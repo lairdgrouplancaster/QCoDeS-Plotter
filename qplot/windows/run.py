@@ -9,11 +9,12 @@ from qplot.datahandling import dataset
 import sys
 import os
 
+
 class MainWindow(qtw.QMainWindow):
     
     def __init__(self):
         super().__init__()
-        
+       
         #prevent auto delete of windows
         self.windows = []
         
@@ -39,12 +40,10 @@ class MainWindow(qtw.QMainWindow):
         pltbutton.clicked.connect(self.openPlot)
         layout.addWidget(pltbutton)
         
-         
-        
         w = qtw.QWidget()
         w.setLayout(layout)
         self.setCentralWidget(w)
-        
+       
         #bring window to top
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         self.show() 
@@ -96,9 +95,10 @@ class MainWindow(qtw.QMainWindow):
             )
         return ds
 
+     
 if __name__=="__main__":
     app = qtw.QApplication(sys.argv)
     w = MainWindow()
     app.exec()
     
-    
+  

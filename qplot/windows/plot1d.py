@@ -11,6 +11,7 @@ import qcodes
 import numpy as np
 
 from qplot.tools import unpack_param
+
 from .setup import plotWidget
 
 class plot1d(plotWidget):
@@ -25,7 +26,6 @@ class plot1d(plotWidget):
         
         
         indepParam = unpack_param(dataset, param.depends_on)
-        print()
         
         
         if isinstance(self.df.index.names, type(None)) or len(self.df.index.names) == 1:
