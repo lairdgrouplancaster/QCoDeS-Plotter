@@ -6,7 +6,6 @@ from qplot.windows import plot1d, plot2d
 from qplot.datahandling import dataset
 # from qplot.windows.setup import closeEvent
 # from pyqtgraph import GraphicsLayoutWidget
-import sys
 import os
 
 
@@ -58,7 +57,7 @@ class MainWindow(qtw.QMainWindow):
         win = widget(*args, **kargs)
         self.windows.append(win)
         win.sig.connect(self.onClose)
-        # print(f"Opened {str(win)}, remaining: {self.windows}")
+        win.show()
 
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
@@ -74,7 +73,7 @@ class MainWindow(qtw.QMainWindow):
                 depends_on = param.depends_on.split(", ")
                 if len(depends_on) == 1:
                     self.openWin(plot1d, ds, param)
-                elif len(depends_on) ==2:
+                elif len(depends_on) == 2:
                     self.openWin(plot2d, ds, param)
                 else:
                     raise IndexError(
@@ -94,11 +93,3 @@ class MainWindow(qtw.QMainWindow):
             captured_run_id=run_id
             )
         return ds
-
-     
-if __name__=="__main__":
-    app = qtw.QApplication(sys.argv)
-    w = MainWindow()
-    app.exec()
-    
-  

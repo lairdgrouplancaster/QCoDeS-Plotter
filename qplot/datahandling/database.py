@@ -6,6 +6,7 @@ Created on Sun Jul  6 19:40:32 2025
 """
 # from typing import TYPE_CHECKING
 import qcodes
+from os.path import abspath
 
 from qcodes.dataset import initialise_or_create_database_at
 from qcodes.dataset.data_set import (
@@ -40,7 +41,9 @@ class DataSet4Plt(DataSet):
     
     @classmethod
     def init_and_load_by_spec(cls, path, **kargs):
-        initialise_or_create_database_at(path, journal_mode = None)
+        
+        if abspath(get_DB_location()) != abspath(path):
+            initialise_or_create_database_at(path, journal_mode = None)
         
         internal_conn = connect(get_DB_location())
         
