@@ -6,8 +6,9 @@ Created on Sun Jul  6 19:39:45 2025
 """
 
 from .database import DataSet4Plt as dataset
-
+from .readDS import get_runs_from_db
 
 __all__ = [
     "dataset",
+    "get_runs_from_db",
     ]

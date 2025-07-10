@@ -27,13 +27,6 @@ from qcodes.dataset.sqlite.database import (
     )
 
 
-
-# if TYPE_CHECKING: #prevents circular import for checking types
-from qcodes.dataset.data_set_protocol import ParameterData
-from qcodes.dataset.descriptions.param_spec import ParamSpec
-from qcodes.parameters import ParameterBase
-from collections.abc import Callable
-
 class DataSet4Plt(DataSet):
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)

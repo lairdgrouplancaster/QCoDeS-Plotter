@@ -8,4 +8,5 @@ def run():
     w = MainWindow()
     app.exec()
     
+    
     return app, w
