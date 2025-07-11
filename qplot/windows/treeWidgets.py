@@ -18,16 +18,22 @@ from os.path import isfile
 import numpy as np
 
 
-class RunList(qtw.QListWidget):
+class RunList(qtw.QTreeWidget):
     
-    selected = QtCore.pyqtSignal([list])
+    
+    cols = ['Run ID', 'Date','Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
+
+    selected = QtCore.pyqtSignal([int])
     
     def __init__(self, *args, initalize=False, **kargs):
         super().__init__(*args, **kargs)
         
+        self.setColumnCount(len(self.cols))
+        self.setHeaderLabels(self.cols)
+        
         if isfile(get_DB_location()):
-            runs = np.array(get_runs_from_db(), dtype=str)
-            self.addItems(runs)
+            # runs = np.array(list(get_runs_from_db().keys()), dtype=str)
+            self.addRuns()
             
         self.itemSelectionChanged.connect(self.onSelect)
     
@@ -35,18 +41,60 @@ class RunList(qtw.QListWidget):
     def refresh(self):
         self.clear()
         
-        runs = np.array(get_runs_from_db(), dtype=str)
-        self.addItems(runs)
+        # runs = np.array(list(get_runs_from_db().keys()), dtype=str)
+        self.addRuns()
 
-    
+    def addRuns(self):
+        runs = get_runs_from_db()
+        self.setSortingEnabled(False)
+        
+        
+        for run_id, exp in runs.items():
+            arr = [str(run_id)]
+            arr.append("") #Date
+            arr.append(exp["name"])
+            arr.append(exp["sample_name"])
+            arr.append("")
+            arr.append(str(exp["started_at"]))
+            arr.append(str(exp["finished_at"]))
+            arr.append("")
+        
+            item = SortableTreeWidgetItem(arr)
+            
+            self.addTopLevelItem(item)
+            
+            
+            
+        self.setSortingEnabled(True)
+        for i in range(len(self.cols)):
+            self.resizeColumnToContents(i)
+
+
     
     @QtCore.pyqtSlot()
     def onSelect(self):
-        selection = [item.text() for item in self.selectedItems()]
-        self.selected.emit(selection)
+        # print(self.selectedItems())
+        selection = self.selectedItems()[0].text(0)
+        # print(selection)
+        self.selected.emit(int(selection))
         
         
+class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
+    """
+    QTreeWidgetItem with an overridden comparator that sorts numerical values
+    as numbers instead of sorting them alphabetically.
+    """
+    def __init__(self, strings):
+        super().__init__(strings)
 
+    def __lt__(self, other: qtw.QTreeWidgetItem) -> bool:
+        col = self.treeWidget().sortColumn()
+        text1 = self.text(col)
+        text2 = other.text(col)
+        try:
+            return float(text1) < float(text2)
+        except ValueError:
+            return text1 < text2    
 
 
 #taken from plottr

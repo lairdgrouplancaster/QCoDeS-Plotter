@@ -71,7 +71,7 @@ class MainWindow(qtw.QMainWindow):
         w.setLayout(self.l)
         self.setCentralWidget(w)
        
-        self.resize(750, 600)
+        self.resize(750, 700)
         
         #bring window to top
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
@@ -126,22 +126,28 @@ class MainWindow(qtw.QMainWindow):
                                                    os.getcwd(),
                                                    "Data Base File (*.db)"
                                                    )[0]
-        self.fileTextbox.setText(filename)
-        if os.path.isfile(get_DB_location()):
-            initialise_or_create_database_at(os.path.abspath(filename))
+        if os.path.isfile(filename):
+            self.fileTextbox.setText(filename)
+            
+            abspath = os.path.abspath(filename)
+            if abspath != get_DB_location():
+                initialise_or_create_database_at(abspath)
           
-        self.listWidget.refresh()
+            self.listWidget.refresh()
         
         
     @QtCore.pyqtSlot()
     def openRuns(self):
-        assert self.ds is not None
-        self.openPlot()
+        try:
+            assert self.ds is not None
+            self.openPlot()
+        except AssertionError:
+            pass
 
         
-    @QtCore.pyqtSlot(list)
-    def updateSelected(self, items):
-        self.ds = load_by_id(items[0])
+    @QtCore.pyqtSlot(int)
+    def updateSelected(self, item):
+        self.ds = load_by_id(item)
         
         if hasattr(self.ds, "snapshot"):
             snap = self.ds.snapshot
