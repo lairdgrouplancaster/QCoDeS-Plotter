@@ -11,7 +11,7 @@ from PyQt5 import QtWidgets as qtw
 import pyqtgraph as pg
 
 from qplot.tools import unpack_param, data2matrix
-from .setup import plotWidget
+from .plotWin import plotWidget
 
 class plot2d(plotWidget):
     def __init__(self, 

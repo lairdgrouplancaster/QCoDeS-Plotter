@@ -37,21 +37,15 @@ class RunList(qtw.QTreeWidget):
         
         if isfile(get_DB_location()):
             # runs = np.array(list(get_runs_from_db().keys()), dtype=str)
-            self.addRuns()
+            self.setRuns()
             
         self.itemSelectionChanged.connect(self.onSelect)
     
     
-    def refresh(self):
-        self.clear()
-        
-        # runs = np.array(list(get_runs_from_db().keys()), dtype=str)
-        self.addRuns()
-
-    def addRuns(self):
-        runs = get_runs_via_sql()
+    def addRuns(self, runs): #tbd
         self.setSortingEnabled(False)
         
+        self.maxTime = max([subDict["run_timestamp"] for subDict in runs.values()])
         
         for run_id, metadata in runs.items():
             arr = [str(run_id)] #run id
@@ -61,21 +55,29 @@ class RunList(qtw.QTreeWidget):
             arr.append(metadata["sample_name"]) #sample
             arr.append(metadata["name"]) #name
             arr.append(run_time.strftime("%Y-%m-%d %H:%M:%S")) #started
-            arr.append(datetime.utcfromtimestamp(metadata["completed_timestamp"]).strftime("%Y-%m-%d %H:%M:%S")) #finished
+            try:
+                assert metadata["completed_timestamp"] is not None
+                arr.append(datetime.utcfromtimestamp(metadata["completed_timestamp"]).strftime("%Y-%m-%d %H:%M:%S")) #finished
+            except AssertionError:
+                arr.append("Ongoing")
             arr.append(metadata["guid"]) #guid
         
             item = SortableTreeWidgetItem(arr)
             
             self.addTopLevelItem(item)
             
-            
-            
-        self.setSortingEnabled(True)
-        for i in range(len(self.cols)):
-            self.resizeColumnToContents(i)
+            self.setSortingEnabled(True)
+            for i in range(len(self.cols)):
+                self.resizeColumnToContents(i)
+        
+        
+    def setRuns(self):
+        self.clear()
+        runs = get_runs_via_sql()
+        
+        self.addRuns(runs)      
+        
 
-
-    
     @QtCore.pyqtSlot()
     def onSelect(self):
         selection = self.selectedItems()[0].text(6) #emit guid

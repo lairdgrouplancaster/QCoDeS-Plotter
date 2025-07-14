@@ -7,12 +7,14 @@ from . import (
     RunList,
     moreInfo,
     )
-# from .treeWidgets import MainList
-from qplot.datahandling import dataset
+from qplot.datahandling import (
+    dataset,
+    find_new_runs
+    )
 
 from qcodes.dataset import (
     initialise_or_create_database_at,
-    load_by_id,
+    # load_by_id,
     load_by_guid
     )
 from qcodes.dataset.sqlite.database import get_DB_location
@@ -30,42 +32,14 @@ class MainWindow(qtw.QMainWindow):
         self.windows = [] #prevent auto delete of windows
         self.ds = None
         
-        
+        #setup
         self.l = qtw.QVBoxLayout()
         
+        self.initRefresh()
+        self.initMenu()
+        self.initFile()
+        self.initRunDisplay()
         
-        #Menu
-        menu = self.menuBar()
-        fileMenu = menu.addMenu("&File")
-        
-        loadAction = qtw.QAction("&Load", self)
-        loadAction.setShortcut("Ctrl+L")
-        loadAction.triggered.connect(self.getfile)
-        fileMenu.addAction(loadAction)
-        
-        #File Picker
-        self.l.addWidget(qtw.QLabel("File Directory:"))
-        
-        self.fileTextbox = qtw.QLineEdit("C:/Users/Benjamin Wordsworth/.qcodes/code/WN7C_first cooldown.db")
-        self.fileTextbox.setReadOnly(True)
-        self.l.addWidget(self.fileTextbox)
-        
-        #Run Display and plot
-        sublayout = qtw.QHBoxLayout()
-        
-        sublayout.addWidget(qtw.QLabel("Run id:"))
-
-        pltbutton = qtw.QPushButton("Open Plots")
-        pltbutton.clicked.connect(self.openRuns)
-        sublayout.addWidget(pltbutton)
-        self.l.addLayout(sublayout)
-        
-        self.listWidget = RunList()
-        self.l.addWidget(self.listWidget)
-        self.listWidget.selected.connect(self.updateSelected)
-        
-        self.infoBox = moreInfo()
-        self.l.addWidget(self.infoBox)
         
         #Final Setup
         w = qtw.QWidget()
@@ -80,11 +54,71 @@ class MainWindow(qtw.QMainWindow):
         self.show() 
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint) 
         self.show()
+
+
+
+    def initRefresh(self):
+        self.toolbar = self.addToolBar("Refresh Timer")
+        
+        self.monitor = QtCore.QTimer()
+        
+        # self.monitorInput = #tbd
+    
+    
+        self.monitor.timeout.connect(self.refreshMain)
+    
+        self.monitor.start(5000)
+    
+    def initMenu(self):
+        menu = self.menuBar()
+        fileMenu = menu.addMenu("&File")
+        
+        loadAction = qtw.QAction("&Load", self)
+        loadAction.setShortcut("Ctrl+L")
+        loadAction.triggered.connect(self.getfile)
+        fileMenu.addAction(loadAction)
+        
+        refreshAction = qtw.QAction("&Refresh", self)
+        refreshAction.setShortcut("R")
+        refreshAction.triggered.connect(self.refreshMain)
+        fileMenu.addAction(refreshAction)
+        
+        
+    def initFile(self):
+        self.l.addWidget(qtw.QLabel("File Directory:"))
+        
+        
+        self.fileTextbox = qtw.QLineEdit()
+        self.fileTextbox.setReadOnly(True)
+        self.l.addWidget(self.fileTextbox)
+        if os.path.isfile(get_DB_location()):
+            self.fileTextbox.setText(str(get_DB_location()))
+        
+        
+    def initRunDisplay(self):
+        sublayout = qtw.QHBoxLayout()
+        
+        sublayout.addWidget(qtw.QLabel("Run id:"))
+
+        pltbutton = qtw.QPushButton("Open Plots")
+        pltbutton.clicked.connect(self.openRun)
+        sublayout.addWidget(pltbutton)
+        self.l.addLayout(sublayout)
+        
+        self.listWidget = RunList()
+        self.l.addWidget(self.listWidget)
+        self.listWidget.selected.connect(self.updateSelected)
+        
+        self.infoBox = moreInfo()
+        self.l.addWidget(self.infoBox)
         
 ###############################################################################
 #Open/Close events
 
     def closeEvent(self, event):
+        if self.monitor.isActive():
+            self.monitor.stop()
+        
         qtw.QApplication.closeAllWindows()
         
         
@@ -119,7 +153,24 @@ class MainWindow(qtw.QMainWindow):
                        )
         
 ###############################################################################
-#Button signals 
+#Signals 
+    
+    @QtCore.pyqtSlot()
+    def refreshMain(self):
+        if not self.fileTextbox.text():
+            return
+        # print("Monitoring")
+        newRuns = find_new_runs(self.listWidget.maxTime)
+        
+        if not newRuns:
+            return
+        
+        print(newRuns)
+        
+        self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()])
+        self.listWidget.addRuns(newRuns)
+        # print(f"New run found at {newRuns.keys()}")
+        
 
     @QtCore.pyqtSlot()
     def getfile(self):
@@ -135,11 +186,11 @@ class MainWindow(qtw.QMainWindow):
             if abspath != get_DB_location():
                 initialise_or_create_database_at(abspath)
           
-            self.listWidget.refresh()
+            self.listWidget.setRuns()
         
         
     @QtCore.pyqtSlot()
-    def openRuns(self):
+    def openRun(self):
         try:
             assert self.ds is not None
             self.openPlot()
@@ -148,8 +199,8 @@ class MainWindow(qtw.QMainWindow):
 
         
     @QtCore.pyqtSlot(str)
-    def updateSelected(self, item):
-        self.ds = load_by_guid(item)
+    def updateSelected(self, guid):
+        self.ds = load_by_guid(guid)
         
         if hasattr(self.ds, "snapshot"):
             snap = self.ds.snapshot

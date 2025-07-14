@@ -12,7 +12,7 @@ import numpy as np
 
 from qplot.tools import unpack_param
 
-from .setup import plotWidget
+from .plotWin import plotWidget
 
 class plot1d(plotWidget):
     def __init__(self, 

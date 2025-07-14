@@ -39,23 +39,39 @@ def get_runs_via_sql():
     return outDict
 
 
-def find_active_runs(): #Work in progress
+def find_new_runs(last_time): #Work in progress
     conn = connect(get_DB_location())
     
     cursor = conn.cursor()
     
-    cursor.execute("""
+    cursor.execute(f"""
        SELECT
-           run_id, 
-           guid
+           runs.run_id,
+           runs.exp_id,
+           runs.name,
+           runs.run_timestamp,
+           runs.completed_timestamp,
+           runs.is_completed,
+           runs.guid,
+           experiments.name AS exp_name,
+           experiments.sample_name
        FROM runs
-       WHERE is_completed = 0            
+       LEFT JOIN experiments ON runs.exp_id = experiments.exp_id
+       WHERE runs.run_timestamp > {last_time}          
     """)
-    out = {}
-    for row in cursor.fetchall():
-        out[row[0]] = row[1]
+    values = cursor.fetchall()
+    
+    if len(values) == 0:
+        return None
+    
+    column_names = [desc[0] for desc in cursor.description]
+    
+    outDict = {}
+    for row in values:
+        outDict[row[0]] = dict(zip(column_names[1:], row[1:]))
 
-    return out
+    conn.close()
+    return outDict
 
 #depricated
 def get_runs_from_db(start: int = 0,
