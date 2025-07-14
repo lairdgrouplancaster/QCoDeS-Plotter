@@ -37,25 +37,35 @@ class plot2d(plotWidget):
             
         
         dataGrid = data2matrix(
-            indepData[0].copy(), 
             indepData[1].copy(), 
+            indepData[0].copy(), 
             self.depvarData
         )
         
-        plot = self.widget.addPlot()
+        # plot = self.widget.addPlot()
         image = pg.ImageItem(dataGrid.to_numpy(float))
         
-        plot.addItem(image)
-        plot.addColorBar(
+        #set axis values
+        image.setRect(
+            pg.QtCore.QRectF(
+                indepData[1].copy()[0], 
+                indepData[0].copy()[0], 
+                indepData[1].copy()[-1] - indepData[1].copy()[0], 
+                indepData[0].copy()[-1] - indepData[0].copy()[0]
+            ))
+        
+        
+        self.plot.addItem(image)
+        self.plot.addColorBar(
             image,
-            colorMap="CET-L9",
+            colorMap="magma",
             label=f"{param.label} ({param.unit})",
             rounding=(max(self.depvarData) - min(self.depvarData))/1e5 #Add 10,000 colours
             )
         
         
-        plot.setLabel('left', f"{indepParams[0].label} ({indepParams[0].unit})")
-        plot.setLabel('bottom', f"{indepParams[1].label} ({indepParams[1].unit})")
+        self.plot.setLabel('left', f"{indepParams[0].label} ({indepParams[0].unit})")
+        self.plot.setLabel('bottom', f"{indepParams[1].label} ({indepParams[1].unit})")
         
-        print("graph produced")
+        print("graph produced \n")
         

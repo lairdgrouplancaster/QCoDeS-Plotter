@@ -40,9 +40,13 @@ class plot1d(plotWidget):
             
         
         
-        plot = self.widget.addPlot(x=indepData, y=self.depvarData)
-        plot.setLabel(axis="bottom", text=f"{indepParam.label} ({indepParam.unit})")
-        plot.setLabel(axis="left", text=f"{param.label} (param.unit)")
+        # self.plot = self.widget.addPlot(x=indepData, y=self.depvarData)
+        self.line = self.plot.plot()
+        
+        self.line.setData(x=indepData, y=self.depvarData)
+        
+        self.plot.setLabel(axis="bottom", text=f"{indepParam.label} ({indepParam.unit})")
+        self.plot.setLabel(axis="left", text=f"{param.label} ({param.unit})")
         
         print("Graph produced \n")
         

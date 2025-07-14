@@ -9,11 +9,11 @@ from . import windows
 from . import tools
 
 
-from .windows.run import MainWindow as run
+from .run import run
 
 __all__ = [
-#     "datahandling",
-#     "windows",
-#     "tools",
+    "datahandling",
+    "windows",
+    "tools",
     "run",
     ]

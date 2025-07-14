@@ -6,6 +6,4 @@ Created on Sat Jul  5 17:03:14 2025
 """
 
 from qplot import run
-
-
 run()

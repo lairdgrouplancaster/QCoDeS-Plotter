@@ -1,0 +1,12 @@
+from qplot.windows import MainWindow
+
+import sys
+from PyQt5 import QtWidgets as qtw
+
+def run():
+    app = qtw.QApplication(sys.argv)
+    w = MainWindow()
+    app.exec()
+    
+    
+    return app, w
