@@ -9,19 +9,20 @@ from PyQt5 import (
     QtCore
     )
 
-from ..datahandling import get_runs_from_db
+from ..datahandling import get_runs_from_db, get_runs_via_sql
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from os.path import isfile
 
 import numpy as np
+from datetime import datetime
 
 
 class RunList(qtw.QTreeWidget):
     
     
-    cols = ['Run ID', 'Date','Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
+    cols = ['Run ID', 'Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
 
     selected = QtCore.pyqtSignal([int])
     
@@ -45,19 +46,20 @@ class RunList(qtw.QTreeWidget):
         self.addRuns()
 
     def addRuns(self):
-        runs = get_runs_from_db()
+        runs = get_runs_via_sql()
         self.setSortingEnabled(False)
         
         
-        for run_id, exp in runs.items():
-            arr = [str(run_id)]
-            arr.append("") #Date
-            arr.append(exp["name"])
-            arr.append(exp["sample_name"])
-            arr.append("")
-            arr.append(str(exp["started_at"]))
-            arr.append(str(exp["finished_at"]))
-            arr.append("")
+        for run_id, metadata in runs.items():
+            arr = [str(run_id)] #run id
+            
+            run_time = datetime.utcfromtimestamp(metadata["run_timestamp"])
+            arr.append(metadata["exp_name"]) #experiment
+            arr.append(metadata["sample_name"]) #sample
+            arr.append(metadata["name"]) #name
+            arr.append(run_time.strftime("%Y-%m-%d %H:%M:%S")) #started
+            arr.append(datetime.utcfromtimestamp(metadata["completed_timestamp"]).strftime("%Y-%m-%d %H:%M:%S")) #finished
+            arr.append(metadata["guid"]) #guid
         
             item = SortableTreeWidgetItem(arr)
             
@@ -73,9 +75,7 @@ class RunList(qtw.QTreeWidget):
     
     @QtCore.pyqtSlot()
     def onSelect(self):
-        # print(self.selectedItems())
-        selection = self.selectedItems()[0].text(0)
-        # print(selection)
+        selection = self.selectedItems()[0].text(-1) #emit guid
         self.selected.emit(int(selection))
         
         

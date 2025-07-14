@@ -12,7 +12,8 @@ from qplot.datahandling import dataset
 
 from qcodes.dataset import (
     initialise_or_create_database_at,
-    load_by_id
+    load_by_id,
+    load_by_guid
     )
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -72,6 +73,7 @@ class MainWindow(qtw.QMainWindow):
         self.setCentralWidget(w)
        
         self.resize(750, 700)
+        self.setWindowTitle("qPlot")
         
         #bring window to top
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
@@ -147,7 +149,7 @@ class MainWindow(qtw.QMainWindow):
         
     @QtCore.pyqtSlot(int)
     def updateSelected(self, item):
-        self.ds = load_by_id(item)
+        self.ds = load_by_guid(item)
         
         if hasattr(self.ds, "snapshot"):
             snap = self.ds.snapshot
@@ -155,7 +157,7 @@ class MainWindow(qtw.QMainWindow):
             snap = None
         
         paramspec = self.ds.get_parameters()
-        structure = {}
+        structure = {"Data points" : len(self.ds)}
         for param in paramspec:
             if len(param.depends_on) > 0:
                 structure[param.name] = {"unit" : param.unit,
