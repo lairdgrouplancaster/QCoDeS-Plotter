@@ -147,7 +147,7 @@ class MainWindow(qtw.QMainWindow):
             pass
 
         
-    @QtCore.pyqtSlot(int)
+    @QtCore.pyqtSlot(str)
     def updateSelected(self, item):
         self.ds = load_by_guid(item)
         

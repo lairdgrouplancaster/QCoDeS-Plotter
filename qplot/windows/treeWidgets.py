@@ -9,7 +9,10 @@ from PyQt5 import (
     QtCore
     )
 
-from ..datahandling import get_runs_from_db, get_runs_via_sql
+from ..datahandling import (
+    # get_runs_from_db, 
+    get_runs_via_sql
+    )
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -24,7 +27,7 @@ class RunList(qtw.QTreeWidget):
     
     cols = ['Run ID', 'Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
 
-    selected = QtCore.pyqtSignal([int])
+    selected = QtCore.pyqtSignal([str])
     
     def __init__(self, *args, initalize=False, **kargs):
         super().__init__(*args, **kargs)
@@ -75,8 +78,8 @@ class RunList(qtw.QTreeWidget):
     
     @QtCore.pyqtSlot()
     def onSelect(self):
-        selection = self.selectedItems()[0].text(-1) #emit guid
-        self.selected.emit(int(selection))
+        selection = self.selectedItems()[0].text(6) #emit guid
+        self.selected.emit(selection)
         
         
 class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
