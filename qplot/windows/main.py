@@ -31,11 +31,13 @@ class MainWindow(qtw.QMainWindow):
         #vars
         self.windows = [] #prevent auto delete of windows
         self.ds = None
+        self.monitorTimer = None
         
-        #setup
+        #widgets
         self.l = qtw.QVBoxLayout()
         
         self.initRefresh()
+        self.initAutoplot()
         self.initMenu()
         self.initFile()
         self.initRunDisplay()
@@ -62,12 +64,29 @@ class MainWindow(qtw.QMainWindow):
         
         self.monitor = QtCore.QTimer()
         
-        # self.monitorInput = #tbd
+        # sublayout = qtw.QFormLayout()
+        
+        self.spinBox = qtw.QDoubleSpinBox()
+        self.spinBox.setSingleStep(0.1)
+        self.spinBox.setDecimals(1)
+        # sublayout.addRow("Refresh interval (s)", self.spinBox)
     
+        self.toolbar.addWidget(qtw.QLabel("Refresh interval (s): "))
+        self.toolbar.addWidget(self.spinBox)
     
+        self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshMain)
     
-        self.monitor.start(5000)
+    
+    
+    def initAutoplot(self):
+        self.toolbar.addSeparator()
+        
+        self.toolbar.addWidget(qtw.QLabel("Toggle Auto-plot" ))
+        
+        self.autoPlotBox = qtw.QCheckBox()
+        self.toolbar.addWidget(self.autoPlotBox)
+    
     
     def initMenu(self):
         menu = self.menuBar()
@@ -155,11 +174,17 @@ class MainWindow(qtw.QMainWindow):
 ###############################################################################
 #Signals 
     
+    @QtCore.pyqtSlot(float)
+    def monitorIntervalChanged(self, interval):
+        self.monitor.stop()
+        if interval > 0:
+            self.monitor.start(int(interval * 1000)) #convert to seconds
+
     @QtCore.pyqtSlot()
     def refreshMain(self):
         if not self.fileTextbox.text():
             return
-        # print("Monitoring")
+        print("Monitoring")
         newRuns = find_new_runs(self.listWidget.maxTime)
         
         if not newRuns:
@@ -171,6 +196,10 @@ class MainWindow(qtw.QMainWindow):
         self.listWidget.addRuns(newRuns)
         # print(f"New run found at {newRuns.keys()}")
         
+        if self.autoPlotBox.checkState():
+            print("I Should AutoPlot")
+            pass
+        
 
     @QtCore.pyqtSlot()
     def getfile(self):
@@ -180,6 +209,7 @@ class MainWindow(qtw.QMainWindow):
                                                    "Data Base File (*.db)"
                                                    )[0]
         if os.path.isfile(filename):
+            self.monitor.stop()
             self.fileTextbox.setText(filename)
             
             abspath = os.path.abspath(filename)
@@ -187,6 +217,7 @@ class MainWindow(qtw.QMainWindow):
                 initialise_or_create_database_at(abspath)
           
             self.listWidget.setRuns()
+            self.monitor.start(self.monitorTimer.value())
         
         
     @QtCore.pyqtSlot()
