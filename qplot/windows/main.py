@@ -82,7 +82,7 @@ class MainWindow(qtw.QMainWindow):
     def initAutoplot(self):
         self.toolbar.addSeparator()
         
-        self.toolbar.addWidget(qtw.QLabel("Toggle Auto-plot" ))
+        self.toolbar.addWidget(qtw.QLabel("Toggle Auto-plot "))
         
         self.autoPlotBox = qtw.QCheckBox()
         self.toolbar.addWidget(self.autoPlotBox)
@@ -144,28 +144,32 @@ class MainWindow(qtw.QMainWindow):
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
         self.windows.remove(win)
-        del win
+        # del win
         # print(f"Closed {str(win)}, remaining: {self.windows}")
             
     
     def openWin(self, widget, *args, **kargs):
         win = widget(*args, **kargs)
         self.windows.append(win)
-        win.sig.connect(self.onClose)
+        win.closed.connect(self.onClose)
         win.show()
 
 
     
-    def openPlot(self):
-        # ds = self.openDataset()
+    def openPlot(self, guid : str=None):
+        if guid:
+            ds = load_by_guid(guid)
+        else:
+            ds = self.ds
+
         
-        for param in self.ds.get_parameters():
+        for param in ds.get_parameters():
             if param.depends_on != "":
                 depends_on = param.depends_on_
                 if len(depends_on) == 1:
-                    self.openWin(plot1d, self.ds, param)
+                    self.openWin(plot1d, ds, param, refrate = self.spinBox.value())
                 elif len(depends_on) == 2:
-                    self.openWin(plot2d, self.ds, param)
+                    self.openWin(plot2d, ds, param, refrate = self.spinBox.value())
                 else:
                     raise IndexError(
                         f"Parameter: {param.name}, depends on too many variables ({depends_on}, {len(depends_on)=})"
@@ -184,22 +188,25 @@ class MainWindow(qtw.QMainWindow):
     def refreshMain(self):
         if not self.fileTextbox.text():
             return
-        print("Monitoring")
+        # print("Monitoring")
         newRuns = find_new_runs(self.listWidget.maxTime)
         
         if not newRuns:
             return
         
-        print(newRuns)
+        # print(newRuns)
         
         self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()])
         self.listWidget.addRuns(newRuns)
         # print(f"New run found at {newRuns.keys()}")
-        
+
         if self.autoPlotBox.checkState():
-            print("I Should AutoPlot")
-            pass
-        
+            for run in newRuns.values():
+                print(run["guid"])
+                self.openPlot(run["guid"])
+        else:
+            print("unticked")
+                
 
     @QtCore.pyqtSlot()
     def getfile(self):
@@ -217,7 +224,10 @@ class MainWindow(qtw.QMainWindow):
                 initialise_or_create_database_at(abspath)
           
             self.listWidget.setRuns()
-            self.monitor.start(self.monitorTimer.value())
+            
+            monitorTimer = self.spinBox.value()
+            if monitorTimer > 0:
+                self.monitor.start(int(monitorTimer * 1000))
         
         
     @QtCore.pyqtSlot()
@@ -239,7 +249,7 @@ class MainWindow(qtw.QMainWindow):
             snap = None
         
         paramspec = self.ds.get_parameters()
-        structure = {"Data points" : len(self.ds)}
+        structure = {"Data points" : self.ds.number_of_results}
         for param in paramspec:
             if len(param.depends_on) > 0:
                 structure[param.name] = {"unit" : param.unit,

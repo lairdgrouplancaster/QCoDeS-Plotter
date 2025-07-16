@@ -66,9 +66,9 @@ class RunList(qtw.QTreeWidget):
             
             self.addTopLevelItem(item)
             
-            self.setSortingEnabled(True)
-            for i in range(len(self.cols)):
-                self.resizeColumnToContents(i)
+        self.setSortingEnabled(True)
+        for i in range(len(self.cols)):
+            self.resizeColumnToContents(i)
         
         
     def setRuns(self):

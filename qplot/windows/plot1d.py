@@ -16,16 +16,15 @@ from .plotWin import plotWidget
 
 class plot1d(plotWidget):
     def __init__(self, 
-                 dataset : qcodes.dataset.data_set.DataSet, 
-                 param : qcodes.dataset.ParamSpec
+                 *args,
+                 refrate = None,
+                 **kargs
                  ):
-        super().__init__(dataset, param, str(dataset.run_id))
+        super().__init__(*args, **kargs)
         
         print("Working")
         
-        
-        
-        indepParam = unpack_param(dataset, param.depends_on)
+        indepParam = unpack_param(self.ds, self.param.depends_on)
         
         
         if isinstance(self.df.index.names, type(None)) or len(self.df.index.names) == 1:
@@ -46,10 +45,17 @@ class plot1d(plotWidget):
         self.line.setData(x=indepData, y=self.depvarData)
         
         self.plot.setLabel(axis="bottom", text=f"{indepParam.label} ({indepParam.unit})")
-        self.plot.setLabel(axis="left", text=f"{param.label} ({param.unit})")
+        self.plot.setLabel(axis="left", text=f"{self.param.label} ({self.param.unit})")
         
+        
+        
+        self.initRefresh(refrate)
+        self.initLabels()
+        
+        self.initalised = True
         print("Graph produced \n")
         
         
-        
+    def refreshPlot(self):
+        pass
         
