@@ -22,24 +22,32 @@ class plot1d(plotWidget):
                  ):
         super().__init__(*args, **kargs)
         
+        
+        
+        
+        # if isinstance(self.df.index.names, type(None)) or len(self.df.index.names) == 1:
+        #     indepData = self.df.index.to_numpy(float)
+        # else: 
+        #     name_ind = self.df.index.names.index(indepParam.name)
+        #     unpacked_index = np.array(
+        #         [*self.df.index], #unpack tupple to produce nd array
+        #         dtype=float
+        #         )
+        #     indepData = unpacked_index[:,name_ind]
+        self.initFrame()
+        self.initRefresh(refrate)
+        
+    def initFrame(self):
+        if self.df.empty:
+            print("df empty")
+            return
         print("Working")
+        
         
         indepParam = unpack_param(self.ds, self.param.depends_on)
         
+        indepData = self.indepData[0]
         
-        if isinstance(self.df.index.names, type(None)) or len(self.df.index.names) == 1:
-            indepData = self.df.index.to_numpy(float)
-        else: 
-            name_ind = self.df.index.names.index(indepParam.name)
-            unpacked_index = np.array(
-                [*self.df.index], #unpack tupple to produce nd array
-                dtype=float
-                )
-            indepData = unpacked_index[:,name_ind]
-            
-        
-        
-        # self.plot = self.widget.addPlot(x=indepData, y=self.depvarData)
         self.line = self.plot.plot()
         
         self.line.setData(x=indepData, y=self.depvarData)
@@ -47,9 +55,6 @@ class plot1d(plotWidget):
         self.plot.setLabel(axis="bottom", text=f"{indepParam.label} ({indepParam.unit})")
         self.plot.setLabel(axis="left", text=f"{self.param.label} ({self.param.unit})")
         
-        
-        
-        self.initRefresh(refrate)
         self.initLabels()
         
         self.initalised = True
@@ -57,5 +62,10 @@ class plot1d(plotWidget):
         
         
     def refreshPlot(self):
-        pass
+        indepData = self.indepData[0]
+        self.line.setData(
+            x=indepData, 
+            y=self.depvarData,
+            # autoRange=False
+            )
         

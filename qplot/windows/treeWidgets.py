@@ -18,7 +18,7 @@ from qcodes.dataset.sqlite.database import get_DB_location
 
 from os.path import isfile
 
-import numpy as np
+# import numpy as np
 from datetime import datetime
 
 
@@ -80,8 +80,9 @@ class RunList(qtw.QTreeWidget):
 
     @QtCore.pyqtSlot()
     def onSelect(self):
-        selection = self.selectedItems()[0].text(6) #emit guid
-        self.selected.emit(selection)
+        if len(self.selectedItems()) == 1:
+            selection = self.selectedItems()[0].text(6) #emit guid
+            self.selected.emit(selection)
         
         
 class SortableTreeWidgetItem(qtw.QTreeWidgetItem):

@@ -202,7 +202,6 @@ class MainWindow(qtw.QMainWindow):
 
         if self.autoPlotBox.checkState():
             for run in newRuns.values():
-                print(run["guid"])
                 self.openPlot(run["guid"])
         else:
             print("unticked")
@@ -216,6 +215,9 @@ class MainWindow(qtw.QMainWindow):
                                                    "Data Base File (*.db)"
                                                    )[0]
         if os.path.isfile(filename):
+            self.listWidget.clearSelection()
+            self.infoBox.clear()
+            
             self.monitor.stop()
             self.fileTextbox.setText(filename)
             

@@ -4,10 +4,10 @@ Created on Tue Jul  8 09:41:16 2025
 
 @author: Benjamin Wordsworth
 """
-import qcodes
-import numpy as np
+# import qcodes
+# import numpy as np
 
-from PyQt5 import QtWidgets as qtw
+# from PyQt5 import QtWidgets as qtw
 import pyqtgraph as pg
 
 from qplot.tools import unpack_param, data2matrix
@@ -72,17 +72,6 @@ class plot2d(plotWidget):
         self.initLabels()
         
     def refreshPlot(self):
-        if not self.initalised:
-            self.initFrame()
-            return
-        
-        # indepData = self.df.index.to_frame()
-        # valid_rows = ~np.isnan(self.depvarData)
-        
-        # indepData = [indepData.iloc[:,0].loc[valid_rows].to_numpy(float), 
-        #             indepData.iloc[:,1].loc[valid_rows].to_numpy(float), 
-        #             ]
-        
         dataGrid = data2matrix(
             self.indepData[1].copy(), 
             self.indepData[0].copy(), 

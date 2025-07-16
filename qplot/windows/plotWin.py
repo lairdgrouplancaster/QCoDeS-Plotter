@@ -14,11 +14,11 @@ from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore 
 
 import qcodes
-
+from qcodes.dataset.sqlite.database import get_DB_location
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
-    runEnd = QtCore.pyqtSignal(str)
+    # runEnd = QtCore.pyqtSignal(str)
     
     #Core methods
     def __init__(self, 
@@ -29,8 +29,8 @@ class plotWidget(qtw.QMainWindow):
         super().__init__()
         
         self.ds = dataset
-        self.name = str(self.ds.run_id)
         self.param = param
+        self.name = str(self)
         self.monitor = QtCore.QTimer()
         self.initalised = False
         self.ds.cache.load_data_from_db()
@@ -55,12 +55,17 @@ class plotWidget(qtw.QMainWindow):
         
         
     def __str__(self):
-        return self.name
+        filenameStr = get_DB_location().split('\\')[-1]
+        fstr = (f"{filenameStr} | " 
+                f"run ID: {self.ds.run_id} | "
+                f"{self.param.name} ({self.param.label})"
+                )
+        return fstr
     
     #Other Methods
     
     def loadDSdata(self):
-        # self.ds.cache.data()
+        
         self.df = self.ds.cache.to_pandas_dataframe().loc[:, self.param.name:self.param.name]
         self.depvarData = self.df.iloc[:,0].to_numpy(float)
         
@@ -80,7 +85,8 @@ class plotWidget(qtw.QMainWindow):
         if not self.ds.running:
             return
         
-        self.toolbarRef = self.addToolBar("Refresh Timer")
+        self.toolbarRef = qtw.QToolBar("Refresh Timer")
+        self.addToolBar(QtCore.Qt.TopToolBarArea, self.toolbarRef)
         
         
         self.spinBox = qtw.QDoubleSpinBox()
@@ -103,7 +109,8 @@ class plotWidget(qtw.QMainWindow):
         
         
     def initLabels(self):
-        self.toolbarCo_ord = self.addToolBar("Co-ordinates")
+        self.toolbarCo_ord = qtw.QToolBar("Co-ordinates")
+        self.addToolBar(QtCore.Qt.BottomToolBarArea, self.toolbarCo_ord)
         
         self.posLabelx = qtw.QLabel(text="x=       ")
         self.toolbarCo_ord.addWidget(self.posLabelx)
@@ -155,13 +162,16 @@ class plotWidget(qtw.QMainWindow):
             
     @QtCore.pyqtSlot()
     def refreshWindow(self):
+        if not self.initalised:
+            self.initFrame() #defined in children classes
+            return
         if not self.ds.running:
             self.monitor.stop()
-            self.runEnd.emit(self.ds.guid)
-            return
-        last_df_len = len(self.depvarData)
+            # self.runEnd.emit(self.ds.guid)
+        
+        self.last_df_len = len(self.depvarData)
         self.loadDSdata()
         
-        if len(self.depvarData) != last_df_len:
+        if len(self.depvarData) != self.last_df_len:
             self.refreshPlot()
-        
+            # print("monitoring plots")
