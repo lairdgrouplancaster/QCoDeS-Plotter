@@ -7,8 +7,10 @@ Created on Thu Jul 10 10:57:06 2025
 from qcodes.dataset.experiment_container import experiments
 from qcodes.dataset.sqlite.queries import get_runs
 from qcodes.dataset.sqlite.database import connect, get_DB_location
+# import time
 
 def get_runs_via_sql():
+    # startTime = time.time()
     conn = connect(get_DB_location())
     
     cursor = conn.cursor()
@@ -27,35 +29,59 @@ def get_runs_via_sql():
        FROM runs
        LEFT JOIN experiments ON runs.exp_id = experiments.exp_id
     """)
-    
+    # print(f"method: get_runs_via_sql, took {time.time() - startTime}s" )
     column_names = [desc[0] for desc in cursor.description]
     
     outDict = {}
     for row in cursor.fetchall():
         outDict[row[0]] = dict(zip(column_names[1:], row[1:]))
         
-        
+
     conn.close()
+
     return outDict
 
 
-def find_active_runs(): #Work in progress
+def find_new_runs(last_time): #Work in progress
+    # startTime = time.time()    
     conn = connect(get_DB_location())
     
     cursor = conn.cursor()
     
     cursor.execute("""
        SELECT
-           run_id, 
-           guid
+           runs.run_id,
+           runs.exp_id,
+           runs.name,
+           runs.run_timestamp,
+           runs.completed_timestamp,
+           runs.is_completed,
+           runs.guid,
+           experiments.name AS exp_name,
+           experiments.sample_name
        FROM runs
-       WHERE is_completed = 0            
-    """)
-    out = {}
-    for row in cursor.fetchall():
-        out[row[0]] = row[1]
+       LEFT JOIN experiments ON runs.exp_id = experiments.exp_id
+       WHERE runs.run_timestamp > ?        
+    """, (last_time, ))
+    # print(f"method: find_new_runs, took {time.time() - startTime}s" )
+    values = cursor.fetchall()
 
-    return out
+    if len(values) == 0:
+        return None
+    
+    column_names = [desc[0] for desc in cursor.description]
+    
+    outDict = {}
+    for row in values:
+        outDict[row[0]] = dict(zip(column_names[1:], row[1:]))
+
+    conn.close()
+    return outDict
+
+
+def read_UpdatedData(guid, last_index):
+    pass
+
 
 #depricated
 def get_runs_from_db(start: int = 0,
