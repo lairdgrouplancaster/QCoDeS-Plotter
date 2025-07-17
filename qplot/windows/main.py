@@ -14,7 +14,6 @@ from qplot.datahandling import (
 
 from qcodes.dataset import (
     initialise_or_create_database_at,
-    # load_by_id,
     load_by_guid
     )
 from qcodes.dataset.sqlite.database import get_DB_location
@@ -24,14 +23,15 @@ import os
 
 class MainWindow(qtw.QMainWindow):
     
-    
     def __init__(self):
         super().__init__()
        
         #vars
         self.windows = [] #prevent auto delete of windows
         self.ds = None
-        self.monitorTimer = None
+        self.monitor = QtCore.QTimer()
+        self.x = 0
+        self.y = 0
         
         #widgets
         self.l = qtw.QVBoxLayout()
@@ -48,8 +48,13 @@ class MainWindow(qtw.QMainWindow):
         w.setLayout(self.l)
         self.setCentralWidget(w)
        
+        
         self.resize(750, 700)
         self.setWindowTitle("qPlot")
+        
+        self.screenrect = qtw.QApplication.primaryScreen().availableGeometry()
+        self.x = self.screenrect.left() #control new window position
+        self.y = self.screenrect.top()
         
         #bring window to top
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
@@ -62,15 +67,10 @@ class MainWindow(qtw.QMainWindow):
     def initRefresh(self):
         self.toolbar = self.addToolBar("Refresh Timer")
         
-        self.monitor = QtCore.QTimer()
-        
-        # sublayout = qtw.QFormLayout()
-        
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
-        # sublayout.addRow("Refresh interval (s)", self.spinBox)
-    
+        
         self.toolbar.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbar.addWidget(self.spinBox)
     
@@ -106,10 +106,10 @@ class MainWindow(qtw.QMainWindow):
     def initFile(self):
         self.l.addWidget(qtw.QLabel("File Directory:"))
         
-        
         self.fileTextbox = qtw.QLineEdit()
         self.fileTextbox.setReadOnly(True)
         self.l.addWidget(self.fileTextbox)
+        
         if os.path.isfile(get_DB_location()):
             self.fileTextbox.setText(str(get_DB_location()))
         
@@ -134,6 +134,7 @@ class MainWindow(qtw.QMainWindow):
 ###############################################################################
 #Open/Close events
 
+    @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
         if self.monitor.isActive():
             self.monitor.stop()
@@ -144,25 +145,36 @@ class MainWindow(qtw.QMainWindow):
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
         self.windows.remove(win)
-        # del win
-        # print(f"Closed {str(win)}, remaining: {self.windows}")
-            
+        del win
+    
     
     def openWin(self, widget, *args, **kargs):
         win = widget(*args, **kargs)
+        
         self.windows.append(win)
         win.closed.connect(self.onClose)
+        
+        win.move(self.x, self.y)
         win.show()
+        
+        #set next position
+        tolerance = 30
+        self.x += win.width
+        if self.x + win.width - tolerance > self.screenrect.right():
+            self.x = self.screenrect.left()
+            self.y += win.height
+            
+            if self.y + win.height - tolerance > self.screenrect.bottom():
+                self.y = self.screenrect.top()
+        
 
 
-    
     def openPlot(self, guid : str=None):
         if guid:
             ds = load_by_guid(guid)
         else:
             ds = self.ds
-
-        
+            
         for param in ds.get_parameters():
             if param.depends_on != "":
                 depends_on = param.depends_on_
@@ -188,17 +200,14 @@ class MainWindow(qtw.QMainWindow):
     def refreshMain(self):
         if not self.fileTextbox.text():
             return
-        # print("Monitoring")
+        
         newRuns = find_new_runs(self.listWidget.maxTime)
         
         if not newRuns:
             return
         
-        # print(newRuns)
-        
         self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()])
         self.listWidget.addRuns(newRuns)
-        # print(f"New run found at {newRuns.keys()}")
 
         if self.autoPlotBox.checkState():
             for run in newRuns.values():

@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jul  8 12:50:50 2025
-
-@author: Benjamin Wordsworth
-"""
 from math import log10
 
 import pyqtgraph as pg
@@ -18,9 +12,7 @@ from qcodes.dataset.sqlite.database import get_DB_location
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
-    # runEnd = QtCore.pyqtSignal(str)
     
-    #Core methods
     def __init__(self, 
                  dataset : qcodes.dataset.data_set.DataSet, 
                  param : qcodes.dataset.ParamSpec,
@@ -44,14 +36,18 @@ class plotWidget(qtw.QMainWindow):
         self.layout.addWidget(self.widget)
         
         
+        
+        self.setWindowTitle(str(self))
+        
+        screenrect = qtw.QApplication.primaryScreen().availableGeometry()
+        sizeFrac = 0.47
+        self.width = int(sizeFrac * screenrect.width())
+        self.height = int(sizeFrac * screenrect.height())
+        self.resize(self.width, self.height)
+        
         w = qtw.QWidget()
         w.setLayout(self.layout)
         self.setCentralWidget(w)
-        
-        self.setWindowTitle(str(self))
-        self.resize(960, 540)
-        
-        # self.show()
         
         
     def __str__(self):
@@ -61,7 +57,8 @@ class plotWidget(qtw.QMainWindow):
                 f"{self.param.name} ({self.param.label})"
                 )
         return fstr
-    
+ 
+###############################################################################
     #Other Methods
     
     def loadDSdata(self):
@@ -122,7 +119,20 @@ class plotWidget(qtw.QMainWindow):
         
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
+    
+    def initContextMenu(self):
+        vb = self.plot.getViewBox()
+        self.vbMenu = vb.menu
         
+        actions = []
+        for action in self.vbMenu.actions():
+            actions.append(action)
+            if action.text() == "View All":
+                action.setText("Autoscale")
+        
+        self.autoscaleSep = self.vbMenu.insertSeparator(actions[1])
+    
+    
     @staticmethod
     def formatNum(num : float, sf : int=3) -> str:
         try:
@@ -134,9 +144,11 @@ class plotWidget(qtw.QMainWindow):
             return f"{num:.{sf}e}"
         else:
             return f"{num:.{sf - log}f}"
-        
+      
+###############################################################################
     #Events
     
+    @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
         if self.monitor:
             self.monitor.stop()
@@ -160,6 +172,7 @@ class plotWidget(qtw.QMainWindow):
         if interval > 0:
             self.monitor.start(int(interval * 1000)) #convert to seconds
             
+            
     @QtCore.pyqtSlot()
     def refreshWindow(self):
         if not self.initalised:
@@ -167,11 +180,9 @@ class plotWidget(qtw.QMainWindow):
             return
         if not self.ds.running:
             self.monitor.stop()
-            # self.runEnd.emit(self.ds.guid)
         
         self.last_df_len = len(self.depvarData)
         self.loadDSdata()
         
         if len(self.depvarData) != self.last_df_len:
             self.refreshPlot()
-            # print("monitoring plots")

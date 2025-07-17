@@ -1,19 +1,13 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jul  8 09:41:16 2025
+from PyQt5 import QtWidgets as qtw
+from PyQt5 import QtCore
 
-@author: Benjamin Wordsworth
-"""
-# import qcodes
-# import numpy as np
-
-# from PyQt5 import QtWidgets as qtw
 import pyqtgraph as pg
 
 from qplot.tools import unpack_param, data2matrix
 from .plotWin import plotWidget
 
 class plot2d(plotWidget):
+    
     def __init__(self, 
                  *args,
                  refrate = None,
@@ -23,6 +17,7 @@ class plot2d(plotWidget):
         
         self.initFrame()
         self.initRefresh(refrate)
+        
         
     def initFrame(self):
         if self.df.empty:
@@ -56,7 +51,8 @@ class plot2d(plotWidget):
         
         
         self.plot.addItem(self.image)
-        self.plot.addColorBar(
+        
+        self.bar = self.plot.addColorBar(
             self.image,
             colorMap="magma",
             label=f"{self.param.label} ({self.param.unit})",
@@ -66,10 +62,13 @@ class plot2d(plotWidget):
         self.plot.setLabel('left', f"{self.indepParams[0].label} ({self.indepParams[0].unit})")
         self.plot.setLabel('bottom', f"{self.indepParams[1].label} ({self.indepParams[1].unit})")
         
+        self.initContextMenu()
+        
         self.initalised = True
         print("graph produced \n")
         
         self.initLabels()
+        
         
     def refreshPlot(self):
         dataGrid = data2matrix(
@@ -94,3 +93,20 @@ class plot2d(plotWidget):
                 max(self.indepData[1]) - idepData_xmin, 
                 max(self.indepData[0]) - idepData_ymin
             ))
+        
+    
+    def initContextMenu(self):
+        super().initContextMenu()
+
+        autoColor = qtw.QAction("Autoscale Color", self)
+        autoColor.triggered.connect(self.scaleColorbar)
+        self.vbMenu.insertAction(self.autoscaleSep, autoColor)
+        
+        
+    @QtCore.pyqtSlot(bool)
+    def scaleColorbar(self, event):
+        vmin, vmax = min(self.depvarData), max(self.depvarData)
+
+        self.bar.setLevels((vmin, vmax))
+        
+        

@@ -1,15 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Jul  6 16:35:38 2025
-
-@author: Benjamin Wordsworth
-"""
-from PyQt5 import QtWidgets as qtw
-
-import qcodes
-
-import numpy as np
-
 from qplot.tools import unpack_param
 
 from .plotWin import plotWidget
@@ -22,18 +10,6 @@ class plot1d(plotWidget):
                  ):
         super().__init__(*args, **kargs)
         
-        
-        
-        
-        # if isinstance(self.df.index.names, type(None)) or len(self.df.index.names) == 1:
-        #     indepData = self.df.index.to_numpy(float)
-        # else: 
-        #     name_ind = self.df.index.names.index(indepParam.name)
-        #     unpacked_index = np.array(
-        #         [*self.df.index], #unpack tupple to produce nd array
-        #         dtype=float
-        #         )
-        #     indepData = unpacked_index[:,name_ind]
         self.initFrame()
         self.initRefresh(refrate)
         
@@ -42,7 +18,6 @@ class plot1d(plotWidget):
             print("df empty")
             return
         print("Working")
-        
         
         indepParam = unpack_param(self.ds, self.param.depends_on)
         
@@ -56,6 +31,7 @@ class plot1d(plotWidget):
         self.plot.setLabel(axis="left", text=f"{self.param.label} ({self.param.unit})")
         
         self.initLabels()
+        self.initContextMenu()
         
         self.initalised = True
         print("Graph produced \n")
@@ -66,6 +42,6 @@ class plot1d(plotWidget):
         self.line.setData(
             x=indepData, 
             y=self.depvarData,
-            # autoRange=False
             )
+        self.line.disableAutoRange
         

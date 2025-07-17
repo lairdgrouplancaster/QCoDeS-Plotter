@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Jul 10 11:16:24 2025
-
-@author: Benjamin Wordsworth
-"""
 from PyQt5 import (
     QtWidgets as qtw,
     QtCore
@@ -18,12 +12,10 @@ from qcodes.dataset.sqlite.database import get_DB_location
 
 from os.path import isfile
 
-# import numpy as np
 from datetime import datetime
 
 
 class RunList(qtw.QTreeWidget):
-    
     
     cols = ['Run ID', 'Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
 
@@ -36,7 +28,6 @@ class RunList(qtw.QTreeWidget):
         self.setHeaderLabels(self.cols)
         
         if isfile(get_DB_location()):
-            # runs = np.array(list(get_runs_from_db().keys()), dtype=str)
             self.setRuns()
             
         self.itemSelectionChanged.connect(self.onSelect)
@@ -51,6 +42,7 @@ class RunList(qtw.QTreeWidget):
             arr = [str(run_id)] #run id
             
             run_time = datetime.utcfromtimestamp(metadata["run_timestamp"])
+            
             arr.append(metadata["exp_name"]) #experiment
             arr.append(metadata["sample_name"]) #sample
             arr.append(metadata["name"]) #name
@@ -83,8 +75,9 @@ class RunList(qtw.QTreeWidget):
         if len(self.selectedItems()) == 1:
             selection = self.selectedItems()[0].text(6) #emit guid
             self.selected.emit(selection)
+ 
         
-        
+#3 classes/methods below are adapted from plottr
 class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
     """
     QTreeWidgetItem with an overridden comparator that sorts numerical values
@@ -103,7 +96,6 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
             return text1 < text2    
 
 
-#taken from plottr
 class moreInfo(qtw.QTreeWidget):
     
     def __init__(self, *args):
@@ -112,7 +104,7 @@ class moreInfo(qtw.QTreeWidget):
         self.setHeaderLabels(["Key", "Value"])
         self.setColumnCount(2)
         
-    # @QtCore.pyqtSlot(dict)
+    @QtCore.pyqtSlot(dict)
     def setInfo(self, info):
         self.clear()
         
@@ -124,7 +116,6 @@ class moreInfo(qtw.QTreeWidget):
         self.expandAll()
         for i in range(2):
             self.resizeColumnToContents(i)
-
 
 
 def dictToTree(d : dict):
