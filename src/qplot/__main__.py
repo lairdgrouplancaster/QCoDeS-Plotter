@@ -10,3 +10,6 @@ def run():
     
     
     return app, w
+
+if __name__=="__main__":
+    run()

@@ -9,7 +9,7 @@ from . import windows
 from . import tools
 
 
-from .run import run
+from .__main__ import run
 
 __all__ = [
     "datahandling",

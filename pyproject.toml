@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qplot"
+version = "0.9.1"
+authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"}]
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.3.1",
+    "pandas>=2.3.0",
+    "PyQt5>=5.15.11",
+    "pyqtgraph>=0.13.7",
+    "qcodes>=0.53.0",
+]
+
+[project.scripts]
+qplot = "qplot.__main__:run"
+
+
+[project.urls]
+Homepage = "https://github.com/Wordsbo/QCoDeS-Plotter/tree/main"
+
+
+[tool.setuptools.packages.find]
+where = [".src."]
