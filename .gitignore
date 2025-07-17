@@ -2,4 +2,5 @@
 *.db-shm
 *.db-wal
 *.pyc
-other\Specification.docx
+other/*
+src/qplot.egg-info/*

@@ -10,6 +10,7 @@ from PyQt5 import QtCore
 import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
+
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
     
@@ -29,7 +30,7 @@ class plotWidget(qtw.QMainWindow):
         
         self.loadDSdata()
         
-        self.layout = qtw.QVBoxLayout(self)
+        self.layout = qtw.QVBoxLayout()
         
         self.widget = pg.GraphicsLayoutWidget()
         self.plot = self.widget.addPlot()
@@ -175,14 +176,16 @@ class plotWidget(qtw.QMainWindow):
             
     @QtCore.pyqtSlot()
     def refreshWindow(self):
+        self.last_df_len = len(self.depvarData)
+        self.loadDSdata()
+        
         if not self.initalised:
             self.initFrame() #defined in children classes
             return
+        
         if not self.ds.running:
             self.monitor.stop()
         
-        self.last_df_len = len(self.depvarData)
-        self.loadDSdata()
         
         if len(self.depvarData) != self.last_df_len:
             self.refreshPlot()

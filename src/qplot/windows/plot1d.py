@@ -43,5 +43,5 @@ class plot1d(plotWidget):
             x=indepData, 
             y=self.depvarData,
             )
-        self.line.disableAutoRange
+        # self.plot.disableAutoRange
         

@@ -4,10 +4,10 @@ import sys
 from PyQt5 import QtWidgets as qtw
 
 def run():
+    print("Initialising GUI, this may take a few seconds.\n")
     app = qtw.QApplication(sys.argv)
     w = MainWindow()
     app.exec()
-    
     
     return app, w
 

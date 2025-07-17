@@ -21,8 +21,5 @@ qplot = "qplot.__main__:run"
 
 
 [project.urls]
-Homepage = "https://github.com/Wordsbo/QCoDeS-Plotter/tree/main"
+Homepage = "https://github.com/Wordsbo/QCoDeS-Plotter.git"
 
-
-[tool.setuptools.packages.find]
-where = [".src."]
