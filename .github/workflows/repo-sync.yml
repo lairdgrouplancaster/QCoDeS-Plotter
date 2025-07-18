@@ -1,8 +1,9 @@
-name: Sync Priv to Priv
+name: Sync Push
 
 on:
   push:
-    branches: [ main ]
+    branches:
+     [ main ]
         
 permissions:
   contents: write
@@ -13,19 +14,33 @@ jobs:
   sync:
     name: Repo Sync
     runs-on: ubuntu-latest
+    
     steps:
-    - uses: actions/checkout@v3
-    - uses: repo-sync/github-sync@v2
-      name: Sync Repo to Branch
+    - name: Checkout source repo
+      uses: actions/checkout@v3
       with:
-        source_repo: ${{ secrets.SOURCE_REPO }}
-        source_branch: main
-        destination_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
-        github_token: ${{ secrets.TOKEN }}
-    - uses: repo-sync/pull-request@v2
-      name: Create pull request
+        ref: main
+        token: ${{ secrets.SOURCE_TOKEN }}
+        fetch-depth: 0
+
+    - name: Configure git
+      run: |
+        git config --global user.name "github-actions"
+        git config --global user.email "actions@github.com"
+    
+    - name: Add destination repo as remote
+      run: |
+        git remote add destination https://${{ secrets.TARGET_TOKEN }}@github.com/${{ secrets.TARGET_REPO }}.git
+
+    - name: Push Main to destination intermediate branch
+      run: |
+        git push destination main:refs/heads/${{ secrets.INTERMEDIATE_BRANCH }} --force
+        
+    - name: Create pull request on destination repo
+      uses: repo-sync/pull-request@v2
       with:
+        github_token: ${{ secrets.TARGET_TOKEN }}
         source_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
         destination_branch: main
-        github_token: ${{ secrets.TOKEN }}
-      
+        repository: ${{ secrets.TARGET_REPO }}
+

@@ -4,3 +4,4 @@
 *.pyc
 other/*
 src/qplot.egg-info/*
+.github/workflows/*.yml
