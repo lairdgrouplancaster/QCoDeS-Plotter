@@ -1,4 +1,4 @@
-name: Sync Priv to Pub
+name: Sync Priv to Priv
 
 on:
   push:
@@ -26,7 +26,6 @@ jobs:
       name: Create pull request
       with:
         source_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
-        destinatin_branch: main
+        destination_branch: main
         github_token: ${{ secrets.TOKEN }}
       
-          
