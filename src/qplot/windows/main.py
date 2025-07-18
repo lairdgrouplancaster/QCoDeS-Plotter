@@ -1,5 +1,6 @@
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore
+from PyQt5.QtGui import QIntValidator
 
 from . import (
     plot1d,
@@ -14,7 +15,8 @@ from qplot.datahandling import (
 
 from qcodes.dataset import (
     initialise_or_create_database_at,
-    load_by_guid
+    load_by_guid,
+    load_by_id
     )
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -108,6 +110,13 @@ class MainWindow(qtw.QMainWindow):
         
         self.fileTextbox = qtw.QLineEdit()
         self.fileTextbox.setReadOnly(True)
+        self.fileTextbox.setStyleSheet("""
+            QLineEdit {
+                color: #4a4a4a;    
+                background-color: #eaeaea;
+                border: 1px solid #cccccc
+            }
+        """)
         self.l.addWidget(self.fileTextbox)
         
         if os.path.isfile(get_DB_location()):
@@ -118,8 +127,18 @@ class MainWindow(qtw.QMainWindow):
         sublayout = qtw.QHBoxLayout()
         
         sublayout.addWidget(qtw.QLabel("Run id:"))
+        
+        self.selected_run_id = None
+        self.run_idBox = qtw.QLineEdit()
+        self.run_idBox.setMaximumWidth(50)
+        self.run_idBox.setValidator(QIntValidator(1, 9999999, self))
+        self.run_idBox.textEdited.connect(self.update_run_id)
+        sublayout.addWidget(self.run_idBox)
+        
+        sublayout.addStretch()
 
         pltbutton = qtw.QPushButton("Open Plots")
+        pltbutton.setFixedWidth(200)
         pltbutton.clicked.connect(self.openRun)
         sublayout.addWidget(pltbutton)
         self.l.addLayout(sublayout)
@@ -243,6 +262,13 @@ class MainWindow(qtw.QMainWindow):
         
     @QtCore.pyqtSlot()
     def openRun(self):
+        if self.selected_run_id and self.fileTextbox.text():
+            try:
+                ds = load_by_id(self.selected_run_id)
+            except NameError as error:
+                print(type(error), error)
+                return
+            self.ds = ds
         try:
             assert self.ds is not None
             self.openPlot()
@@ -253,6 +279,9 @@ class MainWindow(qtw.QMainWindow):
     @QtCore.pyqtSlot(str)
     def updateSelected(self, guid):
         self.ds = load_by_guid(guid)
+        
+        self.selected_run_id = None
+        self.run_idBox.setText(str(self.ds.run_id))
         
         if hasattr(self.ds, "snapshot"):
             snap = self.ds.snapshot
@@ -276,6 +305,15 @@ class MainWindow(qtw.QMainWindow):
                 "Snapshot" : snap
                 }
         self.infoBox.setInfo(info)
+    
+    @QtCore.pyqtSlot(str)
+    def update_run_id(self, text):
+        try:
+            self.selected_run_id = int(text)
+        except ValueError:
+            self.selected_run_id = None
+            return
+    
     
 ###############################################################################        
 #Depreicated
