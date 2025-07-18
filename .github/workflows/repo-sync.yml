@@ -21,7 +21,7 @@ jobs:
         source_repo: ${{ secrets.SOURCE_REPO }}
         source_branch: main
         destination_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
-    - uses: repo-sync/pullrequest@v2
+    - uses: repo-sync/pull-request@v2
       name: Create pull request
       with:
         source_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
