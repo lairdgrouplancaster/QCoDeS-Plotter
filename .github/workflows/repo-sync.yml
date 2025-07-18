@@ -1,0 +1,31 @@
+name: Sync Priv to Pub
+
+on:
+  push:
+    branches: [ main ]
+        
+permissions:
+  contents: write
+  pull-requests: write        
+
+
+jobs:
+  sync:
+    name: Repo Sync
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: repo-sync/github-sync@v2
+      name: Sync Repo to Branch
+      with:
+        source_repo: ${{ secrets.SOURCE_REPO }}
+        source_branch: main
+        destination_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
+    - uses: repo-sync/pullrequest@v2
+      name: Create pull request
+      with:
+        source_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
+        destinatin_branch: main
+        gothub_token: ${{ secrets.GITHUB_TOKEN }}
+      
+          
