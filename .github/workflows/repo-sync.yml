@@ -43,4 +43,5 @@ jobs:
         source_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
         destination_branch: main
         destination_repository: ${{ secrets.TARGET_REPO }}
+      continue-on-error: true
 
