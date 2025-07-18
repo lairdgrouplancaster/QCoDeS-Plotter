@@ -21,6 +21,7 @@ jobs:
       with:
         ref: GitManagement
         token: ${{ secrets.SOURCE_TOKEN }}
+        fetch-depth: 0
 
     - name: Configure git
       run: |
