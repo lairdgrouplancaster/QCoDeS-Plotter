@@ -20,6 +20,7 @@ jobs:
       uses: actions/checkout@v3
       with:
         ref: GitManagement
+        token: ${{ secrets.SOURCE_TOKEN }}
 
     - name: Configure git
       run: |
@@ -28,7 +29,7 @@ jobs:
     
     - name: Add destination repo as remote
       run: |
-        git remote add destination https://${{ secrets.TOKEN }}@github.com/${{ secrets.TARGET_REPO }}.git
+        git remote add destination https://${{ secrets.TARGET_TOKEN }}@github.com/${{ secrets.TARGET_REPO }}.git
 
     - name: Push GitManagement to destination intermediate branch
       run: |
@@ -37,7 +38,7 @@ jobs:
     - name: Create pull request on destination repo
       uses: repo-sync/pull-request@v2
       with:
-        github_token: ${{ secrets.TOKEN }}
+        github_token: ${{ secrets.TARGET_TOKEN }}
         source_branch: ${{ secrets.INTERMEDIATE_BRANCH }}
         destination_branch: main
         repository: ${{ secrets.TARGET_REPO }}
