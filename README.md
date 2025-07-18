@@ -6,7 +6,7 @@ QCodes-Plotter is an alternative live data plotter aimed to provide fast data di
 
 Install with:
 
-    pip install git+https://github.com/Wordsbo/QCoDeS-Plotter.git@main
+    pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 and add username and one time code.
 
 <br/>
