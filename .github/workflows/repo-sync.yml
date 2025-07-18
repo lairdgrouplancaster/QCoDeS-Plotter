@@ -3,7 +3,7 @@ name: Sync Push
 on:
   push:
     branches:
-     [ GitManagement ]
+     [ main ]
         
 permissions:
   contents: write
@@ -19,7 +19,7 @@ jobs:
     - name: Checkout source repo
       uses: actions/checkout@v3
       with:
-        ref: GitManagement
+        ref: main
         token: ${{ secrets.SOURCE_TOKEN }}
         fetch-depth: 0
 
@@ -34,7 +34,7 @@ jobs:
 
     - name: Push Main to destination intermediate branch
       run: |
-        git push destination GitManagement:refs/heads/${{ secrets.INTERMEDIATE_BRANCH }} --force
+        git push destination main:refs/heads/${{ secrets.INTERMEDIATE_BRANCH }} --force
         
     - name: Create pull request on destination repo
       uses: repo-sync/pull-request@v2
