@@ -4,10 +4,11 @@ QCodes-Plotter
 QCodes-Plotter is an alternative live data plotter aimed to provide fast data display of running and finished QCoDeS experiments.
 
 
-Install with:
+Install with, requires Git:
 
     pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
-and add username and one time code.
+
+and while private, after sign in.
 
 <br/>
 
