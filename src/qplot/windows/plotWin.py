@@ -10,6 +10,7 @@ from PyQt5 import QtCore
 import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
+from qplot.configuration import config
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
@@ -41,7 +42,8 @@ class plotWidget(qtw.QMainWindow):
         self.setWindowTitle(str(self))
         
         screenrect = qtw.QApplication.primaryScreen().availableGeometry()
-        sizeFrac = 0.47
+        sizeFrac = config().get("GUI.plot_frame_fraction")
+
         self.width = int(sizeFrac * screenrect.width())
         self.height = int(sizeFrac * screenrect.height())
         self.resize(self.width, self.height)

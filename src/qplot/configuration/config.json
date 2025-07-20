@@ -1,0 +1,13 @@
+{
+    "GUI": {
+        "plot_frame_fraction": 0.47,
+        "main_frame_size": [
+            750,
+            700
+        ]
+    },
+    "file": {
+        "default_load_path": "",
+        "last_file_path": "C:\\Users\\Benjamin Wordsworth\\OneDrive\\Documents\\GitHub\\QCoDeS-Plotter\\tests\\data\\experiments_for_15_mins.db"
+    }
+}
