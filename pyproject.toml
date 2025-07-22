@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qplot"
-version = "0.9.1"
+version = "0.9.2"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"}]
 license = "MIT"
 requires-python = ">=3.11"

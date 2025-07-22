@@ -3,6 +3,8 @@ from PyQt5 import QtCore
 
 import pyqtgraph as pg
 
+import numpy as np
+
 from qplot.tools import unpack_param, data2matrix
 from .plotWin import plotWidget
 
@@ -34,19 +36,28 @@ class plot2d(plotWidget):
             self.indepData[1].copy(),
             self.indepData[0].copy(), 
             self.depvarData
-        )
+        ).to_numpy(float)
         
-        self.image.setImage(dataGrid.to_numpy(float), autoLevels=True, autoRange=True)
+        self.image.setImage(dataGrid, autoLevels=True, autoRange=True)
         
         #set axis values
         idepData_xmin = min(self.indepData[1])
         idepData_ymin = min(self.indepData[0])
+        xrange = max(self.indepData[1]) - idepData_xmin
+        yrange = max(self.indepData[0]) - idepData_ymin
+        
+        if xrange == 0:
+            xrange = idepData_xmin / 100 
+        if yrange == 0:
+            yrange = idepData_ymin / 100 
+        
+        
         self.image.setRect(
             pg.QtCore.QRectF(
                 idepData_xmin,
                 idepData_ymin, 
-                max(self.indepData[1]) - idepData_xmin, 
-                max(self.indepData[0]) - idepData_ymin
+                xrange, 
+                yrange
             ))
         
         
@@ -86,12 +97,21 @@ class plot2d(plotWidget):
         #set axis values
         idepData_xmin = min(self.indepData[1])
         idepData_ymin = min(self.indepData[0])
+        xrange = max(self.indepData[1]) - idepData_xmin
+        yrange = max(self.indepData[0]) - idepData_ymin
+        
+        if xrange == 0:
+            xrange = idepData_xmin / 100 
+        if yrange == 0:
+            yrange = idepData_ymin / 100 
+        
+        
         self.image.setRect(
             pg.QtCore.QRectF(
                 idepData_xmin,
                 idepData_ymin, 
-                max(self.indepData[1]) - idepData_xmin, 
-                max(self.indepData[0]) - idepData_ymin
+                xrange, 
+                yrange
             ))
         
     
