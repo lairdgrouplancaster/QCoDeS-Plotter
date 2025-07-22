@@ -23,3 +23,9 @@ qplot = "qplot.__main__:run"
 [project.urls]
 Homepage = "https://github.com/Wordsbo/QCoDeS-Plotter.git"
 
+[tools.setuptools]
+packages = ["qplot"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"qplot" = ["**/*.json"]
