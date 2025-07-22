@@ -1,0 +1,59 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        
+        "GUI": {
+            "type": "object",
+            "properties": {
+                "plot_frame_fraction": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "exclusiveMaximum": 1,
+                    "default": 0.47
+                },
+                "main_frame_size": {
+                    "type": "array",
+                    "items": { "type": "integer"},
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "default": [750, 700]
+                }
+            },
+            "required": ["plot_frame_fraction", "main_frame_size"],
+            "additionalProperties": false
+        },
+        
+        "file": {
+            "type": "object",
+            "properties": {
+                "default_load_path": {
+                    "type": "string",
+                    "default": ""
+                },
+                "last_file_path": {
+                    "type": "string",
+                    "default": ""
+                }
+            },
+            "required": ["default_load_path", "last_file_path"],
+            "additionalProperties": false
+        },
+        
+        "user_preference": {
+            "type": "object",
+            "properties": {
+                "theme":{
+                    "type": "string",
+                    "enum": ["light", "dark"],
+                    "default": "light"
+                }
+            },
+            "required": ["theme"],
+            "additionalProperties": false
+        }
+        
+    },
+    "required": ["GUI", "file", "user_preference"],
+    "additionalProperties": false
+}
