@@ -36,6 +36,7 @@ class MainWindow(qtw.QMainWindow):
         self.x = 0
         self.y = 0
         self.config = config()
+        self.localLastFile = None
         
         #widgets
         self.l = qtw.QVBoxLayout()
@@ -101,12 +102,12 @@ class MainWindow(qtw.QMainWindow):
         loadAction.triggered.connect(self.getfile)
         fileMenu.addAction(loadAction)
         
-        loadLastAction = qtw.QAction("&Load Last")
-        # loadLastAction.setShortcut("Ctrl+Shift+L")
-        loadLastAction.triggered.connect(self.loadLastFile)
-        fileMenu.addAction(loadLastAction)
+        self.loadLastAction = qtw.QAction("&Load Last", self)
+        self.loadLastAction.setShortcut("Ctrl+Shift+L")
+        self.loadLastAction.triggered.connect(self.loadLastFile)
+        fileMenu.addAction(self.loadLastAction)
         if not self.config.get("file.last_file_path"):
-            loadLastAction.setDisabled(True)
+            self.loadLastAction.setDisabled(True)
         
         refreshAction = qtw.QAction("&Refresh", self)
         refreshAction.setShortcut("R")
@@ -224,6 +225,7 @@ class MainWindow(qtw.QMainWindow):
         if interval > 0:
             self.monitor.start(int(interval * 1000)) #convert to seconds
 
+
     @QtCore.pyqtSlot()
     def refreshMain(self):
         if not self.fileTextbox.text():
@@ -231,11 +233,14 @@ class MainWindow(qtw.QMainWindow):
         
         newRuns = find_new_runs(self.listWidget.maxTime)
         
+        self.listWidget.checkWatching()
+        
         if not newRuns:
             return
         
         self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()])
         self.listWidget.addRuns(newRuns)
+
 
         if self.autoPlotBox.checkState():
             for run in newRuns.values():
@@ -246,10 +251,15 @@ class MainWindow(qtw.QMainWindow):
 
     @QtCore.pyqtSlot()
     def getfile(self):
+        if self.config.get("file.default_load_path"):
+            openDir = self.config.get("file.default_load_path")
+        else:
+            openDir = os.getcwd()
+        
         filename = qtw.QFileDialog.getOpenFileName(
             self, 
             'Open file', 
-            os.getcwd(),
+            openDir,
             "Data Base File (*.db)"
             )[0]
         
@@ -264,10 +274,14 @@ class MainWindow(qtw.QMainWindow):
             
     @QtCore.pyqtSlot()
     def loadLastFile(self):
-        last_file = self.config.get("file.last_file_path")
+        if not self.localLastFile:
+            last_file = self.config.get("file.last_file_path")
+        else:
+            last_file = os.path.abspath(self.localLastFile)
         
         if os.path.isfile(last_file):
             self.load_file(last_file)
+        
         
     @QtCore.pyqtSlot()
     def openRun(self):
@@ -328,15 +342,21 @@ class MainWindow(qtw.QMainWindow):
 
     def load_file(self, abspath):
         
-        self.listWidget.clearSelection()
-        self.infoBox.clear()
+        if abspath == get_DB_location():
+            return
         
+        self.listWidget.clearSelection()
+        self.listWidget.watching = []
+        self.infoBox.clear()
         self.monitor.stop()
+        
+        if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:
+            self.localLastFile = self.fileTextbox.text()
+            self.loadLastAction.setEnabled(True)
+        
         self.fileTextbox.setText(abspath)
         
-        
-        if abspath != get_DB_location():
-            initialise_or_create_database_at(abspath)
+        initialise_or_create_database_at(abspath)
             
         self.listWidget.setRuns()
         

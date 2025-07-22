@@ -10,7 +10,6 @@ from qcodes.dataset.sqlite.database import connect, get_DB_location
 # import time
 
 def get_runs_via_sql():
-    # startTime = time.time()
     conn = connect(get_DB_location())
     
     cursor = conn.cursor()
@@ -29,7 +28,6 @@ def get_runs_via_sql():
        FROM runs
        LEFT JOIN experiments ON runs.exp_id = experiments.exp_id
     """)
-    # print(f"method: get_runs_via_sql, took {time.time() - startTime}s" )
     column_names = [desc[0] for desc in cursor.description]
     
     outDict = {}
@@ -42,8 +40,7 @@ def get_runs_via_sql():
     return outDict
 
 
-def find_new_runs(last_time): #Work in progress
-    # startTime = time.time()    
+def find_new_runs(last_time):
     conn = connect(get_DB_location())
     
     cursor = conn.cursor()
@@ -55,7 +52,6 @@ def find_new_runs(last_time): #Work in progress
            runs.name,
            runs.run_timestamp,
            runs.completed_timestamp,
-           runs.is_completed,
            runs.guid,
            experiments.name AS exp_name,
            experiments.sample_name
@@ -63,7 +59,6 @@ def find_new_runs(last_time): #Work in progress
        LEFT JOIN experiments ON runs.exp_id = experiments.exp_id
        WHERE runs.run_timestamp > ?        
     """, (last_time, ))
-    # print(f"method: find_new_runs, took {time.time() - startTime}s" )
     values = cursor.fetchall()
 
     if len(values) == 0:
@@ -78,10 +73,22 @@ def find_new_runs(last_time): #Work in progress
     conn.close()
     return outDict
 
-
-def read_UpdatedData(guid, last_index):
-    pass
-
+def has_finished(guid):
+    conn = connect(get_DB_location())
+    
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+      SELECT 
+          completed_timestamp
+      FROM runs
+      WHERE guid=?
+      LIMIT 1
+    """, (guid, ))
+    value = cursor.fetchall()
+    
+    conn.close()
+    return value[0]
 
 #depricated
 def get_runs_from_db(start: int = 0,

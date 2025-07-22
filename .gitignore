@@ -5,3 +5,4 @@
 other/*
 src/qplot.egg-info/*
 .github/workflows/*.yml
+src/qplot/configuration/config.json
