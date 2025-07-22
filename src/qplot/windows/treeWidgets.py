@@ -4,8 +4,8 @@ from PyQt5 import (
     )
 
 from ..datahandling import (
-    # get_runs_from_db, 
-    get_runs_via_sql
+    get_runs_via_sql,
+    has_finished
     )
 
 from qcodes.dataset.sqlite.database import get_DB_location
@@ -24,6 +24,8 @@ class RunList(qtw.QTreeWidget):
     def __init__(self, *args, initalize=False, **kargs):
         super().__init__(*args, **kargs)
         
+        self.watching = []
+        
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
         
@@ -33,9 +35,10 @@ class RunList(qtw.QTreeWidget):
         self.itemSelectionChanged.connect(self.onSelect)
     
     
-    def addRuns(self, runs): #tbd
+    def addRuns(self, runs, track = False): #tbd
         self.setSortingEnabled(False)
         
+        append = False
         self.maxTime = max([subDict["run_timestamp"] for subDict in runs.values()])
         
         for run_id, metadata in runs.items():
@@ -52,15 +55,19 @@ class RunList(qtw.QTreeWidget):
                 arr.append(datetime.utcfromtimestamp(metadata["completed_timestamp"]).strftime("%Y-%m-%d %H:%M:%S")) #finished
             except AssertionError:
                 arr.append("Ongoing")
+                append = True
             arr.append(metadata["guid"]) #guid
         
             item = SortableTreeWidgetItem(arr)
             
             self.addTopLevelItem(item)
+            if append:
+                self.watching.append(item)
             
         self.setSortingEnabled(True)
         for i in range(len(self.cols)):
             self.resizeColumnToContents(i)
+        
         
         
     def setRuns(self):
@@ -75,7 +82,21 @@ class RunList(qtw.QTreeWidget):
         if len(self.selectedItems()) == 1:
             selection = self.selectedItems()[0].text(6) #emit guid
             self.selected.emit(selection)
- 
+
+    def checkWatching(self):
+
+        to_remove = []
+        for run in self.watching:
+
+            finished = has_finished(run.text(6))[0]
+
+            if finished:
+                run.setText(5, datetime.utcfromtimestamp(finished).strftime("%Y-%m-%d %H:%M:%S"))
+                to_remove.append(run)
+        
+        for run in to_remove:
+            self.watching.remove(run)
+
         
 #3 classes/methods below are adapted from plottr
 class SortableTreeWidgetItem(qtw.QTreeWidgetItem):

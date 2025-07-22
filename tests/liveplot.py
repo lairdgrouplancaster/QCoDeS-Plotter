@@ -56,8 +56,8 @@ context_meas.register_parameter(dac.ch1)
 context_meas.register_parameter(dmm.v1, setpoints=(dac.ch1,))
 
 # Setting up a doNd measurement
-sweep_1 = LinSweep(dac.ch1, -1, 1, 1000, 0.01)
-sweep_2 = LinSweep(dac.ch2, -1, 1, 1000, 0.01)
+sweep_1 = LinSweep(dac.ch1, -1, 1, 10, 0.01)
+sweep_2 = LinSweep(dac.ch2, -1, 1, 10, 0.01)
 
 
 dond(
@@ -71,4 +71,4 @@ dond(
     write_period=0.1,
 )
 
-# do1d(dac.ch1, 0, 25, 100, 0.01, dmm.v1, dmm.v2, write_period=0.1)
+# do1d(dac.ch1, 0, 25, 10, 0.01, dmm.v1, dmm.v2, write_period=0.1)
