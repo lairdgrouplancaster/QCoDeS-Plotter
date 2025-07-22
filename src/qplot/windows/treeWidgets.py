@@ -13,13 +13,14 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from os.path import isfile
 
 from datetime import datetime
-
+from zoneinfo import ZoneInfo
 
 class RunList(qtw.QTreeWidget):
     
     cols = ['Run ID', 'Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
 
     selected = QtCore.pyqtSignal([str])
+    plot = QtCore.pyqtSignal([str])
     
     def __init__(self, *args, initalize=False, **kargs):
         super().__init__(*args, **kargs)
@@ -33,7 +34,8 @@ class RunList(qtw.QTreeWidget):
             self.setRuns()
             
         self.itemSelectionChanged.connect(self.onSelect)
-    
+        self.itemDoubleClicked.connect(self.doubleClicked)
+        
     
     def addRuns(self, runs, track = False): #tbd
         self.setSortingEnabled(False)
@@ -44,7 +46,7 @@ class RunList(qtw.QTreeWidget):
         for run_id, metadata in runs.items():
             arr = [str(run_id)] #run id
             
-            run_time = datetime.utcfromtimestamp(metadata["run_timestamp"])
+            run_time = datetime.fromtimestamp(metadata["run_timestamp"])
             
             arr.append(metadata["exp_name"]) #experiment
             arr.append(metadata["sample_name"]) #sample
@@ -52,7 +54,9 @@ class RunList(qtw.QTreeWidget):
             arr.append(run_time.strftime("%Y-%m-%d %H:%M:%S")) #started
             try:
                 assert metadata["completed_timestamp"] is not None
-                arr.append(datetime.utcfromtimestamp(metadata["completed_timestamp"]).strftime("%Y-%m-%d %H:%M:%S")) #finished
+                arr.append(datetime.fromtimestamp(
+                    metadata["completed_timestamp"], 
+                    ).strftime("%Y-%m-%d %H:%M:%S")) #finished
             except AssertionError:
                 arr.append("Ongoing")
                 append = True
@@ -69,34 +73,40 @@ class RunList(qtw.QTreeWidget):
             self.resizeColumnToContents(i)
         
         
-        
     def setRuns(self):
         self.clear()
         runs = get_runs_via_sql()
         
         self.addRuns(runs)      
-        
 
-    @QtCore.pyqtSlot()
-    def onSelect(self):
-        if len(self.selectedItems()) == 1:
-            selection = self.selectedItems()[0].text(6) #emit guid
-            self.selected.emit(selection)
 
     def checkWatching(self):
 
         to_remove = []
         for run in self.watching:
 
-            finished = has_finished(run.text(6))[0]
+            finished = has_finished(run.guid)[0]
 
             if finished:
-                run.setText(5, datetime.utcfromtimestamp(finished).strftime("%Y-%m-%d %H:%M:%S"))
+                run.setText(5, datetime.fromtimestamp(
+                        finished,
+                        ).strftime("%Y-%m-%d %H:%M:%S"))
                 to_remove.append(run)
         
         for run in to_remove:
-            self.watching.remove(run)
+            self.watching.remove(run)        
 
+
+    @QtCore.pyqtSlot()
+    def onSelect(self):
+        if len(self.selectedItems()) == 1:
+            selection = self.selectedItems()[0].guid #emit guid
+            self.selected.emit(selection)
+
+    @QtCore.pyqtSlot(qtw.QTreeWidgetItem, int)
+    def doubleClicked(self, item, column):
+        print("Double clicked")
+        self.plot.emit(None)
         
 #3 classes/methods below are adapted from plottr
 class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
@@ -115,6 +125,10 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
             return float(text1) < float(text2)
         except ValueError:
             return text1 < text2    
+    
+    @property
+    def guid(self):
+        return self.text(6)
 
 
 class moreInfo(qtw.QTreeWidget):

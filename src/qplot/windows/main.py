@@ -156,6 +156,7 @@ class MainWindow(qtw.QMainWindow):
         self.listWidget = RunList()
         self.l.addWidget(self.listWidget)
         self.listWidget.selected.connect(self.updateSelected)
+        self.listWidget.plot.connect(self.openPlot)
         
         self.infoBox = moreInfo()
         self.l.addWidget(self.infoBox)
@@ -195,26 +196,6 @@ class MainWindow(qtw.QMainWindow):
             
             if self.y + win.height - tolerance > self.screenrect.bottom():
                 self.y = self.screenrect.top()
-        
-
-
-    def openPlot(self, guid : str=None):
-        if guid:
-            ds = load_by_guid(guid)
-        else:
-            ds = self.ds
-            
-        for param in ds.get_parameters():
-            if param.depends_on != "":
-                depends_on = param.depends_on_
-                if len(depends_on) == 1:
-                    self.openWin(plot1d, ds, param, refrate = self.spinBox.value())
-                elif len(depends_on) == 2:
-                    self.openWin(plot2d, ds, param, refrate = self.spinBox.value())
-                else:
-                    raise IndexError(
-                        f"Parameter: {param.name}, depends on too many variables ({depends_on}, {len(depends_on)=})"
-                       )
         
 ###############################################################################
 #Signals 
@@ -297,7 +278,26 @@ class MainWindow(qtw.QMainWindow):
             self.openPlot()
         except AssertionError:
             pass
-
+    
+    @QtCore.pyqtSlot(str)
+    def openPlot(self, guid : str=None):
+        if guid and self.ds.guid != guid:
+            ds = load_by_guid(guid)
+        else:
+            ds = self.ds
+            
+        for param in ds.get_parameters():
+            if param.depends_on != "":
+                depends_on = param.depends_on_
+                if len(depends_on) == 1:
+                    self.openWin(plot1d, ds, param, refrate = self.spinBox.value())
+                elif len(depends_on) == 2:
+                    self.openWin(plot2d, ds, param, refrate = self.spinBox.value())
+                else:
+                    raise IndexError(
+                        f"Parameter: {param.name}, depends on too many variables ({depends_on}, {len(depends_on)=})"
+                       )
+        
         
     @QtCore.pyqtSlot(str)
     def updateSelected(self, guid):

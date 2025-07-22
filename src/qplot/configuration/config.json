@@ -9,5 +9,8 @@
     "file": {
         "default_load_path": "",
         "last_file_path": ""
+    },
+    "user_preference" :{
+        "theme" : null
     }
 }
