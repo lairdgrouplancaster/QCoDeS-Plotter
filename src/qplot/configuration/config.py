@@ -1,23 +1,26 @@
 import json
+import jsonschema
+
+from copy import deepcopy
 
 from importlib.resources import files
 
 class config:
     
     config_file_name = "config.json"
+    schema_file_name = "config_schema.json"
     
     default_file = str(files("qplot.configuration") / config_file_name)
-    
+    default__schema_file = str(files("qplot.configuration") / schema_file_name)
     
     def __init__(self):
-        self.load_config(self.default_file)
-
+        self.config = self.load_config(self.default_file)
+        self.schema = self.load_config(self.default__schema_file)
+        jsonschema.validate(self.config, self.schema)
+        
     
     def __str__(self):
-        out = ""
-        for k, v in self.config.items():
-            out += f"{k}: {v}\n"
-        return out
+        return json.dumps(self.config, indent=4)
     
     def __repr__(self):
         return self.config
@@ -35,14 +38,21 @@ class config:
     
     def update(self, key, value):
         keys = key.split(".")
-        if len(keys) == 1:
-            self.config[key] = value
-        elif len(keys) == 2:
-            self.config[keys[0]][keys[1]] = value
-        else:
-            raise KeyError(f"key length too long, {key}")
         
+        config = deepcopy(self.config)
+        
+        #to anyone reading this, good luck
+        run_str = ""
+        for key in keys:
+            run_str += f"['{key}']" # chain .get(keys) for dic item
+        
+        exec(f"config{run_str} = value") #add value to dic under key
+        
+        jsonschema.validate(config, self.schema)
+        
+        self.config = config
         self.save_config(self.default_file)
+    
     
     def load_config(self, path: str):
         """Load a config JSON file
@@ -56,7 +66,8 @@ class config:
 
         """
         with open(path) as fp:
-            self.config = json.load(fp)
+            config = json.load(fp)
+        return config
 
 
     def save_config(self, path: str) -> None:
@@ -69,5 +80,23 @@ class config:
         """
         with open(path, "w") as fp:
             json.dump(self.config, fp, indent=4)
-
+            
     
+    def reset_to_defaults(self):
+        config = {}
+        for key, val in self.schema["properties"].items():
+            subdict = {}
+            for k, v in val["properties"].items():
+                subdict[k] = v["default"]
+            config[key] = subdict
+        
+        jsonschema.validate(config, self.schema)
+        self.config = config
+        
+        self.save_config(self.default_file)
+
+
+if __name__=="__main__":
+    conf = config()
+    
+    conf.reset_to_defaults()
