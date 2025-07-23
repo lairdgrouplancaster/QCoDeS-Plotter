@@ -20,18 +20,18 @@ class plot1d(plotWidget):
         
         self.initLabels()
         self.initContextMenu()
-        self.initAxes()
         
-        indepParam = unpack_param(self.ds, self.param.depends_on)
+        # indepParam = unpack_param(self.ds, self.param.depends_on)
         
-        indepData = self.indepData[0]
+        # indepData = self.indepData[0]
         
         self.line = self.plot.plot()
         
-        self.line.setData(x=indepData, y=self.depvarData)
+        # self.line.setData(x=self.xaxis_data, y=self.yaxis_data)
+        self.refreshPlot()
         
-        self.plot.setLabel(axis="bottom", text=f"{indepParam.label} ({indepParam.unit})")
-        self.plot.setLabel(axis="left", text=f"{self.param.label} ({self.param.unit})")
+        self.plot.setLabel(axis="bottom", text=f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
+        self.plot.setLabel(axis="left", text=f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
         
         
         self.initalised = True
@@ -39,9 +39,9 @@ class plot1d(plotWidget):
         
         
     def refreshPlot(self):
-        indepData = self.indepData[0]
+        # indepData = self.indepData[0]
         self.line.setData(
-            x=indepData, 
-            y=self.depvarData,
+            x=self.xaxis_data, 
+            y=self.yaxis_data,
             )
         

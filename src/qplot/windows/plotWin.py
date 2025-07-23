@@ -30,6 +30,8 @@ class plotWidget(qtw.QMainWindow):
         self.initalised = False
         self.ds.cache.load_data_from_db()
         
+        self.initAxes()
+        
         self.loadDSdata()
         
         self.layout = qtw.QVBoxLayout()
@@ -68,10 +70,10 @@ class plotWidget(qtw.QMainWindow):
     def loadDSdata(self):
         
         self.df = self.ds.cache.to_pandas_dataframe().loc[:, self.param.name:self.param.name]
-        self.depvarData = self.df.iloc[:,0].to_numpy(float)
+        depvarData = self.df.iloc[:,0].to_numpy(float)
         
         #get non np.nan values
-        valid_rows = ~np.isnan(self.depvarData)
+        valid_rows = ~np.isnan(depvarData)
         indepData = self.df.index.to_frame()
         
         valid_data = []
@@ -79,8 +81,20 @@ class plotWidget(qtw.QMainWindow):
             valid_data.append(indepData.iloc[:,itr].loc[valid_rows].to_numpy(float))
         
         self.indepData = valid_data
-        self.depvarData = self.depvarData[valid_rows]
+        self.depvarData = depvarData[valid_rows]
         
+        for axis in ["x", "y"]:
+            name = self.axis_dropdown[axis].currentText()
+            param = self.param_dict[name]
+            if not param.depends_on:
+                data = self.indepData[indepData.columns.get_loc(name)]
+            else:
+                data = self.depvarData #silence error, is used in exec below
+            
+            #save to self.<x/y>axis respectively
+            exec(f"self.{axis}axis_data = data")
+            exec(f"self.{axis}axis_param = param")
+
     
     def initRefresh(self, refrate : float):
         if not self.ds.running:
@@ -102,7 +116,7 @@ class plotWidget(qtw.QMainWindow):
         self.monitor.timeout.connect(self.refreshWindow)
         
         if refrate > 0:
-            self.monitor.start(int(refrate * 1000))
+            self.monitor.start(int(refrate * 1000)) #convert from ms to s
             self.spinBox.setValue(refrate)
         else:
             self.monitor.start(5000)
@@ -140,10 +154,10 @@ class plotWidget(qtw.QMainWindow):
     def initAxes(self):
         indep_params = self.param.depends_on_
         
-        self.param_Dict = {}
+        self.param_dict = {self.param.name: self.param}
         for param in indep_params:
             param_spec = unpack_param(self.ds, param)
-            self.param_Dict[param_spec.name] = param_spec
+            self.param_dict[param_spec.name] = param_spec
         
         toolbarAxes = qtw.QToolBar("Axes Control")
         
@@ -249,4 +263,10 @@ class plotWidget(qtw.QMainWindow):
     
     @QtCore.pyqtSlot(int)
     def change_axis(self, index):
-        pass
+        
+        
+        
+        self.refreshPlot()
+        
+        self.plot.setLabel(axis="bottom", text=f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
+        self.plot.setLabel(axis="left", text=f"{self.yaxis_param.label} ({self.yaxis_param.unit})")

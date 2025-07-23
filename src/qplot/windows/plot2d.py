@@ -29,12 +29,12 @@ class plot2d(plotWidget):
         
         self.initLabels()
         self.initContextMenu()
-        self.initAxes()
+        
         
         self.image = pg.ImageItem()
         
-        indepNames = self.param.depends_on_
-        self.indepParams = [unpack_param(self.ds, name) for name in indepNames]
+        # indepNames = self.param.depends_on_
+        # self.indepParams = [unpack_param(self.ds, name) for name in indepNames]
         
         self.refreshPlot()
         
@@ -47,15 +47,13 @@ class plot2d(plotWidget):
             rounding=(max(self.depvarData) - min(self.depvarData))/1e5 #Add 10,000 colours
             )
         
-        self.plot.setLabel('left', f"{self.indepParams[0].label} ({self.indepParams[0].unit})")
-        self.plot.setLabel('bottom', f"{self.indepParams[1].label} ({self.indepParams[1].unit})")
+        self.plot.setLabel('left', f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
+        self.plot.setLabel('bottom', f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
     
         self.scaleColorbar()
         
         self.initalised = True
         print("graph produced \n")
-        
-        
         
         
     def refreshPlot(self):
@@ -72,21 +70,21 @@ class plot2d(plotWidget):
             )
         
         #set axis values
-        idepData_xmin = min(self.indepData[1])
-        idepData_ymin = min(self.indepData[0])
-        xrange = max(self.indepData[1]) - idepData_xmin
-        yrange = max(self.indepData[0]) - idepData_ymin
+        xmin = min(self.xaxis_data)
+        ymin = min(self.yaxis_data)
+        xrange = max(self.xaxis_data) - xmin
+        yrange = max(self.yaxis_data) - ymin
         
         if xrange == 0:
-            xrange = idepData_xmin / 100 
+            xrange = xmin / 100 
         if yrange == 0:
-            yrange = idepData_ymin / 100 
+            yrange = ymin / 100 
         
         
         self.image.setRect(
             pg.QtCore.QRectF(
-                idepData_xmin,
-                idepData_ymin, 
+                xmin,
+                ymin, 
                 xrange, 
                 yrange
             ))
