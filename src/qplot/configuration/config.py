@@ -5,6 +5,11 @@ from copy import deepcopy
 
 from importlib.resources import files
 
+from .themes import (
+    light,
+    dark,
+    )
+
 class config:
     
     config_file_name = "config.json"
@@ -94,7 +99,14 @@ class config:
         self.config = config
         
         self.save_config(self.default_file)
-
+        
+###############################################################################    
+#handled functions
+    
+    @property
+    def theme(self):
+        config_theme = self.get("user_preference.theme")
+        return eval(config_theme)
 
 if __name__=="__main__":
     conf = config()

@@ -38,6 +38,8 @@ class MainWindow(qtw.QMainWindow):
         self.config = config()
         self.localLastFile = None
         
+        self.setStyleSheet(self.config.theme.main_window_stylesheet())
+        
         #widgets
         self.l = qtw.QVBoxLayout()
         
@@ -66,7 +68,6 @@ class MainWindow(qtw.QMainWindow):
         self.show() 
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint) 
         self.show()
-
 
 
     def initRefresh(self):
@@ -119,14 +120,7 @@ class MainWindow(qtw.QMainWindow):
         self.l.addWidget(qtw.QLabel("File Directory:"))
         
         self.fileTextbox = qtw.QLineEdit()
-        self.fileTextbox.setReadOnly(True)
-        self.fileTextbox.setStyleSheet("""
-            QLineEdit {
-                color: #4a4a4a;    
-                background-color: #eaeaea;
-                border: 1px solid #cccccc
-            }
-        """)
+        self.fileTextbox.setDisabled(True)
         self.l.addWidget(self.fileTextbox)
         
         if os.path.isfile(get_DB_location()):

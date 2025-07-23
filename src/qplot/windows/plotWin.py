@@ -4,8 +4,6 @@ import pyqtgraph as pg
 
 import numpy as np
 
-from copy import deepcopy
-
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore 
 
