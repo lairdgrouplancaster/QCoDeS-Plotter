@@ -232,7 +232,7 @@ class MainWindow(qtw.QMainWindow):
 
     @QtCore.pyqtSlot()
     def getfile(self):
-        if self.config.get("file.default_load_path"):
+        if os.path.isfile(self.config.get("file.default_load_path")):
             openDir = self.config.get("file.default_load_path")
         else:
             openDir = os.getcwd()
@@ -291,12 +291,12 @@ class MainWindow(qtw.QMainWindow):
                 depends_on = param.depends_on_
                 if len(depends_on) == 1:
                     self.openWin(plot1d, ds, param, refrate = self.spinBox.value())
-                elif len(depends_on) == 2:
-                    self.openWin(plot2d, ds, param, refrate = self.spinBox.value())
                 else:
-                    raise IndexError(
-                        f"Parameter: {param.name}, depends on too many variables ({depends_on}, {len(depends_on)=})"
-                       )
+                    self.openWin(plot2d, ds, param, refrate = self.spinBox.value())
+                # else:
+                #     raise IndexError(
+                #         f"Parameter: {param.name}, depends on too many variables ({depends_on}, {len(depends_on)=})"
+                #        )
         
         
     @QtCore.pyqtSlot(str)
@@ -345,9 +345,15 @@ class MainWindow(qtw.QMainWindow):
         if abspath == get_DB_location():
             return
         
+        self.run_idBox.setText("")
+        
         self.listWidget.clearSelection()
         self.listWidget.watching = []
+        self.listWidget.scrollToTop()
+        
         self.infoBox.clear()
+        self.infoBox.scrollToTop()
+        
         self.monitor.stop()
         
         if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:

@@ -25,8 +25,6 @@ class plot2d(plotWidget):
         if self.df.empty:
             return
         
-        print("Working")
-        
         self.initLabels()
         self.initContextMenu()
         
@@ -58,8 +56,8 @@ class plot2d(plotWidget):
         
     def refreshPlot(self):
         dataGrid = data2matrix(
-            self.indepData[1].copy(), 
-            self.indepData[0].copy(), 
+            self.xaxis_data.copy(), 
+            self.yaxis_data.copy(), 
             self.depvarData
         )
         

@@ -4,6 +4,8 @@ import pyqtgraph as pg
 
 import numpy as np
 
+from copy import deepcopy
+
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore 
 
@@ -21,6 +23,7 @@ class plotWidget(qtw.QMainWindow):
                  param : qcodes.dataset.ParamSpec,
                  refrate : float=None
                  ):
+        print("Working, please wait")
         super().__init__()
         
         self.ds = dataset
@@ -80,14 +83,15 @@ class plotWidget(qtw.QMainWindow):
         for itr in range(len(indepData.columns)):
             valid_data.append(indepData.iloc[:,itr].loc[valid_rows].to_numpy(float))
         
-        self.indepData = valid_data
+        # indepData = valid_data
         self.depvarData = depvarData[valid_rows]
         
         for axis in ["x", "y"]:
             name = self.axis_dropdown[axis].currentText()
             param = self.param_dict[name]
+            
             if not param.depends_on:
-                data = self.indepData[indepData.columns.get_loc(name)]
+                data = valid_data[indepData.columns.get_loc(name)]
             else:
                 data = self.depvarData #silence error, is used in exec below
             
@@ -107,7 +111,6 @@ class plotWidget(qtw.QMainWindow):
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
-
 
         toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         toolbarRef.addWidget(self.spinBox)
@@ -155,6 +158,7 @@ class plotWidget(qtw.QMainWindow):
         indep_params = self.param.depends_on_
         
         self.param_dict = {self.param.name: self.param}
+        
         for param in indep_params:
             param_spec = unpack_param(self.ds, param)
             self.param_dict[param_spec.name] = param_spec
@@ -186,6 +190,8 @@ class plotWidget(qtw.QMainWindow):
         
         if len(indep_params) == 1:
             self.axis_dropdown["y"].addItems([self.param.name])
+            self.axis_dropdown["x"].addItems([self.param.name])
+            
             self.axis_dropdown["x"].setCurrentIndex(
                 self.axis_dropdown["x"].findText(indep_params[0])
                 )
@@ -200,8 +206,10 @@ class plotWidget(qtw.QMainWindow):
                 self.axis_dropdown["y"].findText(indep_params[0])
                 )
         
-        self.axis_dropdown["x"].currentIndexChanged.connect(self.change_axis)
-        self.axis_dropdown["y"].currentIndexChanged.connect(self.change_axis)
+        for axis in ["x", "y"]:
+            self.axis_dropdown[axis].currentIndexChanged.connect(
+                                        lambda index, axis=axis: self.change_axis(axis)
+                                        )
         
         
     @staticmethod
@@ -245,28 +253,51 @@ class plotWidget(qtw.QMainWindow):
             
             
     @QtCore.pyqtSlot()
-    def refreshWindow(self):
-        self.last_df_len = len(self.depvarData)
-        self.loadDSdata()
-        
-        if not self.initalised:
-            self.initFrame() #defined in children classes
-            return
-        
-        if not self.ds.running:
-            self.monitor.stop()
-        
-        
-        if len(self.depvarData) != self.last_df_len:
-            self.refreshPlot()
+    def refreshWindow(self, force : bool = False):
+        self.monitor.stop()
+
+        try:
+            self.last_df_len = len(self.depvarData)
+            self.loadDSdata()
             
+            if not self.initalised:
+                self.initFrame() #defined in children classes
+                return
+            
+            if len(self.depvarData) != self.last_df_len or force:
+                self.refreshPlot()
+            
+        finally:
+            if self.ds.running:
+                self.monitorIntervalChanged(self.spinBox.value())
     
-    @QtCore.pyqtSlot(int)
-    def change_axis(self, index):
+    
+    @QtCore.pyqtSlot()
+    def change_axis(self, key):
+        duplicates = [k for k, v in self.axis_dropdown.items() 
+                          if self.axis_dropdown[key].currentText() == v.currentText()
+                          and k != key
+                     ]
+        if len(duplicates) == 1:
+            self.axis_dropdown[duplicates[0]].blockSignals(True)
+            
+            self.axis_dropdown[duplicates[0]].setCurrentIndex(
+                self.axis_dropdown[duplicates[0]].findText(eval(f"self.{key}axis_param.name"))
+                )
+            
+            self.axis_dropdown[duplicates[0]].blockSignals(False)
+            
+        elif len(duplicates) > 1:
+            raise ValueError("Too many duplicates in axis assertion.\nThis should not be possible?")
         
         
-        
-        self.refreshPlot()
+        self.refreshWindow(force=True)
         
         self.plot.setLabel(axis="bottom", text=f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
         self.plot.setLabel(axis="left", text=f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
+        
+        self.plot.enableAutoRange(True)
+        try: 
+            self.scaleColorbar()
+        except AttributeError:
+            pass
