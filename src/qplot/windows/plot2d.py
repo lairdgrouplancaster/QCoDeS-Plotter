@@ -26,40 +26,17 @@ class plot2d(plotWidget):
             return
         
         print("Working")
+        
+        self.initLabels()
+        self.initContextMenu()
+        self.initAxes()
+        
         self.image = pg.ImageItem()
         
         indepNames = self.param.depends_on_
         self.indepParams = [unpack_param(self.ds, name) for name in indepNames]
         
-        
-        dataGrid = data2matrix(
-            self.indepData[1].copy(),
-            self.indepData[0].copy(), 
-            self.depvarData
-        ).to_numpy(float)
-        
-        self.image.setImage(dataGrid, autoLevels=True, autoRange=True)
-        
-        #set axis values
-        idepData_xmin = min(self.indepData[1])
-        idepData_ymin = min(self.indepData[0])
-        xrange = max(self.indepData[1]) - idepData_xmin
-        yrange = max(self.indepData[0]) - idepData_ymin
-        
-        if xrange == 0:
-            xrange = idepData_xmin / 100 
-        if yrange == 0:
-            yrange = idepData_ymin / 100 
-        
-        
-        self.image.setRect(
-            pg.QtCore.QRectF(
-                idepData_xmin,
-                idepData_ymin, 
-                xrange, 
-                yrange
-            ))
-        
+        self.refreshPlot()
         
         self.plot.addItem(self.image)
         
@@ -72,13 +49,13 @@ class plot2d(plotWidget):
         
         self.plot.setLabel('left', f"{self.indepParams[0].label} ({self.indepParams[0].unit})")
         self.plot.setLabel('bottom', f"{self.indepParams[1].label} ({self.indepParams[1].unit})")
-        
-        self.initContextMenu()
+    
+        self.scaleColorbar()
         
         self.initalised = True
         print("graph produced \n")
         
-        self.initLabels()
+        
         
         
     def refreshPlot(self):
@@ -124,7 +101,7 @@ class plot2d(plotWidget):
         
         
     @QtCore.pyqtSlot(bool)
-    def scaleColorbar(self, event):
+    def scaleColorbar(self, event = None):
         vmin, vmax = min(self.depvarData), max(self.depvarData)
 
         self.bar.setLevels((vmin, vmax))

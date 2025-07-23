@@ -15,9 +15,12 @@ class plot1d(plotWidget):
         
     def initFrame(self):
         if self.df.empty:
-            print("df empty")
             return
         print("Working")
+        
+        self.initLabels()
+        self.initContextMenu()
+        self.initAxes()
         
         indepParam = unpack_param(self.ds, self.param.depends_on)
         
@@ -30,8 +33,6 @@ class plot1d(plotWidget):
         self.plot.setLabel(axis="bottom", text=f"{indepParam.label} ({indepParam.unit})")
         self.plot.setLabel(axis="left", text=f"{self.param.label} ({self.param.unit})")
         
-        self.initLabels()
-        self.initContextMenu()
         
         self.initalised = True
         print("Graph produced \n")
@@ -43,5 +44,4 @@ class plot1d(plotWidget):
             x=indepData, 
             y=self.depvarData,
             )
-        # self.plot.disableAutoRange
         

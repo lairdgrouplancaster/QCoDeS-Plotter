@@ -11,6 +11,7 @@ import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.configuration import config
+from qplot.tools import unpack_param
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
@@ -60,9 +61,9 @@ class plotWidget(qtw.QMainWindow):
                 f"{self.param.name} ({self.param.label})"
                 )
         return fstr
- 
+
 ###############################################################################
-    #Other Methods
+#Other Methods
     
     def loadDSdata(self):
         
@@ -85,8 +86,8 @@ class plotWidget(qtw.QMainWindow):
         if not self.ds.running:
             return
         
-        self.toolbarRef = qtw.QToolBar("Refresh Timer")
-        self.addToolBar(QtCore.Qt.TopToolBarArea, self.toolbarRef)
+        toolbarRef = qtw.QToolBar("Refresh Timer")
+        self.addToolBar(QtCore.Qt.TopToolBarArea, toolbarRef)
         
         
         self.spinBox = qtw.QDoubleSpinBox()
@@ -94,8 +95,8 @@ class plotWidget(qtw.QMainWindow):
         self.spinBox.setDecimals(1)
 
 
-        self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
-        self.toolbarRef.addWidget(self.spinBox)
+        toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
+        toolbarRef.addWidget(self.spinBox)
     
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshWindow)
@@ -109,16 +110,16 @@ class plotWidget(qtw.QMainWindow):
         
         
     def initLabels(self):
-        self.toolbarCo_ord = qtw.QToolBar("Co-ordinates")
-        self.addToolBar(QtCore.Qt.BottomToolBarArea, self.toolbarCo_ord)
+        toolbarCo_ord = qtw.QToolBar("Co-ordinates")
+        self.addToolBar(QtCore.Qt.BottomToolBarArea, toolbarCo_ord)
         
         self.posLabelx = qtw.QLabel(text="x=       ")
-        self.toolbarCo_ord.addWidget(self.posLabelx)
+        toolbarCo_ord.addWidget(self.posLabelx)
         
         self.posLabely = qtw.QLabel(text="y=       ")
-        self.toolbarCo_ord.addWidget(self.posLabely)
+        toolbarCo_ord.addWidget(self.posLabely)
         
-        self.toolbarCo_ord.addWidget(qtw.QLabel("  "))
+        toolbarCo_ord.addWidget(qtw.QLabel("  "))
         
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
@@ -134,8 +135,61 @@ class plotWidget(qtw.QMainWindow):
                 action.setText("Autoscale")
         
         self.autoscaleSep = self.vbMenu.insertSeparator(actions[1])
-    
-    
+        
+        
+    def initAxes(self):
+        indep_params = self.param.depends_on_
+        
+        self.param_Dict = {}
+        for param in indep_params:
+            param_spec = unpack_param(self.ds, param)
+            self.param_Dict[param_spec.name] = param_spec
+        
+        toolbarAxes = qtw.QToolBar("Axes Control")
+        
+        self.addToolBar(QtCore.Qt.LeftToolBarArea, toolbarAxes)
+        
+        toolbar_l = qtw.QVBoxLayout()
+        
+        x_layout = qtw.QHBoxLayout()
+        x_layout.addWidget(qtw.QLabel("x axis: "))
+        x_dropdown = qtw.QComboBox()
+        x_dropdown.addItems(indep_params)
+        x_layout.addWidget(x_dropdown)
+        toolbar_l.addLayout(x_layout)
+        
+        y_layout = qtw.QHBoxLayout()
+        y_layout.addWidget(qtw.QLabel("y axis: "))
+        y_dropdown = qtw.QComboBox()
+        y_dropdown.addItems(indep_params)
+        y_layout.addWidget(y_dropdown)
+        toolbar_l.addLayout(y_layout)
+        
+        w = qtw.QWidget()
+        w.setLayout(toolbar_l)
+        toolbarAxes.addWidget(w)
+        self.axis_dropdown = {"x": x_dropdown, "y": y_dropdown}
+        
+        if len(indep_params) == 1:
+            self.axis_dropdown["y"].addItems([self.param.name])
+            self.axis_dropdown["x"].setCurrentIndex(
+                self.axis_dropdown["x"].findText(indep_params[0])
+                )
+            self.axis_dropdown["y"].setCurrentIndex(
+                self.axis_dropdown["y"].findText(self.param.name)
+                )
+        else:
+            self.axis_dropdown["x"].setCurrentIndex(
+                self.axis_dropdown["x"].findText(indep_params[1])
+                )
+            self.axis_dropdown["y"].setCurrentIndex(
+                self.axis_dropdown["y"].findText(indep_params[0])
+                )
+        
+        self.axis_dropdown["x"].currentIndexChanged.connect(self.change_axis)
+        self.axis_dropdown["y"].currentIndexChanged.connect(self.change_axis)
+        
+        
     @staticmethod
     def formatNum(num : float, sf : int=3) -> str:
         try:
@@ -149,7 +203,7 @@ class plotWidget(qtw.QMainWindow):
             return f"{num:.{sf - log}f}"
       
 ###############################################################################
-    #Events
+#Events
     
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
@@ -191,3 +245,8 @@ class plotWidget(qtw.QMainWindow):
         
         if len(self.depvarData) != self.last_df_len:
             self.refreshPlot()
+            
+    
+    @QtCore.pyqtSlot(int)
+    def change_axis(self, index):
+        pass
