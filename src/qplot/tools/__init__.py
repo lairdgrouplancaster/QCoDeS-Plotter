@@ -6,7 +6,6 @@ Created on Sun Jul  6 16:34:51 2025
 """
 
 from .tools import (
-    progressBar,
     data2matrix,
     unpack_param,
     find_indep,
@@ -17,7 +16,6 @@ from .tools import (
 
 
 __all__ = [
-    "progressBar",
     "data2matrix",
     "unpack_param",
     "find_indep",

@@ -13,7 +13,7 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from os.path import isfile
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
+
 
 class RunList(qtw.QTreeWidget):
     
@@ -105,7 +105,6 @@ class RunList(qtw.QTreeWidget):
 
     @QtCore.pyqtSlot(qtw.QTreeWidgetItem, int)
     def doubleClicked(self, item, column):
-        print("Double clicked")
         self.plot.emit(None)
         
 #3 classes/methods below are adapted from plottr
