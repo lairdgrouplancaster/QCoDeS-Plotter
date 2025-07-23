@@ -15,33 +15,25 @@ class plot1d(plotWidget):
         
     def initFrame(self):
         if self.df.empty:
-            print("df empty")
             return
-        print("Working")
-        
-        indepParam = unpack_param(self.ds, self.param.depends_on)
-        
-        indepData = self.indepData[0]
-        
-        self.line = self.plot.plot()
-        
-        self.line.setData(x=indepData, y=self.depvarData)
-        
-        self.plot.setLabel(axis="bottom", text=f"{indepParam.label} ({indepParam.unit})")
-        self.plot.setLabel(axis="left", text=f"{self.param.label} ({self.param.unit})")
         
         self.initLabels()
         self.initContextMenu()
+        
+        self.line = self.plot.plot()
+        
+        self.refreshPlot()
+        
+        self.plot.setLabel(axis="bottom", text=f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
+        self.plot.setLabel(axis="left", text=f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
         
         self.initalised = True
         print("Graph produced \n")
         
         
     def refreshPlot(self):
-        indepData = self.indepData[0]
         self.line.setData(
-            x=indepData, 
-            y=self.depvarData,
+            x=self.xaxis_data, 
+            y=self.yaxis_data,
             )
-        # self.plot.disableAutoRange
         
