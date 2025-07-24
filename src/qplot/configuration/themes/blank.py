@@ -6,8 +6,8 @@ class blank:
     
     @staticmethod
     def style_plotItem(plot_item):
-        pg.setConfigOption('background', "default")  
-        pg.setConfigOption('foreground', "default")
+        pg.setConfigOption('background', "k")  
+        pg.setConfigOption('foreground', "d")
         
         # penCol = pg.mkPen(color="default")
         # plot_item.getAxis('bottom').setPen(penCol)
