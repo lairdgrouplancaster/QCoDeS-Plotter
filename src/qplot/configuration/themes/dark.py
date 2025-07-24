@@ -146,7 +146,7 @@ class dark:
         QMenuBar::item {
         	color: #a9b7c6;
           	spacing: 3px;
-          	padding: 1px 4px;
+          	padding: 7px 4px;
           	background: #1e1d23;
         }
         
@@ -180,7 +180,7 @@ class dark:
         	padding-left:17px;
         	padding-top:4px;
         	padding-bottom:4px;
-        	padding-right:7px;
+        	padding-right:17px;
         	background-color: #1e1d23;
         }
         QMenu{

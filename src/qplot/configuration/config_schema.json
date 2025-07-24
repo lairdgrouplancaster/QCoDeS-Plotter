@@ -45,7 +45,7 @@
             "properties": {
                 "theme":{
                     "type": "string",
-                    "enum": ["light", "dark", "PyQt"],
+                    "enum": ["light", "dark", "pyqt"],
                     "default": "light"
                 }
             },

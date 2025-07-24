@@ -115,6 +115,24 @@ class MainWindow(qtw.QMainWindow):
         refreshAction.triggered.connect(self.refreshMain)
         fileMenu.addAction(refreshAction)
         
+        prefMenu = menu.addMenu("&Options")
+        
+        default_load_picker = qtw.QAction("&Open Location", self)
+        default_load_picker.triggered.connect(self.change_default_file)
+        prefMenu.addAction(default_load_picker)
+        
+        themeMenu = prefMenu.addMenu("&Theme")
+        
+        current_theme = self.config.get("user_preference.theme")
+        self.themes = []
+        for itr, theme in enumerate(["Light", "Dark", "PyQt"]):
+            self.themes.append(qtw.QAction(f'&{theme}', self, checkable=True))
+            self.themes[itr].triggered.connect(lambda _, theme=theme.lower(), action=self.themes[itr]:
+                                               self.change_theme(theme, action))
+            themeMenu.addAction(self.themes[itr])
+            if theme.lower() == current_theme:
+                self.themes[itr].setChecked(True)
+        
         
     def initFile(self):
         self.l.addWidget(qtw.QLabel("File Directory:"))
@@ -228,7 +246,7 @@ class MainWindow(qtw.QMainWindow):
 
     @QtCore.pyqtSlot()
     def getfile(self):
-        if os.path.isfile(self.config.get("file.default_load_path")):
+        if os.path.isdir(self.config.get("file.default_load_path")):
             openDir = self.config.get("file.default_load_path")
         else:
             openDir = os.getcwd()
@@ -274,6 +292,7 @@ class MainWindow(qtw.QMainWindow):
             self.openPlot()
         except AssertionError:
             pass
+    
     
     @QtCore.pyqtSlot(str)
     def openPlot(self, guid : str=None):
@@ -321,6 +340,7 @@ class MainWindow(qtw.QMainWindow):
                 }
         self.infoBox.setInfo(info)
     
+    
     @QtCore.pyqtSlot(str)
     def update_run_id(self, text):
         try:
@@ -328,7 +348,34 @@ class MainWindow(qtw.QMainWindow):
         except ValueError:
             self.selected_run_id = None
             return
-    
+        
+        
+    def change_theme(self, theme, action):
+        for QActions in self.themes:
+            if QActions != action:
+                QActions.setChecked(False)
+                
+        self.config.update("user_preference.theme", theme)
+        
+        self.setStyleSheet(self.config.theme.main)
+        for win in self.windows:
+            win.update_theme(self.config)
+            
+    @QtCore.pyqtSlot()
+    def change_default_file(self):
+        if os.path.isdir(self.config.get("file.default_load_path")):
+            openDir = self.config.get("file.default_load_path")
+        else:
+            openDir = os.getcwd()
+        
+        foldername = qtw.QFileDialog.getExistingDirectory(
+            self, 
+            'Select Folder', 
+            openDir,
+            )
+        
+        self.config.update("file.default_load_path", foldername)
+        
 ###############################################################################
 #Other funcs
 

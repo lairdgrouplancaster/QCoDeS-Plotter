@@ -146,7 +146,7 @@ class light:
         QMenuBar::item {
             color: #000000;
             spacing: 3px;
-            padding: 1px 4px;
+            padding: 7px 4px;
             background: #f0f0f0;
         }
         QMenuBar::item:selected {
@@ -179,7 +179,7 @@ class light:
             padding-left: 17px;
             padding-top: 4px;
             padding-bottom: 4px;
-            padding-right: 7px;
+            padding-right: 17px;
             background-color: #f0f0f0;
         }
         QMenu {
