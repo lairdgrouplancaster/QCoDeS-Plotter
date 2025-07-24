@@ -3,19 +3,33 @@ import jsonschema
 
 from copy import deepcopy
 
+from os import makedirs
+from os import path
+
 from importlib.resources import files
+
+from .themes import *
 
 class config:
     
     config_file_name = "config.json"
     schema_file_name = "config_schema.json"
     
-    default_file = str(files("qplot.configuration") / config_file_name)
+    default_file = path.expanduser(
+        path.join("~", ".qplot", config_file_name)
+        )
     default__schema_file = str(files("qplot.configuration") / schema_file_name)
     
     def __init__(self):
-        self.config = self.load_config(self.default_file)
         self.schema = self.load_config(self.default__schema_file)
+        
+        if not path.isfile(self.default_file):
+            makedirs(path.dirname(self.default_file), exist_ok=True)
+            open(self.default_file, 'x').close()
+            
+            self.reset_to_defaults()
+        else:
+            self.config = self.load_config(self.default_file)
         jsonschema.validate(self.config, self.schema)
         
     
@@ -25,6 +39,9 @@ class config:
     def __repr__(self):
         return self.config
     
+    def dump(self):
+        print(f"config.json at: {self.default_file} \ncontents:")
+        print(str(self))
     
     def get(self, key):
         keys = key.split(".")
@@ -94,9 +111,11 @@ class config:
         self.config = config
         
         self.save_config(self.default_file)
-
-
-if __name__=="__main__":
-    conf = config()
+        
+###############################################################################    
+#handled functions
     
-    conf.reset_to_defaults()
+    @property
+    def theme(self):
+        config_theme = self.get("user_preference.theme")        
+        return eval(config_theme)

@@ -38,6 +38,8 @@ class MainWindow(qtw.QMainWindow):
         self.config = config()
         self.localLastFile = None
         
+        self.setStyleSheet(self.config.theme.main)
+        
         #widgets
         self.l = qtw.QVBoxLayout()
         
@@ -66,7 +68,6 @@ class MainWindow(qtw.QMainWindow):
         self.show() 
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint) 
         self.show()
-
 
 
     def initRefresh(self):
@@ -119,14 +120,7 @@ class MainWindow(qtw.QMainWindow):
         self.l.addWidget(qtw.QLabel("File Directory:"))
         
         self.fileTextbox = qtw.QLineEdit()
-        self.fileTextbox.setReadOnly(True)
-        self.fileTextbox.setStyleSheet("""
-            QLineEdit {
-                color: #4a4a4a;    
-                background-color: #eaeaea;
-                border: 1px solid #cccccc
-            }
-        """)
+        self.fileTextbox.setDisabled(True)
         self.l.addWidget(self.fileTextbox)
         
         if os.path.isfile(get_DB_location()):
@@ -184,6 +178,8 @@ class MainWindow(qtw.QMainWindow):
         self.windows.append(win)
         win.closed.connect(self.onClose)
         
+        win.update_theme(self.config)
+        
         win.move(self.x, self.y)
         win.show()
         
@@ -219,7 +215,7 @@ class MainWindow(qtw.QMainWindow):
         if not newRuns:
             return
         
-        self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()])
+        self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()], default=0)
         self.listWidget.addRuns(newRuns)
 
 
@@ -290,13 +286,9 @@ class MainWindow(qtw.QMainWindow):
             if param.depends_on != "":
                 depends_on = param.depends_on_
                 if len(depends_on) == 1:
-                    self.openWin(plot1d, ds, param, refrate = self.spinBox.value())
+                    self.openWin(plot1d, ds, param, self.config, refrate = self.spinBox.value())
                 else:
-                    self.openWin(plot2d, ds, param, refrate = self.spinBox.value())
-                # else:
-                #     raise IndexError(
-                #         f"Parameter: {param.name}, depends on too many variables ({depends_on}, {len(depends_on)=})"
-                #        )
+                    self.openWin(plot2d, ds, param, self.config, refrate = self.spinBox.value())
         
         
     @QtCore.pyqtSlot(str)

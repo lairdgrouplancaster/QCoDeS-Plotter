@@ -3,6 +3,8 @@ QCodes-Plotter
 
 QCodes-Plotter is an alternative live data plotter aimed to provide fast data display of running and finished QCoDeS experiments.
 
+Installation
+------------
 
 Install with, requires Git:
 
@@ -11,6 +13,9 @@ Install with, requires Git:
 and while repo is private, you will need to sign in. (Usually twice)
 
 <br/>
+
+How to Run
+----------
 
 After installing with pip into a virtual environment
 To run, either:
@@ -33,10 +38,10 @@ Currently changes to config file can only be done in file and IDE. Terminal comm
 * Use:
 
       from qplot import config
-      print(config())
+      config().dump()
   to see current config file.
 
-* To change a config value, use config().update(key, value), i.e.
+* To manually change a config value, use config().update(key, value), i.e.
 
       config().update("file.default_load_path", "C:\Users\<user>\Desktop")
 

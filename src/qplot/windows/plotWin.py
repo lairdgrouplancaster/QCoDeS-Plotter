@@ -4,15 +4,12 @@ import pyqtgraph as pg
 
 import numpy as np
 
-from copy import deepcopy
-
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore 
 
 import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.configuration import config
 from qplot.tools import unpack_param
 
 class plotWidget(qtw.QMainWindow):
@@ -21,7 +18,8 @@ class plotWidget(qtw.QMainWindow):
     def __init__(self, 
                  dataset : qcodes.dataset.data_set.DataSet, 
                  param : qcodes.dataset.ParamSpec,
-                 refrate : float=None
+                 config,
+                 refrate : float=None,
                  ):
         print("Working, please wait")
         super().__init__()
@@ -32,6 +30,7 @@ class plotWidget(qtw.QMainWindow):
         self.monitor = QtCore.QTimer()
         self.initalised = False
         self.ds.cache.load_data_from_db()
+        self.config = config
         
         self.initAxes()
         
@@ -43,12 +42,10 @@ class plotWidget(qtw.QMainWindow):
         self.plot = self.widget.addPlot()
         self.layout.addWidget(self.widget)
         
-        
-        
         self.setWindowTitle(str(self))
         
         screenrect = qtw.QApplication.primaryScreen().availableGeometry()
-        sizeFrac = config().get("GUI.plot_frame_fraction")
+        sizeFrac = self.config.get("GUI.plot_frame_fraction")
 
         self.width = int(sizeFrac * screenrect.width())
         self.height = int(sizeFrac * screenrect.height())
@@ -72,7 +69,7 @@ class plotWidget(qtw.QMainWindow):
     
     def loadDSdata(self):
         
-        self.df = self.ds.cache.to_pandas_dataframe().loc[:, self.param.name:self.param.name]
+        self.df = self.ds.cache.to_pandas_dataframe_dict()[self.param.name]
         depvarData = self.df.iloc[:,0].to_numpy(float)
         
         #get non np.nan values
@@ -98,7 +95,7 @@ class plotWidget(qtw.QMainWindow):
             #save to self.<x/y>axis respectively
             exec(f"self.{axis}axis_data = data")
             exec(f"self.{axis}axis_param = param")
-
+            
     
     def initRefresh(self, refrate : float):
         if not self.ds.running:
@@ -142,8 +139,8 @@ class plotWidget(qtw.QMainWindow):
     
     
     def initContextMenu(self):
-        vb = self.plot.getViewBox()
-        self.vbMenu = vb.menu
+        self.vb = self.plot.getViewBox()
+        self.vbMenu = self.vb.menu
         
         actions = []
         for action in self.vbMenu.actions():
@@ -223,6 +220,14 @@ class plotWidget(qtw.QMainWindow):
             return f"{num:.{sf}e}"
         else:
             return f"{num:.{sf - log}f}"
+        
+        
+    def update_theme(self, config):
+        self.config = config
+        
+        self.setStyleSheet(self.config.theme.main)
+        self.config.theme.style_plotItem(self)
+        
       
 ###############################################################################
 #Events
