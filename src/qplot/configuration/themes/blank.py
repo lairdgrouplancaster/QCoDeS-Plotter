@@ -5,18 +5,18 @@ class blank:
     
     
     @staticmethod
-    def style_plotItem(plot_item):
+    def style_plotItem(plot_win):
         pg.setConfigOption('background', "k")  
         pg.setConfigOption('foreground', "d")
         
-        # penCol = pg.mkPen(color="default")
-        # plot_item.getAxis('bottom').setPen(penCol)
-        # plot_item.getAxis('left').setPen(penCol)
+        plot_item = plot_win.plot
+        plot_win.widget.setBackground("k")
         
-        # plot_item.getAxis('bottom').setTextPen(penCol)
-        # plot_item.getAxis('left').setTextPen(penCol)
+        for side in ['left', 'bottom', 'right', 'top']:
+            axis = plot_item.getAxis(side)
+            axis.setPen()
+            axis.setTextPen()
+        plot_item.vb.gridPen = None
         
-        # plot_item.vb.gridPen = penCol
-        
-        # for item in plot_item.listDataItems():
-        #     item.setPen(penCol)
+        for line in plot_item.listDataItems():
+            line.setPen()

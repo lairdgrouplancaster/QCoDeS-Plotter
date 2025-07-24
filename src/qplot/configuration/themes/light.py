@@ -13,7 +13,7 @@ class light:
         }
         QTextEdit {
             background-color: #ffffff;
-            color: #00000;
+            color: #000000;
         }
         QPlainTextEdit {
             selection-background-color: #500a84ff;
@@ -24,14 +24,14 @@ class light:
             border-left-color: transparent;
             border-bottom-color: transparent;
             border-width: 1px;
-            color: #00000;
+            color: #000000;
         }
         QPushButton {
             border-width: 1px; border-radius: 4px;
             border-color: rgb(160, 160, 160);
             border-style: solid;
             padding: 0 8px;
-            color: #00000;
+            color: #000000;
             padding: 2px;
             background-color: #f0f0f0;
         }
@@ -42,7 +42,7 @@ class light:
             border-left-color: transparent;
             border-bottom-color: #0a84ff;
             border-width: 1px;
-            color: #00000;
+            color: #000000;
             padding: 2px;
             background-color: #f0f0f0;
         }
@@ -54,7 +54,7 @@ class light:
             border-bottom-color: #500a84ff;
             border-bottom-width: 1px;
             border-style: solid;
-            color: #00000;
+            color: #000000;
             padding: 2px;
             background-color: #f0f0f0;
         }
@@ -111,7 +111,7 @@ class light:
             border-color: rgb(160, 160, 160);
             border-style: inset;
             padding: 0 8px;
-            color: #00000;
+            color: #000000;
             background: #ffffff;
             selection-background-color: #500a84ff;
             selection-color: #000000;
@@ -122,7 +122,7 @@ class light:
             border: 1px solid #a0a0a0;
         }
         QLabel {
-            color: #00000;
+            color: #000000;
         }
         QLCDNumber {
             color: #500a84ff;
@@ -144,7 +144,7 @@ class light:
             background-color: #f0f0f0;
         }
         QMenuBar::item {
-            color: #00000;
+            color: #000000;
             spacing: 3px;
             padding: 1px 4px;
             background: #f0f0f0;
@@ -175,7 +175,7 @@ class light:
             border-bottom-color: transparent;
             border-bottom-width: 1px;
             border-style: solid;
-            color: #00000;
+            color: #000000;
             padding-left: 17px;
             padding-top: 4px;
             padding-bottom: 4px;
@@ -224,7 +224,7 @@ class light:
             background-color: #f0f0f0;
         }
         QCheckBox {
-            color: #00000;
+            color: #000000;
             padding: 2px;
         }
         QCheckBox:disabled {
@@ -248,7 +248,7 @@ class light:
             border-style: solid;
             border-width: 1px;
             border-color: #0a84ff;
-            color: #00000;
+            color: #000000;
             background-color: #0a84ff;
         }
         QCheckBox::indicator:unchecked {
@@ -257,11 +257,11 @@ class light:
             border-style: solid;
             border-width: 1px;
             border-color: #0a84ff;
-            color: #00000;
+            color: #000000;
             background-color: transparent;
         }
         QRadioButton {
-            color: #00000;
+            color: #000000;
             background-color: #f0f0f0;
             padding: 1px;
         }
@@ -272,7 +272,7 @@ class light:
             border-radius: 5px;
             border-width: 1px;
             border-color: #500a84ff;
-            color: #00000;
+            color: #000000;
             background-color: #500a84ff;
         }
         QRadioButton::indicator:!checked {
@@ -282,41 +282,41 @@ class light:
             border-radius: 5px;
             border-width: 1px;
             border-color: #500a84ff;
-            color: #00000;
+            color: #000000;
             background-color: transparent;
         }
         QStatusBar {
             color: #01664d;
         }
         QSpinBox {
-            color: #00000;
+            color: #000000;
             background-color: #ffffff;
         }
         QDoubleSpinBox {
-            color: #00000;
+            color: #000000;
             background-color: #ffffff;
             border: 1px solid #a0a0a0;
             border-radius: 4px;
         }
         QTimeEdit {
-            color: #00000;
+            color: #000000;
             background-color: #ffffff;
         }
         QDateTimeEdit {
-            color: #00000;
+            color: #000000;
             background-color: #ffffff;
         }
         QDateEdit {
-            color: #00000;
+            color: #000000;
             background-color: #ffffff;
         }
         QComboBox {
-            color: #00000;
+            color: #000000;
             background: #ffffff;
         }
         QComboBox:editable {
             background: #ffffff;
-            color: #00000;
+            color: #000000;
         }
         QComboBox:!editable, QComboBox::drop-down:editable {
             background: #f0f0f0;
@@ -333,7 +333,7 @@ class light:
             background-color: #ffffff;
             selection-background-color: #500a84ff;
             selection-color: #000000;
-            color: #00000;
+            color: #000000;
         }
         QSlider::groove:horizontal {
             border: 1px solid #bbb;
@@ -397,7 +397,7 @@ class light:
         QListView {
             background-color: #ffffff;
             alternate-background-color: #f0f0f0;
-            color: #00000;
+            color: #000000;
         }
         QListView::item:selected {
             background-color: #500a84ff;
@@ -406,7 +406,7 @@ class light:
         QTableView {
             background-color: #ffffff;
             alternate-background-color: #f0f0f0;
-            color: #00000;
+            color: #000000;
             gridline-color: #cccccc;
         }
         QTableView::item:selected {
@@ -416,16 +416,15 @@ class light:
     """
     
     @staticmethod
-    def style_plotItem(plot_item):
-        pg.setConfigOption('background', 'w')  
-        pg.setConfigOption('foreground', 'k')  
+    def style_plotItem(plot_win): 
+        plot_item = plot_win.plot
+        plot_win.widget.setBackground("w")
         
-        penCol = pg.mkPen(color='#000000')
-        plot_item.getAxis('bottom').setPen(penCol)
-        plot_item.getAxis('left').setPen(penCol)
-        
-        plot_item.getAxis('bottom').setTextPen(penCol)
-        plot_item.getAxis('left').setTextPen(penCol)
+        pen = pg.mkPen("k")
+        for side in ['left', 'bottom', 'right', 'top']:
+            axis = plot_item.getAxis(side)
+            axis.setPen(pen)
+            axis.setTextPen(pen)
         
         plot_item.vb.gridPen = pg.mkPen(color='darkgray')  
         
@@ -434,4 +433,4 @@ class light:
             index = itr % len(colours)
             line.setPen(pg.mkPen(color=colours[index]))
         
-        plot_item.vb.update()
+

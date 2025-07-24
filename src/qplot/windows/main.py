@@ -178,8 +178,7 @@ class MainWindow(qtw.QMainWindow):
         self.windows.append(win)
         win.closed.connect(self.onClose)
         
-        win.setStyleSheet(self.config.theme.main)
-        self.config.theme.style_plotItem(win.plot)
+        win.update_theme(self.config)
         
         win.move(self.x, self.y)
         win.show()
@@ -287,9 +286,9 @@ class MainWindow(qtw.QMainWindow):
             if param.depends_on != "":
                 depends_on = param.depends_on_
                 if len(depends_on) == 1:
-                    self.openWin(plot1d, ds, param, refrate = self.spinBox.value())
+                    self.openWin(plot1d, ds, param, self.config, refrate = self.spinBox.value())
                 else:
-                    self.openWin(plot2d, ds, param, refrate = self.spinBox.value())
+                    self.openWin(plot2d, ds, param, self.config, refrate = self.spinBox.value())
         
         
     @QtCore.pyqtSlot(str)

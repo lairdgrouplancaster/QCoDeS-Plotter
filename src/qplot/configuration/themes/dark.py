@@ -474,22 +474,19 @@ class dark:
     """
     
     @staticmethod
-    def style_plotItem(plot_item):
-        pg.setConfigOption('background', 'k')  
-        pg.setConfigOption('foreground', 'w')  
+    def style_plotItem(plot_win):
+        plot_item = plot_win.plot
+        plot_win.widget.setBackground("k")
         
-        penCol = pg.mkPen(color='#ffffff')
-        plot_item.getAxis('bottom').setPen(penCol)
-        plot_item.getAxis('left').setPen(penCol)
-        
-        plot_item.getAxis('bottom').setTextPen(penCol)
-        plot_item.getAxis('left').setTextPen(penCol)
-        
-        plot_item.vb.gridPen = pg.mkPen(color='lightgray')  # or (200, 200, 255), etc.
+        pen = pg.mkPen("w")
+        for side in ['left', 'bottom', 'right', 'top']:
+            axis = plot_item.getAxis(side)
+            axis.setPen(pen)
+            axis.setTextPen(pen)
+        plot_item.vb.gridPen = pg.mkPen(color='lightgray')  
         
         colours = ["red", "green", "blue", "white", "Cyan", "Yellow"]
         for itr, line in enumerate(plot_item.listDataItems()):
             index = itr - (itr // len(colours))
             line.setPen(pg.mkPen(color=colours[index]))
         
-        plot_item.vb.update()

@@ -39,6 +39,9 @@ class config:
     def __repr__(self):
         return self.config
     
+    def dump(self):
+        print(f"config.json at: {self.default_file} \ncontents:")
+        print(str(self))
     
     def get(self, key):
         keys = key.split(".")
@@ -116,8 +119,3 @@ class config:
     def theme(self):
         config_theme = self.get("user_preference.theme")        
         return eval(config_theme)
-
-if __name__=="__main__":
-    conf = config()
-    
-    conf.reset_to_defaults()
