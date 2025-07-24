@@ -374,7 +374,8 @@ class MainWindow(qtw.QMainWindow):
             openDir,
             )
         
-        self.config.update("file.default_load_path", foldername)
+        if os.path.isdir(foldername):
+            self.config.update("file.default_load_path", foldername)
         
 ###############################################################################
 #Other funcs
