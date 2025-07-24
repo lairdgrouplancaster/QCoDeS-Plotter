@@ -41,7 +41,7 @@ class RunList(qtw.QTreeWidget):
         self.setSortingEnabled(False)
         
         append = False
-        self.maxTime = max([subDict["run_timestamp"] for subDict in runs.values()])
+        self.maxTime = max([subDict["run_timestamp"] for subDict in runs.values()], default=0)
         
         for run_id, metadata in runs.items():
             arr = [str(run_id)] #run id
