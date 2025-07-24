@@ -140,8 +140,8 @@ class plotWidget(qtw.QMainWindow):
     
     
     def initContextMenu(self):
-        vb = self.plot.getViewBox()
-        self.vbMenu = vb.menu
+        self.vb = self.plot.getViewBox()
+        self.vbMenu = self.vb.menu
         
         actions = []
         for action in self.vbMenu.actions():

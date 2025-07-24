@@ -5,10 +5,7 @@ from copy import deepcopy
 
 from importlib.resources import files
 
-from .themes import (
-    light,
-    dark,
-    )
+from .themes import *
 
 class config:
     
@@ -105,7 +102,7 @@ class config:
     
     @property
     def theme(self):
-        config_theme = self.get("user_preference.theme")
+        config_theme = self.get("user_preference.theme")        
         return eval(config_theme)
 
 if __name__=="__main__":

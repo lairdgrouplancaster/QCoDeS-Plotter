@@ -38,7 +38,7 @@ class MainWindow(qtw.QMainWindow):
         self.config = config()
         self.localLastFile = None
         
-        self.setStyleSheet(self.config.theme.main_window_stylesheet())
+        self.setStyleSheet(self.config.theme.main)
         
         #widgets
         self.l = qtw.QVBoxLayout()
@@ -178,6 +178,9 @@ class MainWindow(qtw.QMainWindow):
         self.windows.append(win)
         win.closed.connect(self.onClose)
         
+        win.setStyleSheet(self.config.theme.main)
+        self.config.theme.style_plotItem(win.plot)
+        
         win.move(self.x, self.y)
         win.show()
         
@@ -213,7 +216,7 @@ class MainWindow(qtw.QMainWindow):
         if not newRuns:
             return
         
-        self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()])
+        self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()], default=0)
         self.listWidget.addRuns(newRuns)
 
 
