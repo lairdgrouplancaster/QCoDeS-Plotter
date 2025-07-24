@@ -290,10 +290,6 @@ class MainWindow(qtw.QMainWindow):
                     self.openWin(plot1d, ds, param, refrate = self.spinBox.value())
                 else:
                     self.openWin(plot2d, ds, param, refrate = self.spinBox.value())
-                # else:
-                #     raise IndexError(
-                #         f"Parameter: {param.name}, depends on too many variables ({depends_on}, {len(depends_on)=})"
-                #        )
         
         
     @QtCore.pyqtSlot(str)

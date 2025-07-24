@@ -70,7 +70,7 @@ class plotWidget(qtw.QMainWindow):
     
     def loadDSdata(self):
         
-        self.df = self.ds.cache.to_pandas_dataframe().loc[:, self.param.name:self.param.name]
+        self.df = self.ds.cache.to_pandas_dataframe_dict()[self.param.name]
         depvarData = self.df.iloc[:,0].to_numpy(float)
         
         #get non np.nan values
@@ -87,6 +87,9 @@ class plotWidget(qtw.QMainWindow):
         for axis in ["x", "y"]:
             name = self.axis_dropdown[axis].currentText()
             param = self.param_dict[name]
+            
+            print(f"{name=}\n{param=}")
+            print(indepData)
             
             if not param.depends_on:
                 data = valid_data[indepData.columns.get_loc(name)]
