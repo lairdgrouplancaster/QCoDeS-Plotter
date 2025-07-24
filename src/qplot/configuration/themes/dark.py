@@ -177,10 +177,10 @@ class dark:
         	border-bottom-width: 1px;
         	border-style: solid;
         	color: #a9b7c6;
-        	padding-left:17px;
+        	padding-left:4px;
         	padding-top:4px;
         	padding-bottom:4px;
-        	padding-right:7px;
+        	padding-right:17px;
         	background-color: #1e1d23;
         }
         QMenu{

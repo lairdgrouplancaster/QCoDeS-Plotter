@@ -115,6 +115,18 @@ class MainWindow(qtw.QMainWindow):
         refreshAction.triggered.connect(self.refreshMain)
         fileMenu.addAction(refreshAction)
         
+        prefMenu = menu.addMenu("&Options")
+        
+        themeMenu = prefMenu.addMenu("&Theme")
+        
+        self.themes = []
+        for itr, theme in enumerate(["Light", "Dark", "PyQt"]):
+            self.themes.append(qtw.QAction(f'&{theme}', checkable=True))
+            self.themes[itr].triggered.connect(lambda _, theme=theme.lower(), action=self.themes[itr]:
+                                               self.change_theme(theme, action))
+            themeMenu.addAction(self.themes[itr])
+            
+        
         
     def initFile(self):
         self.l.addWidget(qtw.QLabel("File Directory:"))
@@ -328,6 +340,20 @@ class MainWindow(qtw.QMainWindow):
         except ValueError:
             self.selected_run_id = None
             return
+        
+    def change_theme(self, theme, action):
+        for QActions in self.themes:
+            if QActions != action:
+                QActions.setChecked(False)
+                
+        self.config.update("user_preference.theme", theme)
+        
+        self.setStyleSheet(self.config.theme.main)
+        for win in self.windows:
+            win.update_theme(self.config)
+        
+        
+        
     
 ###############################################################################
 #Other funcs

@@ -30,18 +30,20 @@ class config:
             self.reset_to_defaults()
         else:
             self.config = self.load_config(self.default_file)
-        jsonschema.validate(self.config, self.schema)
         
     
     def __str__(self):
         return json.dumps(self.config, indent=4)
     
+    
     def __repr__(self):
         return self.config
+    
     
     def dump(self):
         print(f"config.json at: {self.default_file} \ncontents:")
         print(str(self))
+    
     
     def get(self, key):
         keys = key.split(".")

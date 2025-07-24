@@ -1,9 +1,9 @@
 from .light import light
 from .dark import dark
-from .blank import blank as PyQt
+from .blank import blank as pyqt
 
 __all__=[
     "light",
     "dark",
-    "PyQt",
+    "pyqt",
     ]
