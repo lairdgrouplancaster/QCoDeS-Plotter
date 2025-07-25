@@ -33,7 +33,6 @@ class plotWidget(qtw.QMainWindow):
         self.config = config
         
         self.initAxes()
-        
         self.loadDSdata()
         
         self.layout = qtw.QVBoxLayout()
@@ -41,6 +40,11 @@ class plotWidget(qtw.QMainWindow):
         self.widget = pg.GraphicsLayoutWidget()
         self.plot = self.widget.addPlot()
         self.layout.addWidget(self.widget)
+        
+        self.initLabels()
+        self.initContextMenu()
+        self.initRefresh(refrate)
+        self.initFrame()
         
         self.setWindowTitle(str(self))
         
@@ -55,6 +59,8 @@ class plotWidget(qtw.QMainWindow):
         w.setLayout(self.layout)
         self.setCentralWidget(w)
         
+        if self.ds.running:
+            self.monitor.start((int(self.spinBox.value() * 1000)))
         
     def __str__(self):
         filenameStr = get_DB_location().split('\\')[-1]
@@ -98,39 +104,47 @@ class plotWidget(qtw.QMainWindow):
             
     
     def initRefresh(self, refrate : float):
+        self.toolbarRef = qtw.QToolBar("Refresh Timer")
+        self.addToolBar(QtCore.Qt.TopToolBarArea, self.toolbarRef)
+        
         if not self.ds.running:
-            return
-        
-        toolbarRef = qtw.QToolBar("Refresh Timer")
-        self.addToolBar(QtCore.Qt.TopToolBarArea, toolbarRef)
-        
+            self.toolbarRef.hide()
         
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
 
-        toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
-        toolbarRef.addWidget(self.spinBox)
+        self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
+        self.toolbarRef.addWidget(self.spinBox)
     
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshWindow)
         
         if refrate > 0:
-            self.monitor.start(int(refrate * 1000)) #convert from ms to s
             self.spinBox.setValue(refrate)
         else:
-            self.monitor.start(5000)
             self.spinBox.setValue(5.0)
+            
+        self.toolbarRef.addSeparator()
+        self.toolbarRef.addWidget(qtw.QLabel("On refresh:  "))
+        self.toolbarRef.addWidget(qtw.QLabel("Re-scale"))
+        
+        self.rescale_refresh = qtw.QCheckBox()
+        self.toolbarRef.addWidget(self.rescale_refresh)
         
         
     def initLabels(self):
         toolbarCo_ord = qtw.QToolBar("Co-ordinates")
         self.addToolBar(QtCore.Qt.BottomToolBarArea, toolbarCo_ord)
         
-        self.posLabelx = qtw.QLabel(text="x=       ")
+        labelWidth = 95
+        
+        self.posLabelx = qtw.QLabel(text="x= ")
+        self.posLabelx.setMinimumWidth(labelWidth)
         toolbarCo_ord.addWidget(self.posLabelx)
         
-        self.posLabely = qtw.QLabel(text="y=       ")
+        self.posLabely = qtw.QLabel(text="y= ")
+        self.posLabelx.setMinimumWidth(labelWidth)
         toolbarCo_ord.addWidget(self.posLabely)
         
         toolbarCo_ord.addWidget(qtw.QLabel("  "))
@@ -246,8 +260,8 @@ class plotWidget(qtw.QMainWindow):
         if self.plot.sceneBoundingRect().contains(pos):
             mousePoint = self.plot.vb.mapSceneToView(pos)
 
-            self.posLabelx.setText(f"x = {self.formatNum(mousePoint.x())}   ")
-            self.posLabely.setText(f"y = {self.formatNum(mousePoint.y())}   ")
+            self.posLabelx.setText(f"x = {self.formatNum(mousePoint.x())};")
+            self.posLabely.setText(f"y = {self.formatNum(mousePoint.y())}")
             
             
     @QtCore.pyqtSlot(float)

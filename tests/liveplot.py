@@ -71,4 +71,4 @@ dond(
     write_period=0.1,
 )
 
-# do1d(dac.ch1, 0, 25, 10, 0.01, dmm.v1, dmm.v2, write_period=0.1)
+do1d(dac.ch1, 0, 25, 1000, 0.01, dmm.v1, dmm.v2, write_period=0.1)
