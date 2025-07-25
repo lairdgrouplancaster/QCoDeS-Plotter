@@ -415,8 +415,8 @@ class light:
         }
     """
     
-    @staticmethod
-    def style_plotItem(plot_win): 
+    @classmethod
+    def style_plotItem(cls, plot_win): 
         plot_item = plot_win.plot
         plot_win.widget.setBackground("w")
         
@@ -427,7 +427,10 @@ class light:
             axis.setTextPen(pen)
         
         plot_item.vb.gridPen = pg.mkPen(color='darkgray')  
+        cls.set_line_colours(plot_item)
         
+    @staticmethod
+    def set_line_colours(plot_item):
         colours = ["red", "green", "blue", "black", "darkCyan", "darkYellow"]
         for itr, line in enumerate(plot_item.listDataItems()):
             index = itr % len(colours)

@@ -33,8 +33,11 @@ To run, either:
 
 Config 
 ------
-
-Currently changes to config file can only be done in file, IDE, or terminal.  (Top box is IDE, bottom is terminal)
+To see all config options, in terminal run:
+```console
+qplot-cfg -info
+```
+Currently changes to config file can be done in file, IDE, or terminal.  (Top box is IDE, bottom is terminal)
 * To see current config file, use:
 ```python
     from qplot import config

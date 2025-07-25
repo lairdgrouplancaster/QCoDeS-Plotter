@@ -19,7 +19,7 @@ dependencies = [
 
 [project.scripts]
 qplot = "qplot.__main__:run"
-qplot_cfg = "qplot.configuration.scripts:scripts"
+qplot-cfg = "qplot.configuration.scripts:scripts"
 
 [project.urls]
 Homepage = "https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git"

@@ -4,8 +4,8 @@ class blank:
     main = ""
     
     
-    @staticmethod
-    def style_plotItem(plot_win):
+    @classmethod
+    def style_plotItem(cls, plot_win):
         pg.setConfigOption('background', "k")  
         pg.setConfigOption('foreground', "d")
         
@@ -18,5 +18,9 @@ class blank:
             axis.setTextPen()
         plot_item.vb.gridPen = None
         
+        cls.set_line_colours(plot_item)
+        
+    @staticmethod
+    def set_line_colours(plot_item):
         for line in plot_item.listDataItems():
             line.setPen()
