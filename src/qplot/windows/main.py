@@ -245,6 +245,21 @@ class MainWindow(qtw.QMainWindow):
         else:
             print("unticked")
                 
+    @QtCore.pyqtSlot()
+    def change_default_file(self):
+        if os.path.isdir(self.config.get("file.default_load_path")):
+            openDir = self.config.get("file.default_load_path")
+        else:
+            openDir = os.getcwd()
+        
+        foldername = qtw.QFileDialog.getExistingDirectory(
+            self, 
+            'Select Folder', 
+            openDir,
+            )
+        
+        if os.path.isdir(foldername):
+            self.config.update("file.default_load_path", foldername)
 
     @QtCore.pyqtSlot()
     def getfile(self):
@@ -289,11 +304,9 @@ class MainWindow(qtw.QMainWindow):
                 print(type(error), error)
                 return
             self.ds = ds
-        try:
-            assert self.ds is not None
+        
+        if self.ds:
             self.openPlot()
-        except AssertionError:
-            pass
     
     
     @QtCore.pyqtSlot(str)
@@ -364,22 +377,6 @@ class MainWindow(qtw.QMainWindow):
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
-            
-    @QtCore.pyqtSlot()
-    def change_default_file(self):
-        if os.path.isdir(self.config.get("file.default_load_path")):
-            openDir = self.config.get("file.default_load_path")
-        else:
-            openDir = os.getcwd()
-        
-        foldername = qtw.QFileDialog.getExistingDirectory(
-            self, 
-            'Select Folder', 
-            openDir,
-            )
-        
-        if os.path.isdir(foldername):
-            self.config.update("file.default_load_path", foldername)
         
 ###############################################################################
 #Other funcs
