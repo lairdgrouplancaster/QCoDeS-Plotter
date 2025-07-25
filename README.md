@@ -34,17 +34,28 @@ To run, either:
 Config 
 ------
 
-Currently changes to config file can only be done in file and IDE. Terminal commands will be added shortly.
-* Use:
-
-      from qplot import config
-      config().dump()
-  to see current config file.
-
-* To manually change a config value, use config().update(key, value), i.e.
-
-      config().update("file.default_load_path", "C:\Users\<user>\Desktop")
-
+Currently changes to config file can only be done in file, IDE, or terminal.  (Top box is IDE, bottom is terminal)
+* To see current config file, use:
+```python
+    from qplot import config
+    config().dump()
+```
+```console
+    qplot-cfg -dump
+```
+* To manually change a config value, use: (both take `key, value`, as such).
+```python
+    config().update("file.default_load_path", "C:\Users\<user>\Desktop")
+```
+```console
+    qplot-cfg set_value file.default_load_path C:\Users\<user>\Desktop
+```
+> You will need to use "" if the value has spaces.
+  
 * To reset config to defaults
-
-      config().reset_to_defaults()
+```python
+    config().reset_to_defaults()
+```
+```console
+    qplot-cfg -reset
+```

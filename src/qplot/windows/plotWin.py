@@ -176,6 +176,7 @@ class plotWidget(qtw.QMainWindow):
             self.param_dict[param_spec.name] = param_spec
         
         toolbarAxes = qtw.QToolBar("Axes Control")
+        toolbarAxes.setMaximumWidth(int(self.frameGeometry().width() * 0.25))
         
         self.addToolBar(QtCore.Qt.LeftToolBarArea, toolbarAxes)
         

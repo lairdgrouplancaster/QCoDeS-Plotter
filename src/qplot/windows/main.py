@@ -12,7 +12,7 @@ from qplot.datahandling import (
     dataset,
     find_new_runs
     )
-from qplot.configuration import config
+from qplot import config
 
 from qcodes.dataset import (
     initialise_or_create_database_at,
