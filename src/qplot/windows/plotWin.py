@@ -130,6 +130,7 @@ class plotWidget(qtw.QMainWindow):
         self.toolbarRef.addWidget(qtw.QLabel("Re-scale"))
         
         self.rescale_refresh = qtw.QCheckBox()
+        self.rescale_refresh.setChecked(True)
         self.toolbarRef.addWidget(self.rescale_refresh)
         
         

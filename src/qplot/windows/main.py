@@ -237,8 +237,10 @@ class MainWindow(qtw.QMainWindow):
         self.listWidget.addRuns(newRuns)
 
 
-        if self.autoPlotBox.checkState():
+        if self.autoPlotBox.isChecked():
+            print("ticked")
             for run in newRuns.values():
+                print(run["guid"])
                 self.openPlot(run["guid"])
         else:
             print("unticked")
@@ -296,7 +298,9 @@ class MainWindow(qtw.QMainWindow):
     
     @QtCore.pyqtSlot(str)
     def openPlot(self, guid : str=None):
-        if guid and self.ds.guid != guid:
+        if not self.ds:
+            ds = load_by_guid(guid)
+        elif guid and self.ds.guid != guid:
             ds = load_by_guid(guid)
         else:
             ds = self.ds
