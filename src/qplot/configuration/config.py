@@ -48,11 +48,16 @@ class config:
     def get(self, key):
         keys = key.split(".")
         if len(keys) == 1:
-            return self.config.get(key)
+            out = self.config.get(key)
         elif len(keys) == 2:
-            return self.config.get(keys[0]).get(keys[1])
+            out = self.config.get(keys[0]).get(keys[1])
         else:
-            raise KeyError(f"key length too long, {key}")
+            raise KeyError(f"Key length too long, {key}. Please ensure you use a dot (.) seperated key")
+            
+        if out:
+            return out
+        else:
+            raise KeyError(f"Key: {key}, not found. Please ensure you use a dot (.) seperated key")
     
     
     def update(self, key, value):
