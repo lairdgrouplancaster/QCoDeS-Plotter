@@ -3,36 +3,23 @@ from PyQt5 import QtCore
 
 import pyqtgraph as pg
 
-import numpy as np
-
-from qplot.tools import unpack_param, data2matrix
+from qplot.tools import data2matrix
 from .plotWin import plotWidget
 
 class plot2d(plotWidget):
     
     def __init__(self, 
                  *args,
-                 refrate = None,
                  **kargs,
                  ):
         super().__init__(*args, **kargs)
-        
-        self.initFrame()
-        self.initRefresh(refrate)
-        
+
         
     def initFrame(self):
         if self.df.empty:
             return
         
-        self.initLabels()
-        self.initContextMenu()
-        
-        
         self.image = pg.ImageItem()
-        
-        # indepNames = self.param.depends_on_
-        # self.indepParams = [unpack_param(self.ds, name) for name in indepNames]
         
         self.refreshPlot()
         
@@ -52,8 +39,25 @@ class plot2d(plotWidget):
         
         self.initalised = True
         print("graph produced \n")
+      
+    def initRefresh(self, refresh):
+        super().initRefresh(refresh)
         
+        self.toolbarRef.addWidget(qtw.QLabel("| "))
+        self.toolbarRef.addWidget(qtw.QLabel("Re-Map Colors "))
         
+        self.relevel_refresh = qtw.QCheckBox()
+        self.toolbarRef.addWidget(self.relevel_refresh)
+     
+    
+    def initContextMenu(self):
+        super().initContextMenu()
+
+        autoColor = qtw.QAction("Autoscale Color", self)
+        autoColor.triggered.connect(self.scaleColorbar)
+        self.vbMenu.insertAction(self.autoscaleSep, autoColor)
+        
+    
     def refreshPlot(self):
         dataGrid = data2matrix(
             self.xaxis_data.copy(), 
@@ -63,8 +67,8 @@ class plot2d(plotWidget):
         
         self.image.setImage(
             dataGrid.to_numpy(float),
-            autoLevels=False,
-            autoRange=False
+            autoLevels=bool(self.relevel_refresh.isChecked()),
+            autoRange=bool(self.rescale_refresh.isChecked())
             )
         
         #set axis values
@@ -78,7 +82,6 @@ class plot2d(plotWidget):
         if yrange == 0:
             yrange = ymin / 100 
         
-        
         self.image.setRect(
             pg.QtCore.QRectF(
                 xmin,
@@ -87,19 +90,10 @@ class plot2d(plotWidget):
                 yrange
             ))
         
-    
-    def initContextMenu(self):
-        super().initContextMenu()
-
-        autoColor = qtw.QAction("Autoscale Color", self)
-        autoColor.triggered.connect(self.scaleColorbar)
-        self.vbMenu.insertAction(self.autoscaleSep, autoColor)
-        
         
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):
         vmin, vmax = min(self.depvarData), max(self.depvarData)
 
         self.bar.setLevels((vmin, vmax))
-        
         

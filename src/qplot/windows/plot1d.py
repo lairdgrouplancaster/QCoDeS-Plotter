@@ -1,24 +1,15 @@
-from qplot.tools import unpack_param
-
 from .plotWin import plotWidget
 
 class plot1d(plotWidget):
     def __init__(self, 
                  *args,
-                 refrate = None,
                  **kargs
                  ):
         super().__init__(*args, **kargs)
         
-        self.initFrame()
-        self.initRefresh(refrate)
-        
     def initFrame(self):
         if self.df.empty:
             return
-        
-        self.initLabels()
-        self.initContextMenu()
         
         self.line = self.plot.plot()
         
@@ -36,4 +27,5 @@ class plot1d(plotWidget):
             x=self.xaxis_data, 
             y=self.yaxis_data,
             )
+        self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked()))
         
