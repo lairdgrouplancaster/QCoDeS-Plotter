@@ -15,9 +15,10 @@ class config:
     config_file_name = "config.json"
     schema_file_name = "config_schema.json"
     
-    default_file = path.expanduser(
-        path.join("~", ".qplot", config_file_name)
+    default_path = path.expanduser(
+        path.join("~", ".qplot")
         )
+    default_file = path.join(default_path, config_file_name)
     default__schema_file = str(files("qplot.configuration") / schema_file_name)
     
     def __init__(self):

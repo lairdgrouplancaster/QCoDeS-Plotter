@@ -27,5 +27,5 @@ class plot1d(plotWidget):
             x=self.xaxis_data, 
             y=self.yaxis_data,
             )
-        self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked()))
+        # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
         

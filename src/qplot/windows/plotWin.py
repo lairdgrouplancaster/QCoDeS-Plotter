@@ -135,20 +135,23 @@ class plotWidget(qtw.QMainWindow):
         
         
     def initLabels(self):
-        toolbarCo_ord = qtw.QToolBar("Co-ordinates")
-        self.addToolBar(QtCore.Qt.BottomToolBarArea, toolbarCo_ord)
+        self.toolbarCo_ord = qtw.QToolBar("Co-ordinates")
+        self.addToolBar(QtCore.Qt.BottomToolBarArea, self.toolbarCo_ord)
         
         labelWidth = 95
+        self.pos_labels = {}
         
-        self.posLabelx = qtw.QLabel(text="x= ")
-        self.posLabelx.setMinimumWidth(labelWidth)
-        toolbarCo_ord.addWidget(self.posLabelx)
+        posLabelx = qtw.QLabel("x= ")
+        posLabelx.setMinimumWidth(labelWidth)
+        self.toolbarCo_ord.addWidget(posLabelx)
+        self.pos_labels["x"] = posLabelx
         
-        self.posLabely = qtw.QLabel(text="y= ")
-        self.posLabelx.setMinimumWidth(labelWidth)
-        toolbarCo_ord.addWidget(self.posLabely)
+        posLabely = qtw.QLabel("y= ")
+        posLabelx.setMinimumWidth(labelWidth)
+        self.toolbarCo_ord.addWidget(posLabely)
+        self.pos_labels["y"] = posLabely
         
-        toolbarCo_ord.addWidget(qtw.QLabel("  "))
+        self.toolbarCo_ord.addWidget(qtw.QLabel("  "))
         
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
@@ -259,12 +262,33 @@ class plotWidget(qtw.QMainWindow):
     @QtCore.pyqtSlot(object)
     def mouseMoved(self, pos):
         
-        if self.plot.sceneBoundingRect().contains(pos):
-            mousePoint = self.plot.vb.mapSceneToView(pos)
-
-            self.posLabelx.setText(f"x = {self.formatNum(mousePoint.x())};")
-            self.posLabely.setText(f"y = {self.formatNum(mousePoint.y())}")
+        if not self.plot.sceneBoundingRect().contains(pos):
+            return
+    
+        self.mousePoint = self.plot.vb.mapSceneToView(pos)
+        
+        x_txt = f"x = {self.formatNum(self.mousePoint.x())};"
+        y_txt = f"y = {self.formatNum(self.mousePoint.y())}"
+        
+        if self.pos_labels.get("z", 0):
             
+            y_txt += ";"
+            
+            image_data = self.image.image
+            
+            rect = self.rect
+            
+            i = (self.mousePoint.x() - rect.x()) / rect.width()
+            j = (self.mousePoint.y() - rect.y()) / rect.height()
+            
+            if (i >= 0 and i <= 1) and (j >= 0 and j <= 1):
+                i = int(i * image_data.shape[0])
+                j = int(j * image_data.shape[1])
+                self.pos_labels["z"].setText(f"z = {self.formatNum(image_data[i, j])}")
+
+        self.pos_labels["x"].setText(x_txt)
+        self.pos_labels["y"].setText(y_txt)
+        
             
     @QtCore.pyqtSlot(float)
     def monitorIntervalChanged(self, interval):
@@ -291,7 +315,7 @@ class plotWidget(qtw.QMainWindow):
         finally:
             if self.ds.running:
                 self.monitorIntervalChanged(self.spinBox.value())
-    
+                
     
     @QtCore.pyqtSlot()
     def change_axis(self, key):
