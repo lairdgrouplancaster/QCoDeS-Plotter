@@ -57,6 +57,17 @@ class plot2d(plotWidget):
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
         
+        
+    def initLabels(self):
+        super().initLabels()
+        
+        self.pos_labels["y"].setText(self.pos_labels["y"].text() + ";")
+        
+        posLabelx = qtw.QLabel("z= ")
+        self.toolbarCo_ord.addWidget(posLabelx)
+        self.pos_labels["z"] = posLabelx
+        
+###############################################################################
     
     def refreshPlot(self):
         dataGrid = data2matrix(
@@ -68,7 +79,7 @@ class plot2d(plotWidget):
         self.image.setImage(
             dataGrid.to_numpy(float),
             autoLevels=bool(self.relevel_refresh.isChecked()),
-            autoRange=bool(self.rescale_refresh.isChecked())
+            # autoRange=bool(self.rescale_refresh.isChecked()) #currently redundant
             )
         
         #set axis values
@@ -82,14 +93,15 @@ class plot2d(plotWidget):
         if yrange == 0:
             yrange = ymin / 100 
         
-        self.image.setRect(
-            pg.QtCore.QRectF(
-                xmin,
-                ymin, 
-                xrange, 
-                yrange
-            ))
-        
+        self.rect = pg.QtCore.QRectF(
+            xmin,
+            ymin, 
+            xrange, 
+            yrange
+        )
+        self.image.setRect(self.rect)
+
+###############################################################################    
         
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):

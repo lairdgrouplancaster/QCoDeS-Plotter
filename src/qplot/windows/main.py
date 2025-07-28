@@ -238,12 +238,10 @@ class MainWindow(qtw.QMainWindow):
 
 
         if self.autoPlotBox.isChecked():
-            print("ticked")
             for run in newRuns.values():
                 print(run["guid"])
                 self.openPlot(run["guid"])
-        else:
-            print("unticked")
+
                 
     @QtCore.pyqtSlot()
     def change_default_file(self):
