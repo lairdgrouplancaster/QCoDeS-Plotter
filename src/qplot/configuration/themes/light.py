@@ -318,12 +318,6 @@ class light:
             background: #ffffff;
             color: #000000;
         }
-        QComboBox:!editable, QComboBox::drop-down:editable {
-            background: #f0f0f0;
-        }
-        QComboBox:!editable:on, QComboBox::drop-down:editable:on {
-            background: #f0f0f0;
-        }
         QComboBox:on {
             padding-top: 3px;
             padding-left: 4px;
@@ -414,6 +408,7 @@ class light:
             color: #000000;
         }
     """
+    colors = [pg.mkColor(col) for col in ["red", "green", "blue", "black", "darkcyan", "darkorange"]]
     
     @classmethod
     def style_plotItem(cls, plot_win): 
@@ -429,11 +424,8 @@ class light:
         plot_item.vb.gridPen = pg.mkPen(color='darkgray')  
         cls.set_line_colours(plot_item)
         
-    @staticmethod
-    def set_line_colours(plot_item):
-        colours = ["red", "green", "blue", "black", "darkCyan", "darkYellow"]
+    @classmethod
+    def set_line_colours(cls, plot_item):
         for itr, line in enumerate(plot_item.listDataItems()):
-            index = itr % len(colours)
-            line.setPen(pg.mkPen(color=colours[index]))
-        
-
+            index = itr - (itr // len(cls.colors))
+            line.setPen(pg.mkPen(color=cls.colors[index]))

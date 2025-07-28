@@ -11,6 +11,7 @@ import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.tools import unpack_param
+from qplot.windows.widgets import expandingComboBox
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
@@ -27,6 +28,7 @@ class plotWidget(qtw.QMainWindow):
         self.ds = dataset
         self.param = param
         self.name = str(self)
+        self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
         self.initalised = False
         self.ds.cache.load_data_from_db()
@@ -178,30 +180,30 @@ class plotWidget(qtw.QMainWindow):
             param_spec = unpack_param(self.ds, param)
             self.param_dict[param_spec.name] = param_spec
         
-        toolbarAxes = qtw.QToolBar("Axes Control")
-        toolbarAxes.setMaximumWidth(int(self.frameGeometry().width() * 0.25))
+        self.toolbarAxes = qtw.QToolBar("Axes Control")
+        self.toolbarAxes.setMaximumWidth(int(self.frameGeometry().width() * 0.25))
         
-        self.addToolBar(QtCore.Qt.LeftToolBarArea, toolbarAxes)
+        self.addToolBar(QtCore.Qt.LeftToolBarArea, self.toolbarAxes)
         
         toolbar_l = qtw.QVBoxLayout()
         
         x_layout = qtw.QHBoxLayout()
         x_layout.addWidget(qtw.QLabel("x axis: "))
-        x_dropdown = qtw.QComboBox()
+        x_dropdown = expandingComboBox()
         x_dropdown.addItems(indep_params)
         x_layout.addWidget(x_dropdown)
         toolbar_l.addLayout(x_layout)
         
         y_layout = qtw.QHBoxLayout()
         y_layout.addWidget(qtw.QLabel("y axis: "))
-        y_dropdown = qtw.QComboBox()
+        y_dropdown = expandingComboBox()
         y_dropdown.addItems(indep_params)
         y_layout.addWidget(y_dropdown)
         toolbar_l.addLayout(y_layout)
         
         w = qtw.QWidget()
         w.setLayout(toolbar_l)
-        toolbarAxes.addWidget(w)
+        self.toolbarAxes.addWidget(w)
         self.axis_dropdown = {"x": x_dropdown, "y": y_dropdown}
         
         if len(indep_params) == 1:

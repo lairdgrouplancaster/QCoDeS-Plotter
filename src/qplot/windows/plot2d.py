@@ -4,7 +4,7 @@ from PyQt5 import QtCore
 import pyqtgraph as pg
 
 from qplot.tools import data2matrix
-from .plotWin import plotWidget
+from qplot.windows.plotWin import plotWidget
 
 class plot2d(plotWidget):
     

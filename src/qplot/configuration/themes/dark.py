@@ -330,10 +330,6 @@ class dark:
         	selection-color: #FFFFFF;
         	selection-background-color: #1e1d23;
         }
-        QComboBox:!editable:on, QComboBox::drop-down:editable:on {
-        	color: #a9b7c6;	
-        	background: #1e1d23;
-        }
         QFontComboBox {
         	color: #a9b7c6;	
         	background-color: #1e1d23;
@@ -473,6 +469,8 @@ class dark:
         
     """
     
+    colors = [pg.mkColor(col) for col in ["red", "green", "blue", "white", "cyan", "yellow"]]
+    
     @classmethod
     def style_plotItem(cls, plot_win):
         plot_item = plot_win.plot
@@ -487,10 +485,9 @@ class dark:
         
         cls.set_line_colours(plot_item)
         
-    @staticmethod
-    def set_line_colours(plot_item):
-        colours = ["red", "green", "blue", "white", "Cyan", "Yellow"]
+    @classmethod
+    def set_line_colours(cls, plot_item):
         for itr, line in enumerate(plot_item.listDataItems()):
-            index = itr - (itr // len(colours))
-            line.setPen(pg.mkPen(color=colours[index]))
+            index = itr - (itr // len(cls.colors))
+            line.setPen(pg.mkPen(color=cls.colors[index]))
         
