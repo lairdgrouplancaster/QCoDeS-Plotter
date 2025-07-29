@@ -71,8 +71,8 @@ class plot2d(plotWidget):
     
     def refreshPlot(self):
         dataGrid = data2matrix(
-            self.axis_data["x"].copy(), 
-            self.axis_data["y"].copy(), 
+            self.axis_data["x"], 
+            self.axis_data["y"], 
             self.depvarData
         )
         

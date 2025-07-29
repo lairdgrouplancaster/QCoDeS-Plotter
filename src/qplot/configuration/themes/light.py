@@ -427,5 +427,5 @@ class light:
     @classmethod
     def set_line_colours(cls, plot_item):
         for itr, line in enumerate(plot_item.listDataItems()):
-            index = itr - (itr // len(cls.colors))
+            index = itr % len(cls.colors)
             line.setPen(pg.mkPen(color=cls.colors[index]))

@@ -39,7 +39,13 @@ class subplot1d(PlotDataItem):
             for axis in ["x", "y"]:
                 name = parent.axis_dropdown[axis].currentText()
                 
+                
                 if self.param_dict.get(name, 0):
+                    param = self.param_dict.get(name)
+                else:
+                    param = parent.param_dict.get(name)
+                    
+                if not param.depends_on:
                     data[axis] = window.valid_data[indepDataNames.index(name)]
                     
                 else:

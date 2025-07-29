@@ -429,7 +429,7 @@ class MainWindow(qtw.QMainWindow):
         wins = []
         
         for item in self.windows:
-            if item.param.depends_on == win.param.depends_on and item != win:
+            if item.param.depends_on == win.param.depends_on and not item.label in win.lines.keys():
                 wins.append(item)
         
         win.update_line_picker(wins)
