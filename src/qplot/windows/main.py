@@ -2,9 +2,11 @@ from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore
 from PyQt5.QtGui import QIntValidator
 
-from . import (
+from qplot.windows import (
     plot1d,
     plot2d,
+    )
+from qplot.windows.widgets import (
     RunList,
     moreInfo,
     )
@@ -82,7 +84,6 @@ class MainWindow(qtw.QMainWindow):
     
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshMain)
-    
     
     
     def initAutoplot(self):
@@ -178,15 +179,14 @@ class MainWindow(qtw.QMainWindow):
 
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
-        if self.monitor.isActive():
-            self.monitor.stop()
-        
+        self.monitor.stop()
         qtw.QApplication.closeAllWindows()
         
         
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
         self.windows.remove(win)
+        self.post_admin()
         del win
     
     
@@ -195,7 +195,7 @@ class MainWindow(qtw.QMainWindow):
         
         self.windows.append(win)
         win.closed.connect(self.onClose)
-        
+
         win.update_theme(self.config)
         
         win.move(self.x, self.y)
@@ -323,6 +323,7 @@ class MainWindow(qtw.QMainWindow):
                     self.openWin(plot1d, ds, param, self.config, refrate = self.spinBox.value())
                 else:
                     self.openWin(plot2d, ds, param, self.config, refrate = self.spinBox.value())
+        self.post_admin()
         
         
     @QtCore.pyqtSlot(str)
@@ -366,6 +367,9 @@ class MainWindow(qtw.QMainWindow):
         
         
     def change_theme(self, theme, action):
+        if self.config.get("user_preference.theme") == theme:
+            action.setChecked(True)
+            return
         for QActions in self.themes:
             if QActions != action:
                 QActions.setChecked(False)
@@ -375,7 +379,7 @@ class MainWindow(qtw.QMainWindow):
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
-        
+
 ###############################################################################
 #Other funcs
 
@@ -383,6 +387,8 @@ class MainWindow(qtw.QMainWindow):
         
         if abspath == get_DB_location():
             return
+        
+        self.monitor.stop()
         
         self.run_idBox.setText("")
         
@@ -392,8 +398,6 @@ class MainWindow(qtw.QMainWindow):
         
         self.infoBox.clear()
         self.infoBox.scrollToTop()
-        
-        self.monitor.stop()
         
         if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:
             self.localLastFile = self.fileTextbox.text()
@@ -408,7 +412,28 @@ class MainWindow(qtw.QMainWindow):
         monitorTimer = self.spinBox.value()
         if monitorTimer > 0:
             self.monitor.start(int(monitorTimer * 1000))
+            
     
+    def post_admin(self):
+        
+        for item in self.windows:
+            if isinstance(item, plot1d):
+                self.get_1d_wins(item)
+                
+            else:
+                #do 2d admin
+                pass
+    
+    def get_1d_wins(self, win):
+        
+        wins = []
+        
+        for item in self.windows:
+            if item.param.depends_on == win.param.depends_on and not item.label in win.lines.keys():
+                wins.append(item)
+        
+        win.update_line_picker(wins)
+        
 ###############################################################################        
 #Depreicated
 

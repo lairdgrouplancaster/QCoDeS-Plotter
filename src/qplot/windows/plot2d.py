@@ -4,7 +4,7 @@ from PyQt5 import QtCore
 import pyqtgraph as pg
 
 from qplot.tools import data2matrix
-from .plotWin import plotWidget
+from qplot.windows.plotWin import plotWidget
 
 class plot2d(plotWidget):
     
@@ -32,8 +32,8 @@ class plot2d(plotWidget):
             rounding=(max(self.depvarData) - min(self.depvarData))/1e5 #Add 10,000 colours
             )
         
-        self.plot.setLabel('left', f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
-        self.plot.setLabel('bottom', f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
+        self.plot.setLabel('left', f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
+        self.plot.setLabel('bottom', f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
     
         self.scaleColorbar()
         
@@ -71,22 +71,22 @@ class plot2d(plotWidget):
     
     def refreshPlot(self):
         dataGrid = data2matrix(
-            self.xaxis_data.copy(), 
-            self.yaxis_data.copy(), 
+            self.axis_data["x"], 
+            self.axis_data["y"], 
             self.depvarData
         )
         
         self.image.setImage(
             dataGrid.to_numpy(float),
             autoLevels=bool(self.relevel_refresh.isChecked()),
-            # autoRange=bool(self.rescale_refresh.isChecked()) #currently redundant
+            autoRange=bool(self.rescale_refresh.isChecked()) #currently redundant
             )
         
         #set axis values
-        xmin = min(self.xaxis_data)
-        ymin = min(self.yaxis_data)
-        xrange = max(self.xaxis_data) - xmin
-        yrange = max(self.yaxis_data) - ymin
+        xmin = min(self.axis_data["x"])
+        ymin = min(self.axis_data["y"])
+        xrange = max(self.axis_data["x"]) - xmin
+        yrange = max(self.axis_data["y"]) - ymin
         
         if xrange == 0:
             xrange = xmin / 100 

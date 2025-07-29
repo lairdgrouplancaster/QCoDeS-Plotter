@@ -2,7 +2,7 @@ import pyqtgraph as pg
 
 class blank:
     main = ""
-    
+    colors = [pg.mkColor(col) for col in ["white", "red", "green", "blue", "cyan", "yellow"]]
     
     @classmethod
     def style_plotItem(cls, plot_win):

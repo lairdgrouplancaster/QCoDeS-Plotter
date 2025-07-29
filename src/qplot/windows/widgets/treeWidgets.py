@@ -3,7 +3,7 @@ from PyQt5 import (
     QtCore
     )
 
-from ..datahandling import (
+from qplot.datahandling import (
     get_runs_via_sql,
     has_finished
     )
@@ -106,7 +106,8 @@ class RunList(qtw.QTreeWidget):
     @QtCore.pyqtSlot(qtw.QTreeWidgetItem, int)
     def doubleClicked(self, item, column):
         self.plot.emit(None)
-        
+    
+   
 #3 classes/methods below are adapted from plottr
 class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
     """
@@ -165,4 +166,4 @@ def dictToTree(d : dict):
     return items
         
         
-        
+

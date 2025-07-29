@@ -11,6 +11,7 @@ import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.tools import unpack_param
+from qplot.windows.widgets import expandingComboBox
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
@@ -27,6 +28,7 @@ class plotWidget(qtw.QMainWindow):
         self.ds = dataset
         self.param = param
         self.name = str(self)
+        self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
         self.initalised = False
         self.ds.cache.load_data_from_db()
@@ -47,6 +49,9 @@ class plotWidget(qtw.QMainWindow):
         self.initFrame()
         
         self.setWindowTitle(str(self))
+        
+        self.plot.showAxis("right")
+        self.plot.showAxis("top")
         
         screenrect = qtw.QApplication.primaryScreen().availableGeometry()
         sizeFrac = self.config.get("GUI.plot_frame_fraction")
@@ -82,25 +87,27 @@ class plotWidget(qtw.QMainWindow):
         valid_rows = ~np.isnan(depvarData)
         indepData = self.df.index.to_frame()
         
-        valid_data = []
+        self.valid_data = []
         for itr in range(len(indepData.columns)):
-            valid_data.append(indepData.iloc[:,itr].loc[valid_rows].to_numpy(float))
+            self.valid_data.append(indepData.iloc[:,itr].loc[valid_rows].to_numpy(float))
         
-        # indepData = valid_data
         self.depvarData = depvarData[valid_rows]
+        
+        self.axis_data = {}
+        self.axis_param = {}
         
         for axis in ["x", "y"]:
             name = self.axis_dropdown[axis].currentText()
             param = self.param_dict[name]
             
             if not param.depends_on:
-                data = valid_data[indepData.columns.get_loc(name)]
+                data = self.valid_data[indepData.columns.get_loc(name)]
             else:
-                data = self.depvarData #silence error, is used in exec below
+                data = self.depvarData #ignore error, is used in exec below
             
             #save to self.<x/y>axis respectively
-            exec(f"self.{axis}axis_data = data")
-            exec(f"self.{axis}axis_param = param")
+            self.axis_data[axis] = data
+            self.axis_param[axis] = param
             
     
     def initRefresh(self, refrate : float):
@@ -178,30 +185,32 @@ class plotWidget(qtw.QMainWindow):
             param_spec = unpack_param(self.ds, param)
             self.param_dict[param_spec.name] = param_spec
         
-        toolbarAxes = qtw.QToolBar("Axes Control")
-        toolbarAxes.setMaximumWidth(int(self.frameGeometry().width() * 0.25))
+        self.toolbarAxes = qtw.QToolBar("Axes Control")
+        # self.toolbarAxes.setFixedWidth(int(self.frameGeometry().width() * 0.25))
         
-        self.addToolBar(QtCore.Qt.LeftToolBarArea, toolbarAxes)
+        self.toolbarAxes.setSizePolicy(qtw.QSizePolicy.Fixed, qtw.QSizePolicy.Preferred)
+        
+        self.addToolBar(QtCore.Qt.LeftToolBarArea, self.toolbarAxes)
         
         toolbar_l = qtw.QVBoxLayout()
         
         x_layout = qtw.QHBoxLayout()
         x_layout.addWidget(qtw.QLabel("x axis: "))
-        x_dropdown = qtw.QComboBox()
+        x_dropdown = expandingComboBox()
         x_dropdown.addItems(indep_params)
         x_layout.addWidget(x_dropdown)
         toolbar_l.addLayout(x_layout)
         
         y_layout = qtw.QHBoxLayout()
         y_layout.addWidget(qtw.QLabel("y axis: "))
-        y_dropdown = qtw.QComboBox()
+        y_dropdown = expandingComboBox()
         y_dropdown.addItems(indep_params)
         y_layout.addWidget(y_dropdown)
         toolbar_l.addLayout(y_layout)
         
         w = qtw.QWidget()
         w.setLayout(toolbar_l)
-        toolbarAxes.addWidget(w)
+        self.toolbarAxes.addWidget(w)
         self.axis_dropdown = {"x": x_dropdown, "y": y_dropdown}
         
         if len(indep_params) == 1:
@@ -253,8 +262,7 @@ class plotWidget(qtw.QMainWindow):
     
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
-        if self.monitor:
-            self.monitor.stop()
+        self.monitor.stop()
         self.closed.emit(self) 
         del self
 
@@ -327,7 +335,7 @@ class plotWidget(qtw.QMainWindow):
             self.axis_dropdown[duplicates[0]].blockSignals(True)
             
             self.axis_dropdown[duplicates[0]].setCurrentIndex(
-                self.axis_dropdown[duplicates[0]].findText(eval(f"self.{key}axis_param.name"))
+                self.axis_dropdown[duplicates[0]].findText(self.axis_param[key].name)
                 )
             
             self.axis_dropdown[duplicates[0]].blockSignals(False)
@@ -335,14 +343,12 @@ class plotWidget(qtw.QMainWindow):
         elif len(duplicates) > 1:
             raise ValueError("Too many duplicates in axis assertion.\nThis should not be possible?")
         
-        
         self.refreshWindow(force=True)
         
-        self.plot.setLabel(axis="bottom", text=f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
-        self.plot.setLabel(axis="left", text=f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
+        self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
+        self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
         
         self.plot.enableAutoRange(True)
-        try: 
+        if hasattr(self, "scaleColorbar"):
             self.scaleColorbar()
-        except AttributeError:
-            pass
+        
