@@ -39,9 +39,9 @@ class plot1d(plotWidget):
             x=self.axis_data["x"], 
             y=self.axis_data["y"],
             )
-        for row in list(self.lines.values())[1:]:
+        for line in list(self.lines.values())[1:]:
             # print(row)
-            row[1].refresh()
+            line.refresh()
         # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
         
 ###############################################################################
@@ -73,7 +73,7 @@ class plot1d(plotWidget):
             new_option = picker_1d(self.config, [item.label for item in self.mergable])
         
         new_option.itemSelected.connect(self.add_line)
-        
+        new_option.closed.connect(self.remove_line)
         
         self.option_boxes.append(new_option)
         self.toolbarAxes.addWidget(new_option)
@@ -96,8 +96,17 @@ class plot1d(plotWidget):
                 break
         
         subplot = subplot1d(self, win)
-        self.lines[label] = [win, subplot]
+        self.lines[label] = subplot
         
         self.add_option_box()
         
+    
+    @QtCore.pyqtSlot(str)
+    def remove_line(self, label):
         
+        for option in self.option_boxes:
+            if option.option_box.currentText() == label:
+                self.option_boxes.remove(option)
+                break
+        
+        self.plot.removeItem(self.lines[label])

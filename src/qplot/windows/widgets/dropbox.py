@@ -4,10 +4,11 @@ from PyQt5.QtCore import Qt
 
 class picker_1d(qtw.QWidget):
     itemSelected = QtCore.pyqtSignal([str])
+    closed = QtCore.pyqtSignal([str])
     
     def __init__(self, cfg, items, *args, **kargs):
         super().__init__()
-        self.deleteLater()
+        
         layout = qtw.QGridLayout(self)
         
         self.option_box = expandingComboBox(*args, **kargs)
@@ -18,6 +19,7 @@ class picker_1d(qtw.QWidget):
         
         self.del_box = qtw.QPushButton("X")
         self.del_box.setDisabled(True)
+        self.del_box.clicked.connect(self.deleteBox)
         layout.addWidget(self.del_box, 0, 4, 1, 1)
         
         self.color_box = colorBox(cfg)
@@ -47,7 +49,13 @@ class picker_1d(qtw.QWidget):
         
         self.itemSelected.emit(self.option_box.currentText())
    
-    # def
+    @QtCore.pyqtSlot()
+    def deleteBox(self):
+        self.setParent(None)
+        self.deleteLater()
+        
+        self.closed.emit(self.option_box.currentText())
+    
     
 class expandingComboBox(qtw.QComboBox):
     def showPopup(self):
