@@ -11,7 +11,9 @@ from .tools import (
     find_indep,
     )
 
-
+from .subplot import (
+    subplot1d,
+    )
 
 
 
@@ -19,4 +21,5 @@ __all__ = [
     "data2matrix",
     "unpack_param",
     "find_indep",
+    "subplot1d",
     ]

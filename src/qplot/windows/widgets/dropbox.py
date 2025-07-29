@@ -7,7 +7,7 @@ class picker_1d(qtw.QWidget):
     
     def __init__(self, cfg, items, *args, **kargs):
         super().__init__()
-        
+        self.deleteLater()
         layout = qtw.QGridLayout(self)
         
         self.option_box = expandingComboBox(*args, **kargs)
@@ -47,6 +47,7 @@ class picker_1d(qtw.QWidget):
         
         self.itemSelected.emit(self.option_box.currentText())
    
+    # def
     
 class expandingComboBox(qtw.QComboBox):
     def showPopup(self):

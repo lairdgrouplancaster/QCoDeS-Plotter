@@ -50,6 +50,9 @@ class plotWidget(qtw.QMainWindow):
         
         self.setWindowTitle(str(self))
         
+        self.plot.showAxis("right")
+        self.plot.showAxis("top")
+        
         screenrect = qtw.QApplication.primaryScreen().availableGeometry()
         sizeFrac = self.config.get("GUI.plot_frame_fraction")
 
@@ -84,25 +87,27 @@ class plotWidget(qtw.QMainWindow):
         valid_rows = ~np.isnan(depvarData)
         indepData = self.df.index.to_frame()
         
-        valid_data = []
+        self.valid_data = []
         for itr in range(len(indepData.columns)):
-            valid_data.append(indepData.iloc[:,itr].loc[valid_rows].to_numpy(float))
+            self.valid_data.append(indepData.iloc[:,itr].loc[valid_rows].to_numpy(float))
         
-        # indepData = valid_data
         self.depvarData = depvarData[valid_rows]
+        
+        self.axis_data = {}
+        self.axis_param = {}
         
         for axis in ["x", "y"]:
             name = self.axis_dropdown[axis].currentText()
             param = self.param_dict[name]
             
             if not param.depends_on:
-                data = valid_data[indepData.columns.get_loc(name)]
+                data = self.valid_data[indepData.columns.get_loc(name)]
             else:
-                data = self.depvarData #silence error, is used in exec below
+                data = self.depvarData #ignore error, is used in exec below
             
             #save to self.<x/y>axis respectively
-            exec(f"self.{axis}axis_data = data")
-            exec(f"self.{axis}axis_param = param")
+            self.axis_data[axis] = data
+            self.axis_param[axis] = param
             
     
     def initRefresh(self, refrate : float):
@@ -337,14 +342,12 @@ class plotWidget(qtw.QMainWindow):
         elif len(duplicates) > 1:
             raise ValueError("Too many duplicates in axis assertion.\nThis should not be possible?")
         
-        
         self.refreshWindow(force=True)
         
         self.plot.setLabel(axis="bottom", text=f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
         self.plot.setLabel(axis="left", text=f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
         
         self.plot.enableAutoRange(True)
-        try: 
+        if hasattr(self, "scaleColorbar"):
             self.scaleColorbar()
-        except AttributeError:
-            pass
+        

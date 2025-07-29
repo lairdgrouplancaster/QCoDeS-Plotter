@@ -56,15 +56,15 @@ context_meas.register_parameter(dac.ch1)
 context_meas.register_parameter(dmm.v1, setpoints=(dac.ch1,))
 
 # Setting up a doNd measurement
-sweep_1 = LinSweep(dac.ch1, -1, 1, int(np.sqrt(1e7)), 0.01)
-sweep_2 = LinSweep(dac.ch2, -1, 1, int(np.sqrt(1e7)), 0.01)
+sweep_1 = LinSweep(dac.ch1, -1, 1, 1000, 0.01)
+sweep_2 = LinSweep(dac.ch2, -1, 1, 1000, 0.01)
 
 
 dond(
     sweep_1,  # 1st independent parameter
-    sweep_2,  # 2nd independent parameter
+    # sweep_2,  # 2nd independent parameter
     dmm.v1,  # 1st dependent parameter
-    # dmm.v2,  # 2nd dependent parameter
+    dmm.v2,  # 2nd dependent parameter
     measurement_name="dond_example",  # Set the measurement name
     exp=tutorial_exp,  # Set the experiment to save data to.
     show_progress=True,  # Optional progress bar

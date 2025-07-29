@@ -1,5 +1,6 @@
 from qplot.windows.plotWin import plotWidget
 from qplot.windows.widgets import picker_1d
+from qplot.tools.subplot import subplot1d
 
 from PyQt5 import (
     QtWidgets as qtw,
@@ -26,8 +27,8 @@ class plot1d(plotWidget):
         
         self.refreshPlot()
         
-        self.plot.setLabel(axis="bottom", text=f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
-        self.plot.setLabel(axis="left", text=f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
+        self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
+        self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
         
         self.initalised = True
         print("Graph produced \n")
@@ -35,9 +36,12 @@ class plot1d(plotWidget):
         
     def refreshPlot(self):
         self.line.setData(
-            x=self.xaxis_data, 
-            y=self.yaxis_data,
+            x=self.axis_data["x"], 
+            y=self.axis_data["y"],
             )
+        for row in list(self.lines.values())[1:]:
+            # print(row)
+            row[1].refresh()
         # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
         
 ###############################################################################
@@ -49,7 +53,7 @@ class plot1d(plotWidget):
         self.toolbarAxes.addSeparator()
         
         self.toolbarAxes.addWidget(qtw.QLabel("Line Control"))
-        self.lines = {"main" : self.line}
+        self.lines = {self.label : self.line}
         self.option_boxes = []
         
         main_line = picker_1d(self.config, [self.label])
@@ -91,8 +95,9 @@ class plot1d(plotWidget):
                 win = item
                 break
         
-        subplot = self.plot.plot()
+        subplot = subplot1d(self, win)
         self.lines[label] = [win, subplot]
         
+        self.add_option_box()
         
         
