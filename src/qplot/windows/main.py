@@ -86,7 +86,6 @@ class MainWindow(qtw.QMainWindow):
         self.monitor.timeout.connect(self.refreshMain)
     
     
-    
     def initAutoplot(self):
         self.toolbar.addSeparator()
         
@@ -180,15 +179,14 @@ class MainWindow(qtw.QMainWindow):
 
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
-        if self.monitor.isActive():
-            self.monitor.stop()
-        
+        self.monitor.stop()
         qtw.QApplication.closeAllWindows()
         
         
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
         self.windows.remove(win)
+        self.post_admin()
         del win
     
     
@@ -325,7 +323,7 @@ class MainWindow(qtw.QMainWindow):
                     self.openWin(plot1d, ds, param, self.config, refrate = self.spinBox.value())
                 else:
                     self.openWin(plot2d, ds, param, self.config, refrate = self.spinBox.value())
-        self.post_open_runs()
+        self.post_admin()
         
         
     @QtCore.pyqtSlot(str)
@@ -416,11 +414,12 @@ class MainWindow(qtw.QMainWindow):
             self.monitor.start(int(monitorTimer * 1000))
             
     
-    def post_open_runs(self):
+    def post_admin(self):
         
         for item in self.windows:
             if isinstance(item, plot1d):
                 self.get_1d_wins(item)
+                
             else:
                 #do 2d admin
                 pass

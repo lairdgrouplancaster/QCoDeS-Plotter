@@ -51,6 +51,7 @@ class picker_1d(qtw.QWidget):
    
     @QtCore.pyqtSlot()
     def deleteBox(self):
+        
         self.setParent(None)
         self.deleteLater()
         

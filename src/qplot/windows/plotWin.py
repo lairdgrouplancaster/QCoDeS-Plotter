@@ -260,8 +260,7 @@ class plotWidget(qtw.QMainWindow):
     
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
-        if self.monitor:
-            self.monitor.stop()
+        self.monitor.stop()
         self.closed.emit(self) 
         del self
 
@@ -334,7 +333,7 @@ class plotWidget(qtw.QMainWindow):
             self.axis_dropdown[duplicates[0]].blockSignals(True)
             
             self.axis_dropdown[duplicates[0]].setCurrentIndex(
-                self.axis_dropdown[duplicates[0]].findText(eval(f"self.{key}axis_param.name"))
+                self.axis_dropdown[duplicates[0]].findText(self.axis_param[key].name)
                 )
             
             self.axis_dropdown[duplicates[0]].blockSignals(False)
@@ -344,8 +343,8 @@ class plotWidget(qtw.QMainWindow):
         
         self.refreshWindow(force=True)
         
-        self.plot.setLabel(axis="bottom", text=f"{self.xaxis_param.label} ({self.xaxis_param.unit})")
-        self.plot.setLabel(axis="left", text=f"{self.yaxis_param.label} ({self.yaxis_param.unit})")
+        self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
+        self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
         
         self.plot.enableAutoRange(True)
         if hasattr(self, "scaleColorbar"):
