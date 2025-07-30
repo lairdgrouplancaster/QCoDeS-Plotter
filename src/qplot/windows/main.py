@@ -25,6 +25,8 @@ from qcodes.dataset.sqlite.database import get_DB_location
 
 import os
 
+import numpy as np
+
 
 class MainWindow(qtw.QMainWindow):
     
@@ -233,7 +235,7 @@ class MainWindow(qtw.QMainWindow):
         if not newRuns:
             return
         
-        self.listWidget.maxTime = max([subDict["run_timestamp"] for subDict in newRuns.values()], default=0)
+        self.listWidget.maxTime = max(np.array([subDict["run_timestamp"] for subDict in newRuns.values()], dtype=float), default=0)
         self.listWidget.addRuns(newRuns)
 
 
