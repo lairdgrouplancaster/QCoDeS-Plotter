@@ -12,6 +12,8 @@ from qcodes.dataset.sqlite.database import get_DB_location
 
 from os.path import isfile
 
+import numpy as np
+
 from datetime import datetime
 
 
@@ -41,7 +43,7 @@ class RunList(qtw.QTreeWidget):
         self.setSortingEnabled(False)
         
         append = False
-        self.maxTime = max([subDict["run_timestamp"] for subDict in runs.values()], default=0)
+        self.maxTime = max(np.array([subDict["run_timestamp"] for subDict in runs.values()], dtype=float), default=0)
         
         for run_id, metadata in runs.items():
             arr = [str(run_id)] #run id
