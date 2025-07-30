@@ -50,16 +50,18 @@ class RunList(qtw.QTreeWidget):
             
             run_time = datetime.fromtimestamp(metadata["run_timestamp"])
             
+            if not run_time:
+                continue
+            
             arr.append(metadata["exp_name"]) #experiment
             arr.append(metadata["sample_name"]) #sample
             arr.append(metadata["name"]) #name
             arr.append(run_time.strftime("%Y-%m-%d %H:%M:%S")) #started
-            try:
-                assert metadata["completed_timestamp"] is not None
+            if metadata["completed_timestamp"]:
                 arr.append(datetime.fromtimestamp(
                     metadata["completed_timestamp"], 
                     ).strftime("%Y-%m-%d %H:%M:%S")) #finished
-            except AssertionError:
+            else:
                 arr.append("Ongoing")
                 append = True
             arr.append(metadata["guid"]) #guid
