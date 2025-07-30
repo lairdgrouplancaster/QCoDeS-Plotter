@@ -38,6 +38,9 @@ class RunList(qtw.QTreeWidget):
         self.itemSelectionChanged.connect(self.onSelect)
         self.itemDoubleClicked.connect(self.doubleClicked)
         
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.prepareMenu)
+        
     
     def addRuns(self, runs, track = False): #tbd
         self.setSortingEnabled(False)
@@ -98,8 +101,60 @@ class RunList(qtw.QTreeWidget):
                 to_remove.append(run)
         
         for run in to_remove:
-            self.watching.remove(run)        
-
+            self.watching.remove(run)      
+            
+    
+    @QtCore.pyqtSlot(QtCore.QPoint)
+    def prepareMenu(self, pos):
+        main = self.parentWidget().parent()
+        
+        menu = qtw.QMenu(self)
+        
+        open_menu = menu.addMenu("&Open")
+        
+        open_all = qtw.QAction("All", self)
+        open_all.triggered.connect(lambda _,: main.openPlot())
+        open_menu.addAction(open_all)
+        
+        open_menu.addSeparator()
+        
+        params = {param: param.depends_on_ for param in main.ds.get_parameters() if param.depends_on}
+        
+        for param in params.keys():
+            
+            open_win = qtw.QAction(f"{param.name}", self)
+            open_win.triggered.connect(lambda _, param=param: main.openPlot(params=[param]))
+            
+            open_menu.addAction(open_win)
+        
+        add_menu = menu.addMenu("&Add _ to _")
+        
+        # add_all = add_menu.addMenu("All (not functional)")
+        # add_menu.addSeparator()
+        
+        
+        for param, depends_on in params.items():
+            if len(depends_on) != 1:
+                continue
+            
+            valid_actions = []
+            for win in main.windows:
+                if win.param.depends_on_ == depends_on:
+                    win_action = qtw.QAction(f"{win.label}", self)
+                    win_action.triggered.connect(
+                        lambda _, win=win, param=param: self.add_plot(win, param)
+                        )
+                    
+                    valid_actions.append(win_action)
+                    
+            if valid_actions:
+                param_menu = add_menu.addMenu(f"{param.name}")
+                param_menu.addActions(valid_actions)
+                    
+        
+            
+        menu.exec_(self.mapToGlobal(pos))
+    
 
     @QtCore.pyqtSlot()
     def onSelect(self):
@@ -107,10 +162,50 @@ class RunList(qtw.QTreeWidget):
             selection = self.selectedItems()[0].guid #emit guid
             self.selected.emit(selection)
 
+
     @QtCore.pyqtSlot(qtw.QTreeWidgetItem, int)
     def doubleClicked(self, item, column):
         self.plot.emit(None)
     
+    
+    @QtCore.pyqtSlot(object)
+    def add_plot(self, target_win, param):
+        main = self.parentWidget().parent()
+        from_win = None
+        close_later = False
+        
+        for win in main.windows:
+            if win.ds.guid == self.selectedItems()[0].guid and win.param == param:
+                from_win = win
+                break
+        
+        if not from_win:
+            x, y = main.x, main.y
+            
+            main.openPlot(params=[param])
+            from_win = main.windows[-1]
+            
+            main.x, main.y = x, y
+            close_later = True
+        
+        if target_win.option_boxes[-1].isEnabled():
+            box = target_win.option_boxes[-1]
+        else:
+            target_win.add_option_box()
+            box = target_win.option_boxes[-1]
+            
+        box.option_box.setCurrentText(from_win.label)
+        box.option_box.setDisabled(True)
+        box.del_box.setEnabled(True)
+        box.itemSelected.emit(from_win.label)
+        
+        if close_later:
+            from_win.close()
+        
+     
+    @QtCore.pyqtSlot()
+    def add_all(self):
+        pass
    
 #3 classes/methods below are adapted from plottr
 class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
@@ -169,5 +264,5 @@ def dictToTree(d : dict):
         items.append(item)
     return items
         
-        
+
 

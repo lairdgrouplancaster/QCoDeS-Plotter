@@ -82,7 +82,7 @@ class plot1d(plotWidget):
         else:
             new_option = picker_1d(self.config, [item.label for item in self.mergable])
         
-        new_option.itemSelected.connect(self.add_line)
+        new_option.itemSelected.connect(lambda label: self.add_line(label))
         new_option.closed.connect(self.remove_line)
         
         cols = self.config.theme.colors
@@ -98,9 +98,9 @@ class plot1d(plotWidget):
         if wins:
             self.mergable = wins
         
-        for box in self.option_boxes:
-            if box.option_box.isEnabled():
-                box.reset_box([item.label for item in self.mergable])
+        if self.option_boxes and self.mergable:
+            box_texts = [box.option_box.currentText() for box in self.option_boxes]
+            self.option_boxes[-1].reset_box([item.label for item in self.mergable if item.label not in box_texts])
     
     
     @QtCore.pyqtSlot(str)
@@ -137,6 +137,7 @@ class plot1d(plotWidget):
                 break
         
         self.plot.removeItem(self.lines[label])
+        self.update_line_picker()
     
     
     @QtCore.pyqtSlot(QColor)
