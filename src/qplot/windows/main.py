@@ -310,7 +310,7 @@ class MainWindow(qtw.QMainWindow):
     
     
     @QtCore.pyqtSlot(str)
-    def openPlot(self, guid : str=None):
+    def openPlot(self, guid : str=None, params : list=None):
         if not self.ds:
             ds = load_by_guid(guid)
         elif guid and self.ds.guid != guid:
@@ -318,7 +318,10 @@ class MainWindow(qtw.QMainWindow):
         else:
             ds = self.ds
             
-        for param in ds.get_parameters():
+        if not params:
+            params = ds.get_parameters()
+            
+        for param in params:
             if param.depends_on != "":
                 depends_on = param.depends_on_
                 if len(depends_on) == 1:
