@@ -10,6 +10,7 @@ class picker_1d(qtw.QWidget):
         super().__init__()
         
         layout = qtw.QGridLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignRight)
         
         self.option_box = expandingComboBox(*args, **kargs)
         self.reset_box(items)
@@ -18,11 +19,13 @@ class picker_1d(qtw.QWidget):
         layout.addWidget(self.option_box, 0, 0, 1, 4)
         
         self.del_box = qtw.QPushButton("X")
+        self.del_box.setFixedWidth(15)
         self.del_box.setDisabled(True)
         self.del_box.clicked.connect(self.deleteBox)
         layout.addWidget(self.del_box, 0, 4, 1, 1)
         
         self.color_box = colorBox(cfg)
+        self.color_box.setFixedWidth(75)
         
         layout.addWidget(qtw.QLabel("Color:"), 1, 1, 1, 2)
         layout.addWidget(self.color_box, 1, 3, 1, 3)
