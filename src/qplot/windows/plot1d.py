@@ -54,9 +54,9 @@ class plot1d(plotWidget):
         self.toolbarAxes.addSeparator()
         self.toolbarAxes.addSeparator()
         
-        self.toolbarAxes.addWidget(qtw.QLineEdit())
+        # self.toolbarAxes.addWidget(qtw.QLineEdit())
         
-        self.toolbarAxes.addSeparator()
+        # self.toolbarAxes.addSeparator()
         
         self.toolbarAxes.addWidget(qtw.QLabel("Line Control"))
         self.lines = {self.label : self.line}

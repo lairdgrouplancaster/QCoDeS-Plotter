@@ -129,8 +129,10 @@ class RunList(qtw.QTreeWidget):
         
         add_menu = menu.addMenu("&Add _ to _")
         
-        # add_all = add_menu.addMenu("All (not functional)")
-        # add_menu.addSeparator()
+        add_all = add_menu.addMenu("All")
+        valid_wins = []
+        
+        add_menu.addSeparator()
         
         
         for param, depends_on in params.items():
@@ -146,6 +148,15 @@ class RunList(qtw.QTreeWidget):
                         )
                     
                     valid_actions.append(win_action)
+                    
+                    if win not in valid_wins:
+                        all_action = qtw.QAction(f"{win.label}", self)
+                        all_action.triggered.connect(
+                            lambda _, win=win, param_dict=params: self.add_all(win, param_dict)
+                            )
+                        valid_wins.append(win)
+                        
+                        add_all.addAction(all_action)
                     
             if valid_actions:
                 param_menu = add_menu.addMenu(f"{param.name}")
@@ -168,7 +179,6 @@ class RunList(qtw.QTreeWidget):
         self.plot.emit(None)
     
     
-    @QtCore.pyqtSlot(object)
     def add_plot(self, target_win, param):
         main = self.parentWidget().parent()
         from_win = None
@@ -203,10 +213,12 @@ class RunList(qtw.QTreeWidget):
             from_win.close()
         
      
-    @QtCore.pyqtSlot()
-    def add_all(self):
-        pass
+    def add_all(self, target_win, param_dict):
+        for param, depends_on in param_dict.items():
+            if depends_on == target_win.param.depends_on_:
+                self.add_plot(target_win, param)
    
+    
 #3 classes/methods below are adapted from plottr
 class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
     """
