@@ -41,7 +41,6 @@ class plot1d(plotWidget):
             y=self.axis_data["y"],
             )
         for line in list(self.lines.values())[1:]:
-            # print(row)
             line.refresh()
         # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
         
@@ -54,9 +53,6 @@ class plot1d(plotWidget):
         self.toolbarAxes.addSeparator()
         self.toolbarAxes.addSeparator()
         
-        # self.toolbarAxes.addWidget(qtw.QLineEdit())
-        
-        # self.toolbarAxes.addSeparator()
         
         self.toolbarAxes.addWidget(qtw.QLabel("Line Control"))
         self.lines = {self.label : self.line}
@@ -71,8 +67,9 @@ class plot1d(plotWidget):
         main_line.color_box.selectedColor.connect(
             lambda col: self.set_color(col, self.line)
             )
-        
         self.toolbarAxes.addWidget(main_line)
+        main_line.adjustSize()
+        
         self.add_option_box(options=[""])
     
     
@@ -92,7 +89,7 @@ class plot1d(plotWidget):
         
         self.option_boxes.append(new_option)
         self.toolbarAxes.addWidget(new_option)
-    
+        
     
     def update_line_picker(self, wins = None):
         if wins:
@@ -105,6 +102,7 @@ class plot1d(plotWidget):
     
     @QtCore.pyqtSlot(str)
     def add_line(self, label):
+        
         for item in self.mergable:
             if item.label == label:
                 win = item
@@ -116,6 +114,8 @@ class plot1d(plotWidget):
         subplot = subplot1d(self, win)
         self.lines[label] = subplot
         
+        print(f"{type(subplot)=}")
+        
         for box in self.option_boxes:
             if label == box.option_box.currentText():
                 col_box = box.color_box
@@ -124,8 +124,6 @@ class plot1d(plotWidget):
                     )
                 break
         self.set_color(col_box.color(), subplot)
-        
-        
         
     
     @QtCore.pyqtSlot(str)

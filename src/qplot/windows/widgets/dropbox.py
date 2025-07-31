@@ -6,6 +6,9 @@ class picker_1d(qtw.QWidget):
     itemSelected = QtCore.pyqtSignal([str])
     closed = QtCore.pyqtSignal([str])
     
+    del_but_width = 15
+    color_box_width = 75
+    
     def __init__(self, cfg, items, *args, **kargs):
         super().__init__()
         
@@ -13,22 +16,23 @@ class picker_1d(qtw.QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignRight)
         
         self.option_box = expandingComboBox(*args, **kargs)
+        # self.setFixedWidth(150)
         self.reset_box(items)
         self.option_box.currentIndexChanged.connect(self.selectedOption)
         
-        layout.addWidget(self.option_box, 0, 0, 1, 4)
+        layout.addWidget(self.option_box, 0, 0, 1, 3)
         
         self.del_box = qtw.QPushButton("X")
-        self.del_box.setFixedWidth(15)
+        self.del_box.setFixedWidth(self.del_but_width)
         self.del_box.setDisabled(True)
         self.del_box.clicked.connect(self.deleteBox)
-        layout.addWidget(self.del_box, 0, 4, 1, 1)
+        layout.addWidget(self.del_box, 0, 3, 1, 1)
         
         self.color_box = colorBox(cfg)
-        self.color_box.setFixedWidth(75)
+        self.color_box.setFixedWidth(self.color_box_width)
         
-        layout.addWidget(qtw.QLabel("Color:"), 1, 1, 1, 2)
-        layout.addWidget(self.color_box, 1, 3, 1, 3)
+        layout.addWidget(qtw.QLabel("Color:"), 1, 1, 1, 1)
+        layout.addWidget(self.color_box, 1, 2, 1, 2)
         
     
     def reset_box(self, items):
@@ -49,6 +53,8 @@ class picker_1d(qtw.QWidget):
     def selectedOption(self, index):
         self.option_box.setDisabled(True)
         self.del_box.setEnabled(True)
+        
+        self.option_box.adjustSize()
         
         self.itemSelected.emit(self.option_box.currentText())
    
@@ -91,6 +97,7 @@ class colorBox(qtw.QComboBox):
         for col in cfg.theme.colors:
             self.addItem('', userData = col)
             self.setItemData(self.count()-1, col, Qt.BackgroundRole)
+        self.addItem('Custom')
      
         
     def color(self):
@@ -98,17 +105,30 @@ class colorBox(qtw.QComboBox):
      
         
     def setColor(self, color):
-        self._color_selected(self.findData(color), False)
+        self._color_selected(color=color, emitSignal=False)
 
     
-    def _color_selected(self, index, emitSignal = True):
-        # if a color is selected, emit the selectedColor signal      
-        self._currentColor = self.itemData(index)
-        if (emitSignal):
+    @QtCore.pyqtSlot(int)
+    def _color_selected(self, index = None, color = None, emitSignal = True):
+        if index and self.itemText(index) == "Custom":
+            self.setCurrentText("") 
+            color = qtw.QColorDialog.getColor()
+
+            if color.alpha() == 255:
+                return
+            
+            self._currentColor = color
+            
+        elif color:      
+            self._currentColor = color
+            
+        else:
+            self._currentColor = self.itemData(index)
+            self.setCurrentIndex(self.findData(self._currentColor))
+            
+        
+        self.lineEdit().setStyleSheet("background-color: " + self._currentColor.name())
+        if emitSignal:
             self.selectedColor.emit(self._currentColor)
         
-        # make sure that current color is displayed
-        if (self._currentColor):
-            self.setCurrentIndex(self.findData(self._currentColor))
-            self.lineEdit().setStyleSheet("background-color: "+self._currentColor.name())
             

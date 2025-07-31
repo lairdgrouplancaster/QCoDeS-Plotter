@@ -192,8 +192,12 @@ class RunList(qtw.QTreeWidget):
         if not from_win:
             x, y = main.x, main.y
             
-            main.openPlot(params=[param])
+            main.openPlot(params=[param], show=False)
             from_win = main.windows[-1]
+            
+            if from_win.ds.running and not target_win.monitor.isActive():
+                target_win.monitorIntervalChanged(target_win.spinBox.value())
+                target_win.toolbarRef.show()
             
             main.x, main.y = x, y
             close_later = True
@@ -206,6 +210,7 @@ class RunList(qtw.QTreeWidget):
             
         box.option_box.setCurrentText(from_win.label)
         box.option_box.setDisabled(True)
+        # box.option_box.adjustSize()
         box.del_box.setEnabled(True)
         box.itemSelected.emit(from_win.label)
         

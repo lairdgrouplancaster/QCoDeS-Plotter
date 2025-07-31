@@ -12,6 +12,7 @@ class subplot1d(PlotDataItem):
         self.label = window.label
         self.param_dict = window.param_dict
         self.df = window.df
+        self.running = window.ds.running
         
         self.parent = parent
         self.window = window
@@ -25,6 +26,8 @@ class subplot1d(PlotDataItem):
         
         parent = self.parent
         window = self.window
+        
+        self.running = window.ds.running
         
         data = {}
         

@@ -55,7 +55,7 @@ class MainWindow(qtw.QMainWindow):
         
         
         #Final Setup
-        w = qtw.QWidget()
+        w = qtw.QFrame()
         w.setLayout(self.l)
         self.setCentralWidget(w)
        
@@ -192,7 +192,7 @@ class MainWindow(qtw.QMainWindow):
         del win
     
     
-    def openWin(self, widget, *args, **kargs):
+    def openWin(self, widget, *args, show=True, **kargs):
         win = widget(*args, **kargs)
         
         self.windows.append(win)
@@ -200,18 +200,19 @@ class MainWindow(qtw.QMainWindow):
 
         win.update_theme(self.config)
         
-        win.move(self.x, self.y)
-        win.show()
+        if show:
+            win.move(self.x, self.y)
+            win.show()
         
-        #set next position
-        tolerance = 30
-        self.x += win.width
-        if self.x + win.width - tolerance > self.screenrect.right():
-            self.x = self.screenrect.left()
-            self.y += win.height
-            
-            if self.y + win.height - tolerance > self.screenrect.bottom():
-                self.y = self.screenrect.top()
+            #set next position
+            tolerance = 30
+            self.x += win.width
+            if self.x + win.width - tolerance > self.screenrect.right():
+                self.x = self.screenrect.left()
+                self.y += win.height
+                
+                if self.y + win.height - tolerance > self.screenrect.bottom():
+                    self.y = self.screenrect.top()
         
 ###############################################################################
 #Signals 
@@ -310,7 +311,7 @@ class MainWindow(qtw.QMainWindow):
     
     
     @QtCore.pyqtSlot(str)
-    def openPlot(self, guid : str=None, params : list=None):
+    def openPlot(self, guid : str=None, params : list=None, show=True):
         if not self.ds:
             ds = load_by_guid(guid)
         elif guid and self.ds.guid != guid:
@@ -325,9 +326,23 @@ class MainWindow(qtw.QMainWindow):
             if param.depends_on != "":
                 depends_on = param.depends_on_
                 if len(depends_on) == 1:
-                    self.openWin(plot1d, ds, param, self.config, refrate = self.spinBox.value())
+                    self.openWin(
+                        plot1d, 
+                        ds, 
+                        param, 
+                        self.config, 
+                        refrate = self.spinBox.value(),
+                        show = show
+                        )
                 else:
-                    self.openWin(plot2d, ds, param, self.config, refrate = self.spinBox.value())
+                    self.openWin(
+                        plot2d, 
+                        ds, 
+                        param, 
+                        self.config, 
+                        refrate = self.spinBox.value(),
+                        show = show
+                        )
         self.post_admin()
         
         

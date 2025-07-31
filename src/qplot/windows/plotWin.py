@@ -53,6 +53,9 @@ class plotWidget(qtw.QMainWindow):
         self.plot.showAxis("right")
         self.plot.showAxis("top")
         
+        self.plot.getAxis('top').setStyle(showValues=False)
+        self.plot.getAxis('right').setStyle(showValues=False)
+        
         screenrect = qtw.QApplication.primaryScreen().availableGeometry()
         sizeFrac = self.config.get("GUI.plot_frame_fraction")
 
@@ -60,7 +63,7 @@ class plotWidget(qtw.QMainWindow):
         self.height = int(sizeFrac * screenrect.height())
         self.resize(self.width, self.height)
         
-        w = qtw.QWidget()
+        w = qtw.QFrame()
         w.setLayout(self.layout)
         self.setCentralWidget(w)
         
@@ -321,8 +324,16 @@ class plotWidget(qtw.QMainWindow):
                 self.refreshPlot()
             
         finally:
+            
             if self.ds.running:
                 self.monitorIntervalChanged(self.spinBox.value())
+                
+            elif hasattr(self, "lines") and self.lines:
+                for subplot in list(self.lines.values())[1:]:
+                    if subplot.running:
+                        self.monitorIntervalChanged(self.spinBox.value())
+                        break
+
                 
     
     @QtCore.pyqtSlot()
