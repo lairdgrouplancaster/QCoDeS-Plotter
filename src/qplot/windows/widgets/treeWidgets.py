@@ -186,9 +186,12 @@ class RunList(qtw.QTreeWidget):
         
         for win in main.windows:
             if win.ds.guid == self.selectedItems()[0].guid and win.param == param:
+                if target_win == win:
+                    print(f"Skip, {target_win.label}. Target and Source are the same.\n")
+                    return
                 from_win = win
                 break
-        
+            
         if not from_win:
             x, y = main.x, main.y
             
@@ -207,14 +210,17 @@ class RunList(qtw.QTreeWidget):
         else:
             target_win.add_option_box()
             box = target_win.option_boxes[-1]
-            
-        box.option_box.setCurrentText(from_win.label)
-        box.option_box.setDisabled(True)
-        # box.option_box.adjustSize()
-        box.del_box.setEnabled(True)
-        box.itemSelected.emit(from_win.label)
+        
+        index = box.option_box.findText(from_win.label)
+        
+        print(from_win.label)
+        
+        # box.option_box.currentTextChanged.emit(from_win.label)
+        box.option_box.setCurrentIndex(index)
+        # box.option_box.activated.emit(index)
         
         if close_later:
+            print("closing")
             from_win.close()
         
      

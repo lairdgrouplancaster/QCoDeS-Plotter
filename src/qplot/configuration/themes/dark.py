@@ -319,6 +319,7 @@ class dark:
         	color: #a9b7c6;	
         	background: #1e1d23;
         }
+        
         QComboBox:editable {
         	background: #1e1d23;
         	color: #a9b7c6;
@@ -351,8 +352,12 @@ class dark:
         	background-color: #1e1d23;
         }
         QScrollArea {
-        	color: #FFFFFF;
+        	color: #ffffff;
         	background-color: #1e1d23;
+            border: none;
+        }
+        QScrollArea QWidget {
+            background-color: #1e1d23;
         }
         QSlider::groove:horizontal {
         	height: 5px;

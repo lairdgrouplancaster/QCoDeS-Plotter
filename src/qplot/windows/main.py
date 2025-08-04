@@ -11,17 +11,18 @@ from qplot.windows.widgets import (
     moreInfo,
     )
 from qplot.datahandling import (
-    dataset,
     find_new_runs
     )
 from qplot import config
 
 from qcodes.dataset import (
     initialise_or_create_database_at,
-    load_by_guid,
-    load_by_id
+    load_by_id,
+    load_by_guid
     )
-from qcodes.dataset.sqlite.database import get_DB_location
+from qcodes.dataset.sqlite.database import (
+    get_DB_location
+    )
 
 import os
 
@@ -242,7 +243,7 @@ class MainWindow(qtw.QMainWindow):
 
         if self.autoPlotBox.isChecked():
             for run in newRuns.values():
-                print(run["guid"])
+                # print(run["guid"])
                 self.openPlot(run["guid"])
 
                 
@@ -321,29 +322,34 @@ class MainWindow(qtw.QMainWindow):
             
         if not params:
             params = ds.get_parameters()
-            
-        for param in params:
-            if param.depends_on != "":
-                depends_on = param.depends_on_
-                if len(depends_on) == 1:
-                    self.openWin(
-                        plot1d, 
-                        ds, 
-                        param, 
-                        self.config, 
-                        refrate = self.spinBox.value(),
-                        show = show
-                        )
-                else:
-                    self.openWin(
-                        plot2d, 
-                        ds, 
-                        param, 
-                        self.config, 
-                        refrate = self.spinBox.value(),
-                        show = show
-                        )
-        self.post_admin()
+           
+        try:
+            for param in params:
+                if param.depends_on != "":
+                    depends_on = param.depends_on_
+                    if len(depends_on) == 1:
+                        self.openWin(
+                            plot1d, 
+                            ds, 
+                            param, 
+                            self.config, 
+                            refrate = self.spinBox.value(),
+                            show = show
+                            )
+                    else:
+                        self.openWin(
+                            plot2d, 
+                            ds, 
+                            param, 
+                            self.config, 
+                            refrate = self.spinBox.value(),
+                            show = show
+                            )
+            self.post_admin() #
+        except Exception as err:
+            # atempt to prevent SQL locks
+            ds.conn.close()
+            raise err
         
         
     @QtCore.pyqtSlot(str)
@@ -454,13 +460,3 @@ class MainWindow(qtw.QMainWindow):
         
         win.update_line_picker(wins)
         
-###############################################################################        
-#Depreicated
-
-    def openDataset(self):
-        run_id = int(self.pltTextbox.text())
-        ds = dataset.init_and_load_by_spec(
-            self.fileTextbox.text(),
-            captured_run_id=run_id
-            )
-        return ds

@@ -50,14 +50,25 @@ class plot1d(plotWidget):
     def initAxes(self):
         super().initAxes()
         
-        self.toolbarAxes.addSeparator()
-        self.toolbarAxes.addSeparator()
         
-        
-        self.toolbarAxes.addWidget(qtw.QLabel("Line Control"))
+        self.axesLayout.addWidget(qtw.QLabel("Line Control"))
         self.lines = {self.label : self.line}
         self.option_boxes = []
         self.box_count = 1
+        
+        
+        self.lineScroll = qtw.QScrollArea()
+        self.lineScroll.setWidgetResizable(True)
+        self.lineScroll.setMinimumSize(1, 1)
+        self.lineScroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.axesLayout.addWidget(self.lineScroll)
+        
+        self.scrollWidget = qtw.QWidget()
+        self.lineScroll.setWidget(self.scrollWidget)
+        
+        self.box_layout = qtw.QVBoxLayout()
+        self.box_layout.setContentsMargins(0, 0, 0, 0)
+        self.scrollWidget.setLayout(self.box_layout)
         
         main_line = picker_1d(self.config, [self.label])
         main_line.option_box.setCurrentIndex(0)
@@ -67,12 +78,28 @@ class plot1d(plotWidget):
         main_line.color_box.selectedColor.connect(
             lambda col: self.set_color(col, self.line)
             )
-        self.toolbarAxes.addWidget(main_line)
+        self.box_layout.addWidget(main_line)
         main_line.adjustSize()
         
+        self.box_layout.addStretch()
+        
         self.add_option_box(options=[""])
-    
-    
+        
+        
+    def _resize_scrollArea(self):
+        self.scrollWidget.adjustSize()
+        scrollWidth = (
+            self.scrollWidget.sizeHint().width() +
+            2 *  self.lineScroll.frameWidth() +
+            self.lineScroll.verticalScrollBar().sizeHint().width()
+            )
+        # self.lineScroll.resize(scrollWidth, self.lineScroll.height())
+        # self.dockWidget.adjustSize()
+        self.lineScroll.setMinimumWidth(scrollWidth)
+        
+        # self.lineScroll.setMinimumWidth(1) # allow user downsizing
+        
+        
     def add_option_box(self, options = None):
         if options:
             new_option = picker_1d(self.config, options)
@@ -88,8 +115,11 @@ class plot1d(plotWidget):
         self.box_count += 1
         
         self.option_boxes.append(new_option)
-        self.toolbarAxes.addWidget(new_option)
+        self.box_layout.insertWidget(self.box_layout.count() - 1, new_option)
         
+        self._resize_scrollArea()
+        
+    
     
     def update_line_picker(self, wins = None):
         if wins:
@@ -97,11 +127,15 @@ class plot1d(plotWidget):
         
         if self.option_boxes and self.mergable:
             box_texts = [box.option_box.currentText() for box in self.option_boxes]
-            self.option_boxes[-1].reset_box([item.label for item in self.mergable if item.label not in box_texts])
+            for box in self.option_boxes:
+                if box.option_box.isEnabled():
+                    self.option_boxes[-1].reset_box([item.label for item in self.mergable if item.label not in box_texts])
     
     
     @QtCore.pyqtSlot(str)
     def add_line(self, label):
+        
+        win = None
         
         for item in self.mergable:
             if item.label == label:
@@ -109,12 +143,12 @@ class plot1d(plotWidget):
                 self.mergable.remove(item)
                 break
         
+        assert win is not None
+        
         self.add_option_box()
         
         subplot = subplot1d(self, win)
         self.lines[label] = subplot
-        
-        print(f"{type(subplot)=}")
         
         for box in self.option_boxes:
             if label == box.option_box.currentText():
@@ -136,6 +170,8 @@ class plot1d(plotWidget):
         
         self.plot.removeItem(self.lines[label])
         self.update_line_picker()
+        
+        self._resize_scrollArea()
     
     
     @QtCore.pyqtSlot(QColor)

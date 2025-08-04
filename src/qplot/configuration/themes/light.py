@@ -329,6 +329,9 @@ class light:
             selection-color: #000000;
             color: #000000;
         }
+        QScrollArea {
+            border: none;
+        }
         QSlider::groove:horizontal {
             border: 1px solid #bbb;
             background: #f0f0f0;

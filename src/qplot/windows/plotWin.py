@@ -188,12 +188,18 @@ class plotWidget(qtw.QMainWindow):
             param_spec = unpack_param(self.ds, param)
             self.param_dict[param_spec.name] = param_spec
         
-        self.toolbarAxes = qtw.QToolBar("Axes Control")
-        # self.toolbarAxes.setFixedWidth(int(self.frameGeometry().width() * 0.25))
         
-        self.toolbarAxes.setSizePolicy(qtw.QSizePolicy.Fixed, qtw.QSizePolicy.Preferred)
+        dock = qtw.QDockWidget()
+        dock.setTitleBarWidget(qtw.QWidget(dock)) #effectively removes titlebar
+        # dock.setFeatures(qtw.QDockWidget.NoDockWidgetFeatures)
+        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
         
-        self.addToolBar(QtCore.Qt.LeftToolBarArea, self.toolbarAxes)
+        self.dockWidget = qtw.QFrame()
+        dock.setWidget(self.dockWidget)
+        
+        self.axesLayout = qtw.QVBoxLayout()
+        self.dockWidget.setLayout(self.axesLayout)
+        
         
         toolbar_l = qtw.QVBoxLayout()
         
@@ -211,9 +217,7 @@ class plotWidget(qtw.QMainWindow):
         y_layout.addWidget(y_dropdown)
         toolbar_l.addLayout(y_layout)
         
-        w = qtw.QWidget()
-        w.setLayout(toolbar_l)
-        self.toolbarAxes.addWidget(w)
+        self.axesLayout.addLayout(toolbar_l)
         self.axis_dropdown = {"x": x_dropdown, "y": y_dropdown}
         
         if len(indep_params) == 1:
@@ -238,6 +242,12 @@ class plotWidget(qtw.QMainWindow):
             self.axis_dropdown[axis].currentIndexChanged.connect(
                                         lambda index, axis=axis: self.change_axis(axis)
                                         )
+        sep = qtw.QFrame()
+        sep.setFrameShape(qtw.QFrame.HLine)
+        sep.setFrameShadow(qtw.QFrame.Sunken)
+        
+        self.axesLayout.addWidget(sep)
+        
         
         
     @staticmethod

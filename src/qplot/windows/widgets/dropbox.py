@@ -12,27 +12,35 @@ class picker_1d(qtw.QWidget):
     def __init__(self, cfg, items, *args, **kargs):
         super().__init__()
         
-        layout = qtw.QGridLayout(self)
+        layout = qtw.QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignRight)
         
+        row_1 = qtw.QHBoxLayout()
+        row_2 = qtw.QHBoxLayout()
+        
         self.option_box = expandingComboBox(*args, **kargs)
-        # self.setFixedWidth(150)
+        self.option_box.setSizePolicy(qtw.QSizePolicy.Expanding, qtw.QSizePolicy.Fixed)
         self.reset_box(items)
         self.option_box.currentIndexChanged.connect(self.selectedOption)
         
-        layout.addWidget(self.option_box, 0, 0, 1, 3)
+        row_1.addWidget(self.option_box)
+        
         
         self.del_box = qtw.QPushButton("X")
         self.del_box.setFixedWidth(self.del_but_width)
         self.del_box.setDisabled(True)
         self.del_box.clicked.connect(self.deleteBox)
-        layout.addWidget(self.del_box, 0, 3, 1, 1)
+        row_1.addWidget(self.del_box)
         
         self.color_box = colorBox(cfg)
         self.color_box.setFixedWidth(self.color_box_width)
         
-        layout.addWidget(qtw.QLabel("Color:"), 1, 1, 1, 1)
-        layout.addWidget(self.color_box, 1, 2, 1, 2)
+        row_2.addStretch()
+        row_2.addWidget(qtw.QLabel("Color: "))
+        row_2.addWidget(self.color_box)
+        
+        layout.addLayout(row_1)
+        layout.addLayout(row_2)
         
     
     def reset_box(self, items):
@@ -54,7 +62,14 @@ class picker_1d(qtw.QWidget):
         self.option_box.setDisabled(True)
         self.del_box.setEnabled(True)
         
-        self.option_box.adjustSize()
+        # print(self.option_box.count())
+        # if self.option_box.count() == 1:
+        #     self.option_box.addItem(self.option_box.currentText())
+        
+        font_metrics = self.option_box.view().fontMetrics()
+        text_width = font_metrics.boundingRect(self.option_box.currentText()).width()
+        
+        self.option_box.setMinimumWidth(text_width + 10)
         
         self.itemSelected.emit(self.option_box.currentText())
    
@@ -66,6 +81,7 @@ class picker_1d(qtw.QWidget):
         
         self.closed.emit(self.option_box.currentText())
     
+
     
 class expandingComboBox(qtw.QComboBox):
     def showPopup(self):
@@ -81,7 +97,10 @@ class expandingComboBox(qtw.QComboBox):
         self.view().setMinimumWidth(max_width)
 
         super().showPopup()     
-
+        
+    def wheelEvent(self, event):
+        event.ignore()  
+        
 
 class colorBox(qtw.QComboBox):
     selectedColor = QtCore.pyqtSignal([QColor])
@@ -102,8 +121,8 @@ class colorBox(qtw.QComboBox):
         
     def color(self):
         return self._currentColor
-     
-        
+    
+    
     def setColor(self, color):
         self._color_selected(color=color, emitSignal=False)
 
@@ -131,4 +150,7 @@ class colorBox(qtw.QComboBox):
         if emitSignal:
             self.selectedColor.emit(self._currentColor)
         
-            
+        
+    def wheelEvent(self, event):
+        event.ignore()  
+        
