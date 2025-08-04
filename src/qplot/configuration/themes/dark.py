@@ -141,12 +141,13 @@ class dark:
         	border-radius: 5px;
         }
         QMenuBar {
+            border-bottom: 1px solid #50a0b0a0;
         	background-color: #1e1d23;
         }
         QMenuBar::item {
         	color: #a9b7c6;
           	spacing: 3px;
-          	padding: 7px 4px;
+          	padding: 4px 4px;
           	background: #1e1d23;
         }
         

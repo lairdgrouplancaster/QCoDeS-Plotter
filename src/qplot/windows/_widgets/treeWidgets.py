@@ -212,15 +212,9 @@ class RunList(qtw.QTreeWidget):
             box = target_win.option_boxes[-1]
         
         index = box.option_box.findText(from_win.label)
-        
-        print(from_win.label)
-        
-        # box.option_box.currentTextChanged.emit(from_win.label)
         box.option_box.setCurrentIndex(index)
-        # box.option_box.activated.emit(index)
         
         if close_later:
-            print("closing")
             from_win.close()
         
      

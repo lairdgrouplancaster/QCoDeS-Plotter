@@ -11,7 +11,10 @@ import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.tools import unpack_param
-from qplot.windows.widgets import expandingComboBox
+from qplot.windows._widgets import (
+    expandingComboBox,
+    QDock_context,
+    )
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
@@ -47,6 +50,7 @@ class plotWidget(qtw.QMainWindow):
         self.initContextMenu()
         self.initRefresh(refrate)
         self.initFrame()
+        self.initMenu()
         
         self.setWindowTitle(str(self))
         
@@ -189,35 +193,21 @@ class plotWidget(qtw.QMainWindow):
             self.param_dict[param_spec.name] = param_spec
         
         
-        dock = qtw.QDockWidget()
-        dock.setTitleBarWidget(qtw.QWidget(dock)) #effectively removes titlebar
-        # dock.setFeatures(qtw.QDockWidget.NoDockWidgetFeatures)
-        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, dock)
+        self.axes_dock = QDock_context("Line control", self)
+        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.axes_dock)
         
-        self.dockWidget = qtw.QFrame()
-        dock.setWidget(self.dockWidget)
-        
-        self.axesLayout = qtw.QVBoxLayout()
-        self.dockWidget.setLayout(self.axesLayout)
-        
-        
-        toolbar_l = qtw.QVBoxLayout()
-        
-        x_layout = qtw.QHBoxLayout()
+        x_layout = self.axes_dock.addLayout()
         x_layout.addWidget(qtw.QLabel("x axis: "))
         x_dropdown = expandingComboBox()
         x_dropdown.addItems(indep_params)
         x_layout.addWidget(x_dropdown)
-        toolbar_l.addLayout(x_layout)
         
-        y_layout = qtw.QHBoxLayout()
+        y_layout = self.axes_dock.addLayout()
         y_layout.addWidget(qtw.QLabel("y axis: "))
         y_dropdown = expandingComboBox()
         y_dropdown.addItems(indep_params)
         y_layout.addWidget(y_dropdown)
-        toolbar_l.addLayout(y_layout)
         
-        self.axesLayout.addLayout(toolbar_l)
         self.axis_dropdown = {"x": x_dropdown, "y": y_dropdown}
         
         if len(indep_params) == 1:
@@ -246,7 +236,25 @@ class plotWidget(qtw.QMainWindow):
         sep.setFrameShape(qtw.QFrame.HLine)
         sep.setFrameShadow(qtw.QFrame.Sunken)
         
-        self.axesLayout.addWidget(sep)
+        self.axes_dock.addWidget(sep)
+        
+        if self.__class__.__name__ == "plot2d":
+            self.axes_dock.layout.addStretch()
+        
+    
+    def initMenu(self):
+        menu = self.menuBar()
+        
+        main_menu = menu.addMenu("&View")
+        
+        refreshAction = qtw.QAction("&Refresh", self)
+        refreshAction.setShortcut("R")
+        refreshAction.triggered.connect(lambda: self.refreshMain(force=True))
+        main_menu.addAction(refreshAction)
+        
+        toolbar_menu = self.createPopupMenu()
+        toolbar_menu.setTitle("Toolbars")
+        main_menu.addMenu(toolbar_menu)
         
         
         
@@ -268,6 +276,20 @@ class plotWidget(qtw.QMainWindow):
         
         self.setStyleSheet(self.config.theme.main)
         self.config.theme.style_plotItem(self)
+    
+   
+    def createPopupMenu(self):
+        menu = qtw.QMenu(self)
+    
+        # Safe collection of QToolBar and QDockWidget
+        widgets = self.findChildren((qtw.QToolBar, qtw.QDockWidget))
+    
+        for widget in widgets:
+            action = widget.toggleViewAction()
+            if isinstance(action, qtw.QAction):
+                menu.addAction(action)
+    
+        return menu
         
       
 ###############################################################################
@@ -326,6 +348,7 @@ class plotWidget(qtw.QMainWindow):
             self.last_df_len = len(self.depvarData)
             self.loadDSdata()
             
+            #Plot has started
             if not self.initalised:
                 self.initFrame() #defined in children classes
                 return
@@ -333,11 +356,13 @@ class plotWidget(qtw.QMainWindow):
             if len(self.depvarData) != self.last_df_len or force:
                 self.refreshPlot()
             
-        finally:
+        finally: #Ran after return
             
+            #restart monitor
             if self.ds.running:
                 self.monitorIntervalChanged(self.spinBox.value())
-                
+               
+            #restard monitor if any subplots are live
             elif hasattr(self, "lines") and self.lines:
                 for subplot in list(self.lines.values())[1:]:
                     if subplot.running:

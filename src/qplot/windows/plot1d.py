@@ -1,5 +1,5 @@
 from qplot.windows.plotWin import plotWidget
-from qplot.windows.widgets import picker_1d
+from qplot.windows._widgets import picker_1d
 from qplot.tools.subplot import subplot1d
 
 from PyQt5 import (
@@ -51,7 +51,7 @@ class plot1d(plotWidget):
         super().initAxes()
         
         
-        self.axesLayout.addWidget(qtw.QLabel("Line Control"))
+        self.axes_dock.addWidget(qtw.QLabel("Line Control"))
         self.lines = {self.label : self.line}
         self.option_boxes = []
         self.box_count = 1
@@ -61,7 +61,7 @@ class plot1d(plotWidget):
         self.lineScroll.setWidgetResizable(True)
         self.lineScroll.setMinimumSize(1, 1)
         self.lineScroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.axesLayout.addWidget(self.lineScroll)
+        self.axes_dock.addWidget(self.lineScroll)
         
         self.scrollWidget = qtw.QWidget()
         self.lineScroll.setWidget(self.scrollWidget)
@@ -93,11 +93,7 @@ class plot1d(plotWidget):
             2 *  self.lineScroll.frameWidth() +
             self.lineScroll.verticalScrollBar().sizeHint().width()
             )
-        # self.lineScroll.resize(scrollWidth, self.lineScroll.height())
-        # self.dockWidget.adjustSize()
         self.lineScroll.setMinimumWidth(scrollWidth)
-        
-        # self.lineScroll.setMinimumWidth(1) # allow user downsizing
         
         
     def add_option_box(self, options = None):

@@ -6,7 +6,7 @@ from qplot.windows import (
     plot1d,
     plot2d,
     )
-from qplot.windows.widgets import (
+from qplot.windows._widgets import (
     RunList,
     moreInfo,
     )
