@@ -24,6 +24,7 @@ class plotWidget(qtw.QMainWindow):
                  param : qcodes.dataset.ParamSpec,
                  config,
                  refrate : float=None,
+                 show : bool=True
                  ):
         print("Working, please wait")
         super().__init__()
@@ -44,32 +45,35 @@ class plotWidget(qtw.QMainWindow):
         
         self.widget = pg.GraphicsLayoutWidget()
         self.plot = self.widget.addPlot()
+        self.vb = self.plot.getViewBox()
         self.layout.addWidget(self.widget)
         
-        self.initLabels()
-        self.initContextMenu()
         self.initRefresh(refrate)
-        self.initFrame()
-        self.initMenu()
         
-        self.setWindowTitle(str(self))
-        
-        self.plot.showAxis("right")
-        self.plot.showAxis("top")
-        
-        self.plot.getAxis('top').setStyle(showValues=False)
-        self.plot.getAxis('right').setStyle(showValues=False)
-        
-        screenrect = qtw.QApplication.primaryScreen().availableGeometry()
-        sizeFrac = self.config.get("GUI.plot_frame_fraction")
-
-        self.width = int(sizeFrac * screenrect.width())
-        self.height = int(sizeFrac * screenrect.height())
-        self.resize(self.width, self.height)
-        
-        w = qtw.QFrame()
-        w.setLayout(self.layout)
-        self.setCentralWidget(w)
+        if show:
+            self.initLabels()
+            self.initContextMenu()
+            self.initFrame()
+            self.initMenu()
+            
+            self.setWindowTitle(str(self))
+            
+            self.plot.showAxis("right")
+            self.plot.showAxis("top")
+            
+            self.plot.getAxis('top').setStyle(showValues=False)
+            self.plot.getAxis('right').setStyle(showValues=False)
+            
+            screenrect = qtw.QApplication.primaryScreen().availableGeometry()
+            sizeFrac = self.config.get("GUI.plot_frame_fraction")
+    
+            self.width = int(sizeFrac * screenrect.width())
+            self.height = int(sizeFrac * screenrect.height())
+            self.resize(self.width, self.height)
+            
+            w = qtw.QFrame()
+            w.setLayout(self.layout)
+            self.setCentralWidget(w)
         
         if self.ds.running:
             self.monitor.start((int(self.spinBox.value() * 1000)))
@@ -161,7 +165,7 @@ class plotWidget(qtw.QMainWindow):
         self.pos_labels["x"] = posLabelx
         
         posLabely = qtw.QLabel("y= ")
-        posLabelx.setMinimumWidth(labelWidth)
+        posLabely.setMinimumWidth(labelWidth)
         self.toolbarCo_ord.addWidget(posLabely)
         self.pos_labels["y"] = posLabely
         
@@ -171,7 +175,6 @@ class plotWidget(qtw.QMainWindow):
     
     
     def initContextMenu(self):
-        self.vb = self.plot.getViewBox()
         self.vbMenu = self.vb.menu
         
         actions = []
@@ -191,7 +194,6 @@ class plotWidget(qtw.QMainWindow):
         for param in indep_params:
             param_spec = unpack_param(self.ds, param)
             self.param_dict[param_spec.name] = param_spec
-        
         
         self.axes_dock = QDock_context("Line control", self)
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.axes_dock)
@@ -249,13 +251,12 @@ class plotWidget(qtw.QMainWindow):
         
         refreshAction = qtw.QAction("&Refresh", self)
         refreshAction.setShortcut("R")
-        refreshAction.triggered.connect(lambda: self.refreshMain(force=True))
+        refreshAction.triggered.connect(lambda: self.refreshWindow(force=True))
         main_menu.addAction(refreshAction)
         
         toolbar_menu = self.createPopupMenu()
         toolbar_menu.setTitle("Toolbars")
         main_menu.addMenu(toolbar_menu)
-        
         
         
     @staticmethod

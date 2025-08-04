@@ -40,6 +40,17 @@ class plot2d(plotWidget):
         self.initalised = True
         print("graph produced \n")
       
+        
+    def loadDSdata(self):
+        super().loadDSdata()
+        
+        self.dataGrid = data2matrix(
+            self.axis_data["x"], 
+            self.axis_data["y"], 
+            self.depvarData
+        ).to_numpy(float)
+        
+        
     def initRefresh(self, refresh):
         super().initRefresh(refresh)
         
@@ -70,14 +81,8 @@ class plot2d(plotWidget):
 ###############################################################################
     
     def refreshPlot(self):
-        dataGrid = data2matrix(
-            self.axis_data["x"], 
-            self.axis_data["y"], 
-            self.depvarData
-        )
-        
         self.image.setImage(
-            dataGrid.to_numpy(float),
+            self.dataGrid,
             autoLevels=bool(self.relevel_refresh.isChecked()),
             autoRange=bool(self.rescale_refresh.isChecked()) #currently redundant
             )

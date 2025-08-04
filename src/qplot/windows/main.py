@@ -194,7 +194,7 @@ class MainWindow(qtw.QMainWindow):
     
     
     def openWin(self, widget, *args, show=True, **kargs):
-        win = widget(*args, **kargs)
+        win = widget(*args, show=True, **kargs)
         
         self.windows.append(win)
         win.closed.connect(self.onClose)
@@ -237,7 +237,10 @@ class MainWindow(qtw.QMainWindow):
         if not newRuns:
             return
         
-        self.listWidget.maxTime = max(np.array([subDict["run_timestamp"] for subDict in newRuns.values()], dtype=float), default=0)
+        self.listWidget.maxTime = max(
+            np.array([subDict["run_timestamp"] for subDict in newRuns.values()], dtype=float),
+            default=0
+            )
         self.listWidget.addRuns(newRuns)
 
 

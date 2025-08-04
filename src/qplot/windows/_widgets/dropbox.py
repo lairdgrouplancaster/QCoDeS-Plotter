@@ -9,22 +9,21 @@ class picker_1d(qtw.QWidget):
     del_but_width = 15
     color_box_width = 75
     
-    def __init__(self, cfg, items, *args, **kargs):
+    def __init__(self, main, cfg, items, *args, **kargs):
         super().__init__()
         
         layout = qtw.QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignRight)
         
-        row_1 = qtw.QHBoxLayout()
-        row_2 = qtw.QHBoxLayout()
+        #produce rows with context menu and context manager from dockWidget
+        row_1 = main.axes_dock.HBox_context(main.axes_dock.event_filter)
+        row_2 = main.axes_dock.HBox_context(main.axes_dock.event_filter)
         
         self.option_box = expandingComboBox(*args, **kargs)
         self.option_box.setSizePolicy(qtw.QSizePolicy.Expanding, qtw.QSizePolicy.Fixed)
         self.reset_box(items)
         self.option_box.currentIndexChanged.connect(self.selectedOption)
-        
         row_1.addWidget(self.option_box)
-        
         
         self.del_box = qtw.QPushButton("X")
         self.del_box.setFixedWidth(self.del_but_width)
@@ -32,11 +31,19 @@ class picker_1d(qtw.QWidget):
         self.del_box.clicked.connect(self.deleteBox)
         row_1.addWidget(self.del_box)
         
-        self.color_box = colorBox(cfg)
-        self.color_box.setFixedWidth(self.color_box_width)
+        
+        row_2.addWidget(qtw.QLabel("Side: "))
+        
+        self.axis_side = expandingComboBox()
+        self.axis_side.addItems(["Left", "Right"])
+        self.axis_side.setCurrentIndex(0)
+        row_2.addWidget(self.axis_side)
         
         row_2.addStretch()
         row_2.addWidget(qtw.QLabel("Color: "))
+        
+        self.color_box = colorBox(cfg)
+        self.color_box.setFixedWidth(self.color_box_width)
         row_2.addWidget(self.color_box)
         
         layout.addLayout(row_1)
@@ -47,7 +54,8 @@ class picker_1d(qtw.QWidget):
         self.option_box.blockSignals(True)
         
         self.option_box.clear()
-        self.option_box.addItems(items)
+        if items:
+            self.option_box.addItems(items)
         
         self.option_box.setEditable(True)
         self.option_box.lineEdit().setReadOnly(True)
@@ -61,10 +69,6 @@ class picker_1d(qtw.QWidget):
     def selectedOption(self, index):
         self.option_box.setDisabled(True)
         self.del_box.setEnabled(True)
-        
-        # print(self.option_box.count())
-        # if self.option_box.count() == 1:
-        #     self.option_box.addItem(self.option_box.currentText())
         
         font_metrics = self.option_box.view().fontMetrics()
         text_width = font_metrics.boundingRect(self.option_box.currentText()).width()

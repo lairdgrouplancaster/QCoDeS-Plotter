@@ -6,7 +6,8 @@ from PyQt5 import (
     QtWidgets as qtw,
     QtCore,
     )
-from PyQt5.QtGui import QColor
+
+import pyqtgraph as pg
 
 
 class plot1d(plotWidget):
@@ -45,7 +46,7 @@ class plot1d(plotWidget):
         # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
         
 ###############################################################################
-#Line control
+#Line and Subplots control
    
     def initAxes(self):
         super().initAxes()
@@ -70,10 +71,11 @@ class plot1d(plotWidget):
         self.box_layout.setContentsMargins(0, 0, 0, 0)
         self.scrollWidget.setLayout(self.box_layout)
         
-        main_line = picker_1d(self.config, [self.label])
+        main_line = picker_1d(self, self.config, [self.label])
         main_line.option_box.setCurrentIndex(0)
         main_line.option_box.setDisabled(True)
         main_line.del_box.setDisabled(True)
+        main_line.axis_side.setDisabled(True)
         main_line.color_box.setColor(self.config.theme.colors[0])
         main_line.color_box.selectedColor.connect(
             lambda col: self.set_color(col, self.line)
@@ -83,7 +85,7 @@ class plot1d(plotWidget):
         
         self.box_layout.addStretch()
         
-        self.add_option_box(options=[""])
+        self.add_option_box(options=[])
         
         
     def _resize_scrollArea(self):
@@ -97,10 +99,10 @@ class plot1d(plotWidget):
         
         
     def add_option_box(self, options = None):
-        if options:
-            new_option = picker_1d(self.config, options)
+        if options is not None:
+            new_option = picker_1d(self, self.config, options)
         else:
-            new_option = picker_1d(self.config, [item.label for item in self.mergable])
+            new_option = picker_1d(self, self.config, [item.label for item in self.mergable])
         
         new_option.itemSelected.connect(lambda label: self.add_line(label))
         new_option.closed.connect(self.remove_line)
@@ -148,12 +150,20 @@ class plot1d(plotWidget):
         
         for box in self.option_boxes:
             if label == box.option_box.currentText():
-                col_box = box.color_box
-                col_box.selectedColor.connect(
-                    lambda col: self.set_color(col, subplot)
+                
+                box.color_box.selectedColor.connect(
+                    subplot.set_color
+                    )
+                
+                box.axis_side.currentTextChanged.connect(
+                    subplot.set_side
                     )
                 break
-        self.set_color(col_box.color(), subplot)
+        
+        assert box is not None
+        
+        subplot.set_color(box.color_box.color())
+        subplot.set_side(box.axis_side.currentText().lower())
         
     
     @QtCore.pyqtSlot(str)
@@ -169,7 +179,4 @@ class plot1d(plotWidget):
         
         self._resize_scrollArea()
     
-    
-    @QtCore.pyqtSlot(QColor)
-    def set_color(self, col, subplot):
-        subplot.setPen(col)
+        

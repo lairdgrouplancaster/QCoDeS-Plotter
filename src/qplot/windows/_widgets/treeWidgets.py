@@ -198,12 +198,15 @@ class RunList(qtw.QTreeWidget):
             main.openPlot(params=[param], show=False)
             from_win = main.windows[-1]
             
-            if from_win.ds.running and not target_win.monitor.isActive():
-                target_win.monitorIntervalChanged(target_win.spinBox.value())
-                target_win.toolbarRef.show()
+            if from_win.ds.running:
+                if not target_win.monitor.isActive():
+                    target_win.monitorIntervalChanged(target_win.spinBox.value())
+                    target_win.toolbarRef.show()
+            else: 
+                close_later = True
             
             main.x, main.y = x, y
-            close_later = True
+            
         
         if target_win.option_boxes[-1].isEnabled():
             box = target_win.option_boxes[-1]
