@@ -4,7 +4,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qplot"
-<<<<<<< HEAD
 version = "0.9.12"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"}]
 license = "MIT"
