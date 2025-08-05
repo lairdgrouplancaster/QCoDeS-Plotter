@@ -137,7 +137,7 @@ class colorBox(qtw.QComboBox):
             self.setCurrentText("") 
             color = qtw.QColorDialog.getColor()
 
-            if color.alpha() == 255:
+            if not color.isValid():
                 return
             
             self._currentColor = color

@@ -80,7 +80,7 @@ class plot1d(plotWidget):
         main_line.axis_side.setDisabled(True)
         main_line.color_box.setColor(self.config.theme.colors[0])
         main_line.color_box.selectedColor.connect(
-            lambda col: self.set_color(col, self.line)
+            lambda col: self.line.setPen(col)
             )
         self.box_layout.addWidget(main_line)
         main_line.adjustSize()
