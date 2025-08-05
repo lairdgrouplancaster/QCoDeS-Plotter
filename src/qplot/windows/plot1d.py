@@ -1,15 +1,17 @@
 from qplot.windows.plotWin import plotWidget
-from qplot.windows.widgets import picker_1d
+from qplot.windows._widgets import picker_1d
 from qplot.tools.subplot import subplot1d
 
 from PyQt5 import (
     QtWidgets as qtw,
     QtCore,
     )
-from PyQt5.QtGui import QColor
+
+import pyqtgraph as pg
 
 
 class plot1d(plotWidget):
+    get_mergables = QtCore.pyqtSignal()
     
     def __init__(self, 
                  *args,
@@ -17,6 +19,7 @@ class plot1d(plotWidget):
                  ):
         self.mergable = None
         self.line = None
+        self.right_vb = None
         super().__init__(*args, **kargs)
         
         
@@ -41,46 +44,67 @@ class plot1d(plotWidget):
             y=self.axis_data["y"],
             )
         for line in list(self.lines.values())[1:]:
-            # print(row)
             line.refresh()
         # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
         
 ###############################################################################
-#Line control
+#Line and Subplots control
    
     def initAxes(self):
         super().initAxes()
         
-        self.toolbarAxes.addSeparator()
-        self.toolbarAxes.addSeparator()
         
-        # self.toolbarAxes.addWidget(qtw.QLineEdit())
-        
-        # self.toolbarAxes.addSeparator()
-        
-        self.toolbarAxes.addWidget(qtw.QLabel("Line Control"))
+        self.axes_dock.addWidget(qtw.QLabel("Line Control"))
         self.lines = {self.label : self.line}
         self.option_boxes = []
         self.box_count = 1
         
-        main_line = picker_1d(self.config, [self.label])
+        
+        self.lineScroll = qtw.QScrollArea()
+        self.lineScroll.setWidgetResizable(True)
+        self.lineScroll.setMinimumSize(1, 1)
+        self.lineScroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.axes_dock.addWidget(self.lineScroll)
+        
+        self.scrollWidget = qtw.QWidget()
+        self.lineScroll.setWidget(self.scrollWidget)
+        
+        self.box_layout = qtw.QVBoxLayout()
+        self.box_layout.setContentsMargins(0, 0, 0, 0)
+        self.scrollWidget.setLayout(self.box_layout)
+        
+        main_line = picker_1d(self, self.config, [self.label])
         main_line.option_box.setCurrentIndex(0)
         main_line.option_box.setDisabled(True)
         main_line.del_box.setDisabled(True)
+        main_line.axis_side.setDisabled(True)
         main_line.color_box.setColor(self.config.theme.colors[0])
         main_line.color_box.selectedColor.connect(
-            lambda col: self.set_color(col, self.line)
+            lambda col: self.line.setPen(col)
             )
+        self.box_layout.addWidget(main_line)
+        main_line.adjustSize()
         
-        self.toolbarAxes.addWidget(main_line)
-        self.add_option_box(options=[""])
-    
-    
+        self.box_layout.addStretch()
+        
+        self.add_option_box(options=[])
+        
+        
+    def _resize_scrollArea(self):
+        self.scrollWidget.adjustSize()
+        scrollWidth = (
+            self.scrollWidget.sizeHint().width() +
+            2 *  self.lineScroll.frameWidth() +
+            self.lineScroll.verticalScrollBar().sizeHint().width()
+            )
+        self.lineScroll.setMinimumWidth(scrollWidth)
+        
+        
     def add_option_box(self, options = None):
-        if options:
-            new_option = picker_1d(self.config, options)
+        if options is not None:
+            new_option = picker_1d(self, self.config, options)
         else:
-            new_option = picker_1d(self.config, [item.label for item in self.mergable])
+            new_option = picker_1d(self, self.config, [item.label for item in self.mergable])
         
         new_option.itemSelected.connect(lambda label: self.add_line(label))
         new_option.closed.connect(self.remove_line)
@@ -91,7 +115,10 @@ class plot1d(plotWidget):
         self.box_count += 1
         
         self.option_boxes.append(new_option)
-        self.toolbarAxes.addWidget(new_option)
+        self.box_layout.insertWidget(self.box_layout.count() - 1, new_option)
+        
+        self._resize_scrollArea()
+        
     
     
     def update_line_picker(self, wins = None):
@@ -100,32 +127,59 @@ class plot1d(plotWidget):
         
         if self.option_boxes and self.mergable:
             box_texts = [box.option_box.currentText() for box in self.option_boxes]
-            self.option_boxes[-1].reset_box([item.label for item in self.mergable if item.label not in box_texts])
+            for box in self.option_boxes:
+                if box.option_box.isEnabled():
+                    self.option_boxes[-1].reset_box([item.label for item in self.mergable if item.label not in box_texts])
     
     
     @QtCore.pyqtSlot(str)
     def add_line(self, label):
+        
+        win = None
+        
         for item in self.mergable:
             if item.label == label:
                 win = item
                 self.mergable.remove(item)
                 break
         
+        assert win is not None
+        
+        if not self.right_vb:
+            #Create viewbox for right axis and add viewbox to main plot widget
+            self.right_vb = pg.ViewBox()
+            self.plot.scene().addItem(self.right_vb)
+            
+            self.plot.getAxis('right').linkToView(self.right_vb)
+            self.right_vb.setXLink(self.plot)
+            
+            self.updateViews(None)
+            self.vb.main_moved.connect(self.updateViews)
+            
+        
         self.add_option_box()
         
         subplot = subplot1d(self, win)
         self.lines[label] = subplot
         
+        self.plot.getAxis('right').setStyle(showValues=True)
+        
         for box in self.option_boxes:
             if label == box.option_box.currentText():
-                col_box = box.color_box
-                col_box.selectedColor.connect(
-                    lambda col: self.set_color(col, subplot)
+                
+                box.color_box.selectedColor.connect(
+                    subplot.set_color
+                    )
+                
+                box.axis_side.currentTextChanged.connect(
+                    subplot.set_side
                     )
                 break
-        self.set_color(col_box.color(), subplot)
         
+        assert box is not None
         
+        subplot.set_color(box.color_box.color())
+        subplot.set_side(box.axis_side.currentText().lower())
         
     
     @QtCore.pyqtSlot(str)
@@ -136,10 +190,24 @@ class plot1d(plotWidget):
                 self.option_boxes.remove(option)
                 break
         
+        if not self.option_boxes:
+            self.plot.getAxis('right').setStyle(showValues=False)
+        
         self.plot.removeItem(self.lines[label])
-        self.update_line_picker()
+        self.lines.pop(label)
+        
+        self.get_mergables.emit()
+        
+        self._resize_scrollArea()
     
     
-    @QtCore.pyqtSlot(QColor)
-    def set_color(self, col, subplot):
-        subplot.setPen(col)
+    @QtCore.pyqtSlot(object)
+    def updateViews(self, ev):
+        self.right_vb.setGeometry(self.vb.sceneBoundingRect())
+        
+        if ev.__class__.__name__ == "QGraphicsSceneWheelEvent":
+            self.right_vb.wheelEvent(ev)
+        elif ev.__class__.__name__ == "MouseDragEvent":
+            self.right_vb.mouseDragEvent(ev)
+        
+        self.right_vb.setGeometry(self.vb.sceneBoundingRect())

@@ -185,28 +185,36 @@ class RunList(qtw.QTreeWidget):
         
         for win in main.windows:
             if win.ds.guid == self.selectedItems()[0].guid and win.param == param:
+                if target_win == win:
+                    print(f"Skip, {target_win.label}. Target and Source are the same.\n")
+                    return
                 from_win = win
                 break
-        
+            
         if not from_win:
             x, y = main.x, main.y
             
-            main.openPlot(params=[param])
+            main.openPlot(params=[param], show=False)
             from_win = main.windows[-1]
             
+            if from_win.ds.running:
+                if not target_win.monitor.isActive():
+                    target_win.monitorIntervalChanged(target_win.spinBox.value())
+                    target_win.toolbarRef.show()
+            else: 
+                close_later = True
+            
             main.x, main.y = x, y
-            close_later = True
+            
         
         if target_win.option_boxes[-1].isEnabled():
             box = target_win.option_boxes[-1]
         else:
             target_win.add_option_box()
             box = target_win.option_boxes[-1]
-            
-        box.option_box.setCurrentText(from_win.label)
-        box.option_box.setDisabled(True)
-        box.del_box.setEnabled(True)
-        box.itemSelected.emit(from_win.label)
+        
+        index = box.option_box.findText(from_win.label)
+        box.option_box.setCurrentIndex(index)
         
         if close_later:
             from_win.close()

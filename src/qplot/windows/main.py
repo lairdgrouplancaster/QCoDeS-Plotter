@@ -6,22 +6,23 @@ from qplot.windows import (
     plot1d,
     plot2d,
     )
-from qplot.windows.widgets import (
+from qplot.windows._widgets import (
     RunList,
     moreInfo,
     )
 from qplot.datahandling import (
-    dataset,
     find_new_runs
     )
 from qplot import config
 
 from qcodes.dataset import (
     initialise_or_create_database_at,
-    load_by_guid,
-    load_by_id
+    load_by_id,
+    load_by_guid
     )
-from qcodes.dataset.sqlite.database import get_DB_location
+from qcodes.dataset.sqlite.database import (
+    get_DB_location
+    )
 
 import os
 
@@ -55,7 +56,7 @@ class MainWindow(qtw.QMainWindow):
         
         
         #Final Setup
-        w = qtw.QWidget()
+        w = qtw.QFrame()
         w.setLayout(self.l)
         self.setCentralWidget(w)
        
@@ -192,26 +193,30 @@ class MainWindow(qtw.QMainWindow):
         del win
     
     
-    def openWin(self, widget, *args, **kargs):
-        win = widget(*args, **kargs)
+    def openWin(self, widget, *args, show=True, **kargs):
+        win = widget(*args, show=show, **kargs)
         
         self.windows.append(win)
+        
         win.closed.connect(self.onClose)
+        if hasattr(win, "get_mergables"):
+            win.get_mergables.connect(lambda: self.get_1d_wins(win))
 
         win.update_theme(self.config)
         
-        win.move(self.x, self.y)
-        win.show()
+        if show:
+            win.move(self.x, self.y)
+            win.show()
         
-        #set next position
-        tolerance = 30
-        self.x += win.width
-        if self.x + win.width - tolerance > self.screenrect.right():
-            self.x = self.screenrect.left()
-            self.y += win.height
-            
-            if self.y + win.height - tolerance > self.screenrect.bottom():
-                self.y = self.screenrect.top()
+            #set next position
+            tolerance = 30
+            self.x += win.width
+            if self.x + win.width - tolerance > self.screenrect.right():
+                self.x = self.screenrect.left()
+                self.y += win.height
+                
+                if self.y + win.height - tolerance > self.screenrect.bottom():
+                    self.y = self.screenrect.top()
         
 ###############################################################################
 #Signals 
@@ -235,13 +240,16 @@ class MainWindow(qtw.QMainWindow):
         if not newRuns:
             return
         
-        self.listWidget.maxTime = max(np.array([subDict["run_timestamp"] for subDict in newRuns.values()], dtype=float), default=0)
+        self.listWidget.maxTime = max(
+            np.array([subDict["run_timestamp"] for subDict in newRuns.values()], dtype=float),
+            default=0
+            )
         self.listWidget.addRuns(newRuns)
 
 
         if self.autoPlotBox.isChecked():
             for run in newRuns.values():
-                print(run["guid"])
+                # print(run["guid"])
                 self.openPlot(run["guid"])
 
                 
@@ -310,7 +318,7 @@ class MainWindow(qtw.QMainWindow):
     
     
     @QtCore.pyqtSlot(str)
-    def openPlot(self, guid : str=None, params : list=None):
+    def openPlot(self, guid : str=None, params : list=None, show=True):
         if not self.ds:
             ds = load_by_guid(guid)
         elif guid and self.ds.guid != guid:
@@ -320,15 +328,34 @@ class MainWindow(qtw.QMainWindow):
             
         if not params:
             params = ds.get_parameters()
-            
-        for param in params:
-            if param.depends_on != "":
-                depends_on = param.depends_on_
-                if len(depends_on) == 1:
-                    self.openWin(plot1d, ds, param, self.config, refrate = self.spinBox.value())
-                else:
-                    self.openWin(plot2d, ds, param, self.config, refrate = self.spinBox.value())
-        self.post_admin()
+           
+        try:
+            for param in params:
+                if param.depends_on != "":
+                    depends_on = param.depends_on_
+                    if len(depends_on) == 1:
+                        self.openWin(
+                            plot1d, 
+                            ds, 
+                            param, 
+                            self.config, 
+                            refrate = self.spinBox.value(),
+                            show = show
+                            )
+                    else:
+                        self.openWin(
+                            plot2d, 
+                            ds, 
+                            param, 
+                            self.config, 
+                            refrate = self.spinBox.value(),
+                            show = show
+                            )
+            self.post_admin() #
+        except Exception as err:
+            # atempt to prevent SQL locks
+            ds.conn.close()
+            raise err
         
         
     @QtCore.pyqtSlot(str)
@@ -439,13 +466,3 @@ class MainWindow(qtw.QMainWindow):
         
         win.update_line_picker(wins)
         
-###############################################################################        
-#Depreicated
-
-    def openDataset(self):
-        run_id = int(self.pltTextbox.text())
-        ds = dataset.init_and_load_by_spec(
-            self.fileTextbox.text(),
-            captured_run_id=run_id
-            )
-        return ds
