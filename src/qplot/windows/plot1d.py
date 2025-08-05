@@ -11,6 +11,7 @@ import pyqtgraph as pg
 
 
 class plot1d(plotWidget):
+    get_mergables = QtCore.pyqtSignal()
     
     def __init__(self, 
                  *args,
@@ -18,6 +19,7 @@ class plot1d(plotWidget):
                  ):
         self.mergable = None
         self.line = None
+        self.right_vb = None
         super().__init__(*args, **kargs)
         
         
@@ -143,10 +145,24 @@ class plot1d(plotWidget):
         
         assert win is not None
         
+        if not self.right_vb:
+            #Create viewbox for right axis and add viewbox to main plot widget
+            self.right_vb = pg.ViewBox()
+            self.plot.scene().addItem(self.right_vb)
+            
+            self.plot.getAxis('right').linkToView(self.right_vb)
+            self.right_vb.setXLink(self.plot)
+            
+            self.updateViews(None)
+            self.vb.main_moved.connect(self.updateViews)
+            
+        
         self.add_option_box()
         
         subplot = subplot1d(self, win)
         self.lines[label] = subplot
+        
+        self.plot.getAxis('right').setStyle(showValues=True)
         
         for box in self.option_boxes:
             if label == box.option_box.currentText():
@@ -174,9 +190,24 @@ class plot1d(plotWidget):
                 self.option_boxes.remove(option)
                 break
         
+        if not self.option_boxes:
+            self.plot.getAxis('right').setStyle(showValues=False)
+        
         self.plot.removeItem(self.lines[label])
-        self.update_line_picker()
+        self.lines.pop(label)
+        
+        self.get_mergables.emit()
         
         self._resize_scrollArea()
     
+    
+    @QtCore.pyqtSlot(object)
+    def updateViews(self, ev):
+        self.right_vb.setGeometry(self.vb.sceneBoundingRect())
         
+        if ev.__class__.__name__ == "QGraphicsSceneWheelEvent":
+            self.right_vb.wheelEvent(ev)
+        elif ev.__class__.__name__ == "MouseDragEvent":
+            self.right_vb.mouseDragEvent(ev)
+        
+        self.right_vb.setGeometry(self.vb.sceneBoundingRect())

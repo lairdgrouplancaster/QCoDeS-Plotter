@@ -15,6 +15,8 @@ from qplot.windows._widgets import (
     expandingComboBox,
     QDock_context,
     )
+from qplot.tools.subplot import custom_viewbox
+
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
@@ -44,8 +46,9 @@ class plotWidget(qtw.QMainWindow):
         self.layout = qtw.QVBoxLayout()
         
         self.widget = pg.GraphicsLayoutWidget()
-        self.plot = self.widget.addPlot()
-        self.vb = self.plot.getViewBox()
+        self.vb = custom_viewbox()
+        self.plot = self.widget.addPlot(viewBox=self.vb)
+        self.vb.setParent(self.plot)
         self.layout.addWidget(self.widget)
         
         self.initRefresh(refrate)

@@ -194,10 +194,13 @@ class MainWindow(qtw.QMainWindow):
     
     
     def openWin(self, widget, *args, show=True, **kargs):
-        win = widget(*args, show=True, **kargs)
+        win = widget(*args, show=show, **kargs)
         
         self.windows.append(win)
+        
         win.closed.connect(self.onClose)
+        if hasattr(win, "get_mergables"):
+            win.get_mergables.connect(lambda: self.get_1d_wins(win))
 
         win.update_theme(self.config)
         

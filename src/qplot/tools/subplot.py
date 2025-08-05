@@ -15,16 +15,6 @@ class subplot1d(pg.PlotDataItem):
         self.parent = parent
         self.from_win = from_win
         
-        #Create viewbox for line and add viewbox to main plot widget
-        self.vb = pg.ViewBox()
-        self.parent.plot.scene().addItem(self.vb)
-        
-        self.parent.plot.getAxis('right').linkToView(self.vb)
-        self.vb.setXLink(self.parent.plot)
-        
-        self.updateViews()
-        self.parent.vb.sigResized.connect(self.updateViews)
-        
         self.refresh()
         
         self.side = "left"
@@ -68,12 +58,6 @@ class subplot1d(pg.PlotDataItem):
             y=data["y"],
             )
         # parent.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
-        
-    
-    def updateViews(self):
-        self.vb.setGeometry(self.parent.vb.sceneBoundingRect())
-        self.vb.linkedViewChanged(self.parent.vb, self.vb.XAxis)
-    
     
     @QtCore.pyqtSlot(QColor)
     def set_color(self, col):
@@ -83,17 +67,36 @@ class subplot1d(pg.PlotDataItem):
     @QtCore.pyqtSlot(str)
     def set_side(self, side):
         side = side.lower()
+        parent = self.parent
         
         if self.side == side:
             return
         
         if side == "right":
-            self.parent.plot.removeItem(self)
-            self.vb.addItem(self)
+            parent.plot.removeItem(self)
+            parent.right_vb.addItem(self)
         else:
-            self.vb.removeItem(self)
+            parent.right_vb.removeItem(self)
             self.parent.plot.addItem(self)
             
-        self.parent.vb.enableAutoRange()
+        parent.vb.enableAutoRange()
         self.side = side
+        
+        
+class custom_viewbox(pg.ViewBox):
+    main_moved = QtCore.pyqtSignal([object])
+    
+    
+    def mouseDragEvent(self, ev, axis=None):
+        super().mouseDragEvent(ev, axis=axis)
+        
+        if axis is None:
+            self.main_moved.emit(ev)
+        
+        
+    def wheelEvent(self, ev, axis=None):
+        super().wheelEvent(ev, axis=axis)
+        
+        if axis is None:
+            self.main_moved.emit(ev)
         

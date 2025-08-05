@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Jul  6 16:34:51 2025
-
-@author: Benjamin Wordsworth
-"""
 
 from .tools import (
     data2matrix,
@@ -13,6 +7,7 @@ from .tools import (
 
 from .subplot import (
     subplot1d,
+    custom_viewbox,
     )
 
 
@@ -22,4 +17,5 @@ __all__ = [
     "unpack_param",
     "find_indep",
     "subplot1d",
+    "custom_viewbox",
     ]
