@@ -85,18 +85,21 @@ class subplot1d(pg.PlotDataItem):
         
 class custom_viewbox(pg.ViewBox):
     main_moved = QtCore.pyqtSignal([object])
-    
+    autoRange_triggered = QtCore.pyqtSignal()
     
     def mouseDragEvent(self, ev, axis=None):
         super().mouseDragEvent(ev, axis=axis)
         
         if axis is None:
             self.main_moved.emit(ev)
-        
-        
+         
     def wheelEvent(self, ev, axis=None):
         super().wheelEvent(ev, axis=axis)
         
         if axis is None:
             self.main_moved.emit(ev)
+       
+    def autoRange(self, padding=None, items=None, item=None):
+        super().autoRange(padding=padding, items=items, item=item)
         
+        self.autoRange_triggered.emit()

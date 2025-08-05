@@ -160,8 +160,6 @@ class RunList(qtw.QTreeWidget):
             if valid_actions:
                 param_menu = add_menu.addMenu(f"{param.name}")
                 param_menu.addActions(valid_actions)
-                    
-        
             
         menu.exec_(self.mapToGlobal(pos))
     

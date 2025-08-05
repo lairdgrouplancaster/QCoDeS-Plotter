@@ -153,10 +153,16 @@ class plot1d(plotWidget):
             self.plot.getAxis('right').linkToView(self.right_vb)
             self.right_vb.setXLink(self.plot)
             
+            #connect pan/scale signals
             self.updateViews(None)
             self.vb.main_moved.connect(self.updateViews)
             
-        
+            self.plot.autoBtn.clicked.connect(
+                lambda: self.right_vb.enableAutoRange() if self.plot.autoBtn.mode == 'auto'
+                        else self.right_vb.disableAutoRange()
+                )
+            self.vb.autoRange_triggered.connect(self.right_vb.autoRange)
+            
         self.add_option_box()
         
         subplot = subplot1d(self, win)
