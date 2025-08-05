@@ -51,10 +51,9 @@ class RunList(qtw.QTreeWidget):
         for run_id, metadata in runs.items():
             arr = [str(run_id)] #run id
             
-            run_time = datetime.fromtimestamp(metadata["run_timestamp"])
-            
-            if not run_time:
+            if not metadata["run_timestamp"]:
                 continue
+            run_time = datetime.fromtimestamp(metadata["run_timestamp"])
             
             arr.append(metadata["exp_name"]) #experiment
             arr.append(metadata["sample_name"]) #sample
