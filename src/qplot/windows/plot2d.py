@@ -3,7 +3,7 @@ from PyQt5 import QtCore
 
 import pyqtgraph as pg
 
-from qplot.tools import data2matrix
+from qplot.tools import loader_2d as loader
 from qplot.windows.plotWin import plotWidget
 
 class plot2d(plotWidget):
@@ -16,14 +16,14 @@ class plot2d(plotWidget):
 
         
     def initFrame(self):
-        if self.df.empty:
+        if self.loader.df.empty:
             return
         
         self.image = pg.ImageItem()
         
-        self.refreshPlot()
-        
         self.plot.addItem(self.image)
+        
+        self.loader.start.emit(self.axis_options())
         
         self.bar = self.plot.addColorBar(
             self.image,
@@ -31,27 +31,20 @@ class plot2d(plotWidget):
             label=f"{self.param.label} ({self.param.unit})",
             rounding=(max(self.depvarData) - min(self.depvarData))/1e5 #Add 10,000 colours
             )
+        self.scaleColorbar()
+        
+        # Wait for loader to finish to enure needed data is collected.
+        self.thread.wait()
         
         self.plot.setLabel('left', f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
         self.plot.setLabel('bottom', f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
     
-        self.scaleColorbar()
-        
         self.initalised = True
         print("graph produced \n")
       
         
-    def loadDSdata(self):
-        super().loadDSdata()
-        
-        self.dataGrid = data2matrix(
-            self.axis_data["x"], 
-            self.axis_data["y"], 
-            self.depvarData
-        ).to_numpy(float)
-        
-        
     def initRefresh(self, refresh):
+        self.loader = loader(self.thread, self.ds, self.param, self.param_dict)
         super().initRefresh(refresh)
         
         self.toolbarRef.addWidget(qtw.QLabel("| "))
@@ -81,6 +74,8 @@ class plot2d(plotWidget):
 ###############################################################################
     
     def refreshPlot(self):
+        super().refreshPlot()
+        
         self.image.setImage(
             self.dataGrid,
             autoLevels=bool(self.relevel_refresh.isChecked()),

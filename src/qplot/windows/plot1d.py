@@ -1,6 +1,10 @@
 from qplot.windows.plotWin import plotWidget
 from qplot.windows._widgets import picker_1d
-from qplot.tools.subplot import subplot1d
+from qplot.tools import (
+    subplot1d,
+    loader_1d,
+    )
+
 
 from PyQt5 import (
     QtWidgets as qtw,
@@ -21,15 +25,21 @@ class plot1d(plotWidget):
         self.line = None
         self.right_vb = None
         super().__init__(*args, **kargs)
+      
+        
+    def initRefresh(self, refrate):
+        self.loader = loader_1d(self.thread, self.ds, self.param, self.param_dict)
+        super().initRefresh(refrate)
         
         
     def initFrame(self):
-        if self.df.empty:
-            return
         
         self.line = self.plot.plot()
         
-        self.refreshPlot()
+        print("start worker")
+        print(self.axis_options())
+        
+        self.wait_on_thread()
         
         self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
         self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
@@ -39,6 +49,8 @@ class plot1d(plotWidget):
         
         
     def refreshPlot(self):
+        super().refreshPlot()
+        
         self.line.setData(
             x=self.axis_data["x"], 
             y=self.axis_data["y"],
@@ -217,3 +229,4 @@ class plot1d(plotWidget):
             self.right_vb.mouseDragEvent(ev)
         
         self.right_vb.setGeometry(self.vb.sceneBoundingRect())
+        

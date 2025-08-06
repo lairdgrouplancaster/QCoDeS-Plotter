@@ -363,7 +363,9 @@ class MainWindow(qtw.QMainWindow):
         self.ds = load_by_guid(guid)
         
         self.selected_run_id = None
+        self.run_idBox.blockSignals(True)
         self.run_idBox.setText(str(self.ds.run_id))
+        self.run_idBox.blockSignals(False)
         
         if hasattr(self.ds, "snapshot"):
             snap = self.ds.snapshot
