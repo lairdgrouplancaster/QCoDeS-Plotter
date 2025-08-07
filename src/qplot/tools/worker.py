@@ -2,6 +2,9 @@ from typing import TYPE_CHECKING
 
 from PyQt5 import QtCore
 
+from qcodes.dataset import load_by_guid
+from qcodes.dataset.sqlite.database import connect, get_DB_location
+
 from . import data2matrix
 
 import numpy as np
@@ -29,7 +32,7 @@ class loader_1d(QtCore.QRunnable):
     """
     
     def __init__(self,
-                 ds : "qcodes.data_set.dataset",
+                 guid : str,
                  param : "qcodes.dataset.descriptions.param_spec.ParamSpec", 
                  param_dict : dict,
                  axes : dict
@@ -38,36 +41,23 @@ class loader_1d(QtCore.QRunnable):
         self.running = True
         self.emitter = _emitter()
         
-        self.ds = ds
+        self.guid = guid
         self.param = param
-        self.param_dict = param_dict        
-        self.df = self.ds.cache.to_pandas_dataframe_dict()[self.param.name]
+        self.param_dict = param_dict
         
         self.axes_dict = axes
         
-        
-        
-    # # @QtCore.pyqtSlot(dict)
-    # def start_load(self, axes : dict):
-    #     try:
-    #         self.emitter.printer.emit(str(axes))
-    #         self.reset_load()
-        
-        
-        
-    #         self.emitter.printer.emit("Emitting start")
-    #         self.emitter.start_thread.emit()
-            
-    #     except Exception as err:
-    #         self.emitter.errorOccurred.emit(err)
-    #         self.reset_load()
-    #         self.emitter.finished.emit(False)
     
-    # @QtCore.pyqtSlot()
     def run(self):
         try:    
+            # SQLite is not thread safe, so requires new conn. Settled for making 
+            # ds object to ensure safety at the cost of some speed. Responsiveness 
+            # should not be lost.
+            self.ds = load_by_guid(self.guid)
+            
+            
             self.emitter.printer.emit("Running")
-            self.df = self.ds.cache.to_pandas_dataframe_dict()[self.param.name]
+            self.df = self.ds.to_pandas_dataframe_dict()[self.param.name]
             self.depvarData = self.df.iloc[:,0].to_numpy(float)
             
             #get non np.nan values
@@ -106,21 +96,7 @@ class loader_1d(QtCore.QRunnable):
                 
         except Exception as err:
             self.emitter.errorOccurred.emit(err)
-            self.reset_load()
             self.emitter.finished.emit(False)
-    
-    
-    # def reset_load(self):
-    #     try: # If case of trying to fetch aborted data
-    #         self.axes_dict = None
-            
-    #         self.axis_data = None
-    #         self.axis_param = None
-            
-    #     except Exception as err:
-    #         self.emitter.errorOccurred.emit(err)
-    #         self.emitter.finished.emit(False)
-
     
     
 class loader_2d(loader_1d):
@@ -143,14 +119,8 @@ class loader_2d(loader_1d):
             
         except Exception as err:
             self.emitter.errorOccurred.emit(err)
-            self.reset_load()
             self.emitter.finished.emit(False)
       
-    # @QtCore.pyqtSlot()
-    # def reset_load(self):
-    #     super().reset_load()
-    #     self.dataGrid = []
-        
         
 class _emitter(QtCore.QObject):
     """

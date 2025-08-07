@@ -37,7 +37,6 @@ class plotWidget(qtw.QMainWindow):
         self.monitor = QtCore.QTimer()
         self.threadPool = threadPool
         self.initalised = False
-        self.ds.cache.load_data_from_db() #create live cache
         self.last_ds_len = self.ds.number_of_results
         self.config = config
         
@@ -271,7 +270,7 @@ class plotWidget(qtw.QMainWindow):
     
     
     def load_data(self, wait_on_thread=False):
-        worker = self.loader(self.ds, self.param, self.param_dict, self.axis_options())
+        worker = self.loader(self.ds.guid, self.param, self.param_dict, self.axis_options())
         
         # self.loader defined in plot<1/2>d.initRefresh()
         worker.emitter.finished.connect(self.refreshPlot)
@@ -342,25 +341,19 @@ class plotWidget(qtw.QMainWindow):
     def refreshWindow(self, force : bool = False, wait_on_thread : bool = False):
         self.monitor.stop()
         retry = False
-        
-        print("Trying refresh")
-
+#
         try:
-            #Plot has started
-            if not self.initalised:
-                print("not Init")
+            # Plot has started, worker first defined in initFrame
+            if not hasattr(self, "worker"):
                 self.initFrame() #defined in children classes
                 retry = True
                 return
             
             if self.ds.number_of_results != self.last_ds_len or force:
-                print("Attempting reload")
                 if self.worker.running:
                     if not force: #restart loading process in event of force
-                        print("Loaded, quitting")
                         return
                     
-                print("Loading")
                 self.load_data(wait_on_thread=wait_on_thread)
 
         finally: #Ran after return
@@ -382,19 +375,24 @@ class plotWidget(qtw.QMainWindow):
     @QtCore.pyqtSlot(bool)
     def refreshPlot(self, finished):
         print("Refreshing")
-        if self.worker.df.empty or not finished:
-            return
-        
-        #set data to be called by plot<1/2>d.refreshPlot()
-        self.depvarData = self.worker.depvarData
-        self.axis_data = {
-            "x": self.worker.axis_data["x"].copy(), 
-            "y": self.worker.axis_data["y"].copy()
-            }
-        self.axis_param = {
-            "x": self.worker.axis_param["x"], 
-            "y": self.worker.axis_param["y"]
-            }
+        try:
+            if self.worker.df.empty or not finished:
+                return
+            
+            #set data to be called by plot<1/2>d.refreshPlot()
+            self.depvarData = self.worker.depvarData
+            self.axis_data = {
+                "x": self.worker.axis_data["x"].copy(), 
+                "y": self.worker.axis_data["y"].copy()
+                }
+            self.axis_param = {
+                "x": self.worker.axis_param["x"], 
+                "y": self.worker.axis_param["y"]
+                }
+        except AttributeError as err:
+            # If worker starts too quickly, overwrites data and spits out error.
+            # Making error soft error.
+            print(type(err), err)
         
         
     @QtCore.pyqtSlot(Exception)
