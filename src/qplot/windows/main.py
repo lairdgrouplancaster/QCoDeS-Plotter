@@ -38,6 +38,7 @@ class MainWindow(qtw.QMainWindow):
         self.windows = [] #prevent auto delete of windows
         self.ds = None
         self.monitor = QtCore.QTimer()
+        self.threadPool = QtCore.QThreadPool()
         self.x = 0
         self.y = 0
         self.config = config()
@@ -194,12 +195,12 @@ class MainWindow(qtw.QMainWindow):
     
     
     def openWin(self, widget, *args, show=True, **kargs):
-        win = widget(*args, show=show, **kargs)
+        win = widget(*args, self.threadPool, show=show, **kargs)
         
         self.windows.append(win)
         
         win.closed.connect(self.onClose)
-        if hasattr(win, "get_mergables"):
+        if hasattr(win, "get_mergables"): #get_mergables only in 1d
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
 
         win.update_theme(self.config)
@@ -219,7 +220,7 @@ class MainWindow(qtw.QMainWindow):
                     self.y = self.screenrect.top()
         
 ###############################################################################
-#Signals 
+#Slots
     
     @QtCore.pyqtSlot(float)
     def monitorIntervalChanged(self, interval):
@@ -458,6 +459,7 @@ class MainWindow(qtw.QMainWindow):
                 #do 2d admin
                 pass
     
+    
     def get_1d_wins(self, win):
         
         wins = []
@@ -467,4 +469,3 @@ class MainWindow(qtw.QMainWindow):
                 wins.append(item)
         
         win.update_line_picker(wins)
-        

@@ -23,6 +23,7 @@ class plotWidget(qtw.QMainWindow):
                  dataset : qcodes.dataset.data_set.DataSet, 
                  param : qcodes.dataset.ParamSpec,
                  config,
+                 threadPool : QtCore.QThreadPool,
                  refrate : float=None,
                  show : bool=True
                  ):
@@ -34,7 +35,7 @@ class plotWidget(qtw.QMainWindow):
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
-        self.thread = QtCore.QThread()
+        self.threadPool = threadPool
         self.initalised = False
         self.ds.cache.load_data_from_db() #create live cache
         self.last_ds_len = self.ds.number_of_results
@@ -108,10 +109,6 @@ class plotWidget(qtw.QMainWindow):
     
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshWindow)
-        
-        # self.loader defined in plot<1/2>d.initRefresh()
-        self.loader.finished.connect(self.refreshPlot)
-        self.loader.errorOccurred.connect(self.err_raiser)
         
         if refrate > 0:
             self.spinBox.setValue(refrate)
@@ -273,17 +270,25 @@ class plotWidget(qtw.QMainWindow):
         return {k: v.currentText() for k, v in self.axis_dropdown.items()}
     
     
-    def wait_on_thread(self):
-        hold_up = QtCore.QEventLoop()
-        self.loader.finished.connect(hold_up.quit)
+    def load_data(self, wait_on_thread=False):
+        worker = self.loader(self.ds, self.param, self.param_dict, self.axis_options())
         
-        self.loader.start_load(self.axis_options())
+        # self.loader defined in plot<1/2>d.initRefresh()
+        worker.emitter.finished.connect(self.refreshPlot)
+        worker.emitter.errorOccurred.connect(self.err_raiser)
+        worker.emitter.printer.connect(self.worker_printer)
         
-        hold_up.exec()
-        
-        
-        # self.thread.wait()
-        self.loader.finished.disconnect(hold_up.quit)
+        if wait_on_thread:     
+            hold_up = QtCore.QEventLoop()
+            worker.emitter.finished.connect(hold_up.quit)
+            
+        self.worker = worker
+        self.threadPool.start(worker)
+    
+        if wait_on_thread:
+            hold_up.exec()
+            self.worker.emitter.finished.disconnect(hold_up.quit)
+            
     
 ###############################################################################
 #Events
@@ -334,7 +339,7 @@ class plotWidget(qtw.QMainWindow):
             
             
     @QtCore.pyqtSlot()
-    def refreshWindow(self, force : bool = False):
+    def refreshWindow(self, force : bool = False, wait_on_thread : bool = False):
         self.monitor.stop()
         retry = False
         
@@ -350,13 +355,13 @@ class plotWidget(qtw.QMainWindow):
             
             if self.ds.number_of_results != self.last_ds_len or force:
                 print("Attempting reload")
-                if self.thread.isRunning():
+                if self.worker.running:
                     if not force: #restart loading process in event of force
                         print("Loaded, quitting")
                         return
                     
                 print("Loading")
-                self.loader.start.emit(self.axis_options())
+                self.load_data(wait_on_thread=wait_on_thread)
 
         finally: #Ran after return
             # number_of_results Uses SQL check so can be used regardless of loader progress
@@ -374,28 +379,33 @@ class plotWidget(qtw.QMainWindow):
                         break
 
 
-    @QtCore.pyqtSlot()
-    def refreshPlot(self):
+    @QtCore.pyqtSlot(bool)
+    def refreshPlot(self, finished):
         print("Refreshing")
-        if self.loader.df.empty:
+        if self.worker.df.empty or not finished:
             return
         
         #set data to be called by plot<1/2>d.refreshPlot()
-        self.depvarData = self.loader.depvarData
+        self.depvarData = self.worker.depvarData
         self.axis_data = {
-            "x": self.loader.axis_data["x"].copy(), 
-            "y": self.loader.axis_data["y"].copy()
+            "x": self.worker.axis_data["x"].copy(), 
+            "y": self.worker.axis_data["y"].copy()
             }
         self.axis_param = {
-            "x": self.loader.axis_param["x"], 
-            "y": self.loader.axis_param["y"]
+            "x": self.worker.axis_param["x"], 
+            "y": self.worker.axis_param["y"]
             }
         
         
     @QtCore.pyqtSlot(Exception)
-    def err_raiser(err : Exception):
+    def err_raiser(self, err : Exception):
         print("WORKER ERROR:")
         raise err
+        
+        
+    @QtCore.pyqtSlot(str)
+    def worker_printer(self, fstr : str):
+        print(fstr)
     
     
     @QtCore.pyqtSlot()
@@ -416,7 +426,7 @@ class plotWidget(qtw.QMainWindow):
         elif len(duplicates) > 1:
             raise ValueError("Too many duplicates in axis assertion.\nThis should not be possible?")
         
-        self.refreshWindow(force=True)
+        self.refreshWindow(force=True, wait_on_thread=True)
         
         self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
         self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")

@@ -28,7 +28,7 @@ class plot1d(plotWidget):
       
         
     def initRefresh(self, refrate):
-        self.loader = loader_1d(self.thread, self.ds, self.param, self.param_dict)
+        self.loader = loader_1d
         super().initRefresh(refrate)
         
         
@@ -39,7 +39,7 @@ class plot1d(plotWidget):
         print("start worker")
         print(self.axis_options())
         
-        self.wait_on_thread()
+        self.load_data(wait_on_thread=True)
         
         self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
         self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
@@ -48,8 +48,8 @@ class plot1d(plotWidget):
         print("Graph produced \n")
         
         
-    def refreshPlot(self):
-        super().refreshPlot()
+    def refreshPlot(self, finished):
+        super().refreshPlot(finished)
         
         self.line.setData(
             x=self.axis_data["x"], 

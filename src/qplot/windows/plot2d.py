@@ -16,15 +16,12 @@ class plot2d(plotWidget):
 
         
     def initFrame(self):
-        if self.loader.df.empty:
-            return
-        
         self.image = pg.ImageItem()
         
         self.plot.addItem(self.image)
         
         # Wait for loader to finish to enure needed data is collected.
-        self.wait_on_thread()
+        self.load_data(wait_on_thread=True)
         
         self.bar = self.plot.addColorBar(
             self.image,
@@ -42,7 +39,7 @@ class plot2d(plotWidget):
       
         
     def initRefresh(self, refresh):
-        self.loader = loader(self.thread, self.ds, self.param, self.param_dict)
+        self.loader = loader
         super().initRefresh(refresh)
         
         self.toolbarRef.addWidget(qtw.QLabel("| "))
@@ -71,10 +68,10 @@ class plot2d(plotWidget):
         
 ###############################################################################
     
-    def refreshPlot(self):
-        super().refreshPlot()
+    def refreshPlot(self, finished):
+        super().refreshPlot(finished)
         
-        self.dataGrid = self.loader.dataGrid
+        self.dataGrid = self.worker.dataGrid
         
         self.image.setImage(
             self.dataGrid,
