@@ -336,7 +336,7 @@ class plotWidget(qtw.QMainWindow):
     @QtCore.pyqtSlot()
     def refreshWindow(self, force : bool = False):
         self.monitor.stop()
-        retry = True
+        retry = False
         
         print("Trying refresh")
 
@@ -345,22 +345,18 @@ class plotWidget(qtw.QMainWindow):
             if not self.initalised:
                 print("not Init")
                 self.initFrame() #defined in children classes
+                retry = True
                 return
             
             if self.ds.number_of_results != self.last_ds_len or force:
                 print("Attempting reload")
                 if self.thread.isRunning():
-                    if force: #restart loading process in event of force
-                        # self.loader.cancel()
-                        # self.thread.quit()
-                        pass
-                    else: #quit if running
+                    if not force: #restart loading process in event of force
                         print("Loaded, quitting")
                         return
                     
                 print("Loading")
                 self.loader.start.emit(self.axis_options())
-            retry = False
 
         finally: #Ran after return
             # number_of_results Uses SQL check so can be used regardless of loader progress
@@ -385,6 +381,7 @@ class plotWidget(qtw.QMainWindow):
             return
         
         #set data to be called by plot<1/2>d.refreshPlot()
+        self.depvarData = self.loader.depvarData
         self.axis_data = {
             "x": self.loader.axis_data["x"].copy(), 
             "y": self.loader.axis_data["y"].copy()

@@ -23,7 +23,8 @@ class plot2d(plotWidget):
         
         self.plot.addItem(self.image)
         
-        self.loader.start.emit(self.axis_options())
+        # Wait for loader to finish to enure needed data is collected.
+        self.wait_on_thread()
         
         self.bar = self.plot.addColorBar(
             self.image,
@@ -32,9 +33,6 @@ class plot2d(plotWidget):
             rounding=(max(self.depvarData) - min(self.depvarData))/1e5 #Add 10,000 colours
             )
         self.scaleColorbar()
-        
-        # Wait for loader to finish to enure needed data is collected.
-        self.thread.wait()
         
         self.plot.setLabel('left', f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
         self.plot.setLabel('bottom', f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
@@ -75,6 +73,8 @@ class plot2d(plotWidget):
     
     def refreshPlot(self):
         super().refreshPlot()
+        
+        self.dataGrid = self.loader.dataGrid
         
         self.image.setImage(
             self.dataGrid,

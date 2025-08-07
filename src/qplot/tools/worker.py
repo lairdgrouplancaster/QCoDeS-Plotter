@@ -72,17 +72,17 @@ class loader_1d(QtCore.QObject):
     def load(self):
         try:
             self.df = self.ds.cache.to_pandas_dataframe_dict()[self.param.name]
-            depvarData = self.df.iloc[:,0].to_numpy(float)
+            self.depvarData = self.df.iloc[:,0].to_numpy(float)
             
             #get non np.nan values
-            valid_rows = ~np.isnan(depvarData)
+            valid_rows = ~np.isnan(self.depvarData)
             indepData = self.df.index.to_frame()
             
             valid_data = []
             for itr in range(len(indepData.columns)):
                 valid_data.append(indepData.iloc[:,itr].loc[valid_rows].to_numpy(float))
             
-            depvarData = depvarData[valid_rows]
+            self.depvarData = self.depvarData[valid_rows]
             
             axis_data = {}
             axis_param = {}
@@ -94,7 +94,7 @@ class loader_1d(QtCore.QObject):
                 if not param.depends_on:
                     data = valid_data[indepData.columns.get_loc(name)]
                 else:
-                    data = depvarData
+                    data = self.depvarData
                 
                 axis_data[axis] = data
                 axis_param[axis] = param
@@ -143,7 +143,6 @@ class loader_2d(loader_1d):
         except Exception as err:
             self.errorOccurred.emit(err)
             self.reset_load()
-            self.abort.emit()
       
     @QtCore.pyqtSlot()
     def reset_load(self):
