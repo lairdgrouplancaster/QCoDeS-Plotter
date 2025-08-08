@@ -2,29 +2,32 @@ from math import log10
 
 import pyqtgraph as pg
 
-import numpy as np
-
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore 
 
 import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.tools import unpack_param
+from qplot.tools import (
+    unpack_param,
+    custom_viewbox,
+    loader
+    )
 from qplot.windows._widgets import (
     expandingComboBox,
     QDock_context,
     )
-from qplot.tools.subplot import custom_viewbox
 
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
+    end_wait = QtCore.pyqtSignal()
     
     def __init__(self, 
                  dataset : qcodes.dataset.data_set.DataSet, 
                  param : qcodes.dataset.ParamSpec,
                  config,
+                 threadPool : QtCore.QThreadPool,
                  refrate : float=None,
                  show : bool=True
                  ):
@@ -36,12 +39,11 @@ class plotWidget(qtw.QMainWindow):
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
+        self.threadPool = threadPool
         self.initalised = False
         self.ds.cache.load_data_from_db()
+        self.last_ds_len = self.ds.number_of_results
         self.config = config
-        
-        self.initAxes()
-        self.loadDSdata()
         
         self.layout = qtw.QVBoxLayout()
         
@@ -51,12 +53,15 @@ class plotWidget(qtw.QMainWindow):
         self.vb.setParent(self.plot)
         self.layout.addWidget(self.widget)
         
-        self.initRefresh(refrate)
+        self.initAxes()
         
-        if show:
+        self.initRefresh(refrate)
+        self.initFrame() #in plot1d, plot2d
+        
+        
+        if show: #dont run non essential GUI functions if not displaying
             self.initLabels()
             self.initContextMenu()
-            self.initFrame()
             self.initMenu()
             
             self.setWindowTitle(str(self))
@@ -78,8 +83,12 @@ class plotWidget(qtw.QMainWindow):
             w.setLayout(self.layout)
             self.setCentralWidget(w)
         
-        if self.ds.running:
+        if self.ds.running: #start refresh cycle if live
+            print("starting monitor")
             self.monitor.start((int(self.spinBox.value() * 1000)))
+        else:
+            print("Who needs a monitor")
+        
         
     def __str__(self):
         filenameStr = get_DB_location().split('\\')[-1]
@@ -90,39 +99,7 @@ class plotWidget(qtw.QMainWindow):
         return fstr
 
 ###############################################################################
-#Other Methods
-    
-    def loadDSdata(self):
-        
-        self.df = self.ds.cache.to_pandas_dataframe_dict()[self.param.name]
-        depvarData = self.df.iloc[:,0].to_numpy(float)
-        
-        #get non np.nan values
-        valid_rows = ~np.isnan(depvarData)
-        indepData = self.df.index.to_frame()
-        
-        self.valid_data = []
-        for itr in range(len(indepData.columns)):
-            self.valid_data.append(indepData.iloc[:,itr].loc[valid_rows].to_numpy(float))
-        
-        self.depvarData = depvarData[valid_rows]
-        
-        self.axis_data = {}
-        self.axis_param = {}
-        
-        for axis in ["x", "y"]:
-            name = self.axis_dropdown[axis].currentText()
-            param = self.param_dict[name]
-            
-            if not param.depends_on:
-                data = self.valid_data[indepData.columns.get_loc(name)]
-            else:
-                data = self.depvarData #ignore error, is used in exec below
-            
-            #save to self.<x/y>axis respectively
-            self.axis_data[axis] = data
-            self.axis_param[axis] = param
-            
+#Other Methods     
     
     def initRefresh(self, refrate : float):
         self.toolbarRef = qtw.QToolBar("Refresh Timer")
@@ -281,7 +258,8 @@ class plotWidget(qtw.QMainWindow):
         self.setStyleSheet(self.config.theme.main)
         self.config.theme.style_plotItem(self)
     
-   
+    
+    #Note, this is an overwrite
     def createPopupMenu(self):
         menu = qtw.QMenu(self)
     
@@ -295,7 +273,31 @@ class plotWidget(qtw.QMainWindow):
     
         return menu
         
-      
+    
+    def axis_options(self):
+        return {k: v.currentText() for k, v in self.axis_dropdown.items()}
+    
+    
+    def load_data(self, wait_on_thread=False):
+        worker = loader(self.ds.cache.data(), self.param, self.param_dict, self.axis_options())
+        
+        # self.loader defined in plot<1/2>d.initRefresh()
+        worker.emitter.finished.connect(self.refreshPlot)
+        worker.emitter.errorOccurred.connect(self.err_raiser)
+        worker.emitter.printer.connect(self.worker_printer)
+        
+        if wait_on_thread:     
+            hold_up = QtCore.QEventLoop()
+            self.end_wait.connect(hold_up.quit)
+            
+        self.worker = worker
+        self.threadPool.start(worker)
+    
+        if wait_on_thread:
+            hold_up.exec()
+            self.end_wait.disconnect(hold_up.quit)
+            
+    
 ###############################################################################
 #Events
     
@@ -345,25 +347,30 @@ class plotWidget(qtw.QMainWindow):
             
             
     @QtCore.pyqtSlot()
-    def refreshWindow(self, force : bool = False):
+    def refreshWindow(self, force : bool = False, wait_on_thread : bool = False):
         self.monitor.stop()
+        retry = False
 
         try:
-            self.last_df_len = len(self.depvarData)
-            self.loadDSdata()
-            
-            #Plot has started
-            if not self.initalised:
+            # Plot has started, worker first defined in initFrame
+            if not hasattr(self, "worker"):
                 self.initFrame() #defined in children classes
+                retry = True
                 return
             
-            if len(self.depvarData) != self.last_df_len or force:
-                self.refreshPlot()
-            
+            if self.ds.number_of_results != self.last_ds_len or force:
+                if self.worker.running:
+                    if not force: #restart loading process in event of force
+                        return
+                    
+                self.load_data(wait_on_thread=wait_on_thread)
+
         finally: #Ran after return
-            
+            # number_of_results Uses SQL check so can be used regardless of loader progress
+            self.last_ds_len = self.ds.number_of_results 
+
             #restart monitor
-            if self.ds.running:
+            if self.ds.running or retry:
                 self.monitorIntervalChanged(self.spinBox.value())
                
             #restard monitor if any subplots are live
@@ -373,7 +380,45 @@ class plotWidget(qtw.QMainWindow):
                         self.monitorIntervalChanged(self.spinBox.value())
                         break
 
+
+    @QtCore.pyqtSlot(bool)
+    def refreshPlot(self, finished):
+        
+        try:
+            if not finished:
+                return
+            
+            #set data to be called by plot<1/2>d.refreshPlot()
+            self.axis_data = {
+                "x": self.worker.axis_data["x"], 
+                "y": self.worker.axis_data["y"]
+                }
+            self.axis_param = {
+                "x": self.worker.axis_param["x"], 
+                "y": self.worker.axis_param["y"]
+                }
+            
+            if hasattr(self.worker, "dataGrid"):        
+                self.dataGrid = self.worker.dataGrid
                 
+        except AttributeError as err:
+            # If worker starts too quickly, overwrites data and spits out error.
+            # Making error soft error.
+            print(type(err), err)
+        
+        finally:
+            self.end_wait.emit()
+        
+    @QtCore.pyqtSlot(Exception)
+    def err_raiser(self, err : Exception):
+        print("WORKER ERROR:")
+        raise err
+        
+        
+    @QtCore.pyqtSlot(str)
+    def worker_printer(self, fstr : str):
+        print(fstr)
+    
     
     @QtCore.pyqtSlot()
     def change_axis(self, key):
@@ -393,7 +438,7 @@ class plotWidget(qtw.QMainWindow):
         elif len(duplicates) > 1:
             raise ValueError("Too many duplicates in axis assertion.\nThis should not be possible?")
         
-        self.refreshWindow(force=True)
+        self.refreshWindow(force=True, wait_on_thread=True)
         
         self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
         self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")

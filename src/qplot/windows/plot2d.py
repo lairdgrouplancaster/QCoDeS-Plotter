@@ -3,7 +3,8 @@ from PyQt5 import QtCore
 
 import pyqtgraph as pg
 
-from qplot.tools import data2matrix
+import numpy as np
+
 from qplot.windows.plotWin import plotWidget
 
 class plot2d(plotWidget):
@@ -16,40 +17,27 @@ class plot2d(plotWidget):
 
         
     def initFrame(self):
-        if self.df.empty:
-            return
-        
         self.image = pg.ImageItem()
         
-        self.refreshPlot()
-        
         self.plot.addItem(self.image)
+        
+        # Wait for loader to finish to enure needed data is collected.
+        self.load_data(wait_on_thread=True)
         
         self.bar = self.plot.addColorBar(
             self.image,
             colorMap="magma",
             label=f"{self.param.label} ({self.param.unit})",
-            rounding=(max(self.depvarData) - min(self.depvarData))/1e5 #Add 10,000 colours
+            rounding=(np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid))/1e5 #Add 10,000 colours
             )
+        self.scaleColorbar()
         
         self.plot.setLabel('left', f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
         self.plot.setLabel('bottom', f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
     
-        self.scaleColorbar()
-        
         self.initalised = True
         print("graph produced \n")
       
-        
-    def loadDSdata(self):
-        super().loadDSdata()
-        
-        self.dataGrid = data2matrix(
-            self.axis_data["x"], 
-            self.axis_data["y"], 
-            self.depvarData
-        ).to_numpy(float)
-        
         
     def initRefresh(self, refresh):
         super().initRefresh(refresh)
@@ -80,7 +68,9 @@ class plot2d(plotWidget):
         
 ###############################################################################
     
-    def refreshPlot(self):
+    def refreshPlot(self, finished):
+        super().refreshPlot(finished)
+        
         self.image.setImage(
             self.dataGrid,
             autoLevels=bool(self.relevel_refresh.isChecked()),
@@ -105,12 +95,14 @@ class plot2d(plotWidget):
             yrange
         )
         self.image.setRect(self.rect)
+        
+        self.worker.running = False
 
 ###############################################################################    
         
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):
-        vmin, vmax = min(self.depvarData), max(self.depvarData)
+        vmin, vmax = np.nanmin(self.dataGrid) , np.nanmax(self.dataGrid)
 
         self.bar.setLevels((vmin, vmax))
         

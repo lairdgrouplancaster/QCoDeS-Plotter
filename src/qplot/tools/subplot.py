@@ -9,7 +9,6 @@ class subplot1d(pg.PlotDataItem):
         
         self.label = from_win.label
         self.param_dict = from_win.param_dict
-        self.df = from_win.df
         self.running = from_win.ds.running
         
         self.parent = parent
@@ -30,28 +29,19 @@ class subplot1d(pg.PlotDataItem):
         
         data = {}
         
-        
-        if self.df.empty:
-            data["x"] = []
-            data["y"] = []
-        
-        else:
-            indepDataNames = self.df.index.names
+    
+        parent_options = parent.axis_options()
+        from_win_options = from_win.axis_options()
 
-            for axis in ["x", "y"]:
-                name = parent.axis_dropdown[axis].currentText()
-                
-                
-                if self.param_dict.get(name, 0):
-                    param = self.param_dict.get(name)
-                else:
-                    param = parent.param_dict.get(name)
+        # for subplot, must share 1 axis parameter name, so check if flipped
+        if parent_options["x"] == from_win_options["x"] or parent_options["y"] == from_win_options["y"]:
+            choose_from = ["x", "y"]
+        else:
+            choose_from = ["y", "x"]
+            
+        for itr, axis in enumerate(["x", "y"]):
+            data[axis] = from_win.axis_data[choose_from[itr]]
                     
-                if not param.depends_on:
-                    data[axis] = from_win.valid_data[indepDataNames.index(name)]
-                    
-                else:
-                    data[axis] = from_win.depvarData #ignore error, is used in exec below
                 
         self.setData(
             x=data["x"], 

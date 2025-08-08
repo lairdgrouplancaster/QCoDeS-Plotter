@@ -1,6 +1,9 @@
 from qplot.windows.plotWin import plotWidget
 from qplot.windows._widgets import picker_1d
-from qplot.tools.subplot import subplot1d
+from qplot.tools import (
+    subplot1d,
+    )
+
 
 from PyQt5 import (
     QtWidgets as qtw,
@@ -24,12 +27,10 @@ class plot1d(plotWidget):
         
         
     def initFrame(self):
-        if self.df.empty:
-            return
         
         self.line = self.plot.plot()
         
-        self.refreshPlot()
+        self.load_data(wait_on_thread=True)
         
         self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
         self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
@@ -38,7 +39,9 @@ class plot1d(plotWidget):
         print("Graph produced \n")
         
         
-    def refreshPlot(self):
+    def refreshPlot(self, finished):
+        super().refreshPlot(finished)
+        
         self.line.setData(
             x=self.axis_data["x"], 
             y=self.axis_data["y"],
@@ -46,6 +49,8 @@ class plot1d(plotWidget):
         for line in list(self.lines.values())[1:]:
             line.refresh()
         # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
+        
+        self.worker.running = False
         
 ###############################################################################
 #Line and Subplots control
@@ -217,3 +222,4 @@ class plot1d(plotWidget):
             self.right_vb.mouseDragEvent(ev)
         
         self.right_vb.setGeometry(self.vb.sceneBoundingRect())
+        
