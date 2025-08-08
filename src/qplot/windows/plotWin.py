@@ -8,16 +8,20 @@ from PyQt5 import QtCore
 import qcodes
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.tools import unpack_param
+from qplot.tools import (
+    unpack_param,
+    custom_viewbox,
+    loader
+    )
 from qplot.windows._widgets import (
     expandingComboBox,
     QDock_context,
     )
-from qplot.tools.subplot import custom_viewbox
 
 
 class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
+    end_wait = QtCore.pyqtSignal()
     
     def __init__(self, 
                  dataset : qcodes.dataset.data_set.DataSet, 
@@ -37,6 +41,7 @@ class plotWidget(qtw.QMainWindow):
         self.monitor = QtCore.QTimer()
         self.threadPool = threadPool
         self.initalised = False
+        self.ds.cache.load_data_from_db()
         self.last_ds_len = self.ds.number_of_results
         self.config = config
         
@@ -79,7 +84,11 @@ class plotWidget(qtw.QMainWindow):
             self.setCentralWidget(w)
         
         if self.ds.running: #start refresh cycle if live
+            print("starting monitor")
             self.monitor.start((int(self.spinBox.value() * 1000)))
+        else:
+            print("Who needs a monitor")
+        
         
     def __str__(self):
         filenameStr = get_DB_location().split('\\')[-1]
@@ -270,7 +279,7 @@ class plotWidget(qtw.QMainWindow):
     
     
     def load_data(self, wait_on_thread=False):
-        worker = self.loader(self.ds.guid, self.param, self.param_dict, self.axis_options())
+        worker = loader(self.ds.cache.data(), self.param, self.param_dict, self.axis_options())
         
         # self.loader defined in plot<1/2>d.initRefresh()
         worker.emitter.finished.connect(self.refreshPlot)
@@ -279,14 +288,14 @@ class plotWidget(qtw.QMainWindow):
         
         if wait_on_thread:     
             hold_up = QtCore.QEventLoop()
-            worker.emitter.finished.connect(hold_up.quit)
+            self.end_wait.connect(hold_up.quit)
             
         self.worker = worker
         self.threadPool.start(worker)
     
         if wait_on_thread:
             hold_up.exec()
-            self.worker.emitter.finished.disconnect(hold_up.quit)
+            self.end_wait.disconnect(hold_up.quit)
             
     
 ###############################################################################
@@ -341,7 +350,7 @@ class plotWidget(qtw.QMainWindow):
     def refreshWindow(self, force : bool = False, wait_on_thread : bool = False):
         self.monitor.stop()
         retry = False
-#
+
         try:
             # Plot has started, worker first defined in initFrame
             if not hasattr(self, "worker"):
@@ -374,26 +383,31 @@ class plotWidget(qtw.QMainWindow):
 
     @QtCore.pyqtSlot(bool)
     def refreshPlot(self, finished):
-        print("Refreshing")
+        
         try:
-            if self.worker.df.empty or not finished:
+            if not finished:
                 return
             
             #set data to be called by plot<1/2>d.refreshPlot()
-            self.depvarData = self.worker.depvarData
             self.axis_data = {
-                "x": self.worker.axis_data["x"].copy(), 
-                "y": self.worker.axis_data["y"].copy()
+                "x": self.worker.axis_data["x"], 
+                "y": self.worker.axis_data["y"]
                 }
             self.axis_param = {
                 "x": self.worker.axis_param["x"], 
                 "y": self.worker.axis_param["y"]
                 }
+            
+            if hasattr(self.worker, "dataGrid"):        
+                self.dataGrid = self.worker.dataGrid
+                
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
             # Making error soft error.
             print(type(err), err)
         
+        finally:
+            self.end_wait.emit()
         
     @QtCore.pyqtSlot(Exception)
     def err_raiser(self, err : Exception):

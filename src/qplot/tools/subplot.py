@@ -9,7 +9,6 @@ class subplot1d(pg.PlotDataItem):
         
         self.label = from_win.label
         self.param_dict = from_win.param_dict
-        self.df = from_win.loader.df
         self.running = from_win.ds.running
         
         self.parent = parent
@@ -30,23 +29,18 @@ class subplot1d(pg.PlotDataItem):
         
         data = {}
         
-        
-        if self.df.empty:
-            data["x"] = []
-            data["y"] = []
-        
-        else:
-            parent_options = parent.axis_options()
-            from_win_options = from_win.axis_options()
+    
+        parent_options = parent.axis_options()
+        from_win_options = from_win.axis_options()
 
-            # for subplot, must share 1 axis parameter name, so check if flipped
-            if parent_options["x"] == from_win_options["x"] or parent_options["y"] == from_win_options["y"]:
-                choose_from = ["x", "y"]
-            else:
-                choose_from = ["y", "x"]
-                
-            for itr, axis in enumerate(["x", "y"]):
-                data[axis] = from_win.axis_data[choose_from[itr]]
+        # for subplot, must share 1 axis parameter name, so check if flipped
+        if parent_options["x"] == from_win_options["x"] or parent_options["y"] == from_win_options["y"]:
+            choose_from = ["x", "y"]
+        else:
+            choose_from = ["y", "x"]
+            
+        for itr, axis in enumerate(["x", "y"]):
+            data[axis] = from_win.axis_data[choose_from[itr]]
                     
                 
         self.setData(

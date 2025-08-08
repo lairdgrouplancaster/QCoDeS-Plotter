@@ -2,7 +2,6 @@ from qplot.windows.plotWin import plotWidget
 from qplot.windows._widgets import picker_1d
 from qplot.tools import (
     subplot1d,
-    loader_1d,
     )
 
 
@@ -25,19 +24,11 @@ class plot1d(plotWidget):
         self.line = None
         self.right_vb = None
         super().__init__(*args, **kargs)
-      
-        
-    def initRefresh(self, refrate):
-        self.loader = loader_1d
-        super().initRefresh(refrate)
         
         
     def initFrame(self):
         
         self.line = self.plot.plot()
-        
-        print("start worker")
-        print(self.axis_options())
         
         self.load_data(wait_on_thread=True)
         
@@ -58,6 +49,8 @@ class plot1d(plotWidget):
         for line in list(self.lines.values())[1:]:
             line.refresh()
         # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
+        
+        self.worker.running = False
         
 ###############################################################################
 #Line and Subplots control

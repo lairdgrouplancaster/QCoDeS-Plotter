@@ -3,7 +3,8 @@ from PyQt5 import QtCore
 
 import pyqtgraph as pg
 
-from qplot.tools import loader_2d as loader
+import numpy as np
+
 from qplot.windows.plotWin import plotWidget
 
 class plot2d(plotWidget):
@@ -27,7 +28,7 @@ class plot2d(plotWidget):
             self.image,
             colorMap="magma",
             label=f"{self.param.label} ({self.param.unit})",
-            rounding=(max(self.depvarData) - min(self.depvarData))/1e5 #Add 10,000 colours
+            rounding=(np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid))/1e5 #Add 10,000 colours
             )
         self.scaleColorbar()
         
@@ -39,7 +40,6 @@ class plot2d(plotWidget):
       
         
     def initRefresh(self, refresh):
-        self.loader = loader
         super().initRefresh(refresh)
         
         self.toolbarRef.addWidget(qtw.QLabel("| "))
@@ -71,8 +71,6 @@ class plot2d(plotWidget):
     def refreshPlot(self, finished):
         super().refreshPlot(finished)
         
-        self.dataGrid = self.worker.dataGrid
-        
         self.image.setImage(
             self.dataGrid,
             autoLevels=bool(self.relevel_refresh.isChecked()),
@@ -97,12 +95,14 @@ class plot2d(plotWidget):
             yrange
         )
         self.image.setRect(self.rect)
+        
+        self.worker.running = False
 
 ###############################################################################    
         
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):
-        vmin, vmax = min(self.depvarData), max(self.depvarData)
+        vmin, vmax = np.nanmin(self.dataGrid) , np.nanmax(self.dataGrid)
 
         self.bar.setLevels((vmin, vmax))
         

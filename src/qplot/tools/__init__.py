@@ -11,8 +11,8 @@ from .subplot import (
     )
 
 from .worker import (
-    loader_1d,
-    loader_2d,
+    loader,
+    # loader_2d,
     )
 
 
@@ -22,6 +22,6 @@ __all__ = [
     "find_indep",
     "subplot1d",
     "custom_viewbox",
-    "loader_1d",
-    "loader_2d",
+    "loader",
+    # "loader_2d",
     ]
