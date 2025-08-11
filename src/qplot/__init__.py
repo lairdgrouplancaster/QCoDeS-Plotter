@@ -1,4 +1,4 @@
-from qplot.configuration import config
+from qplot.configuration.config import config
 from qplot import datahandling
 from qplot import windows
 from qplot import tools

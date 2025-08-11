@@ -1,5 +1,3 @@
-from .config import config
-
-__all__ = [
-    "config",
-    ]
+"""
+Imported in src.__init__
+"""
