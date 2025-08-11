@@ -50,7 +50,7 @@ Plot windows are seperated into 2 types, line graphs and heatmaps. They both hav
 * The top refresh toolbar is only shown on runs which are live, but can be displayed on static runs. The refresh timer takes the same value as the main window if it refreshing, otherwise it trys to refresh every 5.0s.
 * The bottom toolbar displays the current co-ordinates of the mouse.
 * The left toolbar is used to change to assigned axes, this is mainly used for heatmaps with more than 2 independant variables but can be used to flip axes.
-* For Line graphs, you can change the color of the line in the left toolbar. You may also add other lines from other open line graphs, control which y axis these are attached to, and change the color. The "X" button can be used to remove a line.
+* For Line graphs, you can change the color of the line in the left toolbar. You may also add other lines from other open line graphs using the dropdown menu, control which y axis these are attached to, and change the color. The "X" button can be used to remove a line.
 * When multiple lines are connect to different sides, using scroll or drag on the central area of the plot controls both axes, while placing your cursor on a side axis will control only that axis.
 
 <br/>
