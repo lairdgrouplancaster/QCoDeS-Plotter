@@ -5,6 +5,11 @@ from PyQt5 import (
 
 
 class QDock_context(qtw.QDockWidget):
+    """
+    A custom QDockWidget designed to emulate a side QToolbar.
+    
+    
+    """
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
         
@@ -27,6 +32,7 @@ class QDock_context(qtw.QDockWidget):
     def addWidget(self, *args, **kargs):
         self.layout.addWidget(*args, **kargs)
     
+    ### SUB CLASS LAYOUT TO CARRY CONTEXT MENU THROUGH ###
     class VBox_context(qtw.QVBoxLayout):
         def __init__(self, event_filter, *args, **kargs):
             super().__init__(*args, **kargs)
@@ -59,15 +65,33 @@ class contextMenuFilter(QtCore.QObject):
         self.main_window = main_window
 
     def eventFilter(self, obj, event):
+        """
+        Event handler for right-clicking on a QDock_context
+        Produces a context menu for toggling display of toolbars and dockwidgets
+
+        Parameters
+        ----------
+        obj :
+            Unused by required slot.
+        event : PyQt5.QtCore.QEvent.ContextMenu
+            
+        Returns
+        -------
+        bool
+            Whether to show context menu.
+
+        """
         if event.type() == QtCore.QEvent.ContextMenu:
             menu = qtw.QMenu(self.main_window)
 
+            # Find toolbar and dock widgets to add to context menu
             for toolbar in self.main_window.findChildren(qtw.QToolBar):
                 menu.addAction(toolbar.toggleViewAction())
 
             for dock in self.main_window.findChildren(qtw.QDockWidget):
                 menu.addAction(dock.toggleViewAction())
 
+            # Display context menu
             menu.exec_(event.globalPos())
             return True
         return False

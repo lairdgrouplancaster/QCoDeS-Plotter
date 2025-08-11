@@ -5,24 +5,35 @@ from jsonschema import ValidationError
 import sys
 
 class sysHandle:
+    """
+    Entry point for terminal/console based commands. Called through scripts, 
+    which is set up in pyproject.toml.
+    
+    This is somewhat Jerry-Rigged, fetching string following qplot-cfg and 
+    converts them to command matching functions here.
+    """
     def __init__(self, command, *args):
         
+        # Find valid commands by checking against class attributes which are callable
         self.valid_args = [f"-{str(method_name)}" for method_name in dir(sysHandle)
                       if callable(getattr(sysHandle, method_name))
                       and method_name[0] != "_"]
 
+        # Convert command str to callable
         if command in self.valid_args:
             func = getattr(self, command[1:])
         else:
             key = f"Command: ({command}), not found. Valid options: {self.valid_args}"
             raise KeyError(key)
         
+        # Create config to interact with
         self.config = config()
-        func(*args)
+        func(*args) # Pass other arguments to func
 
     def dump(self):
         """
         -dump
+        -----
         Prints the location of the config.json file along with its full 
         contents
         
@@ -32,6 +43,7 @@ class sysHandle:
     def reset(self):
         """
         -reset
+        ------
         Reset all config.json values to their defaults and prints new config
         file
 
@@ -44,6 +56,7 @@ class sysHandle:
     def find(self, key : str):
         """
         -find
+        -----
         Returns the key and the value assiated with that key.
         key must be laid out as a dot (.) seperated path, i.e.
             qplot-cfg -find GUI.main_frame_size
@@ -68,6 +81,7 @@ class sysHandle:
             ):
         """
         -set_value
+        ----------
         Sets the value in the config.json file, located at key.
         
         > key must be laid out as a dot (.) seperated path, i.e.
@@ -115,6 +129,7 @@ class sysHandle:
     def info(self, attr : str=None):
         """
         -info
+        -----
         Gets infomation about callable functions.
         
         'qplot-cfg -info' lists all callable functions
@@ -147,8 +162,22 @@ class sysHandle:
 
 
 def try_as_num(item):
+    """
+    Attempts to convert str to float or int.
+
+    Parameters
+    ----------
+    item : str
+        item to be converted.
+
+    Returns
+    -------
+    item : int, float, str
+        The item after conversions.
+
+    """
     try:
-        if "." in item:
+        if "." in item: # Check for decimal point. Add log_10 check for large nums?
             item = float(item)
         else:
             item = int(item)
@@ -156,6 +185,12 @@ def try_as_num(item):
         item = str(item)
     return item
 
+
 def scripts():
+    """
+    The actual entry point which call sysHandle to manage commands
+
+    """
+    # Fetch str based command from command line
     args=sys.argv
     sysHandle(*args[1:])

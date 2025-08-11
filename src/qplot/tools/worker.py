@@ -10,16 +10,38 @@ if TYPE_CHECKING:
     import qcodes
 
 class loader(QtCore.QRunnable):
+    """
+    A Worker to be placed inside a QThreadPool.
+    It handles fetched data from the dataset cache and performs necessary work
+    before rerending data
+    
+    """
     def __init__(self,
                  cache_data : "qcodes.dataset.cache._data",
                  param : "qcodes.dataset.descriptions.param_spec.ParamSpec", 
                  param_dict : dict,
                  axes : dict
                  ):
+        """
+        Sets up worker with required data for run()
+
+        Parameters
+        ----------
+        cache_data : qcodes.dataset.cache._data
+            The refreshed data from the dataset.
+        param : qcodes.dataset.descriptions.param_spec.ParamSpec
+            The parameter being updated.
+        param_dict : dict{str: ParamSpec}
+            List of all parameter data inside the dataset.
+        axes : dict{str: str}
+            The selected parameter for the axes.
+
+        """
         super().__init__()
         self.running = True
-        self.emitter = _emitter()
+        self.emitter = _emitter() # For signals
         
+        # Required working data
         self.data = cache_data[param.name]
         self.param = param
         self.param_dict = param_dict
@@ -34,15 +56,19 @@ class loader(QtCore.QRunnable):
             axis_data = {}
             axis_param = {}
             dict_labels = list(self.data.keys())
+            
+            #Remove nan values
+            valid_rows = ~np.isnan(depvarData)
 
-               
             # for 2d plots
             if len(depvarData.shape) == 2:
                 
-                valid_rows = ~np.isnan(depvarData).any(axis=1)
+                # convert valid_rows into form for 2d numpy arrays
+                valid_rows = valid_rows.any(axis=1)
                 
                 depvarData = depvarData[valid_rows]
                 
+                # Find correct data for each axis
                 for axis in ["x", "y"]:
                     name = self.axes_dict[axis]
                     param = self.param_dict[name]
@@ -61,16 +87,14 @@ class loader(QtCore.QRunnable):
                     
                     axis_data[axis] = data
                     axis_param[axis] = param
-                    
+                  
+                # Allow main to fetch data
                 self.dataGrid = depvarData
                 self.axis_data = axis_data
                 self.axis_param = axis_param
             
                 self.emitter.finished.emit(True)
                 return
-           
-            #Remove nan values
-            valid_rows = ~np.isnan(depvarData)
             
             # for 1d plots
             if len(self.param.depends_on_) == 1:
@@ -79,25 +103,29 @@ class loader(QtCore.QRunnable):
                 axis_data["x"] = self.data[x_name][valid_rows]
                 axis_param["x"] = self.param_dict[x_name]
                 
+                # get other value
                 index = 1 if dict_labels[0] == x_name else 0
                 axis_data["y"] = self.data[dict_labels[index]][valid_rows]
                 axis_param["y"] = self.param_dict[dict_labels[index]]
                 
+                # Allow main to fetch data
                 self.axis_data = axis_data
                 self.axis_param = axis_param
                 
                 self.emitter.finished.emit(True)
                 return
             
-            
             # for >2d plots
             for axis in ["x", "y"]:
+                # Get specific parameter
                 name = self.axes_dict[axis]
                 param = self.param_dict[name]
                 
+                # Update data
                 axis_data[axis] = self.data[name][valid_rows]
                 axis_param[axis] = param
                 
+            # Allow main to fetch data
             self.axis_data = axis_data
             self.axis_param = axis_param
             
@@ -112,31 +140,8 @@ class loader(QtCore.QRunnable):
             
         except Exception as err: # Raise error in main thread
             self.emitter.errorOccurred.emit(err)
-            self.emitter.finished.emit(False) # False - Failed
-    
-    
-# class loader_2d(loader_1d):
-#     def __init__(self, *args, **kargs):
-#         super().__init__(*args, **kargs)
-#         self.dataGrid = []
-        
-#     @QtCore.pyqtSlot()
-#     def run(self):
-#         super().run()
-#         try:
-#             self.dataGrid = data2matrix(
-#                     self.axis_data["x"], 
-#                     self.axis_data["y"], 
-#                     self.depvarData
-#                 ).to_numpy(float)
+            self.emitter.finished.emit(False) # False: Failed
             
-#             self.running = False
-#             self.emitter.finished.emit(True)
-            
-#         except Exception as err:
-#             self.emitter.errorOccurred.emit(err)
-#             self.emitter.finished.emit(False)
-      
         
 class _emitter(QtCore.QObject):
     """

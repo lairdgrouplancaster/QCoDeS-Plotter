@@ -8,6 +8,16 @@ import numpy as np
 from qplot.windows.plotWin import plotWidget
 
 class plot2d(plotWidget):
+    """
+    Plot window for 2d and higher plots, aka Heatmaps.
+    Inherits and wraps several functions from qplot.windows.plotWin.PlotWidget.
+    PlotWidget handles majority of set up, recommend to view first.
+    
+    Key functions to see in plot2d:
+        initFrame
+        refreshPlot
+        
+    """
     
     def __init__(self, 
                  *args,
@@ -17,6 +27,10 @@ class plot2d(plotWidget):
 
         
     def initFrame(self):
+        """
+        Sets up the initial plot and starting data.
+
+        """
         self.image = pg.ImageItem()
         
         self.plot.addItem(self.image)
@@ -69,8 +83,20 @@ class plot2d(plotWidget):
 ###############################################################################
     
     def refreshPlot(self, finished):
+        """
+        Updates plot based on data produced by the thread worker. Data is 
+        assigned in plotWidget.refreshPlot, then all plot items are produced
+        here.
+
+        Parameters
+        ----------
+        finished : bool
+            In the event the worker had to abort, finished is False and refresh
+            is not ran.
+        """
         super().refreshPlot(finished)
         
+        # Produce Heatmap
         self.image.setImage(
             self.dataGrid,
             autoLevels=bool(self.relevel_refresh.isChecked()),
@@ -88,6 +114,7 @@ class plot2d(plotWidget):
         if yrange == 0:
             yrange = ymin / 100 
         
+        # Link x/y axis values with Heatmap data
         self.rect = pg.QtCore.QRectF(
             xmin,
             ymin, 
@@ -96,12 +123,22 @@ class plot2d(plotWidget):
         )
         self.image.setRect(self.rect)
         
+        # Allow new worker to be produced
         self.worker.running = False
 
 ###############################################################################    
         
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):
+        """
+        Sets colorbar range to match heatmap value range, giving effect of
+        rescaling color bar
+
+        Parameters
+        ----------
+        Unused but required by slot
+
+        """
         vmin, vmax = np.nanmin(self.dataGrid) , np.nanmax(self.dataGrid)
 
         self.bar.setLevels((vmin, vmax))
