@@ -13,6 +13,7 @@ Install with, requires Git:
 ```console
     pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 ```
+Recommended to create and activate a virtual environment to avoid conflicts.
 <br/>
 
 How to Run
