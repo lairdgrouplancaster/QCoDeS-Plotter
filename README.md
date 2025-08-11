@@ -22,7 +22,7 @@ How to Run
 After installing with pip into a virtual environment
 To run, either:
 * In its own IDE consol
-```console  
+```python  
       import qplot
       qplot.run()
 ```
