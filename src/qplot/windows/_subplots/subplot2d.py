@@ -34,9 +34,11 @@ class sweeper(plotWidget):
             )
         self.axis_dropdown["x"].blockSignals(False)
         
+        # Disable y axis box, for display only
         self.axis_dropdown["y"].blockSignals(True)
         self.axis_dropdown["y"].setEditable(True)
         self.axis_dropdown["y"].lineEdit().setReadOnly(True)
+        self.axis_dropdown["y"].setDisabled(True)
         self.axis_dropdown["y"].setCurrentText(self.param.name)
         
         # add line control
@@ -52,7 +54,8 @@ class sweeper(plotWidget):
         self.axes_dock.addWidget(main_line)
         main_line.adjustSize()
         
-        # Add picker for changing sweep location
+        # Add picker for changing sweep location using x axis options since
+        # y param is not in that
         self.picker = fixed_var_picker(
             self, 
             [self.axis_dropdown["x"].itemText(i) for i in range(self.axis_dropdown["x"].count())],
@@ -130,6 +133,10 @@ class sweeper(plotWidget):
 # Events/Slots
     
     def update_sweep(self):
+        """
+        Refresh 1d plot when there is a change in parameter or value
+
+        """
         # Get correct row for y data
         self.axis_data["y"] = self.dataGrid[:, self.fixed_index]
         
@@ -142,6 +149,16 @@ class sweeper(plotWidget):
 
     @QtCore.pyqtSlot(int)
     def change_index(self, index):
+        """
+        Event handler for picker.slider changing value
+        Changes index value of the fixed parameter and refreshes plot.
+
+        Parameters
+        ----------
+        index : int
+            Value slider was changed to.
+
+        """
         # Update display box
         self.picker.text_box.setText(
             self.formatNum(self.axis_data["x"][index])
@@ -151,9 +168,29 @@ class sweeper(plotWidget):
         self.fixed_index = index
         self.update_sweep()
         
+        self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
+        self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
+            
     
     @QtCore.pyqtSlot(int)
     def change_fixed_param(self, index):
+        """
+        Event handler for fixed parameter dropdown selector. (picker.option_box)
+        Updates the parameter on the x axis of the sweep and resets fixed 
+        parameter index to 0.
+        If the parameter changed to is the current sweep parameter, switches 
+        them.
+
+        Parameters
+        ----------
+        Unused but required by slot
+
+        """
+        # Update Slider
+        self.picker.slider.blockSignals(True)
+        self.picker.slider.setValue(0)
+        self.picker.text_box.setText("") # Let refreshPlot know signal is blocked
+        
         if self.picker.option_box.currentText() == self.axis_dropdown["x"].currentText():
             self.axis_dropdown["x"].blockSignals(True)
             self.axis_dropdown["x"].setCurrentIndex(
@@ -161,35 +198,100 @@ class sweeper(plotWidget):
                 )
             self.axis_dropdown["x"].blockSignals(True)
             
+        # NOTE, same as self.change_axis() from here
+            
             # Switch data
             self.axis_data["x"] = self.worker.axis_data["y"]
-            self.dataGrid = self.dataGrid.transpose()
+            temp_y_param = self.worker.axis_param["y"]
+            self.worker.dataGrid = self.worker.dataGrid.transpose()
             
             # Switch worker data to track changes
             self.worker.axis_data["y"] = self.worker.axis_data["x"]
             self.worker.axis_data["x"] = self.axis_data["x"]
+            
+            self.worker.axis_param["y"] = self.worker.axis_param["x"]
+            self.worker.axis_param["x"] = temp_y_param
         
-            # Update slider
-            self.picker.slider.setValue(0) # Also emits refresh signal
-            self.picker.slider.setRange(0, len(self.axis_data["x"]) - 1)
+            self.sweep_indep, self.fixed_indep = self.axis_options.values()
+        
+            self.refreshPlot() # Refresh without new data
             
         else:
-            
-            self.picker.slider.blockSignals(True)
-            self.picker.text_box.setText("") # Let refreshPlot know signal is blocked
+            self.sweep_indep, self.fixed_indep = self.axis_options.values()
             
             # Get new data
-            self.refreshWindow(force=True) # wait_on_thread else param data is not updated
+            self.refreshWindow(force=True) 
             
     
-    
-    
-    
-    
+    @QtCore.pyqtSlot()
+    def change_axis(self, key : str):
+        """
+        Event handler for x axis dropdown selector.
+        Updates the parameter on the x axis of the sweep and resets fixed 
+        parameter index to 0.
+        If the parameter changed to is the current fixed parameter, switches 
+        them.
+        
+
+        Parameters
+        ----------
+        key : str
+            The key of which box to change. Will be x in all cases but required
+            by definition in parent
+
+        """
+        # Update Slider
+        self.picker.slider.blockSignals(True)
+        self.picker.slider.setValue(0)
+        self.picker.text_box.setText("") # Let refreshPlot know signal is blocked
+        
+        if self.axis_dropdown["x"].currentText() == self.picker.option_box.currentText():
+            self.picker.option_box.blockSignals(True)
+            self.picker.option_box.setCurrentIndex(
+                self.picker.option_box.findText(self.sweep_indep)
+                )
+            self.picker.option_box.blockSignals(False)
+            
+        # NOTE, same as self.change_fixed_param() from here
+            
+            # Switch data
+            self.axis_data["x"] = self.worker.axis_data["y"]
+            temp_y_param = self.worker.axis_param["y"]
+            self.worker.dataGrid = self.worker.dataGrid.transpose()
+            
+            # Switch worker data to track changes
+            self.worker.axis_data["y"] = self.worker.axis_data["x"]
+            self.worker.axis_data["x"] = self.axis_data["x"]
+            
+            self.worker.axis_param["y"] = self.worker.axis_param["x"]
+            self.worker.axis_param["x"] = temp_y_param
+        
+            self.sweep_indep, self.fixed_indep = self.axis_options.values()
+            
+            self.refreshPlot() # Refresh without new data
+            
+        else: 
+            self.sweep_indep, self.fixed_indep = self.axis_options.values()
+        
+            # Get new data
+            self.refreshWindow(force=True) 
     
     
     
 class fixed_var_picker(qtw.QWidget):
+    """
+    A custom QWidget which contains other widgets to interact with and control
+    the static/fixed parameter of the heat map while viewing the 1d sweep.
+    
+    Contains:
+        self.option_box: Changing the fixed parameter
+        self.slider: change which value the plot is looking at
+        self.text_box: visual display of current sweep value
+        
+    Note, uses custom HBoxLayout to set up context menu within dock widget.
+    See qplot.windows._widgets.toolbar
+    """
+    
     
     def __init__(self, main, items):
         super().__init__()
@@ -202,14 +304,17 @@ class fixed_var_picker(qtw.QWidget):
         
         row_1.addWidget(qtw.QLabel("Fixed Varaible: "))
         
+        # Create box to change paramater
         self.option_box = expandingComboBox()
         self.option_box.addItems(items)
         row_1.addWidget(self.option_box)
         
+        # Switches fixed parameter
         self.slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.slider.setTickPosition(qtw.QSlider.TickPosition.TicksBelow)
         row_2.addWidget(self.slider)
         
+        # Update user to change
         self.text_box = qtw.QLineEdit()
         self.text_box.setReadOnly(True)
         self.text_box.setMaximumWidth(95)

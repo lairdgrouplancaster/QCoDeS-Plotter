@@ -697,5 +697,5 @@ class plotWidget(qtw.QMainWindow):
             
         else:
             # get new data
-            self.refreshWindow(force=True) # wait_on_thread else param data is not updated
+            self.refreshWindow(force=True) 
         
