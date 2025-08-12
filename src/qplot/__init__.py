@@ -1,9 +1,8 @@
 from qplot.configuration.config import config
 from qplot import datahandling
-from qplot import windows
 from qplot import tools
 
-
+from qplot import windows
 
 from .__main__ import run
 

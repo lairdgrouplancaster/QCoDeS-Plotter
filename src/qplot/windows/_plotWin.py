@@ -11,10 +11,12 @@ from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.tools import (
     unpack_param,
-    custom_viewbox,
-    loader
+    loader,
     )
-from qplot.windows._widgets import (
+    
+from ._subplots import custom_viewbox
+    
+from ._widgets import (
     expandingComboBox,
     QDock_context,
     )
@@ -90,7 +92,6 @@ class plotWidget(qtw.QMainWindow):
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
         self.threadPool = threadPool
-        self.initalised = False
         self.ds.cache.load_data_from_db()
         self.last_ds_len = self.ds.number_of_results
         self.config = config
@@ -176,7 +177,7 @@ class plotWidget(qtw.QMainWindow):
         self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
         
-        if refrate > 0:
+        if refrate is not None and refrate > 0:
             self.spinBox.setValue(refrate)
         else:
             self.spinBox.setValue(5.0)
@@ -226,11 +227,11 @@ class plotWidget(qtw.QMainWindow):
         """
         self.vbMenu = self.vb.menu
         
-        actions = []
-        for action in self.vbMenu.actions():
-            actions.append(action)
+        actions = self.vbMenu.actions()
+        for action in actions:
             if action.text() == "View All":
                 action.setText("Autoscale")
+                break
         
         self.autoscaleSep = self.vbMenu.insertSeparator(actions[1])
         
@@ -297,6 +298,7 @@ class plotWidget(qtw.QMainWindow):
             self.axis_dropdown[axis].currentIndexChanged.connect(
                                         lambda index, axis=axis: self.change_axis(axis)
                                         )
+            
         # Produce seperations line as QDockWidget as none inbuilt
         sep = qtw.QFrame()
         sep.setFrameShape(qtw.QFrame.HLine)
@@ -504,6 +506,11 @@ class plotWidget(qtw.QMainWindow):
                 i = int(i * image_data.shape[0])
                 j = int(j * image_data.shape[1])
                 self.pos_labels["z"].setText(f"z = {self.formatNum(image_data[i, j])}")
+                
+                # Save z location for subplot use
+                self.z_index = [i, j]
+            else:
+                self.z_index = None
 
         # Update text
         self.pos_labels["x"].setText(x_txt)
@@ -528,7 +535,7 @@ class plotWidget(qtw.QMainWindow):
             
             
     @QtCore.pyqtSlot()
-    def refreshWindow(self, force : bool = False, wait_on_thread : bool = False):
+    def refreshWindow(self, force : bool = False):
         """
         Event handler for monitor timeout and other refresh sources.
         
@@ -560,7 +567,7 @@ class plotWidget(qtw.QMainWindow):
                         return
                     
                 # The actual refresh line
-                self.load_data(wait_on_thread=wait_on_thread)
+                self.load_data()
 
         finally: #Ran after return or otherwise
         
@@ -580,7 +587,7 @@ class plotWidget(qtw.QMainWindow):
 
 
     @QtCore.pyqtSlot(bool)
-    def refreshPlot(self, finished : bool):
+    def refreshPlot(self, finished : bool = True):
         """
         Produces a shallow copy of data produced by worker.
         This is inhertited by plot<1/2>d to actually use the loaded data.
@@ -593,7 +600,7 @@ class plotWidget(qtw.QMainWindow):
 
         """
         try:
-            if not finished:
+            if not finished: # error in worker
                 return
             
             #set data to be called by plot<1/2>d.refreshPlot()
@@ -609,6 +616,12 @@ class plotWidget(qtw.QMainWindow):
             # For 2d plots
             if hasattr(self.worker, "dataGrid"):        
                 self.dataGrid = self.worker.dataGrid
+                
+            # I didnt want to make this a dedicated callback for the few times 
+            # it is used, as the performace hit is neglible
+            # Update text
+            self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
+            self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
                 
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
@@ -659,23 +672,30 @@ class plotWidget(qtw.QMainWindow):
         if len(duplicates) == 1:
             self.axis_dropdown[duplicates[0]].blockSignals(True)
             
+            # Fetch axis parameter from self.axis_param["<x/y>"]
             self.axis_dropdown[duplicates[0]].setCurrentIndex(
                 self.axis_dropdown[duplicates[0]].findText(self.axis_param[key].name)
                 )
             
             self.axis_dropdown[duplicates[0]].blockSignals(False)
             
-        elif len(duplicates) > 1:
-            raise ValueError("Too many duplicates in axis assertion.\nThis should not be possible?")
-        
-        self.refreshWindow(force=True, wait_on_thread=True) # wait_on_thread else param data is not updated
-        
-        # Update text
-        self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
-        self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
-        
-        # Update range
-        self.plot.enableAutoRange(True)
-        if hasattr(self, "scaleColorbar"): # and colorbar for 2d plots.
-            self.scaleColorbar()
+            # Flip worker data to match change
+            temp_y_data = self.worker.axis_data["y"]
+            temp_y_param = self.worker.axis_param["y"]
+            
+            self.worker.axis_data["y"] = self.worker.axis_data["x"]
+            self.worker.axis_data["x"] = temp_y_data
+            
+            self.worker.axis_param["y"] = self.worker.axis_param["x"]
+            self.worker.axis_param["x"] = temp_y_param
+            
+            if hasattr(self.worker, "dataGrid"):
+                self.worker.dataGrid = self.worker.dataGrid.transpose()
+                
+            # Refresh without loading new dataset data
+            self.refreshPlot()
+            
+        else:
+            # get new data
+            self.refreshWindow(force=True) # wait_on_thread else param data is not updated
         
