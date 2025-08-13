@@ -11,8 +11,18 @@ from qplot.windows._widgets import (
 
 
 class sweeper(plotWidget):
+    sweep_moved = QtCore.pyqtSignal([int, str, str, int, object])
+    remove_sweep = QtCore.pyqtSignal([int])
     
-    def __init__(self, sweep_indep, fixed_indep, fixed_index, *args, **kargs):
+    def __init__(self,
+                 sweep_id : int,
+                 sweep_indep : str,
+                 fixed_indep : str, 
+                 fixed_index : int, 
+                 *args, 
+                 **kargs
+                 ):
+        self.sweep_id = sweep_id
         self.sweep_indep = sweep_indep
         self.fixed_indep = fixed_indep
         self.fixed_index = fixed_index
@@ -23,6 +33,10 @@ class sweeper(plotWidget):
         
         
     def initAxes(self):
+        """
+        Adds to left toolbar to allow for sweep parameter control
+
+        """
         # Got back to default before line picker
         super().initAxes()
         
@@ -49,6 +63,9 @@ class sweeper(plotWidget):
         main_line.color_box.setColor(self.config.theme.colors[0])
         main_line.color_box.selectedColor.connect(
             lambda col: self.line.setPen(col)
+            )
+        main_line.color_box.selectedColor.connect( # emit update to main
+            lambda _: self.update_sweep()
             )
         self.axes_dock.addWidget(main_line)
         main_line.adjustSize()
@@ -147,6 +164,12 @@ class sweeper(plotWidget):
         """
         return {"x": self.axis_dropdown["x"].currentText(), "y": self.picker.option_box.currentText()}
         
+    
+    @QtCore.pyqtSlot(bool)
+    def closeEvent(self, event):
+        super().closeEvent(event)
+        self.remove_sweep.emit(self.sweep_id)
+        
 ###############################################################################
 # Events/Slots
     
@@ -162,6 +185,14 @@ class sweeper(plotWidget):
         self.line.setData(
             x=self.axis_data["x"], 
             y=self.axis_data["y"],
+            )
+        
+        # Tell main graph to update scan line on source graph
+        self.sweep_moved.emit(
+            self.sweep_id,
+            *self.axis_options.values(),
+            self.fixed_index,
+            self.line.opts['pen']
             )
 
 

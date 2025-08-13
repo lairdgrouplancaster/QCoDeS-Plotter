@@ -26,6 +26,8 @@ class plot2d(plotWidget):
                  **kargs,
                  ):
         super().__init__(*args, **kargs)
+        self.sweep_id = 0
+        self.sweep_lines = {}
 
         
     def initFrame(self):
@@ -34,6 +36,7 @@ class plot2d(plotWidget):
 
         """
         self.image = pg.ImageItem()
+        self.image.setZValue(0) # Like *Send to back*
         
         self.plot.addItem(self.image)
         
@@ -182,11 +185,57 @@ class plot2d(plotWidget):
         # Emit to Main window to open new window
         self.open_subplot.emit(sweeper,
                 (
+                self.sweep_id,
                 sweep_var,
                 fixed_var,
-                fixed_index,
+                fixed_index, 
                 self.ds,
                 self.param
                 )
             )
+        self.sweep_id += 1
             
+        
+    @QtCore.pyqtSlot(int, str, str, int, object)
+    def update_sweep_line(self, sweep_id, sweep_param, fixed_param, fixed_index, line_col):
+        
+        # Check if display is possible on current axes
+        if sweep_param not in self.axis_options.values() or fixed_param not in self.axis_options.values():
+
+            return
+        
+        # get axis of fixed_param
+        index = list(self.axis_options.values()).index(fixed_param)
+        axis = list(self.axis_options.keys())[index]
+    
+        at_value = self.axis_data[axis][fixed_index]
+    
+        # Check if already has line and remove before adding new
+        self.remove_sweep(sweep_id)
+        
+        # Produce line
+        if axis == "x":
+            line = self.plot.addLine(x=at_value, pen=line_col)
+        else:
+            line = self.plot.addLine(y=at_value, pen=line_col)
+            
+        line.setZValue(1) # Move to top
+        self.sweep_lines[sweep_id] = line # Track for delete later
+    
+    
+    @QtCore.pyqtSlot(int)
+    def remove_sweep(self, sweep_id):
+        """
+        Event handler for subplot closing.
+        Removes line sweep display from plot
+
+        Parameters
+        ----------
+        sweep_id : int
+            Number Id of Sweep.
+
+        """
+        if not self.sweep_lines.get(sweep_id, 0):
+            return
+        self.plot.removeItem(self.sweep_lines[sweep_id])
+        self.sweep_lines.pop(sweep_id)
