@@ -57,16 +57,9 @@ class loader(QtCore.QRunnable):
             axis_param = {}
             dict_labels = list(self.data.keys())
             
-            #Remove nan values
-            valid_rows = ~np.isnan(depvarData)
-
             # for 2d plots
             if len(depvarData.shape) == 2:
-                
-                # convert valid_rows into form for 2d numpy arrays
-                valid_rows = valid_rows.any(axis=1)
-                
-                depvarData = depvarData[valid_rows]
+                valid = {}
                 
                 # Find correct data for each axis
                 for axis in ["x", "y"]:
@@ -78,10 +71,20 @@ class loader(QtCore.QRunnable):
                     # indep data in self.data is in either identical rows or 
                     # columns to match size of depvar Data, so find either col 
                     # or row as need.
-                    if data[0, 0] == data[0, 1]: # identical columns
-                        data = data[:, 0][valid_rows]
-                    else: # identical rows
+                    if data[0, 0] == data[0, 1] and data[1, 0] == data[1, 1]: # identical columns (double check for safety)
+                        data = data[:, 0]
+                        
+                        # Find non nan index values
+                        valid[axis] = ~np.isnan(data)
+                        data = data[valid[axis]]
+                        
+                    else: # identical rows, set using column
                         data = data[0, :]
+                        
+                        # Find non nan index values
+                        valid[axis] = ~np.isnan(data)
+                        data = data[valid[axis]]
+                        
                         if axis == "x": #rotate data to match axis data
                             depvarData = depvarData.transpose()
                     
@@ -89,13 +92,19 @@ class loader(QtCore.QRunnable):
                     axis_param[axis] = param
                   
                 # Allow main to fetch data
-                self.dataGrid = depvarData
+                
+                # Access non nan indexed values
+                self.dataGrid = depvarData[valid["x"]][:, valid["y"]]
+                
                 self.axis_data = axis_data
                 self.axis_param = axis_param
             
                 self.emitter.finished.emit(True)
                 return
-            
+
+            #Remove nan values
+            valid_rows = ~np.isnan(depvarData)
+
             # for 1d plots
             if len(self.param.depends_on_) == 1:
                 
@@ -126,14 +135,14 @@ class loader(QtCore.QRunnable):
                 axis_param[axis] = param
                 
             # Allow main to fetch data
+            self.dataGrid = data2matrix(
+                    axis_data["x"], 
+                    axis_data["y"], 
+                    depvarData[valid_rows]
+                ).to_numpy(float)
             self.axis_data = axis_data
             self.axis_param = axis_param
             
-            self.dataGrid = data2matrix(
-                    self.axis_data["x"], 
-                    self.axis_data["y"], 
-                    depvarData[valid_rows]
-                ).to_numpy(float)
             
             self.emitter.finished.emit(True)
             return

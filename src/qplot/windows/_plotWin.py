@@ -139,7 +139,6 @@ class plotWidget(qtw.QMainWindow):
         
         #start refresh cycle if live
         if self.ds.running: 
-            print("starting monitor")
             self.monitor.start((int(self.spinBox.value() * 1000)))
         
         
@@ -545,9 +544,6 @@ class plotWidget(qtw.QMainWindow):
         ----------
         force : bool, optional
             Forces a refresh regarless of checks. The default is False.
-        wait_on_thread : bool, optional
-            Passed to self.load_data(), see self.load_data for more detail. 
-            The default is False.
 
         """
         self.monitor.stop()

@@ -68,7 +68,7 @@ class plot2d(plotWidget):
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
-        v_sweep = qtw.QAction("Plot Verticle Sweep", self)
+        v_sweep = qtw.QAction("Plot Vertical Sweep", self)
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         

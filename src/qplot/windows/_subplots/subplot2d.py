@@ -12,7 +12,6 @@ from qplot.windows._widgets import (
 
 class sweeper(plotWidget):
     
-    
     def __init__(self, sweep_indep, fixed_indep, fixed_index, *args, **kargs):
         self.sweep_indep = sweep_indep
         self.fixed_indep = fixed_indep
@@ -92,28 +91,47 @@ class sweeper(plotWidget):
     
     @QtCore.pyqtSlot(bool)
     def refreshPlot(self, finished : bool = True):
+        """
+        Event handler for worker callback
+        Fetches values from data from worker in super().refreshPlot
+        
+        Updates display (see self.update_sweep) and slider as needed
+
+        Parameters
+        ----------
+        finished : bool
+            In the event the worker had to abort, finished is False and refresh
+            is not ran.
+
+        """
         super().refreshPlot(finished)
+        
+        ### NOTE. self.axis_data["y"] is set to fixed param in super().refreshPlot,
+        ###       then updated to y axis value (indep param) in self.update_sweep()
+        self.fixed_indep_data = self.axis_data["y"]
         
         # Get correct row and param for y data
         self.axis_param["y"] = self.param
         
         # Set-up fixed axis picker and slide
-        # Match range to index of x data
-        self.picker.slider.setRange(0, len(self.axis_data["x"]) - 1)
+        # Match range to index of fixed param data
+        self.picker.slider.setRange(0, len(self.fixed_indep_data) - 1)
         
         # Refresh plot
         # blank text_box means slider signal blocked, during axis switch
         if not self.picker.text_box.text():
-            self.picker.slider.blockSignals(False)
-            
-            self.picker.slider.setValue(self.fixed_index) # Calls update_sweep
+            self.picker.slider.setValue(self.fixed_index) 
             self.picker.text_box.setText(
-                self.formatNum(self.axis_data["x"][self.fixed_index])
+                self.formatNum(self.fixed_indep_data[self.fixed_index])
                 )
+            
+            self.update_sweep()
+            self.picker.slider.blockSignals(False)
             
         else:
             self.update_sweep()
         
+        self.worker.running = False
         
         
     @property
@@ -161,7 +179,7 @@ class sweeper(plotWidget):
         """
         # Update display box
         self.picker.text_box.setText(
-            self.formatNum(self.axis_data["x"][index])
+            self.formatNum(self.fixed_indep_data[index])
             )
         
         # Update plot
@@ -189,6 +207,7 @@ class sweeper(plotWidget):
         # Update Slider
         self.picker.slider.blockSignals(True)
         self.picker.slider.setValue(0)
+        self.fixed_index = 0
         self.picker.text_box.setText("") # Let refreshPlot know signal is blocked
         
         if self.picker.option_box.currentText() == self.axis_dropdown["x"].currentText():
@@ -196,18 +215,18 @@ class sweeper(plotWidget):
             self.axis_dropdown["x"].setCurrentIndex(
                 self.axis_dropdown["x"].findText(self.fixed_indep)
                 )
-            self.axis_dropdown["x"].blockSignals(True)
+            self.axis_dropdown["x"].blockSignals(False)
             
         # NOTE, same as self.change_axis() from here
             
             # Switch data
-            self.axis_data["x"] = self.worker.axis_data["y"]
+            temp_y_data = self.worker.axis_data["y"]
             temp_y_param = self.worker.axis_param["y"]
             self.worker.dataGrid = self.worker.dataGrid.transpose()
             
             # Switch worker data to track changes
             self.worker.axis_data["y"] = self.worker.axis_data["x"]
-            self.worker.axis_data["x"] = self.axis_data["x"]
+            self.worker.axis_data["x"] = temp_y_data
             
             self.worker.axis_param["y"] = self.worker.axis_param["x"]
             self.worker.axis_param["x"] = temp_y_param
@@ -243,7 +262,10 @@ class sweeper(plotWidget):
         # Update Slider
         self.picker.slider.blockSignals(True)
         self.picker.slider.setValue(0)
+        self.fixed_index = 0
         self.picker.text_box.setText("") # Let refreshPlot know signal is blocked
+        
+        print(bool(self.axis_dropdown["x"].currentText() == self.picker.option_box.currentText()))
         
         if self.axis_dropdown["x"].currentText() == self.picker.option_box.currentText():
             self.picker.option_box.blockSignals(True)
@@ -255,28 +277,28 @@ class sweeper(plotWidget):
         # NOTE, same as self.change_fixed_param() from here
             
             # Switch data
-            self.axis_data["x"] = self.worker.axis_data["y"]
+            temp_y_data = self.worker.axis_data["y"]
             temp_y_param = self.worker.axis_param["y"]
             self.worker.dataGrid = self.worker.dataGrid.transpose()
             
             # Switch worker data to track changes
             self.worker.axis_data["y"] = self.worker.axis_data["x"]
-            self.worker.axis_data["x"] = self.axis_data["x"]
+            self.worker.axis_data["x"] = temp_y_data
             
             self.worker.axis_param["y"] = self.worker.axis_param["x"]
             self.worker.axis_param["x"] = temp_y_param
         
             self.sweep_indep, self.fixed_indep = self.axis_options.values()
-            
+        
             self.refreshPlot() # Refresh without new data
             
-        else: 
+        else:
             self.sweep_indep, self.fixed_indep = self.axis_options.values()
-        
+            
             # Get new data
             self.refreshWindow(force=True) 
-    
-    
+            
+
     
 class fixed_var_picker(qtw.QWidget):
     """
