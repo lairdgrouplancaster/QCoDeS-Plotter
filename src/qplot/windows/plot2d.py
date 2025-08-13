@@ -5,12 +5,13 @@ import pyqtgraph as pg
 
 import numpy as np
 
-from qplot.windows.plotWin import plotWidget
+from qplot.windows._plotWin import plotWidget
+from ._subplots.subplot2d import sweeper
 
 class plot2d(plotWidget):
     """
     Plot window for 2d and higher plots, aka Heatmaps.
-    Inherits and wraps several functions from qplot.windows.plotWin.PlotWidget.
+    Inherits and wraps several functions from qplot.windows._plotWin.plotWidget.
     PlotWidget handles majority of set up, recommend to view first.
     
     Key functions to see in plot2d:
@@ -18,6 +19,7 @@ class plot2d(plotWidget):
         refreshPlot
         
     """
+    open_subplot = QtCore.pyqtSignal([object, tuple])
     
     def __init__(self, 
                  *args,
@@ -36,20 +38,8 @@ class plot2d(plotWidget):
         self.plot.addItem(self.image)
         
         # Wait for loader to finish to enure needed data is collected.
-        self.load_data(wait_on_thread=True)
+        self.load_data()
         
-        self.bar = self.plot.addColorBar(
-            self.image,
-            colorMap="magma",
-            label=f"{self.param.label} ({self.param.unit})",
-            rounding=(np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid))/1e5 #Add 10,000 colours
-            )
-        self.scaleColorbar()
-        
-        self.plot.setLabel('left', f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
-        self.plot.setLabel('bottom', f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
-    
-        self.initalised = True
         print("graph produced \n")
       
         
@@ -70,9 +60,22 @@ class plot2d(plotWidget):
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
         
+        actions = self.vbMenu.actions()
+        
+        sep = self.vbMenu.insertSeparator(actions[3])
+        
+        h_sweep = qtw.QAction("Plot Horizontal Sweep", self)
+        h_sweep.triggered.connect(lambda _: self.openSweep("h"))
+        self.vbMenu.insertAction(sep, h_sweep)
+        
+        v_sweep = qtw.QAction("Plot Vertical Sweep", self)
+        v_sweep.triggered.connect(lambda _: self.openSweep("v"))
+        self.vbMenu.insertAction(sep, v_sweep)
+        
         
     def initLabels(self):
         super().initLabels()
+        self.z_index = None
         
         self.pos_labels["y"].setText(self.pos_labels["y"].text() + ";")
         
@@ -82,7 +85,7 @@ class plot2d(plotWidget):
         
 ###############################################################################
     
-    def refreshPlot(self, finished):
+    def refreshPlot(self, finished : bool = True):
         """
         Updates plot based on data produced by the thread worker. Data is 
         assigned in plotWidget.refreshPlot, then all plot items are produced
@@ -123,6 +126,16 @@ class plot2d(plotWidget):
         )
         self.image.setRect(self.rect)
         
+        # Produce color bar on first run
+        if not hasattr(self, "bar"):
+            self.bar = self.plot.addColorBar(
+                self.image,
+                colorMap="magma",
+                label=f"{self.param.label} ({self.param.unit})",
+                rounding=(np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid))/1e5 #Add 10,000 colours
+                )
+            self.scaleColorbar()
+        
         # Allow new worker to be produced
         self.worker.running = False
 
@@ -142,4 +155,38 @@ class plot2d(plotWidget):
         vmin, vmax = np.nanmin(self.dataGrid) , np.nanmax(self.dataGrid)
 
         self.bar.setLevels((vmin, vmax))
+
+###############################################################################
+# Subplot control
+
+    def openSweep(self, side):
+        # Quit out if not on heatmap
+        if self.z_index is None:
+            return
         
+        # Fetch axes names
+        axes = self.axis_options
+        
+        # Get fixed and sweep parameter
+        if side == "v":
+            fixed_var = axes["x"]
+            sweep_var = axes["y"]
+            fixed_index = self.z_index[0]
+        elif side == "h":
+            fixed_var = axes["y"]
+            sweep_var = axes["x"]
+            fixed_index = self.z_index[1]
+        else:
+            raise KeyError(f"Invalid sweep side, {side=}, must be 'v' or 'h'.")
+            
+        # Emit to Main window to open new window
+        self.open_subplot.emit(sweeper,
+                (
+                sweep_var,
+                fixed_var,
+                fixed_index,
+                self.ds,
+                self.param
+                )
+            )
+            

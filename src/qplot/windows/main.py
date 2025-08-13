@@ -6,7 +6,7 @@ from qplot.windows import (
     plot1d,
     plot2d,
     )
-from qplot.windows._widgets import (
+from ._widgets import (
     RunList,
     moreInfo,
     )
@@ -259,11 +259,13 @@ class MainWindow(qtw.QMainWindow):
         self.post_admin() # Update other plot windows
         del win
     
-    
+    @QtCore.pyqtSlot(object, tuple)
     def openWin(self, widget, *args, show=True, **kargs):
         """
         Handles opening Plot window, widget.
         Passes all attributes to widget(). Also passes other critical objects.
+
+        Connected to plot2d for openning it's secondary plots.        
 
         Parameters
         ----------
@@ -280,6 +282,10 @@ class MainWindow(qtw.QMainWindow):
 
 
         """
+        # Convert args to usable form if passed as iterable
+        if len(args) == 1 and (isinstance(args[0], tuple) or isinstance(args[0], list)):
+            args = tuple(args[0])
+        
         win = widget(
             *args, 
             self.config, 
@@ -295,12 +301,14 @@ class MainWindow(qtw.QMainWindow):
         win.closed.connect(self.onClose)
         if hasattr(win, "get_mergables"): #get_mergables only in 1d
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
+        elif win.__class__.__name__ == "plot2d":
+            win.open_subplot.connect(self.openWin)
 
-        # match style/theme to main window
-        win.update_theme(self.config)
-        
         # Place window on screen so it doesnt overlap with last openned
         if show:
+            # match style/theme to main window
+            win.update_theme(self.config)
+            
             win.move(self.x, self.y)
             win.show()
         
@@ -704,8 +712,11 @@ class MainWindow(qtw.QMainWindow):
         
         for item in self.windows:
             # Find compatible windows
-            if item.param.depends_on == win.param.depends_on and not item.label in win.lines.keys():
-                wins.append(item)
+            try:
+                if item.param.depends_on == win.param.depends_on and not item.label in win.lines.keys():
+                    wins.append(item)
+            except AttributeError:
+                continue
         
         # Update within win
         win.update_line_picker(wins)

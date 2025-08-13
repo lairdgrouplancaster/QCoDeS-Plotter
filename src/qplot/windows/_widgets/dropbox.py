@@ -11,6 +11,9 @@ class picker_1d(qtw.QWidget):
         self.axis_side: Control which side the plot is attached to (left or right)
         self.color_box: dropdown menu for choosing line colour
     
+    Uses modified QHBoxLayouts to set context menu on items.
+    See qplot.windows._widgets.toolbar.
+    
     """
     itemSelected = QtCore.pyqtSignal([str])
     closed = QtCore.pyqtSignal([str])
@@ -114,6 +117,7 @@ class picker_1d(qtw.QWidget):
         # Emit to plot1d for further handling
         self.itemSelected.emit(self.option_box.currentText())
    
+    
     @QtCore.pyqtSlot()
     def deleteBox(self):
         """
@@ -128,7 +132,6 @@ class picker_1d(qtw.QWidget):
         # Emit to plot1d for further handling
         self.closed.emit(self.option_box.currentText())
     
-
     
 class expandingComboBox(qtw.QComboBox):
     """

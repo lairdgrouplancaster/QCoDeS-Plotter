@@ -334,55 +334,41 @@ class light:
             border: none;
         }
         QSlider::groove:horizontal {
-            border: 1px solid #bbb;
-            background: #f0f0f0;
-            height: 10px;
-            border-radius: 4px;
+        	height: 5px;
+        	background: #500a84ff;
         }
+        QSlider::groove:vertical {
+        	height: 5px;
+        	background: #500a84ff;
+        }
+        
         QSlider::handle:horizontal {
-            background: #500a84ff;
-            border: 1px solid #500a84ff;
-            width: 18px;
-            margin: -5px 0;
-            border-radius: 6px;
+        	background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
+        	border: 1px solid #5c5c5c;
+        	width: 14px;
+        	margin: -5px 0;
+        	border-radius: 7px;
+        }                        
+        QSlider::handle:vertical {
+        	background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
+        	border: 1px solid #5c5c5c;
+        	width: 14px;
+        	margin: -5px 0;
+        	border-radius: 7px;
         }
-        QSlider::handle:horizontal:hover {
-            background: #66cc99;
-            border: 1px solid #66cc99;
+        QSlider::add-page:horizontal {
+            background: #a0a0a0;
+        }
+        QSlider::add-page:vertical {
+            background: #a0a0a0;
         }
         QSlider::sub-page:horizontal {
             background: #500a84ff;
-            border-radius: 4px;
-        }
-        QSlider::add-page:horizontal {
-            background: #f0f0f0;
-            border-radius: 4px;
-        }
-        QSlider::groove:vertical {
-            border: 1px solid #bbb;
-            background: #f0f0f0;
-            width: 10px;
-            border-radius: 4px;
-        }
-        QSlider::handle:vertical {
-            background: #500a84ff;
-            border: 1px solid #500a84ff;
-            height: 18px;
-            margin: 0 -5px;
-            border-radius: 6px;
-        }
-        QSlider::handle:vertical:hover {
-            background: #66cc99;
-            border: 1px solid #66cc99;
         }
         QSlider::sub-page:vertical {
             background: #500a84ff;
-            border-radius: 4px;
         }
-        QSlider::add-page:vertical {
-            background: #f0f0f0;
-            border-radius: 4px;
-        }
+        
         QTreeView {
             background-color: #ffffff;
             alternate-background-color: #f0f0f0;

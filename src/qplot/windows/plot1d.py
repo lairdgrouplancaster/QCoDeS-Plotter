@@ -1,8 +1,6 @@
-from qplot.windows.plotWin import plotWidget
+from qplot.windows._plotWin import plotWidget
 from qplot.windows._widgets import picker_1d
-from qplot.tools import (
-    subplot1d,
-    )
+from ._subplots import subplot1d
 
 
 from PyQt5 import (
@@ -16,7 +14,7 @@ import pyqtgraph as pg
 class plot1d(plotWidget):
     """
     Plot window for 1d Line plots.
-    Inherits and wraps several functions from qplot.windows.plotWin.PlotWidget.
+    Inherits and wraps several functions from qplot.windows._plotWin.plotWidget.
     PlotWidget handles majority of set up, recommend to view first.
     
     Key functions to see in plot1d:
@@ -24,9 +22,9 @@ class plot1d(plotWidget):
         refreshPlot
         
     Most other functions are for multiple lines. Makes use of 
-    qplot.tools.subplot.subplot1d to produces line data.
-    """
+    qplot.windows._subplot.subplot1d to produces line data.
     
+    """
     get_mergables = QtCore.pyqtSignal()
     
     def __init__(self, 
@@ -48,16 +46,12 @@ class plot1d(plotWidget):
         self.line = self.plot.plot()
         
         # Wait for loader to finish to enure needed data is collected.
-        self.load_data(wait_on_thread=True)
+        self.load_data()
         
-        self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
-        self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
-        
-        self.initalised = True
         print("Graph produced \n")
         
         
-    def refreshPlot(self, finished):
+    def refreshPlot(self, finished : bool = True):
         """
         Updates plot based on data produced by the thread worker. Data is 
         assigned in plotWidget.refreshPlot, then all plot items are produced

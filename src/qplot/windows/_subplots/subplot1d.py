@@ -34,21 +34,35 @@ class subplot1d(pg.PlotDataItem):
         # Update live state
         self.running = from_win.ds.running
         
-        data = {}
-        
         # Get which data is on which axis
-        parent_options = parent.axis_options()
-        from_win_options = from_win.axis_options()
+        parent_options = parent.axis_options
+        from_win_options = from_win.axis_options
 
         # for subplot, must share 1 axis parameter name, so check if flipped
         if parent_options["x"] == from_win_options["x"] or parent_options["y"] == from_win_options["y"]:
-            choose_from = ["x", "y"]
+            self.choose_from = ["x", "y"]
         else:
-            choose_from = ["y", "x"]
+            self.choose_from = ["y", "x"]
             
+        # Wait for data to finish
+        if from_win.worker.running:
+            from_win.end_wait.connect(self.call_update)
+        else:
+            self.call_update()
+            
+    
+    @QtCore.pyqtSlot()
+    def call_update(self):
+        """
+        Event handler for self.refresh/from_win.worker finish
+        Updates the subplot line data.
+
+        """
+        data = {}
+    
         # Assign data to correct axis
         for itr, axis in enumerate(["x", "y"]):
-            data[axis] = from_win.axis_data[choose_from[itr]]
+            data[axis] = self.from_win.axis_data[self.choose_from[itr]]
                     
         # Updates display
         self.setData(
@@ -56,7 +70,11 @@ class subplot1d(pg.PlotDataItem):
             y=data["y"],
             )
         # parent.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
-    
+        
+        try:
+            self.from_win.end_wait.disconnect(self.call_update)
+        except TypeError: # Type error if not connected
+            pass
     
     @QtCore.pyqtSlot(QColor)
     def set_color(self, col):

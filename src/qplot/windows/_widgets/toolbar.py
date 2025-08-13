@@ -23,7 +23,8 @@ class QDock_context(qtw.QDockWidget):
         
         self.layout = self.VBox_context(self.event_filter, core_widget)
         
-        
+    
+    ### Overwrite add functions to add to main layout
     def addLayout(self, *args, **kargs):
         layout = self.HBox_context(self.event_filter, *args, **kargs)
         self.layout.addLayout(layout)
