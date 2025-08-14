@@ -238,6 +238,15 @@ class MainWindow(qtw.QMainWindow):
         Also handles some closing admin        
 
         """
+        # Confirm exit
+        reply = qtw.QMessageBox.question(self, "Confirm Exit", "Are you sure you want to exit?",
+                                     qtw.QMessageBox.Yes | qtw.QMessageBox.No)
+        if reply == qtw.QMessageBox.Yes:
+            event.accept()
+        else:
+            event.ignore()
+            return
+        
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
         # Add self.ds.conn.close()?
@@ -258,6 +267,7 @@ class MainWindow(qtw.QMainWindow):
         self.windows.remove(win)
         self.post_admin() # Update other plot windows
         del win
+    
     
     @QtCore.pyqtSlot(object, tuple)
     def openWin(self, widget, *args, show=True, **kargs):
@@ -299,10 +309,23 @@ class MainWindow(qtw.QMainWindow):
         
         # Slot connectons
         win.closed.connect(self.onClose)
-        if hasattr(win, "get_mergables"): #get_mergables only in 1d
+        if win.__class__.__name__ == "plot1d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
+            
         elif win.__class__.__name__ == "plot2d":
             win.open_subplot.connect(self.openWin)
+            
+        elif win.__class__.__name__ == "sweeper":
+            # find win's parent
+            for item in self.windows:
+                if item.ds == win.ds and item.param == win.param and isinstance(item, plot2d):
+                    win.sweep_moved.connect(item.update_sweep_line) # Update event
+                    win.remove_sweep.connect(item.remove_sweep) # Close event
+                    item.sweep_moved.connect(win.update_sweep_line)
+                    break
+            
+        else:
+            raise TypeError(f"Unknown window of type: {win.__class__.__name__}")
 
         # Place window on screen so it doesnt overlap with last openned
         if show:
@@ -561,7 +584,17 @@ class MainWindow(qtw.QMainWindow):
             for param in params:
                 if param.depends_on != "":
                     depends_on = param.depends_on_
+                    skip = False
+                    
                     if len(depends_on) == 1:
+                        for win in self.windows:
+                            # Check if window is open
+                            if win.ds == ds and win.param == param and isinstance(win, plot1d):
+                                print("Target parameter is already open.")
+                                skip = True
+                                break
+                        if skip: continue
+                        
                         self.openWin(
                             plot1d, 
                             ds, 
@@ -571,6 +604,14 @@ class MainWindow(qtw.QMainWindow):
                             )
                         
                     else:
+                        for win in self.windows:
+                            # Check if window is open
+                            if (win.ds == ds and win.param == param and isinstance(win, plot2d)):
+                                print("Target parameter is already open.")
+                                skip = True
+                                break
+                        if skip: continue
+                            
                         self.openWin(
                             plot2d, 
                             ds, 
