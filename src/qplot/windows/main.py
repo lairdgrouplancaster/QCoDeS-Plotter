@@ -321,6 +321,7 @@ class MainWindow(qtw.QMainWindow):
                 if item.ds == win.ds and item.param == win.param and isinstance(item, plot2d):
                     win.sweep_moved.connect(item.update_sweep_line) # Update event
                     win.remove_sweep.connect(item.remove_sweep) # Close event
+                    item.sweep_moved.connect(win.update_sweep_line)
                     break
             
         else:
