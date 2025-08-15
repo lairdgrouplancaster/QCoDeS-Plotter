@@ -37,21 +37,36 @@ How to Use
 ----------
 After opening a QCoDeS database (.db) with File -> Load, all runs within the database will be displayed in the central table. The table is sortable by clicking on any column header.
 Clicking on a run displays a more detailed view in the table below. <br/>
-After selecting a run, it can be openned with the "Open Plots" button or by double clicking the row in the central table. Alternatively you may enter a run ID into the text box above the central table then use the "Open Plots" Button. <br/>
-Both double clicking and using the button will open a window with a plot display for each dependant parameter. To open a specific parameter, right click on the row and use the "Open" context menu. <br/> 
-The "Add _ to _" conext menu is used to add other line to a plot window. It displays the parameters in the selected row (Add _) and then which plots that parameter can be added to (to _) by matching independant varaible names. This can also be done within a line plot window and is mentioned later.
+After selecting a run, it can be opened with the "Open Plots" button or by double clicking the row in the central table. Alternatively you may enter a run ID into the text box above the central table, then use the "Open Plots" Button. <br/>
+Both double clicking and using the button will open a window with a plot display for each dependent parameter. To open a specific parameter, right click on the row and use the "Open" context menu. <br/> 
+The "Add _ to _" context menu is used to add additional lines to a plot window. It displays the parameters in the selected row (Add _) and then which plots that parameter can be added to (to _) by matching independant variable names. This can also be done within a line plot window and is mentioned later.
 <br/>
-You can alter how frequently the app check for new runs by changing the box in the top toolbar. Setting the value to 0.0, will stop any checks. You can also manually refresh using File -> Refresh or by pressing R. The "Toggle Auto-plt" tickbox will open any new runs once ticked.
+You can alter how frequently the app checks for new runs by changing the interval box in the top toolbar. Setting the value to 0.0, will stop any checks. You can also manually refresh using File -> Refresh or by pressing R. The "Toggle Auto-plot" tickbox will open any new runs once ticked.
 <br/>
 The "Options" menu in the menu bar allows for: changing between light and dark mode and the default PyQt display, and allows for changing the default directory for the File -> Load dialog box. Both of these can also be changed using configuration options, see below. 
 <br/>
 <br/>
-Plot windows are seperated into 2 types, line graphs and heatmaps. They both have toolbars which can displayed or hidden using View -> Toolbars or by right-clicking on a toolbar. <br/>
-* The top refresh toolbar is only shown on runs which are live, but can be displayed on static runs. The refresh timer takes the same value as the main window if it refreshing, otherwise it trys to refresh every 5.0s.
-* The bottom toolbar displays the current co-ordinates of the mouse.
-* The left toolbar is used to change to assigned axes, this is mainly used for heatmaps with more than 2 independant variables but can be used to flip axes.
-* For Line graphs, you can change the color of the line in the left toolbar. You may also add other lines from other open line graphs using the dropdown menu, control which y axis these are attached to, and change the color. The "X" button can be used to remove a line.
-* When multiple lines are connect to different sides, using scroll or drag on the central area of the plot controls both axes, while placing your cursor on a side axis will control only that axis.
+Plot windows are separated into 2 types, line graphs and heatmaps. They both have toolbars which can be displayed or hidden using View -> Toolbars or by right-clicking on a toolbar. <br/>
+* The top refresh toolbar is only shown on runs which are live, but can be displayed on static runs. The refresh timer takes the same value as the main window if it is set to update, otherwise it tries to refresh every 5.0s.
+* The bottom toolbar displays the current coordinates of the mouse.
+* The left toolbar is used to change to assigned axes, this is mainly used for heatmaps with more than 2 independent variables but can be used to flip axes.
+* The left toolbar also contains specialist functionality.
+<br/>
+<ins>**Line Graphs**</ins>
+* For Line graphs, you can change the colour of the line in the left toolbar. You may also add other lines from other open line graphs using the dropdown menu, control which y axis these are attached to, and change the color. The "X" button can be used to remove a line.
+* When multiple lines are connected to different sides, using scroll or drag on the central area of the plot controls both axes, while placing your cursor on a side axis will control only that axis.
+* Once a line is added, the source window can be closed. Live updates will continue with the same refresh rate.
+* Please note that secondary lines cannot be rotated when attached to the right axis.
+<br/>
+<ins>**Heatmaps**</ins>
+
+* 1d sweeps can be performed on heatmaps by right clicking on the row/column that you wish to sweep and using "Plot Horizontal/Vertical Sweep".
+* This will create a new window with the sweep, and a cursor of the sweep location on the heatmap. The sweep is <ins>live data compatible</ins>.
+* Within the sweep plot, you may move the sweep location with the slider on the left, this can also be done by dragging the cursor on the heatmap.
+* You may also switch which is the sweep parameter and the fixed parameter using the "x axis" or "fixed parameter" dropdown boxes.
+* Any changes in the sweep plot will be reflected in the cursor, including parameter and <ins>colour change</ins>.
+* Once a sweep is open, the heatmap can be closed and the sweep will remain open and live.
+* Sweeps can be added to 1d plots if the sweep's x axis matches the 1d plots independant variable. Manual refresh may be needed to pick the option and update any changes.
 
 <br/>
 <br/>
@@ -68,7 +83,7 @@ You may also get more infomation on a desired command using `-info <command>`, i
 qplot-cfg -info dump
 ```
 
-Changes to config file can be done in file, IDE, or terminal.  (Top box is python IDE, bottom is terminal)
+Changes to config file can be done in file, IDE, or terminal. (Top box is python IDE, bottom is terminal)
 * To see current config file, use:
 ```python
     from qplot import config

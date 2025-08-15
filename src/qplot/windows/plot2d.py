@@ -253,6 +253,7 @@ class plot2d(plotWidget):
         if self.sweep_lines.get(sweep_id, None) is not None:
             line = self.sweep_lines[sweep_id]
             
+            # Update line data
             line.angle = (90 if axis == "x" else 0)
             line.pen = line_col
             line.hoverPen = line_col
@@ -304,6 +305,7 @@ class plot2d(plotWidget):
             Number Id of Sweep.
 
         """
+        #check exists, then remove
         if self.sweep_lines.get(sweep_id, None) is None:
             return
         self.plot.removeItem(self.sweep_lines[sweep_id])
@@ -325,6 +327,17 @@ class plot2d(plotWidget):
     
     @QtCore.pyqtSlot()  
     def rotate_sweeps(self):
+        """
+        Event handler for changing assigned axes (is connected to self.end_wait
+                                                  in self.refreshPlot)
+        
+        Rotates sweep cursors if the axis is flipped. Otherwise removes them
+
+        Returns
+        -------
+        None.
+
+        """
         if self.rotate is None: # Not from changing axis parameters
             return
         
@@ -351,6 +364,18 @@ class plot2d(plotWidget):
     
     @QtCore.pyqtSlot(object)
     def moving_sweep(self, line):
+        """
+        Event handler for dragging sweep cursor.
+        
+        Uses line possition to find index of fixed parameter and sends to 
+        signal to subplot window to move sweep scan to new location.
+
+        Parameters
+        ----------
+        line : pyqtgraph.graphicsItems.InfiniteLine
+            The line being dragged.
+
+        """
         
         image_data = self.image.image
         rect = self.rect

@@ -95,6 +95,7 @@ class plotWidget(qtw.QMainWindow):
         self.ds.cache.load_data_from_db()
         self.last_ds_len = self.ds.number_of_results
         self.config = config
+        self.visible = show
         
         ### WIDGETS
         self.layout = qtw.QVBoxLayout()
@@ -112,7 +113,7 @@ class plotWidget(qtw.QMainWindow):
         self.initRefresh(refrate)
         self.initFrame() # See plot1d, plot2d
         
-        if show: #dont run non essential GUI functions if not displaying
+        if self.visible: #dont run non essential GUI functions if not displaying
             self.initLabels()
             self.initContextMenu()
             self.initMenu()
@@ -323,6 +324,8 @@ class plotWidget(qtw.QMainWindow):
         refreshAction = qtw.QAction("&Refresh", self)
         refreshAction.setShortcut("R")
         refreshAction.triggered.connect(lambda: self.refreshWindow(force=True))
+        if hasattr(self, "get_mergables"): # Force refresh 1d line options
+            refreshAction.triggered.connect(lambda: self.get_mergables.emit())
         main_menu.addAction(refreshAction)
         
         toolbar_menu = self.createPopupMenu()
@@ -459,8 +462,9 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.monitor.stop()
+        self.visible = False
         self.closed.emit(self) 
-        del self # Pretty much pointless but its here.
+        del self # Pretty much pointless but its here anyway.
 
 
     @QtCore.pyqtSlot(object)
@@ -595,6 +599,7 @@ class plotWidget(qtw.QMainWindow):
             is not ran.
 
         """
+        print("Refreshing", self.label)
         try:
             if not finished: # error in worker
                 return

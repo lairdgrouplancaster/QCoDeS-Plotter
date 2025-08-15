@@ -1,9 +1,9 @@
 from qplot import run
-from qplot._repair import _repair
+from qplot._repair import repair
 
 try:
     run()
 except Exception as err:
     print("Closing SQL Connect")
-    _repair()
+    repair()
     raise err

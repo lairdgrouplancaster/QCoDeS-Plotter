@@ -70,10 +70,19 @@ class plot1d(plotWidget):
             x=self.axis_data["x"], 
             y=self.axis_data["y"],
             )
-        # Subplot lines (TODO handle update in thread)
+        # Subplot lines 
         for line in list(self.lines.values())[1:]:
             line.refresh()
-        # self.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
+            # Restart stopped monitors for live plots
+            from_win = line.from_win
+            if (not from_win.visible and 
+                from_win.ds.running and
+                not from_win.monitor.isActive()
+                ):
+                # Force start monitor
+                from_win.spinBox.setValue(self.spinBox.value())
+                from_win.monitor.start(int(self.spinBox.value() * 1000))
+                self.spinBox.valueChanged.connect(line.from_win.spinBox.setValue)
         
         # Allow new worker to be produced
         self.worker.running = False
@@ -188,7 +197,6 @@ class plot1d(plotWidget):
         self._resize_scrollArea()
         
     
-    
     def update_line_picker(self, wins = None):
         """
         Refreshes the available options in the box dropdown menus.
@@ -292,6 +300,17 @@ class plot1d(plotWidget):
         subplot.set_side(box.axis_side.currentText().lower())
         
     
+    @QtCore.pyqtSlot(bool)
+    def closeEvent(self, event):
+        # Stopped lines as needed
+        for line in list(self.lines.values())[1:]:
+            if not line.from_win.visible:
+                line.from_win.monitor.stop()
+            
+        super().closeEvent(event)
+        
+        
+    
     @QtCore.pyqtSlot(str)
     def remove_line(self, label):
         """
@@ -314,8 +333,13 @@ class plot1d(plotWidget):
             self.plot.getAxis('right').setStyle(showValues=False)
         
         # Remove line from viewbox
-        self.plot.removeItem(self.lines[label])
+        line = self.lines[label]
+        self.plot.removeItem(line)
         self.lines.pop(label)
+        
+        # Stop refresh monitor for line if needed
+        if not line.from_win.visible:
+            line.from_win.stop()
         
         # Update box options
         self.get_mergables.emit()

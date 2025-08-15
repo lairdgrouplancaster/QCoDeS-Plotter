@@ -11,6 +11,14 @@ from qplot.windows._widgets import (
 
 
 class sweeper(plotWidget):
+    """
+    A plotWidget which displays a 1d sweep on an 2d plot.
+    Produced throught he context menu of the plotItem in plot2d.
+    
+    Produces a cursor on its source plot2d to display the location of the sweep.
+    Both plots become linked, any changes to the cursor or sweep will update
+    their counterpart.
+    """
     sweep_moved = QtCore.pyqtSignal([int, str, str, int, object])
     remove_sweep = QtCore.pyqtSignal([int])
     
@@ -167,6 +175,14 @@ class sweeper(plotWidget):
     
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
+        """
+        Post close admin, emits to 2d main plot  to remove sweep cursor
+
+        Parameters
+        ----------
+        unused byt reauired by slot
+        
+        """
         super().closeEvent(event)
         self.remove_sweep.emit(self.sweep_id)
         
@@ -176,6 +192,11 @@ class sweeper(plotWidget):
     def update_sweep(self, emit = True):
         """
         Refresh 1d plot when there is a change in parameter or value
+        
+        Parameters
+        ----------
+        emit : bool, optional
+            Whether to emit a signal to parent 2d plot. The default is True.
 
         """
         # Get correct row for y data
