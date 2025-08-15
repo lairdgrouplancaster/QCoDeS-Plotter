@@ -5,7 +5,7 @@ from qcodes.dataset.sqlite.database import (
 
 from os.path import isfile
 
-def _repair():
+def repair():
     """
     Attempts to remove SQL lock that can happens on crashes while in IDE
 

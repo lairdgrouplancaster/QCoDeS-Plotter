@@ -754,9 +754,18 @@ class MainWindow(qtw.QMainWindow):
         for item in self.windows:
             # Find compatible windows
             try:
-                if item.param.depends_on == win.param.depends_on and not item.label in win.lines.keys():
-                    wins.append(item)
-            except AttributeError:
+                if item.param.depends_on == win.param.depends_on:
+                    if not item.label in win.lines.keys():
+                        wins.append(item)
+                        
+                elif (item.__class__.__name__ == "sweeper" 
+                      and 
+                      item.axis_options["x"] == win.param.depends_on):
+                    if not item.label in win.lines.keys():
+                        wins.append(item)
+                        
+                    
+            except AttributeError: # If not initisiased properly
                 continue
         
         # Update within win

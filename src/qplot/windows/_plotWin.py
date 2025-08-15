@@ -95,6 +95,7 @@ class plotWidget(qtw.QMainWindow):
         self.ds.cache.load_data_from_db()
         self.last_ds_len = self.ds.number_of_results
         self.config = config
+        self.visible = show
         
         ### WIDGETS
         self.layout = qtw.QVBoxLayout()
@@ -112,7 +113,7 @@ class plotWidget(qtw.QMainWindow):
         self.initRefresh(refrate)
         self.initFrame() # See plot1d, plot2d
         
-        if show: #dont run non essential GUI functions if not displaying
+        if self.visible: #dont run non essential GUI functions if not displaying
             self.initLabels()
             self.initContextMenu()
             self.initMenu()
@@ -184,14 +185,6 @@ class plotWidget(qtw.QMainWindow):
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshWindow)
             
-        self.toolbarRef.addSeparator()
-        self.toolbarRef.addWidget(qtw.QLabel("On refresh:  "))
-        self.toolbarRef.addWidget(qtw.QLabel("Re-scale"))
-        
-        self.rescale_refresh = qtw.QCheckBox()
-        self.rescale_refresh.setChecked(True)
-        self.toolbarRef.addWidget(self.rescale_refresh)
-        
         
     def initLabels(self):
         """
@@ -323,6 +316,8 @@ class plotWidget(qtw.QMainWindow):
         refreshAction = qtw.QAction("&Refresh", self)
         refreshAction.setShortcut("R")
         refreshAction.triggered.connect(lambda: self.refreshWindow(force=True))
+        if hasattr(self, "get_mergables"): # Force refresh 1d line options
+            refreshAction.triggered.connect(lambda: self.get_mergables.emit())
         main_menu.addAction(refreshAction)
         
         toolbar_menu = self.createPopupMenu()
@@ -459,8 +454,9 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.monitor.stop()
+        self.visible = False
         self.closed.emit(self) 
-        del self # Pretty much pointless but its here.
+        del self # Pretty much pointless but its here anyway.
 
 
     @QtCore.pyqtSlot(object)

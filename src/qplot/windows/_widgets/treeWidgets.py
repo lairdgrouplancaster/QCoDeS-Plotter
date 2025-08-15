@@ -300,7 +300,6 @@ class RunList(qtw.QTreeWidget):
         # Get Main Window
         main = self.parentWidget().parent()
         from_win = None
-        close_later = False
         
         # Find window with param from open windows.
         for win in main.windows:
@@ -323,8 +322,6 @@ class RunList(qtw.QTreeWidget):
                 if not target_win.monitor.isActive():
                     target_win.monitorIntervalChanged(target_win.spinBox.value())
                     target_win.toolbarRef.show()
-            else: 
-                close_later = True
             
         # Update the display on target_win to show new plot
         if target_win.option_boxes[-1].isEnabled():
@@ -337,8 +334,7 @@ class RunList(qtw.QTreeWidget):
         index = box.option_box.findText(from_win.label)
         box.option_box.setCurrentIndex(index)
         
-        if close_later:
-            from_win.close()
+        from_win.close()
         
      
     def add_all(self, target_win, param_dict):
