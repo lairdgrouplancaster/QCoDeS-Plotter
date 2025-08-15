@@ -51,6 +51,9 @@ class plot2d(plotWidget):
     def initRefresh(self, refresh):
         super().initRefresh(refresh)
         
+        self.toolbarRef.addSeparator()
+        self.toolbarRef.addWidget(qtw.QLabel("On refresh:  "))
+        
         self.toolbarRef.addWidget(qtw.QLabel("| "))
         self.toolbarRef.addWidget(qtw.QLabel("Re-Map Colors "))
         
@@ -110,7 +113,7 @@ class plot2d(plotWidget):
         self.image.setImage(
             self.dataGrid,
             autoLevels=bool(self.relevel_refresh.isChecked()),
-            autoRange=bool(self.rescale_refresh.isChecked()) #currently redundant
+            autoRange=True
             )
         
         #set axis values

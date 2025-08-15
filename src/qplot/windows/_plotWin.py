@@ -185,14 +185,6 @@ class plotWidget(qtw.QMainWindow):
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshWindow)
             
-        self.toolbarRef.addSeparator()
-        self.toolbarRef.addWidget(qtw.QLabel("On refresh:  "))
-        self.toolbarRef.addWidget(qtw.QLabel("Re-scale"))
-        
-        self.rescale_refresh = qtw.QCheckBox()
-        self.rescale_refresh.setChecked(True)
-        self.toolbarRef.addWidget(self.rescale_refresh)
-        
         
     def initLabels(self):
         """
@@ -599,7 +591,6 @@ class plotWidget(qtw.QMainWindow):
             is not ran.
 
         """
-        print("Refreshing", self.label)
         try:
             if not finished: # error in worker
                 return

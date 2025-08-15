@@ -69,7 +69,6 @@ class subplot1d(pg.PlotDataItem):
             x=data["x"], 
             y=data["y"],
             )
-        # parent.vb.enableAutoRange(bool(self.rescale_refresh.isChecked())) #currently redundant
         
         try:
             self.from_win.end_wait.disconnect(self.call_update)
