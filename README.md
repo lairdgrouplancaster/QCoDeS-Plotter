@@ -1,9 +1,8 @@
 QCodes-Plotter
 ==============
 
-QCodes-Plotter is an alternative live data plotter aimed to provide fast data display of running and finished QCoDeS experiments.
+QCodes-Plotter is an alternative data plotter aimed to provide fast data display of running and completed expermients using QCoDeS databases.
 
-<br/>
 <br/>
 
 Installation
@@ -31,7 +30,6 @@ To run, either:
       qplot
 ```
 <br/>
-<br/>
 
 How to Use
 ----------
@@ -51,15 +49,15 @@ Plot windows are separated into 2 types, line graphs and heatmaps. They both hav
 * The bottom toolbar displays the current coordinates of the mouse.
 * The left toolbar is used to change to assigned axes, this is mainly used for heatmaps with more than 2 independent variables but can be used to flip axes.
 * The left toolbar also contains specialist functionality.
-<br/>
-<ins>**Line Graphs**</ins>
+
+
+### Line Graphs
 * For Line graphs, you can change the colour of the line in the left toolbar. You may also add other lines from other open line graphs using the dropdown menu, control which y axis these are attached to, and change the color. The "X" button can be used to remove a line.
 * When multiple lines are connected to different sides, using scroll or drag on the central area of the plot controls both axes, while placing your cursor on a side axis will control only that axis.
 * Once a line is added, the source window can be closed. Live updates will continue with the same refresh rate.
 * Please note that secondary lines cannot be rotated when attached to the right axis.
-<br/>
-<ins>**Heatmaps**</ins>
 
+### Heatmaps
 * 1d sweeps can be performed on heatmaps by right clicking on the row/column that you wish to sweep and using "Plot Horizontal/Vertical Sweep".
 * This will create a new window with the sweep, and a cursor of the sweep location on the heatmap. The sweep is <ins>live data compatible</ins>.
 * Within the sweep plot, you may move the sweep location with the slider on the left, this can also be done by dragging the cursor on the heatmap.
@@ -68,7 +66,6 @@ Plot windows are separated into 2 types, line graphs and heatmaps. They both hav
 * Once a sweep is open, the heatmap can be closed and the sweep will remain open and live.
 * Sweeps can be added to 1d plots if the sweep's x axis matches the 1d plots independant variable. Manual refresh may be needed to pick the option and update any changes.
 
-<br/>
 <br/>
 
 Configuration Options
@@ -84,7 +81,7 @@ qplot-cfg -info dump
 ```
 
 Changes to config file can be done in file, IDE, or terminal. (Top box is python IDE, bottom is terminal)
-* To see current config file, use:
+* To see the current config file, use:
 ```python
     from qplot import config
     config().dump()
