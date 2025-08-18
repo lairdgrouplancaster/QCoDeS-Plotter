@@ -116,7 +116,12 @@ class sysHandle:
             for itr in range(len(convrt_value)):
                 convrt_value[itr] = try_as_num(convrt_value[itr])
         else:
-            convrt_value =  try_as_num(value)
+            if convrt_value.lower() == "true":
+                convrt_value = True
+            elif convrt_value.lower() == "false":
+                convrt_value = False
+            else:
+                convrt_value =  try_as_num(value)
         
         try:
             self.config.update(key, convrt_value)
@@ -125,6 +130,7 @@ class sysHandle:
             err_key += str(error)
             raise ValidationError(err_key)
         print(f"set '{key}' to '{value}'")
+        
         
     def info(self, attr : str=None):
         """

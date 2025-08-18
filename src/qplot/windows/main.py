@@ -49,7 +49,7 @@ class MainWindow(qtw.QMainWindow):
         self.ds = None
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
-        self.threadPool.setMaxThreadCount(4)
+        self.threadPool.setMaxThreadCount(self.config.get("file.max_threads"))
         self.x = 0
         self.y = 0
         self.localLastFile = None
@@ -182,6 +182,13 @@ class MainWindow(qtw.QMainWindow):
             themeMenu.addAction(self.themes[itr])
             if theme.lower() == current_theme:
                 self.themes[itr].setChecked(True)
+                
+        confirm_exit = qtw.QAction("Confirm on Exit?", self, checkable=True)
+        confirm_exit.setChecked(self.config.get("user_preference.confirm_close"))
+        prefMenu.addAction(confirm_exit)
+        confirm_exit.toggled.connect(lambda checked: 
+                self.config.update("user_preference.confirm_close", checked)
+            )
         
         
     def initFile(self):
@@ -245,17 +252,17 @@ class MainWindow(qtw.QMainWindow):
 
         """
         # Confirm exit
-        reply = qtw.QMessageBox.question(self, "Confirm Exit", "Are you sure you want to exit?",
-                                     qtw.QMessageBox.Yes | qtw.QMessageBox.No)
-        if reply == qtw.QMessageBox.Yes:
-            event.accept()
-        else:
-            event.ignore()
-            return
+        if self.config.get("user_preference.confirm_close"):
+            reply = qtw.QMessageBox.question(self, "Confirm Exit", "Are you sure you want to exit?",
+                                         qtw.QMessageBox.Yes | qtw.QMessageBox.No)
+            if reply == qtw.QMessageBox.Yes:
+                event.accept()
+            else:
+                event.ignore()
+                return
         
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
-        # Add self.ds.conn.close()?
     
    
     @QtCore.pyqtSlot()
@@ -265,7 +272,7 @@ class MainWindow(qtw.QMainWindow):
         Closes all windows other than the main window.
 
         """
-        for win in self.windows.copy():
+        for win in self.windows.copy(): # Copy needed as close removes items
             win.close()
         
         

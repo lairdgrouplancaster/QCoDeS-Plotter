@@ -88,6 +88,8 @@ class plotWidget(qtw.QMainWindow):
         ### CORE VARIABLES
         self.ds = dataset
         self.param = param
+        if not hasattr(self.param, "_complete"): # Add completed load track
+            self.param._complete = False
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
@@ -417,7 +419,7 @@ class plotWidget(qtw.QMainWindow):
             worker has finished its task. The default is False.
 
         """
-        load_param_data_from_db_prep(self.ds.cache)
+        load_param_data_from_db_prep(self.ds.cache, self.param)
         
         worker = loader(self.ds.cache, self.param, self.param_dict, self.axis_options)
         

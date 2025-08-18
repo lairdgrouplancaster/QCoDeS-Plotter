@@ -1,3 +1,10 @@
+"""
+The functions in this file are addapted from qcodes to allow for thread safe
+and single parameter loading. See:
+    qcodes.dataset.data_set_cache
+    qcodes.dataset.sqlite.queries
+for the original functions of similar names as well as typing.
+"""
 from qcodes.dataset.data_set_cache import _merge_data
 from qcodes.dataset.sqlite.queries import (
     completed,
@@ -7,7 +14,7 @@ from qcodes.dataset.sqlite.queries import (
 
 def append_shaped_parameter_data_to_existing_arrays(
     rundescriber,
-    meas_parameter,
+    meas_parameter : str,
     write_status,
     existing_data,
     new_data,
@@ -57,7 +64,10 @@ def append_shaped_parameter_data_to_existing_arrays(
     return updated_write_status, merged_data
 
 
-def load_param_data_from_db_prep(cache):
+def load_param_data_from_db_prep(
+        cache : "DataSetCacheWithDBBackend",
+        param : "paramSpec"
+        ):
     if cache.live:
         raise RuntimeError(
             "Cannot load data into this cache from the "
@@ -65,14 +75,14 @@ def load_param_data_from_db_prep(cache):
             "in-memory."
         )
 
-    if cache._loaded_from_completed_ds:
+    if param._complete: # Altered to be per param
         return
 
     is_completed = completed(cache._dataset.conn, cache._dataset.run_id)
     if cache._dataset.completed != is_completed:
         cache._dataset.completed = is_completed
     if cache._dataset.completed:
-        cache._loaded_from_completed_ds = True
+        param._complete = True
     if cache._data == {}:
         cache.prepare()
 
@@ -81,11 +91,11 @@ def load_param_data_from_db(
     conn,
     table_name,
     rundescriber,
-    meas_parameter,
+    meas_parameter : str,
     write_status,
     read_status,
     existing_data,
-    end=None,
+    end : int=None,
 ):
     # Data fetch
     updated_read_status: dict[str, int] = dict(read_status)
