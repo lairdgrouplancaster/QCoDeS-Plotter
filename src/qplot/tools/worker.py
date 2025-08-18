@@ -160,15 +160,20 @@ class loader(QtCore.QRunnable):
                 axis_data[axis] = data[name][valid_rows]
                 axis_param[axis] = param
                 
-            # Allow main to fetch data
-            self.dataGrid = data2matrix(
+            dataGrid = data2matrix(
                     axis_data["x"], 
                     axis_data["y"], 
                     depvarData[valid_rows]
-                ).to_numpy(float)
+                )
+            
+            # remove duplicates
+            axis_data["x"] = dataGrid.index.to_numpy(float)
+            axis_data["y"] = dataGrid.columns.to_numpy(float)
+            
+            # Allow main to fetch data
+            self.dataGrid = dataGrid.to_numpy(float)
             self.axis_data = axis_data
             self.axis_param = axis_param
-            
             
             self.emitter.finished.emit(True)
             return
