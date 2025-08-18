@@ -44,13 +44,14 @@ class MainWindow(qtw.QMainWindow):
         super().__init__()
        
         #vars
-        self.windows = [] #prevent auto delete of windows
+        self.config = config() # Connect to config.json in :/users/<user>/.qplot/
+        self.windows = [] # prevent auto delete of windows
         self.ds = None
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
+        self.threadPool.setMaxThreadCount(self.config.get("file.max_threads"))
         self.x = 0
         self.y = 0
-        self.config = config() # Connect to config.json in /users/<user>/.qplot/
         self.localLastFile = None
         
         # Set GUI color and style from user choice in qplot.configuration.themes
@@ -61,11 +62,9 @@ class MainWindow(qtw.QMainWindow):
         
         #Core initialisation functions
         self.initRefresh()
-        self.initAutoplot()
         self.initMenu()
         self.initFile()
         self.initRunDisplay()
-        
         
         #Final Setup
         w = qtw.QFrame()
@@ -94,32 +93,39 @@ class MainWindow(qtw.QMainWindow):
         added to the dataset.
         
         """
-        self.toolbar = self.addToolBar("Refresh Timer")
+        toolbar = self.addToolBar("Refresh Timer")
+        toolbar.setContextMenuPolicy(QtCore.Qt.PreventContextMenu)
+        toolbar.setMovable(False)
         
         # Widget production
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
         
-        self.toolbar.addWidget(qtw.QLabel("Refresh interval (s): "))
-        self.toolbar.addWidget(self.spinBox)
+        toolbar.addWidget(qtw.QLabel("Refresh interval (s): "))
+        toolbar.addWidget(self.spinBox)
     
         # Slot connections
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshMain)
-    
-    
-    def initAutoplot(self):
-        """
-        Produces tick box for whether to automatically open newly found plots
         
-        """
-        self.toolbar.addSeparator() # Toolbar produced in self.initRefresh()
+        # Produces tick box for whether to automatically open newly found plots
+        toolbar.addSeparator()
         
-        self.toolbar.addWidget(qtw.QLabel("Toggle Auto-plot "))
+        toolbar.addWidget(qtw.QLabel("Toggle Auto-plot "))
         
         self.autoPlotBox = qtw.QCheckBox()
-        self.toolbar.addWidget(self.autoPlotBox)
+        toolbar.addWidget(self.autoPlotBox)
+        
+        # Make makeshift addStrech()
+        spacer = qtw.QWidget()
+        spacer.setSizePolicy(qtw.QSizePolicy.Expanding, qtw.QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
+        
+        # Add button to close all subplots
+        close_all_but = qtw.QPushButton("Close All Plots")
+        close_all_but.clicked.connect(self.closeAll)
+        toolbar.addWidget(close_all_but)
     
     
     def initMenu(self):
@@ -176,6 +182,13 @@ class MainWindow(qtw.QMainWindow):
             themeMenu.addAction(self.themes[itr])
             if theme.lower() == current_theme:
                 self.themes[itr].setChecked(True)
+                
+        confirm_exit = qtw.QAction("Confirm on Exit?", self, checkable=True)
+        confirm_exit.setChecked(self.config.get("user_preference.confirm_close"))
+        prefMenu.addAction(confirm_exit)
+        confirm_exit.toggled.connect(lambda checked: 
+                self.config.update("user_preference.confirm_close", checked)
+            )
         
         
     def initFile(self):
@@ -239,17 +252,28 @@ class MainWindow(qtw.QMainWindow):
 
         """
         # Confirm exit
-        reply = qtw.QMessageBox.question(self, "Confirm Exit", "Are you sure you want to exit?",
-                                     qtw.QMessageBox.Yes | qtw.QMessageBox.No)
-        if reply == qtw.QMessageBox.Yes:
-            event.accept()
-        else:
-            event.ignore()
-            return
+        if self.config.get("user_preference.confirm_close"):
+            reply = qtw.QMessageBox.question(self, "Confirm Exit", "Are you sure you want to exit?",
+                                         qtw.QMessageBox.Yes | qtw.QMessageBox.No)
+            if reply == qtw.QMessageBox.Yes:
+                event.accept()
+            else:
+                event.ignore()
+                return
         
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
-        # Add self.ds.conn.close()?
+    
+   
+    @QtCore.pyqtSlot()
+    def closeAll(self):
+        """
+        Event handler for close all menu button.
+        Closes all windows other than the main window.
+
+        """
+        for win in self.windows.copy(): # Copy needed as close removes items
+            win.close()
         
         
     @QtCore.pyqtSlot(object)
@@ -328,7 +352,7 @@ class MainWindow(qtw.QMainWindow):
             raise TypeError(f"Unknown window of type: {win.__class__.__name__}")
 
         # Place window on screen so it doesnt overlap with last openned
-        if show:
+        if show:    
             # match style/theme to main window
             win.update_theme(self.config)
             

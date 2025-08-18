@@ -54,7 +54,6 @@ class plot2d(plotWidget):
         self.toolbarRef.addSeparator()
         self.toolbarRef.addWidget(qtw.QLabel("On refresh:  "))
         
-        self.toolbarRef.addWidget(qtw.QLabel("| "))
         self.toolbarRef.addWidget(qtw.QLabel("Re-Map Colors "))
         
         self.relevel_refresh = qtw.QCheckBox()

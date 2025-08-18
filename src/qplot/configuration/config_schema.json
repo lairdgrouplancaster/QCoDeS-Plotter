@@ -34,9 +34,14 @@
                 "last_file_path": {
                     "type": "string",
                     "default": ""
+                },
+                "max_threads": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 4
                 }
             },
-            "required": ["default_load_path", "last_file_path"],
+            "required": ["default_load_path", "last_file_path", "max_threads"],
             "additionalProperties": false
         },
         
@@ -47,9 +52,13 @@
                     "type": "string",
                     "enum": ["light", "dark", "pyqt"],
                     "default": "light"
+                },
+                "confirm_close": {
+                    "type": "boolean",
+                    "default": true
                 }
             },
-            "required": ["theme"],
+            "required": ["theme", "confirm_close"],
             "additionalProperties": false
         }
         

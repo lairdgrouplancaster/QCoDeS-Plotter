@@ -13,9 +13,9 @@ from qplot.tools import (
     unpack_param,
     loader,
     )
+from qplot.datahandling import load_param_data_from_db_prep
     
 from ._subplots import custom_viewbox
-    
 from ._widgets import (
     expandingComboBox,
     QDock_context,
@@ -88,11 +88,12 @@ class plotWidget(qtw.QMainWindow):
         ### CORE VARIABLES
         self.ds = dataset
         self.param = param
+        if not hasattr(self.param, "_complete"): # Add completed load track
+            self.param._complete = False
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
         self.threadPool = threadPool
-        self.ds.cache.load_data_from_db()
         self.last_ds_len = self.ds.number_of_results
         self.config = config
         self.visible = show
@@ -418,7 +419,9 @@ class plotWidget(qtw.QMainWindow):
             worker has finished its task. The default is False.
 
         """
-        worker = loader(self.ds.cache.data(), self.param, self.param_dict, self.axis_options)
+        load_param_data_from_db_prep(self.ds.cache, self.param)
+        
+        worker = loader(self.ds.cache, self.param, self.param_dict, self.axis_options)
         
         # Callback
         worker.emitter.finished.connect(self.refreshPlot)
@@ -491,21 +494,23 @@ class plotWidget(qtw.QMainWindow):
             
             rect = self.rect
             
-            # Get index for that heatmap 'pixel' as a percentage of width/height
-            i = (mousePoint.x() - rect.x()) / rect.width()
-            j = (mousePoint.y() - rect.y()) / rect.height()
-            
-            # Check index is within heatmap.
-            if (i >= 0 and i <= 1) and (j >= 0 and j <= 1):
-                # Convert to true index
-                i = int(i * image_data.shape[0])
-                j = int(j * image_data.shape[1])
-                self.pos_labels["z"].setText(f"z = {self.formatNum(image_data[i, j])}")
+            if hasattr(rect, "x"): # Check plot has initalised
+                    
+                # Get index for that heatmap 'pixel' as a percentage of width/height
+                i = (mousePoint.x() - rect.x()) / rect.width()
+                j = (mousePoint.y() - rect.y()) / rect.height()
                 
-                # Save z location for subplot use
-                self.z_index = [i, j]
-            else:
-                self.z_index = None
+                # Check index is within heatmap.
+                if (i >= 0 and i <= 1) and (j >= 0 and j <= 1):
+                    # Convert to true index
+                    i = int(i * image_data.shape[0])
+                    j = int(j * image_data.shape[1])
+                    self.pos_labels["z"].setText(f"z = {self.formatNum(image_data[i, j])}")
+                    
+                    # Save z location for subplot use
+                    self.z_index = [i, j]
+                else:
+                    self.z_index = None
 
         # Update text
         self.pos_labels["x"].setText(x_txt)
@@ -595,19 +600,37 @@ class plotWidget(qtw.QMainWindow):
             if not finished: # error in worker
                 return
             
+            # Update qcodes dataset variables
+            cache = self.ds.cache
+            name = self.param.name
+            worker = self.worker
+            
+            cache._read_status[name] = worker.updated_read_status[name]
+            cache._write_status[name] = worker.updated_write_status[name]
+            cache._data[name] = worker.cache_data[name]
+            
+            ### Copied from qcodes functions
+            data_not_read = all(
+                status is None or status == 0 for status in cache._write_status.values()
+            )
+            if not data_not_read:
+                self._live = False
+            ###
+            
+            
             #set data to be called by plot<1/2>d.refreshPlot()
             self.axis_data = {
-                "x": self.worker.axis_data["x"], 
-                "y": self.worker.axis_data["y"]
+                "x": worker.axis_data["x"], 
+                "y": worker.axis_data["y"]
                 }
             self.axis_param = {
-                "x": self.worker.axis_param["x"], 
-                "y": self.worker.axis_param["y"]
+                "x": worker.axis_param["x"], 
+                "y": worker.axis_param["y"]
                 }
             
             # For 2d plots
-            if hasattr(self.worker, "dataGrid"):        
-                self.dataGrid = self.worker.dataGrid
+            if hasattr(worker, "dataGrid"):        
+                self.dataGrid = worker.dataGrid
                 
             # I didnt want to make this a dedicated callback for the few times 
             # it is used, as the performace hit is neglible
@@ -617,7 +640,7 @@ class plotWidget(qtw.QMainWindow):
                 
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
-            # This shoudl no longer be possible so making error soft error.
+            # This should no longer be possible so making error soft error.
             print(type(err), err)
         
         finally: # Allow code to move on from wait_on_thread

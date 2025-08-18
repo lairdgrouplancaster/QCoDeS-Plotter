@@ -41,7 +41,26 @@ class config:
             # Create config from schema
             self.reset_to_defaults()
         else:
-            self.config = self.load_config(self.default_file)
+            try:
+                self.config = self.load_config(self.default_file)
+                jsonschema.validate(self.config, self.schema)
+            
+            # config.json does not meet schema requirements
+            except jsonschema.ValidationError as err:
+                print("!!! config.json is invalid and cannot be loaded !!!\n"
+                      "Please reset config.json to defaults or fix manually.")
+                
+                while True:
+                    user_in = input("Would you like to reset to default? [y/n]: ")
+                    if user_in.lower() == "y":
+                        self.reset_to_defaults()
+                        break
+                    elif user_in.lower() == "n":
+                        print(f"Please see: {self.default_file}, and fix "
+                              "the following error.")
+                        raise err
+                    else:
+                        print("Invalid Input.")
         
     
     def __str__(self) -> str:
