@@ -5,6 +5,9 @@ QCodes-Plotter is an alternative data plotter aimed to provide fast data display
 
 <br/>
 
+> [!IMPORTANT]
+> Please note that plots will open empty while loading. Unless the app stops responding or errors appear in console, please wait for loading to finish.
+
 Installation
 ------------
 
