@@ -1,4 +1,4 @@
-from .tools import (
+from .general import (
     data2matrix,
     unpack_param,
     )
