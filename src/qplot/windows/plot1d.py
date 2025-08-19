@@ -1,5 +1,5 @@
-from qplot.windows._plotWin import plotWidget
-from qplot.windows._widgets import picker_1d
+from ._plotWin import plotWidget
+from ._widgets import picker_1d
 from ._subplots import subplot1d
 
 

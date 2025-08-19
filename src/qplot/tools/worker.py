@@ -26,7 +26,8 @@ class loader(QtCore.QRunnable):
                  param : "qcodes.dataset.descriptions.param_spec.ParamSpec", 
                  param_dict : dict,
                  axes : dict,
-                 operations: dict = {}
+                 read_data : bool = True,
+                 operations : dict = {}
                  ):
         """
         Sets up worker with required data for run()
@@ -60,33 +61,38 @@ class loader(QtCore.QRunnable):
         self.param_dict = param_dict
         
         self.axes_dict = axes
-        
+        self.read_data = read_data
         self.operations = operations
         
     
     def run(self):
         try:
             did_error = False
-            
-            conn = connect(get_DB_location())
             cache = self.cache
             
-            (
-                self.updated_read_status,
-                self.updated_write_status,
-                self.cache_data
-            ) = load_param_data_from_db (
-                conn,
-                self.table_name,
-                cache.rundescriber,
-                self.param.name,
-                cache._write_status,
-                cache._read_status,
-                cache._data
-            )
-            data = self.cache_data[self.param.name]
+            if self.read_data:
+                conn = connect(get_DB_location())
+                (
+                    self.updated_read_status,
+                    self.updated_write_status,
+                    self.cache_data
+                ) = load_param_data_from_db (
+                    conn,
+                    self.table_name,
+                    cache.rundescriber,
+                    self.param.name,
+                    cache._write_status,
+                    cache._read_status,
+                    cache._data
+                )
+                conn.close()
+                
+                data = self.cache_data[self.param.name]
+                
+            else:
+                data = cache._data[self.param.name]
+                
             depvarData = data[self.param.name]
-            
             
             # for shaped 2d plots
             if len(depvarData.shape) == 2:
@@ -98,8 +104,6 @@ class loader(QtCore.QRunnable):
                     data,
                     depvarData
                     )
-                
-                
                 return
 
             #Remove nan values
@@ -135,15 +139,38 @@ class loader(QtCore.QRunnable):
             self.emitter.finished.emit(False) # False: Failed
             
         finally:
-            conn.close()
             if did_error: # errored out
                 return
+            
             # Allow main to fetch data
             self.axis_data = axis_data
             self.axis_param = axis_param
             if len(self.param.depends_on_) != 1:
                 self.dataGrid = dataGrid
+              
+            # Run additional operations
+            results = do_operations(
+                self.operations,
+                self.axis_data["x"],
+                self.axis_data["y"],
+                self.dataGrid if hasattr(self, "dataGrid") else None # Only give dataGrid if it exists
+                )
             
+            # If an operation failed, raise error, data should be complete to 
+            # refresh without operations, so finished stays true
+            if isinstance(results, Exception):
+                self.emitter.errorOccurred.emit(results)
+                
+            # Update based on operations
+            elif results is not None:
+                (
+                    self.axis_data["x"],
+                    self.axis_data["y"]
+                ) = results[:2]
+                if hasattr(self, "dataGrid"):
+                    self.dataGrid = results[2]
+            
+            # Callback
             self.emitter.finished.emit(True)
             
    
@@ -152,7 +179,6 @@ class loader(QtCore.QRunnable):
         axis_data = {}
         axis_param = {}
         dict_labels = list(data.keys())
-        
         
         x_name =  self.axes_dict["x"]
         axis_data["x"] = data[x_name][valid_rows]
@@ -234,6 +260,7 @@ class loader(QtCore.QRunnable):
         return axis_data, axis_param, dataGrid
         
         
+        
 class _emitter(QtCore.QObject):
     """
     QRunnable cannot emit signals, use of QObject can
@@ -243,3 +270,47 @@ class _emitter(QtCore.QObject):
     errorOccurred = QtCore.pyqtSignal([Exception]) # Errors do not display in threads
     
 
+def do_operations(operations : dict, x, y, z):
+    """
+    Runs through all functions in operations and performs those on the data.
+
+    Parameters
+    ----------
+    operations : dict{str: callable}
+        Contains function to perform on the data. Will perform them in order added.
+    x : np.array
+        x data array.
+    y : np.array
+        y data array.
+    z : np.ndarray | None
+        z data array. None if 1d.
+
+    Returns
+    -------
+    data_dict["x"], data_dict["y"], data_dict["z"] : np.ndarray
+        The updated data after all operations have been performed
+    None : NoneType
+        No operations to be perform
+    err : Exception
+        An error occured in operation, return to worker to emit error.
+
+    """
+    try:
+        if len(operations) == 0:
+            return None
+        
+        data_dict = {
+            "x" : x.copy(),
+            "y" : y.copy(),
+            "z" : z.copy() if z is not None else None
+            }
+        
+        for func in operations.values():
+            results = func(data_dict)
+            for key in results.keys():
+                data_dict[key] = results[key]
+        
+        return data_dict["x"], data_dict["y"], data_dict["z"]
+
+    except Exception as err:
+        return err
