@@ -75,8 +75,8 @@ def load_param_data_from_db_prep(
             "in-memory."
         )
 
-    if param._complete: # Altered to be per param
-        return
+    if param._complete == True: # Altered to be per param
+        return True
 
     is_completed = completed(cache._dataset.conn, cache._dataset.run_id)
     if cache._dataset.completed != is_completed:
@@ -85,6 +85,8 @@ def load_param_data_from_db_prep(
         param._complete = True
     if cache._data == {}:
         cache.prepare()
+    
+    return False
 
 
 def load_param_data_from_db(

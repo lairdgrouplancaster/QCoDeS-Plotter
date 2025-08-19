@@ -38,15 +38,11 @@ class plotWidget(qtw.QMainWindow):
     > Then produce worker for thread in self.load_data(). And queues to available
       thread in self.threadPool.
       See qplot.tools.worker.loader for more detail.
+    > Worker loads from SQL database inside worker and handles data to usable
+      form. See qplot.datahandling.LoadFromDB for more detail.
     > On worker finish, worker callback to plot which calls self.refreshPlot().
       plotWidget.refreshPlot() fetches data from worker, plot<1/2>d.refreshPlot()
       then inherits, handles data, and renders as needed.  
-    Note. dataset is refreshed using dataset.cache.data() before passing to 
-          worker, as cache is a SQL item and is not thread safe and must be 
-          loaded inside main thread. (Recreating dataset in worker increases 
-                                      load time by 5-10 times)
-          In future a deadicated thread/service will be used to handling all 
-          loaded datasets to avoid this issue.
     """
     
     closed = QtCore.pyqtSignal([object])
@@ -97,6 +93,7 @@ class plotWidget(qtw.QMainWindow):
         self.last_ds_len = self.ds.number_of_results
         self.config = config
         self.visible = show
+        self.operations = {}
         
         ### WIDGETS
         self.layout = qtw.QVBoxLayout()
@@ -110,7 +107,6 @@ class plotWidget(qtw.QMainWindow):
         
         ### CORE INIT FUNCTIONS
         self.initAxes()
-        
         self.initRefresh(refrate)
         self.initFrame() # See plot1d, plot2d
         
@@ -419,9 +415,16 @@ class plotWidget(qtw.QMainWindow):
             worker has finished its task. The default is False.
 
         """
-        load_param_data_from_db_prep(self.ds.cache, self.param)
+        complete = load_param_data_from_db_prep(self.ds.cache, self.param)
         
-        worker = loader(self.ds.cache, self.param, self.param_dict, self.axis_options)
+        worker = loader(
+            self.ds.cache, 
+            self.param, 
+            self.param_dict, 
+            self.axis_options,
+            read_data= not complete,
+            operations= self.operations
+            )
         
         # Callback
         worker.emitter.finished.connect(self.refreshPlot)
@@ -441,7 +444,6 @@ class plotWidget(qtw.QMainWindow):
             hold_up.exec() # The actual place the code waits for self.end_wait.emit
             self.end_wait.disconnect(hold_up.quit)
             
-    
 ###############################################################################
 #Events
     
@@ -600,23 +602,24 @@ class plotWidget(qtw.QMainWindow):
             if not finished: # error in worker
                 return
             
-            # Update qcodes dataset variables
-            cache = self.ds.cache
-            name = self.param.name
             worker = self.worker
             
-            cache._read_status[name] = worker.updated_read_status[name]
-            cache._write_status[name] = worker.updated_write_status[name]
-            cache._data[name] = worker.cache_data[name]
-            
-            ### Copied from qcodes functions
-            data_not_read = all(
-                status is None or status == 0 for status in cache._write_status.values()
-            )
-            if not data_not_read:
-                self._live = False
-            ###
-            
+            # Update qcodes dataset variables if db read happened
+            if worker.read_data:
+                cache = self.ds.cache
+                name = self.param.name
+                
+                cache._read_status[name] = worker.updated_read_status[name]
+                cache._write_status[name] = worker.updated_write_status[name]
+                cache._data[name] = worker.cache_data[name]
+                
+                ### Copied from qcodes functions
+                data_not_read = all(
+                    status is None or status == 0 for status in cache._write_status.values()
+                )
+                if not data_not_read:
+                    self._live = False
+                ###
             
             #set data to be called by plot<1/2>d.refreshPlot()
             self.axis_data = {
@@ -658,6 +661,29 @@ class plotWidget(qtw.QMainWindow):
     def worker_printer(self, fstr : str):
         # Worker print() often does not work, so done through event handlers
         print(fstr)
+    
+    
+    def add_or_remove_operations(self, key : str, func : callable = None):
+        """
+        Adds a callable function to be passed to the operations for the worker
+
+        Parameters
+        ----------
+        key : str
+            A key to track the function.
+        func : callable, optional
+            Function to be added to the tracker. If None is passed instead of a
+            callable, the key is instead removed from the tracker.
+
+        """
+        # Remove item if func is none
+        if func is None and self.operations.get(key, 0) != 0:
+            self.operations.pop(key)
+        else: # otherwise add to list
+            self.operations[key] = func
+        
+        # Force update
+        self.refreshWindow(force=True)
     
     
     @QtCore.pyqtSlot()
