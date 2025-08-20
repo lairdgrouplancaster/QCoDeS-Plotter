@@ -37,14 +37,17 @@ class loader(QtCore.QRunnable):
 
         Parameters
         ----------
-        cache_data : qcodes.dataset.cache._data
-            The refreshed data from the dataset.
+        cache : qcodes.dataset.data_set_cache.DataSetCacheWithDBBackend
+            The cache for the dataset that is being refreshed.
         param : qcodes.dataset.descriptions.param_spec.ParamSpec
             The parameter being updated.
         param_dict : dict{str: ParamSpec}
             List of all parameter data inside the dataset.
         axes : dict{str: str}
             The selected parameter for the axes.
+        read_data : bool
+            Whether to read the database for new data or use current data.
+            The default is True.
         operations: dict{str, callable}
             A dictionary containing functions to perform on the refreshed data
             before returning

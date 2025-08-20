@@ -26,6 +26,7 @@ class plot1d(plotWidget):
     
     """
     get_mergables = QtCore.pyqtSignal()
+    remove_dataset = QtCore.pyqtSignal([str])
     
     def __init__(self, 
                  *args,
@@ -274,6 +275,7 @@ class plot1d(plotWidget):
         self.add_option_box()
         
         # Create and track new line
+        self.make_ds.emit(win._guid)
         subplot = subplot1d(self, win)
         self.lines[label] = subplot
         
@@ -304,11 +306,12 @@ class plot1d(plotWidget):
     def closeEvent(self, event):
         # Stopped lines as needed
         for line in list(self.lines.values())[1:]:
+            self.remove_dataset.emit(line.from_win._guid)
             if not line.from_win.visible:
                 line.from_win.monitor.stop()
+                
             
         super().closeEvent(event)
-        
         
     
     @QtCore.pyqtSlot(str)
@@ -325,6 +328,7 @@ class plot1d(plotWidget):
         # Find box and remove box
         for option in self.option_boxes:
             if option.option_box.currentText() == label:
+                side = option.axis_side.currentText()
                 self.option_boxes.remove(option)
                 break
         
@@ -334,12 +338,16 @@ class plot1d(plotWidget):
         
         # Remove line from viewbox
         line = self.lines[label]
-        self.plot.removeItem(line)
         self.lines.pop(label)
+        # Fetch correct viewbox to remove from
+        vb = self.plot if side.lower() == "left" else self.right_vb
+        vb.removeItem(line)
         
+        # Remove track of window
+        self.remove_dataset.emit(line.from_win._guid)
         # Stop refresh monitor for line if needed
         if not line.from_win.visible:
-            line.from_win.stop()
+            line.from_win.monitor.stop()
         
         # Update box options
         self.get_mergables.emit()

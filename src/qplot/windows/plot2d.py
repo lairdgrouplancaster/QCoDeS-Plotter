@@ -20,7 +20,7 @@ class plot2d(plotWidget):
         refreshPlot
         
     """
-    open_subplot = QtCore.pyqtSignal([object, tuple])
+    open_subplot = QtCore.pyqtSignal([object, str, tuple])
     sweep_moved = QtCore.pyqtSignal([int, int])
     
     def __init__(self, 
@@ -229,13 +229,14 @@ class plot2d(plotWidget):
             raise KeyError(f"Invalid sweep side, {side=}, must be 'v' or 'h'.")
             
         # Emit to Main window to open new window
-        self.open_subplot.emit(sweeper,
+        self.open_subplot.emit(
+                sweeper,
+                self._guid,
                 (
                 self.sweep_id,
                 sweep_var,
                 fixed_var,
-                fixed_index, 
-                self.ds,
+                fixed_index,
                 self.param
                 )
             )

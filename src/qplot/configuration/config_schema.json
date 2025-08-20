@@ -34,14 +34,9 @@
                 "last_file_path": {
                     "type": "string",
                     "default": ""
-                },
-                "max_threads": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": 4
                 }
             },
-            "required": ["default_load_path", "last_file_path", "max_threads"],
+            "required": ["default_load_path", "last_file_path"],
             "additionalProperties": false
         },
         
@@ -56,13 +51,36 @@
                 "confirm_close": {
                     "type": "boolean",
                     "default": true
+                },
+                "default_refresh_rate": {
+                    "type": "number",
+                    "minimum": 1,
+                    "default": 10
                 }
             },
-            "required": ["theme", "confirm_close"],
+            "required": ["theme", "confirm_close", "default_refresh_rate"],
             "additionalProperties": false
-        }
+        },
         
+        "runtime_settings": {
+            "type": "object",
+            "properties": {
+                "max_threads": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 4
+                },
+                "del_grace_period": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 300,
+                    "default": 10
+                }
+             },
+             "required": ["max_threads", "del_grace_period"],
+             "additionalProperties": false 
+        }
     },
-    "required": ["GUI", "file", "user_preference"],
+    "required": ["GUI", "file", "user_preference", "runtime_settings"],
     "additionalProperties": false
 }

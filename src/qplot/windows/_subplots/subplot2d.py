@@ -23,10 +23,11 @@ class sweeper(plotWidget):
     remove_sweep = QtCore.pyqtSignal([int])
     
     def __init__(self,
+                 guid : str, # Had to handle seperately to *args
                  sweep_id : int,
                  sweep_indep : str,
                  fixed_indep : str, 
-                 fixed_index : int, 
+                 fixed_index : int,
                  *args, 
                  **kargs
                  ):
@@ -37,7 +38,7 @@ class sweeper(plotWidget):
         
         self.line = None
         
-        super().__init__(*args, **kargs)
+        super().__init__(guid, *args, **kargs)
         
         
     def initAxes(self):
@@ -418,7 +419,7 @@ class fixed_var_picker(qtw.QWidget):
         # Update user to change
         self.text_box = qtw.QLineEdit()
         self.text_box.setReadOnly(True)
-        self.text_box.setMaximumWidth(95)
+        self.text_box.setMaximumWidth(self._label_width)
         row_2.addWidget(self.text_box)
         
         layout.addLayout(row_1)

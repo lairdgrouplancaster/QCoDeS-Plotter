@@ -47,12 +47,16 @@ class plotWidget(qtw.QMainWindow):
     
     closed = QtCore.pyqtSignal([object])
     end_wait = QtCore.pyqtSignal()
+    make_ds = QtCore.pyqtSignal([str])
+    
+    _label_width = 95 #About the size of 3 s.f. scientific
     
     def __init__(self, 
-                 dataset : "qcodes.dataset.data_set.DataSet", 
+                 guid : str, 
                  param : "qcodes.dataset.ParamSpec",
                  config : "qplot.configuration.config.config",
                  threadPool : "QtCore.QThreadPool",
+                 dataset_holder : dict,
                  refrate : float=None,
                  show : bool=True
                  ):
@@ -62,8 +66,8 @@ class plotWidget(qtw.QMainWindow):
 
         Parameters
         ----------
-        dataset : qcodes.dataset.data_set.DataSet
-            The dataset which contains the data to be plotted.
+        guid : str
+            The guid of dataset which contains the data to be plotted.
         param : qcodes.dataset.ParamSpec
             Which parameter within dataset to plot.
         config : qplot.configuration.config.config
@@ -82,7 +86,8 @@ class plotWidget(qtw.QMainWindow):
         super().__init__()
         
         ### CORE VARIABLES
-        self.ds = dataset
+        self._dataset_holder = dataset_holder
+        self._guid = guid
         self.param = param
         if not hasattr(self.param, "_complete"): # Add completed load track
             self.param._complete = False
@@ -148,6 +153,29 @@ class plotWidget(qtw.QMainWindow):
                 )
         return fstr
 
+    
+    @property
+    def ds(self):
+        """
+        Returns the window's dataset from the dictionary of stored datasets
+
+        Returns
+        -------
+        qcodes.dataset.data_set.dataset
+
+        """
+        # Check dataset exists, produce new one if needed.
+        if self._dataset_holder.get(self._guid, 0) == 0:
+            print(f"KeyError: guid: {self._guid} not found. Producing new dataset.")
+            self.make_ds.emit(self._guid)
+        
+        # Check a deletion timer is not active and stop
+        elif self._dataset_holder[self._guid]["del_timer"] is not None:
+            self._dataset_holder[self._guid]["del_timer"].stop() # Stop delete timer
+            self._dataset_holder[self._guid]["del_timer"] = None
+            
+        return self._dataset_holder[self._guid]["dataset"]
+        
 ###############################################################################
 # Init functions   
     
@@ -177,7 +205,7 @@ class plotWidget(qtw.QMainWindow):
         if refrate is not None and refrate > 0:
             self.spinBox.setValue(refrate)
         else:
-            self.spinBox.setValue(5.0)
+            self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
             
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshWindow)
@@ -191,7 +219,7 @@ class plotWidget(qtw.QMainWindow):
         self.toolbarCo_ord = qtw.QToolBar("Co-ordinates")
         self.addToolBar(QtCore.Qt.BottomToolBarArea, self.toolbarCo_ord)
         
-        labelWidth = 95 #About the size of 3 s.f. scientific
+        labelWidth = self._label_width #About the size of 3 s.f. scientific
         self.pos_labels = {}
         
         posLabelx = qtw.QLabel("x= ")
