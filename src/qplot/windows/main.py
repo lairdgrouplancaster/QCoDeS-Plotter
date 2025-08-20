@@ -47,9 +47,10 @@ class MainWindow(qtw.QMainWindow):
         self.config = config() # Connect to config.json in :/users/<user>/.qplot/
         self.windows = [] # prevent auto delete of windows
         self.ds = None
+        self.dataset_holder = {}
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
-        self.threadPool.setMaxThreadCount(self.config.get("file.max_threads"))
+        self.threadPool.setMaxThreadCount(self.config.get("runtime_settings.max_threads"))
         self.x = 0
         self.y = 0
         self.localLastFile = None
@@ -289,12 +290,13 @@ class MainWindow(qtw.QMainWindow):
 
         """
         self.windows.remove(win)
+        self.remove_ds_at(win._guid)
         self.post_admin() # Update other plot windows
         del win
     
     
-    @QtCore.pyqtSlot(object, tuple)
-    def openWin(self, widget, *args, show=True, **kargs):
+    @QtCore.pyqtSlot(object, str, tuple)
+    def openWin(self, widget, guid_or_ds, *args, show=True, **kargs):
         """
         Handles opening Plot window, widget.
         Passes all attributes to widget(). Also passes other critical objects.
@@ -320,10 +322,23 @@ class MainWindow(qtw.QMainWindow):
         if len(args) == 1 and (isinstance(args[0], tuple) or isinstance(args[0], list)):
             args = tuple(args[0])
         
+        # Find if guid or ds was passed
+        if isinstance(guid_or_ds, str):
+            ds = None
+            guid = guid_or_ds
+        else: 
+            ds = guid_or_ds
+            guid = ds.guid
+            
+        # add dataset to store
+        self.add_ds_at(guid, ds=ds)
+        
         win = widget(
+            guid,
             *args, 
             self.config, 
-            self.threadPool, 
+            self.threadPool,
+            self.dataset_holder,
             show=show, 
             **kargs
             )
@@ -333,8 +348,10 @@ class MainWindow(qtw.QMainWindow):
         
         # Slot connectons
         win.closed.connect(self.onClose)
+        win.make_ds.connect(self.add_ds_at)
         if win.__class__.__name__ == "plot1d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
+            win.remove_dataset.connect(self.remove_ds_at)
             
         elif win.__class__.__name__ == "plot2d":
             win.open_subplot.connect(self.openWin)
@@ -507,7 +524,11 @@ class MainWindow(qtw.QMainWindow):
             The unique id to load the dataset from.
 
         """
-        self.ds = load_by_guid(guid)
+        # Load from store if possible
+        if self.dataset_holder.get(guid, 0) == 0:
+            self.ds = load_by_guid(guid)
+        else:
+            self.ds = self.dataset_holder[guid]["dataset"]
         
         self.selected_run_id = None # Prevents reloading the dataset through run_idbox
         self.run_idBox.blockSignals(True)
@@ -594,10 +615,12 @@ class MainWindow(qtw.QMainWindow):
         
         """
         # Get dataset with GUID or default
-        if not self.ds:
-            ds = load_by_guid(guid)
-        elif guid and self.ds.guid != guid:
-            ds = load_by_guid(guid)
+        if not self.ds or (guid and self.ds.guid != guid):
+            # Load from store if possible
+            if self.dataset_holder.get(guid, 0) == 0:
+                ds = load_by_guid(guid)
+            else:
+                ds = self.dataset_holder[guid]["dataset"]
         else:
             ds = self.ds
             
@@ -702,6 +725,88 @@ class MainWindow(qtw.QMainWindow):
 ###############################################################################
 #Other funcs
 
+    @QtCore.pyqtSlot(str)
+    def add_ds_at(self, guid : str, ds = None):
+        """
+        Uses the guid of a dataset to update self.dataset_holder with a new 
+        tracker of a dataset
+        
+        If the dataset is already stored, increases the tracker of the number
+        of windows that use that dataset (users).
+        If the dataset is not stored, load a new dataset with that guid
+
+        Parameters
+        ----------
+        guid : str
+            guid of the dataset being added.
+        ds : TYPE, optional
+            An already loaded dataset with a guid. 
+            This may be from using that dataset elsewhere in the app and is 
+            passed to prevent loading again.
+
+        """
+        # dataset does not exist
+        if self.dataset_holder.get(guid, 0) == 0:
+            # load ds unless ds is already provided
+            ds = load_by_guid(guid) if ds is None else ds
+            assert ds.guid == guid
+            
+            self.dataset_holder[guid] = {
+                "dataset" : ds,
+                "users" : 1,
+                "del_timer" : None
+                }
+        # increment users and stop deletion timer if needed
+        else:
+            self.dataset_holder[guid]["users"] += 1
+            if self.dataset_holder[guid]["del_timer"] is not None:
+                self.dataset_holder[guid]["del_timer"].stop() # Stop delete timer
+                self.dataset_holder[guid]["del_timer"] = None
+            
+    
+    @QtCore.pyqtSlot(str)
+    def remove_ds_at(self, guid : str):
+        """
+        Decreases the count of users for a dataset.
+        If dataset has no more users, begin timer to delete object if unused.
+        If dataset gets a new user, timer is stopped.
+        Timer length can be found in config file.
+
+        Parameters
+        ----------
+        guid : str
+            guid of the dataset being removed.
+
+        """
+        # Check dataset is available to be removed
+        if self.dataset_holder.get(guid, 0) == 0:
+            print("Trying to remove dataset that does not exist")
+            return
+        
+        # Track removal
+        self.dataset_holder[guid]["users"] -= 1
+        
+        # Check for no windows using
+        if self.dataset_holder[guid]["users"] <= 0:
+            del_time = self.config.get("runtime_settings.del_grace_period")
+            
+            # Remove now if no grace period
+            if del_time == 0: # Remove now if no grace period
+                self.dataset_holder.pop(guid)
+                
+            # Set up removal timer, remove after del_time seconds
+            elif self.dataset_holder[guid]["del_timer"] is None:
+                del_timer = QtCore.QTimer()
+                del_timer.setSingleShot(True)
+                self.dataset_holder[guid]["del_timer"] = del_timer
+                # Link timer to delete
+                del_timer.timeout.connect(lambda guid=guid:
+                    self.dataset_holder.pop(guid)
+                    )
+                    
+                del_timer.start(int(del_time*1000)) # convert to seconds
+        
+
     def load_file(self, abspath):
         """
         Updates the database for RunList display and loading datasets.
@@ -753,15 +858,10 @@ class MainWindow(qtw.QMainWindow):
         Updates the Plot windows internal track of other open windows.
 
         """
-        
         for item in self.windows:
             if isinstance(item, plot1d):
                 self.get_1d_wins(item)
                 
-            else:
-                # to do 2d admin
-                pass
-    
     
     def get_1d_wins(self, win):
         """
