@@ -419,7 +419,7 @@ class fixed_var_picker(qtw.QWidget):
         # Update user to change
         self.text_box = qtw.QLineEdit()
         self.text_box.setReadOnly(True)
-        self.text_box.setMaximumWidth(self._label_width)
+        self.text_box.setMaximumWidth(main._label_width)
         row_2.addWidget(self.text_box)
         
         layout.addLayout(row_1)

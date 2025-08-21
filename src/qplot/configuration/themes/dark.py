@@ -394,8 +394,6 @@ class dark:
         QSlider::sub-page:vertical {
             background: #04b97f;
         }
-       
-        
         QTreeWidget {
             background-color: #1e1d23;
             color: #a9b7c6;
@@ -471,8 +469,24 @@ class dark:
             background: none;
             border: none;
         }
-
-        
+        QListWidget {
+            background-color: #1e1d23;
+            color: #a9b7c6;
+            border: 1px solid #3a3a3a;
+            outline: 0;
+        }
+        QListWidget::item {
+            padding: 2px 4px;
+            border: none;
+        }
+        QListWidget::item:selected {
+            background-color: #80007b50;
+            color: #ffffff;
+        }
+        QListWidget::item:hover {
+            background-color: #50007b50;
+            color: #ffffff;
+        }
     """
     
     colors = [pg.mkColor(col) for col in ["red", "green", "blue", "white", "cyan", "yellow"]]
