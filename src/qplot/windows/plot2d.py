@@ -112,10 +112,11 @@ class plot2d(plotWidget):
         """
         super().refreshPlot(finished)
         
+        autoLevels=self.relevel_refresh.isChecked()
         # Produce Heatmap
         self.image.setImage(
             self.dataGrid,
-            autoLevels=bool(self.relevel_refresh.isChecked()),
+            autoLevels=autoLevels,
             autoRange=True
             )
         
@@ -149,6 +150,9 @@ class plot2d(plotWidget):
                 )
             self.scaleColorbar()
         
+        if autoLevels:
+            self.scaleColorbar()
+            
         # Allow new worker to be produced
         self.worker.running = False
 
