@@ -27,7 +27,7 @@ class loader(QtCore.QRunnable):
                  param_dict : dict,
                  axes : dict,
                  read_data : bool = True,
-                 operations : dict = {}
+                 operations : list = []
                  ):
         """
         Sets up worker with required data for run()
@@ -48,8 +48,8 @@ class loader(QtCore.QRunnable):
         read_data : bool
             Whether to read the database for new data or use current data.
             The default is True.
-        operations: dict{str, callable}
-            A dictionary containing functions to perform on the refreshed data
+        operations: list
+            A list containing functions to perform on the refreshed data
             before returning
 
         """
@@ -152,20 +152,10 @@ class loader(QtCore.QRunnable):
                 self.dataGrid = dataGrid
               
             # Run additional operations
-            results = do_operations(
-                self.operations,
-                self.axis_data["x"],
-                self.axis_data["y"],
-                self.dataGrid if hasattr(self, "dataGrid") else None # Only give dataGrid if it exists
-                )
+            results = self.do_operations()
             
-            # If an operation failed, raise error, data should be complete to 
-            # refresh without operations, so finished stays true
-            if isinstance(results, Exception):
-                self.emitter.errorOccurred.emit(results)
-                
             # Update based on operations
-            elif results is not None:
+            if results is not None:
                 (
                     self.axis_data["x"],
                     self.axis_data["y"]
@@ -262,7 +252,48 @@ class loader(QtCore.QRunnable):
         
         return axis_data, axis_param, dataGrid
         
+    
+    def do_operations(self):
+        """
+        Runs through all functions in self.operations and performs those on the
+        data.
+        Copies data to allow a fall
+
+        Returns
+        -------
+        data_dict["x"], data_dict["y"], data_dict["z"] : np.ndarray
+            The updated data after all operations have been performed
+        None : NoneType
+            No operations to be perform or all failed.
+    
+        """
+        operations = self.operations
+        if len(operations) == 0:
+            return None
         
+        one_succeeded = False
+        
+        data_dict = {
+            "x" : self.axis_data["x"].copy(),
+            "y" : self.axis_data["y"].copy(),
+            "z" : self.dataGrid.copy() if hasattr(self, "dataGrid") else None # Only give dataGrid if it exists
+            }
+        
+        for func in operations:
+            try:
+                results = func(data_dict)
+                for key in results.keys():
+                    data_dict[key] = results[key]
+                one_succeeded = True
+                
+            except Exception as err:
+                self.emitter.errorOccurred.emit(err)
+                
+        if one_succeeded:
+            return data_dict["x"], data_dict["y"], data_dict["z"]
+        else: # If all failed, go back to before operations data
+            return None
+
         
 class _emitter(QtCore.QObject):
     """
@@ -272,48 +303,3 @@ class _emitter(QtCore.QObject):
     finished = QtCore.pyqtSignal([bool]) # Callback to main to say fetch data
     errorOccurred = QtCore.pyqtSignal([Exception]) # Errors do not display in threads
     
-
-def do_operations(operations : dict, x, y, z):
-    """
-    Runs through all functions in operations and performs those on the data.
-
-    Parameters
-    ----------
-    operations : dict{str: callable}
-        Contains function to perform on the data. Will perform them in order added.
-    x : np.array
-        x data array.
-    y : np.array
-        y data array.
-    z : np.ndarray | None
-        z data array. None if 1d.
-
-    Returns
-    -------
-    data_dict["x"], data_dict["y"], data_dict["z"] : np.ndarray
-        The updated data after all operations have been performed
-    None : NoneType
-        No operations to be perform
-    err : Exception
-        An error occured in operation, return to worker to emit error.
-
-    """
-    try:
-        if len(operations) == 0:
-            return None
-        
-        data_dict = {
-            "x" : x.copy(),
-            "y" : y.copy(),
-            "z" : z.copy() if z is not None else None
-            }
-        
-        for func in operations.values():
-            results = func(data_dict)
-            for key in results.keys():
-                data_dict[key] = results[key]
-        
-        return data_dict["x"], data_dict["y"], data_dict["z"]
-
-    except Exception as err:
-        return err

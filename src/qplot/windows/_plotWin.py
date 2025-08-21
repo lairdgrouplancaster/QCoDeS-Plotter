@@ -19,6 +19,7 @@ from ._subplots import custom_viewbox
 from ._widgets import (
     expandingComboBox,
     QDock_context,
+    operations_widget,
     )
 
 if TYPE_CHECKING:
@@ -112,6 +113,7 @@ class plotWidget(qtw.QMainWindow):
         
         ### CORE INIT FUNCTIONS
         self.initAxes()
+        self.initOperations()
         self.initRefresh(refrate)
         self.initFrame() # See plot1d, plot2d
         
@@ -250,7 +252,16 @@ class plotWidget(qtw.QMainWindow):
                 action.setText("Autoscale")
                 break
         
-        self.autoscaleSep = self.vbMenu.insertSeparator(actions[1])
+        x_action = actions[1]
+        
+        self.autoscaleSep = self.vbMenu.insertSeparator(x_action)
+        
+        # Create visibility
+        toggleAction = qtw.QAction("View Operations", self, checkable=True)
+        toggleAction.triggered.connect(self.oper_dock.setVisible)
+        self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
+        self.vbMenu.insertAction(x_action, toggleAction)
+        self.vbMenu.insertSeparator(x_action)
         
         
     def initAxes(self):
@@ -323,9 +334,26 @@ class plotWidget(qtw.QMainWindow):
         
         self.axes_dock.addWidget(sep)
         
-        # Placeholder for later work
         if self.__class__.__name__ == "plot2d":
             self.axes_dock.layout.addStretch()
+        
+    
+    def initOperations(self):
+        """
+        Produces a right toolbar for viewing operations to perform during 
+        refresh
+        
+        see ._widgets.operations for setup
+            and
+            qplot.tools.plot_tools for functions
+
+        """
+        self.oper_dock = QDock_context("Operations", self)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.oper_dock)
+        self.oper_dock.setVisible(False)# Large window so toggle off by default
+        
+        self.oper_widget = operations_widget(self)
+        self.oper_dock.addWidget(self.oper_widget)
         
     
     def initMenu(self):
@@ -383,6 +411,15 @@ class plotWidget(qtw.QMainWindow):
         
         
     def update_theme(self, config):
+        """
+        Updates theme of window to match main.
+
+        Parameters
+        ----------
+        config : qplot.config
+            Updated config file.
+
+        """
         self.config = config
         
         self.setStyleSheet(self.config.theme.main)
@@ -444,14 +481,14 @@ class plotWidget(qtw.QMainWindow):
 
         """
         complete = load_param_data_from_db_prep(self.ds.cache, self.param)
-        
+         
         worker = loader(
             self.ds.cache, 
             self.param, 
             self.param_dict, 
             self.axis_options,
-            read_data= not complete,
-            operations= self.operations
+            read_data = not complete,
+            operations = self.oper_widget.get_data()
             )
         
         # Callback

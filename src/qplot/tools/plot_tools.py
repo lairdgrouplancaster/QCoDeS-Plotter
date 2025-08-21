@@ -1,10 +1,15 @@
 """
 FUNCTIONS TO BE PASSED TO THE WORKER VIA OPERATIONS
+PLEASE IMPORT INTO qplot.windows._widget.operations AND ADD TO RESPECTIVE CLASS
+AT BOTTOM OF FILE. 
+The code should handle the rest.
 
 Function .worker.loader.do_operations() will give each operation
 data_dict{x : np.array, y : np.array, z : np.array | None} as only arguemnt.
+The operations tab can pass 1 user defined input of type: int, float, str or a
+list of options.
 To pass other arguments, please use lambda functions, i.e.:
-    operations["subtract_mean_x"] = lambda data_dict: subtract_mean("x", data_dict)
+    "func" : lambda data_dict: subtract_mean("x", data_dict)
 
 .worker.loader.do_operations() expects a dictionary to be returned which is 
 used to find which properties to update the keyed value.

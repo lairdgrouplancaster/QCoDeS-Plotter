@@ -7,7 +7,7 @@ import numpy as np
 
 from ._plotWin import plotWidget
 from ._subplots.subplot2d import sweeper
-from qplot.tools import subtract_mean
+
 
 class plot2d(plotWidget):
     """
@@ -71,27 +71,6 @@ class plot2d(plotWidget):
         actions = self.vbMenu.actions()
         
         sep = self.vbMenu.insertSeparator(actions[3])
-        
-        ### Mean subtraction
-        y_mean = qtw.QAction("Subtract Row Mean", self, checkable=True)
-        y_mean.toggled.connect(lambda checked:  # To Whom it may concern. I'm sorry you had to read this
-                self.add_or_remove_operations(
-                    "sub_mean_y",
-                    (lambda dataDict: subtract_mean("y", dataDict)) 
-                        if checked else None # None removes from operations track
-                ))
-        self.vbMenu.insertAction(sep, y_mean)
-        
-        x_mean = qtw.QAction("Subtract Column Mean", self, checkable=True)
-        x_mean.toggled.connect(lambda checked:
-                self.add_or_remove_operations(
-                    "sub_mean_x",
-                    (lambda dataDict: subtract_mean("x", dataDict))
-                         if checked else None
-                ))
-        self.vbMenu.insertAction(sep, x_mean)
-        
-        self.mean_actions = {"x": x_mean, "y": y_mean}
         
         ### Sweep control
         h_sweep = qtw.QAction("Plot Horizontal Sweep", self)
