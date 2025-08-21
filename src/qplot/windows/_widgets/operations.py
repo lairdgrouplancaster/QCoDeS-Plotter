@@ -6,6 +6,7 @@ from PyQt5 import (
 
 from qplot.tools.plot_tools import (
     subtract_mean,
+    pass_filter,
     )
 from .dropbox import expandingComboBox
 
@@ -141,6 +142,9 @@ class operations_options_base(qtw.QWidget):
         Then adds these to available options.
 
         """
+        for key, subdict in self.common_operation_options.items():
+            self.add_option(key, subdict["func"], subdict["input_type"])
+            
         for key, subdict in self.operation_options.items():
             self.add_option(key, subdict["func"], subdict["input_type"])
     
@@ -158,6 +162,7 @@ class operations_options_base(qtw.QWidget):
 
         """
         operations = []
+        print(self.list_order.count())
         for i in range(self.list_order.count()):
             item = self.list_order.item(i)
             
@@ -165,13 +170,20 @@ class operations_options_base(qtw.QWidget):
             if output == "" or item.isHidden(): # Data not entered
                 continue
             
+            print(item.label)
+            
             if output is None: # No input requried
                 func = item.func
             else: # Add input
-                func = lambda data, output=output: item.func(output, data)
+                # Some weird internal python stuff causes issues with lambda in loops
+                func = func_with_input(item.func, output) 
                 
             operations.append(func)
         return operations
+ 
+    
+def func_with_input(func, value):
+    return lambda data: func(value, data)
  
 
 class draggableListWidget(qtw.QListWidget):
@@ -221,12 +233,13 @@ class rowItem(qtw.QListWidgetItem):
         if input_type is bool: # on/off tickbox
             self.input = qtw.QCheckBox()
             self.reset = lambda: self.input.setChecked(False)
-            self.output = lambda: self.input.isChecked()
+            self.output = lambda: bool(self.input.isChecked())
         
         elif input_type in [int, float, str]: # Textbox input
             self.input = qtw.QLineEdit()
             self.reset = lambda: self.input.setText("")
-            self.output = lambda: self.input.text()
+            self.output = lambda: (input_type(self.input.text()) 
+                                   if self.input.text() else "")
             # Restrict user input to reduce errors
             if input_type != str:
                 validator = QtGui.QDoubleValidator()
@@ -269,7 +282,15 @@ class rowItem(qtw.QListWidgetItem):
 
 class operations_options_common(operations_options_base):
     # For common between all 3 window types.
-    pass
+    common_operation_options = {
+        # display Name : {"func" : lambda input, data: function_to_run(input, data), 
+        #                 "input_type" : input_type_needed}
+        "Low-pass Filter" : {"func": lambda limit, data: pass_filter("low", limit, data),
+                             "input_type": float},
+        "High-pass Filter" : {"func": lambda limit, data: pass_filter("high", limit, data),
+                             "input_type": float},
+        }
+
 
 class operations_options_1d(operations_options_common):
     operation_options = {

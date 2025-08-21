@@ -16,9 +16,10 @@ used to find which properties to update the keyed value.
 """
 import numpy as np
 
-def subtract_mean(axis : str,
-                  data_dict : dict
-                   ):
+def subtract_mean(
+        axis : str,
+        data_dict : dict
+        ):
     """
     Subtracts the mean from the dataGrid based on the axis.
     
@@ -48,3 +49,26 @@ def subtract_mean(axis : str,
     
     return {"z" : dataGrid}
     
+
+def pass_filter(
+        which : str,
+        limit : float,
+        data_dict : dict
+        ):
+    # Get y for 1d or z for 2d
+    axis = "z" if data_dict["z"] is not None else "y"
+    data = data_dict[axis]
+    
+    # Set the bounds
+    if which == "low":
+        limit_arr = (None, limit)
+    elif which == "high":
+        limit_arr = (limit, None)
+    else:
+        raise KeyError(f'Invalid value for which: {which}. Must be: "high" or "low"')
+    
+    print(which)
+    print(limit_arr)
+    new_data = np.clip(data, *limit_arr)
+    
+    return {axis : new_data}
