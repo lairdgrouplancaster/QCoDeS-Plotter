@@ -341,7 +341,6 @@ class light:
         	height: 5px;
         	background: #500a84ff;
         }
-        
         QSlider::handle:horizontal {
         	background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
         	border: 1px solid #5c5c5c;
@@ -396,6 +395,24 @@ class light:
         QTableView::item:selected {
             background-color: #500a84ff;
             color: #000000;
+        }
+        }
+        QListWidget {
+            color: #a9b7c6;
+            border: 1px solid #80202060;
+            outline: 0;
+        }
+        QListWidget::item {
+            padding: 2px 4px;
+            border: none;
+        }
+        QListWidget::item:selected {
+            background-color: #800a84ff;
+            color: #ffffff;
+        }
+        QListWidget::item:hover {
+            background-color: #500a84ff;
+            color: #ffffff;
         }
     """
     colors = [pg.mkColor(col) for col in ["red", "green", "blue", "black", "darkcyan", "darkorange"]]

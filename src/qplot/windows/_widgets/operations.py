@@ -4,7 +4,7 @@ from PyQt5 import (
     QtCore,
     )
 
-from qplot.tools import (
+from qplot.tools.plot_tools import (
     subtract_mean,
     )
 from .dropbox import expandingComboBox
@@ -59,7 +59,7 @@ class operations_options_base(qtw.QWidget):
         self.layout = self.parent.oper_dock.VBox_context(self.filter, self)
 
         # Controls order to perform and user inputs
-        self.list_order = qtw.QListWidget()
+        self.list_order = draggableListWidget()
         self.list_order.setDragDropMode(qtw.QAbstractItemView.InternalMove)
         self.layout.addWidget(self.list_order)
 
@@ -143,11 +143,6 @@ class operations_options_base(qtw.QWidget):
         """
         for key, subdict in self.operation_options.items():
             self.add_option(key, subdict["func"], subdict["input_type"])
-            
-        self.add_option("Enable Feature", lambda: print("Triggered"), bool)
-        self.add_option("Username", lambda: print("User"), str)
-        self.add_option("Speed", lambda: print("Speed"), float)
-        self.add_option("Mode", lambda: print("Mode"), ["Auto", "Manual"])
     
     
     def get_data(self):
@@ -177,7 +172,23 @@ class operations_options_base(qtw.QWidget):
                 
             operations.append(func)
         return operations
-            
+ 
+
+class draggableListWidget(qtw.QListWidget):
+    """
+    QListWidgets have a know issue, when dragging the last time in the list 
+    below itself, the item contents gets deleted. This class impliments a work 
+    around to prevent that bug.
+    """
+    def dragMoveEvent(self, event):
+        target = self.row(self.itemAt(event.pos()))
+        current = self.currentRow()
+        # Block drop below itself when it's the last item
+        if target == current + 1 or (current == self.count() - 1 and target == -1):
+            event.ignore()
+        else:
+            super().dragMoveEvent(event)
+           
    
 class rowItem(qtw.QListWidgetItem):
     """
