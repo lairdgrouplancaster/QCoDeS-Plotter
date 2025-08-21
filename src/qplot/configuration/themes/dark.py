@@ -476,7 +476,7 @@ class dark:
             outline: 0;
         }
         QListWidget::item {
-            padding: 2px 4px;
+            padding: 0px 0px;
             border: none;
         }
         QListWidget::item:selected {

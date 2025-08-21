@@ -59,9 +59,12 @@ class operations_options_base(qtw.QWidget):
         self.filter = self.parent.oper_dock.event_filter
         self.layout = self.parent.oper_dock.VBox_context(self.filter, self)
 
+        self.layout.addWidget(qtw.QLabel("Data Operations"))
+
         # Controls order to perform and user inputs
         self.list_order = draggableListWidget()
         self.list_order.setDragDropMode(qtw.QAbstractItemView.InternalMove)
+        self.list_order.setToolTip("Drag Items to Control Operation Order")
         self.layout.addWidget(self.list_order)
 
         # Allows user to toggle options
@@ -162,15 +165,12 @@ class operations_options_base(qtw.QWidget):
 
         """
         operations = []
-        print(self.list_order.count())
         for i in range(self.list_order.count()):
             item = self.list_order.item(i)
             
             output = item.output()
             if output == "" or item.isHidden(): # Data not entered
                 continue
-            
-            print(item.label)
             
             if output is None: # No input requried
                 func = item.func
@@ -200,7 +200,10 @@ class draggableListWidget(qtw.QListWidget):
             event.ignore()
         else:
             super().dragMoveEvent(event)
-           
+             
+    def addItem(self, item, *args, **kargs):
+        super().addItem(item, *args, **kargs)
+        item.setToolTip(self.toolTip())
    
 class rowItem(qtw.QListWidgetItem):
     """
@@ -229,6 +232,7 @@ class rowItem(qtw.QListWidgetItem):
         self.row_widget.setLayout(row_layout)
         
         row_layout.addWidget(self._label)
+        row_layout.setContentsMargins(5, 5, 5, 5)
         
         if input_type is bool: # on/off tickbox
             self.input = qtw.QCheckBox()
