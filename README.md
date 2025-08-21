@@ -52,6 +52,8 @@ Plot windows are separated into 2 types, line graphs and heatmaps. They both hav
 * The bottom toolbar displays the current coordinates of the mouse.
 * The left toolbar is used to change to assigned axes, this is mainly used for heatmaps with more than 2 independent variables but can be used to flip axes.
 * The left toolbar also contains specialist functionality.
+* The right toolbar controls operations, which are ran during the refresh process but after the data is collected from the database. After selecting from the bottom table, they appear in the top table. You can then enter inputs as needed and drag to sort the order in which the operations are run. (top to bottom)
+  The right toolbar is hidden by default but can be opened through any method or the plot context menu.
 
 
 ### Line Graphs
