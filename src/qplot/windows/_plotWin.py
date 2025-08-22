@@ -353,6 +353,7 @@ class plotWidget(qtw.QMainWindow):
         self.oper_dock.setVisible(False)# Large window so toggle off by default
         
         self.oper_widget = operations_widget(self)
+        self.oper_widget.apply_but.clicked.connect(lambda: self.refreshWindow(force=True))
         self.oper_dock.addWidget(self.oper_widget)
         
     

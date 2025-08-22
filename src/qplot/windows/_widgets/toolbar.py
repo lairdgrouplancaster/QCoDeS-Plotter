@@ -8,7 +8,6 @@ class QDock_context(qtw.QDockWidget):
     """
     A custom QDockWidget designed to emulate a side QToolbar.
     
-    
     """
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
