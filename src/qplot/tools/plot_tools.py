@@ -71,7 +71,6 @@ def pass_filter(
         The data array to operate on.
         This uses the dependant parameter data. (data_dict["y"] or data_dict["z"])
         
-        
     Returns
     -------
     data : dict{str: np.ndarray}
@@ -97,11 +96,64 @@ def pass_filter(
     
     return {axis : new_data}
 
+
 def differentiate(
         dx : str,
         data_dict : dict
         ):
-    pass
+    """
+    Differentiates the dependant parameter data with respect to the input dx    
+
+    Parameters
+    ----------
+    dx : str
+        The axis to perform the differentiation against.
+    data_dict : dict{str : np.ndarry}
+        The data array to operate on.
+        This uses the dependant parameter data. (data_dict["y"] or data_dict["z"])
+        and an independant to find spacing.
+
+    Returns
+    -------
+    data : dict{str: np.ndarray}
+        returns the updated dictionary in the the form:
+            {"z": new_data} for 2d
+            or 
+            {"y": new_data} for 1d
+
+    """
+    if dx not in ["x", "y"]:
+        raise KeyError(f'Invalid value for dx: {dx}, must be "x" or "y".')
+    
+    # Get y for 1d or z for 2d
+    if data_dict["z"] is not None:
+        key = "z"
+        axis_num = 0 if dx == "x" else 1
+        
+    else:
+        key = "y"
+        axis_num = 0
+       
+    data = data_dict[key]
+    new_data = np.gradient(data, data_dict[dx], axis=axis_num)
+    
+    return {key : new_data}
+
+
+def mirror(
+        which : str,
+        data_dict : dict
+        ):
+    new_x = np.flip(data_dict["x"])
+    if data_dict["z"] is not None:
+        key = "z"
+        new_data = np.flipud(data_dict["z"])
+    else:
+        key = "y"
+        new_data = np.flip(data_dict["y"])
+        
+    return {"x" : new_x, key : new_data}
+    
 
 def integrate(
         dx : str,

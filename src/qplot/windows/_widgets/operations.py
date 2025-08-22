@@ -7,6 +7,7 @@ from PyQt5 import (
 from qplot.tools.plot_tools import (
     subtract_mean,
     pass_filter,
+    differentiate,
     )
 from .dropbox import expandingComboBox
 
@@ -66,6 +67,16 @@ class operations_options_base(qtw.QWidget):
         self.list_order.setDragDropMode(qtw.QAbstractItemView.InternalMove)
         self.list_order.setToolTip("Drag Items to Control Operation Order")
         self.layout.addWidget(self.list_order)
+
+        # Buttons
+        but_l = self.parent.oper_dock.HBox_context(self.filter, self)
+        self.apply_but = qtw.QPushButton("Apply/Refresh")
+        but_l.addWidget(self.apply_but)
+        clear_but = qtw.QPushButton("Clear")
+        clear_but.clicked.connect(self.hide_all)
+        but_l.addWidget(clear_but)
+        
+        self.layout.addLayout(but_l)
 
         # Allows user to toggle options
         self.list_options = qtw.QListWidget()
@@ -151,6 +162,13 @@ class operations_options_base(qtw.QWidget):
         for key, subdict in self.operation_options.items():
             self.add_option(key, subdict["func"], subdict["input_type"])
     
+    
+    @QtCore.pyqtSlot()
+    def hide_all(self):
+        for i in range(self.list_options.count()):
+            item = self.list_options.item(i)
+            item.input.setChecked(False)
+            
     
     def get_data(self):
         """
@@ -300,16 +318,22 @@ class operations_options_1d(operations_options_common):
     operation_options = {
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
         #                 "input_type" : input_type_needed}
+        "dy/dx" : {"func" : lambda data: differentiate("x", data), 
+                   "input_type" : None},
         }
 
 class operations_options_2d(operations_options_common):
     operation_options = {
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
         #                 "input_type" : input_type_needed}
-        "Subtract Row Mean" : {"func" : lambda data: subtract_mean("y", data),
+        "Subtract Row Mean" : {"func" : lambda data: subtract_mean("x", data),
                                "input_type" : None},
-        "Subtract Column Mean" : {"func" : lambda data: subtract_mean("x", data),
+        "Subtract Column Mean" : {"func" : lambda data: subtract_mean("y", data),
                                   "input_type" : None},
+        "dz/dx" : {"func" : lambda data: differentiate("x", data), 
+                   "input_type" : None},
+        "dz/dy" : {"func" : lambda data: differentiate("y", data),
+                   "input_type" : None},
         
         }
     
@@ -317,4 +341,12 @@ class operations_options_sweep(operations_options_common):
     operation_options = {
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
         #                 "input_type" : input_type_needed}
+        "Subtract Fixed Mean" : {"func" : lambda data: subtract_mean("x", data),
+                               "input_type" : None},
+        "Subtract Sweep Mean" : {"func" : lambda data: subtract_mean("y", data),
+                                  "input_type" : None},
+        "Differentiate Sweep" : {"func" : lambda data: differentiate("x", data), 
+                                 "input_type" : None},
+        "Differentiate Fixed" : {"func" : lambda data: differentiate("y", data),
+                                 "input_type" : None},
         }
