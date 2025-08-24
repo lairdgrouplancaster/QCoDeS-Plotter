@@ -86,7 +86,7 @@ class operations_options_base(qtw.QWidget):
         self.add_all_options()
         
         
-    def add_option(self, name, func, input_type):
+    def add_option(self, name, func, input_type, default=""):
         """
         Adds an option to the list_options with a tickbox.
         Creates a row stored within the option, this holds the function and
@@ -113,7 +113,7 @@ class operations_options_base(qtw.QWidget):
         self.list_options.setItemWidget(row, row.row_widget)
     
         # create item to add to active box. This data is fetched by self.get_data()
-        row.operation_row = rowItem(name, func, input_type)
+        row.operation_row = rowItem(name, func, input_type, default=default)
         row.input.stateChanged.connect(lambda state: 
                     self.add_or_remove_operation(state, row.operation_row)
                     )
@@ -158,11 +158,20 @@ class operations_options_base(qtw.QWidget):
 
         """
         for key, subdict in self.common_operation_options.items():
-            self.add_option(key, subdict["func"], subdict["input_type"])
+            self.add_option(
+                key, 
+                subdict["func"], 
+                subdict["input_type"],
+                subdict.get("default", "")
+                )
             
         for key, subdict in self.operation_options.items():
-            self.add_option(key, subdict["func"], subdict["input_type"])
-    
+            self.add_option(
+                key, 
+                subdict["func"], 
+                subdict["input_type"],
+                subdict.get("default", "")
+                )
     
     @QtCore.pyqtSlot()
     def hide_all(self):
@@ -186,10 +195,19 @@ class operations_options_base(qtw.QWidget):
         operations = []
         for i in range(self.list_order.count()):
             item = self.list_order.item(i)
+            if item.isHidden():
+                continue
             
             output = item.output()
-            if output == "" or item.isHidden(): # Data not entered
-                continue
+            if output == "": # Data not entered
+                if hasattr(item.input, "placeholderText"):
+                    output = item.input.placeholderText()
+                    
+                    if isinstance(item.type, type):
+                        output = item.type(output)
+                        
+                if output == "": # still blank
+                    continue
             
             if output is None: # No input requried
                 func = item.func
@@ -236,7 +254,7 @@ class rowItem(qtw.QListWidgetItem):
         output : callabel - returns current value of input
     """
     
-    def __init__(self, label, func, input_type):
+    def __init__(self, label, func, input_type, default=""):
         super().__init__()
         
         if callable(func):
@@ -245,6 +263,7 @@ class rowItem(qtw.QListWidgetItem):
             raise AssertionError("Func is not callable")
             
         self._label = qtw.QLabel(label)
+        self.type = input_type
         
         self.row_widget = qtw.QWidget()
         row_layout = qtw.QHBoxLayout()
@@ -289,6 +308,10 @@ class rowItem(qtw.QListWidgetItem):
         row_layout.addStretch() # push to edges
         if self.input is not None:
             row_layout.addWidget(self.input)
+            if isinstance(self.input, qtw.QCheckBox):
+                self.input.setChecked(True if default == True else False)
+            else:
+                self.input.setPlaceholderText(str(default))
             
         # pyqt defaults height of widget to 0, what?
         self.setSizeHint(self.row_widget.sizeHint())
@@ -307,7 +330,8 @@ class operations_options_common(operations_options_base):
     # For common between all 3 window types.
     common_operation_options = {
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
-        #                 "input_type" : input_type_needed}
+        #                 "input_type" : input_type_needed,
+        #                 "default" : (optional) None | default_value},
         "Limit Maxiumum" : {"func": lambda limit, data: pass_filter("low", limit, data),
                              "input_type": float},
         "Limit Minimum" : {"func": lambda limit, data: pass_filter("high", limit, data),
@@ -318,7 +342,8 @@ class operations_options_common(operations_options_base):
 class operations_options_1d(operations_options_common):
     operation_options = {
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
-        #                 "input_type" : input_type_needed}
+        #                 "input_type" : input_type_needed,
+        #                 "default" : (optional) None | default_value},
         "dy/dx" : {"func" : lambda data: differentiate("x", data), 
                    "input_type" : None},
         }
@@ -326,7 +351,8 @@ class operations_options_1d(operations_options_common):
 class operations_options_2d(operations_options_common):
     operation_options = {
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
-        #                 "input_type" : input_type_needed}
+        #                 "input_type" : input_type_needed,
+        #                 "default" : (optional) None | default_value},
         "Subtract Row Mean" : {"func" : lambda data: subtract_mean("x", data),
                                "input_type" : None},
         "Subtract Column Mean" : {"func" : lambda data: subtract_mean("y", data),
@@ -335,17 +361,20 @@ class operations_options_2d(operations_options_common):
                    "input_type" : None},
         "dz/dy" : {"func" : lambda data: differentiate("y", data),
                    "input_type" : None},
-        "Fill Below" : {"func" : lambda data: fill_heatmap("below", data),
-                        "input_type" : None},
-        "Fill Right" : {"func" : lambda data: fill_heatmap("right", data),
-                        "input_type" : None},
+        "Fill Below" : {"func" : lambda value, data: fill_heatmap("below", data, max_depth=value),
+                        "input_type" : int,
+                        "default" : 10},
+        "Fill Right" : {"func" : lambda value, data: fill_heatmap("right", data, max_depth=value),
+                        "input_type" : int,
+                        "default" : 10},
         
         }
     
 class operations_options_sweep(operations_options_common):
     operation_options = {
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
-        #                 "input_type" : input_type_needed}
+        #                 "input_type" : input_type_needed,
+        #                 "default" : (optional) None | default_value},
         "Subtract Fixed Mean" : {"func" : lambda data: subtract_mean("x", data),
                                "input_type" : None},
         "Subtract Sweep Mean" : {"func" : lambda data: subtract_mean("y", data),

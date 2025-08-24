@@ -669,8 +669,6 @@ class plotWidget(qtw.QMainWindow):
             if not finished: # error in worker
                 return
             
-            print("loading new data")
-            
             worker = self.worker
             
             # Update qcodes dataset variables if db read happened

@@ -177,7 +177,7 @@ def fill_heatmap(
     for itr in range(initial_size):
         truth_arr = np.append(
             truth_arr, 
-            [np.isnan(fetch_row(max_depth))],
+            [np.isnan(fetch_row(itr))],
             axis = 0
             )
     
