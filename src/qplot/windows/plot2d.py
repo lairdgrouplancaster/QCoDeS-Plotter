@@ -38,8 +38,9 @@ class plot2d(plotWidget):
         Sets up the initial plot and starting data.
 
         """
-        self.image = pg.ImageItem()
+        self.image = pg.ImageItem(axisOrder='row-major')
         self.image.setZValue(0) # Like *Send to back*
+        # self.image.setPxMode(True)
         
         self.plot.addItem(self.image)
         
@@ -144,7 +145,7 @@ class plot2d(plotWidget):
         if not hasattr(self, "bar"):
             self.bar = self.plot.addColorBar(
                 self.image,
-                colorMap="magma", # make config option?
+                colorMap=self.config.get("user_preference.bar_colour"),
                 label=f"{self.param.label} ({self.param.unit})",
                 rounding=(np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid))/1e5 #Add 10,000 colours
                 )

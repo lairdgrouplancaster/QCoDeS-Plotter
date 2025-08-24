@@ -214,7 +214,7 @@ class loader(QtCore.QRunnable):
                 valid[axis] = ~np.isnan(param_data)
                 param_data = param_data[valid[axis]]
                 
-                if axis == "x": #rotate data to match axis data
+                if axis == "y": #rotate data to match axis data
                     depvarData = depvarData.transpose()
             
             axis_data[axis] = param_data
@@ -239,14 +239,14 @@ class loader(QtCore.QRunnable):
             axis_param[axis] = param
             
         dataGrid = data2matrix(
-                axis_data["x"], 
                 axis_data["y"], 
+                axis_data["x"], 
                 depvarData[valid_rows]
             )
         
         # remove duplicates
-        axis_data["x"] = dataGrid.index.to_numpy(float)
-        axis_data["y"] = dataGrid.columns.to_numpy(float)
+        axis_data["y"] = dataGrid.index.to_numpy(float)
+        axis_data["x"] = dataGrid.columns.to_numpy(float)
         
         dataGrid = dataGrid.to_numpy(float)
         

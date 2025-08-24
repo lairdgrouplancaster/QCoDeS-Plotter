@@ -563,7 +563,7 @@ class plotWidget(qtw.QMainWindow):
             rect = self.rect
             
             if hasattr(rect, "x"): # Check plot has initalised
-                    
+                
                 # Get index for that heatmap 'pixel' as a percentage of width/height
                 i = (mousePoint.x() - rect.x()) / rect.width()
                 j = (mousePoint.y() - rect.y()) / rect.height()
@@ -571,9 +571,10 @@ class plotWidget(qtw.QMainWindow):
                 # Check index is within heatmap.
                 if (i >= 0 and i <= 1) and (j >= 0 and j <= 1):
                     # Convert to true index
-                    i = int(i * image_data.shape[0])
-                    j = int(j * image_data.shape[1])
-                    self.pos_labels["z"].setText(f"z = {self.formatNum(image_data[i, j])}")
+                    # Note that pyqtgraph indexes [column, row]
+                    i = int(i * image_data.shape[1])
+                    j = int(j * image_data.shape[0])
+                    self.pos_labels["z"].setText(f"z = {self.formatNum(image_data[j, i])}")
                     
                     # Save z location for subplot use
                     self.z_index = [i, j]
@@ -667,6 +668,8 @@ class plotWidget(qtw.QMainWindow):
         try:
             if not finished: # error in worker
                 return
+            
+            print("loading new data")
             
             worker = self.worker
             

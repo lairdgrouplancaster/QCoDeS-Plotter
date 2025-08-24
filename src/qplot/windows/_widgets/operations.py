@@ -8,6 +8,7 @@ from qplot.tools.plot_tools import (
     subtract_mean,
     pass_filter,
     differentiate,
+    fill_heatmap
     )
 from .dropbox import expandingComboBox
 
@@ -307,9 +308,9 @@ class operations_options_common(operations_options_base):
     common_operation_options = {
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
         #                 "input_type" : input_type_needed}
-        "Low-pass Filter" : {"func": lambda limit, data: pass_filter("low", limit, data),
+        "Limit Maxiumum" : {"func": lambda limit, data: pass_filter("low", limit, data),
                              "input_type": float},
-        "High-pass Filter" : {"func": lambda limit, data: pass_filter("high", limit, data),
+        "Limit Minimum" : {"func": lambda limit, data: pass_filter("high", limit, data),
                              "input_type": float},
         }
 
@@ -334,6 +335,10 @@ class operations_options_2d(operations_options_common):
                    "input_type" : None},
         "dz/dy" : {"func" : lambda data: differentiate("y", data),
                    "input_type" : None},
+        "Fill Below" : {"func" : lambda data: fill_heatmap("below", data),
+                        "input_type" : None},
+        "Fill Right" : {"func" : lambda data: fill_heatmap("right", data),
+                        "input_type" : None},
         
         }
     
@@ -345,8 +350,8 @@ class operations_options_sweep(operations_options_common):
                                "input_type" : None},
         "Subtract Sweep Mean" : {"func" : lambda data: subtract_mean("y", data),
                                   "input_type" : None},
-        "Differentiate Sweep" : {"func" : lambda data: differentiate("x", data), 
+        "Differentiate Sweep" : {"func" : lambda data: differentiate("y", data), 
                                  "input_type" : None},
-        "Differentiate Fixed" : {"func" : lambda data: differentiate("y", data),
+        "Differentiate Fixed" : {"func" : lambda data: differentiate("x", data),
                                  "input_type" : None},
         }

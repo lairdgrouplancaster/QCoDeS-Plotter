@@ -48,6 +48,11 @@
                     "enum": ["light", "dark", "pyqt"],
                     "default": "light"
                 },
+                "bar_colour" : {
+                    "type": "string",
+                    "enum": ["none", "cividis", "inferno", "magma", "plasma", "turbo", "viridis"],
+                    "default": "viridis"
+                },
                 "confirm_close": {
                     "type": "boolean",
                     "default": true
@@ -58,7 +63,7 @@
                     "default": 10
                 }
             },
-            "required": ["theme", "confirm_close", "default_refresh_rate"],
+            "required": ["theme", "bar_colour", "confirm_close", "default_refresh_rate"],
             "additionalProperties": false
         },
         

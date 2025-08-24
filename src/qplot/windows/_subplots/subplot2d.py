@@ -106,8 +106,7 @@ class sweeper(plotWidget):
         Note, is copy of plot1d.initFrame
 
         """
-        
-        self.line = self.plot.plot()
+        self.line = self.plot.plot(connect="all")
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
@@ -201,7 +200,7 @@ class sweeper(plotWidget):
 
         """
         # Get correct row for y data
-        self.axis_data["y"] = self.dataGrid[:, self.fixed_index]
+        self.axis_data["y"] = self.dataGrid[self.fixed_index, :]
         
         # update line
         self.line.setData(

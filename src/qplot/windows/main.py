@@ -1,5 +1,7 @@
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore
+from PyQt5 import (
+    QtWidgets as qtw,
+    QtCore
+    )
 from PyQt5.QtGui import QIntValidator
 
 from qplot.windows import (
@@ -218,7 +220,7 @@ class MainWindow(qtw.QMainWindow):
         self.run_idBox = qtw.QLineEdit()
         self.run_idBox.setMaximumWidth(50)
         # Only allow int in box between 1 and 9999999
-        self.run_idBox.setValidator(QIntValidator(1, 9999999, self))
+        self.run_idBox.setValidator(QIntValidator())
         self.run_idBox.textEdited.connect(self.update_run_id)
         sublayout.addWidget(self.run_idBox)
         
