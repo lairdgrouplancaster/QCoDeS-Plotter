@@ -140,20 +140,65 @@ def differentiate(
     return {key : new_data}
 
 
-def mirror(
+def fill_heatmap(
         which : str,
-        data_dict : dict
+        data_dict : dict,
+        max_depth : int = 10
         ):
-    new_x = np.flip(data_dict["x"])
-    if data_dict["z"] is not None:
-        key = "z"
-        new_data = np.flipud(data_dict["z"])
-    else:
-        key = "y"
-        new_data = np.flip(data_dict["y"])
+    def set_value_row_major(major, minor, data):
+        new_val = data[major - 1, minor]
+        if np.isnan(new_val):
+            return
+        data[major, minor] = new_val
         
-    return {"x" : new_x, key : new_data}
+    def set_value_col_major(major, minor, data):
+        new_val = data[minor, major - 1]
+        if np.isnan(new_val):
+            return
+        data[minor, major] = new_val
+        
+    data = data_dict["z"].copy()
+    if which == "below":
+        fetch_row = lambda major: data[major]
+        set_item = set_value_row_major
+    elif which == "right":
+        fetch_row = lambda major: data[:, major]
+        set_item = set_value_col_major
+    else:
+        raise KeyError(f'Invalid value for which: {which}, must be "below" or "right".')
+        
+    shape = data.shape
+    length = shape[0] if which == "below" else shape[1]
+        
     
+    truth_arr = np.array([np.isnan(fetch_row(0))])
+    initial_size = max_depth if length >= max_depth else length
+    
+    for itr in range(initial_size):
+        truth_arr = np.append(
+            truth_arr, 
+            [np.isnan(fetch_row(itr))],
+            axis = 0
+            )
+    
+    for major_itr in range(1, length - 1):
+        truth_arr = truth_arr[1:] # remove first item
+        
+        try:
+            truth_arr = np.append(
+                truth_arr, 
+                [np.isnan(fetch_row(major_itr + max_depth))],
+                axis = 0
+                )
+        except IndexError: # Ignore error for last few data points
+            pass
+        
+        for minor_itr, minor_val in enumerate(truth_arr[0]):
+            if minor_val and not truth_arr[:, minor_itr].all():
+                set_item(major_itr, minor_itr, data)
+        
+    return {"z" : data}
+        
 
 def integrate(
         dx : str,

@@ -44,7 +44,7 @@ class plot1d(plotWidget):
 
         """
         
-        self.line = self.plot.plot()
+        self.line = self.plot.plot(connect="all")
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
