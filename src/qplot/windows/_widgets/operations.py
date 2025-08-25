@@ -202,11 +202,12 @@ class operations_options_base(qtw.QWidget):
             if output == "": # Data not entered
                 if hasattr(item.input, "placeholderText"):
                     output = item.input.placeholderText()
+                    if output == "": # still blank
+                        continue
                     
                     if isinstance(item.type, type):
                         output = item.type(output)
-                        
-                if output == "": # still blank
+                else:
                     continue
             
             if output is None: # No input requried

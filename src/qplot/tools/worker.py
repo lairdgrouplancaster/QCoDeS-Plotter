@@ -133,8 +133,6 @@ class loader(QtCore.QRunnable):
                 valid_rows,
                 depvarData
                 )
-            return
-            
         
         except Exception as err: # Raise error in main thread
             did_error = True
@@ -221,7 +219,7 @@ class loader(QtCore.QRunnable):
             axis_param[axis] = param
           
         # Access non nan indexed values
-        dataGrid = depvarData[valid["x"]][:, valid["y"]]
+        dataGrid = depvarData[valid["y"]][:, valid["x"]]
         
         return axis_data, axis_param, dataGrid
     

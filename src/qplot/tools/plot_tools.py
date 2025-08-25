@@ -194,9 +194,7 @@ def fill_heatmap(
             pass
         
         for minor_itr, minor_val in enumerate(truth_arr[0]):
-            # print(truth_arr[:, minor_itr].all())
             if minor_val and not truth_arr[:, minor_itr].all():
-                # print("updating data", minor_val)
                 set_item(major_itr, minor_itr, data)
         
     return {"z" : data}

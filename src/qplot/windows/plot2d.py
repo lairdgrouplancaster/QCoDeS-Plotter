@@ -136,7 +136,7 @@ class plot2d(plotWidget):
         self.rect = pg.QtCore.QRectF(
             xmin,
             ymin, 
-            xrange, 
+            xrange,
             yrange
         )
         self.image.setRect(self.rect)
