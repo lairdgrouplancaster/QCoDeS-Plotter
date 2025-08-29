@@ -41,7 +41,7 @@ def subtract_mean(
     
     """
     dataGrid = data_dict["z"]
-    num_axis = 0 if axis == "x" else 1
+    num_axis = 1 if axis == "x" else 0
     
     mean = np.nanmean(dataGrid, axis=num_axis, keepdims=True)
     
@@ -128,7 +128,7 @@ def differentiate(
     # Get y for 1d or z for 2d
     if data_dict["z"] is not None:
         key = "z"
-        axis_num = 0 if dx == "x" else 1
+        axis_num = 1 if dx == "x" else 0
         
     else:
         key = "y"
