@@ -386,9 +386,8 @@ class plot2d(plotWidget):
         line : pyqtgraph.graphicsItems.InfiniteLine
             The line being dragged.
 
-        """
-        
-        image_data = self.image.image
+        """        
+        image_data = self.dataGrid
         rect = self.rect
         
         pos = line.value()
@@ -400,10 +399,10 @@ class plot2d(plotWidget):
         if axis == "x":
             i = (pos - rect.x()) / rect.width()
             # convert % to index
-            index = int(i * image_data.shape[0])
+            index = int(i * image_data.shape[1])
         else:
             i = (pos - rect.y()) / rect.height()
-            index = int(i * image_data.shape[1])
+            index = int(i * image_data.shape[0])
             
         # check within heatmap
         if 0 <= i and i < 1:

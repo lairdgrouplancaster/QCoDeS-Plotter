@@ -172,6 +172,8 @@ class operations_options_base(qtw.QWidget):
                 subdict["input_type"],
                 subdict.get("default", "")
                 )
+        self.list_options.adjustSize()
+            
     
     @QtCore.pyqtSlot()
     def hide_all(self):
@@ -376,12 +378,12 @@ class operations_options_sweep(operations_options_common):
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
         #                 "input_type" : input_type_needed,
         #                 "default" : (optional) None | default_value},
-        "Subtract Fixed Mean" : {"func" : lambda data: subtract_mean("x", data),
-                               "input_type" : None},
-        "Subtract Sweep Mean" : {"func" : lambda data: subtract_mean("y", data),
+        "Subtract Sweep Mean" : {"func" : lambda data: subtract_mean("x", data),
                                   "input_type" : None},
-        "Differentiate Sweep" : {"func" : lambda data: differentiate("y", data), 
+        "Subtract Fixed Mean" : {"func" : lambda data: subtract_mean("y", data),
+                               "input_type" : None},
+        "Differentiate Sweep" : {"func" : lambda data: differentiate("x", data), 
                                  "input_type" : None},
-        "Differentiate Fixed" : {"func" : lambda data: differentiate("x", data),
+        "Differentiate Fixed" : {"func" : lambda data: differentiate("y", data),
                                  "input_type" : None},
         }
