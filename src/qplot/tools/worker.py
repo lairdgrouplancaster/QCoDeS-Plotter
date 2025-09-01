@@ -74,7 +74,7 @@ class loader(QtCore.QRunnable):
             cache = self.cache
             
             if self.read_data:
-                conn = connect(get_DB_location())
+                conn = connect(cache._dataset.path_to_db)
                 (
                     self.updated_read_status,
                     self.updated_write_status,
