@@ -1,7 +1,7 @@
 QCodes-Plotter
 ==============
 
-QCodes-Plotter is an alternative data plotter aimed to provide fast data display of running and completed expermients using QCoDeS databases.
+QCodes-Plotter is an alternative data plotter aimed to provide fast data display of running and completed experiments using QCoDeS databases.
 
 <br/>
 
@@ -40,7 +40,7 @@ After opening a QCoDeS database (.db) with File -> Load, all runs within the dat
 Clicking on a run displays a more detailed view in the table below. <br/>
 After selecting a run, it can be opened with the "Open Plots" button or by double clicking the row in the central table. Alternatively you may enter a run ID into the text box above the central table, then use the "Open Plots" Button. <br/>
 Both double clicking and using the button will open a window with a plot display for each dependent parameter. To open a specific parameter, right click on the row and use the "Open" context menu. <br/> 
-The "Add _ to _" context menu is used to add additional lines to a plot window. It displays the parameters in the selected row (Add _) and then which plots that parameter can be added to (to _) by matching independant variable names. This can also be done within a line plot window and is mentioned later.
+The "Add _ to _" context menu is used to add additional lines to a plot window. It displays the parameters in the selected row (Add _) and then which plots that parameter can be added to (to _) by matching independent variable names. This can also be done within a line plot window and is mentioned later.
 <br/>
 You can alter how frequently the app checks for new runs by changing the interval box in the top toolbar. Setting the value to 0.0, will stop any checks. You can also manually refresh using File -> Refresh or by pressing R. The "Toggle Auto-plot" tickbox will open any new runs once ticked.
 <br/>
