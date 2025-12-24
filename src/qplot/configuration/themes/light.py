@@ -334,26 +334,26 @@ class light:
             border: none;
         }
         QSlider::groove:horizontal {
-        	height: 5px;
-        	background: #500a84ff;
+         	height: 5px;
+         	background: #500a84ff;
         }
         QSlider::groove:vertical {
-        	height: 5px;
-        	background: #500a84ff;
+         	height: 5px;
+         	background: #500a84ff;
         }
         QSlider::handle:horizontal {
-        	background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
-        	border: 1px solid #5c5c5c;
-        	width: 14px;
-        	margin: -5px 0;
-        	border-radius: 7px;
+         	background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
+         	border: 1px solid #5c5c5c;
+         	width: 14px;
+         	margin: -5px 0;
+         	border-radius: 7px;
         }                        
         QSlider::handle:vertical {
-        	background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
-        	border: 1px solid #5c5c5c;
-        	width: 14px;
-        	margin: -5px 0;
-        	border-radius: 7px;
+         	background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
+         	border: 1px solid #5c5c5c;
+         	width: 14px;
+         	margin: -5px 0;
+         	border-radius: 7px;
         }
         QSlider::add-page:horizontal {
             background: #a0a0a0;
@@ -395,7 +395,6 @@ class light:
         QTableView::item:selected {
             background-color: #500a84ff;
             color: #000000;
-        }
         }
         QListWidget {
             color: #a9b7c6;
