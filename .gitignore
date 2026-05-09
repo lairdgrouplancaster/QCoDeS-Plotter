@@ -2,5 +2,7 @@
 *.db-shm
 *.db-wal
 *.pyc
+.DS_Store
+.venv/
 other/*
 src/qplot.egg-info/*

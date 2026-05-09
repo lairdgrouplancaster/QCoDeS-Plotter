@@ -48,11 +48,10 @@ class plot1d(plotWidget):
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
+        self.show_status("Line plot ready; loading data...", 5000)
         
-        print("Graph produced \n")
         
-        
-    def refreshPlot(self, finished : bool = True):
+    def refreshPlot(self, finished : bool = True, worker=None):
         """
         Updates plot based on data produced by the thread worker. Data is 
         assigned in plotWidget.refreshPlot, then all plot items are produced
@@ -64,7 +63,8 @@ class plot1d(plotWidget):
             In the event the worker had to abort, finished is False and refresh
             is not ran.
         """
-        super().refreshPlot(finished)
+        if not super().refreshPlot(finished, worker=worker):
+            return
         
         # Main line
         self.line.setData(
@@ -255,6 +255,7 @@ class plot1d(plotWidget):
         if not self.right_vb:
             #Create viewbox for right axis and add viewbox to main plot widget
             self.right_vb = pg.ViewBox()
+            self.right_vb.setDefaultPadding(0)
             self.plot.scene().addItem(self.right_vb)
             
             self.plot.getAxis('right').linkToView(self.right_vb)
@@ -373,7 +374,6 @@ class plot1d(plotWidget):
             self.right_vb.wheelEvent(ev)
         elif ev.__class__.__name__ == "MouseDragEvent":
             self.right_vb.mouseDragEvent(ev)
-        
+
         # Prevents lines from moving outside the axes.
         self.right_vb.setGeometry(self.vb.sceneBoundingRect())
-        

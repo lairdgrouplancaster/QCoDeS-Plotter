@@ -116,9 +116,9 @@ class sysHandle:
             for itr in range(len(convrt_value)):
                 convrt_value[itr] = try_as_num(convrt_value[itr])
         else:
-            if convrt_value.lower() == "true":
+            if value.lower() == "true":
                 convrt_value = True
-            elif convrt_value.lower() == "false":
+            elif value.lower() == "false":
                 convrt_value = False
             else:
                 convrt_value =  try_as_num(value)
@@ -126,7 +126,7 @@ class sysHandle:
         try:
             self.config.update(key, convrt_value)
         except ValidationError as error:
-            err_key = "Value: {value}, is invalid."
+            err_key = f"Value: {value}, is invalid."
             err_key += str(error)
             raise ValidationError(err_key)
         print(f"set '{key}' to '{value}'")
@@ -183,7 +183,8 @@ def try_as_num(item):
 
     """
     try:
-        if "." in item: # Check for decimal point. Add log_10 check for large nums?
+        item = item.strip()
+        if "." in item or "e" in item.lower():
             item = float(item)
         else:
             item = int(item)

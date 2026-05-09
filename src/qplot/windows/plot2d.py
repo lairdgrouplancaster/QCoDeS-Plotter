@@ -46,8 +46,7 @@ class plot2d(plotWidget):
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
-        
-        print("graph produced \n")
+        self.show_status("Heatmap ready; loading data...", 5000)
       
         
     def initRefresh(self, refresh):
@@ -66,6 +65,7 @@ class plot2d(plotWidget):
         super().initContextMenu()
 
         autoColor = qtw.QAction("Autoscale Color", self)
+        self.register_shortcut(autoColor, "Ctrl+Shift+C", "Autoscale color range")
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
         
@@ -75,10 +75,12 @@ class plot2d(plotWidget):
         
         ### Sweep control
         h_sweep = qtw.QAction("Plot Horizontal Sweep", self)
+        self.register_shortcut(h_sweep, "Ctrl+Shift+H", "Plot horizontal sweep")
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
         v_sweep = qtw.QAction("Plot Vertical Sweep", self)
+        self.register_shortcut(v_sweep, "Ctrl+Shift+V", "Plot vertical sweep")
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         
@@ -99,7 +101,7 @@ class plot2d(plotWidget):
         
 ###############################################################################
     
-    def refreshPlot(self, finished : bool = True):
+    def refreshPlot(self, finished : bool = True, worker=None):
         """
         Updates plot based on data produced by the thread worker. Data is 
         assigned in plotWidget.refreshPlot, then all plot items are produced
@@ -111,7 +113,8 @@ class plot2d(plotWidget):
             In the event the worker had to abort, finished is False and refresh
             is not ran.
         """
-        super().refreshPlot(finished)
+        if not super().refreshPlot(finished, worker=worker):
+            return
         
         autoLevels=self.relevel_refresh.isChecked()
         # Produce Heatmap

@@ -24,9 +24,12 @@ qplot-cfg = "qplot.configuration.scripts:scripts"
 [project.urls]
 Homepage = "https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git"
 
-[tools.setuptools]
-packages = ["qplot"]
+[tool.setuptools]
+package-dir = {"" = "src"}
 include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools.package-data]
 "qplot" = ["**/*.json"]

@@ -8,7 +8,13 @@ from os import path
 
 from importlib.resources import files
 
-from .themes import * # ignore error, used in self.theme()
+from .themes import dark, light, pyqt
+
+THEME_CLASSES = {
+    "light": light,
+    "dark": dark,
+    "pyqt": pyqt,
+}
 
 class config:
     """
@@ -147,16 +153,30 @@ class config:
 
         """
         keys = key.split(".")
-        
+
         # Create copy to prevent unwanted changes to file
         config = deepcopy(self.config)
-        
-        #to anyone reading this, good luck
-        run_str = ""
-        for key in keys:
-            run_str += f"['{key}']" # chain .get(keys) for dic item
-        
-        exec(f"config{run_str} = value") #add value to dic under key
+
+        target = config
+        for part in keys[:-1]:
+            try:
+                target = target[part]
+            except KeyError as err:
+                raise KeyError(
+                    f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
+                ) from err
+
+            if not isinstance(target, dict):
+                raise KeyError(
+                    f"Key: {key}, cannot be updated because {part} is not a section"
+                )
+
+        if keys[-1] not in target:
+            raise KeyError(
+                f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
+            )
+
+        target[keys[-1]] = value
         
         # Check update is allowed by schema
         jsonschema.validate(config, self.schema)
@@ -242,5 +262,5 @@ class config:
             set config value
 
         """
-        config_theme = self.get("user_preference.theme")        
-        return eval(config_theme)
+        config_theme = self.get("user_preference.theme")
+        return THEME_CLASSES[config_theme]

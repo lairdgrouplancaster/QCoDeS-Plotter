@@ -31,6 +31,7 @@ class RunList(qtw.QTreeWidget):
 
     selected = QtCore.pyqtSignal([str])
     plot = QtCore.pyqtSignal([str])
+    _shortcut_keys = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     
     def __init__(self, *args, initalize=False, **kargs):
         super().__init__(*args, **kargs)
@@ -51,6 +52,12 @@ class RunList(qtw.QTreeWidget):
         # Setup Context Menu
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.prepareMenu)
+
+        context_action = qtw.QAction("Show Context Menu", self)
+        context_action.setShortcut("Shift+F10")
+        context_action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        context_action.triggered.connect(self.openKeyboardMenu)
+        self.addAction(context_action)
         
     
     def addRuns(self, runs):
@@ -159,13 +166,17 @@ class RunList(qtw.QTreeWidget):
         """
         # Get Main Window
         main = self.parentWidget().parent()
+        if main.ds is None:
+            main.show_status("Select a run before opening the context menu.", 5000)
+            return
         
         menu = qtw.QMenu(self)
         
         ### OPEN SUBMENU
         open_menu = menu.addMenu("&Open")
         
-        open_all = qtw.QAction("All", self)
+        open_all = qtw.QAction("&All", open_menu)
+        self._set_action_shortcut(open_all, "Ctrl+Return")
         open_all.triggered.connect(lambda _,: main.openPlot()) # Feed no param to open all
         open_menu.addAction(open_all)
         
@@ -175,9 +186,11 @@ class RunList(qtw.QTreeWidget):
         
         # Create an action for all dependant parameters in the loaded dataset,
         # linking the coresponding parameter to the openPlot.
-        for param in params.keys():
+        for itr, param in enumerate(params.keys()):
             
-            open_win = qtw.QAction(f"{param.name}", self)
+            open_win = qtw.QAction(self._numbered_label(itr, param.name), open_menu)
+            if itr < 9:
+                self._set_action_shortcut(open_win, f"Ctrl+{itr + 1}")
             
             # Due to the for loop, the lambda function sets param as an optional 
             # default. Otherwise, param is set by the last iteration of the for loop.
@@ -191,7 +204,7 @@ class RunList(qtw.QTreeWidget):
         ### ADD SUBMEMU
         add_menu = menu.addMenu("&Add _ to _")
         
-        add_all = add_menu.addMenu("All")
+        add_all = add_menu.addMenu("&All")
         valid_wins = []
         
         add_menu.addSeparator()
@@ -227,7 +240,7 @@ class RunList(qtw.QTreeWidget):
                 if win.param.depends_on_ == depends_on: # If it can be added
                     
                     # Produce action and connect open
-                    win_action = qtw.QAction(f"{win.label}", self)
+                    win_action = qtw.QAction(self._numbered_label(len(valid_actions), win.label), menu)
                     win_action.triggered.connect(
                         lambda _, win=win, param=param: self.add_plot(win, param)
                         )
@@ -236,7 +249,9 @@ class RunList(qtw.QTreeWidget):
                     
                     # Check if this window is on the add all list.
                     if win not in valid_wins:
-                        all_action = qtw.QAction(f"{win.label}", self)
+                        all_action = qtw.QAction(self._numbered_label(len(valid_wins), win.label), add_all)
+                        if len(valid_wins) < 9:
+                            self._set_action_shortcut(all_action, f"Ctrl+Alt+{len(valid_wins) + 1}")
                         all_action.triggered.connect(
                             lambda _, win=win, param_dict=params: self.add_all(win, param_dict)
                             )
@@ -246,11 +261,43 @@ class RunList(qtw.QTreeWidget):
              
             # If any actions where found, create menu for them.
             if valid_actions:
-                param_menu = add_menu.addMenu(f"{param.name}")
+                param_menu = add_menu.addMenu(self._numbered_label(len(add_menu.actions()), param.name))
                 param_menu.addActions(valid_actions)
             
         # Display context menu
         menu.exec_(self.mapToGlobal(pos))
+
+
+    @QtCore.pyqtSlot()
+    def openKeyboardMenu(self):
+        """
+        Opens the run context menu from the keyboard.
+
+        """
+        item = self.currentItem()
+        pos = self.visualItemRect(item).center() if item else self.rect().center()
+        self.prepareMenu(pos)
+
+
+    def _set_action_shortcut(self, action, shortcut):
+        """
+        Sets a context-menu action shortcut.
+
+        """
+        action.setShortcut(shortcut)
+        action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        if hasattr(action, "setShortcutVisibleInContextMenu"):
+            action.setShortcutVisibleInContextMenu(True)
+
+
+    def _numbered_label(self, index, label):
+        """
+        Adds a menu mnemonic to a dynamic context-menu label.
+
+        """
+        if index < len(self._shortcut_keys):
+            return f"&{self._shortcut_keys[index]} {label}"
+        return label
     
 
     @QtCore.pyqtSlot()
@@ -305,7 +352,7 @@ class RunList(qtw.QTreeWidget):
         for win in main.windows:
             if win.ds.guid == self.selectedItems()[0].guid and win.param == param:
                 if target_win == win:
-                    print(f"Skip, {target_win.label}. Target and Source are the same.\n")
+                    main.show_status(f"Skipped {target_win.label}; source and target are the same.", 5000)
                     return
                 from_win = win
                 break
@@ -412,5 +459,3 @@ def dictToTree(d : dict):
         items.append(item)
     return items
         
-
-

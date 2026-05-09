@@ -51,6 +51,12 @@ class plotWidget(qtw.QMainWindow):
     make_ds = QtCore.pyqtSignal([str])
     
     _label_width = 95 #About the size of 3 s.f. scientific
+    _toggle_shortcuts = {
+        "Refresh Timer": "Ctrl+Alt+R",
+        "Co-ordinates": "Ctrl+Alt+C",
+        "Line control": "Ctrl+Alt+A",
+        "Operations": "Ctrl+Alt+O",
+    }
     
     def __init__(self, 
                  guid : str, 
@@ -83,7 +89,6 @@ class plotWidget(qtw.QMainWindow):
             When false reduces produced widgets to reduce workload.
 
         """
-        print("Working, please wait")
         super().__init__()
         
         ### CORE VARIABLES
@@ -100,6 +105,8 @@ class plotWidget(qtw.QMainWindow):
         self.config = config
         self.visible = show
         self.operations = {}
+        self._last_error_text = None
+        self.show_status("Working, please wait", 0)
         
         ### WIDGETS
         self.layout = qtw.QVBoxLayout()
@@ -107,6 +114,7 @@ class plotWidget(qtw.QMainWindow):
         self.widget = pg.GraphicsLayoutWidget()
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
+        self.vb.setDefaultPadding(0)
         self.plot = self.widget.addPlot(viewBox=self.vb)
         self.vb.setParent(self.plot)
         self.layout.addWidget(self.widget)
@@ -156,6 +164,48 @@ class plotWidget(qtw.QMainWindow):
         return fstr
 
     
+    def show_status(self, message : str, timeout : int = 5000):
+        """
+        Shows a short message in the plot window status bar.
+
+        """
+        if getattr(self, "visible", False):
+            self.statusBar().showMessage(message, timeout)
+
+
+    def show_error(self, title : str, message : str, details : str = None):
+        """
+        Shows an error both in the status bar and, for visible windows, in a
+        message box.
+
+        """
+        self.show_status(message, 10000)
+
+        if not self.visible:
+            return
+
+        box = qtw.QMessageBox(qtw.QMessageBox.Warning, title, message, parent=self)
+        if details:
+            box.setDetailedText(details)
+        box.exec_()
+
+
+    def register_shortcut(self, action, shortcut : str, status_tip : str = None):
+        """
+        Registers a QAction shortcut on the plot window.
+
+        """
+        action.setShortcut(shortcut)
+        action.setShortcutContext(QtCore.Qt.WindowShortcut)
+        if hasattr(action, "setShortcutVisibleInContextMenu"):
+            action.setShortcutVisibleInContextMenu(True)
+        if status_tip:
+            action.setStatusTip(status_tip)
+            action.setToolTip(f"{status_tip} ({shortcut})")
+        if action not in self.actions():
+            self.addAction(action)
+
+
     @property
     def ds(self):
         """
@@ -168,7 +218,7 @@ class plotWidget(qtw.QMainWindow):
         """
         # Check dataset exists, produce new one if needed.
         if self._dataset_holder.get(self._guid, 0) == 0:
-            print(f"KeyError: guid: {self._guid} not found. Producing new dataset.")
+            self.show_status(f"Dataset {self._guid} not found. Reloading...", 5000)
             self.make_ds.emit(self._guid)
         
         # Check a deletion timer is not active and stop
@@ -245,11 +295,16 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.vbMenu = self.vb.menu
+
+        contextAction = qtw.QAction("Show Context Menu", self)
+        self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
+        contextAction.triggered.connect(self.open_context_menu)
         
         actions = self.vbMenu.actions()
         for action in actions:
             if action.text() == "View All":
                 action.setText("Autoscale")
+                self.register_shortcut(action, "Ctrl+0", "Autoscale plot")
                 break
         
         x_action = actions[1]
@@ -258,10 +313,20 @@ class plotWidget(qtw.QMainWindow):
         
         # Create visibility
         toggleAction = qtw.QAction("View Operations", self, checkable=True)
+        self.register_shortcut(toggleAction, "Ctrl+Shift+O", "Toggle operations panel")
         toggleAction.triggered.connect(self.oper_dock.setVisible)
         self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
         self.vbMenu.insertAction(x_action, toggleAction)
         self.vbMenu.insertSeparator(x_action)
+
+
+    @QtCore.pyqtSlot()
+    def open_context_menu(self):
+        """
+        Opens the plot context menu from the keyboard.
+
+        """
+        self.vbMenu.exec_(self.widget.mapToGlobal(self.widget.rect().center()))
         
         
     def initAxes(self):
@@ -448,6 +513,13 @@ class plotWidget(qtw.QMainWindow):
         for widget in widgets:
             action = widget.toggleViewAction()
             if isinstance(action, qtw.QAction):
+                shortcut = self._toggle_shortcuts.get(widget.windowTitle())
+                if shortcut:
+                    self.register_shortcut(
+                        action,
+                        shortcut,
+                        f"Toggle {widget.windowTitle()}"
+                        )
                 menu.addAction(action)
     
         return menu
@@ -482,6 +554,10 @@ class plotWidget(qtw.QMainWindow):
 
         """
         complete = load_param_data_from_db_prep(self.ds.cache, self.param)
+        if complete:
+            self.show_status(f"Processing cached data for {self.param.name}...", 0)
+        else:
+            self.show_status(f"Loading data for {self.param.name}...", 0)
          
         worker = loader(
             self.ds.cache, 
@@ -493,7 +569,9 @@ class plotWidget(qtw.QMainWindow):
             )
         
         # Callback
-        worker.emitter.finished.connect(self.refreshPlot)
+        worker.emitter.finished.connect(
+            lambda finished, worker=worker: self.refreshPlot(finished, worker=worker)
+            )
         # Error event handling
         worker.emitter.errorOccurred.connect(self.err_raiser)
         worker.emitter.printer.connect(self.worker_printer)
@@ -651,7 +729,7 @@ class plotWidget(qtw.QMainWindow):
 
 
     @QtCore.pyqtSlot(bool)
-    def refreshPlot(self, finished : bool = True):
+    def refreshPlot(self, finished : bool = True, worker=None):
         """
         Produces a shallow copy of data produced by worker.
         This is inhertited by plot<1/2>d to actually use the loaded data.
@@ -665,9 +743,16 @@ class plotWidget(qtw.QMainWindow):
         """
         try:
             if not finished: # error in worker
-                return
+                if worker is not None:
+                    worker.running = False
+                return False
             
-            worker = self.worker
+            if worker is None:
+                worker = self.worker
+
+            if worker is not self.worker:
+                worker.running = False
+                return False
             
             # Update qcodes dataset variables if db read happened
             if worker.read_data:
@@ -705,11 +790,17 @@ class plotWidget(qtw.QMainWindow):
             # Update text
             self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
             self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
+
+            self.show_status(
+                f"Loaded {self.ds.number_of_results:,} points for {self.param.name}",
+                5000
+                )
+            return True
                 
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
             # This should no longer be possible so making error soft error.
-            print(type(err), err)
+            self.show_status(f"Refresh skipped: {err}", 10000)
         
         finally: # Allow code to move on from wait_on_thread
             self.end_wait.emit()
@@ -717,14 +808,20 @@ class plotWidget(qtw.QMainWindow):
         
     @QtCore.pyqtSlot(Exception)
     def err_raiser(self, err : Exception):
-        # Worker cannot raise errors so much be done through event handlers
-        print("WORKER ERROR:")
-        raise err
+        message = f"{type(err).__name__}: {err}"
+        self.show_status(f"Worker error: {message}", 10000)
+
+        if message == self._last_error_text:
+            return
+
+        self._last_error_text = message
+        self.show_error("Plot Error", "A plot worker failed.", message)
         
         
     @QtCore.pyqtSlot(str)
     def worker_printer(self, fstr : str):
         # Worker print() often does not work, so done through event handlers
+        self.show_status(fstr, 5000)
         print(fstr)
     
     
@@ -803,5 +900,4 @@ class plotWidget(qtw.QMainWindow):
             
         else:
             # get new data
-            self.refreshWindow(force=True) 
-        
+            self.refreshWindow(force=True)

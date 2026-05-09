@@ -110,12 +110,11 @@ class sweeper(plotWidget):
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
-        
-        print("Graph produced \n")
+        self.show_status("Sweep plot ready; loading data...", 5000)
         
     
     @QtCore.pyqtSlot(bool)
-    def refreshPlot(self, finished : bool = True):
+    def refreshPlot(self, finished : bool = True, worker=None):
         """
         Event handler for worker callback
         Fetches values from data from worker in super().refreshPlot
@@ -129,7 +128,8 @@ class sweeper(plotWidget):
             is not ran.
 
         """
-        super().refreshPlot(finished)
+        if not super().refreshPlot(finished, worker=worker):
+            return
         
         ### NOTE. self.axis_data["y"] is set to fixed param in super().refreshPlot,
         ###       then updated to y axis value (indep param) in self.update_sweep()
@@ -420,7 +420,6 @@ class fixed_var_picker(qtw.QWidget):
         self.text_box.setReadOnly(True)
         self.text_box.setMaximumWidth(main._label_width)
         row_2.addWidget(self.text_box)
-        
+
         layout.addLayout(row_1)
         layout.addLayout(row_2)
-        
