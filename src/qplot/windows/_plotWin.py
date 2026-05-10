@@ -24,7 +24,11 @@ from ._widgets import (
     operations_widget,
     )
 from ._shortcuts import standard_key_sequences
-from ._window_controls import add_standard_window_controls
+from ._window_controls import (
+    add_confirmation_options,
+    add_restore_defaults_option,
+    add_standard_window_controls,
+    )
 
 if TYPE_CHECKING:
     import qplot
@@ -436,6 +440,13 @@ class plotWidget(qtw.QMainWindow):
 
         file_menu = menu.addMenu("&File")
 
+        close_all_plots_action = qtw.QAction("Close All &Plot Windows", self)
+        close_all_plots_action.setShortcut("Ctrl+Shift+W")
+        close_all_plots_action.setShortcutContext(QtCore.Qt.WindowShortcut)
+        close_all_plots_action.setStatusTip("Close all open plot windows")
+        close_all_plots_action.triggered.connect(self.request_close_all_plots)
+        file_menu.addAction(close_all_plots_action)
+
         closeAction = qtw.QAction("&Close Window", self)
         closeAction.setShortcuts(
             standard_key_sequences(QKeySequence.Close, ["Ctrl+W"])
@@ -455,6 +466,11 @@ class plotWidget(qtw.QMainWindow):
         file_menu.addAction(quitAction)
 
         add_standard_window_controls(self)
+
+        options_menu = menu.addMenu("&Options")
+        add_restore_defaults_option(self, options_menu)
+        options_menu.addSeparator()
+        add_confirmation_options(self, options_menu)
         
         main_menu = menu.addMenu("&View")
         
@@ -534,6 +550,22 @@ class plotWidget(qtw.QMainWindow):
                 return
 
         app.closeAllWindows()
+
+
+    @staticmethod
+    def request_close_all_plots():
+        """
+        Closes all plot windows through the main window.
+
+        """
+        app = qtw.QApplication.instance()
+        if app is None:
+            return
+
+        for window in app.topLevelWidgets():
+            if hasattr(window, "closeAll"):
+                window.closeAll()
+                return
     
     
     #Note, this is an overwrite of core QMainWindow function

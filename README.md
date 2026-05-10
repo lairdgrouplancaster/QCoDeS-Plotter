@@ -92,18 +92,20 @@ Opening A Database
 2. Drag a QCoDeS `.db` file onto the database path field, or select
    `File -> Load`.
 3. Choose a QCoDeS `.db` database file if using the file menu.
+   Previously loaded databases are available from `File -> Load Recent Database`.
 4. Select a run from the central table.
 5. Use `Run` and `Measurement` to plot a specific measurement, or set
    `Measurement` to `*` to plot all measurements for that run.
 
-The run table can be sorted by clicking a column header. Selecting a run shows
-details in the lower pane:
+The run table includes measurement count, setpoint count, start time, completion
+progress, time taken, and storage used by each run. It can be sorted by clicking
+a column header. Selecting a run shows details in the lower pane:
 
 * `Overview` summarises run properties, data point count, GUID, and parameters.
-* `Parameters` shows a compact table of labels, units, axes, values, instruments,
-  and validators.
+* `Sweep parameters` shows a compact table of labels, units, axes, values,
+  instruments, and validators.
 * `Metadata` shows metadata with long values shortened and available as tooltips.
-* `Raw` keeps the full nested structure for detailed inspection.
+* `Raw key-value` keeps the full nested structure for detailed inspection.
 
 Refresh And Live Data
 ---------------------
@@ -191,8 +193,11 @@ General shortcuts:
 | `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the current cell or value in the run details pane |
 | `Shift+F10` | Open the focused widget's context menu |
 | `Ctrl+Shift+D` | Open the current database folder |
+| `Ctrl+Shift+M` | Bring the main window to front, or behind the graph windows |
 | `Ctrl+Return` | Plot the requested run and measurement |
-| `Ctrl+1` to `Ctrl+9` | Plot dependent parameters 1 to 9 for the selected run |
+| `Ctrl+Shift+Return` | Plot all measurements in the selected run |
+| `Ctrl+1` to `Ctrl+9` | Plot measurements 1 to 9 in the selected run |
+| `Ctrl+Shift+W` | Close all plot windows |
 
 Plot-window shortcuts:
 

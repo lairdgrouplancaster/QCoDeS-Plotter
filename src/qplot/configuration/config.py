@@ -49,6 +49,8 @@ class config:
         else:
             try:
                 self.config = self.load_config(self.default_file)
+                if self.add_missing_defaults(self.config):
+                    self.save_config(self.default_file)
                 jsonschema.validate(self.config, self.schema)
             
             # config.json does not meet schema requirements
@@ -246,6 +248,28 @@ class config:
         # Save reset to file
         self.config = config
         self.save_config(self.default_file)
+
+
+    def add_missing_defaults(self, target_config):
+        """
+        Adds newly introduced default settings to existing config files.
+
+        """
+        changed = False
+        for section, section_schema in self.schema["properties"].items():
+            if section not in target_config:
+                target_config[section] = {}
+                changed = True
+
+            if not isinstance(target_config[section], dict):
+                continue
+
+            for key, key_schema in section_schema["properties"].items():
+                if key not in target_config[section]:
+                    target_config[section][key] = deepcopy(key_schema["default"])
+                    changed = True
+
+        return changed
         
 ###############################################################################    
 #handled functions

@@ -16,8 +16,14 @@ from ._widgets import (
     RunList,
     moreInfo,
     )
+from ._widgets.preview import PREVIEW_SIZE
 from ._shortcuts import standard_key_sequences
-from ._window_controls import add_standard_window_controls
+from ._window_controls import (
+    add_confirmation_options,
+    add_restore_defaults_option,
+    add_standard_window_controls,
+    close_all_warning_enabled,
+    )
 from qplot.datahandling import (
     find_new_runs
     )
@@ -33,6 +39,7 @@ from qcodes.dataset.sqlite.database import (
     )
 
 import os
+from time import perf_counter
 
 import numpy as np
 import pandas as pd
@@ -124,12 +131,14 @@ class MainWindow(qtw.QMainWindow):
     """
     
     def __init__(self):
+        startup_start = perf_counter()
         super().__init__()
        
         #vars
         self.config = config() # Connect to config.json in :/users/<user>/.qplot/
         self.windows = [] # prevent auto delete of windows
         self.ds = None
+        self.preview_size = self._configured_preview_size()
         self.dataset_holder = {}
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
@@ -161,7 +170,8 @@ class MainWindow(qtw.QMainWindow):
         # Fetch window size from config.json
         self.resize(*self.config.get("GUI.main_frame_size"))
         self.setWindowTitle("qPlot")
-        self.show_status("Ready")
+        startup_elapsed = perf_counter() - startup_start
+        self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         
         # Get user's window dimensions to control new window position
         self.screenrect = qtw.QApplication.primaryScreen().availableGeometry()
@@ -181,51 +191,29 @@ class MainWindow(qtw.QMainWindow):
         added to the dataset.
         
         """
-        toolbar = self.addToolBar("Refresh Timer")
-        toolbar.setContextMenuPolicy(QtCore.Qt.PreventContextMenu)
-        toolbar.setMovable(False)
-        toolbar.setIconSize(QtCore.QSize(16, 16))
-        toolbar.setMinimumHeight(34)
-
-        left_spacer = qtw.QWidget()
-        left_spacer.setFixedWidth(6)
-        toolbar.addWidget(left_spacer)
-        
-        # Widget production
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
         self.spinBox.setFixedWidth(72)
-        
-        toolbar.addWidget(qtw.QLabel("Refresh interval (s): "))
-        toolbar.addWidget(self.spinBox)
+        self.spinBox.setAlignment(QtCore.Qt.AlignRight)
+        self.spinBox.setToolTip("Refresh interval in seconds")
     
         # Slot connections
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshMain)
         
-        # Produces tick box for whether to automatically open newly found plots
-        toolbar.addSeparator()
-        
-        toolbar.addWidget(qtw.QLabel("Auto-plot "))
-        
         self.autoPlotBox = qtw.QCheckBox()
         self.autoPlotBox.setToolTip("Automatically open plots for newly detected runs")
-        toolbar.addWidget(self.autoPlotBox)
-        
-        # Make makeshift addStrech()
-        spacer = qtw.QWidget()
-        spacer.setSizePolicy(qtw.QSizePolicy.Expanding, qtw.QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
-        
-        # Add button to close all subplots
-        close_all_but = qtw.QPushButton("Close All Plots")
-        close_all_but.setObjectName("closeAllPlotsButton")
-        close_all_but.setToolTip("Close all open plot windows")
-        close_all_but.setMinimumHeight(self.spinBox.sizeHint().height())
-        close_all_but.setMinimumWidth(150)
-        close_all_but.clicked.connect(self.closeAll)
-        toolbar.addWidget(close_all_but)
+
+        self.closeAllPlotsButton = qtw.QToolButton()
+        self.closeAllPlotsButton.setObjectName("closeAllPlotsButton")
+        self.closeAllPlotsButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_TitleBarCloseButton)
+            )
+        self.closeAllPlotsButton.setToolTip("Close all plot windows (Ctrl+Shift+W)")
+        self.closeAllPlotsButton.setAccessibleName("Close all plot windows")
+        self.closeAllPlotsButton.setFixedSize(28, 26)
+        self.closeAllPlotsButton.clicked.connect(self.closeAll)
     
     
     def initMenu(self):
@@ -252,6 +240,9 @@ class MainWindow(qtw.QMainWindow):
         if not self.config.get("file.last_file_path"): # has user openned a DB before?
             self.loadLastAction.setDisabled(True)
 
+        self.recentDatabaseMenu = fileMenu.addMenu("Load &Recent Database")
+        self.refresh_recent_database_menu()
+
         open_folder_action = qtw.QAction("Open Database &Folder", self)
         open_folder_action.setShortcut("Ctrl+Shift+D")
         open_folder_action.setStatusTip("Open the folder containing the current database")
@@ -265,6 +256,13 @@ class MainWindow(qtw.QMainWindow):
         fileMenu.addAction(refreshAction)
 
         fileMenu.addSeparator()
+
+        self.closeAllPlotsAction = qtw.QAction("Close All &Plot Windows", self)
+        self.closeAllPlotsAction.setShortcut("Ctrl+Shift+W")
+        self.closeAllPlotsAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        self.closeAllPlotsAction.setStatusTip("Close all open plot windows")
+        self.closeAllPlotsAction.triggered.connect(self.closeAll)
+        fileMenu.addAction(self.closeAllPlotsAction)
 
         closeAction = qtw.QAction("&Close Window", self)
         closeAction.setShortcuts(
@@ -312,12 +310,25 @@ class MainWindow(qtw.QMainWindow):
             if theme.lower() == current_theme:
                 self.themes[itr].setChecked(True)
 
-        confirm_exit = qtw.QAction("Confirm on Exit?", self, checkable=True)
-        confirm_exit.setChecked(self.config.get("user_preference.confirm_close"))
-        prefMenu.addAction(confirm_exit)
-        confirm_exit.toggled.connect(lambda checked:
-                self.config.update("user_preference.confirm_close", checked)
-            )
+        preview_menu = prefMenu.addMenu("&Preview Size")
+        self.previewSizeGroup = qtw.QActionGroup(self)
+        self.previewSizeGroup.setExclusive(True)
+        self.previewSizeActions = []
+        for size in (100, 150, 200, 300, 500):
+            action = qtw.QAction(f"{size} px", self, checkable=True)
+            action.setData(size)
+            action.setChecked(size == self.preview_size)
+            action.triggered.connect(
+                lambda _, preview_size=size: self.change_preview_size(preview_size)
+                )
+            self.previewSizeGroup.addAction(action)
+            self.previewSizeActions.append(action)
+            preview_menu.addAction(action)
+
+        prefMenu.addSeparator()
+        add_restore_defaults_option(self, prefMenu)
+        prefMenu.addSeparator()
+        add_confirmation_options(self, prefMenu)
 
     def initFile(self):
         """
@@ -341,6 +352,17 @@ class MainWindow(qtw.QMainWindow):
             )
         self.fileTextbox.databaseDropped.connect(self.load_database_path)
         self.targetLayout.addWidget(self.fileTextbox, 1)
+
+        self.copyDatabasePathButton = qtw.QToolButton()
+        self.copyDatabasePathButton.setObjectName("databaseIconButton")
+        self.copyDatabasePathButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_FileDialogDetailedView)
+            )
+        self.copyDatabasePathButton.setToolTip("Copy the full database path")
+        self.copyDatabasePathButton.setAccessibleName("Copy database path")
+        self.copyDatabasePathButton.setFixedSize(28, 26)
+        self.copyDatabasePathButton.clicked.connect(self.copy_database_path)
+        self.targetLayout.addWidget(self.copyDatabasePathButton)
 
         self.loadDatabaseButton = qtw.QToolButton()
         self.loadDatabaseButton.setObjectName("databaseIconButton")
@@ -366,25 +388,19 @@ class MainWindow(qtw.QMainWindow):
         self.openDatabaseFolderButton.clicked.connect(self.open_database_location)
         self.targetLayout.addWidget(self.openDatabaseFolderButton)
 
-        self.copyDatabasePathButton = qtw.QToolButton()
-        self.copyDatabasePathButton.setObjectName("databaseIconButton")
-        self.copyDatabasePathButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_FileDialogDetailedView)
-            )
-        self.copyDatabasePathButton.setToolTip("Copy the full database path")
-        self.copyDatabasePathButton.setAccessibleName("Copy database path")
-        self.copyDatabasePathButton.setFixedSize(28, 26)
-        self.copyDatabasePathButton.clicked.connect(self.copy_database_path)
-        self.targetLayout.addWidget(self.copyDatabasePathButton)
+        self.targetLayout.addStretch()
+        self.targetLayout.addSpacing(18)
+        self.targetLayout.addWidget(self.closeAllPlotsButton)
         
         if os.path.isfile(get_DB_location()):
             self.fileTextbox.setText(str(get_DB_location()))
         
         
     def initRunDisplay(self):
-        sublayout = self.targetLayout
+        sublayout = qtw.QHBoxLayout()
+        sublayout.setContentsMargins(8, 0, 8, 2)
+        sublayout.setSpacing(6)
 
-        sublayout.addSpacing(36)
         sublayout.addWidget(qtw.QLabel("Run:"))
         
         self.selected_run_id = None
@@ -411,8 +427,6 @@ class MainWindow(qtw.QMainWindow):
         self.measurementBox.setToolTip("Measurement to plot; * to plot all")
         self.measurementBox.returnPressed.connect(self.openRun)
         sublayout.addWidget(self.measurementBox)
-        
-        sublayout.addStretch() # Force widgets on either side to the edge
 
         self.plotRunButton = qtw.QToolButton()
         self.plotRunButton.setObjectName("plotIconButton")
@@ -435,6 +449,18 @@ class MainWindow(qtw.QMainWindow):
         self.exportCsvButton.setFixedSize(28, 26)
         self.exportCsvButton.clicked.connect(self.exportRunCsv)
         sublayout.addWidget(self.exportCsvButton)
+
+        sublayout.addStretch()
+
+        sublayout.addWidget(qtw.QLabel("Auto-plot"))
+        sublayout.addWidget(self.autoPlotBox)
+
+        sublayout.addSpacing(12)
+        sublayout.addWidget(qtw.QLabel("Refresh:"))
+        sublayout.addWidget(self.spinBox)
+        sublayout.addWidget(qtw.QLabel("s"))
+
+        self.l.addLayout(self.targetLayout)
         self.l.addLayout(sublayout)
         
         # Long QTreeWidget/list to display all runs with small detail
@@ -443,17 +469,25 @@ class MainWindow(qtw.QMainWindow):
         self.RunList.plot.connect(self.openPlot)
         
         # Show all available info on the selected item in self.RunList
-        self.infoBox = moreInfo()
+        self.infoBox = moreInfo(preview_size=self.preview_size)
+        self.infoBox.preview.plotRequested.connect(self.open_preview_plot)
+        if self.fileTextbox.text() and self.RunList.topLevelItemCount():
+            self.infoBox.preview.set_database_runs(
+                self.fileTextbox.text(),
+                self.RunList.all_run_metadata()
+                )
 
         self.runInfoSplitter = qtw.QSplitter(QtCore.Qt.Vertical)
         self.runInfoSplitter.setHandleWidth(8)
-        self.runInfoSplitter.setChildrenCollapsible(False)
+        self.runInfoSplitter.setChildrenCollapsible(True)
         self.runInfoSplitter.setOpaqueResize(True)
         self.runInfoSplitter.addWidget(self.RunList)
         self.runInfoSplitter.addWidget(self.infoBox)
+        self.runInfoSplitter.setCollapsible(0, False)
+        self.runInfoSplitter.setCollapsible(1, True)
         self.runInfoSplitter.setStretchFactor(0, 3)
         self.runInfoSplitter.setStretchFactor(1, 2)
-        self.runInfoSplitter.setSizes([430, 210])
+        self.runInfoSplitter.setSizes([380, self._details_pane_height()])
         self.runInfoSplitter.handle(1).setToolTip(
             "Drag to resize the run list and details panes"
             )
@@ -465,19 +499,26 @@ class MainWindow(qtw.QMainWindow):
         Register keyboard shortcuts for context menu and common run actions.
 
         """
-        open_all = qtw.QAction("Plot Measurement", self)
-        open_all.setShortcut("Ctrl+Return")
-        open_all.setShortcutContext(QtCore.Qt.WindowShortcut)
-        open_all.setStatusTip("Plot the requested measurement for the requested run")
-        open_all.triggered.connect(self.openRun)
-        self.addAction(open_all)
+        plot_entered = qtw.QAction("Plot Entered Run and Measurement", self)
+        plot_entered.setShortcut("Ctrl+Return")
+        plot_entered.setShortcutContext(QtCore.Qt.WindowShortcut)
+        plot_entered.setStatusTip("Plot the run and measurement entered above")
+        plot_entered.triggered.connect(lambda _: self.plotRunButton.click())
+        self.addAction(plot_entered)
+
+        plot_selected_all = qtw.QAction("Plot All Measurements in Selected Run", self)
+        plot_selected_all.setShortcut("Ctrl+Shift+Return")
+        plot_selected_all.setShortcutContext(QtCore.Qt.WindowShortcut)
+        plot_selected_all.setStatusTip("Plot all measurements in the selected run")
+        plot_selected_all.triggered.connect(self.open_selected_run_all)
+        self.addAction(plot_selected_all)
 
         self.open_param_actions = []
         for itr in range(9):
-            action = qtw.QAction(f"Plot Parameter {itr + 1}", self)
+            action = qtw.QAction(f"Plot Measurement {itr + 1} in Selected Run", self)
             action.setShortcut(f"Ctrl+{itr + 1}")
             action.setShortcutContext(QtCore.Qt.WindowShortcut)
-            action.setStatusTip(f"Plot parameter {itr + 1} for the selected run")
+            action.setStatusTip(f"Plot measurement {itr + 1} in the selected run")
             action.triggered.connect(lambda _, index=itr: self.open_param_by_index(index))
             self.addAction(action)
             self.open_param_actions.append(action)
@@ -514,8 +555,27 @@ class MainWindow(qtw.QMainWindow):
         Closes all windows other than the main window.
 
         """
+        plot_windows = self.windows.copy()
+        if not plot_windows:
+            self.show_status("No plot windows to close.", 3000)
+            return
+
+        if close_all_warning_enabled(self.config):
+            count = len(plot_windows)
+            noun = "window" if count == 1 else "windows"
+            reply = qtw.QMessageBox.question(
+                self,
+                "Close All Plot Windows",
+                f"Close {count} plot {noun}?",
+                qtw.QMessageBox.Yes | qtw.QMessageBox.No,
+                qtw.QMessageBox.No,
+                )
+            if reply != qtw.QMessageBox.Yes:
+                self.show_status("Close all plot windows cancelled.", 3000)
+                return
+
         self.show_status("Closing plot windows...", 3000)
-        for win in self.windows.copy(): # Copy needed as close removes items
+        for win in plot_windows:
             win.close()
         
         
@@ -726,6 +786,7 @@ class MainWindow(qtw.QMainWindow):
             default=0
             )
         self.RunList.addRuns(newRuns)
+        self.infoBox.preview.add_runs(newRuns)
         count = len(newRuns)
         noun = "run" if count == 1 else "runs"
         self.show_status(f"Found {count} new {noun}.", 5000)
@@ -807,7 +868,7 @@ class MainWindow(qtw.QMainWindow):
             last_file = os.path.abspath(self.localLastFile)
         
         if os.path.isfile(last_file):
-            self.load_file(last_file)
+            self.load_database_path(last_file)
         else:
             self.show_error(
                 "Load Last Failed",
@@ -822,6 +883,8 @@ class MainWindow(qtw.QMainWindow):
         Load a database path chosen from the file dialog or dropped by the user.
 
         """
+        load_started_at = perf_counter()
+
         if not os.path.isfile(filename):
             self.show_error(
                 "Database Load Failed",
@@ -839,12 +902,86 @@ class MainWindow(qtw.QMainWindow):
                 )
             return False
 
-        if self.load_file(abspath):
+        if self.load_file(abspath, load_started_at):
             self.config.update("file.last_file_path", abspath)
+            self.remember_recent_database(abspath)
             self.loadLastAction.setEnabled(True)
             return True
 
         return False
+
+
+    def recent_database_paths(self):
+        """
+        Returns recent database paths, newest first.
+
+        """
+        try:
+            paths = list(self.config.get("file.recent_file_paths"))
+        except KeyError:
+            paths = []
+
+        try:
+            last_file = self.config.get("file.last_file_path")
+        except KeyError:
+            last_file = ""
+
+        if last_file:
+            paths.insert(0, last_file)
+
+        deduped = []
+        seen = set()
+        for path in paths:
+            abspath = os.path.abspath(path)
+            if abspath in seen:
+                continue
+            seen.add(abspath)
+            deduped.append(abspath)
+
+        return deduped[:10]
+
+
+    def remember_recent_database(self, filename):
+        """
+        Stores a database path in the recent database list.
+
+        """
+        abspath = os.path.abspath(filename)
+        paths = [path for path in self.recent_database_paths() if path != abspath]
+        paths.insert(0, abspath)
+        paths = paths[:10]
+
+        self.config.config.setdefault("file", {})["recent_file_paths"] = paths
+        self.config.save_config(self.config.default_file)
+        self.refresh_recent_database_menu()
+
+
+    def refresh_recent_database_menu(self):
+        """
+        Rebuilds the File -> Load Recent Database menu.
+
+        """
+        if not hasattr(self, "recentDatabaseMenu"):
+            return
+
+        self.recentDatabaseMenu.clear()
+        paths = self.recent_database_paths()
+        self.recentDatabaseMenu.setEnabled(bool(paths))
+
+        if not paths:
+            empty_action = qtw.QAction("No Recent Databases", self)
+            empty_action.setEnabled(False)
+            self.recentDatabaseMenu.addAction(empty_action)
+            return
+
+        for index, path in enumerate(paths, start=1):
+            label = f"{index}. {os.path.basename(path) or path}"
+            action = qtw.QAction(label, self)
+            action.setToolTip(path)
+            action.setStatusTip(path)
+            action.setEnabled(os.path.isfile(path))
+            action.triggered.connect(lambda _, filename=path: self.load_database_path(filename))
+            self.recentDatabaseMenu.addAction(action)
     
     
     @QtCore.pyqtSlot(str)
@@ -927,6 +1064,19 @@ class MainWindow(qtw.QMainWindow):
 
         self.ds = ds
         self.openPlot(params=params)
+
+
+    @QtCore.pyqtSlot()
+    def open_selected_run_all(self):
+        """
+        Opens every plottable measurement in the currently selected table row.
+
+        """
+        if self.ds is None:
+            self.show_status("Select a run before plotting all measurements.", 5000)
+            return
+
+        self.openPlot()
 
 
     @QtCore.pyqtSlot()
@@ -1092,17 +1242,6 @@ class MainWindow(qtw.QMainWindow):
         Open the indexed dependent parameter for the selected run.
 
         """
-        if self.selected_run_id and self.fileTextbox.text():
-            try:
-                self.ds = load_by_id(self.selected_run_id)
-            except Exception as err:
-                self.show_error(
-                    "Run Load Failed",
-                    f"Could not load Run ID {self.selected_run_id}.",
-                    str(err)
-                    )
-                return
-
         if not self.ds:
             self.show_status("Select a run before opening a parameter.", 5000)
             return
@@ -1113,6 +1252,24 @@ class MainWindow(qtw.QMainWindow):
             return
 
         self.openPlot(params=[params[index]])
+
+
+    @QtCore.pyqtSlot(str)
+    def open_preview_plot(self, parameter_name):
+        """
+        Open the plot represented by a double-clicked preview image.
+
+        """
+        if not self.ds:
+            self.show_status("Select a run before opening a preview plot.", 5000)
+            return
+
+        for param in self.ds.get_parameters():
+            if param.name == parameter_name and param.depends_on != "":
+                self.openPlot(params=[param])
+                return
+
+        self.show_status(f"No preview plot found for {parameter_name}.", 5000)
 
 
     def _selected_measurement_params(self, dataset):
@@ -1279,6 +1436,97 @@ class MainWindow(qtw.QMainWindow):
             win.update_theme(self.config)
         self.show_status(f"Theme changed to {theme}.", 2000)
 
+
+    def change_preview_size(self, preview_size):
+        """
+        Updates preview image size and regenerates preview thumbnails.
+
+        """
+        preview_size = int(preview_size)
+        if preview_size == self.preview_size:
+            return
+
+        self.preview_size = preview_size
+        self._save_preview_size(preview_size)
+        if hasattr(self, "infoBox"):
+            self.infoBox.set_preview_size(preview_size)
+            if hasattr(self, "runInfoSplitter"):
+                self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+        self.show_status(f"Preview size set to {preview_size} px.", 3000)
+
+
+    @QtCore.pyqtSlot()
+    def restore_default_settings(self):
+        """
+        Confirms and restores all user settings to schema defaults.
+
+        """
+        reply = qtw.QMessageBox.question(
+            self,
+            "Restore Default Settings",
+            "Restore all qPlot settings to their defaults?",
+            qtw.QMessageBox.Yes | qtw.QMessageBox.No,
+            qtw.QMessageBox.No,
+            )
+        if reply != qtw.QMessageBox.Yes:
+            self.show_status("Default settings restore cancelled.", 3000)
+            return
+
+        self.config.reset_to_defaults()
+        self.apply_current_settings()
+        self.show_status("Default settings restored.", 5000)
+
+
+    def apply_current_settings(self):
+        """
+        Applies config-backed settings that can be updated in open windows.
+
+        """
+        self._sync_theme_actions()
+        self._sync_preview_size_actions()
+        self.setStyleSheet(self.config.theme.main)
+        for win in self.windows:
+            win.update_theme(self.config)
+
+
+    def _sync_theme_actions(self):
+        current_theme = self.config.get("user_preference.theme")
+        for action in getattr(self, "themes", []):
+            action.blockSignals(True)
+            action.setChecked(action.text().replace("&", "").lower() == current_theme)
+            action.blockSignals(False)
+
+
+    def _sync_preview_size_actions(self):
+        self.preview_size = self._configured_preview_size()
+        for action in getattr(self, "previewSizeActions", []):
+            action.blockSignals(True)
+            action.setChecked(action.data() == self.preview_size)
+            action.blockSignals(False)
+
+        if hasattr(self, "infoBox"):
+            self.infoBox.set_preview_size(self.preview_size)
+            if hasattr(self, "runInfoSplitter"):
+                self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+
+
+    def _configured_preview_size(self):
+        try:
+            return int(self.config.get("GUI.preview_size"))
+        except (KeyError, TypeError, ValueError):
+            return PREVIEW_SIZE
+
+
+    def _save_preview_size(self, preview_size):
+        gui_config = self.config.config.setdefault("GUI", {})
+        if "preview_size" not in gui_config:
+            gui_config["preview_size"] = self.preview_size
+        self.config.update("GUI.preview_size", int(preview_size))
+
+
+    def _details_pane_height(self):
+        return max(260, int(self.preview_size) + 84)
+
 ###############################################################################
 #Other funcs
 
@@ -1385,7 +1633,7 @@ class MainWindow(qtw.QMainWindow):
                 del_timer.start(int(del_time*1000)) # convert to seconds
         
 
-    def load_file(self, abspath):
+    def load_file(self, abspath, load_started_at = None):
         """
         Updates the database for RunList display and loading datasets.
         Used by self.loadLastFile() and self.getFile()
@@ -1396,9 +1644,17 @@ class MainWindow(qtw.QMainWindow):
             Path to database.
 
         """
+        if load_started_at is None:
+            load_started_at = perf_counter()
         
         if abspath == get_DB_location(): # Already initialised in QCoDeS
-            self.show_status("Database is already loaded.", 3000)
+            if not self.infoBox.preview.has_database(abspath):
+                self.infoBox.preview.set_database_runs(
+                    abspath,
+                    self.RunList.all_run_metadata()
+                    )
+            elapsed = perf_counter() - load_started_at
+            self.show_status(f"Database is already loaded ({elapsed:.2f} s).", 3000)
             return True
 
         previous_file = self.fileTextbox.text()
@@ -1430,7 +1686,8 @@ class MainWindow(qtw.QMainWindow):
 
             initialise_or_create_database_at(abspath)
 
-            self.RunList.setRuns()
+            runs = self.RunList.setRuns()
+            self.infoBox.preview.set_database_runs(abspath, runs)
             self.select_default_run()
 
         except Exception as err:
@@ -1447,8 +1704,12 @@ class MainWindow(qtw.QMainWindow):
         # Restart refresh
         if monitorTimer > 0:
             self.monitor.start(int(monitorTimer * 1000))
+        elapsed = perf_counter() - load_started_at
         self.show_status(
-            f"Loaded {self.RunList.topLevelItemCount()} runs from {os.path.basename(abspath)}.",
+            (
+                f"Loaded {self.RunList.topLevelItemCount()} runs from "
+                f"{os.path.basename(abspath)} in {elapsed:.2f} s."
+                ),
             5000
             )
         return True

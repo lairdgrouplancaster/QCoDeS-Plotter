@@ -7,6 +7,7 @@ from .treeWidgets import (
     RunList,
     moreInfo,
     )
+from .preview import PreviewTab
 
 from .toolbar import QDock_context
 
@@ -16,6 +17,7 @@ __all__ = [
     "expandingComboBox",
     "moreInfo",
     "picker_1d",
+    "PreviewTab",
     "RunList",
     "QDock_context",
     "operations_widget",

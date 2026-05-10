@@ -105,7 +105,7 @@ class dark:
             padding: 2px 10px;
         	background-color: #1e1d23;
         }
-        QPushButton#closeAllPlotsButton {
+        QToolButton#closeAllPlotsButton {
             margin-right: 8px;
         }
         QLineEdit {
@@ -548,7 +548,7 @@ class dark:
             color: #ffffff;
             background-color: #123b36;
         }
-        QToolButton#databaseIconButton, QToolButton#plotIconButton, QToolButton#exportIconButton {
+        QToolButton#databaseIconButton, QToolButton#plotIconButton, QToolButton#exportIconButton, QToolButton#closeAllPlotsButton {
             border: 1px solid #474c57;
             border-radius: 5px;
             padding: 1px;
@@ -558,8 +558,15 @@ class dark:
             border: 1px solid #16a085;
             background-color: #292d34;
         }
+        QToolButton#closeAllPlotsButton:hover {
+            border: 1px solid #f97316;
+            background-color: #3a2a22;
+        }
         QToolButton#databaseIconButton:pressed, QToolButton#plotIconButton:pressed, QToolButton#exportIconButton:pressed {
             background-color: #123b36;
+        }
+        QToolButton#closeAllPlotsButton:pressed {
+            background-color: #4a2d1c;
         }
         QLineEdit, QDoubleSpinBox {
             min-height: 20px;

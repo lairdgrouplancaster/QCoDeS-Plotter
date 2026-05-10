@@ -8,6 +8,7 @@ from PyQt5 import (
     QtCore,
     )
 
+import numpy as np
 import pyqtgraph as pg
 
 
@@ -35,6 +36,10 @@ class plot1d(plotWidget):
         self.mergable = None
         self.line = None
         self.right_vb = None
+        self.snap_to_trace_box = None
+        self.trace_label = None
+        self.snap_marker = None
+        self._snap_marker_view = None
         super().__init__(*args, **kargs)
         
         
@@ -45,10 +50,192 @@ class plot1d(plotWidget):
         """
         
         self.line = self.plot.plot(connect="all")
+        self._register_main_line()
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
         self.show_status("Line plot ready; loading data...", 5000)
+
+
+    def _register_main_line(self):
+        """
+        Keeps the main pyqtgraph line in the trace registry.
+
+        """
+        if hasattr(self, "lines"):
+            self.lines[self.label] = self.line
+
+
+    def initLabels(self):
+        """
+        Sets up coordinate labels and trace snapping controls for 1d plots.
+
+        """
+        super().initLabels()
+
+        self.snap_to_trace_box = qtw.QCheckBox("Snap to trace")
+        self.snap_to_trace_box.setToolTip(
+            "Lock the coordinate readout to the nearest plotted data point"
+            )
+        self.toolbarCo_ord.addWidget(self.snap_to_trace_box)
+
+        self.trace_label = qtw.QLabel("trace = ")
+        self.trace_label.setMinimumWidth(self._label_width)
+        self.toolbarCo_ord.addWidget(self.trace_label)
+
+        snap_action = qtw.QAction("Snap to Trace", self, checkable=True)
+        self.register_shortcut(
+            snap_action,
+            "Ctrl+Alt+S",
+            "Toggle snap-to-trace cursor readout"
+            )
+        snap_action.toggled.connect(self.snap_to_trace_box.setChecked)
+        self.snap_to_trace_box.toggled.connect(snap_action.setChecked)
+        self.snap_to_trace_box.toggled.connect(self._snap_to_trace_toggled)
+
+
+    @QtCore.pyqtSlot(bool)
+    def _snap_to_trace_toggled(self, enabled):
+        """
+        Handles the snap-to-trace toggle state.
+
+        """
+        if not enabled:
+            self._hide_snap_marker()
+            if self.trace_label is not None:
+                self.trace_label.setText("trace = ")
+
+
+    @QtCore.pyqtSlot(object)
+    def mouseMoved(self, pos):
+        """
+        Updates the coordinate readout, optionally snapping to a 1d trace.
+
+        """
+        if not (
+            self.snap_to_trace_box is not None
+            and self.snap_to_trace_box.isChecked()
+            ):
+            super().mouseMoved(pos)
+            return
+
+        if not self.plot.sceneBoundingRect().contains(pos):
+            self._hide_snap_marker()
+            return
+
+        nearest = self._nearest_trace_point(pos)
+        if nearest is None:
+            self._hide_snap_marker()
+            return
+
+        label, x_value, y_value, viewbox = nearest
+        self.pos_labels["x"].setText(f"x = {self.formatNum(x_value)};")
+        self.pos_labels["y"].setText(f"y = {self.formatNum(y_value)}")
+        self.trace_label.setText(f"trace = {self._short_trace_label(label)}")
+        self.trace_label.setToolTip(label)
+        self._show_snap_marker(x_value, y_value, viewbox)
+
+
+    @staticmethod
+    def _short_trace_label(label):
+        """
+        Returns a compact trace label for the coordinate toolbar.
+
+        """
+        return str(label).split()[-1]
+
+
+    def _nearest_trace_point(self, scene_pos):
+        """
+        Finds the plotted data point nearest to the mouse position.
+
+        """
+        nearest = None
+        nearest_distance = None
+
+        for label, line in self.lines.items():
+            if line is None or not hasattr(line, "getData"):
+                continue
+
+            data = line.getData()
+            if data is None or data[0] is None or data[1] is None:
+                continue
+
+            x_data = np.asarray(data[0], dtype=float)
+            y_data = np.asarray(data[1], dtype=float)
+            if x_data.size == 0 or y_data.size == 0:
+                continue
+
+            count = min(x_data.size, y_data.size)
+            x_data = x_data[:count]
+            y_data = y_data[:count]
+            finite = np.isfinite(x_data) & np.isfinite(y_data)
+            if not np.any(finite):
+                continue
+
+            x_values = x_data[finite]
+            y_values = y_data[finite]
+            viewbox = self._viewbox_for_line(line)
+            mouse_point = viewbox.mapSceneToView(scene_pos)
+            index = int(np.argmin(np.abs(x_values - mouse_point.x())))
+
+            x_value = float(x_values[index])
+            y_value = float(y_values[index])
+            point_scene = viewbox.mapViewToScene(QtCore.QPointF(x_value, y_value))
+            distance = (
+                (point_scene.x() - scene_pos.x()) ** 2
+                + (point_scene.y() - scene_pos.y()) ** 2
+                )
+
+            if nearest_distance is None or distance < nearest_distance:
+                nearest = (label, x_value, y_value, viewbox)
+                nearest_distance = distance
+
+        return nearest
+
+
+    def _viewbox_for_line(self, line):
+        """
+        Returns the viewbox that owns a plotted line.
+
+        """
+        if getattr(line, "side", "left") == "right" and self.right_vb is not None:
+            return self.right_vb
+
+        return self.plot.vb
+
+
+    def _show_snap_marker(self, x_value, y_value, viewbox):
+        """
+        Places a small marker on the snapped data point.
+
+        """
+        if self.snap_marker is None:
+            self.snap_marker = pg.ScatterPlotItem(
+                symbol="s",
+                size=3,
+                pen=pg.mkPen("k", width=1),
+                brush=pg.mkBrush("w"),
+                )
+
+        if self._snap_marker_view is not viewbox:
+            self._hide_snap_marker()
+            viewbox.addItem(self.snap_marker)
+            self._snap_marker_view = viewbox
+
+        self.snap_marker.setData([x_value], [y_value])
+
+
+    def _hide_snap_marker(self):
+        """
+        Removes the snap marker from whichever viewbox currently owns it.
+
+        """
+        if self.snap_marker is None or self._snap_marker_view is None:
+            return
+
+        self._snap_marker_view.removeItem(self.snap_marker)
+        self._snap_marker_view = None
         
         
     def refreshPlot(self, finished : bool = True, worker=None):
@@ -102,7 +289,8 @@ class plot1d(plotWidget):
         self.axes_dock.addWidget(qtw.QLabel("Line Control"))
         
         # Store all line data and boxes for later use
-        self.lines = {self.label : self.line}
+        self.lines = {}
+        self._register_main_line()
         self.option_boxes = []
         self.box_count = 1
         

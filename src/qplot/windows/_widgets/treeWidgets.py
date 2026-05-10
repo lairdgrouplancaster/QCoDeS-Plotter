@@ -1,3 +1,5 @@
+import html
+
 from PyQt5 import (
     QtWidgets as qtw,
     QtCore,
@@ -6,8 +8,9 @@ from PyQt5 import (
 
 from qplot.datahandling import (
     get_runs_via_sql,
-    has_finished
+    get_run_status,
     )
+from .preview import COLLAPSE_MINIMUM_RATIO, PreviewTab
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -33,6 +36,287 @@ def copy_action(label, shortcuts, slot, parent):
     return action
 
 
+def run_tooltip_text(metadata):
+    """
+    Builds the summary shown when hovering over a run table row.
+
+    """
+    sweep = html.escape(format_parameter_list(metadata.get("sweep_parameters")))
+    measure = html.escape(format_parameter_list(metadata.get("measure_parameters")))
+
+    return (
+        "<table cellspacing='0' cellpadding='0'>"
+        f"<tr><td>Sweep</td><td>&nbsp;</td><td>({sweep})</td></tr>"
+        f"<tr><td>Measure</td><td>&nbsp;</td><td>({measure})</td></tr>"
+        "</table>"
+        )
+
+
+def run_tooltip_plain_text(metadata):
+    sweep = format_parameter_list(metadata.get("sweep_parameters"))
+    measure = format_parameter_list(metadata.get("measure_parameters"))
+
+    return "\n".join([
+        f"{'Sweep':<7}({sweep})",
+        f"Measure ({measure})",
+        ])
+
+
+def format_parameter_list(parameters):
+    if not parameters:
+        return "unknown"
+    return ", ".join(str(parameter) for parameter in parameters)
+
+
+def run_is_complete(metadata):
+    return bool(metadata.get("completed_timestamp") or metadata.get("is_completed"))
+
+
+def format_run_status(metadata):
+    if run_is_complete(metadata):
+        return "Complete"
+    return f"Incomplete ({format_progress_percent(metadata)})"
+
+
+def format_progress(metadata):
+    progress = format_progress_percent(metadata)
+    if progress == "unknown":
+        return "unknown% complete"
+    return f"{progress} complete"
+
+
+def format_progress_percent(metadata):
+    if run_is_complete(metadata):
+        return "100%"
+
+    percent = progress_percent_value(metadata)
+    if percent is None:
+        return "unknown"
+
+    return f"{percent:.1f}%"
+
+
+def progress_percent_value(metadata):
+    expected = metadata.get("expected_results")
+    count = metadata.get("result_count")
+    if not expected or count is None:
+        return None
+
+    try:
+        return max(0, min(100, (float(count) / float(expected)) * 100))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def format_complete_cell(metadata):
+    if run_is_complete(metadata):
+        return "✓"
+
+    progress = format_progress_percent(metadata)
+    if progress == "unknown":
+        return "unknown"
+    return progress
+
+
+def format_timestamp(timestamp):
+    if not timestamp:
+        return "unknown"
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def time_taken_seconds(metadata):
+    started = metadata.get("run_timestamp")
+    if not started:
+        return None
+
+    completed = metadata.get("completed_timestamp")
+    end = completed if completed else datetime.now().timestamp()
+    try:
+        return max(0, float(end) - float(started))
+    except (TypeError, ValueError):
+        return None
+
+
+def format_time_taken_seconds(metadata):
+    seconds = time_taken_seconds(metadata)
+    if seconds is None:
+        return "unknown"
+    return f"{seconds:.1f} s"
+
+
+def format_run_duration(metadata):
+    seconds = time_taken_seconds(metadata)
+    if seconds is None:
+        return "unknown"
+
+    if seconds < 10:
+        return f"{seconds:.2f} s"
+    if seconds < 100:
+        return f"{seconds:.1f} s"
+    return f"{seconds:.0f} s"
+
+
+def format_duration_dhms(seconds):
+    total_seconds = int(round(seconds))
+    days, remainder = divmod(total_seconds, 24 * 60 * 60)
+    hours, remainder = divmod(remainder, 60 * 60)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{days}d {hours}h {minutes}m {seconds}s"
+
+
+def format_storage_size(bytes_value):
+    if bytes_value is None:
+        return "unknown"
+
+    try:
+        size = float(bytes_value)
+    except (TypeError, ValueError):
+        return "unknown"
+
+    if size < 0:
+        return "unknown"
+
+    units = ["B", "KB", "MB", "GB", "TB"]
+    unit_index = 0
+    while size >= 1024 and unit_index < len(units) - 1:
+        size /= 1024
+        unit_index += 1
+
+    if unit_index == 0:
+        return f"{int(size)} B"
+    if size < 10:
+        return f"{size:.1f} {units[unit_index]}"
+    return f"{size:.0f} {units[unit_index]}"
+
+
+def format_point_count(metadata):
+    expected = metadata.get("expected_results")
+    shape = metadata.get("point_shape")
+    if shape:
+        try:
+            shape_parts = " × ".join(f"{int(size):,}" for size in shape)
+        except (TypeError, ValueError):
+            shape_parts = ""
+
+        if expected:
+            return f"{int(expected):,} = {shape_parts}"
+        if shape_parts:
+            return shape_parts
+
+    if expected:
+        return f"{int(expected):,}"
+
+    count = metadata.get("result_count")
+    if count is not None:
+        try:
+            return f"{int(count):,}"
+        except (TypeError, ValueError):
+            pass
+
+    return "unknown"
+
+
+def measured_parameter_count(metadata):
+    return len(metadata.get("measure_parameters") or [])
+
+
+class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
+    """
+    Paints values containing " = " with the equals signs vertically aligned.
+    """
+
+    def paint(self, painter, option, index):
+        text = index.data(QtCore.Qt.DisplayRole)
+        if not text or " = " not in text:
+            super().paint(painter, option, index)
+            return
+
+        opt = qtw.QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        left, right = str(text).split(" = ", 1)
+        opt.text = ""
+
+        widget = opt.widget
+        style = widget.style() if widget else qtw.QApplication.style()
+        style.drawControl(qtw.QStyle.CE_ItemViewItem, opt, painter, widget)
+
+        text_rect = style.subElementRect(
+            qtw.QStyle.SE_ItemViewItemText,
+            opt,
+            widget
+            ).adjusted(2, 0, -2, 0)
+        metrics = opt.fontMetrics
+        equals_text = " = "
+        equals_width = metrics.horizontalAdvance(equals_text)
+        max_right_width = self._max_right_width(index, metrics)
+        equals_left = max(
+            text_rect.left(),
+            text_rect.right() - max_right_width - equals_width
+            )
+
+        left_rect = QtCore.QRect(
+            text_rect.left(),
+            text_rect.top(),
+            max(0, equals_left - text_rect.left()),
+            text_rect.height()
+            )
+        equals_rect = QtCore.QRect(
+            equals_left,
+            text_rect.top(),
+            equals_width,
+            text_rect.height()
+            )
+        right_rect = QtCore.QRect(
+            equals_left + equals_width,
+            text_rect.top(),
+            max(0, text_rect.right() - equals_left - equals_width + 1),
+            text_rect.height()
+            )
+
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(self._text_color(opt))
+        painter.drawText(
+            left_rect,
+            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
+            metrics.elidedText(left, QtCore.Qt.ElideLeft, left_rect.width())
+            )
+        painter.drawText(equals_rect, QtCore.Qt.AlignCenter, equals_text)
+        painter.drawText(
+            right_rect,
+            QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
+            metrics.elidedText(right, QtCore.Qt.ElideRight, right_rect.width())
+            )
+        painter.restore()
+
+
+    def _max_right_width(self, index, metrics):
+        view = self.parent()
+        if not isinstance(view, qtw.QTreeWidget):
+            return 0
+
+        max_width = 0
+        column = index.column()
+        for row in range(view.topLevelItemCount()):
+            item = view.topLevelItem(row)
+            if item is None:
+                continue
+
+            text = item.text(column)
+            if " = " not in text:
+                continue
+
+            right = text.split(" = ", 1)[1]
+            max_width = max(max_width, metrics.horizontalAdvance(right))
+        return max_width
+
+
+    def _text_color(self, option):
+        if option.state & qtw.QStyle.State_Selected:
+            return option.palette.color(QtGui.QPalette.HighlightedText)
+        return option.palette.color(QtGui.QPalette.Text)
+
+
 class RunList(qtw.QTreeWidget):
     """
     A modified PyQt5.QtWidgets.QTreeWidget, formated as a list which displays
@@ -43,7 +327,7 @@ class RunList(qtw.QTreeWidget):
     
     """
     
-    cols = ['ID', 'Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
+    cols = ['ID', 'Measurements', 'Setpoints', 'Started', 'Complete', 'Time taken', 'Storage']
 
     selected = QtCore.pyqtSignal([str])
     plot = QtCore.pyqtSignal([str])
@@ -56,6 +340,10 @@ class RunList(qtw.QTreeWidget):
         
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
+        self.setItemDelegateForColumn(
+            self.cols.index("Setpoints"),
+            EqualsAlignedDelegate(self)
+            )
         
         # Only used in IDE
         if isfile(get_DB_location()):
@@ -88,37 +376,81 @@ class RunList(qtw.QTreeWidget):
             produced.
 
         """
+        if not runs:
+            return
+
         self.setSortingEnabled(False) # Prevent constant restort on adding items
-        
-        append_to_watching = False
+
         self.maxTime = max(np.array([subDict["run_timestamp"] for subDict in runs.values()], dtype=float), default=0)
         
         for run_id, metadata in runs.items():
+            append_to_watching = False
             arr = [str(run_id)] # Run ID
             
             # Skip values missing 'run_timestamp', this only happens on a run 
             # which failed to initialise and has no data. Also breaks app...
             if not metadata["run_timestamp"]:
                 continue
-            run_time = datetime.fromtimestamp(metadata["run_timestamp"])
-            
             # Add data display to array
             
-            arr.append(metadata["exp_name"]) #experiment
-            arr.append(metadata["sample_name"]) #sample
-            arr.append(metadata["name"]) #name
-            arr.append(run_time.strftime("%Y-%m-%d %H:%M:%S")) #started
-            if metadata["completed_timestamp"]:
-                arr.append(datetime.fromtimestamp(
-                    metadata["completed_timestamp"], 
-                    ).strftime("%Y-%m-%d %H:%M:%S")) #finished
-            else:
-                arr.append("Ongoing")
+            arr.append(str(measured_parameter_count(metadata))) #measured
+            arr.append(format_point_count(metadata)) #points
+            arr.append(format_timestamp(metadata["run_timestamp"])) #started
+            arr.append(format_complete_cell(metadata)) #complete
+            arr.append(format_time_taken_seconds(metadata)) #time taken
+            arr.append(format_storage_size(metadata.get("storage_bytes"))) #storage
+
+            if not run_is_complete(metadata):
                 append_to_watching = True
-            arr.append(metadata["guid"]) #guid
-        
+
             # Convert arr to easy to sort QTreeWidgetItem
             item = SortableTreeWidgetItem(arr)
+            item.set_guid(metadata["guid"])
+            item.run_metadata = dict(metadata)
+            for col_name in ("ID", "Setpoints", "Storage"):
+                item.setTextAlignment(
+                    self.cols.index(col_name),
+                    QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                    )
+            item.setTextAlignment(
+                self.cols.index("Complete"),
+                QtCore.Qt.AlignCenter
+                )
+            item.setTextAlignment(
+                self.cols.index("Time taken"),
+                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                )
+            item.setData(
+                self.cols.index("Measurements"),
+                QtCore.Qt.UserRole,
+                measured_parameter_count(metadata)
+                )
+            item.setData(
+                self.cols.index("Setpoints"),
+                QtCore.Qt.UserRole,
+                metadata.get("expected_results") or metadata.get("result_count")
+                )
+            item.setData(
+                self.cols.index("Started"),
+                QtCore.Qt.UserRole,
+                metadata.get("run_timestamp")
+                )
+            item.setData(
+                self.cols.index("Complete"),
+                QtCore.Qt.UserRole,
+                100 if run_is_complete(metadata) else progress_percent_value(metadata)
+                )
+            item.setData(
+                self.cols.index("Time taken"),
+                QtCore.Qt.UserRole,
+                time_taken_seconds(metadata)
+                )
+            item.setData(
+                self.cols.index("Storage"),
+                QtCore.Qt.UserRole,
+                metadata.get("storage_bytes")
+                )
+            item.update_tooltip()
             
             # Add to top
             self.addTopLevelItem(item)
@@ -138,9 +470,27 @@ class RunList(qtw.QTreeWidget):
 
         """
         self.clear()
+        self.watching = []
         runs = get_runs_via_sql()
         
-        self.addRuns(runs)      
+        self.addRuns(runs)
+        return runs
+
+
+    def all_run_metadata(self):
+        runs = {}
+        for index in range(self.topLevelItemCount()):
+            item = self.topLevelItem(index)
+            if item is None:
+                continue
+
+            try:
+                run_id = int(item.text(0))
+            except ValueError:
+                run_id = item.text(0)
+
+            runs[run_id] = dict(getattr(item, "run_metadata", {}))
+        return runs
 
 
     def checkWatching(self):
@@ -151,13 +501,55 @@ class RunList(qtw.QTreeWidget):
         to_remove = []
         for run in self.watching:
 
-            finished = has_finished(run.guid)[0]
+            status = get_run_status(run.guid)
+            if not status:
+                continue
+
+            if status.get("result_count") is not None:
+                run.run_metadata["result_count"] = status["result_count"]
+                if not run.run_metadata.get("expected_results"):
+                    points_col = self.cols.index("Setpoints")
+                    run.setText(points_col, format_point_count(run.run_metadata))
+                    run.setData(points_col, QtCore.Qt.UserRole, status["result_count"])
+                complete_col = self.cols.index("Complete")
+                run.setText(complete_col, format_complete_cell(run.run_metadata))
+                run.setData(
+                    complete_col,
+                    QtCore.Qt.UserRole,
+                    progress_percent_value(run.run_metadata)
+                    )
+                time_taken_col = self.cols.index("Time taken")
+                run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
+                run.setData(
+                    time_taken_col,
+                    QtCore.Qt.UserRole,
+                    time_taken_seconds(run.run_metadata)
+                    )
+
+            if status.get("storage_bytes") is not None:
+                storage_col = self.cols.index("Storage")
+                run.run_metadata["storage_bytes"] = status["storage_bytes"]
+                run.setText(storage_col, format_storage_size(status["storage_bytes"]))
+                run.setData(storage_col, QtCore.Qt.UserRole, status["storage_bytes"])
+
+            finished = status.get("completed_timestamp")
 
             if finished:
-                run.setText(5, datetime.fromtimestamp(
-                        finished,
-                        ).strftime("%Y-%m-%d %H:%M:%S"))
+                run.run_metadata["completed_timestamp"] = finished
+                run.run_metadata["is_completed"] = status.get("is_completed", True)
+                complete_col = self.cols.index("Complete")
+                run.setText(complete_col, format_complete_cell(run.run_metadata))
+                run.setData(complete_col, QtCore.Qt.UserRole, 100)
+                time_taken_col = self.cols.index("Time taken")
+                run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
+                run.setData(
+                    time_taken_col,
+                    QtCore.Qt.UserRole,
+                    time_taken_seconds(run.run_metadata)
+                    )
                 to_remove.append(run)
+
+            run.update_tooltip()
         
         # Remove runs outside for loops to prevent interfering with loop indexing
         for run in to_remove:
@@ -192,8 +584,8 @@ class RunList(qtw.QTreeWidget):
 
         self._add_menu_section(menu, "Plot")
         open_all = qtw.QAction("&Plot all", menu)
-        self._set_action_shortcut(open_all, "Ctrl+Return")
-        open_all.triggered.connect(lambda _,: main.openPlot()) # Feed no param to plot all
+        self._set_action_shortcut(open_all, "Ctrl+Shift+Return")
+        open_all.triggered.connect(lambda _,: main.open_selected_run_all())
         menu.addAction(open_all)
 
         params = {param: param.depends_on_ for param in main.ds.get_parameters() if param.depends_on}
@@ -252,8 +644,9 @@ class RunList(qtw.QTreeWidget):
         if add_actions:
             menu.addSeparator()
             self._add_menu_section(menu, "Add to open plot")
-            for action in add_actions:
-                action.setText(f"  - {action.text()}")
+            for itr, action in enumerate(add_actions):
+                prefix = "" if itr == 0 else "  - "
+                action.setText(f"{prefix}{action.text()}")
                 menu.addAction(action)
             
         # Display context menu
@@ -423,9 +816,19 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
     """
     def __init__(self, strings):
         super().__init__(strings)
+        self.run_metadata = {}
+        self._guid = ""
 
     def __lt__(self, other: qtw.QTreeWidgetItem) -> bool:
         col = self.treeWidget().sortColumn()
+        value1 = self.data(col, QtCore.Qt.UserRole)
+        value2 = other.data(col, QtCore.Qt.UserRole)
+        if value1 is not None and value2 is not None:
+            try:
+                return float(value1) < float(value2)
+            except (TypeError, ValueError):
+                pass
+
         text1 = self.text(col)
         text2 = other.text(col)
         try:
@@ -435,30 +838,53 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
     
     @property
     def guid(self): # Easier fetching for data
-        return self.text(6)
+        return self._guid
+
+
+    def set_guid(self, guid):
+        self._guid = guid
+
+
+    def update_tooltip(self):
+        tooltip = run_tooltip_text(self.run_metadata)
+        for col in range(self.columnCount()):
+            self.setToolTip(col, tooltip)
 
 
 class moreInfo(qtw.QTabWidget):
     
-    def __init__(self, *args):
+    def __init__(self, *args, preview_size=None):
         super().__init__(*args)
         self.setObjectName("runDetailsTabs")
 
         self.overview = CopyableTableWidget()
         self.parameters = CopyableTableWidget()
+        self.preview = PreviewTab(preview_size=preview_size)
+        self._update_preview_minimum_height()
         self.metadata = infoTree(expand_all=True, truncate_values=True)
         self.raw = infoTree(expand_all=False, truncate_values=False)
 
         self._setup_table(self.overview, ["Field", "Value"])
         self._setup_table(
             self.parameters,
-            ["Name", "Label", "Unit", "Role", "Axes", "Value", "Instrument", "Validator"]
+            ["Name", "Label", "Unit", "From", "To", "Steps", "Delay", "Instrument"]
             )
 
         self.addTab(self.overview, "Overview")
-        self.addTab(self.parameters, "Parameters")
+        self.addTab(self.parameters, "Sweep parameters")
+        self.addTab(self.preview, "Preview")
         self.addTab(self.metadata, "Metadata")
-        self.addTab(self.raw, "Raw")
+        self.addTab(self.raw, "Raw key-value")
+
+
+    def set_preview_size(self, preview_size):
+        self.preview.set_preview_size(preview_size)
+        self._update_preview_minimum_height()
+
+
+    def _update_preview_minimum_height(self):
+        preferred_height = self.preview.preferred_tab_height() + 36
+        self.setMinimumHeight(max(1, round(preferred_height * COLLAPSE_MINIMUM_RATIO)))
 
 
     def _setup_table(self, table, headers):
@@ -482,6 +908,7 @@ class moreInfo(qtw.QTabWidget):
 
         self._set_overview(info, dataset)
         self._set_parameters(info, dataset)
+        self.preview.set_current_run(dataset)
         self.metadata.setInfo(info.get("MetaData", {}))
         self.raw.setInfo(info)
 
@@ -489,6 +916,7 @@ class moreInfo(qtw.QTabWidget):
     def clear(self):
         self.overview.setRowCount(0)
         self.parameters.setRowCount(0)
+        self.preview.clear_current_run()
         self.metadata.clear()
         self.raw.clear()
 
@@ -516,17 +944,17 @@ class moreInfo(qtw.QTabWidget):
             ]
 
         rows = [
-            ("Run ID", self._dataset_attr(dataset, "run_id")),
-            ("Name", self._dataset_attr(dataset, "name")),
-            ("Experiment", self._dataset_attr(dataset, "exp_name")),
-            ("Sample", self._dataset_attr(dataset, "sample_name")),
             ("Status", self._status_text(dataset)),
             ("Data points", structure.get("Data points")),
+            ("Time taken", self._time_taken_value(dataset, info)),
             ("Measured parameters", ", ".join(measured)),
             ("Setpoints", ", ".join(setpoints)),
-            ("GUID", self._dataset_attr(dataset, "guid")),
             ("Started", self._dataset_timestamp(dataset, "run_timestamp")),
             ("Completed", self._dataset_timestamp(dataset, "completed_timestamp")),
+            ("Experiment", self._dataset_attr(dataset, "exp_name")),
+            ("Sample", self._dataset_attr(dataset, "sample_name")),
+            ("Name", self._dataset_attr(dataset, "name")),
+            ("GUID", self._dataset_attr(dataset, "guid")),
             ]
         rows = [(key, value) for key, value in rows if self._has_value(value)]
 
@@ -541,28 +969,179 @@ class moreInfo(qtw.QTabWidget):
             for param in params
             for axis in getattr(param, "depends_on_", ())
             }
+        setpoint_summaries = self._setpoint_summaries(dataset, all_axes, params)
 
         self.parameters.setRowCount(len(params))
         for row, param in enumerate(params):
             name = getattr(param, "name", "")
             snap = snapshot_params.get(name, {})
-            axes = list(getattr(param, "depends_on_", ()) or [])
-            role = "Measured" if axes else "Setpoint" if name in all_axes else "Other"
-            values = [
-                name,
-                getattr(param, "label", "") or snap.get("label", ""),
-                getattr(param, "unit", "") or snap.get("unit", ""),
-                role,
-                ", ".join(axes),
-                snap.get("value", snap.get("raw_value", "")),
-                snap.get("instrument_name", snap.get("instrument", "")),
-                snap.get("vals", snap.get("validators", "")),
-                ]
+            is_setpoint = name in all_axes and not getattr(param, "depends_on_", ())
+            is_measured = bool(getattr(param, "depends_on_", ()))
+            values = self._parameter_row_values(param, snap, is_setpoint, setpoint_summaries)
 
             for col, value in enumerate(values):
                 self.parameters.setItem(row, col, self._table_item(value, max_len=80))
+            self._style_parameter_row(row, is_setpoint, is_measured)
 
         self._resize_table(self.parameters)
+
+
+    def _style_parameter_row(self, row, is_setpoint, is_measured):
+        if not is_setpoint and not is_measured:
+            return
+
+        role = "Setpoint" if is_setpoint else "Measured"
+        for col in range(self.parameters.columnCount()):
+            item = self.parameters.item(row, col)
+            if item is None:
+                continue
+            font = item.font()
+            font.setBold(is_setpoint)
+            font.setItalic(is_measured)
+            item.setFont(font)
+            item.setToolTip(f"{role} parameter\n{item.toolTip()}")
+
+
+    def _parameter_row_values(self, param, snap, is_setpoint, setpoint_summaries):
+        name = getattr(param, "name", "")
+        common = [
+            name,
+            getattr(param, "label", "") or snap.get("label", ""),
+            getattr(param, "unit", "") or snap.get("unit", ""),
+            ]
+        instrument = snap.get("instrument_name", snap.get("instrument", ""))
+
+        if not is_setpoint:
+            return common + ["", "", "", "", instrument]
+
+        summary = setpoint_summaries.get(name, {})
+        return common + [
+            summary.get("from", snap.get("value", snap.get("raw_value", ""))),
+            summary.get("to", snap.get("value", snap.get("raw_value", ""))),
+            summary.get("steps", ""),
+            self._parameter_delay(snap),
+            instrument,
+            ]
+
+
+    def _parameter_delay(self, snap):
+        for key in ("delay", "post_delay", "inter_delay"):
+            value = snap.get(key)
+            if self._has_value(value):
+                return value
+        return ""
+
+
+    def _time_taken_value(self, dataset, info):
+        started = self._dataset_attr(dataset, "run_timestamp_raw")
+        completed = self._dataset_attr(dataset, "completed_timestamp_raw")
+        if not self._has_value(started):
+            started = self._dataset_attr(dataset, "run_timestamp")
+        if not self._has_value(completed):
+            completed = self._dataset_attr(dataset, "completed_timestamp")
+        if not self._has_value(started):
+            return ""
+
+        end = completed if self._has_value(completed) else datetime.now().timestamp()
+        try:
+            seconds = max(0, self._timestamp_seconds(end) - self._timestamp_seconds(started))
+        except (TypeError, ValueError):
+            return ""
+
+        per_point = self._time_per_point(seconds, info, dataset)
+        if self._has_value(per_point):
+            return f"{seconds:.2f} s\t({format_duration_dhms(seconds)}; {per_point} s/point)"
+        return f"{seconds:.2f} s\t({format_duration_dhms(seconds)})"
+
+
+    def _timestamp_seconds(self, value):
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if isinstance(value, datetime):
+            return value.timestamp()
+
+        text = str(value)
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                return datetime.strptime(text, fmt).timestamp()
+            except ValueError:
+                pass
+
+        return float(value)
+
+
+    def _time_per_point(self, seconds, info, dataset):
+        points = info.get("Data Structure", {}).get("Data points")
+        if not self._has_value(points):
+            points = self._dataset_attr(dataset, "number_of_results")
+
+        try:
+            points = float(points)
+        except (TypeError, ValueError):
+            return ""
+
+        if points <= 0:
+            return ""
+
+        return f"{seconds / points:.3g}"
+
+
+    def _setpoint_summaries(self, dataset, setpoint_names, params):
+        if dataset is None or not setpoint_names:
+            return {}
+
+        summaries = {}
+        measured_params = [
+            param for param in params
+            if getattr(param, "depends_on_", ())
+            ]
+
+        for param in measured_params:
+            try:
+                parameter_data = dataset.get_parameter_data(param.name).get(param.name, {})
+            except Exception:
+                continue
+
+            for name in setpoint_names:
+                if name not in parameter_data or name in summaries:
+                    continue
+                summary = self._setpoint_summary(parameter_data[name])
+                if summary:
+                    summaries[name] = summary
+
+        return summaries
+
+
+    def _setpoint_summary(self, values):
+        try:
+            array = np.asarray(values).ravel()
+        except Exception:
+            return {}
+
+        unique_values = []
+        seen = set()
+        for value in array:
+            try:
+                if np.isnan(value):
+                    continue
+            except TypeError:
+                pass
+
+            key = value.item() if hasattr(value, "item") else value
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_values.append(key)
+
+        if not unique_values:
+            return {}
+
+        return {
+            "from": unique_values[0],
+            "to": unique_values[-1],
+            "steps": len(unique_values),
+            }
 
 
     def _fill_key_value_table(self, table, rows):

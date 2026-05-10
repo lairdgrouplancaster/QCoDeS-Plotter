@@ -18,6 +18,12 @@
                     "minItems": 2,
                     "maxItems": 2,
                     "default": [750, 700]
+                },
+                "preview_size": {
+                    "type": "integer",
+                    "minimum": 50,
+                    "maximum": 1000,
+                    "default": 200
                 }
             },
             "required": ["plot_frame_fraction", "main_frame_size"],
@@ -34,6 +40,11 @@
                 "last_file_path": {
                     "type": "string",
                     "default": ""
+                },
+                "recent_file_paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": []
                 }
             },
             "required": ["default_load_path", "last_file_path"],
@@ -54,6 +65,10 @@
                     "default": "viridis"
                 },
                 "confirm_close": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "confirm_close_all": {
                     "type": "boolean",
                     "default": true
                 },
