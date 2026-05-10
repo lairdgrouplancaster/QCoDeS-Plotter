@@ -1,6 +1,7 @@
 from PyQt5 import (
     QtWidgets as qtw,
-    QtCore
+    QtCore,
+    QtGui,
     )
 
 from qplot.datahandling import (
@@ -16,6 +17,21 @@ import numpy as np
 
 from datetime import datetime
 
+from .._shortcuts import standard_key_sequences
+
+COPY_SELECTION_SHORTCUTS = standard_key_sequences(QtGui.QKeySequence.Copy, ["Ctrl+C"])
+COPY_CELL_SHORTCUTS = [QtGui.QKeySequence("Ctrl+Shift+C")]
+
+
+def copy_action(label, shortcuts, slot, parent):
+    action = qtw.QAction(label, parent)
+    action.setShortcuts(shortcuts)
+    action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+    if hasattr(action, "setShortcutVisibleInContextMenu"):
+        action.setShortcutVisibleInContextMenu(True)
+    action.triggered.connect(slot)
+    return action
+
 
 class RunList(qtw.QTreeWidget):
     """
@@ -27,7 +43,7 @@ class RunList(qtw.QTreeWidget):
     
     """
     
-    cols = ['Run ID', 'Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
+    cols = ['ID', 'Experiment', 'Sample', 'Name', 'Started', 'Completed', 'GUID']
 
     selected = QtCore.pyqtSignal([str])
     plot = QtCore.pyqtSignal([str])
@@ -173,24 +189,20 @@ class RunList(qtw.QTreeWidget):
             return
         
         menu = qtw.QMenu(self)
-        
-        ### OPEN SUBMENU
-        open_menu = menu.addMenu("&Open")
-        
-        open_all = qtw.QAction("&All", open_menu)
+
+        self._add_menu_section(menu, "Plot")
+        open_all = qtw.QAction("&Plot all", menu)
         self._set_action_shortcut(open_all, "Ctrl+Return")
-        open_all.triggered.connect(lambda _,: main.openPlot()) # Feed no param to open all
-        open_menu.addAction(open_all)
-        
-        open_menu.addSeparator()
-        
+        open_all.triggered.connect(lambda _,: main.openPlot()) # Feed no param to plot all
+        menu.addAction(open_all)
+
         params = {param: param.depends_on_ for param in main.ds.get_parameters() if param.depends_on}
-        
+
         # Create an action for all dependant parameters in the loaded dataset,
         # linking the coresponding parameter to the openPlot.
         for itr, param in enumerate(params.keys()):
             
-            open_win = qtw.QAction(self._numbered_label(itr, param.name), open_menu)
+            open_win = qtw.QAction(f"  - {param.name}", menu)
             if itr < 9:
                 self._set_action_shortcut(open_win, f"Ctrl+{itr + 1}")
             
@@ -200,71 +212,49 @@ class RunList(qtw.QTreeWidget):
             # may be missing
             open_win.triggered.connect(lambda _, param=param: main.openPlot(params=[param]))
             
-            open_menu.addAction(open_win)
-        
-        
-        ### ADD SUBMEMU
-        add_menu = menu.addMenu("&Add _ to _")
-        
-        add_all = add_menu.addMenu("&All")
+            menu.addAction(open_win)
+
         valid_wins = []
-        
-        add_menu.addSeparator()
-        
+
         """
-        The Add _ to _ menu allows the user to pick a parameter and add it to 
-        another open windows's plot.
-        The following loops though each dependant parameter in the loaded dataset
-        Inside the context menu Add _ to _, it produces a list of submenus of 
-        each parameter.
-        It then checks which windows that parameter can be added to and adds an
-        action for each window to that parameter's submenu.
-        
-        It keeps track of which which windows can be added to and only shows 
-        those as options in the All option. The All option doesn't care about
-        which parameter it is searching through, it tries all.
-        
-        In practice the order of processes is different. But each button is 
-        connected to self.add_plot for single parameter or self.add_all, which
-        uses self.add_plot to.
-        
+        These actions add a parameter from the selected run to an existing
+        compatible plot window. The menu is intentionally flat so right-click
+        workflows do not require chasing submenus.
+
         """
-        # Why didn't I comment this when I wrote it? Scary.
+        add_actions = []
         for param, depends_on in params.items():
             if len(depends_on) != 1: # Ignore non 1d plots
                 continue
-            
-            
-            valid_actions = []
-            
+
             # Run through each window for each parameter
             for win in main.windows:
                 if win.param.depends_on_ == depends_on: # If it can be added
-                    
+
                     # Produce action and connect open
-                    win_action = qtw.QAction(self._numbered_label(len(valid_actions), win.label), menu)
+                    win_action = qtw.QAction(f"Add {param.name} to {win.label}", menu)
                     win_action.triggered.connect(
                         lambda _, win=win, param=param: self.add_plot(win, param)
                         )
-                    # Store for adding later
-                    valid_actions.append(win_action)
+                    add_actions.append(win_action)
                     
                     # Check if this window is on the add all list.
                     if win not in valid_wins:
-                        all_action = qtw.QAction(self._numbered_label(len(valid_wins), win.label), add_all)
+                        all_action = qtw.QAction(f"Add all to {win.label}", menu)
                         if len(valid_wins) < 9:
                             self._set_action_shortcut(all_action, f"Ctrl+Alt+{len(valid_wins) + 1}")
                         all_action.triggered.connect(
                             lambda _, win=win, param_dict=params: self.add_all(win, param_dict)
                             )
-                        # Add action to add all list and the menu
+                        add_actions.insert(len(valid_wins), all_action)
                         valid_wins.append(win)
-                        add_all.addAction(all_action)
-             
-            # If any actions where found, create menu for them.
-            if valid_actions:
-                param_menu = add_menu.addMenu(self._numbered_label(len(add_menu.actions()), param.name))
-                param_menu.addActions(valid_actions)
+
+        if add_actions:
+            menu.addSeparator()
+            self._add_menu_section(menu, "Add to open plot")
+            for action in add_actions:
+                action.setText(f"  - {action.text()}")
+                menu.addAction(action)
             
         # Display context menu
         menu.exec_(self.mapToGlobal(pos))
@@ -310,15 +300,16 @@ class RunList(qtw.QTreeWidget):
             action.setShortcutVisibleInContextMenu(True)
 
 
-    def _numbered_label(self, index, label):
+    def _add_menu_section(self, menu, label):
         """
-        Adds a menu mnemonic to a dynamic context-menu label.
+        Adds a disabled section label to a context menu.
 
         """
-        if index < len(self._shortcut_keys):
-            return f"&{self._shortcut_keys[index]} {label}"
-        return label
-    
+        section = qtw.QAction(label, menu)
+        section.setEnabled(False)
+        menu.addAction(section)
+        return section
+
 
     @QtCore.pyqtSlot()
     def onSelect(self):
@@ -447,37 +438,398 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
         return self.text(6)
 
 
-class moreInfo(qtw.QTreeWidget):
+class moreInfo(qtw.QTabWidget):
     
     def __init__(self, *args):
         super().__init__(*args)
-        
+        self.setObjectName("runDetailsTabs")
+
+        self.overview = CopyableTableWidget()
+        self.parameters = CopyableTableWidget()
+        self.metadata = infoTree(expand_all=True, truncate_values=True)
+        self.raw = infoTree(expand_all=False, truncate_values=False)
+
+        self._setup_table(self.overview, ["Field", "Value"])
+        self._setup_table(
+            self.parameters,
+            ["Name", "Label", "Unit", "Role", "Axes", "Value", "Instrument", "Validator"]
+            )
+
+        self.addTab(self.overview, "Overview")
+        self.addTab(self.parameters, "Parameters")
+        self.addTab(self.metadata, "Metadata")
+        self.addTab(self.raw, "Raw")
+
+
+    def _setup_table(self, table, headers):
+        table.setObjectName("detailsTable")
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.verticalHeader().hide()
+        table.verticalHeader().setMinimumSectionSize(16)
+        table.verticalHeader().setDefaultSectionSize(20)
+        table.horizontalHeader().setFixedHeight(22)
+        table.setAlternatingRowColors(True)
+        table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
+        table.setTextElideMode(QtCore.Qt.ElideRight)
+        table.setWordWrap(False)
+        table.horizontalHeader().setStretchLastSection(True)
+
+
+    def setInfo(self, info, dataset=None):
+        self.clear()
+
+        self._set_overview(info, dataset)
+        self._set_parameters(info, dataset)
+        self.metadata.setInfo(info.get("MetaData", {}))
+        self.raw.setInfo(info)
+
+
+    def clear(self):
+        self.overview.setRowCount(0)
+        self.parameters.setRowCount(0)
+        self.metadata.clear()
+        self.raw.clear()
+
+
+    def scrollToTop(self):
+        self.overview.scrollToTop()
+        self.parameters.scrollToTop()
+        self.metadata.scrollToTop()
+        self.raw.scrollToTop()
+
+
+    def _set_overview(self, info, dataset):
+        structure = info.get("Data Structure", {})
+        param_info = {
+            key: value for key, value in structure.items()
+            if isinstance(value, dict)
+            }
+        measured = [
+            name for name, details in param_info.items()
+            if details.get("axes")
+            ]
+        setpoints = [
+            name for name, details in param_info.items()
+            if not details.get("axes")
+            ]
+
+        rows = [
+            ("Run ID", self._dataset_attr(dataset, "run_id")),
+            ("Name", self._dataset_attr(dataset, "name")),
+            ("Experiment", self._dataset_attr(dataset, "exp_name")),
+            ("Sample", self._dataset_attr(dataset, "sample_name")),
+            ("Status", self._status_text(dataset)),
+            ("Data points", structure.get("Data points")),
+            ("Measured parameters", ", ".join(measured)),
+            ("Setpoints", ", ".join(setpoints)),
+            ("GUID", self._dataset_attr(dataset, "guid")),
+            ("Started", self._dataset_timestamp(dataset, "run_timestamp")),
+            ("Completed", self._dataset_timestamp(dataset, "completed_timestamp")),
+            ]
+        rows = [(key, value) for key, value in rows if self._has_value(value)]
+
+        self._fill_key_value_table(self.overview, rows)
+
+
+    def _set_parameters(self, info, dataset):
+        params = list(dataset.get_parameters()) if dataset is not None else []
+        snapshot_params = snapshot_parameters(info.get("Snapshot"))
+        all_axes = {
+            axis
+            for param in params
+            for axis in getattr(param, "depends_on_", ())
+            }
+
+        self.parameters.setRowCount(len(params))
+        for row, param in enumerate(params):
+            name = getattr(param, "name", "")
+            snap = snapshot_params.get(name, {})
+            axes = list(getattr(param, "depends_on_", ()) or [])
+            role = "Measured" if axes else "Setpoint" if name in all_axes else "Other"
+            values = [
+                name,
+                getattr(param, "label", "") or snap.get("label", ""),
+                getattr(param, "unit", "") or snap.get("unit", ""),
+                role,
+                ", ".join(axes),
+                snap.get("value", snap.get("raw_value", "")),
+                snap.get("instrument_name", snap.get("instrument", "")),
+                snap.get("vals", snap.get("validators", "")),
+                ]
+
+            for col, value in enumerate(values):
+                self.parameters.setItem(row, col, self._table_item(value, max_len=80))
+
+        self._resize_table(self.parameters)
+
+
+    def _fill_key_value_table(self, table, rows):
+        table.setRowCount(len(rows))
+        for row, (key, value) in enumerate(rows):
+            table.setItem(row, 0, self._table_item(key))
+            table.setItem(row, 1, self._table_item(value, max_len=140))
+        self._resize_table(table)
+
+
+    def _resize_table(self, table):
+        header = table.horizontalHeader()
+        last_col = table.columnCount() - 1
+
+        for col in range(table.columnCount()):
+            header.setSectionResizeMode(col, qtw.QHeaderView.Interactive)
+        for col in range(last_col):
+            table.resizeColumnToContents(col)
+        if last_col >= 0:
+            header.setSectionResizeMode(last_col, qtw.QHeaderView.Stretch)
+            header.setStretchLastSection(True)
+        for row in range(table.rowCount()):
+            table.setRowHeight(row, 20)
+
+
+    def _table_item(self, value, max_len=None):
+        text = format_value(value, max_len=max_len)
+        item = qtw.QTableWidgetItem(text)
+        item.setToolTip(format_value(value))
+        return item
+
+
+    def _dataset_attr(self, dataset, name):
+        if dataset is None:
+            return ""
+        value = getattr(dataset, name, "")
+        return value() if callable(value) else value
+
+
+    def _dataset_timestamp(self, dataset, name):
+        value = self._dataset_attr(dataset, name)
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
+        return value
+
+
+    def _status_text(self, dataset):
+        running = self._dataset_attr(dataset, "running")
+        if running is True:
+            return "Running"
+        if running is False:
+            return "Completed"
+        return ""
+
+
+    def _has_value(self, value):
+        return value is not None and value != ""
+
+
+class infoTree(qtw.QTreeWidget):
+    def __init__(self, expand_all=True, truncate_values=False):
+        super().__init__()
+        self.expand_all = expand_all
+        self.truncate_values = truncate_values
         self.setHeaderLabels(["Key", "Value"])
         self.setColumnCount(2)
-        
-    @QtCore.pyqtSlot(dict)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.openCopyMenu)
+
+        self.copy_value_action = copy_action(
+            "Copy Value",
+            COPY_CELL_SHORTCUTS,
+            self.copyValue,
+            self
+            )
+        self.copy_selection_action = copy_action(
+            "Copy Selection",
+            COPY_SELECTION_SHORTCUTS,
+            self.copySelection,
+            self
+            )
+        self.addActions([self.copy_value_action, self.copy_selection_action])
+
+
     def setInfo(self, info):
         self.clear()
-        
-        items = dictToTree(info)
+
+        if not info:
+            self.addTopLevelItem(qtw.QTreeWidgetItem(["No data", ""]))
+            return
+        if not isinstance(info, dict):
+            item = qtw.QTreeWidgetItem(["Value", format_value(info, 180 if self.truncate_values else None)])
+            item.setToolTip(1, format_value(info))
+            self.addTopLevelItem(item)
+            return
+
+        items = dictToTree(info, truncate_values=self.truncate_values)
         for item in items:
             self.addTopLevelItem(item)
             item.setExpanded(True)
-            
-        self.expandAll()
+
+        if self.expand_all:
+            self.expandAll()
         for i in range(2):
             self.resizeColumnToContents(i)
 
 
-def dictToTree(d : dict):
+    def openCopyMenu(self, pos):
+        item = self.itemAt(pos)
+        if item is None:
+            return
+
+        self.setCurrentItem(item)
+
+        menu = qtw.QMenu(self)
+        menu.addAction(self.copy_value_action)
+
+        copy_row = qtw.QAction("Copy Row", menu)
+        copy_row.triggered.connect(lambda: copy_to_clipboard(row_text(item)))
+        menu.addAction(copy_row)
+
+        if self.selectedItems():
+            menu.addAction(self.copy_selection_action)
+
+        menu.exec_(self.viewport().mapToGlobal(pos))
+
+
+    def copyValue(self):
+        item = self.currentItem()
+        if item is not None:
+            copy_to_clipboard(item.text(1))
+
+
+    def copySelection(self):
+        items = self.selectedItems()
+        if not items and self.currentItem() is not None:
+            items = [self.currentItem()]
+        copy_to_clipboard("\n".join(row_text(item) for item in items))
+
+
+class CopyableTableWidget(qtw.QTableWidget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.openCopyMenu)
+
+        self.copy_cell_action = copy_action(
+            "Copy Cell",
+            COPY_CELL_SHORTCUTS,
+            self.copyCell,
+            self
+            )
+        self.copy_selection_action = copy_action(
+            "Copy Selection",
+            COPY_SELECTION_SHORTCUTS,
+            self.copySelection,
+            self
+            )
+        self.addActions([self.copy_cell_action, self.copy_selection_action])
+
+
+    def openCopyMenu(self, pos):
+        item = self.itemAt(pos)
+        if item is None:
+            return
+
+        self.setCurrentItem(item)
+
+        menu = qtw.QMenu(self)
+        menu.addAction(self.copy_cell_action)
+        menu.addAction(self.copy_selection_action)
+
+        menu.exec_(self.viewport().mapToGlobal(pos))
+
+
+    def copyCell(self):
+        item = self.currentItem()
+        if item is not None:
+            copy_to_clipboard(item.text())
+
+
+    def copySelection(self):
+        ranges = self.selectedRanges()
+        if not ranges and self.currentItem() is not None:
+            self.copyCell()
+            return
+
+        sections = []
+        for selected_range in ranges:
+            rows = []
+            for row in range(selected_range.topRow(), selected_range.bottomRow() + 1):
+                values = []
+                for col in range(selected_range.leftColumn(), selected_range.rightColumn() + 1):
+                    item = self.item(row, col)
+                    values.append(item.text() if item is not None else "")
+                rows.append("\t".join(values))
+            sections.append("\n".join(rows))
+
+        copy_to_clipboard("\n".join(section for section in sections if section))
+
+
+def dictToTree(d : dict, truncate_values=False):
     items = []
     for k, v in d.items():
         if not isinstance(v, dict):
-            item = qtw.QTreeWidgetItem([str(k), str(v)])
+            item = qtw.QTreeWidgetItem([str(k), format_value(v, 180 if truncate_values else None)])
+            item.setToolTip(1, format_value(v))
         else:
             item = qtw.QTreeWidgetItem([k, ''])
-            for child in dictToTree(v):
+            for child in dictToTree(v, truncate_values=truncate_values):
                 item.addChild(child)
         items.append(item)
     return items
+
+
+def snapshot_parameters(snapshot):
+    if not isinstance(snapshot, dict):
+        return {}
+
+    out = {}
+    station = snapshot.get("station", snapshot)
+    parameter_dicts = []
+
+    if isinstance(station, dict):
+        params = station.get("parameters")
+        if isinstance(params, dict):
+            parameter_dicts.append(params)
+
+        instruments = station.get("instruments")
+        if isinstance(instruments, dict):
+            for instrument in instruments.values():
+                if isinstance(instrument, dict) and isinstance(instrument.get("parameters"), dict):
+                    parameter_dicts.append(instrument["parameters"])
+
+    for params in parameter_dicts:
+        for key, details in params.items():
+            if not isinstance(details, dict):
+                continue
+            for name in (key, details.get("name"), details.get("full_name")):
+                if name:
+                    out[str(name)] = details
+
+    return out
+
+
+def format_value(value, max_len=None):
+    if value is None:
+        text = ""
+    elif isinstance(value, float):
+        text = f"{value:.6g}"
+    elif isinstance(value, (list, tuple)):
+        text = ", ".join(format_value(item) for item in value)
+    else:
+        text = str(value)
+
+    text = text.replace("\n", " ")
+    if max_len is not None and len(text) > max_len:
+        return text[:max_len - 3] + "..."
+    return text
+
+
+def row_text(item):
+    return "\t".join(item.text(col) for col in range(item.columnCount()))
+
+
+def copy_to_clipboard(text):
+    clipboard = qtw.QApplication.clipboard()
+    if clipboard is not None:
+        clipboard.setText(text)
         
