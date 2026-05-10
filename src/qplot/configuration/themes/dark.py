@@ -30,9 +30,8 @@ class dark:
         	border-width: 1px; border-radius: 4px;
         	border-color: rgb(58, 58, 58);
         	border-style: solid;
-        	padding: 0 8px;
+            padding: 2px 10px;
         	color: #a9b7c6;
-        	padding: 2px;
         	background-color: #1e1d23;
         }
         QPushButton::default{
@@ -43,7 +42,7 @@ class dark:
         	border-bottom-color: #04b97f;
         	border-width: 1px;
         	color: #a9b7c6;
-        	padding: 2px;
+            padding: 2px 10px;
         	background-color: #1e1d23;
         }
         QToolButton {
@@ -79,7 +78,7 @@ class dark:
         	border-bottom-width: 1px;
         	border-style: solid;
         	color: #FFFFFF;
-        	padding-bottom: 2px;
+            padding: 2px 10px;
         	background-color: #1e1d23;
         }
         QPushButton:pressed{
@@ -88,10 +87,10 @@ class dark:
         	border-right-color: transparent;
         	border-left-color: transparent;
         	border-bottom-color: #37efba;
-        	border-bottom-width: 2px;
+            border-bottom-width: 1px;
         	border-style: solid;
         	color: #F0F0F0;
-        	padding-bottom: 1px;
+            padding: 2px 10px;
         	background-color: #1e1d23;
         }
         QPushButton:disabled{
@@ -100,11 +99,14 @@ class dark:
         	border-right-color: transparent;
         	border-left-color: transparent;
         	border-bottom-color: #808086;
-        	border-bottom-width: 2px;
+            border-bottom-width: 1px;
         	border-style: solid;
         	color: #808086;
-        	padding-bottom: 1px;
+            padding: 2px 10px;
         	background-color: #1e1d23;
+        }
+        QPushButton#closeAllPlotsButton {
+            margin-right: 8px;
         }
         QLineEdit {
         	border-width: 1px; border-radius: 4px;
@@ -120,6 +122,14 @@ class dark:
             background: #1e1d23;
             color: #808086;
             border: 1px solid #3a3a3a;
+        }
+        QSplitter::handle:vertical {
+            background-color: #3a3a3a;
+            height: 6px;
+            margin: 1px 0px;
+        }
+        QSplitter::handle:vertical:hover {
+            background-color: #04b97f;
         }
         QLabel {
         	color: #a9b7c6;
@@ -402,7 +412,7 @@ class dark:
             selection-background-color: #007b50;
             selection-color: #ffffff;
             show-decoration-selected: 1;
-            font-size: 14px
+            font-size: 14px;
         }
         QTreeWidget::item {
             padding: 2px 4px;

@@ -78,7 +78,7 @@ class RunList(qtw.QTreeWidget):
         self.maxTime = max(np.array([subDict["run_timestamp"] for subDict in runs.values()], dtype=float), default=0)
         
         for run_id, metadata in runs.items():
-            arr = [str(run_id)] #run id
+            arr = [str(run_id)] # Run ID
             
             # Skip values missing 'run_timestamp', this only happens on a run 
             # which failed to initialise and has no data. Also breaks app...
@@ -164,8 +164,10 @@ class RunList(qtw.QTreeWidget):
             The cursor position to open the menu at.
 
         """
-        # Get Main Window
-        main = self.parentWidget().parent()
+        main = self.main_window()
+        if main is None:
+            return
+
         if main.ds is None:
             main.show_status("Select a run before opening the context menu.", 5000)
             return
@@ -279,6 +281,24 @@ class RunList(qtw.QTreeWidget):
         self.prepareMenu(pos)
 
 
+    def main_window(self):
+        """
+        Returns the owning main window regardless of intermediate layouts.
+
+        """
+        window = self.window()
+        if hasattr(window, "ds") and hasattr(window, "openPlot"):
+            return window
+
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "ds") and hasattr(parent, "openPlot"):
+                return parent
+            parent = parent.parentWidget()
+
+        return None
+
+
     def _set_action_shortcut(self, action, shortcut):
         """
         Sets a context-menu action shortcut.
@@ -344,8 +364,10 @@ class RunList(qtw.QTreeWidget):
             The depandant parameter that will be added to the target_win.
 
         """
-        # Get Main Window
-        main = self.parentWidget().parent()
+        main = self.main_window()
+        if main is None:
+            return
+
         from_win = None
         
         # Find window with param from open windows.

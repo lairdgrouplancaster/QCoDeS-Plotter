@@ -2,7 +2,11 @@ from PyQt5 import (
     QtWidgets as qtw,
     QtCore
     )
-from PyQt5.QtGui import QIntValidator
+from PyQt5.QtGui import (
+    QDesktopServices,
+    QIntValidator,
+    QKeySequence,
+    )
 
 from qplot.windows import (
     plot1d,
@@ -12,6 +16,8 @@ from ._widgets import (
     RunList,
     moreInfo,
     )
+from ._shortcuts import standard_key_sequences
+from ._window_controls import add_standard_window_controls
 from qplot.datahandling import (
     find_new_runs
     )
@@ -62,6 +68,8 @@ class MainWindow(qtw.QMainWindow):
         
         #widgets
         self.l = qtw.QVBoxLayout()
+        self.l.setContentsMargins(8, 8, 8, 4)
+        self.l.setSpacing(6)
         
         #Core initialisation functions
         self.initRefresh()
@@ -101,6 +109,10 @@ class MainWindow(qtw.QMainWindow):
         toolbar = self.addToolBar("Refresh Timer")
         toolbar.setContextMenuPolicy(QtCore.Qt.PreventContextMenu)
         toolbar.setMovable(False)
+
+        left_spacer = qtw.QWidget()
+        left_spacer.setFixedWidth(8)
+        toolbar.addWidget(left_spacer)
         
         # Widget production
         self.spinBox = qtw.QDoubleSpinBox()
@@ -120,6 +132,7 @@ class MainWindow(qtw.QMainWindow):
         toolbar.addWidget(qtw.QLabel("Toggle Auto-plot "))
         
         self.autoPlotBox = qtw.QCheckBox()
+        self.autoPlotBox.setToolTip("Automatically open plots for newly detected runs")
         toolbar.addWidget(self.autoPlotBox)
         
         # Make makeshift addStrech()
@@ -129,6 +142,9 @@ class MainWindow(qtw.QMainWindow):
         
         # Add button to close all subplots
         close_all_but = qtw.QPushButton("Close All Plots")
+        close_all_but.setObjectName("closeAllPlotsButton")
+        close_all_but.setToolTip("Close all open plot windows")
+        close_all_but.setFixedHeight(self.spinBox.sizeHint().height())
         close_all_but.clicked.connect(self.closeAll)
         toolbar.addWidget(close_all_but)
     
@@ -161,6 +177,28 @@ class MainWindow(qtw.QMainWindow):
         refreshAction.setShortcut("R")
         refreshAction.triggered.connect(self.refreshMain)
         fileMenu.addAction(refreshAction)
+
+        fileMenu.addSeparator()
+
+        closeAction = qtw.QAction("&Close Window", self)
+        closeAction.setShortcuts(
+            standard_key_sequences(QKeySequence.Close, ["Ctrl+W"])
+            )
+        closeAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        closeAction.setStatusTip("Close the main qPlot window")
+        closeAction.triggered.connect(self.close)
+        fileMenu.addAction(closeAction)
+
+        quitAction = qtw.QAction("&Quit qPlot", self)
+        quitAction.setShortcuts(
+            standard_key_sequences(QKeySequence.Quit, ["Ctrl+Q"])
+            )
+        quitAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        quitAction.setStatusTip("Quit qPlot")
+        quitAction.triggered.connect(self.close)
+        fileMenu.addAction(quitAction)
+
+        add_standard_window_controls(self)
         
         # Second dropdown menu
         prefMenu = menu.addMenu("&Options")
@@ -200,11 +238,21 @@ class MainWindow(qtw.QMainWindow):
         Display text box for current selected database
         
         """
-        self.l.addWidget(qtw.QLabel("File Directory:"))
-        
+        fileLayout = qtw.QHBoxLayout()
+        fileLayout.setContentsMargins(0, 0, 0, 0)
+        fileLayout.setSpacing(3)
+
+        self.databaseButton = qtw.QPushButton("Database:")
+        self.databaseButton.setToolTip("Open the current database folder (Ctrl+Shift+D)")
+        self.databaseButton.setShortcut("Ctrl+Shift+D")
+        self.databaseButton.clicked.connect(self.open_database_location)
+        fileLayout.addWidget(self.databaseButton)
+
         self.fileTextbox = qtw.QLineEdit()
-        self.fileTextbox.setDisabled(True)
-        self.l.addWidget(self.fileTextbox)
+        self.fileTextbox.setReadOnly(True)
+        fileLayout.addWidget(self.fileTextbox)
+
+        self.l.addLayout(fileLayout)
         
         if os.path.isfile(get_DB_location()):
             self.fileTextbox.setText(str(get_DB_location()))
@@ -212,8 +260,10 @@ class MainWindow(qtw.QMainWindow):
         
     def initRunDisplay(self):
         sublayout = qtw.QHBoxLayout()
+        sublayout.setContentsMargins(0, 0, 0, 0)
+        sublayout.setSpacing(8)
         
-        sublayout.addWidget(qtw.QLabel("Run id:"))
+        sublayout.addWidget(qtw.QLabel("Run ID:"))
         
         self.selected_run_id = None
         
@@ -229,6 +279,7 @@ class MainWindow(qtw.QMainWindow):
 
         # Opens all plots at run_id in self.run_idBox
         pltbutton = qtw.QPushButton("Open Plots")
+        pltbutton.setToolTip("Open plots for the selected Run ID or typed Run ID (Ctrl+Return)")
         pltbutton.setFixedWidth(200)
         pltbutton.clicked.connect(self.openRun)
         sublayout.addWidget(pltbutton)
@@ -236,13 +287,25 @@ class MainWindow(qtw.QMainWindow):
         
         # Long QTreeWidget/list to display all runs with small detail
         self.RunList = RunList()
-        self.l.addWidget(self.RunList)
         self.RunList.selected.connect(self.updateSelected)
         self.RunList.plot.connect(self.openPlot)
         
         # Show all available info on the selected item in self.RunList
         self.infoBox = moreInfo()
-        self.l.addWidget(self.infoBox)
+
+        self.runInfoSplitter = qtw.QSplitter(QtCore.Qt.Vertical)
+        self.runInfoSplitter.setHandleWidth(8)
+        self.runInfoSplitter.setChildrenCollapsible(False)
+        self.runInfoSplitter.setOpaqueResize(True)
+        self.runInfoSplitter.addWidget(self.RunList)
+        self.runInfoSplitter.addWidget(self.infoBox)
+        self.runInfoSplitter.setStretchFactor(0, 3)
+        self.runInfoSplitter.setStretchFactor(1, 2)
+        self.runInfoSplitter.setSizes([360, 240])
+        self.runInfoSplitter.handle(1).setToolTip(
+            "Drag to resize the run list and details panes"
+            )
+        self.l.addWidget(self.runInfoSplitter, 1)
 
 
     def initShortcuts(self):
@@ -431,6 +494,37 @@ class MainWindow(qtw.QMainWindow):
         self.monitor.stop()
         if interval > 0:
             self.monitor.start(int(interval * 1000)) #convert to seconds
+
+
+    @QtCore.pyqtSlot()
+    def open_database_location(self):
+        """
+        Opens the current database folder in the system file browser.
+
+        """
+        database_path = self.fileTextbox.text()
+        if not database_path:
+            self.show_status("No database is loaded.", 5000)
+            return
+
+        folder = os.path.dirname(database_path)
+        if not os.path.isdir(folder):
+            self.show_error(
+                "Database Location Not Found",
+                "The current database folder could not be found.",
+                database_path
+                )
+            return
+
+        opened = QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(folder))
+        if opened:
+            self.show_status(f"Opened database folder: {folder}", 5000)
+        else:
+            self.show_error(
+                "Open Folder Failed",
+                "The database folder could not be opened.",
+                folder
+                )
 
 
     @QtCore.pyqtSlot()
@@ -638,7 +732,7 @@ class MainWindow(qtw.QMainWindow):
             except Exception as error:
                 self.show_error(
                     "Run Load Failed",
-                    f"Could not load run ID {self.selected_run_id}.",
+                    f"Could not load Run ID {self.selected_run_id}.",
                     str(error)
                     )
                 return
@@ -650,7 +744,7 @@ class MainWindow(qtw.QMainWindow):
         elif not self.fileTextbox.text():
             self.show_status("Load a database before opening plots.", 5000)
         else:
-            self.show_status("Select a run or enter a run ID before opening plots.", 5000)
+            self.show_status("Select a run or enter a Run ID before opening plots.", 5000)
     
     
     @QtCore.pyqtSlot(str)
@@ -778,7 +872,7 @@ class MainWindow(qtw.QMainWindow):
             except Exception as err:
                 self.show_error(
                     "Run Load Failed",
-                    f"Could not load run ID {self.selected_run_id}.",
+                    f"Could not load Run ID {self.selected_run_id}.",
                     str(err)
                     )
                 return
@@ -798,13 +892,13 @@ class MainWindow(qtw.QMainWindow):
     @QtCore.pyqtSlot(str)
     def update_run_id(self, text):
         """
-        Updates the select run id which is entered into the run id: text box.
+        Updates the selected Run ID which is entered into the Run ID text box.
         Note that self.selected_run_id is set to None on RunList selection
 
         Parameters
         ----------
         text : str/int
-            Run id number to be openned.
+            Run ID number to be openned.
 
         """
         try:

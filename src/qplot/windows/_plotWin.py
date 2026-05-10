@@ -1,11 +1,13 @@
 from typing import TYPE_CHECKING
 
 from math import log10
+from time import perf_counter
 
 import pyqtgraph as pg
 
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore 
+from PyQt5.QtGui import QKeySequence
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -21,6 +23,8 @@ from ._widgets import (
     QDock_context,
     operations_widget,
     )
+from ._shortcuts import standard_key_sequences
+from ._window_controls import add_standard_window_controls
 
 if TYPE_CHECKING:
     import qplot
@@ -158,7 +162,7 @@ class plotWidget(qtw.QMainWindow):
     def __str__(self):
         filenameStr = get_DB_location().split('\\')[-1]
         fstr = (f"{filenameStr} | " 
-                f"run ID: {self.ds.run_id} | "
+                f"Run ID: {self.ds.run_id} | "
                 f"{self.param.name} ({self.param.label})"
                 )
         return fstr
@@ -429,6 +433,28 @@ class plotWidget(qtw.QMainWindow):
 
         """
         menu = self.menuBar()
+
+        file_menu = menu.addMenu("&File")
+
+        closeAction = qtw.QAction("&Close Window", self)
+        closeAction.setShortcuts(
+            standard_key_sequences(QKeySequence.Close, ["Ctrl+W"])
+            )
+        closeAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        closeAction.setStatusTip("Close this plot window")
+        closeAction.triggered.connect(self.close)
+        file_menu.addAction(closeAction)
+
+        quitAction = qtw.QAction("&Quit qPlot", self)
+        quitAction.setShortcuts(
+            standard_key_sequences(QKeySequence.Quit, ["Ctrl+Q"])
+            )
+        quitAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        quitAction.setStatusTip("Quit qPlot")
+        quitAction.triggered.connect(self.request_application_quit)
+        file_menu.addAction(quitAction)
+
+        add_standard_window_controls(self)
         
         main_menu = menu.addMenu("&View")
         
@@ -490,6 +516,24 @@ class plotWidget(qtw.QMainWindow):
         
         self.setStyleSheet(self.config.theme.main)
         self.config.theme.style_plotItem(self)
+
+
+    @staticmethod
+    def request_application_quit():
+        """
+        Closes the main window first so its normal quit handling still applies.
+
+        """
+        app = qtw.QApplication.instance()
+        if app is None:
+            return
+
+        for window in app.topLevelWidgets():
+            if window.__class__.__name__ == "MainWindow":
+                window.close()
+                return
+
+        app.closeAllWindows()
     
     
     #Note, this is an overwrite of core QMainWindow function
@@ -567,6 +611,7 @@ class plotWidget(qtw.QMainWindow):
             read_data = not complete,
             operations = self.oper_widget.get_data()
             )
+        worker.started_at = perf_counter()
         
         # Callback
         worker.emitter.finished.connect(
@@ -790,9 +835,11 @@ class plotWidget(qtw.QMainWindow):
             # Update text
             self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
             self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
+            elapsed = perf_counter() - worker.started_at
 
             self.show_status(
-                f"Loaded {self.ds.number_of_results:,} points for {self.param.name}",
+                f"Loaded {self.ds.number_of_results:,} points for {self.param.name} "
+                f"in {elapsed:.2f} seconds",
                 5000
                 )
             return True

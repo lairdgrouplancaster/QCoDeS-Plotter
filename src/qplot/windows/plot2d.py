@@ -58,6 +58,7 @@ class plot2d(plotWidget):
         self.toolbarRef.addWidget(qtw.QLabel("Re-Map Colors "))
         
         self.relevel_refresh = qtw.QCheckBox()
+        self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
         self.toolbarRef.addWidget(self.relevel_refresh)
      
     

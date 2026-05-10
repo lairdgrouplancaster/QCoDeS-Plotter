@@ -30,6 +30,18 @@ Installation
 Using a virtual environment is recommended. Choose one of the two installation
 methods below.
 
+On Windows, replace:
+
+```console
+source .venv/bin/activate
+```
+
+with:
+
+```console
+.venv\Scripts\activate
+```
+
 ### Option 1: Install From GitHub
 
 Use this if you want to install the current GitHub version without editing the
@@ -54,16 +66,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
-```
-
-The final command, `python -m pip install -e .`, is only needed for a local
-checkout. It installs the package in editable mode, creates the `qplot` and
-`qplot-cfg` commands, and installs dependencies.
-
-On Windows, activate the virtual environment with:
-
-```console
-.venv\Scripts\activate
 ```
 
 Running The App
@@ -174,7 +176,13 @@ General shortcuts:
 | Shortcut | Action |
 | --- | --- |
 | `R` | Refresh the current window |
+| `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
+| `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
+| `Cmd+M` / `Alt+Space, N` | Minimize the current window |
+| `Alt+Space, X` / `Alt+Space, R` | Maximize or restore the current window on Windows |
+| `Ctrl+Cmd+F` / `F11` | Enter or leave full screen |
 | `Shift+F10` | Open the focused widget's context menu |
+| `Ctrl+Shift+D` | Open the current database folder |
 | `Ctrl+Return` | Open all plots for the selected run |
 | `Ctrl+1` to `Ctrl+9` | Open dependent parameters 1 to 9 for the selected run |
 

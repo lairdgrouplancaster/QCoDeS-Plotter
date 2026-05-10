@@ -41,7 +41,7 @@ class picker_1d(qtw.QWidget):
         # Removal box
         self.del_box = qtw.QPushButton("X")
         self.del_box.setFixedWidth(self.del_but_width)
-        self.del_box.setToolTip("Remove Plot")
+        self.del_box.setToolTip("Remove this line from the plot")
         self.del_box.setDisabled(True)
         self.del_box.clicked.connect(self.deleteBox)
         row_1.addWidget(self.del_box)
@@ -164,8 +164,7 @@ class expandingComboBox(qtw.QComboBox):
         event : PyQt5.<something?>.QGraphicsSceneWheelEvent
 
         """
-        event.ignore()  
-        
+        event.ignore()
 
 class colorBox(qtw.QComboBox):
     """
@@ -269,5 +268,4 @@ class colorBox(qtw.QComboBox):
         event : PyQt5.<something?>.QGraphicsSceneWheelEvent
 
         """
-        event.ignore()  
-        
+        event.ignore()

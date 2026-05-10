@@ -1,14 +1,22 @@
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import numpy as np
+from PyQt5 import QtCore
+from PyQt5 import QtWidgets as qtw
 
 from qplot.configuration.config import config
 from qplot.configuration.scripts import sysHandle, try_as_num
-from qplot.configuration.themes import dark
+from qplot.configuration.themes import dark, light
+from qplot.windows._widgets.operations import operations_options_1d
+from qplot.windows._widgets.toolbar import QDock_context
+from qplot.windows._widgets import treeWidgets
 from qplot.tools.general import data2matrix
 from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 
@@ -93,6 +101,93 @@ class ToolFunctionTestCase(unittest.TestCase):
         result = subtract_mean("x", data)
 
         np.testing.assert_array_equal(result["z"], np.array([[-1.0, 1.0], [-1.0, 1.0]]))
+
+
+class RunListParentLookupTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
+
+    def test_main_window_lookup_works_through_splitter(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+        main = None
+
+        try:
+            main = qtw.QMainWindow()
+            main.ds = object()
+            main.openPlot = lambda *args, **kwargs: None
+
+            frame = qtw.QFrame()
+            layout = qtw.QVBoxLayout(frame)
+            splitter = qtw.QSplitter(QtCore.Qt.Vertical)
+            run_list = treeWidgets.RunList()
+            splitter.addWidget(run_list)
+            splitter.addWidget(qtw.QTreeWidget())
+            layout.addWidget(splitter)
+            main.setCentralWidget(frame)
+
+            self.assertIs(run_list.main_window(), main)
+        finally:
+            treeWidgets.isfile = old_isfile
+            if main is not None:
+                main.deleteLater()
+
+
+class ThemeStylesheetTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
+
+    def test_light_and_dark_stylesheets_parse_without_qt_warnings(self):
+        messages = []
+
+        def handler(_mode, _context, message):
+            messages.append(message)
+
+        previous = QtCore.qInstallMessageHandler(handler)
+        try:
+            for theme in (light, dark):
+                window = qtw.QMainWindow()
+                window.setStyleSheet(theme.main)
+                window.deleteLater()
+        finally:
+            QtCore.qInstallMessageHandler(previous)
+
+        parse_warnings = [
+            message for message in messages
+            if "Could not parse stylesheet" in message
+            ]
+        self.assertEqual(parse_warnings, [])
+
+
+class OperationsPanelTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
+
+    def test_operations_panel_layout_is_installed_once(self):
+        messages = []
+
+        def handler(_mode, _context, message):
+            messages.append(message)
+
+        main = qtw.QMainWindow()
+        main.oper_dock = QDock_context("Operations", main)
+
+        previous = QtCore.qInstallMessageHandler(handler)
+        try:
+            widget = operations_options_1d(main)
+            main.oper_dock.addWidget(widget)
+        finally:
+            QtCore.qInstallMessageHandler(previous)
+            main.deleteLater()
+
+        layout_warnings = [
+            message for message in messages
+            if "Attempting to add QLayout" in message
+            ]
+        self.assertEqual(layout_warnings, [])
 
 
 if __name__ == "__main__":
