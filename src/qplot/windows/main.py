@@ -197,6 +197,7 @@ class MainWindow(qtw.QMainWindow):
         self.spinBox.setFixedWidth(72)
         self.spinBox.setAlignment(QtCore.Qt.AlignRight)
         self.spinBox.setToolTip("Refresh interval in seconds")
+        self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
     
         # Slot connections
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)

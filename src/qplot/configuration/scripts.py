@@ -200,4 +200,7 @@ def scripts():
     """
     # Fetch str based command from command line
     args=sys.argv
-    sysHandle(*args[1:])
+    if len(args) == 1:
+        sysHandle("-info")
+    else:
+        sysHandle(*args[1:])

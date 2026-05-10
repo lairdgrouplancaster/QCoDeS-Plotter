@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from math import log10
+from os import path
 from time import perf_counter
 
 import pyqtgraph as pg
@@ -243,7 +244,7 @@ class plotWidget(qtw.QMainWindow):
         
         
     def __str__(self):
-        filenameStr = get_DB_location().split('\\')[-1]
+        filenameStr = path.basename(get_DB_location())
         fstr = (f"{filenameStr} | " 
                 f"Run ID: {self.ds.run_id} | "
                 f"{self.param.name} ({self.param.label})"

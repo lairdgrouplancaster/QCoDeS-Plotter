@@ -2,6 +2,7 @@ import io
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -16,9 +17,10 @@ from PyQt5 import QtGui
 from PyQt5 import QtWidgets as qtw
 
 from qplot.configuration.config import config
-from qplot.configuration.scripts import sysHandle, try_as_num
+from qplot.configuration.scripts import scripts, sysHandle, try_as_num
 from qplot.configuration.themes import dark, light
 from qplot.windows import main as main_window
+from qplot.windows import _plotWin as plotwin_module
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import _engineering_tick_strings, plot2d
 from qplot.windows._plotWin import plotWidget
@@ -50,6 +52,10 @@ from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 
 
 class TemporaryConfigTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_default_path = config.default_path
@@ -103,6 +109,52 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
 
+    def test_config_repr_returns_readable_json(self):
+        cfg = config()
+
+        self.assertEqual(repr(cfg), str(cfg))
+        self.assertIn('"user_preference"', repr(cfg))
+
+    def test_invalid_config_is_backed_up_and_reset_without_prompt(self):
+        cfg = config()
+        cfg.update("user_preference.theme", "dark")
+
+        invalid_config = cfg.config
+        invalid_config["user_preference"]["theme"] = "missing-theme"
+        with open(config.default_file, "w") as fp:
+            json.dump(invalid_config, fp)
+
+        reloaded = config()
+
+        self.assertEqual(reloaded.get("user_preference.theme"), "light")
+        self.assertTrue(os.path.isfile(reloaded.invalid_config_backup_file))
+        with open(reloaded.invalid_config_backup_file) as fp:
+            backup = json.load(fp)
+        self.assertEqual(backup["user_preference"]["theme"], "missing-theme")
+
+    def test_scripts_without_arguments_shows_command_info(self):
+        old_argv = sys.argv
+        sys.argv = ["qplot-cfg"]
+        try:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                scripts()
+        finally:
+            sys.argv = old_argv
+
+        self.assertIn("Valid Commands", output.getvalue())
+
+    def test_main_window_uses_configured_default_refresh_rate(self):
+        cfg = config()
+        cfg.update("user_preference.default_refresh_rate", 3.5)
+        window = main_window.MainWindow()
+
+        try:
+            self.assertEqual(window.spinBox.value(), 3.5)
+        finally:
+            window.monitor.stop()
+            window.deleteLater()
+
 
 class ToolFunctionTestCase(unittest.TestCase):
     def test_try_as_num_handles_int_float_scientific_and_string(self):
@@ -144,6 +196,32 @@ class ToolFunctionTestCase(unittest.TestCase):
         result = subtract_mean("x", data)
 
         np.testing.assert_array_equal(result["z"], np.array([[-1.0, 1.0], [-1.0, 1.0]]))
+
+    def test_plot_window_title_uses_database_basename(self):
+        old_get_db_location = plotwin_module.get_DB_location
+        plotwin_module.get_DB_location = lambda: "/tmp/qplot/example.db"
+
+        class Dataset:
+            run_id = 12
+
+        class Param:
+            name = "signal"
+            label = "Signal"
+
+        window = plotWidget.__new__(plotWidget)
+        window._guid = "guid"
+        window._dataset_holder = {
+            "guid": {
+                "dataset": Dataset(),
+                "del_timer": None,
+                }
+            }
+        window.param = Param()
+
+        try:
+            self.assertTrue(str(window).startswith("example.db | Run ID: 12"))
+        finally:
+            plotwin_module.get_DB_location = old_get_db_location
 
 
 class SnapToTraceTestCase(unittest.TestCase):
