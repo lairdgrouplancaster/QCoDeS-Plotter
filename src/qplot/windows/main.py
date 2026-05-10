@@ -467,10 +467,12 @@ class MainWindow(qtw.QMainWindow):
         self.RunList = RunList()
         self.RunList.selected.connect(self.updateSelected)
         self.RunList.plot.connect(self.openPlot)
+        self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
         
         # Show all available info on the selected item in self.RunList
         self.infoBox = moreInfo(preview_size=self.preview_size)
         self.infoBox.preview.plotRequested.connect(self.open_preview_plot)
+        self.infoBox.preview.previewsReady.connect(self.RunList.set_run_previews)
         if self.fileTextbox.text() and self.RunList.topLevelItemCount():
             self.infoBox.preview.set_database_runs(
                 self.fileTextbox.text(),
@@ -652,6 +654,7 @@ class MainWindow(qtw.QMainWindow):
         # Slot connectons
         win.closed.connect(self.onClose)
         win.make_ds.connect(self.add_ds_at)
+        win.previewTraceDropRequested.connect(self.add_dropped_preview_to_plot)
         if win.__class__.__name__ == "plot1d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
             win.remove_dataset.connect(self.remove_ds_at)
@@ -1270,6 +1273,152 @@ class MainWindow(qtw.QMainWindow):
                 return
 
         self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+
+
+    @QtCore.pyqtSlot(str, str)
+    def open_run_preview_plot(self, guid, parameter_name):
+        """
+        Open the plot represented by a double-clicked run-table preview image.
+
+        """
+        if not guid:
+            self.show_status("Select a run before opening a preview plot.", 5000)
+            return
+
+        if not self.ds or self.ds.guid != guid:
+            try:
+                if self.dataset_holder.get(guid, 0) == 0:
+                    self.ds = load_by_guid(guid)
+                else:
+                    self.ds = self.dataset_holder[guid]["dataset"]
+            except Exception as err:
+                self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+                return
+
+        self.open_preview_plot(parameter_name)
+
+
+    @QtCore.pyqtSlot(object, str, str)
+    def add_dropped_preview_to_plot(self, target_win, guid, parameter_name):
+        """
+        Add a run-table preview trace to the plot it was dropped onto.
+
+        """
+        self.add_trace_to_plot(target_win, guid, parameter_name)
+
+
+    def add_trace_to_plot(self, target_win, source_guid, parameter_name, param=None):
+        """
+        Adds a plottable 1D parameter to an existing compatible 1D plot.
+
+        This is the shared implementation for the run-table context menu and
+        run-table preview drag/drop.
+
+        """
+        if target_win is None or not hasattr(target_win, "option_boxes"):
+            self.show_status("Drop traces onto a compatible line plot.", 5000)
+            return False
+
+        if param is None:
+            try:
+                param = self._parameter_from_guid(source_guid, parameter_name)
+            except Exception as err:
+                self.show_error(
+                    "Run Load Failed",
+                    f"Could not load run with GUID {source_guid}.",
+                    str(err)
+                    )
+                return False
+
+        if param is None or not getattr(param, "depends_on", ""):
+            self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+            return False
+
+        if len(getattr(param, "depends_on_", ())) != 1:
+            self.show_status("Only 1D measurements can be added as traces.", 5000)
+            return False
+
+        if tuple(param.depends_on_) != tuple(target_win.param.depends_on_):
+            self.show_status(
+                f"Cannot add {parameter_name}; the plot axes do not match.",
+                5000
+                )
+            return False
+
+        from_win = self._plot_window_for_param(source_guid, param)
+        if from_win == target_win:
+            self.show_status(f"Skipped {target_win.label}; source and target are the same.", 5000)
+            return False
+
+        if from_win is None:
+            from_win = self._open_hidden_trace_window(source_guid, param, target_win)
+            if from_win is None:
+                return False
+
+        self.get_1d_wins(target_win)
+        if target_win.option_boxes[-1].isEnabled():
+            box = target_win.option_boxes[-1]
+        else:
+            target_win.add_option_box()
+            box = target_win.option_boxes[-1]
+
+        index = box.option_box.findText(from_win.label)
+        if index < 0:
+            self.show_status(
+                f"Cannot add {parameter_name}; it is already shown or incompatible.",
+                5000
+                )
+            if not from_win.visible:
+                from_win.close()
+            return False
+
+        box.option_box.setCurrentIndex(index)
+        from_win.close()
+        return True
+
+
+    def _parameter_from_guid(self, guid, parameter_name):
+        ds = self._dataset_for_guid(guid)
+        for param in ds.get_parameters():
+            if param.name == parameter_name:
+                return param
+        return None
+
+
+    def _dataset_for_guid(self, guid):
+        if self.dataset_holder.get(guid, 0) != 0:
+            return self.dataset_holder[guid]["dataset"]
+        return load_by_guid(guid)
+
+
+    def _plot_window_for_param(self, guid, param):
+        for win in self.windows:
+            try:
+                if win.ds.guid == guid and win.param.name == param.name:
+                    return win
+            except AttributeError:
+                continue
+        return None
+
+
+    def _open_hidden_trace_window(self, source_guid, param, target_win):
+        before = set(id(win) for win in self.windows)
+        self.openPlot(guid=source_guid, params=[param], show=False)
+
+        for win in reversed(self.windows):
+            if id(win) in before:
+                continue
+            try:
+                if win.ds.guid == source_guid and win.param.name == param.name:
+                    if win.ds.running and not target_win.monitor.isActive():
+                        target_win.monitorIntervalChanged(target_win.spinBox.value())
+                        target_win.toolbarRef.show()
+                    return win
+            except AttributeError:
+                continue
+
+        self.show_status(f"Could not prepare {param.name} for adding to the plot.", 5000)
+        return None
 
 
     def _selected_measurement_params(self, dataset):

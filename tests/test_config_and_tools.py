@@ -24,11 +24,19 @@ from qplot.windows._window_controls import (
     add_confirmation_options,
     add_restore_defaults_option,
     )
+from qplot.windows._dragdrop import (
+    make_run_preview_mime,
+    preview_drop_is_compatible,
+    run_preview_payload_from_mime,
+    )
 from qplot.windows._widgets.operations import operations_options_1d
 from qplot.windows._widgets.toolbar import QDock_context
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
+    DraggablePreviewImageLabel,
+    PREVIEW_BACKGROUND_COLOR,
     PREVIEW_SIZE,
+    PREVIEW_SELECTED_PROPERTY,
     PreviewTab,
     generate_run_previews,
     render_heatmap_preview,
@@ -512,39 +520,240 @@ class RunListTooltipTestCase(unittest.TestCase):
                 }
 
             self.assertEqual([item.guid for item in run_list.watching], ["unfinished-guid"])
-            self.assertEqual(items["unfinished-guid"].text(1), "1")
+            self.assertEqual(items["unfinished-guid"].text(1), "")
+            self.assertEqual(items["unfinished-guid"].data(1, QtCore.Qt.UserRole), 1)
+            self.assertIsInstance(
+                run_list.itemWidget(items["unfinished-guid"], 1),
+                treeWidgets.RunPreviewCell
+                )
+            self.assertEqual(
+                len(
+                    run_list.itemWidget(
+                        items["unfinished-guid"], 1
+                        ).findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+                    ),
+                1
+                )
             self.assertEqual(items["unfinished-guid"].text(2), r"10 = 10")
             self.assertEqual(items["unfinished-guid"].text(4), "10.0%")
             self.assertRegex(items["unfinished-guid"].text(5), r"^\d+\.\d s$")
             self.assertEqual(items["unfinished-guid"].text(6), "100 KB")
-            self.assertEqual(items["finished-guid"].text(1), "2")
+            self.assertEqual(items["finished-guid"].text(1), "")
+            self.assertEqual(items["finished-guid"].data(1, QtCore.Qt.UserRole), 2)
+            self.assertEqual(
+                len(
+                    run_list.itemWidget(
+                        items["finished-guid"], 1
+                        ).findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+                    ),
+                2
+                )
             self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 × 100")
             self.assertEqual(items["finished-guid"].text(4), "✓")
             self.assertEqual(items["finished-guid"].text(5), "10.0 s")
             self.assertEqual(
-                items["finished-guid"].textAlignment(0),
-                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                int(items["finished-guid"].textAlignment(0)),
+                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
                 )
             self.assertEqual(
-                items["finished-guid"].textAlignment(2),
-                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                int(items["finished-guid"].textAlignment(2)),
+                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
                 )
             self.assertEqual(
-                items["finished-guid"].textAlignment(4),
-                QtCore.Qt.AlignCenter
+                int(items["finished-guid"].textAlignment(4)),
+                int(QtCore.Qt.AlignCenter)
                 )
             self.assertEqual(
-                items["finished-guid"].textAlignment(5),
-                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                int(items["finished-guid"].textAlignment(5)),
+                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
                 )
             self.assertEqual(
-                items["finished-guid"].textAlignment(6),
-                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                int(items["finished-guid"].textAlignment(6)),
+                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
                 )
-            self.assertIn("<td>Measure</td><td>&nbsp;</td><td>(y)</td>", items["unfinished-guid"].toolTip(0))
-            self.assertIn("Complete", items["finished-guid"].toolTip(0))
+            self.assertIn("Measure</td>", items["unfinished-guid"].toolTip(0))
+            self.assertIn("(y)</td>", items["unfinished-guid"].toolTip(0))
+            self.assertNotIn("Complete", items["finished-guid"].toolTip(0))
+
+            run_list.sortItems(1, QtCore.Qt.DescendingOrder)
+            self.assertEqual(
+                [run_list.topLevelItem(row).guid for row in range(run_list.topLevelItemCount())],
+                ["finished-guid", "unfinished-guid"]
+                )
         finally:
             treeWidgets.isfile = old_isfile
+
+    def test_run_table_measurement_previews_use_preview_metadata(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            requested = []
+            run_list.previewPlotRequested.connect(
+                lambda guid, parameter: requested.append((guid, parameter))
+                )
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "result_table_name": "results_1",
+                    "guid": "run-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal", "other"],
+                    "result_count": 2,
+                    "expected_results": 2,
+                    "storage_bytes": 2048,
+                    },
+                })
+
+            item = run_list.topLevelItem(0)
+            cell = run_list.itemWidget(item, 1)
+            self.assertEqual(
+                len(cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")),
+                2
+                )
+
+            run_list.set_run_previews("run-guid", [{
+                "parameter": "signal",
+                "axes": ["x"],
+                "title": "signal vs x",
+                "image": render_sparkline_preview(
+                    np.array([0, 1], dtype=float),
+                    np.array([1, 2], dtype=float),
+                    size=40,
+                    ),
+                }])
+
+            images = cell.findChildren(qtw.QLabel, "measurementPreviewImage")
+            placeholders = cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+            self.assertEqual(len(images), 1)
+            self.assertEqual(len(placeholders), 1)
+            self.assertIsInstance(images[0], DraggablePreviewImageLabel)
+            self.assertEqual(images[0].guid, "run-guid")
+            self.assertEqual(images[0].parameter, "signal")
+            self.assertEqual(images[0].axes, ["x"])
+            self.assertEqual(images[0].toolTip(), "signal vs x")
+            self.assertEqual(images[0].width(), treeWidgets.MEASUREMENT_PREVIEW_SIZE)
+            self.assertEqual(images[0].height(), treeWidgets.MEASUREMENT_PREVIEW_SIZE)
+
+            event = QtGui.QMouseEvent(
+                QtCore.QEvent.MouseButtonDblClick,
+                QtCore.QPointF(5, 5),
+                QtCore.Qt.LeftButton,
+                QtCore.Qt.LeftButton,
+                QtCore.Qt.NoModifier,
+                )
+            qtw.QApplication.sendEvent(images[0], event)
+
+            self.assertEqual(requested, [("run-guid", "signal")])
+            self.assertIs(run_list.currentItem(), item)
+        finally:
+            treeWidgets.isfile = old_isfile
+
+
+class RunPreviewDragDropTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
+
+    def test_run_preview_drag_payload_round_trips_and_checks_axes(self):
+        payload = run_preview_payload_from_mime(
+            make_run_preview_mime("run-guid", "signal", ["x"])
+            )
+
+        self.assertEqual(payload, {
+            "guid": "run-guid",
+            "parameter": "signal",
+            "axes": ["x"],
+            })
+        self.assertTrue(preview_drop_is_compatible(("x",), payload))
+        self.assertFalse(preview_drop_is_compatible(("y",), payload))
+        self.assertFalse(preview_drop_is_compatible(("x", "y"), payload))
+        self.assertIsNone(run_preview_payload_from_mime(QtCore.QMimeData()))
+
+    def test_add_trace_to_plot_uses_existing_add_path(self):
+        class Param:
+            def __init__(self, name, depends_on):
+                self.name = name
+                self.depends_on = depends_on
+                self.depends_on_ = (depends_on,)
+
+        class Dataset:
+            def __init__(self, guid):
+                self.guid = guid
+                self.running = False
+
+        class Combo:
+            def __init__(self, items):
+                self.items = items
+                self.index = None
+
+            def findText(self, text):
+                try:
+                    return self.items.index(text)
+                except ValueError:
+                    return -1
+
+            def setCurrentIndex(self, index):
+                self.index = index
+
+        class Box:
+            def __init__(self, items):
+                self.option_box = Combo(items)
+
+            def isEnabled(self):
+                return True
+
+        class Window:
+            def __init__(self, guid, param, label):
+                self.ds = Dataset(guid)
+                self.param = param
+                self.label = label
+                self.visible = True
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Harness:
+            _plot_window_for_param = main_window.MainWindow._plot_window_for_param
+            add_trace_to_plot = main_window.MainWindow.add_trace_to_plot
+
+            def __init__(self):
+                self.status_messages = []
+                self.errors = []
+
+            def show_status(self, message, timeout=5000):
+                self.status_messages.append((message, timeout))
+
+            def show_error(self, title, message, details=None):
+                self.errors.append((title, message, details))
+
+            def get_1d_wins(self, win):
+                pass
+
+        source_param = Param("signal", "x")
+        target_param = Param("target", "x")
+        source = Window("source-guid", source_param, "ID:1 signal")
+        target = Window("target-guid", target_param, "ID:2 target")
+        target.option_boxes = [Box([source.label])]
+
+        harness = Harness()
+        harness.windows = [target, source]
+
+        added = harness.add_trace_to_plot(
+            target,
+            "source-guid",
+            "signal",
+            param=source_param
+            )
+
+        self.assertTrue(added)
+        self.assertEqual(target.option_boxes[0].option_box.index, 0)
+        self.assertTrue(source.closed)
+        self.assertEqual(harness.status_messages, [])
 
 
 class RunSizeTestCase(unittest.TestCase):
@@ -874,6 +1083,17 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(heatmap.width(), PREVIEW_SIZE)
         self.assertEqual(heatmap.height(), PREVIEW_SIZE)
 
+    def test_sparkline_preview_uses_subtle_non_white_background(self):
+        sparkline = render_sparkline_preview(
+            np.array([], dtype=float),
+            np.array([], dtype=float),
+            size=20,
+            )
+
+        background = QtGui.QColor(sparkline.pixel(0, 0))
+        self.assertEqual(background, QtGui.QColor(PREVIEW_BACKGROUND_COLOR))
+        self.assertNotEqual(background, QtGui.QColor("white"))
+
     def test_heatmap_preview_keeps_x_horizontal_and_y_vertical(self):
         heatmap = render_heatmap_preview(
             np.array([0, 1, 0, 1], dtype=float),
@@ -972,6 +1192,30 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             self.assertEqual(labels[0].toolTip(), title)
             self.assertEqual(labels[0].width(), 150)
             self.assertEqual(labels[0].height(), 150)
+            self.assertIsInstance(labels[0], DraggablePreviewImageLabel)
+
+    def test_preview_tab_images_carry_drag_metadata_for_current_run(self):
+        preview = PreviewTab(preview_size=100)
+        preview.current_guid = "run-guid"
+        preview._show_previews([
+            {
+                "parameter": "signal",
+                "axes": ["x"],
+                "title": "signal vs x",
+                "image": render_sparkline_preview(
+                    np.array([0, 1], dtype=float),
+                    np.array([1, 2], dtype=float),
+                    size=100,
+                    ),
+                },
+            ])
+
+        image = preview.findChild(qtw.QLabel, "previewImage")
+
+        self.assertIsInstance(image, DraggablePreviewImageLabel)
+        self.assertEqual(image.guid, "run-guid")
+        self.assertEqual(image.parameter, "signal")
+        self.assertEqual(image.axes, ["x"])
 
     def test_double_clicking_preview_requests_matching_parameter_plot(self):
         preview = PreviewTab(preview_size=100)
@@ -1001,6 +1245,54 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         qtw.QApplication.sendEvent(image, event)
 
         self.assertEqual(requested, ["dmm_v2"])
+
+    def test_clicking_preview_marks_it_selected(self):
+        preview = PreviewTab(preview_size=80)
+        preview._show_previews([
+            {
+                "parameter": "signal",
+                "title": "signal vs x",
+                "image": render_sparkline_preview(
+                    np.array([0, 1], dtype=float),
+                    np.array([1, 2], dtype=float),
+                    size=80,
+                    ),
+                },
+            {
+                "parameter": "image",
+                "title": "image vs x and y",
+                "image": render_heatmap_preview(
+                    np.array([0, 1, 0, 1], dtype=float),
+                    np.array([0, 0, 1, 1], dtype=float),
+                    np.array([1, 2, 3, 4], dtype=float),
+                    size=80,
+                    ),
+                },
+            ])
+
+        images = preview.findChildren(qtw.QLabel, "previewImage")
+        first_press = QtGui.QMouseEvent(
+            QtCore.QEvent.MouseButtonPress,
+            QtCore.QPointF(10, 10),
+            QtCore.Qt.LeftButton,
+            QtCore.Qt.LeftButton,
+            QtCore.Qt.NoModifier,
+            )
+        second_press = QtGui.QMouseEvent(
+            QtCore.QEvent.MouseButtonPress,
+            QtCore.QPointF(10, 10),
+            QtCore.Qt.LeftButton,
+            QtCore.Qt.LeftButton,
+            QtCore.Qt.NoModifier,
+            )
+
+        qtw.QApplication.sendEvent(images[0], first_press)
+        self.assertTrue(images[0].property(PREVIEW_SELECTED_PROPERTY))
+        self.assertFalse(images[1].property(PREVIEW_SELECTED_PROPERTY))
+
+        qtw.QApplication.sendEvent(images[1], second_press)
+        self.assertFalse(images[0].property(PREVIEW_SELECTED_PROPERTY))
+        self.assertTrue(images[1].property(PREVIEW_SELECTED_PROPERTY))
 
     def test_generate_run_previews_reads_1d_and_2d_sql_data(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
@@ -1053,6 +1345,10 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual([preview["parameter"] for preview in previews], [
             "signal_1d",
             "signal_2d",
+            ])
+        self.assertEqual([preview["axes"] for preview in previews], [
+            ["x"],
+            ["x", "y"],
             ])
         self.assertTrue(all(preview["image"].width() == PREVIEW_SIZE for preview in previews))
 

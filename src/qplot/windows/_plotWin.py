@@ -24,9 +24,12 @@ from ._widgets import (
     operations_widget,
     )
 from ._shortcuts import standard_key_sequences
+from ._dragdrop import (
+    preview_drop_is_compatible,
+    run_preview_payload_from_mime,
+    )
 from ._window_controls import (
     add_confirmation_options,
-    add_restore_defaults_option,
     add_standard_window_controls,
     )
 
@@ -57,6 +60,7 @@ class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
     end_wait = QtCore.pyqtSignal()
     make_ds = QtCore.pyqtSignal([str])
+    previewTraceDropRequested = QtCore.pyqtSignal(object, str, str)
     
     _label_width = 95 #About the size of 3 s.f. scientific
     _toggle_shortcuts = {
@@ -120,6 +124,7 @@ class plotWidget(qtw.QMainWindow):
         self.layout = qtw.QVBoxLayout()
         
         self.widget = pg.GraphicsLayoutWidget()
+        self._install_preview_drop_target()
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
         self.vb.setDefaultPadding(0)
@@ -161,6 +166,80 @@ class plotWidget(qtw.QMainWindow):
         #start refresh cycle if live
         if self.ds.running: 
             self.monitor.start((int(self.spinBox.value() * 1000)))
+
+
+    def _install_preview_drop_target(self):
+        self.setAcceptDrops(True)
+        self.widget.setAcceptDrops(True)
+        self.widget.installEventFilter(self)
+
+        viewport = self.widget.viewport() if hasattr(self.widget, "viewport") else None
+        if viewport is not None:
+            viewport.setAcceptDrops(True)
+            viewport.installEventFilter(self)
+
+
+    def eventFilter(self, source, event):
+        if event.type() in (
+            QtCore.QEvent.DragEnter,
+            QtCore.QEvent.DragMove,
+            QtCore.QEvent.Drop,
+            ):
+            if self._handle_preview_drag_drop(event):
+                return True
+
+        return super().eventFilter(source, event)
+
+
+    def dragEnterEvent(self, event):
+        if self._handle_preview_drag_drop(event):
+            return
+        super().dragEnterEvent(event)
+
+
+    def dragMoveEvent(self, event):
+        if self._handle_preview_drag_drop(event):
+            return
+        super().dragMoveEvent(event)
+
+
+    def dropEvent(self, event):
+        if self._handle_preview_drag_drop(event):
+            return
+        super().dropEvent(event)
+
+
+    def _handle_preview_drag_drop(self, event):
+        payload = run_preview_payload_from_mime(event.mimeData())
+        if payload is None:
+            return False
+
+        if not self.accepts_preview_trace_drop(payload):
+            event.ignore()
+            return True
+
+        if event.type() == QtCore.QEvent.Drop:
+            event.setDropAction(QtCore.Qt.CopyAction)
+            event.accept()
+            self.previewTraceDropRequested.emit(
+                self,
+                payload["guid"],
+                payload["parameter"]
+                )
+            return True
+
+        event.acceptProposedAction()
+        return True
+
+
+    def accepts_preview_trace_drop(self, payload):
+        if not hasattr(self, "option_boxes"):
+            return False
+
+        return preview_drop_is_compatible(
+            getattr(self.param, "depends_on_", ()),
+            payload
+            )
         
         
     def __str__(self):
@@ -198,18 +277,23 @@ class plotWidget(qtw.QMainWindow):
         box.exec_()
 
 
-    def register_shortcut(self, action, shortcut : str, status_tip : str = None):
+    def register_shortcut(self, action, shortcut, status_tip : str = None):
         """
         Registers a QAction shortcut on the plot window.
 
         """
-        action.setShortcut(shortcut)
+        if isinstance(shortcut, (list, tuple)):
+            action.setShortcuts(shortcut)
+            shortcut_text = shortcut[0].toString(QKeySequence.NativeText)
+        else:
+            action.setShortcut(shortcut)
+            shortcut_text = QKeySequence(shortcut).toString(QKeySequence.NativeText)
         action.setShortcutContext(QtCore.Qt.WindowShortcut)
         if hasattr(action, "setShortcutVisibleInContextMenu"):
             action.setShortcutVisibleInContextMenu(True)
         if status_tip:
             action.setStatusTip(status_tip)
-            action.setToolTip(f"{status_tip} ({shortcut})")
+            action.setToolTip(f"{status_tip} ({shortcut_text})")
         if action not in self.actions():
             self.addAction(action)
 
@@ -468,8 +552,6 @@ class plotWidget(qtw.QMainWindow):
         add_standard_window_controls(self)
 
         options_menu = menu.addMenu("&Options")
-        add_restore_defaults_option(self, options_menu)
-        options_menu.addSeparator()
         add_confirmation_options(self, options_menu)
         
         main_menu = menu.addMenu("&View")

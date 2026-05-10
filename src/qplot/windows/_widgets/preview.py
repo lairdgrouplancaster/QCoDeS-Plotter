@@ -6,11 +6,15 @@ from PyQt5 import QtCore, QtGui, QtWidgets as qtw
 
 from qplot.tools.general import data2matrix
 
+from .._dragdrop import make_run_preview_mime
+
 
 PREVIEW_SIZE = 200
+PREVIEW_BACKGROUND_COLOR = "#f4f7fb"
 PREVIEW_HEIGHT_PADDING = 48
 COLLAPSE_MINIMUM_RATIO = 0.25
 MAX_PREVIEW_ROWS = 250000
+PREVIEW_SELECTED_PROPERTY = "previewSelected"
 VIRIDIS_STOPS = np.asarray([
     (68, 1, 84),
     (72, 35, 116),
@@ -32,6 +36,7 @@ class PreviewTab(qtw.QWidget):
 
     """
     plotRequested = QtCore.pyqtSignal(str)
+    previewsReady = QtCore.pyqtSignal(str, object)
 
     def __init__(self, *args, preview_size=PREVIEW_SIZE):
         super().__init__(*args)
@@ -217,6 +222,7 @@ class PreviewTab(qtw.QWidget):
             self.errors[guid] = str(error)
         else:
             self.cache[guid] = previews
+            self.previewsReady.emit(guid, previews)
 
         if guid == self.current_guid:
             if error:
@@ -254,7 +260,7 @@ class PreviewTab(qtw.QWidget):
             return
 
         for preview in previews:
-            card = PreviewCard(preview, self.preview_size, self)
+            card = PreviewCard(preview, self.preview_size, self.current_guid, self)
             card.plotRequested.connect(self.plotRequested)
             self.content_layout.addWidget(card)
         self.content_layout.addStretch()
@@ -263,11 +269,15 @@ class PreviewTab(qtw.QWidget):
 class PreviewCard(qtw.QWidget):
     plotRequested = QtCore.pyqtSignal(str)
 
-    def __init__(self, preview, preview_size, *args):
+    def __init__(self, preview, preview_size, guid=None, *args):
         super().__init__(*args)
         self.parameter = preview.get("parameter", "")
 
-        image = PreviewImageLabel(self.parameter)
+        image = DraggablePreviewImageLabel(
+            guid,
+            self.parameter,
+            preview.get("axes") or [],
+            )
         image.setObjectName("previewImage")
         image.setFixedSize(preview_size, preview_size)
         image.setAlignment(QtCore.Qt.AlignCenter)
@@ -287,6 +297,52 @@ class PreviewImageLabel(qtw.QLabel):
     def __init__(self, parameter, *args):
         super().__init__(*args)
         self.parameter = parameter
+        self._selected = False
+        self.setFocusPolicy(QtCore.Qt.ClickFocus)
+        self.setProperty(PREVIEW_SELECTED_PROPERTY, False)
+
+
+    def set_selected(self, selected):
+        self._selected = bool(selected)
+        self.setProperty(PREVIEW_SELECTED_PROPERTY, self._selected)
+        self.update()
+
+
+    def select_preview(self):
+        scope = self._selection_scope()
+        if scope is not None:
+            for label in scope.findChildren(PreviewImageLabel):
+                if label is not self:
+                    label.set_selected(False)
+        self.set_selected(True)
+
+
+    def _selection_scope(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if isinstance(parent, (PreviewTab, qtw.QTreeWidget)):
+                return parent
+            parent = parent.parentWidget()
+        return self.window()
+
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self.parameter:
+            self.select_preview()
+        super().mousePressEvent(event)
+
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        if not self._selected:
+            return
+
+        painter = QtGui.QPainter(self)
+        pen = QtGui.QPen(self.palette().color(QtGui.QPalette.Highlight))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
 
     def mouseDoubleClickEvent(self, event):
@@ -296,6 +352,53 @@ class PreviewImageLabel(qtw.QLabel):
             return
 
         super().mouseDoubleClickEvent(event)
+
+
+class DraggablePreviewImageLabel(PreviewImageLabel):
+    def __init__(self, guid, parameter, axes=None, *args):
+        super().__init__(parameter, *args)
+        self.guid = guid or ""
+        self.axes = list(axes or [])
+        self._drag_start_pos = None
+        if self.guid:
+            self.setCursor(QtCore.Qt.OpenHandCursor)
+
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+        super().mousePressEvent(event)
+
+
+    def mouseMoveEvent(self, event):
+        if not (
+            event.buttons() & QtCore.Qt.LeftButton
+            and self._drag_start_pos is not None
+            and self.guid
+            and self.parameter
+            ):
+            super().mouseMoveEvent(event)
+            return
+
+        distance = (event.pos() - self._drag_start_pos).manhattanLength()
+        if distance < qtw.QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+
+        self._start_drag()
+        event.accept()
+
+
+    def _start_drag(self):
+        drag = QtGui.QDrag(self)
+        drag.setMimeData(make_run_preview_mime(self.guid, self.parameter, self.axes))
+
+        pixmap = self.pixmap()
+        if pixmap is not None and not pixmap.isNull():
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(QtCore.QPoint(pixmap.width() // 2, pixmap.height() // 2))
+
+        drag.exec_(QtCore.Qt.CopyAction)
 
 
 class PreviewWorker(QtCore.QRunnable):
@@ -364,6 +467,7 @@ def _preview_1d(cursor, table_name, metadata, parameter, axis, size):
     image = render_sparkline_preview(x, y, size=size)
     return {
         "parameter": parameter,
+        "axes": [axis],
         "title": _preview_title(parameter, [axis]),
         "image": image,
         }
@@ -374,6 +478,7 @@ def _preview_2d(cursor, table_name, metadata, parameter, axes, size):
     image = render_heatmap_preview(x, y, z, size=size)
     return {
         "parameter": parameter,
+        "axes": list(axes),
         "title": _preview_title(parameter, axes),
         "image": image,
         }
@@ -394,7 +499,7 @@ def _preview_title(parameter, axes):
 
 def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
     image = QtGui.QImage(size, size, QtGui.QImage.Format_RGB32)
-    image.fill(QtGui.QColor("white"))
+    image.fill(QtGui.QColor(PREVIEW_BACKGROUND_COLOR))
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -440,7 +545,7 @@ def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
 
 def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE):
     image = QtGui.QImage(size, size, QtGui.QImage.Format_RGB32)
-    image.fill(QtGui.QColor("white"))
+    image.fill(QtGui.QColor(PREVIEW_BACKGROUND_COLOR))
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)

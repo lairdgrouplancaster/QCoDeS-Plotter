@@ -30,22 +30,21 @@ Installation
 Using a virtual environment is recommended. Choose one of the two installation
 methods below.
 
-On Windows, replace:
-
-```console
-source .venv/bin/activate
-```
-
-with:
-
-```console
-.venv\Scripts\activate
-```
-
 ### Option 1: Install From GitHub
 
 Use this if you want to install the current GitHub version without editing the
-source code.
+source code. This requires Git to be installed.
+
+#### Windows
+
+```console
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+python -m pip install -U pip
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
+```
+
+#### Mac / Linux
 
 ```console
 python3 -m venv .venv
@@ -54,11 +53,21 @@ python -m pip install -U pip
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 ```
 
-This requires Git to be installed.
-
 ### Option 2: Install A Local Checkout
 
 Use this if you have cloned this repository and plan to edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
+
+#### Windows
+
+```console
+cd QCoDeS-Plotter
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+python -m pip install -U pip
+python -m pip install -e .
+```
+
+#### Mac / Linux
 
 ```console
 cd QCoDeS-Plotter
@@ -90,20 +99,25 @@ Opening A Database
 
 1. Open the app.
 2. Drag a QCoDeS `.db` file onto the database path field, or select
-   `File -> Load`.
+   `File -> Load Database...`.
 3. Choose a QCoDeS `.db` database file if using the file menu.
-   Previously loaded databases are available from `File -> Load Recent Database`.
+   Previously loaded databases are available from `File -> Load Last` and
+   `File -> Load Recent Database`.
 4. Select a run from the central table.
 5. Use `Run` and `Measurement` to plot a specific measurement, or set
    `Measurement` to `*` to plot all measurements for that run.
+   The save button beside the plot button exports the requested measurement
+   data to CSV.
 
-The run table includes measurement count, setpoint count, start time, completion
-progress, duration, and size for each run. It can be sorted by clicking
-a column header. Selecting a run shows details in the lower pane:
+The run table includes measurement previews, setpoint count, start time,
+completion progress, duration, and size for each run. It can be sorted by
+clicking a column header. Selecting a run shows details in the lower pane:
 
 * `Overview` summarises run properties, data point count, GUID, and parameters.
 * `Sweep parameters` shows a grouped table of set parameters and measure
   parameters with labels, units, sweep values, delays, and instruments.
+* `Preview` shows generated thumbnails for 1D and 2D measurements. Double-click
+  a preview to open that plot.
 * `Metadata` shows metadata with long values shortened and available as tooltips.
 * `Raw key-value` keeps the full nested structure for detailed inspection.
 
@@ -151,6 +165,9 @@ Use the left panel or the run table `Add _ to _` context menu to add another
 line to an existing plot. Compatible plots are matched by independent variable
 name.
 
+Compatible 1D preview thumbnails can also be dragged from the run table or the
+`Preview` tab onto an existing line plot to add that trace.
+
 The source window for an added line can be closed after the line is added. Live
 updates continue at the same refresh rate.
 
@@ -183,6 +200,8 @@ General shortcuts:
 
 | Shortcut | Action |
 | --- | --- |
+| `Ctrl+L` | Load a database |
+| `Ctrl+Shift+L` | Load the last database |
 | `R` | Refresh the current window |
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
@@ -209,6 +228,7 @@ Plot-window shortcuts:
 | `Ctrl+Alt+C` | Show or hide the coordinate toolbar |
 | `Ctrl+Alt+A` | Show or hide the axis control panel |
 | `Ctrl+Alt+O` | Show or hide the operations dock |
+| `Ctrl+Alt+S` | Snap the 1D coordinate readout to the nearest trace point |
 
 Heatmap shortcuts:
 

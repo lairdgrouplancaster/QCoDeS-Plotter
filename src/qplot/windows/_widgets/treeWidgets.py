@@ -10,7 +10,11 @@ from qplot.datahandling import (
     get_runs_via_sql,
     get_run_status,
     )
-from .preview import COLLAPSE_MINIMUM_RATIO, PreviewTab
+from .preview import (
+    COLLAPSE_MINIMUM_RATIO,
+    DraggablePreviewImageLabel,
+    PreviewTab,
+    )
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -24,6 +28,8 @@ from .._shortcuts import standard_key_sequences
 
 COPY_SELECTION_SHORTCUTS = standard_key_sequences(QtGui.QKeySequence.Copy, ["Ctrl+C"])
 COPY_CELL_SHORTCUTS = [QtGui.QKeySequence("Ctrl+Shift+C")]
+MEASUREMENT_PREVIEW_SIZE = 22
+MEASUREMENT_PREVIEW_SPACING = 3
 
 
 def copy_action(label, shortcuts, slot, parent):
@@ -232,6 +238,90 @@ def measured_parameter_count(metadata):
     return len(metadata.get("measure_parameters") or [])
 
 
+class RunPreviewCell(qtw.QWidget):
+    plotRequested = QtCore.pyqtSignal(str, str)
+
+    def __init__(self, guid, count, parent=None, icon_size=MEASUREMENT_PREVIEW_SIZE):
+        super().__init__(parent)
+        self.guid = guid
+        self.placeholder_count = max(0, int(count or 0))
+        self.icon_size = int(icon_size)
+
+        self.content_layout = qtw.QHBoxLayout()
+        self.content_layout.setContentsMargins(2, 0, 2, 0)
+        self.content_layout.setSpacing(MEASUREMENT_PREVIEW_SPACING)
+        self.content_layout.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        self.setLayout(self.content_layout)
+        self.setFixedHeight(self.icon_size + 6)
+        self.show_placeholders()
+
+
+    def show_placeholders(self, count=None):
+        self._clear_layout()
+        placeholder_count = self.placeholder_count if count is None else max(0, int(count))
+        for _ in range(placeholder_count):
+            self.content_layout.addWidget(self._placeholder_label())
+        self.content_layout.addStretch()
+
+
+    def show_previews(self, previews):
+        self._clear_layout()
+
+        preview_count = 0
+        for preview in previews or []:
+            image = preview.get("image")
+            if image is None:
+                continue
+
+            label = DraggablePreviewImageLabel(
+                self.guid,
+                preview.get("parameter", ""),
+                preview.get("axes") or [],
+                )
+            label.setObjectName("measurementPreviewImage")
+            label.setFixedSize(self.icon_size, self.icon_size)
+            label.setAlignment(QtCore.Qt.AlignCenter)
+            label.setToolTip(preview.get("title", ""))
+            label.setPixmap(
+                QtGui.QPixmap.fromImage(image).scaled(
+                    self.icon_size,
+                    self.icon_size,
+                    QtCore.Qt.KeepAspectRatio,
+                    QtCore.Qt.SmoothTransformation,
+                    )
+                )
+            label.plotRequested.connect(self._emit_plot_requested)
+            self.content_layout.addWidget(label)
+            preview_count += 1
+
+        for _ in range(max(0, self.placeholder_count - preview_count)):
+            self.content_layout.addWidget(self._placeholder_label())
+        self.content_layout.addStretch()
+
+
+    def _placeholder_label(self):
+        label = qtw.QLabel()
+        label.setObjectName("measurementPreviewPlaceholder")
+        label.setFixedSize(self.icon_size, self.icon_size)
+        label.setFrameShape(qtw.QFrame.Box)
+        label.setFrameShadow(qtw.QFrame.Plain)
+        label.setLineWidth(1)
+        return label
+
+
+    def _emit_plot_requested(self, parameter):
+        self.plotRequested.emit(self.guid, parameter)
+
+
+    def _clear_layout(self):
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+
 class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
     """
     Paints values containing " = " with the equals signs vertically aligned.
@@ -354,17 +444,20 @@ class RunList(qtw.QTreeWidget):
 
     selected = QtCore.pyqtSignal([str])
     plot = QtCore.pyqtSignal([str])
+    previewPlotRequested = QtCore.pyqtSignal(str, str)
     _shortcut_keys = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     
     def __init__(self, *args, initalize=False, **kargs):
         super().__init__(*args, **kargs)
         
         self.watching = []
+        self.preview_cells = {}
         
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
         self.setRootIsDecorated(False)
         self.setIndentation(0)
+        self.setUniformRowHeights(False)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.setItemDelegateForColumn(
             self.cols.index("Setpoints"),
@@ -419,8 +512,9 @@ class RunList(qtw.QTreeWidget):
             if not metadata["run_timestamp"]:
                 continue
             # Add data display to array
-            
-            arr.append(str(measured_parameter_count(metadata))) #measured
+
+            measurement_count = measured_parameter_count(metadata)
+            arr.append("") #measured previews; count remains the hidden sort key
             arr.append(format_point_count(metadata)) #points
             arr.append(format_timestamp(metadata["run_timestamp"])) #started
             arr.append(format_complete_cell(metadata)) #complete
@@ -450,7 +544,11 @@ class RunList(qtw.QTreeWidget):
             item.setData(
                 self.cols.index("Measurements"),
                 QtCore.Qt.UserRole,
-                measured_parameter_count(metadata)
+                measurement_count
+                )
+            item.setSizeHint(
+                self.cols.index("Measurements"),
+                QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6)
                 )
             item.setData(
                 self.cols.index("Setpoints"),
@@ -481,6 +579,7 @@ class RunList(qtw.QTreeWidget):
             
             # Add to top
             self.addTopLevelItem(item)
+            self._set_measurement_preview_cell(item, measurement_count)
             
             # If unfinished run
             if append_to_watching:
@@ -488,6 +587,42 @@ class RunList(qtw.QTreeWidget):
             
         self.setSortingEnabled(True)
         self._resize_columns()
+
+
+    def clear(self):
+        self.preview_cells = {}
+        super().clear()
+
+
+    def _set_measurement_preview_cell(self, item, measurement_count):
+        column = self.cols.index("Measurements")
+        cell = RunPreviewCell(item.guid, measurement_count, self)
+        cell.plotRequested.connect(self._preview_plot_requested)
+        self.preview_cells[item.guid] = cell
+        self.setItemWidget(item, column, cell)
+
+
+    @QtCore.pyqtSlot(str, object)
+    def set_run_previews(self, guid, previews):
+        cell = self.preview_cells.get(guid)
+        if cell is not None:
+            cell.show_previews(previews)
+
+
+    @QtCore.pyqtSlot(str, str)
+    def _preview_plot_requested(self, guid, parameter):
+        item = self._item_for_guid(guid)
+        if item is not None:
+            self.setCurrentItem(item)
+        self.previewPlotRequested.emit(guid, parameter)
+
+
+    def _item_for_guid(self, guid):
+        for row in range(self.topLevelItemCount()):
+            item = self.topLevelItem(row)
+            if item is not None and item.guid == guid:
+                return item
+        return None
 
 
     def _resize_columns(self):
@@ -808,42 +943,16 @@ class RunList(qtw.QTreeWidget):
         if main is None:
             return
 
-        from_win = None
-        
-        # Find window with param from open windows.
-        for win in main.windows:
-            if win.ds.guid == self.selectedItems()[0].guid and win.param == param:
-                if target_win == win:
-                    main.show_status(f"Skipped {target_win.label}; source and target are the same.", 5000)
-                    return
-                from_win = win
-                break
-           
-        # If param window not found, produce new window with param to load and 
-        # fectch data from
-        if not from_win:
+        selected = self.selectedItems()
+        if not selected:
+            return
 
-            main.openPlot(params=[param], show=False)
-            from_win = main.windows[-1] # Due to single thread, should be right
-            
-            # Start monitor for live plotting
-            if from_win.ds.running:
-                if not target_win.monitor.isActive():
-                    target_win.monitorIntervalChanged(target_win.spinBox.value())
-                    target_win.toolbarRef.show()
-            
-        # Update the display on target_win to show new plot
-        if target_win.option_boxes[-1].isEnabled():
-            box = target_win.option_boxes[-1]
-        else:
-            target_win.add_option_box()
-            box = target_win.option_boxes[-1]
-        
-        # Set box text, this also calls functions to add the plot
-        index = box.option_box.findText(from_win.label)
-        box.option_box.setCurrentIndex(index)
-        
-        from_win.close()
+        main.add_trace_to_plot(
+            target_win,
+            selected[0].guid,
+            param.name,
+            param=param
+            )
         
      
     def add_all(self, target_win, param_dict):
