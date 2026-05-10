@@ -180,17 +180,17 @@ When multiple lines use different y axes:
 Heatmaps
 --------
 
-Heatmaps support 1D sweep extraction:
+Heatmaps support 1D cut extraction:
 
-* Right-click the heatmap and select `Plot Horizontal Sweep` or
-  `Plot Vertical Sweep`.
-* A sweep window opens, with a cursor shown on the heatmap.
-* Move the sweep position with the sweep window slider or by dragging the cursor
+* Right-click the heatmap and select `Plot Horizontal Cut` or
+  `Plot Vertical Cut`.
+* A cut window opens, with a cursor shown on the heatmap.
+* Move the cut position with the cut window slider or by dragging the cursor
   on the heatmap.
-* Switch the sweep and fixed parameters with the `x axis` and `fixed parameter`
+* Switch the cut and fixed parameters with the `x axis` and `fixed parameter`
   dropdowns.
-* Sweep plots are live-data compatible.
-* Sweep plots can be added to compatible 1D plots when their x axis matches the
+* Cut plots are live-data compatible.
+* Cut plots can be added to compatible 1D plots when their x axis matches the
   1D plot's independent variable.
 
 Keyboard Shortcuts
@@ -235,8 +235,8 @@ Heatmap shortcuts:
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+Shift+C` | Autoscale the colour range |
-| `Ctrl+Shift+H` | Open a horizontal sweep |
-| `Ctrl+Shift+V` | Open a vertical sweep |
+| `Ctrl+Shift+H` | Open a horizontal cut |
+| `Ctrl+Shift+V` | Open a vertical cut |
 
 Dynamic context menu entries are numbered or underlined. Once the menu is open,
 press the shown number or letter to trigger that entry.

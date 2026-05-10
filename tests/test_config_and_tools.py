@@ -20,6 +20,8 @@ from qplot.configuration.scripts import sysHandle, try_as_num
 from qplot.configuration.themes import dark, light
 from qplot.windows import main as main_window
 from qplot.windows.plot1d import plot1d
+from qplot.windows.plot2d import plot2d
+from qplot.windows._plotWin import plotWidget
 from qplot.windows._window_controls import (
     add_confirmation_options,
     add_restore_defaults_option,
@@ -160,12 +162,13 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.1, 3.8))
 
-        label, x_value, y_value, viewbox = window._nearest_trace_point(scene_pos)
+        label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
 
         self.assertEqual(label, "main")
         self.assertEqual(x_value, 2.0)
         self.assertEqual(y_value, 4.0)
         self.assertIs(viewbox, plot_item.vb)
+        self.assertEqual(point_number, 3)
 
     def test_register_main_line_replaces_initial_empty_trace(self):
         line = object()
@@ -177,6 +180,131 @@ class SnapToTraceTestCase(unittest.TestCase):
         window._register_main_line()
 
         self.assertIs(window.lines["main"], line)
+
+
+class HeatmapHoverOutlineTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
+
+    class SignalCatcher:
+        def __init__(self):
+            self.calls = []
+
+        def emit(self, *args):
+            self.calls.append(args)
+
+    class SweepLine:
+        def __init__(self, sweep_id, angle, value):
+            self.sweep_id = sweep_id
+            self.angle = angle
+            self._value = value
+            self.bounds = None
+
+        def setBounds(self, bounds):
+            self.bounds = bounds
+
+        def setPos(self, value):
+            self._value = value
+
+        def value(self):
+            return self._value
+
+    def test_hover_outline_tracks_heatmap_cell_geometry(self):
+        window = plot2d.__new__(plot2d)
+        window.hover_pixel_outline = qtw.QGraphicsRectItem()
+        window.rect = QtCore.QRectF(10.0, 20.0, 8.0, 6.0)
+        window.dataGrid = np.zeros((3, 4))
+        window.z_index = None
+
+        window.show_hover_pixel_outline(2, 1)
+
+        outline_rect = window.hover_pixel_outline.rect()
+        self.assertTrue(window.hover_pixel_outline.isVisible())
+        self.assertEqual(window.z_index, [2, 1])
+        self.assertEqual(outline_rect, QtCore.QRectF(14.0, 22.0, 2.0, 2.0))
+
+    def test_hover_outline_hides_when_hover_index_is_invalid(self):
+        window = plot2d.__new__(plot2d)
+        window.hover_pixel_outline = qtw.QGraphicsRectItem()
+        window.hover_pixel_outline.show()
+        window.rect = QtCore.QRectF(0.0, 0.0, 2.0, 2.0)
+        window.dataGrid = np.zeros((2, 2))
+        window.z_index = [3, 0]
+
+        window._update_hover_pixel_outline_from_index()
+
+        self.assertFalse(window.hover_pixel_outline.isVisible())
+
+    def test_mouse_moved_clamps_heatmap_edge_to_last_cell(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        window = plot2d.__new__(plot2d)
+        window.plot = plot_item
+        window.rect = QtCore.QRectF(0.0, 0.0, 1.0, 1.0)
+        window.dataGrid = np.array([[1.0, 2.0], [3.0, 4.0]])
+        window.pos_labels = {
+            "x": qtw.QLabel(),
+            "y": qtw.QLabel(),
+            "z": qtw.QLabel(),
+            }
+        window.formatNum = lambda value: str(value)
+        shown_indices = []
+        window.show_hover_pixel_outline = lambda i, j: shown_indices.append((i, j))
+        window.hide_hover_pixel_outline = lambda: shown_indices.append(None)
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 1.0))
+
+        plotWidget.mouseMoved(window, scene_pos)
+
+        self.assertEqual(shown_indices, [(1, 1)])
+        self.assertEqual(window.pos_labels["z"].text(), "z = 4.0")
+
+    def test_dragged_sweep_line_snaps_to_heatmap_pixel_centre(self):
+        window = plot2d.__new__(plot2d)
+        window.rect = QtCore.QRectF(0.0, 10.0, 4.0, 6.0)
+        window.dataGrid = np.zeros((3, 4))
+        window.sweep_moved = self.SignalCatcher()
+        line = self.SweepLine(sweep_id=5, angle=90, value=2.7)
+
+        window.moving_sweep(line)
+
+        self.assertEqual(line.sweep_index, 2)
+        self.assertEqual(window.active_sweep_line_id, 5)
+        self.assertAlmostEqual(line.value(), 2.5)
+        self.assertEqual(line.bounds, (0.5, 3.5))
+        self.assertEqual(window.sweep_moved.calls, [(5, 2)])
+
+    def test_arrow_key_moves_active_sweep_line_by_one_pixel(self):
+        window = plot2d.__new__(plot2d)
+        window.rect = QtCore.QRectF(0.0, 10.0, 4.0, 6.0)
+        window.dataGrid = np.zeros((3, 4))
+        window.sweep_moved = self.SignalCatcher()
+        line = self.SweepLine(sweep_id=8, angle=90, value=1.5)
+        line.sweep_index = 1
+        window.sweep_lines = {8: line}
+        window.active_sweep_line_id = 8
+
+        window.move_sweep_with_arrow_key(QtCore.Qt.Key_Right)
+
+        self.assertEqual(line.sweep_index, 2)
+        self.assertAlmostEqual(line.value(), 2.5)
+        self.assertEqual(window.sweep_moved.calls, [(8, 2)])
+
+    def test_arrow_key_clamps_sweep_line_to_heatmap_edge(self):
+        window = plot2d.__new__(plot2d)
+        window.rect = QtCore.QRectF(0.0, 10.0, 4.0, 6.0)
+        window.dataGrid = np.zeros((3, 4))
+        window.sweep_moved = self.SignalCatcher()
+        line = self.SweepLine(sweep_id=8, angle=90, value=3.5)
+        line.sweep_index = 3
+        window.sweep_lines = {8: line}
+        window.active_sweep_line_id = 8
+
+        window.move_sweep_with_arrow_key(QtCore.Qt.Key_Right)
+
+        self.assertEqual(line.sweep_index, 3)
+        self.assertAlmostEqual(line.value(), 3.5)
+        self.assertEqual(window.sweep_moved.calls, [(8, 3)])
 
 
 class RunListParentLookupTestCase(unittest.TestCase):
@@ -205,6 +333,53 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             self.assertIs(run_list.main_window(), main)
         finally:
+            treeWidgets.isfile = old_isfile
+            if main is not None:
+                main.deleteLater()
+
+    def test_run_context_menu_keeps_plot_actions_without_add_actions(self):
+        old_isfile = treeWidgets.isfile
+        old_exec = qtw.QMenu.exec_
+        treeWidgets.isfile = lambda _: False
+        captured = []
+        main = None
+
+        class Param:
+            def __init__(self, name, depends_on):
+                self.name = name
+                self.depends_on = depends_on
+                self.depends_on_ = (depends_on,)
+
+        class Dataset:
+            def get_parameters(self):
+                return [Param("signal", "x"), Param("image", "y")]
+
+        def capture_menu(menu, *_args, **_kwargs):
+            captured.extend(action.text() for action in menu.actions())
+
+        try:
+            qtw.QMenu.exec_ = capture_menu
+            main = qtw.QMainWindow()
+            main.ds = Dataset()
+            main.windows = []
+            main.openPlot = lambda *args, **kwargs: None
+            main.open_selected_run_all = lambda: None
+            main.show_status = lambda *args, **kwargs: None
+
+            run_list = treeWidgets.RunList()
+            main.setCentralWidget(run_list)
+
+            run_list.prepareMenu(QtCore.QPoint(0, 0))
+
+            self.assertIn("Plot", captured)
+            self.assertIn("&Plot all", captured)
+            self.assertIn("  - signal", captured)
+            self.assertIn("  - image", captured)
+            self.assertNotIn("Add to open plot", captured)
+            self.assertFalse(any(action.startswith("Add ") for action in captured))
+            self.assertFalse(any(action.startswith("  - Add ") for action in captured))
+        finally:
+            qtw.QMenu.exec_ = old_exec
             treeWidgets.isfile = old_isfile
             if main is not None:
                 main.deleteLater()

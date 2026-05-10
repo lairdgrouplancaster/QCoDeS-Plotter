@@ -751,7 +751,7 @@ class RunList(qtw.QTreeWidget):
     def prepareMenu(self, pos):
         """
         Produces the context menu at mouse position on right click.
-        Allows user to open specific Plot or add 1d plots to other 1d plots.
+        Allows user to open specific plots from the selected run.
         
         Relies on the fact the the right click is consered the same as a left 
         click for slots. So right click also runs the selection code of left
@@ -797,49 +797,6 @@ class RunList(qtw.QTreeWidget):
             
             menu.addAction(open_win)
 
-        valid_wins = []
-
-        """
-        These actions add a parameter from the selected run to an existing
-        compatible plot window. The menu is intentionally flat so right-click
-        workflows do not require chasing submenus.
-
-        """
-        add_actions = []
-        for param, depends_on in params.items():
-            if len(depends_on) != 1: # Ignore non 1d plots
-                continue
-
-            # Run through each window for each parameter
-            for win in main.windows:
-                if win.param.depends_on_ == depends_on: # If it can be added
-
-                    # Produce action and connect open
-                    win_action = qtw.QAction(f"Add {param.name} to {win.label}", menu)
-                    win_action.triggered.connect(
-                        lambda _, win=win, param=param: self.add_plot(win, param)
-                        )
-                    add_actions.append(win_action)
-                    
-                    # Check if this window is on the add all list.
-                    if win not in valid_wins:
-                        all_action = qtw.QAction(f"Add all to {win.label}", menu)
-                        if len(valid_wins) < 9:
-                            self._set_action_shortcut(all_action, f"Ctrl+Alt+{len(valid_wins) + 1}")
-                        all_action.triggered.connect(
-                            lambda _, win=win, param_dict=params: self.add_all(win, param_dict)
-                            )
-                        add_actions.insert(len(valid_wins), all_action)
-                        valid_wins.append(win)
-
-        if add_actions:
-            menu.addSeparator()
-            self._add_menu_section(menu, "Add to open plot")
-            for itr, action in enumerate(add_actions):
-                prefix = "" if itr == 0 else "  - "
-                action.setText(f"{prefix}{action.text()}")
-                menu.addAction(action)
-            
         # Display context menu
         menu.exec_(self.mapToGlobal(pos))
 

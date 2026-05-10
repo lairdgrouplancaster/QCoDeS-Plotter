@@ -781,6 +781,8 @@ class plotWidget(qtw.QMainWindow):
         """
         # Ignore if not in plot widget
         if not self.plot.sceneBoundingRect().contains(pos):
+            if hasattr(self, "hide_hover_pixel_outline"):
+                self.hide_hover_pixel_outline()
             return
     
         # get x, y values.
@@ -807,14 +809,20 @@ class plotWidget(qtw.QMainWindow):
                 if (i >= 0 and i <= 1) and (j >= 0 and j <= 1):
                     # Convert to true index
                     # Note that pyqtgraph indexes [column, row]
-                    i = int(i * self.dataGrid.shape[1])
-                    j = int(j * self.dataGrid.shape[0])
+                    i = min(self.dataGrid.shape[1] - 1, int(i * self.dataGrid.shape[1]))
+                    j = min(self.dataGrid.shape[0] - 1, int(j * self.dataGrid.shape[0]))
                     self.pos_labels["z"].setText(f"z = {self.formatNum(self.dataGrid[j, i])}")
                     
                     # Save z location for subplot use
-                    self.z_index = [i, j]
+                    if hasattr(self, "show_hover_pixel_outline"):
+                        self.show_hover_pixel_outline(i, j)
+                    else:
+                        self.z_index = [i, j]
                 else:
-                    self.z_index = None
+                    if hasattr(self, "hide_hover_pixel_outline"):
+                        self.hide_hover_pixel_outline()
+                    else:
+                        self.z_index = None
 
         # Update text
         self.pos_labels["x"].setText(x_txt)

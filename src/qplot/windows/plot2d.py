@@ -1,5 +1,5 @@
 from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore
+from PyQt5 import QtCore, QtGui
 
 import pyqtgraph as pg
 
@@ -30,6 +30,7 @@ class plot2d(plotWidget):
         super().__init__(*args, **kargs)
         self.sweep_id = 0
         self.sweep_lines = {}
+        self.active_sweep_line_id = None
         self.rotate = None # FOR SUBPLOT CURSOR
 
         
@@ -43,6 +44,14 @@ class plot2d(plotWidget):
         # self.image.setPxMode(True)
         
         self.plot.addItem(self.image)
+        self.hover_pixel_outline = qtw.QGraphicsRectItem()
+        self.hover_pixel_outline.setPen(
+            pg.mkPen((255, 255, 255, 190), width=1.5, cosmetic=True)
+        )
+        self.hover_pixel_outline.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+        self.hover_pixel_outline.setZValue(10)
+        self.hover_pixel_outline.hide()
+        self.plot.addItem(self.hover_pixel_outline)
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
@@ -75,19 +84,33 @@ class plot2d(plotWidget):
         sep = self.vbMenu.insertSeparator(actions[3])
         
         ### Sweep control
-        h_sweep = qtw.QAction("Plot Horizontal Sweep", self)
-        self.register_shortcut(h_sweep, "Ctrl+Shift+H", "Plot horizontal sweep")
+        h_sweep = qtw.QAction("Plot Horizontal Cut", self)
+        self.register_shortcut(h_sweep, "Ctrl+Shift+H", "Plot horizontal cut")
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
-        v_sweep = qtw.QAction("Plot Vertical Sweep", self)
-        self.register_shortcut(v_sweep, "Ctrl+Shift+V", "Plot vertical sweep")
+        v_sweep = qtw.QAction("Plot Vertical Cut", self)
+        self.register_shortcut(v_sweep, "Ctrl+Shift+V", "Plot vertical cut")
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         
         # Link finish update with check for rotation of sweep cursor
         self.end_wait.connect(self.rotate_sweeps)
         self.vbMenu.insertSeparator(h_sweep)
+
+        for key, text in (
+                (QtCore.Qt.Key_Left, "Move selected cut left"),
+                (QtCore.Qt.Key_Right, "Move selected cut right"),
+                (QtCore.Qt.Key_Up, "Move selected cut up"),
+                (QtCore.Qt.Key_Down, "Move selected cut down"),
+                ):
+            action = qtw.QAction(text, self)
+            action.setShortcut(QtGui.QKeySequence(key))
+            action.setShortcutContext(QtCore.Qt.WindowShortcut)
+            action.triggered.connect(
+                lambda _, key=key: self.move_sweep_with_arrow_key(key)
+                )
+            self.addAction(action)
         
         
     def initLabels(self):
@@ -157,9 +180,69 @@ class plot2d(plotWidget):
         
         if autoLevels:
             self.scaleColorbar()
+        
+        self._update_hover_pixel_outline_from_index()
+        self._snap_sweep_lines_to_pixel_centres()
             
         # Allow new worker to be produced
         self.worker.running = False
+
+
+    def show_hover_pixel_outline(self, i, j):
+        """
+        Move the hover outline to the heatmap pixel at the given data indices.
+
+        Parameters
+        ----------
+        i : int
+            Column index within the heatmap data grid.
+        j : int
+            Row index within the heatmap data grid.
+        """
+        self.z_index = [i, j]
+        self._update_hover_pixel_outline_from_index()
+
+
+    def hide_hover_pixel_outline(self):
+        """
+        Hide the heatmap hover outline and clear the saved hover index.
+
+        """
+        self.z_index = None
+        if hasattr(self, "hover_pixel_outline"):
+            self.hover_pixel_outline.hide()
+
+
+    def _update_hover_pixel_outline_from_index(self):
+        if (
+                not hasattr(self, "hover_pixel_outline")
+                or not hasattr(self, "rect")
+                or not hasattr(self, "dataGrid")
+                or getattr(self, "z_index", None) is None
+                ):
+            if hasattr(self, "hover_pixel_outline"):
+                self.hover_pixel_outline.hide()
+            return
+
+        i, j = self.z_index
+        rows, cols = self.dataGrid.shape
+        if rows <= 0 or cols <= 0 or i < 0 or j < 0 or i >= cols or j >= rows:
+            self.hover_pixel_outline.hide()
+            return
+
+        cell_width = self.rect.width() / cols
+        cell_height = self.rect.height() / rows
+        if cell_width <= 0 or cell_height <= 0:
+            self.hover_pixel_outline.hide()
+            return
+
+        self.hover_pixel_outline.setRect(QtCore.QRectF(
+            self.rect.x() + i * cell_width,
+            self.rect.y() + j * cell_height,
+            cell_width,
+            cell_height,
+        ))
+        self.hover_pixel_outline.show()
 
 
     @QtCore.pyqtSlot(bool)
@@ -263,7 +346,7 @@ class plot2d(plotWidget):
         index = list(self.axis_options.values()).index(fixed_param)
         axis = list(self.axis_options.keys())[index]
     
-        at_value = self.axis_data[axis][fixed_index]
+        at_value = self.sweep_pixel_centre(axis, fixed_index)
     
         if self.sweep_lines.get(sweep_id, None) is not None:
             line = self.sweep_lines[sweep_id]
@@ -299,13 +382,11 @@ class plot2d(plotWidget):
                 
             line.setZValue(1) # Move to top
             line.sigDragged.connect(self.moving_sweep)
+            line.sigClicked.connect(self.activate_sweep_line)
             self.sweep_lines[sweep_id] = line # Track for update/delete
             line.sweep_id = sweep_id # give copy of id if needed
         
-        line.setBounds((
-            min(self.axis_data[axis]),
-            max(self.axis_data[axis])
-            ))
+        self.set_sweep_line_index(line, fixed_index, emit=False)
     
     
     @QtCore.pyqtSlot(int)
@@ -377,6 +458,121 @@ class plot2d(plotWidget):
         self.rotate = None
     
     
+    def sweep_axis_count(self, axis):
+        if axis == "x":
+            return self.dataGrid.shape[1]
+        return self.dataGrid.shape[0]
+
+
+    def sweep_pixel_centre(self, axis, index):
+        """
+        Return the plot coordinate at the centre of a heatmap pixel.
+
+        """
+        count = self.sweep_axis_count(axis)
+        index = min(max(int(index), 0), count - 1)
+
+        if axis == "x":
+            return self.rect.x() + (index + 0.5) * self.rect.width() / count
+        return self.rect.y() + (index + 0.5) * self.rect.height() / count
+
+
+    def sweep_index_at_value(self, axis, value):
+        """
+        Return the heatmap pixel index containing a plot coordinate.
+
+        """
+        count = self.sweep_axis_count(axis)
+        if axis == "x":
+            start = self.rect.x()
+            width = self.rect.width()
+        else:
+            start = self.rect.y()
+            width = self.rect.height()
+
+        if count <= 0 or width <= 0:
+            return None
+
+        index = int((value - start) / width * count)
+        return min(max(index, 0), count - 1)
+
+
+    def line_sweep_axis(self, line):
+        return "x" if line.angle == 90 else "y"
+
+
+    def activate_sweep_line(self, line, event=None):
+        self.active_sweep_line_id = line.sweep_id
+        if event is not None:
+            event.accept()
+
+
+    def set_sweep_line_index(self, line, index, emit=True):
+        axis = self.line_sweep_axis(line)
+        count = self.sweep_axis_count(axis)
+        index = min(max(int(index), 0), count - 1)
+
+        line.setBounds((
+            self.sweep_pixel_centre(axis, 0),
+            self.sweep_pixel_centre(axis, count - 1)
+            ))
+        line.setPos(self.sweep_pixel_centre(axis, index))
+        line.sweep_index = index
+        self.active_sweep_line_id = line.sweep_id
+
+        if emit:
+            self.sweep_moved.emit(line.sweep_id, index)
+
+
+    def _snap_sweep_lines_to_pixel_centres(self):
+        for line in self.sweep_lines.values():
+            axis = self.line_sweep_axis(line)
+            index = getattr(line, "sweep_index", None)
+            if index is None:
+                index = self.sweep_index_at_value(axis, line.value())
+            if index is not None:
+                self.set_sweep_line_index(line, index, emit=False)
+
+
+    def move_sweep_with_arrow_key(self, key):
+        moves = {
+            QtCore.Qt.Key_Left: ("x", -1),
+            QtCore.Qt.Key_Right: ("x", 1),
+            QtCore.Qt.Key_Down: ("y", -1),
+            QtCore.Qt.Key_Up: ("y", 1),
+            }
+        if key not in moves:
+            return
+
+        axis, step = moves[key]
+        line = self.sweep_line_for_keyboard_move(axis)
+        if line is None:
+            return
+
+        index = getattr(line, "sweep_index", None)
+        if index is None:
+            index = self.sweep_index_at_value(axis, line.value())
+        if index is None:
+            return
+
+        self.set_sweep_line_index(line, index + step)
+
+
+    def sweep_line_for_keyboard_move(self, axis):
+        matching_lines = [
+            line for line in self.sweep_lines.values()
+            if self.line_sweep_axis(line) == axis
+            ]
+        if not matching_lines:
+            return None
+
+        active_line = self.sweep_lines.get(getattr(self, "active_sweep_line_id", None))
+        if active_line in matching_lines:
+            return active_line
+
+        return max(matching_lines, key=lambda line: line.sweep_id)
+
+
     @QtCore.pyqtSlot(object)
     def moving_sweep(self, line):
         """
@@ -391,23 +587,9 @@ class plot2d(plotWidget):
             The line being dragged.
 
         """        
-        image_data = self.dataGrid
-        rect = self.rect
-        
         pos = line.value()
-        axis = "x" if line.angle == 90 else "y"
-        
-        # Find index of value
-        
-        # Find index as % across heatmap
-        if axis == "x":
-            i = (pos - rect.x()) / rect.width()
-            # convert % to index
-            index = int(i * image_data.shape[1])
-        else:
-            i = (pos - rect.y()) / rect.height()
-            index = int(i * image_data.shape[0])
-            
-        # check within heatmap
-        if 0 <= i and i < 1:
-            self.sweep_moved.emit(line.sweep_id, index)
+        axis = self.line_sweep_axis(line)
+        index = self.sweep_index_at_value(axis, pos)
+
+        if index is not None:
+            self.set_sweep_line_index(line, index)
