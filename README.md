@@ -303,7 +303,8 @@ qplot-cfg -reset
 Development
 -----------
 
-For local development, install in editable mode:
+For local development, use an activated virtual environment and install in
+editable mode:
 
 ```console
 python -m pip install -e .
