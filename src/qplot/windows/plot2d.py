@@ -9,6 +9,68 @@ from ._plotWin import plotWidget
 from ._subplots.subplot2d import sweeper
 
 
+_ENGINEERING_PREFIXES = {
+    -24: "y",
+    -21: "z",
+    -18: "a",
+    -15: "f",
+    -12: "p",
+    -9: "n",
+    -6: "u",
+    -3: "m",
+    0: "",
+    3: "k",
+    6: "M",
+    9: "G",
+    12: "T",
+    15: "P",
+    18: "E",
+    21: "Z",
+    24: "Y",
+}
+
+
+def _trim_decimal_places(value, decimal_places=3):
+    """
+    Format a float with up to decimal_places, trimming trailing zeros.
+
+    """
+    text = f"{value:.{decimal_places}f}".rstrip("0").rstrip(".")
+    return "0" if text in ("", "-0") else text
+
+
+def _format_engineering_tick(value, decimal_places=3):
+    """
+    Format an axis tick using compact engineering notation.
+
+    """
+    if not np.isfinite(value):
+        return ""
+
+    if value == 0:
+        return "0"
+
+    exponent = int(np.floor(np.log10(abs(value)) / 3) * 3)
+    exponent = max(min(exponent, 24), -24)
+    scaled = value / 10**exponent
+    rounded_scaled = round(scaled, decimal_places)
+    if abs(rounded_scaled) >= 1000 and exponent < 24:
+        exponent += 3
+        scaled = value / 10**exponent
+
+    prefix = _ENGINEERING_PREFIXES[exponent]
+
+    return f"{_trim_decimal_places(scaled, decimal_places)}{prefix}"
+
+
+def _engineering_tick_strings(values, scale=1.0, spacing=None):
+    """
+    Return engineering-notation labels for pyqtgraph AxisItem ticks.
+
+    """
+    return [_format_engineering_tick(value * scale) for value in values]
+
+
 class plot2d(plotWidget):
     """
     Plot window for 2d and higher plots, aka Heatmaps.
@@ -32,6 +94,7 @@ class plot2d(plotWidget):
         self.sweep_lines = {}
         self.active_sweep_line_id = None
         self.rotate = None # FOR SUBPLOT CURSOR
+        self._colorbar_manual_levels = None
 
         
     def initFrame(self):
@@ -68,6 +131,7 @@ class plot2d(plotWidget):
         
         self.relevel_refresh = qtw.QCheckBox()
         self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
+        self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
         self.toolbarRef.addWidget(self.relevel_refresh)
      
     
@@ -97,6 +161,8 @@ class plot2d(plotWidget):
         # Link finish update with check for rotation of sweep cursor
         self.end_wait.connect(self.rotate_sweeps)
         self.vbMenu.insertSeparator(h_sweep)
+
+        self._init_colorbar_context_menu()
 
         for key, text in (
                 (QtCore.Qt.Key_Left, "Move selected cut left"),
@@ -176,10 +242,17 @@ class plot2d(plotWidget):
                 label=f"{self.param.label} ({self.param.unit})",
                 rounding=(np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid))/1e5 #Add 10,000 colours
                 )
-            self.scaleColorbar()
+            self._set_colorbar_tick_formatter()
+            if self._colorbar_manual_levels is None:
+                self.scaleColorbar()
+            else:
+                self._set_colorbar_levels(*self._colorbar_manual_levels)
         
         if autoLevels:
+            self._colorbar_manual_levels = None
             self.scaleColorbar()
+        elif self._colorbar_manual_levels is not None:
+            self._set_colorbar_levels(*self._colorbar_manual_levels)
         
         self._update_hover_pixel_outline_from_index()
         self._snap_sweep_lines_to_pixel_centres()
@@ -256,9 +329,238 @@ class plot2d(plotWidget):
         Unused but required by slot
 
         """
-        vmin, vmax = np.nanmin(self.dataGrid) , np.nanmax(self.dataGrid)
+        levels = self._data_colorbar_levels()
+        if levels is None:
+            return
 
-        self.bar.setLevels((vmin, vmax))
+        self._colorbar_manual_levels = None
+        self._set_colorbar_levels(*levels)
+
+
+    def _data_colorbar_levels(self):
+        """
+        Return finite min/max levels from the current heatmap data.
+
+        """
+        data = getattr(self, "dataGrid", None)
+        if data is None:
+            return None
+
+        vmin, vmax = np.nanmin(data), np.nanmax(data)
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+            return None
+
+        return float(vmin), float(vmax)
+
+
+    def _set_colorbar_levels(self, vmin, vmax):
+        """
+        Apply levels to the colorbar and mirror them in the menu fields.
+
+        """
+        bar = self.__dict__.get("bar")
+        if bar is not None:
+            bar.setLevels((vmin, vmax))
+
+        self._sync_colorbar_level_fields(vmin, vmax)
+
+
+    def _set_colorbar_tick_formatter(self):
+        """
+        Use engineering notation for colorbar tick labels.
+
+        """
+        bar = self.__dict__.get("bar")
+        axis = getattr(bar, "axis", None)
+        if axis is None:
+            return
+
+        axis.tickStrings = _engineering_tick_strings
+        axis.setWidth(70)
+        axis.setStyle(tickTextWidth=60)
+        axis.picture = None
+        axis.update()
+
+
+    def _current_colorbar_levels(self):
+        """
+        Return the currently displayed colorbar levels for menu synchronisation.
+
+        """
+        bar = self.__dict__.get("bar")
+        if bar is not None:
+            return bar.levels()
+
+        manual_levels = getattr(self, "_colorbar_manual_levels", None)
+        if manual_levels is not None:
+            return manual_levels
+
+        return self._data_colorbar_levels()
+
+
+    def _init_colorbar_context_menu(self):
+        """
+        Add manual/auto color scale controls to the plot context menu.
+
+        """
+        self.colorbar_menu = qtw.QMenu("Color scale", self.vbMenu)
+        controls = qtw.QWidget()
+        layout = qtw.QGridLayout(controls)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setHorizontalSpacing(4)
+        layout.setVerticalSpacing(4)
+
+        self.colorbar_manual_radio = qtw.QRadioButton("Manual")
+        self.colorbar_auto_radio = qtw.QRadioButton("Auto")
+        self.colorbar_min_text = qtw.QLineEdit()
+        self.colorbar_max_text = qtw.QLineEdit()
+
+        validator = QtGui.QDoubleValidator(self)
+        self.colorbar_min_text.setValidator(validator)
+        self.colorbar_max_text.setValidator(validator)
+        for line_edit in (self.colorbar_min_text, self.colorbar_max_text):
+            line_edit.setMinimumWidth(80)
+
+        self.colorbar_button_group = qtw.QButtonGroup(self)
+        self.colorbar_button_group.addButton(self.colorbar_manual_radio)
+        self.colorbar_button_group.addButton(self.colorbar_auto_radio)
+        self.colorbar_button_group.setExclusive(True)
+
+        layout.addWidget(self.colorbar_manual_radio, 0, 0)
+        layout.addWidget(self.colorbar_min_text, 0, 1)
+        layout.addWidget(self.colorbar_max_text, 0, 2)
+        layout.addWidget(self.colorbar_auto_radio, 1, 0)
+
+        controls_action = qtw.QWidgetAction(self.colorbar_menu)
+        controls_action.setDefaultWidget(controls)
+        self.colorbar_menu.addAction(controls_action)
+
+        self.colorbar_menu.aboutToShow.connect(self._sync_colorbar_menu)
+        self.colorbar_manual_radio.clicked.connect(self._apply_colorbar_manual_fields)
+        self.colorbar_min_text.editingFinished.connect(self._apply_colorbar_manual_fields)
+        self.colorbar_max_text.editingFinished.connect(self._apply_colorbar_manual_fields)
+        self.colorbar_auto_radio.clicked.connect(self.setColorbarAuto)
+
+        self._insert_colorbar_menu()
+        self._sync_colorbar_menu()
+
+
+    def _insert_colorbar_menu(self):
+        """
+        Place the color scale menu next to pyqtgraph's X/Y axis menus.
+
+        """
+        actions = self.vbMenu.actions()
+        insert_before = None
+
+        for index, action in enumerate(actions):
+            if action.text().replace("&", "") == "Y axis":
+                if index + 1 < len(actions):
+                    insert_before = actions[index + 1]
+                break
+
+        if insert_before is None:
+            self.vbMenu.addMenu(self.colorbar_menu)
+        else:
+            self.vbMenu.insertMenu(insert_before, self.colorbar_menu)
+
+
+    def _sync_colorbar_menu(self):
+        """
+        Update color scale menu controls from the current colorbar state.
+
+        """
+        levels = self._current_colorbar_levels()
+        if levels is not None:
+            self._sync_colorbar_level_fields(*levels)
+
+        manual = getattr(self, "_colorbar_manual_levels", None) is not None
+        for widget in (self.colorbar_manual_radio, self.colorbar_auto_radio):
+            widget.blockSignals(True)
+
+        self.colorbar_manual_radio.setChecked(manual)
+        self.colorbar_auto_radio.setChecked(not manual)
+
+        for widget in (self.colorbar_manual_radio, self.colorbar_auto_radio):
+            widget.blockSignals(False)
+
+
+    def _sync_colorbar_level_fields(self, vmin, vmax):
+        """
+        Mirror colorbar levels into the context menu text fields.
+
+        """
+        if "colorbar_min_text" not in self.__dict__:
+            return
+
+        for widget, value in (
+                (self.colorbar_min_text, vmin),
+                (self.colorbar_max_text, vmax),
+                ):
+            widget.blockSignals(True)
+            widget.setText(f"{value:.6g}")
+            widget.blockSignals(False)
+
+
+    @QtCore.pyqtSlot()
+    def _apply_colorbar_manual_fields(self):
+        """
+        Apply color scale levels entered in the context menu.
+
+        """
+        try:
+            vmin = float(self.colorbar_min_text.text())
+            vmax = float(self.colorbar_max_text.text())
+        except ValueError:
+            self.show_status("Invalid color scale range.", 5000)
+            self._sync_colorbar_menu()
+            return
+
+        self.setColorbarManualRange(vmin, vmax)
+
+
+    def setColorbarManualRange(self, vmin, vmax):
+        """
+        Set a persistent manual color scale range.
+
+        """
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+            self.show_status("Color scale minimum must be below maximum.", 5000)
+            self._sync_colorbar_menu()
+            return False
+
+        self._colorbar_manual_levels = (float(vmin), float(vmax))
+
+        if "relevel_refresh" in self.__dict__:
+            self.relevel_refresh.setChecked(False)
+
+        self._set_colorbar_levels(*self._colorbar_manual_levels)
+        if "colorbar_manual_radio" in self.__dict__:
+            self.colorbar_manual_radio.setChecked(True)
+        return True
+
+
+    @QtCore.pyqtSlot()
+    def setColorbarAuto(self):
+        """
+        Return the color scale to automatic data-range scaling.
+
+        """
+        self._colorbar_manual_levels = None
+        if "relevel_refresh" in self.__dict__:
+            self.relevel_refresh.setChecked(True)
+        self.scaleColorbar()
+
+
+    @QtCore.pyqtSlot(bool)
+    def _colorbar_auto_refresh_changed(self, enabled):
+        """
+        Keep colorbar manual state in sync with the refresh toolbar checkbox.
+
+        """
+        if enabled:
+            self._colorbar_manual_levels = None
+            self.scaleColorbar()
 
 ###############################################################################
 # Subplot control

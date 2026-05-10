@@ -20,7 +20,7 @@ from qplot.configuration.scripts import sysHandle, try_as_num
 from qplot.configuration.themes import dark, light
 from qplot.windows import main as main_window
 from qplot.windows.plot1d import plot1d
-from qplot.windows.plot2d import plot2d
+from qplot.windows.plot2d import _engineering_tick_strings, plot2d
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._window_controls import (
     add_confirmation_options,
@@ -210,6 +210,43 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         def value(self):
             return self._value
 
+    class Colorbar:
+        def __init__(self):
+            self.values = None
+
+        def setLevels(self, values):
+            self.values = values
+
+        def levels(self):
+            return self.values
+
+    class Axis:
+        def __init__(self):
+            self.width = None
+            self.style = {}
+            self.picture = object()
+            self.updated = False
+            self.tickStrings = None
+
+        def setWidth(self, width):
+            self.width = width
+
+        def setStyle(self, **kwargs):
+            self.style.update(kwargs)
+
+        def update(self):
+            self.updated = True
+
+    class CheckBox:
+        def __init__(self, checked=False):
+            self.checked = checked
+
+        def setChecked(self, checked):
+            self.checked = checked
+
+        def isChecked(self):
+            return self.checked
+
     def test_hover_outline_tracks_heatmap_cell_geometry(self):
         window = plot2d.__new__(plot2d)
         window.hover_pixel_outline = qtw.QGraphicsRectItem()
@@ -305,6 +342,51 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertEqual(line.sweep_index, 3)
         self.assertAlmostEqual(line.value(), 3.5)
         self.assertEqual(window.sweep_moved.calls, [(8, 3)])
+
+    def test_manual_colorbar_range_sets_levels_and_disables_refresh_autoscale(self):
+        window = plot2d.__new__(plot2d)
+        window.bar = self.Colorbar()
+        window.relevel_refresh = self.CheckBox(checked=True)
+        window._colorbar_manual_levels = None
+
+        applied = window.setColorbarManualRange(10, 20)
+
+        self.assertTrue(applied)
+        self.assertEqual(window._colorbar_manual_levels, (10.0, 20.0))
+        self.assertEqual(window.bar.values, (10, 20))
+        self.assertFalse(window.relevel_refresh.checked)
+
+    def test_auto_colorbar_clears_manual_range_and_uses_data_range(self):
+        window = plot2d.__new__(plot2d)
+        window.bar = self.Colorbar()
+        window.relevel_refresh = self.CheckBox(checked=False)
+        window._colorbar_manual_levels = (10.0, 20.0)
+        window.dataGrid = np.array([[0.0, 40.0], [20.0, np.nan]])
+
+        window.setColorbarAuto()
+
+        self.assertIsNone(window._colorbar_manual_levels)
+        self.assertTrue(window.relevel_refresh.checked)
+        self.assertEqual(window.bar.values, (0.0, 40.0))
+
+    def test_colorbar_tick_labels_use_engineering_notation(self):
+        self.assertEqual(
+            _engineering_tick_strings([0, 1200, 1234.5678, 50000, -0.0012, 3.4e6]),
+            ["0", "1.2k", "1.235k", "50k", "-1.2m", "3.4M"],
+            )
+
+    def test_colorbar_tick_formatter_reserves_more_label_space(self):
+        window = plot2d.__new__(plot2d)
+        window.bar = self.Colorbar()
+        window.bar.axis = self.Axis()
+
+        window._set_colorbar_tick_formatter()
+
+        self.assertIs(window.bar.axis.tickStrings, _engineering_tick_strings)
+        self.assertEqual(window.bar.axis.width, 70)
+        self.assertEqual(window.bar.axis.style["tickTextWidth"], 60)
+        self.assertIsNone(window.bar.axis.picture)
+        self.assertTrue(window.bar.axis.updated)
 
 
 class RunListParentLookupTestCase(unittest.TestCase):

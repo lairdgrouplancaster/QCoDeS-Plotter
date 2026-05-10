@@ -387,6 +387,7 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.vbMenu = self.vb.menu
+        self.mouseModeAction = self._context_menu_action("Mouse Mode")
 
         contextAction = qtw.QAction("Show Context Menu", self)
         self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
@@ -410,6 +411,17 @@ class plotWidget(qtw.QMainWindow):
         self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
         self.vbMenu.insertAction(x_action, toggleAction)
         self.vbMenu.insertSeparator(x_action)
+
+
+    def _context_menu_action(self, text):
+        """
+        Returns a pyqtgraph context-menu action by display text.
+
+        """
+        for action in self.vbMenu.actions():
+            if action.text().replace("&", "") == text:
+                return action
+        return None
 
 
     @QtCore.pyqtSlot()
@@ -552,6 +564,11 @@ class plotWidget(qtw.QMainWindow):
         add_standard_window_controls(self)
 
         options_menu = menu.addMenu("&Options")
+        mouse_mode_action = getattr(self, "mouseModeAction", None)
+        if mouse_mode_action is not None:
+            self.vbMenu.removeAction(mouse_mode_action)
+            options_menu.addAction(mouse_mode_action)
+            options_menu.addSeparator()
         add_confirmation_options(self, options_menu)
         
         main_menu = menu.addMenu("&View")
