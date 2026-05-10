@@ -98,12 +98,12 @@ Opening A Database
    `Measurement` to `*` to plot all measurements for that run.
 
 The run table includes measurement count, setpoint count, start time, completion
-progress, time taken, and storage used by each run. It can be sorted by clicking
+progress, duration, and size for each run. It can be sorted by clicking
 a column header. Selecting a run shows details in the lower pane:
 
 * `Overview` summarises run properties, data point count, GUID, and parameters.
-* `Sweep parameters` shows a compact table of labels, units, axes, values,
-  instruments, and validators.
+* `Sweep parameters` shows a grouped table of set parameters and measure
+  parameters with labels, units, sweep values, delays, and instruments.
 * `Metadata` shows metadata with long values shortened and available as tooltips.
 * `Raw key-value` keeps the full nested structure for detailed inspection.
 

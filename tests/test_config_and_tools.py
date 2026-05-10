@@ -412,7 +412,7 @@ class RunListTooltipTestCase(unittest.TestCase):
     def test_run_tooltip_summarises_parameters(self):
         tooltip = treeWidgets.run_tooltip_text({
             "sweep_parameters": ["dac_ch1", "dac_ch2"],
-            "measure_parameters": ["dmm_v1"],
+            "measure_parameters": ["dmm_v1", "dmm_v2"],
             "run_timestamp": 100.0,
             "completed_timestamp": None,
             "is_completed": False,
@@ -420,11 +420,21 @@ class RunListTooltipTestCase(unittest.TestCase):
             "expected_results": 100,
             })
 
-        self.assertIn("<table", tooltip)
-        self.assertIn("<td>Sweep</td><td>&nbsp;</td><td>(dac_ch1, dac_ch2)</td>", tooltip)
-        self.assertIn("<td>Measure</td><td>&nbsp;</td><td>(dmm_v1)</td>", tooltip)
-        self.assertNotIn("<td>Incomplete</td>", tooltip)
-        self.assertNotIn("<td>Time taken</td>", tooltip)
+        self.assertTrue(tooltip.startswith("<table"))
+        self.assertEqual(tooltip.count("<tr>"), 2)
+        self.assertIn("<td style='padding:0 0.5em 0 0'>Sweep</td>", tooltip)
+        self.assertIn(
+            "<td nowrap='nowrap' style='padding:0; white-space:nowrap'>"
+            "(dac_ch1,&nbsp;dac_ch2)</td>",
+            tooltip
+            )
+        self.assertIn("<td style='padding:0 0.5em 0 0'>Measure</td>", tooltip)
+        self.assertIn(
+            "<td nowrap='nowrap' style='padding:0; white-space:nowrap'>"
+            "(dmm_v1,&nbsp;dmm_v2)</td>",
+            tooltip
+            )
+        self.assertNotIn("Duration", tooltip)
 
     def test_format_point_count_summarises_multidimensional_sweeps(self):
         self.assertEqual(
@@ -478,11 +488,23 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual(
                 [run_list.headerItem().text(col) for col in range(run_list.columnCount())],
-                ["ID", "Measurements", "Setpoints", "Started", "Complete", "Time taken", "Storage"]
+                ["ID", "Measurements", "Setpoints", "Started", "Complete", "Duration", "Size"]
                 )
             self.assertIsInstance(
                 run_list.itemDelegateForColumn(2),
                 treeWidgets.EqualsAlignedDelegate
+                )
+            self.assertFalse(run_list.rootIsDecorated())
+            self.assertEqual(run_list.indentation(), 0)
+            self.assertEqual(
+                run_list.horizontalScrollBarPolicy(),
+                QtCore.Qt.ScrollBarAlwaysOff
+                )
+            self.assertTrue(
+                all(
+                    run_list.header().sectionResizeMode(col) == qtw.QHeaderView.Interactive
+                    for col in range(run_list.columnCount())
+                    )
                 )
             items = {
                 run_list.topLevelItem(row).guid: run_list.topLevelItem(row)
@@ -525,7 +547,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
 
-class RunStorageTestCase(unittest.TestCase):
+class RunSizeTestCase(unittest.TestCase):
     def test_point_shape_uses_largest_measured_parameter_shape(self):
         self.assertEqual(
             readSQL._point_shape(
@@ -738,7 +760,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             [
                 "Status",
                 "Data points",
-                "Time taken",
+                "Duration",
                 "Measured parameters",
                 "Setpoints",
                 "Started",
@@ -756,34 +778,57 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 ],
             ["Name", "Label", "Unit", "From", "To", "Steps", "Delay", "Instrument"]
             )
-        self.assertEqual(widget.parameters.rowCount(), 2)
-        self.assertEqual(widget.parameters.item(0, 3).text(), "-1")
-        self.assertEqual(widget.parameters.item(0, 4).text(), "1")
-        self.assertEqual(widget.parameters.item(0, 5).text(), "5")
-        self.assertEqual(widget.parameters.item(0, 6).text(), "")
-        self.assertEqual(widget.parameters.item(0, 7).text(), "dac")
+        self.assertEqual(widget.parameters.rowCount(), 4)
+        self.assertEqual(widget.parameters.item(0, 0).text(), "Set parameters")
         self.assertTrue(widget.parameters.item(0, 0).font().bold())
-        self.assertFalse(widget.parameters.item(0, 0).font().italic())
-        self.assertTrue(widget.parameters.item(0, 0).toolTip().startswith("Setpoint parameter"))
-        self.assertEqual(widget.parameters.item(1, 0).text(), "dmm_v1")
-        self.assertEqual(widget.parameters.item(1, 3).text(), "")
-        self.assertEqual(widget.parameters.item(1, 4).text(), "")
-        self.assertEqual(widget.parameters.item(1, 5).text(), "")
+        self.assertEqual(widget.parameters.item(1, 0).text(), "dac_ch1")
+        self.assertEqual(widget.parameters.item(1, 3).text(), "-1")
+        self.assertEqual(widget.parameters.item(1, 4).text(), "1")
+        self.assertEqual(widget.parameters.item(1, 5).text(), "5")
         self.assertEqual(widget.parameters.item(1, 6).text(), "")
-        self.assertEqual(widget.parameters.item(1, 7).text(), "dmm")
+        self.assertEqual(widget.parameters.item(1, 7).text(), "dac")
         self.assertFalse(widget.parameters.item(1, 0).font().bold())
-        self.assertTrue(widget.parameters.item(1, 0).font().italic())
-        self.assertTrue(widget.parameters.item(1, 0).toolTip().startswith("Measured parameter"))
+        self.assertFalse(widget.parameters.item(1, 0).font().italic())
+        self.assertEqual(widget.parameters.item(2, 0).text(), "Measure parameters")
+        self.assertTrue(widget.parameters.item(2, 0).font().bold())
+        self.assertEqual(widget.parameters.item(3, 0).text(), "dmm_v1")
+        self.assertEqual(widget.parameters.item(3, 3).text(), "")
+        self.assertEqual(widget.parameters.item(3, 4).text(), "")
+        self.assertEqual(widget.parameters.item(3, 5).text(), "")
+        self.assertEqual(widget.parameters.item(3, 6).text(), "")
+        self.assertEqual(widget.parameters.item(3, 7).text(), "dmm")
+        self.assertFalse(widget.parameters.item(3, 0).font().bold())
+        self.assertFalse(widget.parameters.item(3, 0).font().italic())
         self.assertEqual(
             widget.overview.item(2, 1).text(),
             "23.10 s\t(0d 0h 0m 23s; 0.115 s/point)"
             )
         self.assertLessEqual(len(widget.metadata.topLevelItem(0).text(1)), 180)
+        self.assertTrue(widget.metadata.wordWrap())
+        self.assertTrue(widget.raw.wordWrap())
+        self.assertEqual(widget.metadata.textElideMode(), QtCore.Qt.ElideNone)
+        self.assertEqual(widget.raw.textElideMode(), QtCore.Qt.ElideNone)
+        self.assertEqual(
+            widget.metadata.horizontalScrollBarPolicy(),
+            QtCore.Qt.ScrollBarAlwaysOff
+            )
+        self.assertIsInstance(
+            widget.raw.itemDelegateForColumn(1),
+            treeWidgets.WrappedValueDelegate
+            )
+        self.assertEqual(
+            widget.metadata.header().sectionResizeMode(1),
+            qtw.QHeaderView.Stretch
+            )
+        self.assertEqual(
+            widget.raw.header().sectionResizeMode(1),
+            qtw.QHeaderView.Stretch
+            )
         self.assertEqual(
             widget.parameters.horizontalHeader().sectionResizeMode(7),
             qtw.QHeaderView.Stretch
             )
-        widget.parameters.selectRow(1)
+        widget.parameters.selectRow(3)
         widget.parameters.copySelection()
         self.assertEqual(
             qtw.QApplication.clipboard().text(),
@@ -797,7 +842,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             widget.parameters.copy_cell_action.shortcuts()[0].toString(),
             "Ctrl+Shift+C"
             )
-        widget.parameters.setCurrentCell(1, 0)
+        widget.parameters.setCurrentCell(3, 0)
         widget.parameters.copyCell()
         self.assertEqual(qtw.QApplication.clipboard().text(), "dmm_v1")
 
