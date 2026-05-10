@@ -110,7 +110,7 @@ class sweeper(plotWidget):
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
-        self.show_status("Sweep plot ready; loading data...", 5000)
+        self.show_status("Cut plot ready; loading data...", 5000)
         
     
     @QtCore.pyqtSlot(bool)

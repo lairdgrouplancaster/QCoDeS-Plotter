@@ -3,7 +3,7 @@ QCoDeS-Plotter
 
 QCoDeS-Plotter is a PyQt-based data viewer for QCoDeS databases. It is designed
 to inspect both completed and running experiments, with live refresh, line plots,
-heatmaps, sweep extraction, and simple data operations.
+heatmaps, 1D cut extraction, and simple data operations.
 
 > [!IMPORTANT]
 > Plot windows may appear before their data has finished loading. Check the
@@ -44,7 +44,7 @@ python -m pip install -U pip
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 ```
 
-#### Mac / Linux
+#### Mac
 
 ```console
 python3 -m venv .venv
@@ -67,7 +67,7 @@ python -m pip install -U pip
 python -m pip install -e .
 ```
 
-#### Mac / Linux
+#### Mac
 
 ```console
 cd QCoDeS-Plotter
@@ -130,7 +130,7 @@ checks.
 
 Use `File -> Refresh` or press `R` to refresh manually.
 
-`Toggle Auto-plot` opens newly detected runs automatically.
+`Auto-plot` opens newly detected runs automatically.
 
 Plot Windows
 ------------
@@ -205,7 +205,7 @@ General shortcuts:
 | `R` | Refresh the current window |
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
-| `Cmd+M` / `Alt+Space, N` | Minimize the current window |
+| `Ctrl+M` / `Alt+Space, N` | Minimize the current window |
 | `Alt+Space, X` / `Alt+Space, R` | Maximize or restore the current window on Windows |
 | `Ctrl+Cmd+F` / `F11` | Enter or leave full screen |
 | `Ctrl+C` / `Cmd+C` | Copy selected cells or rows in the run details pane |
