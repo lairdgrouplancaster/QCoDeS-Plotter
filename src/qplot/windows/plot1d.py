@@ -343,14 +343,14 @@ class plot1d(plotWidget):
 
         """
         x_data = None
-        line = getattr(self, "line", None)
+        line = self.__dict__.get("line")
         if line is not None and hasattr(line, "getData"):
             data = line.getData()
             if data is not None:
                 x_data = data[0]
 
         if x_data is None:
-            x_data = getattr(self, "axis_data", {}).get("x")
+            x_data = self.__dict__.get("axis_data", {}).get("x")
 
         if x_data is None:
             return None
@@ -368,8 +368,58 @@ class plot1d(plotWidget):
         first = values[0] - gaps[0] / 2
         last = values[-1] + gaps[-1] / 2
         return np.concatenate(([first], mids, [last]))
-        
-        
+
+
+    def _marquee_stats_text(self):
+        values = self._marquee_line_values()
+        if values is None:
+            return None
+
+        return self._format_marquee_stats_text(f"{values.size} points", values)
+
+
+    def _marquee_line_values(self):
+        if self.marquee is None:
+            return None
+
+        line = self.__dict__.get("line")
+        if line is not None and hasattr(line, "getData"):
+            data = line.getData()
+            if data is not None:
+                x_data, y_data = data
+            else:
+                x_data, y_data = None, None
+        else:
+            axis_data = self.__dict__.get("axis_data", {})
+            x_data = axis_data.get("x")
+            y_data = axis_data.get("y")
+
+        if x_data is None or y_data is None:
+            return None
+
+        x_data = np.asarray(x_data, dtype=float)
+        y_data = np.asarray(y_data, dtype=float)
+        count = min(x_data.size, y_data.size)
+        if count == 0:
+            return None
+
+        rect = self.marquee.normalized()
+        x_data = x_data[:count]
+        y_data = y_data[:count]
+        mask = (
+            np.isfinite(x_data)
+            & np.isfinite(y_data)
+            & (x_data >= rect.left())
+            & (x_data <= rect.right())
+            & (y_data >= rect.top())
+            & (y_data <= rect.bottom())
+            )
+        if not np.any(mask):
+            return None
+
+        return y_data[mask]
+
+
     def refreshPlot(self, finished : bool = True, worker=None):
         """
         Updates plot based on data produced by the thread worker. Data is 

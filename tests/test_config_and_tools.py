@@ -22,7 +22,8 @@ from qplot.configuration.themes import dark, light
 from qplot.windows import main as main_window
 from qplot.windows import _plotWin as plotwin_module
 from qplot.windows.plot1d import plot1d
-from qplot.windows.plot2d import _COLORBAR_COLORMAPS, _engineering_tick_strings, plot2d
+from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
+from qplot.windows._subplots import custom_viewbox
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._window_controls import (
     add_confirmation_options,
@@ -287,6 +288,54 @@ class SnapToTraceTestCase(unittest.TestCase):
     def setUpClass(cls):
         cls.app = qtw.QApplication.instance() or qtw.QApplication([])
 
+    def test_axis_label_uses_power_scaled_units_for_auto_si_prefix(self):
+        axis = plotwin_module._PowerScaledAxisItem("bottom")
+        axis.setLabel(text="Gate ch2", units="V")
+        axis.setRange(1e-9, 9e-9)
+
+        self.assertIn("Gate ch2 (10<sup>-9</sup> V)", axis.labelString())
+        self.assertEqual(
+            axis.tickStrings([2e-9, 9e-9], axis.autoSIPrefixScale * axis.scale, 1e-9),
+            ["2", "9"],
+            )
+
+    def test_axis_label_keeps_plain_units_without_auto_si_prefix(self):
+        axis = plotwin_module._PowerScaledAxisItem("left")
+        axis.setLabel(text="Gate ch1", units="V")
+        axis.setRange(-50.0, 50.0)
+
+        self.assertIn("Gate ch1 (V)", axis.labelString())
+
+    def test_param_axis_labels_pass_units_separately(self):
+        class Param:
+            def __init__(self, label, unit):
+                self.label = label
+                self.unit = unit
+
+        class Plot:
+            def __init__(self):
+                self.calls = []
+
+            def setLabel(self, axis, text, units):
+                self.calls.append((axis, text, units))
+
+        window = plotWidget.__new__(plotWidget)
+        window.plot = Plot()
+        window.axis_param = {
+            "x": Param("Gate ch2", "V"),
+            "y": Param("Gate ch1", "V"),
+            }
+
+        window._set_param_axis_labels()
+
+        self.assertEqual(
+            window.plot.calls,
+            [
+                ("bottom", "Gate ch2", "V"),
+                ("left", "Gate ch1", "V"),
+                ],
+            )
+
     def test_nearest_trace_point_uses_plotted_data_point(self):
         widget = pg.GraphicsLayoutWidget()
         plot_item = widget.addPlot()
@@ -376,6 +425,109 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertEqual(rect.right(), 12.0)
         self.assertEqual(rect.top(), -2.0)
         self.assertEqual(rect.bottom(), 6.0)
+
+    def test_shift_drag_corner_uses_initial_handle_grab_offset(self):
+        window = plotWidget.__new__(plotWidget)
+        window.marquee = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
+        captured = []
+
+        window.set_marquee_rect = lambda rect: captured.append(QtCore.QRectF(rect))
+
+        window.begin_marquee_drag(QtCore.QPointF(1.0, 7.0), "nw")
+        window.drag_marquee_to(QtCore.QPointF(1.0, 7.0), QtCore.Qt.ShiftModifier)
+
+        self.assertEqual(captured[-1], QtCore.QRectF(0.0, 0.0, 10.0, 8.0))
+
+    def test_right_click_inside_marquee_opens_marquee_context_menu(self):
+        viewbox = custom_viewbox()
+        calls = []
+
+        class Owner:
+            marquee = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
+
+            def open_marquee_context_menu(self, scene_pos, global_pos=None):
+                calls.append((scene_pos, global_pos))
+                return True
+
+        class Event:
+            accepted = False
+
+            def button(self):
+                return QtCore.Qt.RightButton
+
+            def scenePos(self):
+                return QtCore.QPointF(1.0, 2.0)
+
+            def screenPos(self):
+                return QtCore.QPointF(20.0, 30.0)
+
+            def accept(self):
+                self.accepted = True
+
+        event = Event()
+        viewbox.set_marquee_owner(Owner())
+
+        viewbox.mouseClickEvent(event)
+
+        self.assertTrue(event.accepted)
+        self.assertEqual(calls, [(QtCore.QPointF(1.0, 2.0), QtCore.QPoint(20, 30))])
+
+    def test_marquee_menu_omits_zoom_color_for_1d_plots(self):
+        window = plot1d.__new__(plot1d)
+        window.marquee = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
+
+        menu = window._new_marquee_context_menu()
+        action_texts = [action.text() for action in menu.actions()]
+
+        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Stats..."])
+
+    def test_1d_marquee_stats_include_axis_ranges(self):
+        window = plot1d.__new__(plot1d)
+        window.marquee = QtCore.QRectF(1.0, 2.0, 3.0, 4.0)
+        window.axis_data = {
+            "x": np.array([1.0, 2.0, 4.0, 5.0]),
+            "y": np.array([2.0, 4.0, 6.0, 9.0]),
+            }
+
+        stats_text = window._marquee_stats_text()
+
+        self.assertIn("X range: 1.000 to 4.000", stats_text)
+        self.assertIn("Y range: 2.000 to 6.000", stats_text)
+
+    def test_zoom_marquee_sets_selected_axes_without_padding(self):
+        class ViewBox:
+            def __init__(self):
+                self.x_range = None
+                self.y_range = None
+
+            def setXRange(self, low, high, padding=0):
+                self.x_range = (low, high, padding)
+
+            def setYRange(self, low, high, padding=0):
+                self.y_range = (low, high, padding)
+
+        window = plotWidget.__new__(plotWidget)
+        window.vb = ViewBox()
+        window.marquee = QtCore.QRectF(1.0, 2.0, 3.0, 4.0)
+
+        self.assertTrue(window.zoom_marquee("xy"))
+        self.assertEqual(window.vb.x_range, (1.0, 4.0, 0))
+        self.assertEqual(window.vb.y_range, (2.0, 6.0, 0))
+
+    def test_escape_clears_marquee(self):
+        window = qtw.QMainWindow()
+        window.marquee = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
+        window.clear_marquee = lambda: setattr(window, "marquee", None)
+        event = QtGui.QKeyEvent(
+            QtCore.QEvent.KeyPress,
+            QtCore.Qt.Key_Escape,
+            QtCore.Qt.NoModifier,
+            )
+
+        plotWidget.keyPressEvent(window, event)
+
+        self.assertIsNone(window.marquee)
+        self.assertTrue(event.isAccepted())
 
     def test_marquee_cursor_shapes_match_define_and_resize_modes(self):
         window = plotWidget.__new__(plotWidget)
@@ -480,6 +632,69 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         def isChecked(self):
             return self.checked
 
+    class ColorbarLine:
+        def __init__(self):
+            self.previous_drag_calls = []
+            self.position = None
+
+        def mouseDragEvent(self, event):
+            self.previous_drag_calls.append(event)
+
+        def mapToParent(self, position):
+            return position
+
+        def setPos(self, position):
+            self.position = position
+
+    class ColorbarRegion:
+        movable = True
+
+        def __init__(self):
+            self.previous_drag_calls = []
+            self.lines = [HeatmapHoverOutlineTestCase.ColorbarLine() for _ in range(2)]
+
+        def mouseDragEvent(self, event):
+            self.previous_drag_calls.append(event)
+
+        def prepareGeometryChange(self):
+            pass
+
+    class ColorbarDragEvent:
+        def __init__(
+                self,
+                y,
+                *,
+                modifiers=QtCore.Qt.NoModifier,
+                start=False,
+                finish=False,
+                ):
+            self._y = y
+            self._modifiers = modifiers
+            self._start = start
+            self._finish = finish
+            self.accepted = False
+
+        def modifiers(self):
+            return self._modifiers
+
+        def button(self):
+            return QtCore.Qt.LeftButton
+
+        def isStart(self):
+            return self._start
+
+        def isFinish(self):
+            return self._finish
+
+        def buttonDownPos(self):
+            return QtCore.QPointF(0.0, 0.0)
+
+        def pos(self):
+            return QtCore.QPointF(0.0, self._y)
+
+        def accept(self):
+            self.accepted = True
+
     def test_hover_outline_tracks_heatmap_cell_geometry(self):
         window = plot2d.__new__(plot2d)
         window.hover_pixel_outline = qtw.QGraphicsRectItem()
@@ -514,6 +729,86 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         rect = window._snap_marquee_rect(QtCore.QRectF(10.4, 21.1, 3.8, 4.8))
 
         self.assertEqual(rect, QtCore.QRectF(10.0, 20.0, 6.0, 6.0))
+
+    def test_shift_drag_corner_keeps_heatmap_pixel_marquee_size_after_snap(self):
+        window = plot2d.__new__(plot2d)
+        window.rect = QtCore.QRectF(0.0, 0.0, 20.0, 20.0)
+        window.dataGrid = np.zeros((20, 20))
+        rect = QtCore.QRectF(0.0, 0.0, 10.0, 10.0)
+
+        window._resize_marquee_rect(
+            rect,
+            "ne",
+            QtCore.QPointF(10.1, 10.1),
+            QtCore.Qt.ShiftModifier,
+            )
+        rect = window._snap_marquee_rect(rect.normalized())
+
+        self.assertEqual(rect, QtCore.QRectF(1.0, 1.0, 10.0, 10.0))
+
+    def test_marquee_menu_includes_zoom_color_for_2d_plots(self):
+        window = plot2d.__new__(plot2d)
+        window.marquee = QtCore.QRectF(1.0, 1.0, 2.0, 2.0)
+        window.rect = QtCore.QRectF(0.0, 0.0, 4.0, 4.0)
+        window.dataGrid = np.arange(16.0).reshape(4, 4)
+
+        menu = window._new_marquee_context_menu()
+        action_texts = [action.text() for action in menu.actions()]
+
+        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Zoom color", "Stats..."])
+
+    def test_zoom_color_uses_data_inside_marquee(self):
+        window = plot2d.__new__(plot2d)
+        window.marquee = QtCore.QRectF(1.0, 1.0, 2.0, 2.0)
+        window.rect = QtCore.QRectF(0.0, 0.0, 4.0, 4.0)
+        window.dataGrid = np.arange(16.0).reshape(4, 4)
+        window.bar = self.Colorbar()
+        window._colorbar_manual_levels = None
+
+        self.assertTrue(window.zoom_marquee_color())
+
+        self.assertEqual(window._colorbar_manual_levels, (5.0, 10.0))
+        self.assertEqual(window.bar.values, (5.0, 10.0))
+
+    def test_stats_action_opens_dialog_and_clears_marquee(self):
+        window = plot2d.__new__(plot2d)
+        window.marquee = QtCore.QRectF(1.0, 1.0, 2.0, 2.0)
+        window.rect = QtCore.QRectF(0.0, 0.0, 4.0, 4.0)
+        window.dataGrid = np.arange(16.0).reshape(4, 4)
+        opened = []
+        window.clear_marquee = lambda: setattr(window, "marquee", None)
+        window.show_marquee_stats_dialog = lambda stats_text=None: opened.append(stats_text) or True
+        qtw.QApplication.clipboard().clear()
+
+        menu = window._new_marquee_context_menu()
+        stats_action = next(action for action in menu.actions() if action.text() == "Stats...")
+        stats_action.trigger()
+
+        self.assertEqual(len(opened), 1)
+        self.assertIn("2x2 points", opened[0])
+        self.assertIn("X range: 1.000 to 3.000", opened[0])
+        self.assertIn("Y range: 1.000 to 3.000", opened[0])
+        self.assertEqual(qtw.QApplication.clipboard().text(), "")
+        self.assertIsNone(window.marquee)
+
+    def test_stats_dialog_copy_button_copies_displayed_stats(self):
+        class Host(qtw.QMainWindow):
+            _new_marquee_stats_dialog = plotWidget._new_marquee_stats_dialog
+            copy_marquee_stats_to_clipboard = plotWidget.copy_marquee_stats_to_clipboard
+
+        host = Host()
+        stats_text = "2x2 points\nAverage: 7.5"
+        qtw.QApplication.clipboard().clear()
+
+        dialog = host._new_marquee_stats_dialog(stats_text)
+        copy_button = next(
+            button for button in dialog.findChildren(qtw.QPushButton)
+            if button.text() == "Copy"
+            )
+        copy_button.click()
+
+        self.assertEqual(dialog.findChild(qtw.QPlainTextEdit).toPlainText(), stats_text)
+        self.assertEqual(qtw.QApplication.clipboard().text(), stats_text)
 
     def test_mouse_moved_clamps_heatmap_edge_to_last_cell(self):
         widget = pg.GraphicsLayoutWidget()
@@ -612,6 +907,89 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertIsNone(window._colorbar_manual_levels)
         self.assertTrue(window.relevel_refresh.checked)
         self.assertEqual(window.bar.values, (0.0, 40.0))
+
+    def test_alt_drag_colorbar_handle_widens_levels_about_midpoint(self):
+        for line_index, drag_y in ((0, -16.0), (1, 16.0)):
+            with self.subTest(line_index=line_index):
+                window = plot2d.__new__(plot2d)
+                window.bar = self.Colorbar()
+                window.bar.values = (0.0, 100.0)
+                window.bar.region = self.ColorbarRegion()
+                window.bar.rounding = 1.0
+                window.bar.horizontal = False
+                window.bar.lo_lim = None
+                window.bar.hi_lim = None
+                window.relevel_refresh = self.CheckBox(checked=True)
+                window._colorbar_manual_levels = None
+
+                window._install_colorbar_alt_range_drag_handler(window.bar)
+                line = window.bar.region.lines[line_index]
+                start_event = self.ColorbarDragEvent(
+                    0.0,
+                    modifiers=QtCore.Qt.AltModifier,
+                    start=True,
+                    )
+                move_event = self.ColorbarDragEvent(
+                    drag_y,
+                    modifiers=QtCore.Qt.AltModifier,
+                    )
+                finish_event = self.ColorbarDragEvent(
+                    drag_y,
+                    finish=True,
+                    )
+
+                line.mouseDragEvent(start_event)
+                line.mouseDragEvent(move_event)
+                line.mouseDragEvent(finish_event)
+
+                self.assertTrue(start_event.accepted)
+                self.assertTrue(move_event.accepted)
+                self.assertTrue(finish_event.accepted)
+                self.assertEqual(window.bar.values, (-6.0, 106.0))
+                self.assertEqual(window._colorbar_manual_levels, (-6.0, 106.0))
+                self.assertFalse(window.relevel_refresh.checked)
+                self.assertEqual(window.bar.region.lines[0].position, 63.0)
+                self.assertEqual(window.bar.region.lines[1].position, 191.0)
+
+    def test_plain_colorbar_handle_drag_keeps_pyqtgraph_behavior(self):
+        window = plot2d.__new__(plot2d)
+        window.bar = self.Colorbar()
+        window.bar.values = (0.0, 100.0)
+        window.bar.region = self.ColorbarRegion()
+
+        window._install_colorbar_alt_range_drag_handler(window.bar)
+        line = window.bar.region.lines[1]
+        event = self.ColorbarDragEvent(16.0)
+
+        line.mouseDragEvent(event)
+
+        self.assertFalse(event.accepted)
+        self.assertEqual(line.previous_drag_calls, [event])
+
+    def test_color_autoscale_button_sits_next_to_axis_autoscale_button(self):
+        window = plot2d.__new__(plot2d)
+        window.plot = pg.PlotItem()
+        window.dataGrid = np.array([[0.0, 1.0], [2.0, 3.0]])
+        calls = []
+        window.scaleColorbar = lambda: calls.append(True)
+
+        window._init_color_autoscale_button()
+        window.plot.mouseHovering = True
+        window._update_color_autoscale_button()
+
+        self.assertTrue(window.color_auto_button.isVisible())
+        self.assertGreater(
+            window.color_auto_button.pos().x(),
+            window.plot.autoBtn.pos().x(),
+            )
+        self.assertEqual(
+            window.color_auto_button.toolTip(),
+            "Autoscale color range",
+            )
+
+        window.color_auto_button.clicked.emit(window.color_auto_button)
+
+        self.assertEqual(calls, [True])
 
     def test_colorbar_colormap_updates_bar_and_preference(self):
         class Config:
@@ -717,20 +1095,40 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertNotIn("tab10", available)
         self.assertIn("viridis", available)
 
-    def test_colorbar_tick_labels_use_engineering_notation(self):
+    def test_colorbar_tick_formatter_uses_scaled_ticks_and_unit_label(self):
+        class Param:
+            label = "Gate v2"
+            unit = "V"
+
+        window = plot2d.__new__(plot2d)
+        window.param = Param()
+        window.bar = pg.ColorBarItem(values=(-1.5e-3, 1.5e-3))
+
+        window._set_colorbar_tick_formatter()
+
+        axis = window.bar.axis
         self.assertEqual(
-            _engineering_tick_strings([0, 1200, 1234.5678, 50000, -0.0012, 3.4e6]),
-            ["0", "1.2k", "1.235k", "50k", "-1.2m", "3.4M"],
+            axis.tickStrings([-1.5e-3, 0.0, 1.5e-3], axis.autoSIPrefixScale, 5e-4),
+            ["-1.5", "0", "1.5"],
+            )
+        self.assertIn(
+            "Gate v2 (10<sup>-3</sup> V)",
+            window.bar.getAxis("left").labelString(),
             )
 
-    def test_colorbar_tick_formatter_reserves_more_label_space(self):
+    def test_colorbar_tick_formatter_reserves_label_space(self):
+        class Param:
+            label = "Gate v2"
+            unit = "V"
+
         window = plot2d.__new__(plot2d)
+        window.param = Param()
         window.bar = self.Colorbar()
         window.bar.axis = self.Axis()
 
         window._set_colorbar_tick_formatter()
 
-        self.assertIs(window.bar.axis.tickStrings, _engineering_tick_strings)
+        self.assertNotIn("tickStrings", vars(window.bar.axis))
         self.assertEqual(window.bar.axis.width, 70)
         self.assertEqual(window.bar.axis.style["tickTextWidth"], 60)
         self.assertIsNone(window.bar.axis.picture)
@@ -831,6 +1229,50 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 [action.text().replace("&", "") for action in widget.scene().contextMenu],
                 )
         finally:
+            widget.deleteLater()
+
+    def test_plot_export_action_has_keyboard_shortcut(self):
+        class Host(qtw.QMainWindow):
+            initContextMenu = plotWidget.initContextMenu
+            register_shortcut = plotWidget.register_shortcut
+            _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
+            _context_menu_action = plotWidget._context_menu_action
+
+            def _init_axis_scale_dialogs(self):
+                pass
+
+            def open_context_menu(self):
+                pass
+
+            def open_export_dialog(self):
+                self.export_opened = True
+
+        widget = pg.GraphicsLayoutWidget()
+        host = Host()
+        host.widget = widget
+        host.plot = widget.addPlot()
+        host.vb = host.plot.vb
+        host.oper_dock = qtw.QDockWidget()
+        host.export_opened = False
+
+        try:
+            host.initContextMenu()
+
+            self.assertEqual(
+                host.exportPlotAction.shortcut().toString(),
+                "Ctrl+E",
+                )
+            self.assertEqual(
+                host.exportPlotAction.shortcutContext(),
+                QtCore.Qt.WindowShortcut,
+                )
+            self.assertIn(host.exportPlotAction, host.actions())
+
+            host.exportPlotAction.trigger()
+
+            self.assertTrue(host.export_opened)
+        finally:
+            host.deleteLater()
             widget.deleteLater()
 
     def test_axis_scale_controls_move_from_context_menu_to_dialogs(self):
@@ -950,8 +1392,36 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _colorbar_include_custom_changed = plot2d._colorbar_include_custom_changed
             _colorbar_include_subtype_changed = plot2d._colorbar_include_subtype_changed
             _add_colorbar_scale_context_action = plot2d._add_colorbar_scale_context_action
+            _install_colorbar_scale_bar_handlers = plot2d._install_colorbar_scale_bar_handlers
             _install_colorbar_scale_axis_handlers = plot2d._install_colorbar_scale_axis_handlers
-            _colorbar_scale_context_menu_position = plot2d._colorbar_scale_context_menu_position
+            _install_colorbar_scale_double_click_handler = (
+                plot2d._install_colorbar_scale_double_click_handler
+                )
+            _suppress_colorbar_right_click_menu = plot2d._suppress_colorbar_right_click_menu
+            _install_colorbar_level_sync_handlers = (
+                plot2d._install_colorbar_level_sync_handlers
+                )
+            _install_colorbar_alt_range_drag_handler = (
+                plot2d._install_colorbar_alt_range_drag_handler
+                )
+            _install_colorbar_alt_handle_drag_handler = (
+                plot2d._install_colorbar_alt_handle_drag_handler
+                )
+            _colorbar_alt_range_drag_event = plot2d._colorbar_alt_range_drag_event
+            _colorbar_alt_range_drag_axis_position = (
+                plot2d._colorbar_alt_range_drag_axis_position
+                )
+            _set_colorbar_alt_range_drag_visual = (
+                plot2d._set_colorbar_alt_range_drag_visual
+                )
+            _colorbar_alt_range_drag_levels = plot2d._colorbar_alt_range_drag_levels
+            _colorbar_levels_from_bar = plot2d._colorbar_levels_from_bar
+            _colorbar_interactive_levels_changed = (
+                plot2d._colorbar_interactive_levels_changed
+                )
+            _colorbar_interactive_levels_finished = (
+                plot2d._colorbar_interactive_levels_finished
+                )
             _sync_colorbar_scale_controls = plot2d._sync_colorbar_scale_controls
             _sync_colorbar_level_fields = plot2d._sync_colorbar_level_fields
             _colorbar_colormap_row = plot2d._colorbar_colormap_row
@@ -976,26 +1446,22 @@ class RunListParentLookupTestCase(unittest.TestCase):
         host.bar = Bar()
         host.config = Config()
         host._colorbar_manual_levels = None
-        old_exec = qtw.QMenu.exec_
-        captured_axis_actions = []
 
         class Axis:
             pass
 
-        class ContextEvent:
-            accepted = False
+        class MouseEvent:
+            def __init__(self, button):
+                self._button = button
+                self.accepted = False
 
-            def screenPos(self):
-                return QtCore.QPoint(0, 0)
+            def button(self):
+                return self._button
 
             def accept(self):
                 self.accepted = True
 
-        def capture_menu(menu, *_args, **_kwargs):
-            captured_axis_actions.extend(menu.actions())
-
         try:
-            qtw.QMenu.exec_ = capture_menu
             host._init_colorbar_scale_controls()
             host._add_colorbar_scale_context_action()
             action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
@@ -1060,16 +1526,35 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             self.assertEqual(host._colorbar_colormap_row("CET-C1"), -1)
 
+            double_click_calls = []
+            host.open_colorbar_scale_dialog = lambda: double_click_calls.append(True)
             axis = Axis()
             host._install_colorbar_scale_axis_handlers(axis)
-            event = ContextEvent()
-            axis.contextMenuEvent(event)
+            event = MouseEvent(QtCore.Qt.LeftButton)
+            axis.mouseDoubleClickEvent(event)
 
             self.assertTrue(event.accepted)
-            self.assertEqual(captured_axis_actions[0].text(), "Color Scale...")
-            self.assertIsNone(captured_axis_actions[0].menu())
+            self.assertEqual(double_click_calls, [True])
+            self.assertFalse(hasattr(axis, "contextMenuEvent"))
+
+            previous_bar_clicks = []
+            bar = Axis()
+            bar.mouseClickEvent = lambda event: previous_bar_clicks.append(event.button())
+            host._install_colorbar_scale_bar_handlers(bar)
+            double_click_calls.clear()
+
+            event = MouseEvent(QtCore.Qt.LeftButton)
+            bar.mouseDoubleClickEvent(event)
+
+            self.assertTrue(event.accepted)
+            self.assertEqual(double_click_calls, [True])
+
+            event = MouseEvent(QtCore.Qt.RightButton)
+            bar.mouseClickEvent(event)
+
+            self.assertTrue(event.accepted)
+            self.assertEqual(previous_bar_clicks, [])
         finally:
-            qtw.QMenu.exec_ = old_exec
             host.deleteLater()
 
 

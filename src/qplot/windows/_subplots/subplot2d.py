@@ -239,8 +239,7 @@ class sweeper(plotWidget):
         self.fixed_index = index
         self.update_sweep()
         
-        self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
-        self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
+        self._set_param_axis_labels()
             
     
     @QtCore.pyqtSlot(int)

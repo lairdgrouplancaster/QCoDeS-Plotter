@@ -100,26 +100,18 @@ Opening A Database
 1. Open the app.
 2. Drag a QCoDeS `.db` file onto the database path field, or select
    `File -> Load Database...`.
-3. Choose a QCoDeS `.db` database file if using the file menu.
-   Previously loaded databases are available from `File -> Load Last` and
-   `File -> Load Recent Database`.
-4. Select a run from the central table.
+3. You will see controls at the top, a run table in the middle, and information tabs on the bottom. The run table gives basic information about each run. The information tabs give more detail, including the full nested key-value structure created by QCoDeS.
+
+Plotting a measurement
+------------------
+There are three ways:
+1. Double-click on its preview in the run table.
+2. Right-click on the run table, and use the pop-up.
+3. Set ID and measurement at the top of the window and press the plot button.
 5. Use `Run` and `Measurement` to plot a specific measurement, or set
    `Measurement` to `*` to plot all measurements for that run.
-   The save button beside the plot button exports the requested measurement
-   data to CSV.
 
-The run table includes measurement previews, setpoint count, start time,
-completion progress, duration, and size for each run. It can be sorted by
-clicking a column header. Selecting a run shows details in the lower pane:
-
-* `Overview` summarises run properties, data point count, GUID, and parameters.
-* `Sweep parameters` shows a grouped table of set parameters and measure
-  parameters with labels, units, sweep values, delays, and instruments.
-* `Preview` shows generated thumbnails for 1D and 2D measurements. Double-click
-  a preview to open that plot.
-* `Metadata` shows metadata with long values shortened and available as tooltips.
-* `Raw key-value` keeps the full nested structure for detailed inspection.
+You can also use this window to export measurements as .csv, either using the save button or by right-clicking on a preview.
 
 Refresh And Live Data
 ---------------------
@@ -149,10 +141,15 @@ Common plot controls:
 * Mouse wheel over the plot: zoom.
 * Left-click drag: pan.
 * Right-click drag: scale the view.
-* Right-click the plot: open the plot context menu.
-* Double-click an X, Y, or colour-scale axis: open its scaling dialog.
-* `File -> Export Plot...`: open the plot export dialog.
-* `Autoscale`: reset the plot view.
+* Right-click the plot: open the plot context menu, including `Autoscale` and `Autoscale color`
+* `Alt`/`Option` + left-click drag: draw a marquee selection. Drag its handles
+  to resize it, right-click inside it for zoom and statistics actions, and press
+  `Esc` or double-click the plot to clear it.
+* Double-click an X or Y axis, or the colour scale bar: open its scaling dialog.
+* To scale the color bar:
+  - Drag one handle to adjust its limits
+  - Drag between handles to slide the range
+  - `Alt`/`Option` drag to widen/narrow the range.
 * The bottom toolbar shows cursor coordinates.
 * The left panel controls assigned axes and plot-specific options.
 * The right `Operations` panel applies data operations during refresh, after
@@ -163,12 +160,8 @@ Line Plots
 
 Line plots support multiple compatible traces in one window.
 
-Use the left panel or the run table `Add _ to _` context menu to add another
-line to an existing plot. Compatible plots are matched by independent variable
+Drag preview thumbnails can also be dragged from the run table or the `Preview` tab onto an existing line plot to add that trace. You can also Use the left panel. Compatible plots are matched by independent variable
 name.
-
-Compatible 1D preview thumbnails can also be dragged from the run table or the
-`Preview` tab onto an existing line plot to add that trace.
 
 The source window for an added line can be closed after the line is added. Live
 updates continue at the same refresh rate.
@@ -182,9 +175,12 @@ When multiple lines use different y axes:
 Heatmaps
 --------
 
-Use `Color Scale...` from the heatmap context menu or the colour-scale axis
-right-click menu, or double-click the colour-scale axis, to set manual or
-automatic colour scaling and choose the colour map.
+Use `Color Scale...` from the heatmap context menu or double-click the colour
+scale bar to set manual or automatic colour scaling and choose the
+colour map.
+
+Drag the colour-scale handles to adjust the colour range directly. Hold
+`Alt`/`Option` while dragging a handle to expand or contract the range. Drag between handles to slide the range. The `C` plot button autoscales the colour range.
 
 Heatmaps support 1D cut extraction:
 
@@ -229,6 +225,7 @@ Plot-window shortcuts:
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+0` | Autoscale the plot view |
+| `Ctrl+E` | Export the plot |
 | `Ctrl+Shift+O` | Show or hide the operations panel |
 | `Ctrl+Alt+R` | Show or hide the refresh toolbar |
 | `Ctrl+Alt+C` | Show or hide the coordinate toolbar |
@@ -243,6 +240,7 @@ Heatmap shortcuts:
 | `Ctrl+Shift+C` | Autoscale the colour range |
 | `Ctrl+Shift+H` | Open a horizontal cut |
 | `Ctrl+Shift+V` | Open a vertical cut |
+| Arrow keys | Move the selected cut cursor by one pixel |
 
 Dynamic context menu entries are numbered or underlined. Once the menu is open,
 press the shown number or letter to trigger that entry.

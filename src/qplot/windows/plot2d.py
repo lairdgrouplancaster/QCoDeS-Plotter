@@ -1,33 +1,15 @@
+import math
+
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore, QtGui
 
 import pyqtgraph as pg
+from pyqtgraph.graphicsItems.ButtonItem import ButtonItem
 
 import numpy as np
 
-from ._plotWin import plotWidget
+from ._plotWin import _axis_scale_power_text, plotWidget
 from ._subplots.subplot2d import sweeper
-
-
-_ENGINEERING_PREFIXES = {
-    -24: "y",
-    -21: "z",
-    -18: "a",
-    -15: "f",
-    -12: "p",
-    -9: "n",
-    -6: "u",
-    -3: "m",
-    0: "",
-    3: "k",
-    6: "M",
-    9: "G",
-    12: "T",
-    15: "P",
-    18: "E",
-    21: "Z",
-    24: "Y",
-}
 
 
 _PREFERRED_COLORBAR_COLORMAPS = (
@@ -406,45 +388,31 @@ def _colorbar_colormap_preview(name, width=220, height=14):
     return pixmap
 
 
-def _trim_decimal_places(value, decimal_places=3):
+def _letter_button_pixmap(letter, size=20):
     """
-    Format a float with up to decimal_places, trimming trailing zeros.
-
-    """
-    text = f"{value:.{decimal_places}f}".rstrip("0").rstrip(".")
-    return "0" if text in ("", "-0") else text
-
-
-def _format_engineering_tick(value, decimal_places=3):
-    """
-    Format an axis tick using compact engineering notation.
+    Render a pyqtgraph-style circular letter button.
 
     """
-    if not np.isfinite(value):
-        return ""
+    pixmap = QtGui.QPixmap(size, size)
+    pixmap.fill(QtCore.Qt.transparent)
 
-    if value == 0:
-        return "0"
+    painter = QtGui.QPainter(pixmap)
+    try:
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(QtGui.QPen(QtGui.QColor(70, 70, 70, 230), 1.2))
+        painter.setBrush(QtGui.QColor(235, 235, 235, 225))
+        painter.drawEllipse(QtCore.QRectF(1, 1, size - 2, size - 2))
 
-    exponent = int(np.floor(np.log10(abs(value)) / 3) * 3)
-    exponent = max(min(exponent, 24), -24)
-    scaled = value / 10**exponent
-    rounded_scaled = round(scaled, decimal_places)
-    if abs(rounded_scaled) >= 1000 and exponent < 24:
-        exponent += 3
-        scaled = value / 10**exponent
+        font = QtGui.QFont()
+        font.setBold(True)
+        font.setPointSize(11)
+        painter.setFont(font)
+        painter.setPen(QtGui.QColor(40, 40, 40))
+        painter.drawText(pixmap.rect(), QtCore.Qt.AlignCenter, letter)
+    finally:
+        painter.end()
 
-    prefix = _ENGINEERING_PREFIXES[exponent]
-
-    return f"{_trim_decimal_places(scaled, decimal_places)}{prefix}"
-
-
-def _engineering_tick_strings(values, scale=1.0, spacing=None):
-    """
-    Return engineering-notation labels for pyqtgraph AxisItem ticks.
-
-    """
-    return [_format_engineering_tick(value * scale) for value in values]
+    return pixmap
 
 
 class plot2d(plotWidget):
@@ -483,6 +451,7 @@ class plot2d(plotWidget):
         # self.image.setPxMode(True)
         
         self.plot.addItem(self.image)
+        self._init_color_autoscale_button()
         self.hover_pixel_outline = qtw.QGraphicsRectItem()
         self.hover_pixel_outline.setPen(
             pg.mkPen((255, 255, 255, 190), width=1.5, cosmetic=True)
@@ -496,6 +465,99 @@ class plot2d(plotWidget):
         self.load_data()
         self.show_status("Heatmap ready; loading data...", 5000)
       
+
+    def _init_color_autoscale_button(self):
+        """
+        Add a lower-left color autoscale button beside pyqtgraph's axis autoscale.
+
+        """
+        if "color_auto_button" in self.__dict__:
+            return
+
+        self.color_auto_button = ButtonItem(
+            pixmap=_letter_button_pixmap("C"),
+            width=14,
+            parentItem=self.plot,
+            )
+        self.color_auto_button.setToolTip("Autoscale color range")
+        self.color_auto_button.clicked.connect(lambda _button: self.scaleColorbar())
+        self.color_auto_button.hide()
+
+        self._patch_color_autoscale_button_events()
+        self._position_color_autoscale_button()
+        self._update_color_autoscale_button()
+
+
+    def _patch_color_autoscale_button_events(self):
+        """
+        Keep the color autoscale button in step with pyqtgraph's plot buttons.
+
+        """
+        if getattr(self.plot, "_qplot_color_auto_button_patched", False):
+            return
+
+        original_update_buttons = self.plot.updateButtons
+        original_resize_event = self.plot.resizeEvent
+
+        def update_buttons():
+            original_update_buttons()
+            self._update_color_autoscale_button()
+
+        def resize_event(event):
+            original_resize_event(event)
+            self._position_color_autoscale_button()
+
+        self.plot.updateButtons = update_buttons
+        self.plot.resizeEvent = resize_event
+        self.plot._qplot_color_auto_button_patched = True
+
+
+    def _position_color_autoscale_button(self):
+        """
+        Position the C button just to the right of pyqtgraph's A button.
+
+        """
+        button = getattr(self, "color_auto_button", None)
+        auto_button = getattr(self.plot, "autoBtn", None)
+        if button is None or auto_button is None:
+            return
+
+        try:
+            auto_rect = self.plot.mapRectFromItem(
+                auto_button,
+                auto_button.boundingRect(),
+                )
+            button_rect = self.plot.mapRectFromItem(button, button.boundingRect())
+            x = auto_button.pos().x() + auto_rect.width() + 2
+            y = self.plot.size().height() - button_rect.height()
+            button.setPos(x, y)
+        except RuntimeError:
+            return
+
+
+    def _update_color_autoscale_button(self):
+        """
+        Show the color autoscale button while plot controls are visible.
+
+        """
+        button = getattr(self, "color_auto_button", None)
+        if button is None:
+            return
+
+        try:
+            self._position_color_autoscale_button()
+            if (
+                    self.plot._exportOpts is False
+                    and self.plot.mouseHovering
+                    and not self.plot.buttonsHidden
+                    and self._data_colorbar_levels() is not None
+                    ):
+                button.show()
+            else:
+                button.hide()
+        except RuntimeError:
+            return
+     
         
     def initRefresh(self, refresh):
         super().initRefresh(refresh)
@@ -628,8 +690,10 @@ class plot2d(plotWidget):
             self.bar = self.plot.addColorBar(
                 self.image,
                 colorMap=self._colorbar_colormap(),
-                label=f"{self.param.label} ({self.param.unit})",
-                rounding=(np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid))/1e5 #Add 10,000 colours
+                rounding=(
+                    np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid)
+                    ) / 1e5,  # Add 10,000 colours
+                colorMapMenu=False,
                 )
             self._set_colorbar_tick_formatter()
             if self._colorbar_manual_levels is None:
@@ -757,6 +821,124 @@ class plot2d(plotWidget):
             )
 
 
+    def _add_marquee_color_context_action(self, menu):
+        action = self._add_marquee_context_action(
+            menu,
+            "Zoom color",
+            self.zoom_marquee_color,
+            )
+        if self._marquee_color_levels() is None:
+            action.setEnabled(False)
+            action.setToolTip("No finite data range inside the marquee.")
+        return action
+
+
+    def zoom_marquee_color(self):
+        levels = self._marquee_color_levels()
+        if levels is None:
+            return False
+
+        return self.setColorbarManualRange(*levels)
+
+
+    def _marquee_stats_text(self):
+        selected = self._marquee_selected_data()
+        if selected is None:
+            return None
+
+        values = selected[np.isfinite(selected)]
+        if values.size == 0:
+            return None
+
+        rows, cols = selected.shape
+        rect = self._snap_marquee_rect(self.marquee.normalized())
+        return self._format_marquee_stats_text(f"{cols}x{rows} points", values, rect)
+
+
+    def _marquee_color_levels(self):
+        selected = self._marquee_selected_data()
+        if selected is None:
+            return None
+
+        values = selected[np.isfinite(selected)]
+        if values.size == 0:
+            return None
+
+        vmin = float(values.min())
+        vmax = float(values.max())
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+            return None
+
+        return vmin, vmax
+
+
+    def _marquee_selected_data(self):
+        if (
+                self.__dict__.get("marquee") is None
+                or "rect" not in self.__dict__
+                or "dataGrid" not in self.__dict__
+                ):
+            return None
+
+        slices = self._marquee_cell_slices()
+        if slices is None:
+            return None
+
+        row_slice, col_slice = slices
+        selected = np.asarray(self.dataGrid[row_slice, col_slice], dtype=float)
+        if selected.size == 0:
+            return None
+
+        return selected
+
+
+    def _marquee_cell_slices(self):
+        rows, cols = self.dataGrid.shape
+        if rows <= 0 or cols <= 0 or self.rect.width() <= 0 or self.rect.height() <= 0:
+            return None
+
+        rect = self._snap_marquee_rect(self.marquee.normalized())
+        if rect is None:
+            return None
+
+        col_slice = self._marquee_axis_slice(
+            rect.left(),
+            rect.right(),
+            self.rect.x(),
+            self.rect.width(),
+            cols,
+            )
+        row_slice = self._marquee_axis_slice(
+            rect.top(),
+            rect.bottom(),
+            self.rect.y(),
+            self.rect.height(),
+            rows,
+            )
+        if row_slice is None or col_slice is None:
+            return None
+
+        return row_slice, col_slice
+
+
+    def _marquee_axis_slice(self, low, high, origin, span, count):
+        if count <= 0 or span <= 0:
+            return None
+
+        cell_size = span / count
+        min_value = origin
+        max_value = origin + span
+        low = min(max(low, min_value), max_value)
+        high = min(max(high, min_value), max_value)
+
+        start = int(np.floor((low - origin) / cell_size))
+        stop = int(np.ceil((high - origin) / cell_size))
+        start = min(max(start, 0), count - 1)
+        stop = min(max(stop, start + 1), count)
+
+        return slice(start, stop)
+
+
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):
         """
@@ -800,13 +982,14 @@ class plot2d(plotWidget):
         bar = self.__dict__.get("bar")
         if bar is not None:
             bar.setLevels((vmin, vmax))
+            self._sync_colorbar_axis_scaling()
 
         self._sync_colorbar_level_fields(vmin, vmax)
 
 
     def _set_colorbar_tick_formatter(self):
         """
-        Use engineering notation for colorbar tick labels.
+        Use plain scaled tick labels and show the scale in the colorbar title.
 
         """
         bar = self.__dict__.get("bar")
@@ -814,12 +997,100 @@ class plot2d(plotWidget):
         if axis is None:
             return
 
-        axis.tickStrings = _engineering_tick_strings
+        self._restore_colorbar_default_tick_formatter(axis)
         axis.setWidth(70)
         axis.setStyle(tickTextWidth=60)
+        self._install_colorbar_axis_scale_sync(bar)
+        self._sync_colorbar_axis_scaling()
+        self._install_colorbar_scale_bar_handlers(bar)
+        self._install_colorbar_scale_axis_handlers(axis)
+
+
+    def _restore_colorbar_default_tick_formatter(self, axis):
+        try:
+            del axis.tickStrings
+        except AttributeError:
+            pass
+
+
+    def _install_colorbar_axis_scale_sync(self, bar):
+        axis = getattr(bar, "axis", None)
+        if axis is None or getattr(axis, "_qplot_colorbar_scale_sync_installed", False):
+            return
+
+        previous_set_range = getattr(axis, "setRange", None)
+        if previous_set_range is None:
+            return
+
+        def set_range(low, high, previous_set_range=previous_set_range):
+            previous_set_range(low, high)
+            self._sync_colorbar_axis_scaling()
+
+        axis.setRange = set_range
+        axis._qplot_colorbar_scale_sync_installed = True
+
+
+    def _sync_colorbar_axis_scaling(self):
+        bar = self.__dict__.get("bar")
+        axis = getattr(bar, "axis", None)
+        if axis is None:
+            return
+
+        scale = self._colorbar_axis_display_scale(bar, axis)
+        axis.autoSIPrefixScale = scale
+        axis.labelUnitPrefix = ""
         axis.picture = None
         axis.update()
-        self._install_colorbar_scale_axis_handlers(axis)
+        self._set_colorbar_scaled_label(bar, scale)
+
+
+    def _colorbar_axis_display_scale(self, bar, axis):
+        levels = self._colorbar_levels_from_bar(bar)
+        if levels is None:
+            levels = getattr(axis, "range", None)
+        if levels is None:
+            return 1.0
+
+        low, high = levels
+        scale_value = max(abs(low), abs(high))
+        if not np.isfinite(scale_value):
+            return 1.0
+
+        scale, _prefix = pg.functions.siScale(scale_value, allowUnicode=False)
+        return scale
+
+
+    def _set_colorbar_scaled_label(self, bar, scale):
+        param = self.__dict__.get("param")
+        if param is None or not hasattr(bar, "setLabel"):
+            return
+
+        label = getattr(param, "label", "")
+        unit = getattr(param, "unit", "")
+        unit_scale = 1.0 / scale if scale else 1.0
+        scale_text = _axis_scale_power_text(unit_scale)
+
+        if unit and scale_text:
+            unit_text = f"{scale_text} {unit}"
+        elif unit:
+            unit_text = unit
+        else:
+            unit_text = scale_text
+
+        text = f"{label} ({unit_text})" if unit_text else label
+        axis = "bottom" if getattr(bar, "horizontal", False) else "left"
+        bar.setLabel(axis, text)
+
+
+    def _install_colorbar_scale_bar_handlers(self, bar):
+        """
+        Open the color-scale dialog from colorbar interactions.
+
+        """
+        self._install_colorbar_scale_double_click_handler(bar)
+        self._suppress_colorbar_right_click_menu(bar)
+        self._install_colorbar_level_sync_handlers(bar)
+        self._install_colorbar_alt_range_drag_handler(bar)
 
 
     def _install_colorbar_scale_axis_handlers(self, axis):
@@ -827,10 +1098,18 @@ class plot2d(plotWidget):
         Open the color-scale dialog from direct colorbar axis interactions.
 
         """
-        if getattr(axis, "_qplot_colorbar_scale_handlers_installed", False):
+        self._install_colorbar_scale_double_click_handler(axis)
+
+
+    def _install_colorbar_scale_double_click_handler(self, item):
+        """
+        Open the color-scale dialog when a colorbar item is double-clicked.
+
+        """
+        if getattr(item, "_qplot_colorbar_scale_handlers_installed", False):
             return
 
-        previous_double_click_handler = getattr(axis, "mouseDoubleClickEvent", None)
+        previous_double_click_handler = getattr(item, "mouseDoubleClickEvent", None)
 
         def mouse_double_click(event, previous_handler=previous_double_click_handler):
             if event.button() == QtCore.Qt.LeftButton:
@@ -841,31 +1120,320 @@ class plot2d(plotWidget):
             if previous_handler is not None:
                 previous_handler(event)
 
-        def context_menu(event):
-            menu = qtw.QMenu(self)
-            action = menu.addAction("Color Scale...")
-            action.triggered.connect(self.open_colorbar_scale_dialog)
-            position = self._colorbar_scale_context_menu_position(event)
-            menu.exec_(position)
-            event.accept()
-
-        axis.mouseDoubleClickEvent = mouse_double_click
-        axis.contextMenuEvent = context_menu
-        axis._qplot_colorbar_scale_handlers_installed = True
+        item.mouseDoubleClickEvent = mouse_double_click
+        item._qplot_colorbar_scale_handlers_installed = True
 
 
-    def _colorbar_scale_context_menu_position(self, event):
+    def _suppress_colorbar_right_click_menu(self, bar):
         """
-        Return a global position for colorbar axis context menus.
+        Prevent pyqtgraph's colorbar right-click menu from opening.
 
         """
-        if hasattr(event, "screenPos"):
-            return event.screenPos()
+        if getattr(bar, "_qplot_colorbar_right_click_suppressed", False):
+            return
 
-        if hasattr(event, "globalPos"):
-            return event.globalPos()
+        previous_mouse_click_handler = getattr(bar, "mouseClickEvent", None)
 
-        return QtGui.QCursor.pos()
+        def mouse_click(event, previous_handler=previous_mouse_click_handler):
+            if event.button() == QtCore.Qt.RightButton:
+                event.accept()
+                return
+
+            if previous_handler is not None:
+                previous_handler(event)
+
+        bar.mouseClickEvent = mouse_click
+        bar._qplot_colorbar_right_click_suppressed = True
+
+
+    def _install_colorbar_level_sync_handlers(self, bar):
+        """
+        Treat direct colorbar handle adjustment as a manual color range.
+
+        """
+        if getattr(bar, "_qplot_colorbar_level_sync_installed", False):
+            return
+
+        changed = getattr(bar, "sigLevelsChanged", None)
+        if changed is not None:
+            changed.connect(self._colorbar_interactive_levels_changed)
+
+        finished = getattr(bar, "sigLevelsChangeFinished", None)
+        if finished is not None:
+            finished.connect(self._colorbar_interactive_levels_finished)
+
+        bar._qplot_colorbar_level_sync_installed = True
+
+
+    def _install_colorbar_alt_range_drag_handler(self, bar):
+        """
+        Add Alt/Option-drag on colorbar handles to widen or narrow levels.
+
+        """
+        region = getattr(bar, "region", None)
+        if region is None:
+            return
+
+        if getattr(region, "_qplot_colorbar_alt_range_drag_installed", False):
+            return
+
+        for index, line in enumerate(getattr(region, "lines", ())):
+            self._install_colorbar_alt_handle_drag_handler(bar, region, line, index)
+
+        region._qplot_colorbar_alt_range_drag_installed = True
+
+
+    def _install_colorbar_alt_handle_drag_handler(self, bar, region, line, index):
+        """
+        Patch one pyqtgraph colorbar handle for symmetric Alt/Option-drag.
+
+        """
+        if index not in (0, 1):
+            return
+
+        if getattr(line, "_qplot_colorbar_alt_range_drag_installed", False):
+            return
+
+        previous_mouse_drag_handler = getattr(line, "mouseDragEvent", None)
+        source = ("line", index)
+        direction = -1.0 if index == 0 else 1.0
+
+        def mouse_drag(event, previous_handler=previous_mouse_drag_handler):
+            modifiers = event.modifiers()
+            active = getattr(region, "_qplot_colorbar_alt_range_drag_source", None)
+            if (
+                    event.button() == QtCore.Qt.LeftButton
+                    and (
+                        active == source
+                        or (
+                            modifiers & QtCore.Qt.AltModifier
+                            and getattr(line, "movable", True)
+                            and getattr(region, "movable", True)
+                            )
+                        )
+                    ):
+                self._colorbar_alt_range_drag_event(
+                    bar,
+                    region,
+                    event,
+                    source,
+                    direction,
+                    line,
+                    )
+                return
+
+            if previous_handler is not None:
+                previous_handler(event)
+
+        line.mouseDragEvent = mouse_drag
+        line._qplot_colorbar_alt_range_drag_installed = True
+
+
+    def _colorbar_alt_range_drag_event(
+            self,
+            bar,
+            region,
+            event,
+            source,
+            direction,
+            event_item,
+            ):
+        """
+        Expand or contract the color range around its midpoint during Alt-drag.
+
+        """
+        event.accept()
+
+        if event.isStart():
+            levels = self._colorbar_levels_from_bar(bar)
+            if levels is None:
+                region._qplot_colorbar_alt_range_drag_active = False
+                region._qplot_colorbar_alt_range_drag_source = None
+                return
+
+            region._qplot_colorbar_alt_range_drag_active = True
+            region._qplot_colorbar_alt_range_drag_source = source
+            region._qplot_colorbar_alt_range_drag_levels = levels
+            region._qplot_colorbar_alt_range_drag_start_pos = (
+                self._colorbar_alt_range_drag_axis_position(
+                    bar,
+                    event.buttonDownPos(),
+                    event_item,
+                    )
+                )
+
+        if (
+                not getattr(region, "_qplot_colorbar_alt_range_drag_active", False)
+                or getattr(region, "_qplot_colorbar_alt_range_drag_source", None) != source
+                ):
+            return
+
+        start_levels = region._qplot_colorbar_alt_range_drag_levels
+        start_pos = region._qplot_colorbar_alt_range_drag_start_pos
+        current_pos = self._colorbar_alt_range_drag_axis_position(
+            bar,
+            event.pos(),
+            event_item,
+            )
+        axis_delta = (current_pos - start_pos) * direction
+        self._set_colorbar_alt_range_drag_visual(region, axis_delta)
+        levels = self._colorbar_alt_range_drag_levels(
+            bar,
+            start_levels,
+            axis_delta,
+            )
+        if levels is not None:
+            bar.setLevels(levels)
+            self._colorbar_interactive_levels_changed(bar)
+
+        if event.isFinish():
+            region._qplot_colorbar_alt_range_drag_active = False
+            region._qplot_colorbar_alt_range_drag_source = None
+            self._set_colorbar_alt_range_drag_visual(region, 0.0)
+            self._colorbar_interactive_levels_finished(bar)
+
+
+    def _colorbar_alt_range_drag_axis_position(self, bar, position, item=None):
+        """
+        Return the colorbar-axis coordinate from a region mouse position.
+
+        """
+        if item is not None:
+            try:
+                position = item.mapToParent(position)
+            except (AttributeError, RuntimeError):
+                pass
+
+        if getattr(bar, "horizontal", False):
+            return position.x()
+
+        return position.y()
+
+
+    def _set_colorbar_alt_range_drag_visual(self, region, axis_delta):
+        """
+        Move pyqtgraph's range markers apart or together during Alt-drag.
+
+        """
+        lines = getattr(region, "lines", None)
+        if lines is None or len(lines) != 2:
+            return
+
+        axis_delta = min(max(axis_delta, -63.0), 63.0)
+        previous_block = getattr(region, "blockLineSignal", False)
+        region.blockLineSignal = True
+        try:
+            lines[0].setPos(63.0 - axis_delta)
+            lines[1].setPos(191.0 + axis_delta)
+            region.prepareGeometryChange()
+        finally:
+            region.blockLineSignal = previous_block
+
+
+    def _colorbar_alt_range_drag_levels(self, bar, start_levels, axis_delta):
+        """
+        Return levels widened or narrowed symmetrically by an Alt-drag delta.
+
+        """
+        low, high = start_levels
+        span = high - low
+        if not np.isfinite(span) or span <= 0:
+            return None
+
+        rounding = getattr(bar, "rounding", 0.0)
+        try:
+            rounding = float(rounding)
+        except (TypeError, ValueError):
+            rounding = 0.0
+        if not np.isfinite(rounding) or rounding <= 0:
+            rounding = 0.0
+
+        drag_units = axis_delta / 64.0
+        signed_drag = math.copysign(drag_units * drag_units, drag_units)
+        scale = span + 2 * rounding
+        center = (low + high) / 2.0
+        half_span = span / 2.0 + scale * signed_drag
+        min_span = rounding if rounding > 0 else max(abs(span) * 1e-9, 1e-300)
+        half_span = max(half_span, min_span / 2.0)
+
+        lo_lim = getattr(bar, "lo_lim", None)
+        hi_lim = getattr(bar, "hi_lim", None)
+        if lo_lim is not None and np.isfinite(lo_lim):
+            half_span = min(half_span, center - lo_lim)
+        if hi_lim is not None and np.isfinite(hi_lim):
+            half_span = min(half_span, hi_lim - center)
+        if half_span <= 0:
+            return None
+
+        low = center - half_span
+        high = center + half_span
+
+        if rounding > 0:
+            low = rounding * round(low / rounding)
+            high = rounding * round(high / rounding)
+
+        if lo_lim is not None and np.isfinite(lo_lim):
+            low = max(low, lo_lim)
+        if hi_lim is not None and np.isfinite(hi_lim):
+            high = min(high, hi_lim)
+        if not np.isfinite(low) or not np.isfinite(high) or low >= high:
+            return None
+
+        return float(low), float(high)
+
+
+    def _colorbar_levels_from_bar(self, bar):
+        """
+        Return validated numeric levels from a pyqtgraph colorbar.
+
+        """
+        try:
+            low, high = bar.levels()
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+        try:
+            low = float(low)
+            high = float(high)
+        except (TypeError, ValueError):
+            return None
+
+        if not np.isfinite(low) or not np.isfinite(high) or low >= high:
+            return None
+
+        return low, high
+
+
+    def _colorbar_interactive_levels_changed(self, bar):
+        """
+        Mirror interactively adjusted levels into the scale dialog.
+
+        """
+        levels = self._colorbar_levels_from_bar(bar)
+        if levels is None:
+            return
+
+        self._sync_colorbar_axis_scaling()
+        self._sync_colorbar_level_fields(*levels)
+
+
+    def _colorbar_interactive_levels_finished(self, bar):
+        """
+        Persist interactively adjusted colorbar levels as manual scaling.
+
+        """
+        levels = self._colorbar_levels_from_bar(bar)
+        if levels is None:
+            return
+
+        self._colorbar_manual_levels = levels
+        if "relevel_refresh" in self.__dict__:
+            self.relevel_refresh.setChecked(False)
+        if "colorbar_manual_radio" in self.__dict__:
+            self.colorbar_manual_radio.setChecked(True)
+        if "colorbar_auto_radio" in self.__dict__:
+            self.colorbar_auto_radio.setChecked(False)
+        self._sync_colorbar_level_fields(*levels)
 
 
     def _current_colorbar_levels(self):

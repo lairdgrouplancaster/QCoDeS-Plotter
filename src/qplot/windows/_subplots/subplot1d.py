@@ -212,6 +212,36 @@ class custom_viewbox(pg.ViewBox):
         super().mouseDoubleClickEvent(ev)
 
 
+    def mouseClickEvent(self, ev):
+        owner = self._marquee_owner
+        if (
+                owner is not None
+                and ev.button() == QtCore.Qt.RightButton
+                and owner.open_marquee_context_menu(
+                    ev.scenePos(),
+                    self._mouse_event_global_pos(ev),
+                    )
+                ):
+            ev.accept()
+            return
+
+        super().mouseClickEvent(ev)
+
+
+    def _mouse_event_global_pos(self, ev):
+        for attr_name in ("screenPos", "globalPos"):
+            attr = getattr(ev, attr_name, None)
+            if attr is None:
+                continue
+            pos = attr() if callable(attr) else attr
+            if isinstance(pos, QtCore.QPointF):
+                return pos.toPoint()
+            if isinstance(pos, QtCore.QPoint):
+                return pos
+
+        return None
+
+
     def mouseDragEvent(self, ev, axis=None):
         if axis is None and self._handle_marquee_mouse_drag(ev):
             return

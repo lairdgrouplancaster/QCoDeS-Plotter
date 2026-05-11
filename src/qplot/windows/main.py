@@ -230,6 +230,16 @@ class MainWindow(qtw.QMainWindow):
         self.autoPlotBox = qtw.QCheckBox()
         self.autoPlotBox.setToolTip("Automatically open plots for newly detected runs")
 
+        self.refreshDatabaseButton = qtw.QToolButton()
+        self.refreshDatabaseButton.setObjectName("refreshIconButton")
+        self.refreshDatabaseButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_BrowserReload)
+            )
+        self.refreshDatabaseButton.setToolTip("Refresh the database run list (R)")
+        self.refreshDatabaseButton.setAccessibleName("Refresh database")
+        self.refreshDatabaseButton.setFixedSize(28, 26)
+        self.refreshDatabaseButton.clicked.connect(self.refreshMain)
+
         self.closeAllPlotsButton = qtw.QToolButton()
         self.closeAllPlotsButton.setObjectName("closeAllPlotsButton")
         self.closeAllPlotsButton.setIcon(
@@ -484,6 +494,7 @@ class MainWindow(qtw.QMainWindow):
         sublayout.addWidget(qtw.QLabel("Refresh:"))
         sublayout.addWidget(self.spinBox)
         sublayout.addWidget(qtw.QLabel("s"))
+        sublayout.addWidget(self.refreshDatabaseButton)
 
         self.l.addLayout(self.targetLayout)
         self.l.addLayout(sublayout)

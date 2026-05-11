@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from math import log10
+from math import isclose, isfinite, log10
 from os import path
 from time import perf_counter
 
@@ -38,6 +38,46 @@ from ._window_controls import (
 if TYPE_CHECKING:
     import qplot
     import qcodes
+
+
+def _axis_scale_power_text(scale):
+    """
+    Return a compact HTML power-of-ten label for an axis display scale.
+
+    """
+    if not isfinite(scale) or scale <= 0 or isclose(scale, 1.0):
+        return ""
+
+    exponent = round(log10(scale))
+    if isclose(scale, 10**exponent, rel_tol=1e-9, abs_tol=0.0):
+        return f"10<sup>{exponent}</sup>"
+
+    return f"{scale:g}"
+
+
+class _PowerScaledAxisItem(pg.AxisItem):
+    """
+    Display pyqtgraph's auto SI scaling as powers of ten in the axis unit.
+
+    """
+
+    def labelString(self) -> str:
+        if self.autoSIPrefix and not isclose(self.autoSIPrefixScale, 1.0):
+            unit_scale = 1.0 / self.autoSIPrefixScale
+        else:
+            unit_scale = 1.0
+
+        scale_text = _axis_scale_power_text(unit_scale)
+        if self.labelUnits == "":
+            units = f"({scale_text})" if scale_text else ""
+        elif scale_text:
+            units = f"({scale_text} {self.labelUnits})"
+        else:
+            units = f"({self.labelUnitPrefix}{self.labelUnits})"
+
+        text = f"{self.labelText} {units}"
+        style = ";".join([f"{k}: {self.labelStyle[k]}" for k in self.labelStyle])
+        return f"<span style='{style}'>{text}</span>"
 
 
 class plotWidget(qtw.QMainWindow):
@@ -130,7 +170,13 @@ class plotWidget(qtw.QMainWindow):
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
         self.vb.setDefaultPadding(0)
-        self.plot = self.widget.addPlot(viewBox=self.vb)
+        self.plot = self.widget.addPlot(
+            viewBox=self.vb,
+            axisItems={
+                "bottom": _PowerScaledAxisItem("bottom"),
+                "left": _PowerScaledAxisItem("left"),
+                },
+            )
         self.vb.setParent(self.plot)
         self.vb.set_marquee_owner(self)
         self._init_marquee()
@@ -181,6 +227,15 @@ class plotWidget(qtw.QMainWindow):
         if viewport is not None:
             viewport.setAcceptDrops(True)
             viewport.installEventFilter(self)
+
+
+    def _set_param_axis_label(self, axis, param):
+        self.plot.setLabel(axis=axis, text=param.label, units=param.unit)
+
+
+    def _set_param_axis_labels(self):
+        self._set_param_axis_label("bottom", self.axis_param["x"])
+        self._set_param_axis_label("left", self.axis_param["y"])
 
 
     def eventFilter(self, source, event):
@@ -309,8 +364,14 @@ class plotWidget(qtw.QMainWindow):
         if mode is None:
             mode = "new"
 
+        handle_offset = QtCore.QPointF()
+        if mode != "new" and self.marquee is not None:
+            handle_point = self._marquee_handle_points_for_rect(self.marquee)[mode]
+            handle_offset = start - handle_point
+
         self._marquee_drag_state = {
             "anchor": QtCore.QPointF(start),
+            "handle_offset": QtCore.QPointF(handle_offset),
             "mode": mode,
             "rect": QtCore.QRectF(self.marquee) if self.marquee is not None else None,
             }
@@ -333,6 +394,11 @@ class plotWidget(qtw.QMainWindow):
             rect = QtCore.QRectF(state["anchor"], point)
         else:
             rect = QtCore.QRectF(state["rect"])
+            offset = state.get("handle_offset", QtCore.QPointF())
+            point = QtCore.QPointF(
+                point.x() - offset.x(),
+                point.y() - offset.y(),
+                )
             self._resize_marquee_rect(rect, state["mode"], point, modifiers)
 
         self.set_marquee_rect(rect)
@@ -342,9 +408,186 @@ class plotWidget(qtw.QMainWindow):
         self._marquee_drag_state = None
 
 
+    def marquee_contains_scene_pos(self, scene_pos):
+        """
+        Return whether a scene position is inside the current marquee.
+
+        """
+        if self.marquee is None:
+            return False
+
+        point = self.plot.vb.mapSceneToView(scene_pos)
+        return self.marquee.normalized().contains(point)
+
+
+    def open_marquee_context_menu(self, scene_pos, global_pos=None):
+        """
+        Open the marquee context menu when a right-click lands inside it.
+
+        """
+        if not self.marquee_contains_scene_pos(scene_pos):
+            return False
+
+        menu = self._new_marquee_context_menu()
+        if global_pos is None:
+            global_pos = QtGui.QCursor.pos()
+        elif isinstance(global_pos, QtCore.QPointF):
+            global_pos = global_pos.toPoint()
+
+        menu.exec_(global_pos)
+        return True
+
+
+    def _new_marquee_context_menu(self):
+        menu = qtw.QMenu()
+        if hasattr(menu, "setToolTipsVisible"):
+            menu.setToolTipsVisible(True)
+
+        self._add_marquee_context_action(
+            menu,
+            "Zoom",
+            lambda: self.zoom_marquee("xy"),
+            )
+        self._add_marquee_context_action(
+            menu,
+            "Zoom X",
+            lambda: self.zoom_marquee("x"),
+            )
+        self._add_marquee_context_action(
+            menu,
+            "Zoom Y",
+            lambda: self.zoom_marquee("y"),
+            )
+        self._add_marquee_color_context_action(menu)
+        self._add_marquee_stats_context_action(menu)
+        return menu
+
+
+    def _add_marquee_context_action(self, menu, text, callback):
+        action = menu.addAction(text)
+        action.triggered.connect(
+            lambda _checked=False, callback=callback: self._execute_marquee_action(callback)
+            )
+        return action
+
+
+    def _add_marquee_color_context_action(self, menu):
+        return None
+
+
+    def _add_marquee_stats_context_action(self, menu):
+        stats_text = self._marquee_stats_text()
+        action = self._add_marquee_context_action(
+            menu,
+            "Stats...",
+            lambda stats_text=stats_text: self.show_marquee_stats_dialog(stats_text),
+            )
+        if stats_text is None:
+            action.setEnabled(False)
+            action.setToolTip("No data points inside the marquee.")
+        else:
+            action.setToolTip("Show statistics for the marquee selection.")
+            action.setStatusTip("Show statistics for the marquee selection.")
+        return action
+
+
+    def _execute_marquee_action(self, callback):
+        if callback():
+            self.clear_marquee()
+
+
+    def zoom_marquee(self, axes):
+        rect = self.marquee.normalized() if self.marquee is not None else None
+        if rect is None:
+            return False
+
+        if "x" in axes:
+            self.vb.setXRange(rect.left(), rect.right(), padding=0)
+        if "y" in axes:
+            self.vb.setYRange(rect.top(), rect.bottom(), padding=0)
+        return True
+
+
+    def _marquee_stats_text(self):
+        return None
+
+
+    def show_marquee_stats_dialog(self, stats_text=None):
+        if stats_text is None:
+            stats_text = self._marquee_stats_text()
+        if stats_text is None:
+            return False
+
+        dialog = self._new_marquee_stats_dialog(stats_text)
+        self._marquee_stats_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return True
+
+
+    def _new_marquee_stats_dialog(self, stats_text):
+        dialog = qtw.QDialog(self)
+        dialog.setWindowTitle("Marquee stats")
+
+        layout = qtw.QVBoxLayout(dialog)
+        stats_view = qtw.QPlainTextEdit(stats_text)
+        stats_view.setReadOnly(True)
+        stats_view.setMinimumWidth(280)
+        stats_view.setMinimumHeight(170)
+        layout.addWidget(stats_view)
+
+        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
+        copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ActionRole)
+
+        def copy_stats(_checked=False):
+            self.copy_marquee_stats_to_clipboard(stats_text)
+
+        copy_button.clicked.connect(copy_stats)
+        buttons.rejected.connect(dialog.close)
+        layout.addWidget(buttons)
+
+        return dialog
+
+
+    def _format_marquee_stats_text(self, size_text, values, rect=None):
+        if rect is None and self.__dict__.get("marquee") is not None:
+            rect = self.marquee.normalized()
+
+        lines = [size_text]
+        if rect is not None:
+            lines.extend((
+                f"X range: {self.formatNum(rect.left())} to {self.formatNum(rect.right())}",
+                f"Y range: {self.formatNum(rect.top())} to {self.formatNum(rect.bottom())}",
+                ))
+
+        lines.extend((
+            f"Average: {self.formatNum(float(values.mean()))}",
+            f"Standard deviation: {self.formatNum(float(values.std()))}",
+            f"Max: {self.formatNum(float(values.max()))}",
+            f"Min: {self.formatNum(float(values.min()))}",
+            ))
+
+        return "\n".join(lines)
+
+
+    def copy_marquee_stats_to_clipboard(self, stats_text=None):
+        if stats_text is None:
+            stats_text = self._marquee_stats_text()
+        if stats_text is None:
+            return False
+
+        clipboard = qtw.QApplication.clipboard()
+        if clipboard is None:
+            return False
+
+        clipboard.setText(stats_text)
+        return True
+
+
     def _resize_marquee_rect(self, rect, handle, point, modifiers=QtCore.Qt.NoModifier):
-        symmetric = modifiers & QtCore.Qt.AltModifier
-        asymmetric = modifiers & QtCore.Qt.ShiftModifier
+        symmetric = bool(modifiers & QtCore.Qt.AltModifier)
+        asymmetric = bool(modifiers & QtCore.Qt.ShiftModifier) and not symmetric
         original = QtCore.QRectF(rect)
         anchor = self._marquee_handle_points_for_rect(original)[handle]
 
@@ -373,6 +616,36 @@ class plotWidget(qtw.QMainWindow):
                 rect.setBottom(original.bottom() + offset)
             else:
                 rect.setTop(original.top() + offset)
+
+        if asymmetric:
+            self._snap_translated_marquee_rect(rect, original, handle)
+
+
+    def _snap_translated_marquee_rect(self, rect, original, handle):
+        snapped = self._snap_marquee_rect(QtCore.QRectF(rect).normalized())
+        if snapped is None:
+            return
+
+        adjusted = QtCore.QRectF(snapped)
+        if "w" in handle or "e" in handle:
+            width = original.width()
+            if "w" in handle:
+                adjusted.setLeft(snapped.left())
+                adjusted.setRight(snapped.left() + width)
+            else:
+                adjusted.setRight(snapped.right())
+                adjusted.setLeft(snapped.right() - width)
+
+        if "n" in handle or "s" in handle:
+            height = original.height()
+            if "s" in handle:
+                adjusted.setTop(snapped.top())
+                adjusted.setBottom(snapped.top() + height)
+            else:
+                adjusted.setBottom(snapped.bottom())
+                adjusted.setTop(snapped.bottom() - height)
+
+        rect.setRect(adjusted.left(), adjusted.top(), adjusted.width(), adjusted.height())
 
 
     def set_marquee_rect(self, rect):
@@ -631,7 +904,11 @@ class plotWidget(qtw.QMainWindow):
         self._remove_scene_export_context_menu()
 
         self.exportPlotAction = qtw.QAction("&Export Plot...", self)
-        self.exportPlotAction.setStatusTip("Open the plot export dialog")
+        self.register_shortcut(
+            self.exportPlotAction,
+            "Ctrl+E",
+            "Open the plot export dialog",
+            )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
         contextAction = qtw.QAction("Show Context Menu", self)
@@ -1332,6 +1609,15 @@ class plotWidget(qtw.QMainWindow):
             
 ###############################################################################
 #Events
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape and self.__dict__.get("marquee") is not None:
+            self.clear_marquee()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
     
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
@@ -1542,8 +1828,7 @@ class plotWidget(qtw.QMainWindow):
             # I didnt want to make this a dedicated callback for the few times 
             # it is used, as the performace hit is neglible
             # Update text
-            self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
-            self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
+            self._set_param_axis_labels()
             elapsed = perf_counter() - worker.started_at
 
             self.show_status(
