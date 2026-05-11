@@ -313,6 +313,61 @@ class plot1d(plotWidget):
 
         self._snap_marker_view.removeItem(self.snap_marker)
         self._snap_marker_view = None
+
+
+    def _snap_marquee_rect(self, rect):
+        """
+        Snap marquee X edges to the spaces between plotted data points.
+
+        """
+        boundaries = self._marquee_x_boundaries()
+        if boundaries is None:
+            return rect
+
+        left_index = int(np.searchsorted(boundaries, rect.left(), side="right")) - 1
+        right_index = int(np.searchsorted(boundaries, rect.right(), side="left"))
+        left_index = min(max(left_index, 0), len(boundaries) - 2)
+        right_index = min(max(right_index, left_index + 1), len(boundaries) - 1)
+
+        return QtCore.QRectF(
+            boundaries[left_index],
+            rect.top(),
+            boundaries[right_index] - boundaries[left_index],
+            rect.height(),
+            )
+
+
+    def _marquee_x_boundaries(self):
+        """
+        Return X coordinates halfway between visible 1d sample points.
+
+        """
+        x_data = None
+        line = getattr(self, "line", None)
+        if line is not None and hasattr(line, "getData"):
+            data = line.getData()
+            if data is not None:
+                x_data = data[0]
+
+        if x_data is None:
+            x_data = getattr(self, "axis_data", {}).get("x")
+
+        if x_data is None:
+            return None
+
+        values = np.asarray(x_data, dtype=float)
+        values = np.unique(values[np.isfinite(values)])
+        if values.size == 0:
+            return None
+        if values.size == 1:
+            point = float(values[0])
+            return np.array([point - 0.5, point + 0.5])
+
+        gaps = np.diff(values)
+        mids = values[:-1] + gaps / 2
+        first = values[0] - gaps[0] / 2
+        last = values[-1] + gaps[-1] / 2
+        return np.concatenate(([first], mids, [last]))
         
         
     def refreshPlot(self, finished : bool = True, worker=None):
@@ -335,6 +390,9 @@ class plot1d(plotWidget):
             x=self.axis_data["x"], 
             y=self.axis_data["y"],
             )
+        if self.marquee is not None:
+            self.set_marquee_rect(self.marquee)
+
         # Subplot lines 
         for line in list(self.lines.values())[1:]:
             line.refresh()

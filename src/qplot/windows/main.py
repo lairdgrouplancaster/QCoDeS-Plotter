@@ -161,6 +161,7 @@ class MainWindow(qtw.QMainWindow):
         self.initFile()
         self.initRunDisplay()
         self.initShortcuts()
+        self.load_startup_database()
         
         #Final Setup
         w = qtw.QFrame()
@@ -183,6 +184,29 @@ class MainWindow(qtw.QMainWindow):
         self.show() 
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint) 
         self.show()
+
+
+    def load_startup_database(self):
+        """
+        Load the last database on startup when it is still available.
+
+        Missing or unset paths are ignored so first-run and moved-file startup
+        behaviour stays the same as an empty launch.
+
+        """
+        try:
+            last_file = self.config.get("file.last_file_path")
+        except KeyError:
+            return False
+
+        if not last_file:
+            return False
+
+        last_file = os.path.abspath(last_file)
+        if not os.path.isfile(last_file):
+            return False
+
+        return self.load_database_path(last_file)
 
 
     def initRefresh(self):
@@ -402,7 +426,7 @@ class MainWindow(qtw.QMainWindow):
         sublayout.setContentsMargins(8, 0, 8, 2)
         sublayout.setSpacing(6)
 
-        sublayout.addWidget(qtw.QLabel("Run:"))
+        sublayout.addWidget(qtw.QLabel("ID:"))
         
         self.selected_run_id = None
         

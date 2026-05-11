@@ -30,7 +30,7 @@ _ENGINEERING_PREFIXES = {
 }
 
 
-_COLORBAR_COLORMAPS = (
+_PREFERRED_COLORBAR_COLORMAPS = (
     "viridis",
     "plasma",
     "inferno",
@@ -43,15 +43,124 @@ _COLORBAR_COLORMAPS = (
     "Greens",
     "Oranges",
     "Reds",
-    "none",
 )
+
+
+_DEFAULT_HIDDEN_COLORBAR_PREFIXES = ("gist",)
+_DEFAULT_HIDDEN_COLORBAR_SUFFIXES = ("_r",)
+_DEFAULT_HIDDEN_COLORBAR_NAMES = ("gray", "grey", "Grays")
+
+
+_CET_COLORBAR_SUBTYPES = (
+    ("linear", "Linear"),
+    ("divergent", "Divergent"),
+    ("cyclic", "Cyclic"),
+    ("rainbow", "Rainbow"),
+    ("isoluminant", "Isoluminant"),
+    ("other", "Other"),
+)
+
+
+_MATPLOTLIB_COLORBAR_SUBTYPES = (
+    ("perceptual", "Perceptual"),
+    ("sequential", "Sequential"),
+    ("divergent", "Divergent"),
+    ("cyclic", "Cyclic"),
+    ("qualitative", "Qualitative"),
+    ("other", "Other"),
+)
+
+
+_MATPLOTLIB_PERCEPTUAL_COLORBAR_COLORMAPS = {
+    "cividis",
+    "inferno",
+    "magma",
+    "plasma",
+    "turbo",
+    "viridis",
+}
+
+
+_MATPLOTLIB_SEQUENTIAL_COLORBAR_COLORMAPS = {
+    "afmhot",
+    "autumn",
+    "binary",
+    "Blues",
+    "bone",
+    "BuGn",
+    "BuPu",
+    "cool",
+    "copper",
+    "GnBu",
+    "Greens",
+    "Greys",
+    "hot",
+    "Oranges",
+    "OrRd",
+    "pink",
+    "PuBu",
+    "PuBuGn",
+    "PuRd",
+    "Purples",
+    "RdPu",
+    "Reds",
+    "spring",
+    "summer",
+    "Wistia",
+    "winter",
+    "YlGn",
+    "YlGnBu",
+    "YlOrBr",
+    "YlOrRd",
+}
+
+
+_MATPLOTLIB_DIVERGENT_COLORBAR_COLORMAPS = {
+    "berlin",
+    "BrBG",
+    "bwr",
+    "coolwarm",
+    "managua",
+    "PiYG",
+    "PRGn",
+    "PuOr",
+    "RdBu",
+    "RdGy",
+    "RdYlBu",
+    "RdYlGn",
+    "seismic",
+    "Spectral",
+    "vanimo",
+}
+
+
+_MATPLOTLIB_CYCLIC_COLORBAR_COLORMAPS = {
+    "hsv",
+    "twilight",
+    "twilight_shifted",
+}
+
+
+_MATPLOTLIB_QUALITATIVE_COLORBAR_COLORMAPS = {
+    "Accent",
+    "Dark2",
+    "Paired",
+    "Pastel1",
+    "Pastel2",
+    "Set1",
+    "Set2",
+    "Set3",
+    "tab10",
+    "tab20",
+    "tab20b",
+    "tab20c",
+}
 
 
 _COLORBAR_COLORMAP_LABELS = {
     "cividis": "Cividis",
     "inferno": "Inferno",
     "magma": "Magma",
-    "none": "None",
     "plasma": "Plasma",
     "turbo": "Turbo",
     "viridis": "Viridis",
@@ -102,6 +211,199 @@ _CUSTOM_COLORBAR_COLORMAPS = {
         (103, 0, 13),
     ],
 }
+
+
+def _list_pyqtgraph_colormaps(source=None):
+    """
+    Return color maps advertised by pyqtgraph for an optional source.
+
+    """
+    try:
+        return list(pg.colormap.listMaps(source=source))
+    except Exception:
+        return []
+
+
+def _config_value(config_obj, key, default):
+    """
+    Read a config value, falling back when running against older configs.
+
+    """
+    if config_obj is None:
+        return default
+
+    try:
+        return config_obj.get(key)
+    except (AttributeError, KeyError):
+        return default
+
+
+def _string_list(value):
+    """
+    Normalise config list values used by color-map filters.
+
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+
+    try:
+        return [str(item) for item in value if str(item)]
+    except TypeError:
+        return []
+
+
+def _colorbar_subtype_config_key(group, subtype):
+    return f"user_preference.bar_colour_include_{group}_{subtype}"
+
+
+def _build_colorbar_colormap_catalog():
+    """
+    Build the colorbar map list and remember which pyqtgraph source owns each.
+
+    """
+    colormaps = []
+    sources = {}
+    default_maps = _list_pyqtgraph_colormaps()
+    matplotlib_maps = _list_pyqtgraph_colormaps(source="matplotlib")
+
+    def add_colormap(name, source=None):
+        if name in sources:
+            return
+        colormaps.append(name)
+        sources[name] = source
+
+    for name in _PREFERRED_COLORBAR_COLORMAPS:
+        if name in _CUSTOM_COLORBAR_COLORMAPS:
+            add_colormap(name, "custom")
+        elif name in matplotlib_maps:
+            add_colormap(name, "matplotlib")
+        elif name in default_maps:
+            add_colormap(name)
+
+    for source, maps in ((None, default_maps), ("matplotlib", matplotlib_maps)):
+        for name in maps:
+            add_colormap(name, source)
+
+    for name in _CUSTOM_COLORBAR_COLORMAPS:
+        add_colormap(name, "custom")
+
+    return tuple(colormaps), sources
+
+
+_COLORBAR_COLORMAPS, _COLORBAR_COLORMAP_SOURCES = _build_colorbar_colormap_catalog()
+
+
+def _colorbar_colormap_group(name):
+    """
+    Return the broad group used for color-map filtering.
+
+    """
+    source = _COLORBAR_COLORMAP_SOURCES.get(name)
+    if source == "custom":
+        return "custom"
+    if name.startswith("CET-"):
+        return "cet"
+    if source == "matplotlib":
+        return "matplotlib"
+    return "pyqtgraph"
+
+
+def _cet_colorbar_colormap_subtype(name):
+    """
+    Return the CET subtype used by the color-map filters.
+
+    """
+    if name.startswith(("CET-CBL", "CET-CBTL", "CET-L")):
+        return "linear"
+    if name.startswith(("CET-CBD", "CET-CBTD", "CET-D")):
+        return "divergent"
+    if name.startswith("CET-C"):
+        return "cyclic"
+    if name.startswith("CET-R"):
+        return "rainbow"
+    if name.startswith("CET-I"):
+        return "isoluminant"
+    return "other"
+
+
+def _matplotlib_colorbar_colormap_subtype(name):
+    """
+    Return the matplotlib subtype used by the color-map filters.
+
+    """
+    if name in _MATPLOTLIB_PERCEPTUAL_COLORBAR_COLORMAPS:
+        return "perceptual"
+    if name in _MATPLOTLIB_SEQUENTIAL_COLORBAR_COLORMAPS:
+        return "sequential"
+    if name in _MATPLOTLIB_DIVERGENT_COLORBAR_COLORMAPS:
+        return "divergent"
+    if name in _MATPLOTLIB_CYCLIC_COLORBAR_COLORMAPS:
+        return "cyclic"
+    if name in _MATPLOTLIB_QUALITATIVE_COLORBAR_COLORMAPS:
+        return "qualitative"
+    return "other"
+
+
+def _colorbar_colormap_for_name(name):
+    """
+    Return a color map object, custom map, or special pyqtgraph map name.
+
+    """
+    source = _COLORBAR_COLORMAP_SOURCES.get(name)
+    if source == "custom":
+        colors = _CUSTOM_COLORBAR_COLORMAPS.get(name)
+        if colors is not None:
+            color_map = pg.ColorMap(
+                np.linspace(0.0, 1.0, len(colors)),
+                colors,
+            )
+            color_map.name = name
+            return color_map
+
+    try:
+        return pg.colormap.get(name, source=source)
+    except Exception:
+        pass
+
+    colors = _CUSTOM_COLORBAR_COLORMAPS.get(name)
+    if colors is None:
+        return name
+
+    color_map = pg.ColorMap(
+        np.linspace(0.0, 1.0, len(colors)),
+        colors,
+    )
+    color_map.name = name
+    return color_map
+
+
+def _colorbar_colormap_preview(name, width=220, height=14):
+    """
+    Render a compact pixmap preview for a colorbar color map.
+
+    """
+    pixmap = QtGui.QPixmap(width, height)
+    pixmap.fill(QtGui.QColor("transparent"))
+
+    painter = QtGui.QPainter(pixmap)
+    try:
+        color_map = _colorbar_colormap_for_name(name)
+        if isinstance(color_map, pg.ColorMap):
+            lookup_table = color_map.getLookupTable(nPts=width, alpha=True)
+            for x, color in enumerate(lookup_table):
+                painter.setPen(QtGui.QColor(*[int(channel) for channel in color[:4]]))
+                painter.drawLine(x, 0, x, height - 1)
+        else:
+            painter.fillRect(0, 0, width, height, QtGui.QColor(255, 255, 255))
+
+        painter.setPen(QtGui.QColor(120, 120, 120))
+        painter.drawRect(0, 0, width - 1, height - 1)
+    finally:
+        painter.end()
+
+    return pixmap
 
 
 def _trim_decimal_places(value, decimal_places=3):
@@ -342,6 +644,8 @@ class plot2d(plotWidget):
             self._set_colorbar_levels(*self._colorbar_manual_levels)
         
         self._update_hover_pixel_outline_from_index()
+        if self.marquee is not None:
+            self.set_marquee_rect(self.marquee)
         self._snap_sweep_lines_to_pixel_centres()
             
         # Allow new worker to be produced
@@ -403,6 +707,54 @@ class plot2d(plotWidget):
             cell_height,
         ))
         self.hover_pixel_outline.show()
+
+
+    def _snap_marquee_rect(self, rect):
+        """
+        Snap marquee edges to heatmap pixel boundaries.
+
+        """
+        if not hasattr(self, "rect") or not hasattr(self, "dataGrid"):
+            return rect
+
+        rows, cols = self.dataGrid.shape
+        if rows <= 0 or cols <= 0 or self.rect.width() <= 0 or self.rect.height() <= 0:
+            return rect
+
+        left, right = self._snap_marquee_axis_to_cells(
+            rect.left(),
+            rect.right(),
+            self.rect.x(),
+            self.rect.width(),
+            cols,
+            )
+        bottom, top = self._snap_marquee_axis_to_cells(
+            rect.top(),
+            rect.bottom(),
+            self.rect.y(),
+            self.rect.height(),
+            rows,
+            )
+
+        return QtCore.QRectF(left, bottom, right - left, top - bottom)
+
+
+    def _snap_marquee_axis_to_cells(self, low, high, origin, span, count):
+        cell_size = span / count
+        min_value = origin
+        max_value = origin + span
+        low = min(max(low, min_value), max_value)
+        high = min(max(high, min_value), max_value)
+
+        low_index = int(np.floor((low - origin) / cell_size))
+        high_index = int(np.ceil((high - origin) / cell_size))
+        low_index = min(max(low_index, 0), count - 1)
+        high_index = min(max(high_index, low_index + 1), count)
+
+        return (
+            origin + low_index * cell_size,
+            origin + high_index * cell_size,
+            )
 
 
     @QtCore.pyqtSlot(bool)
@@ -537,20 +889,128 @@ class plot2d(plotWidget):
         Return the selected colorbar color map preference.
 
         """
+        available_colormaps = self._available_colorbar_colormaps()
         name = getattr(self, "_colorbar_colormap_name", None)
-        if name in _COLORBAR_COLORMAPS:
+        if name in available_colormaps:
             return name
 
-        try:
-            name = self.config.get("user_preference.bar_colour")
-        except (AttributeError, KeyError):
-            name = "viridis"
+        name = _config_value(
+            self.__dict__.get("config"),
+            "user_preference.bar_colour",
+            "viridis",
+        )
 
-        if name not in _COLORBAR_COLORMAPS:
-            name = "viridis"
+        if name not in available_colormaps:
+            name = self._fallback_colorbar_colormap_name()
 
         self._colorbar_colormap_name = name
         return name
+
+
+    def _available_colorbar_colormaps(self):
+        """
+        Return color maps after applying persistent user filters.
+
+        """
+        config_obj = self.__dict__.get("config")
+        include_cet = bool(_config_value(
+            config_obj,
+            "user_preference.bar_colour_include_cet",
+            True,
+        ))
+        include_matplotlib = bool(_config_value(
+            config_obj,
+            "user_preference.bar_colour_include_matplotlib",
+            True,
+        ))
+        include_local = bool(_config_value(
+            config_obj,
+            "user_preference.bar_colour_include_local",
+            True,
+        ))
+        include_custom = bool(_config_value(
+            config_obj,
+            "user_preference.bar_colour_include_custom",
+            True,
+        ))
+        include_cet_subtypes = {
+            subtype: bool(_config_value(
+                config_obj,
+                _colorbar_subtype_config_key("cet", subtype),
+                True,
+            ))
+            for subtype, _label in _CET_COLORBAR_SUBTYPES
+        }
+        include_matplotlib_subtypes = {
+            subtype: bool(_config_value(
+                config_obj,
+                _colorbar_subtype_config_key("matplotlib", subtype),
+                True,
+            ))
+            for subtype, _label in _MATPLOTLIB_COLORBAR_SUBTYPES
+        }
+        excluded_names = set(_string_list(_config_value(
+            config_obj,
+            "user_preference.bar_colour_excluded",
+            [],
+        )))
+        excluded_prefixes = tuple(_string_list(_config_value(
+            config_obj,
+            "user_preference.bar_colour_excluded_prefixes",
+            [],
+        )))
+
+        available = []
+        for name in _COLORBAR_COLORMAPS:
+            if name in _DEFAULT_HIDDEN_COLORBAR_NAMES:
+                continue
+            if name.startswith(_DEFAULT_HIDDEN_COLORBAR_PREFIXES):
+                continue
+            if name.endswith(_DEFAULT_HIDDEN_COLORBAR_SUFFIXES):
+                continue
+            if name in excluded_names:
+                continue
+            if excluded_prefixes and name.startswith(excluded_prefixes):
+                continue
+
+            group = _colorbar_colormap_group(name)
+            if group == "cet" and not include_cet:
+                continue
+            if (
+                    group == "cet"
+                    and not include_cet_subtypes[_cet_colorbar_colormap_subtype(name)]
+                    ):
+                continue
+            if group == "matplotlib" and not include_matplotlib:
+                continue
+            if (
+                    group == "matplotlib"
+                    and not include_matplotlib_subtypes[
+                        _matplotlib_colorbar_colormap_subtype(name)
+                        ]
+                    ):
+                continue
+            if group == "pyqtgraph" and not include_local:
+                continue
+            if group == "custom" and not include_custom:
+                continue
+
+            available.append(name)
+
+        return tuple(available)
+
+
+    def _fallback_colorbar_colormap_name(self):
+        """
+        Choose a usable map when the saved preference is filtered out.
+
+        """
+        available_colormaps = self._available_colorbar_colormaps()
+        if "viridis" in available_colormaps:
+            return "viridis"
+        if not available_colormaps:
+            return "viridis"
+        return available_colormaps[0]
 
 
     def _colorbar_colormap(self, name=None):
@@ -561,16 +1021,7 @@ class plot2d(plotWidget):
         if name is None:
             name = self._current_colorbar_colormap_name()
 
-        colors = _CUSTOM_COLORBAR_COLORMAPS.get(name)
-        if colors is None:
-            return name
-
-        color_map = pg.ColorMap(
-            np.linspace(0.0, 1.0, len(colors)),
-            colors,
-        )
-        color_map.name = name
-        return color_map
+        return _colorbar_colormap_for_name(name)
 
 
     def _init_colorbar_scale_controls(self):
@@ -579,21 +1030,26 @@ class plot2d(plotWidget):
 
         """
         controls = qtw.QWidget()
-        layout = qtw.QGridLayout(controls)
+        layout = qtw.QVBoxLayout(controls)
         layout.setContentsMargins(6, 4, 6, 4)
-        layout.setHorizontalSpacing(4)
-        layout.setVerticalSpacing(4)
+        layout.setSpacing(8)
 
         self.colorbar_manual_radio = qtw.QRadioButton("Manual")
         self.colorbar_auto_radio = qtw.QRadioButton("Auto")
         self.colorbar_min_text = qtw.QLineEdit()
         self.colorbar_max_text = qtw.QLineEdit()
-        self.colorbar_colormap_combo = qtw.QComboBox()
-        for name in _COLORBAR_COLORMAPS:
-            self.colorbar_colormap_combo.addItem(
-                _COLORBAR_COLORMAP_LABELS.get(name, name),
-                name,
-            )
+        self.colorbar_colormap_table = qtw.QTableWidget()
+        self.colorbar_include_cet_check = qtw.QCheckBox("CET")
+        self.colorbar_include_matplotlib_check = qtw.QCheckBox("Matplotlib")
+        self.colorbar_include_local_check = qtw.QCheckBox("Local")
+        self.colorbar_include_custom_check = qtw.QCheckBox("Custom")
+        self.colorbar_cet_subtype_checks = {}
+        self.colorbar_matplotlib_subtype_checks = {}
+        for subtype, label in _CET_COLORBAR_SUBTYPES:
+            self.colorbar_cet_subtype_checks[subtype] = qtw.QCheckBox(label)
+        for subtype, label in _MATPLOTLIB_COLORBAR_SUBTYPES:
+            self.colorbar_matplotlib_subtype_checks[subtype] = qtw.QCheckBox(label)
+        self._init_colorbar_colormap_table()
 
         validator = QtGui.QDoubleValidator(self)
         self.colorbar_min_text.setValidator(validator)
@@ -606,17 +1062,55 @@ class plot2d(plotWidget):
         self.colorbar_button_group.addButton(self.colorbar_auto_radio)
         self.colorbar_button_group.setExclusive(True)
 
-        layout.addWidget(qtw.QLabel("Colors"), 0, 0)
-        layout.addWidget(self.colorbar_colormap_combo, 0, 1, 1, 2)
-        layout.addWidget(self.colorbar_manual_radio, 1, 0)
-        layout.addWidget(self.colorbar_min_text, 1, 1)
-        layout.addWidget(self.colorbar_max_text, 1, 2)
-        layout.addWidget(self.colorbar_auto_radio, 2, 0)
+        range_controls = qtw.QWidget()
+        range_layout = qtw.QGridLayout(range_controls)
+        range_layout.setContentsMargins(0, 0, 0, 0)
+        range_layout.setHorizontalSpacing(4)
+        range_layout.setVerticalSpacing(4)
+        range_layout.addWidget(self.colorbar_manual_radio, 0, 0)
+        range_layout.addWidget(self.colorbar_min_text, 0, 1)
+        range_layout.addWidget(self.colorbar_max_text, 0, 2)
+        range_layout.addWidget(self.colorbar_auto_radio, 1, 0)
+
+        filter_controls = self._init_colorbar_filter_controls()
+
+        layout.addWidget(qtw.QLabel("Colors"))
+        layout.addWidget(filter_controls)
+        layout.addWidget(self.colorbar_colormap_table, 1)
+        layout.addWidget(range_controls)
 
         self.colorbar_scale_controls = controls
 
-        self.colorbar_colormap_combo.currentIndexChanged.connect(
-            self._colorbar_colormap_changed
+        self.colorbar_colormap_table.itemSelectionChanged.connect(
+            self._colorbar_colormap_selection_changed
+            )
+        self.colorbar_include_cet_check.toggled.connect(
+            self._colorbar_include_cet_changed
+            )
+        self.colorbar_include_matplotlib_check.toggled.connect(
+            self._colorbar_include_matplotlib_changed
+            )
+        self.colorbar_include_local_check.toggled.connect(
+            self._colorbar_include_local_changed
+            )
+        self.colorbar_include_custom_check.toggled.connect(
+            self._colorbar_include_custom_changed
+            )
+        for subtype, widget in self.colorbar_cet_subtype_checks.items():
+            widget.toggled.connect(
+                lambda enabled, subtype=subtype: self._colorbar_include_subtype_changed(
+                    "cet",
+                    subtype,
+                    enabled,
+                )
+            )
+        for subtype, widget in self.colorbar_matplotlib_subtype_checks.items():
+            widget.toggled.connect(
+                lambda enabled, subtype=subtype: self._colorbar_include_subtype_changed(
+                    "matplotlib",
+                    subtype,
+                    enabled,
+                )
             )
         self.colorbar_manual_radio.clicked.connect(self._apply_colorbar_manual_fields)
         self.colorbar_min_text.editingFinished.connect(self._apply_colorbar_manual_fields)
@@ -624,6 +1118,218 @@ class plot2d(plotWidget):
         self.colorbar_auto_radio.clicked.connect(self.setColorbarAuto)
 
         self._sync_colorbar_scale_controls()
+
+
+    def _init_colorbar_filter_controls(self):
+        """
+        Build broad and subtype color-map filter controls.
+
+        """
+        controls = qtw.QWidget()
+        layout = qtw.QGridLayout(controls)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(2)
+
+        layout.addWidget(qtw.QLabel("Show"), 0, 0)
+        layout.addWidget(self.colorbar_include_cet_check, 0, 1)
+        layout.addWidget(self.colorbar_include_matplotlib_check, 0, 2)
+        layout.addWidget(self.colorbar_include_local_check, 0, 3)
+        layout.addWidget(self.colorbar_include_custom_check, 0, 4)
+
+        layout.addWidget(qtw.QLabel("CET"), 1, 0)
+        for column, (_subtype, widget) in enumerate(
+                self.colorbar_cet_subtype_checks.items(),
+                1,
+                ):
+            layout.addWidget(widget, 1, column)
+
+        layout.addWidget(qtw.QLabel("Matplotlib"), 2, 0)
+        for column, (_subtype, widget) in enumerate(
+                self.colorbar_matplotlib_subtype_checks.items(),
+                1,
+                ):
+            layout.addWidget(widget, 2, column)
+
+        layout.setColumnStretch(7, 1)
+        return controls
+
+
+    def _init_colorbar_colormap_table(self):
+        """
+        Build the scrollable color-map chooser with rendered previews.
+
+        """
+        table = self.colorbar_colormap_table
+        table.setColumnCount(2)
+        table.setHorizontalHeaderLabels(("Color map", "Preview"))
+        table.verticalHeader().hide()
+        table.setShowGrid(False)
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
+        table.setSelectionMode(qtw.QAbstractItemView.SingleSelection)
+        table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
+        table.setMinimumSize(440, 360)
+        table.setIconSize(QtCore.QSize(220, 14))
+
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, qtw.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, qtw.QHeaderView.Stretch)
+
+        self._populate_colorbar_colormap_table()
+
+
+    def _populate_colorbar_colormap_table(self):
+        """
+        Fill the color-map table using the current filter settings.
+
+        """
+        table = self.colorbar_colormap_table
+        table.blockSignals(True)
+        table.setRowCount(0)
+
+        colormaps = self._available_colorbar_colormaps()
+        table.setRowCount(len(colormaps))
+        for row, name in enumerate(colormaps):
+            name_item = qtw.QTableWidgetItem(
+                _COLORBAR_COLORMAP_LABELS.get(name, name)
+            )
+            name_item.setData(QtCore.Qt.UserRole, name)
+            preview_item = qtw.QTableWidgetItem()
+            preview_item.setData(QtCore.Qt.UserRole, name)
+            preview_item.setIcon(QtGui.QIcon(_colorbar_colormap_preview(name)))
+
+            table.setItem(row, 0, name_item)
+            table.setItem(row, 1, preview_item)
+            table.setRowHeight(row, 20)
+
+        table.resizeColumnToContents(0)
+        table.blockSignals(False)
+
+
+    def _sync_colorbar_filter_controls(self):
+        """
+        Mirror persisted broad color-map filters into the dialog controls.
+
+        """
+        config_obj = self.__dict__.get("config")
+        for widget, key in (
+                (
+                    self.colorbar_include_cet_check,
+                    "user_preference.bar_colour_include_cet",
+                    ),
+                (
+                    self.colorbar_include_matplotlib_check,
+                    "user_preference.bar_colour_include_matplotlib",
+                    ),
+                (
+                    self.colorbar_include_local_check,
+                    "user_preference.bar_colour_include_local",
+                    ),
+                (
+                    self.colorbar_include_custom_check,
+                    "user_preference.bar_colour_include_custom",
+                    ),
+                ):
+            widget.blockSignals(True)
+            widget.setChecked(bool(_config_value(config_obj, key, True)))
+            widget.blockSignals(False)
+
+        include_cet = self.colorbar_include_cet_check.isChecked()
+        include_matplotlib = self.colorbar_include_matplotlib_check.isChecked()
+        for subtype, widget in self.colorbar_cet_subtype_checks.items():
+            key = _colorbar_subtype_config_key("cet", subtype)
+            widget.blockSignals(True)
+            widget.setChecked(bool(_config_value(config_obj, key, True)))
+            widget.setEnabled(include_cet)
+            widget.blockSignals(False)
+
+        for subtype, widget in self.colorbar_matplotlib_subtype_checks.items():
+            key = _colorbar_subtype_config_key("matplotlib", subtype)
+            widget.blockSignals(True)
+            widget.setChecked(bool(_config_value(config_obj, key, True)))
+            widget.setEnabled(include_matplotlib)
+            widget.blockSignals(False)
+
+
+    def _set_colorbar_filter_setting(self, key, enabled):
+        """
+        Persist a broad color-map filter and rebuild the chooser.
+
+        """
+        config_obj = self.__dict__.get("config")
+        if config_obj is not None:
+            config_obj.update(key, bool(enabled))
+
+        self._populate_colorbar_colormap_table()
+        self._sync_colorbar_scale_controls()
+
+
+    def _set_colorbar_subtype_filter_setting(self, group, subtype, enabled):
+        """
+        Persist a color-map subtype filter and rebuild the chooser.
+
+        """
+        self._set_colorbar_filter_setting(
+            _colorbar_subtype_config_key(group, subtype),
+            enabled,
+        )
+
+
+    @QtCore.pyqtSlot(bool)
+    def _colorbar_include_cet_changed(self, enabled):
+        """
+        Include or exclude CET color maps in the chooser.
+
+        """
+        self._set_colorbar_filter_setting(
+            "user_preference.bar_colour_include_cet",
+            enabled,
+        )
+
+
+    @QtCore.pyqtSlot(bool)
+    def _colorbar_include_matplotlib_changed(self, enabled):
+        """
+        Include or exclude matplotlib color maps in the chooser.
+
+        """
+        self._set_colorbar_filter_setting(
+            "user_preference.bar_colour_include_matplotlib",
+            enabled,
+        )
+
+
+    @QtCore.pyqtSlot(bool)
+    def _colorbar_include_local_changed(self, enabled):
+        """
+        Include or exclude pyqtgraph local color maps in the chooser.
+
+        """
+        self._set_colorbar_filter_setting(
+            "user_preference.bar_colour_include_local",
+            enabled,
+        )
+
+
+    @QtCore.pyqtSlot(bool)
+    def _colorbar_include_custom_changed(self, enabled):
+        """
+        Include or exclude app-provided custom color maps in the chooser.
+
+        """
+        self._set_colorbar_filter_setting(
+            "user_preference.bar_colour_include_custom",
+            enabled,
+        )
+
+
+    def _colorbar_include_subtype_changed(self, group, subtype, enabled):
+        """
+        Include or exclude a color-map subtype in the chooser.
+
+        """
+        self._set_colorbar_subtype_filter_setting(group, subtype, enabled)
 
 
     def _sync_colorbar_scale_controls(self):
@@ -635,14 +1341,10 @@ class plot2d(plotWidget):
         if levels is not None:
             self._sync_colorbar_level_fields(*levels)
 
-        combo = getattr(self, "colorbar_colormap_combo", None)
-        if combo is not None:
-            index = combo.findData(self._current_colorbar_colormap_name())
-            if index < 0:
-                index = combo.findData("viridis")
-            combo.blockSignals(True)
-            combo.setCurrentIndex(index)
-            combo.blockSignals(False)
+        table = getattr(self, "colorbar_colormap_table", None)
+        if table is not None:
+            self._sync_colorbar_filter_controls()
+            self._select_colorbar_colormap(self._current_colorbar_colormap_name())
 
         manual = getattr(self, "_colorbar_manual_levels", None) is not None
         for widget in (self.colorbar_manual_radio, self.colorbar_auto_radio):
@@ -672,17 +1374,79 @@ class plot2d(plotWidget):
             widget.blockSignals(False)
 
 
-    @QtCore.pyqtSlot(int)
-    def _colorbar_colormap_changed(self, index):
+    def _colorbar_colormap_row(self, name):
+        """
+        Return the table row for a color map name.
+
+        """
+        table = getattr(self, "colorbar_colormap_table", None)
+        if table is None:
+            return -1
+
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            if item is not None and item.data(QtCore.Qt.UserRole) == name:
+                return row
+
+        return -1
+
+
+    def _select_colorbar_colormap(self, name):
+        """
+        Select the current color map row without applying it again.
+
+        """
+        table = getattr(self, "colorbar_colormap_table", None)
+        if table is None:
+            return
+
+        row = self._colorbar_colormap_row(name)
+        if row < 0:
+            row = self._colorbar_colormap_row("viridis")
+        if row < 0:
+            return
+
+        table.blockSignals(True)
+        table.setCurrentCell(row, 0)
+        table.selectRow(row)
+        table.blockSignals(False)
+
+
+    @QtCore.pyqtSlot()
+    def _colorbar_colormap_selection_changed(self):
         """
         Apply the color map selected in the dialog.
 
         """
-        name = self.colorbar_colormap_combo.itemData(index)
+        table = self.colorbar_colormap_table
+        row = table.currentRow()
+        if row < 0:
+            return
+
+        item = table.item(row, 0)
+        if item is None:
+            return
+
+        name = item.data(QtCore.Qt.UserRole)
         if name is None:
             return
 
         self.setColorbarColorMap(name)
+
+
+    @QtCore.pyqtSlot(int)
+    def _colorbar_colormap_changed(self, index):
+        """
+        Compatibility slot for older combo-box based tests or callers.
+
+        """
+        combo = getattr(self, "colorbar_colormap_combo", None)
+        if combo is None:
+            return
+
+        name = combo.itemData(index)
+        if name is not None:
+            self.setColorbarColorMap(name)
 
 
     @QtCore.pyqtSlot()
@@ -695,12 +1459,14 @@ class plot2d(plotWidget):
         if controls is None:
             return
 
+        self._populate_colorbar_colormap_table()
         self._sync_colorbar_scale_controls()
 
         dialog = getattr(self, "colorbar_scale_dialog", None)
         if dialog is None:
             dialog = qtw.QDialog(self)
             dialog.setWindowTitle("Color scale")
+            dialog.resize(520, 560)
             layout = qtw.QVBoxLayout(dialog)
             layout.addWidget(controls)
 
@@ -737,8 +1503,10 @@ class plot2d(plotWidget):
         Set and persist the colorbar color map.
 
         """
-        if name not in _COLORBAR_COLORMAPS:
-            self.show_status("Unknown color map.", 5000)
+        if name not in self._available_colorbar_colormaps():
+            show_status = getattr(self, "show_status", None)
+            if show_status is not None:
+                show_status("Unknown color map.", 5000)
             return False
 
         self._colorbar_colormap_name = name
@@ -746,7 +1514,7 @@ class plot2d(plotWidget):
         if bar is not None:
             bar.setColorMap(self._colorbar_colormap(name))
 
-        config_obj = getattr(self, "config", None)
+        config_obj = self.__dict__.get("config")
         if config_obj is not None:
             config_obj.update("user_preference.bar_colour", name)
 

@@ -4,12 +4,12 @@ from math import log10
 from os import path
 from time import perf_counter
 
+from PyQt5 import QtWidgets as qtw
+from PyQt5 import QtCore, QtGui
+from PyQt5.QtGui import QKeySequence
+
 import pyqtgraph as pg
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
-
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore 
-from PyQt5.QtGui import QKeySequence
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -132,6 +132,8 @@ class plotWidget(qtw.QMainWindow):
         self.vb.setDefaultPadding(0)
         self.plot = self.widget.addPlot(viewBox=self.vb)
         self.vb.setParent(self.plot)
+        self.vb.set_marquee_owner(self)
+        self._init_marquee()
         self.layout.addWidget(self.widget)
         
         ### CORE INIT FUNCTIONS
@@ -242,6 +244,242 @@ class plotWidget(qtw.QMainWindow):
             getattr(self.param, "depends_on_", ()),
             payload
             )
+
+
+    def _init_marquee(self):
+        """
+        Create the reusable marquee graphics shown after Alt-dragging.
+
+        """
+        self.marquee = None
+        self._marquee_drag_state = None
+
+        self.marquee_highlight = qtw.QGraphicsRectItem()
+        highlight_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 135))
+        highlight_pen.setWidthF(3)
+        highlight_pen.setCosmetic(True)
+        self.marquee_highlight.setPen(highlight_pen)
+        self.marquee_highlight.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+        self.marquee_highlight.setZValue(18)
+        self.marquee_highlight.hide()
+        self.marquee_highlight.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.plot.addItem(self.marquee_highlight)
+
+        self.marquee_outline = qtw.QGraphicsRectItem()
+        pen = QtGui.QPen(QtGui.QColor(65, 65, 65, 220))
+        pen.setWidthF(1.2)
+        pen.setCosmetic(True)
+        pen.setStyle(QtCore.Qt.DashLine)
+        self.marquee_outline.setPen(pen)
+        self.marquee_outline.setBrush(QtGui.QBrush(QtGui.QColor(40, 40, 40, 24)))
+        self.marquee_outline.setZValue(19)
+        self.marquee_outline.hide()
+        self.marquee_outline.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.plot.addItem(self.marquee_outline)
+
+        self.marquee_handles = pg.ScatterPlotItem(
+            symbol="s",
+            size=6,
+            pen=pg.mkPen((20, 20, 20, 230), width=1, cosmetic=True),
+            brush=pg.mkBrush(245, 245, 245, 230),
+            )
+        self.marquee_handles.setZValue(20)
+        self.marquee_handles.hide()
+        self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.plot.addItem(self.marquee_handles)
+
+
+    def is_marquee_dragging(self):
+        return self._marquee_drag_state is not None
+
+
+    def current_marquee_drag_mode(self):
+        if self._marquee_drag_state is None:
+            return None
+
+        return self._marquee_drag_state["mode"]
+
+
+    def begin_marquee_drag(self, start, mode=None):
+        """
+        Start creating or resizing a marquee in plot coordinates.
+
+        """
+        start = QtCore.QPointF(start)
+        if mode is None:
+            mode = "new"
+
+        self._marquee_drag_state = {
+            "anchor": QtCore.QPointF(start),
+            "mode": mode,
+            "rect": QtCore.QRectF(self.marquee) if self.marquee is not None else None,
+            }
+
+        if mode == "new":
+            self.set_marquee_rect(QtCore.QRectF(start, start))
+
+
+    def drag_marquee_to(self, point, modifiers=QtCore.Qt.NoModifier):
+        """
+        Update the marquee during an active drag.
+
+        """
+        point = QtCore.QPointF(point)
+        state = self._marquee_drag_state
+        if state is None:
+            return
+
+        if state["mode"] == "new" or state["rect"] is None:
+            rect = QtCore.QRectF(state["anchor"], point)
+        else:
+            rect = QtCore.QRectF(state["rect"])
+            self._resize_marquee_rect(rect, state["mode"], point, modifiers)
+
+        self.set_marquee_rect(rect)
+
+
+    def finish_marquee_drag(self):
+        self._marquee_drag_state = None
+
+
+    def _resize_marquee_rect(self, rect, handle, point, modifiers=QtCore.Qt.NoModifier):
+        symmetric = modifiers & QtCore.Qt.AltModifier
+        asymmetric = modifiers & QtCore.Qt.ShiftModifier
+        original = QtCore.QRectF(rect)
+        anchor = self._marquee_handle_points_for_rect(original)[handle]
+
+        if "w" in handle:
+            rect.setLeft(point.x())
+        if "e" in handle:
+            rect.setRight(point.x())
+        if "s" in handle:
+            rect.setTop(point.y())
+        if "n" in handle:
+            rect.setBottom(point.y())
+
+        dx = point.x() - anchor.x()
+        dy = point.y() - anchor.y()
+
+        if ("w" in handle or "e" in handle) and (symmetric or asymmetric):
+            offset = -dx if symmetric else dx if asymmetric else None
+            if "w" in handle:
+                rect.setRight(original.right() + offset)
+            else:
+                rect.setLeft(original.left() + offset)
+
+        if ("n" in handle or "s" in handle) and (symmetric or asymmetric):
+            offset = -dy if symmetric else dy if asymmetric else None
+            if "s" in handle:
+                rect.setBottom(original.bottom() + offset)
+            else:
+                rect.setTop(original.top() + offset)
+
+
+    def set_marquee_rect(self, rect):
+        """
+        Snap, store, and draw the marquee rectangle.
+
+        """
+        rect = self._snap_marquee_rect(rect.normalized())
+        if rect is None or rect.width() <= 0 or rect.height() <= 0:
+            self.clear_marquee()
+            return
+
+        self.marquee = QtCore.QRectF(rect)
+        self.marquee_highlight.setRect(rect)
+        self.marquee_outline.setRect(rect)
+        self.marquee_highlight.show()
+        self.marquee_outline.show()
+        self._update_marquee_handles()
+
+
+    def clear_marquee(self):
+        self.marquee = None
+        self.marquee_highlight.hide()
+        self.marquee_outline.hide()
+        self.marquee_handles.hide()
+
+
+    def _snap_marquee_rect(self, rect):
+        return rect
+
+
+    def marquee_drag_mode_at(self, scene_pos):
+        """
+        Return the resize handle under a scene position, if there is one.
+
+        """
+        if self.marquee is None or not self.marquee_handles.isVisible():
+            return None
+
+        threshold = 8
+        for handle, point in self._marquee_handle_points().items():
+            handle_scene_pos = self.plot.vb.mapViewToScene(point)
+            distance = (
+                (handle_scene_pos.x() - scene_pos.x()) ** 2
+                + (handle_scene_pos.y() - scene_pos.y()) ** 2
+                )
+            if distance <= threshold ** 2:
+                return handle
+
+        return None
+
+
+    def marquee_cursor_shape_at(self, scene_pos, modifiers=QtCore.Qt.NoModifier):
+        mode = self.current_marquee_drag_mode()
+        if mode == "new":
+            return QtCore.Qt.CrossCursor
+        if mode is not None:
+            return self._marquee_cursor_shape_for_handle(mode)
+
+        handle = self.marquee_drag_mode_at(scene_pos)
+        if handle is not None:
+            return self._marquee_cursor_shape_for_handle(handle)
+        if modifiers & QtCore.Qt.AltModifier:
+            return QtCore.Qt.CrossCursor
+
+        return None
+
+
+    def _marquee_cursor_shape_for_handle(self, handle):
+        if handle in ("e", "w"):
+            return QtCore.Qt.SizeHorCursor
+        if handle in ("n", "s"):
+            return QtCore.Qt.SizeVerCursor
+        if handle in ("nw", "se"):
+            return QtCore.Qt.SizeFDiagCursor
+        if handle in ("ne", "sw"):
+            return QtCore.Qt.SizeBDiagCursor
+
+        return QtCore.Qt.CrossCursor
+
+
+    def _update_marquee_handles(self):
+        points = list(self._marquee_handle_points().values())
+        self.marquee_handles.setData(
+            [point.x() for point in points],
+            [point.y() for point in points],
+            )
+        self.marquee_handles.show()
+
+
+    def _marquee_handle_points(self):
+        return self._marquee_handle_points_for_rect(self.marquee)
+
+
+    def _marquee_handle_points_for_rect(self, rect):
+        centre_x = rect.center().x()
+        centre_y = rect.center().y()
+        return {
+            "nw": QtCore.QPointF(rect.left(), rect.bottom()),
+            "n": QtCore.QPointF(centre_x, rect.bottom()),
+            "ne": QtCore.QPointF(rect.right(), rect.bottom()),
+            "e": QtCore.QPointF(rect.right(), centre_y),
+            "se": QtCore.QPointF(rect.right(), rect.top()),
+            "s": QtCore.QPointF(centre_x, rect.top()),
+            "sw": QtCore.QPointF(rect.left(), rect.top()),
+            "w": QtCore.QPointF(rect.left(), centre_y),
+            }
         
         
     def __str__(self):

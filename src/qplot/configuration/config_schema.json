@@ -61,8 +61,81 @@
                 },
                 "bar_colour" : {
                     "type": "string",
-                    "enum": ["none", "cividis", "inferno", "magma", "plasma", "turbo", "viridis", "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds"],
                     "default": "viridis"
+                },
+                "bar_colour_include_cet": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_matplotlib": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_local": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_custom": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_cet_linear": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_cet_divergent": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_cet_cyclic": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_cet_rainbow": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_cet_isoluminant": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_cet_other": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_matplotlib_perceptual": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_matplotlib_sequential": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_matplotlib_divergent": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_matplotlib_cyclic": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_matplotlib_qualitative": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_include_matplotlib_other": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "bar_colour_excluded": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": []
+                },
+                "bar_colour_excluded_prefixes": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": []
                 },
                 "confirm_close": {
                     "type": "boolean",
@@ -75,7 +148,7 @@
                 "default_refresh_rate": {
                     "type": "number",
                     "minimum": 1,
-                    "default": 10
+                    "default": 1
                 }
             },
             "required": ["theme", "bar_colour", "confirm_close", "default_refresh_rate"],

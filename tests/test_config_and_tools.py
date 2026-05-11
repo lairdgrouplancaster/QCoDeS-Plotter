@@ -11,10 +11,10 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
-import pyqtgraph as pg
 from PyQt5 import QtCore
 from PyQt5 import QtGui
 from PyQt5 import QtWidgets as qtw
+import pyqtgraph as pg
 
 from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle, try_as_num
@@ -22,7 +22,7 @@ from qplot.configuration.themes import dark, light
 from qplot.windows import main as main_window
 from qplot.windows import _plotWin as plotwin_module
 from qplot.windows.plot1d import plot1d
-from qplot.windows.plot2d import _engineering_tick_strings, plot2d
+from qplot.windows.plot2d import _COLORBAR_COLORMAPS, _engineering_tick_strings, plot2d
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._window_controls import (
     add_confirmation_options,
@@ -80,9 +80,9 @@ class TemporaryConfigTestCase(unittest.TestCase):
     def test_config_accepts_extra_color_map_preferences(self):
         cfg = config()
 
-        cfg.update("user_preference.bar_colour", "Purples")
+        cfg.update("user_preference.bar_colour", "CET-L1")
 
-        self.assertEqual(config().get("user_preference.bar_colour"), "Purples")
+        self.assertEqual(config().get("user_preference.bar_colour"), "CET-L1")
 
     def test_config_update_rejects_unknown_key(self):
         cfg = config()
@@ -161,6 +161,57 @@ class TemporaryConfigTestCase(unittest.TestCase):
         finally:
             window.monitor.stop()
             window.deleteLater()
+
+    def test_main_window_loads_last_database_on_startup_when_available(self):
+        cfg = config()
+        calls = []
+        old_load_database_path = main_window.MainWindow.load_database_path
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            cfg.update("file.last_file_path", database.name)
+
+            def load_database_path(window, filename):
+                calls.append(filename)
+                window.fileTextbox.setText(filename)
+                return True
+
+            main_window.MainWindow.load_database_path = load_database_path
+            window = None
+            try:
+                window = main_window.MainWindow()
+                self.assertEqual(calls, [os.path.abspath(database.name)])
+            finally:
+                main_window.MainWindow.load_database_path = old_load_database_path
+                if window is not None:
+                    window.monitor.stop()
+                    window.deleteLater()
+
+    def test_main_window_ignores_missing_last_database_on_startup(self):
+        cfg = config()
+        missing_database = str(Path(self.temp_dir.name) / "missing.db")
+        cfg.update("file.last_file_path", missing_database)
+        calls = []
+        old_load_database_path = main_window.MainWindow.load_database_path
+
+        def load_database_path(window, filename):
+            calls.append(filename)
+            return True
+
+        main_window.MainWindow.load_database_path = load_database_path
+        window = None
+        try:
+            window = main_window.MainWindow()
+            self.assertEqual(calls, [])
+        finally:
+            main_window.MainWindow.load_database_path = old_load_database_path
+            if window is not None:
+                window.monitor.stop()
+                window.deleteLater()
+
+    def test_default_refresh_rate_is_one_second(self):
+        cfg = config()
+
+        self.assertEqual(cfg.get("user_preference.default_refresh_rate"), 1)
 
 
 class ToolFunctionTestCase(unittest.TestCase):
@@ -266,6 +317,99 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertIs(window.lines["main"], line)
 
+    def test_alt_drag_edge_handle_resizes_marquee_symmetrically(self):
+        window = plotWidget.__new__(plotWidget)
+        rect = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
+
+        window._resize_marquee_rect(
+            rect,
+            "w",
+            QtCore.QPointF(2.0, 4.0),
+            QtCore.Qt.AltModifier,
+            )
+
+        self.assertEqual(rect.left(), 2.0)
+        self.assertEqual(rect.right(), 8.0)
+
+    def test_shift_drag_edge_handle_moves_opposite_edge_in_same_direction(self):
+        window = plotWidget.__new__(plotWidget)
+        rect = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
+
+        window._resize_marquee_rect(
+            rect,
+            "w",
+            QtCore.QPointF(2.0, 4.0),
+            QtCore.Qt.ShiftModifier,
+            )
+
+        self.assertEqual(rect.left(), 2.0)
+        self.assertEqual(rect.right(), 12.0)
+
+    def test_alt_drag_corner_handle_resizes_marquee_symmetrically(self):
+        window = plotWidget.__new__(plotWidget)
+        rect = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
+
+        window._resize_marquee_rect(
+            rect,
+            "nw",
+            QtCore.QPointF(2.0, 6.0),
+            QtCore.Qt.AltModifier,
+            )
+
+        self.assertEqual(rect.left(), 2.0)
+        self.assertEqual(rect.right(), 8.0)
+        self.assertEqual(rect.top(), 2.0)
+        self.assertEqual(rect.bottom(), 6.0)
+
+    def test_shift_drag_corner_handle_moves_opposite_corner_in_same_direction(self):
+        window = plotWidget.__new__(plotWidget)
+        rect = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
+
+        window._resize_marquee_rect(
+            rect,
+            "nw",
+            QtCore.QPointF(2.0, 6.0),
+            QtCore.Qt.ShiftModifier,
+            )
+
+        self.assertEqual(rect.left(), 2.0)
+        self.assertEqual(rect.right(), 12.0)
+        self.assertEqual(rect.top(), -2.0)
+        self.assertEqual(rect.bottom(), 6.0)
+
+    def test_marquee_cursor_shapes_match_define_and_resize_modes(self):
+        window = plotWidget.__new__(plotWidget)
+        window._marquee_drag_state = {"mode": "new"}
+
+        self.assertEqual(
+            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.NoModifier),
+            QtCore.Qt.CrossCursor,
+            )
+
+        window._marquee_drag_state = {"mode": "w"}
+        self.assertEqual(
+            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.NoModifier),
+            QtCore.Qt.SizeHorCursor,
+            )
+        self.assertEqual(
+            window._marquee_cursor_shape_for_handle("ne"),
+            QtCore.Qt.SizeBDiagCursor,
+            )
+
+    def test_marquee_x_edges_snap_between_points_without_changing_y(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        line = plot_item.plot(x=[0.0, 1.0, 3.0], y=[4.0, 5.0, 6.0])
+        window = plot1d.__new__(plot1d)
+        window.line = line
+
+        rect = window._snap_marquee_rect(QtCore.QRectF(0.6, 7.25, 1.8, 2.5))
+
+        self.assertEqual(rect.left(), 0.5)
+        self.assertEqual(rect.right(), 4.0)
+        self.assertEqual(rect.top(), 7.25)
+        self.assertEqual(rect.bottom(), 9.75)
+
 
 class HeatmapHoverOutlineTestCase(unittest.TestCase):
     @classmethod
@@ -361,6 +505,15 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window._update_hover_pixel_outline_from_index()
 
         self.assertFalse(window.hover_pixel_outline.isVisible())
+
+    def test_marquee_edges_snap_to_heatmap_pixel_boundaries(self):
+        window = plot2d.__new__(plot2d)
+        window.rect = QtCore.QRectF(10.0, 20.0, 8.0, 6.0)
+        window.dataGrid = np.zeros((3, 4))
+
+        rect = window._snap_marquee_rect(QtCore.QRectF(10.4, 21.1, 3.8, 4.8))
+
+        self.assertEqual(rect, QtCore.QRectF(10.0, 20.0, 6.0, 6.0))
 
     def test_mouse_moved_clamps_heatmap_edge_to_last_cell(self):
         widget = pg.GraphicsLayoutWidget()
@@ -481,6 +634,88 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             [("user_preference.bar_colour", "Purples")],
             )
         self.assertIsInstance(window.bar.color_map, pg.ColorMap)
+
+    def test_none_is_not_offered_or_applied_as_colorbar_colormap(self):
+        window = plot2d.__new__(plot2d)
+        window.status_messages = []
+        window.show_status = lambda *args: window.status_messages.append(args)
+
+        applied = window.setColorbarColorMap("none")
+
+        self.assertFalse(applied)
+        self.assertNotIn("none", _COLORBAR_COLORMAPS)
+        self.assertEqual(window.status_messages, [("Unknown color map.", 5000)])
+
+    def test_colorbar_colormap_config_filters_names_prefixes_and_groups(self):
+        class Config:
+            values = {
+                "user_preference.bar_colour_include_cet": True,
+                "user_preference.bar_colour_include_matplotlib": False,
+                "user_preference.bar_colour_include_local": False,
+                "user_preference.bar_colour_include_custom": False,
+                "user_preference.bar_colour_excluded": ["Purples"],
+                "user_preference.bar_colour_excluded_prefixes": ["CET-D"],
+                }
+
+            def get(self, key):
+                return self.values[key]
+
+        window = plot2d.__new__(plot2d)
+        window.config = Config()
+
+        available = window._available_colorbar_colormaps()
+
+        self.assertNotIn("Purples", available)
+        self.assertNotIn("viridis", available)
+        self.assertNotIn("PAL-relaxed", available)
+        self.assertNotIn("Greys", available)
+        self.assertNotIn("CET-D1", available)
+        self.assertNotIn("gist_yerg", available)
+        self.assertNotIn("gray", available)
+        self.assertNotIn("grey", available)
+        self.assertNotIn("Grays", available)
+        self.assertNotIn("Grays_r", available)
+        self.assertIn("CET-C1", available)
+
+    def test_colorbar_colormap_can_hide_every_source(self):
+        class Config:
+            values = {
+                "user_preference.bar_colour_include_cet": False,
+                "user_preference.bar_colour_include_matplotlib": False,
+                "user_preference.bar_colour_include_local": False,
+                "user_preference.bar_colour_include_custom": False,
+                }
+
+            def get(self, key):
+                return self.values[key]
+
+        window = plot2d.__new__(plot2d)
+        window.config = Config()
+
+        self.assertEqual(window._available_colorbar_colormaps(), ())
+        self.assertEqual(window._fallback_colorbar_colormap_name(), "viridis")
+
+    def test_colorbar_colormap_config_filters_subtypes(self):
+        class Config:
+            values = {
+                "user_preference.bar_colour_include_cet": True,
+                "user_preference.bar_colour_include_matplotlib": True,
+                "user_preference.bar_colour_include_cet_linear": False,
+                "user_preference.bar_colour_include_matplotlib_qualitative": False,
+                }
+
+            def get(self, key):
+                return self.values[key]
+
+        window = plot2d.__new__(plot2d)
+        window.config = Config()
+
+        available = window._available_colorbar_colormaps()
+
+        self.assertNotIn("CET-L1", available)
+        self.assertIn("CET-D1", available)
+        self.assertNotIn("tab10", available)
+        self.assertIn("viridis", available)
 
     def test_colorbar_tick_labels_use_engineering_notation(self):
         self.assertEqual(
@@ -673,25 +908,57 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
         class Config:
             def __init__(self):
+                self.values = {
+                "user_preference.bar_colour": "viridis",
+                "user_preference.bar_colour_include_cet": True,
+                "user_preference.bar_colour_include_matplotlib": True,
+                "user_preference.bar_colour_include_local": True,
+                "user_preference.bar_colour_include_custom": True,
+                "user_preference.bar_colour_excluded": [],
+                "user_preference.bar_colour_excluded_prefixes": [],
+                }
                 self.updates = []
 
             def get(self, key):
                 self.get_key = key
-                return "viridis"
+                return self.values[key]
 
             def update(self, key, value):
+                self.values[key] = value
                 self.updates.append((key, value))
 
         class Host(qtw.QMainWindow):
             _current_colorbar_levels = plot2d._current_colorbar_levels
             _current_colorbar_colormap_name = plot2d._current_colorbar_colormap_name
+            _available_colorbar_colormaps = plot2d._available_colorbar_colormaps
+            _fallback_colorbar_colormap_name = plot2d._fallback_colorbar_colormap_name
             _colorbar_colormap = plot2d._colorbar_colormap
             _init_colorbar_scale_controls = plot2d._init_colorbar_scale_controls
+            _init_colorbar_filter_controls = plot2d._init_colorbar_filter_controls
+            _init_colorbar_colormap_table = plot2d._init_colorbar_colormap_table
+            _populate_colorbar_colormap_table = plot2d._populate_colorbar_colormap_table
+            _sync_colorbar_filter_controls = plot2d._sync_colorbar_filter_controls
+            _set_colorbar_filter_setting = plot2d._set_colorbar_filter_setting
+            _set_colorbar_subtype_filter_setting = (
+                plot2d._set_colorbar_subtype_filter_setting
+                )
+            _colorbar_include_cet_changed = plot2d._colorbar_include_cet_changed
+            _colorbar_include_matplotlib_changed = (
+                plot2d._colorbar_include_matplotlib_changed
+                )
+            _colorbar_include_local_changed = plot2d._colorbar_include_local_changed
+            _colorbar_include_custom_changed = plot2d._colorbar_include_custom_changed
+            _colorbar_include_subtype_changed = plot2d._colorbar_include_subtype_changed
             _add_colorbar_scale_context_action = plot2d._add_colorbar_scale_context_action
             _install_colorbar_scale_axis_handlers = plot2d._install_colorbar_scale_axis_handlers
             _colorbar_scale_context_menu_position = plot2d._colorbar_scale_context_menu_position
             _sync_colorbar_scale_controls = plot2d._sync_colorbar_scale_controls
             _sync_colorbar_level_fields = plot2d._sync_colorbar_level_fields
+            _colorbar_colormap_row = plot2d._colorbar_colormap_row
+            _select_colorbar_colormap = plot2d._select_colorbar_colormap
+            _colorbar_colormap_selection_changed = (
+                plot2d._colorbar_colormap_selection_changed
+                )
             _colorbar_colormap_changed = plot2d._colorbar_colormap_changed
             open_colorbar_scale_dialog = plot2d.open_colorbar_scale_dialog
             _apply_colorbar_manual_fields = plot2d._apply_colorbar_manual_fields
@@ -735,22 +1002,63 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             self.assertIn("Color Scale...", action_texts)
             self.assertIsNone(host.colorbarScaleAction.menu())
-            self.assertGreater(host.colorbar_colormap_combo.findData("Greys"), -1)
-            self.assertGreater(host.colorbar_colormap_combo.findData("Purples"), -1)
+            self.assertGreater(host._colorbar_colormap_row("Greys"), -1)
+            self.assertGreater(host._colorbar_colormap_row("Purples"), -1)
+            self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)
+            self.assertGreater(host._colorbar_colormap_row("PAL-relaxed"), -1)
+            self.assertEqual(
+                host.colorbar_colormap_table.rowCount(),
+                len(host._available_colorbar_colormaps()),
+                )
+            preview_item = host.colorbar_colormap_table.item(
+                host._colorbar_colormap_row("viridis"),
+                1,
+                )
+            self.assertFalse(preview_item.icon().isNull())
 
             host.colorbarScaleAction.trigger()
 
             self.assertEqual(host.colorbar_scale_dialog.windowTitle(), "Color scale")
             self.assertIs(host.colorbar_scale_controls.parent(), host.colorbar_scale_dialog)
 
-            host.colorbar_colormap_combo.setCurrentIndex(
-                host.colorbar_colormap_combo.findData("Purples")
+            host.colorbar_colormap_table.setCurrentCell(
+                host._colorbar_colormap_row("Purples"),
+                0,
                 )
             self.assertEqual(
                 host.config.updates,
                 [("user_preference.bar_colour", "Purples")],
                 )
             self.assertIsInstance(host.bar.color_map, pg.ColorMap)
+
+            host.colorbar_include_local_check.setChecked(False)
+            self.assertEqual(
+                host.config.updates[-1],
+                ("user_preference.bar_colour_include_local", False),
+                )
+            self.assertEqual(host._colorbar_colormap_row("PAL-relaxed"), -1)
+
+            host.colorbar_include_custom_check.setChecked(False)
+            self.assertEqual(
+                host.config.updates[-1],
+                ("user_preference.bar_colour_include_custom", False),
+                )
+            self.assertEqual(host._colorbar_colormap_row("Greys"), -1)
+
+            host.colorbar_cet_subtype_checks["linear"].setChecked(False)
+            self.assertEqual(
+                host.config.updates[-1],
+                ("user_preference.bar_colour_include_cet_linear", False),
+                )
+            self.assertEqual(host._colorbar_colormap_row("CET-L1"), -1)
+            self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)
+
+            host.colorbar_include_cet_check.setChecked(False)
+            self.assertEqual(
+                host.config.updates[-1],
+                ("user_preference.bar_colour_include_cet", False),
+                )
+            self.assertEqual(host._colorbar_colormap_row("CET-C1"), -1)
 
             axis = Axis()
             host._install_colorbar_scale_axis_handlers(axis)
