@@ -5,6 +5,7 @@ from os import path
 from time import perf_counter
 
 import pyqtgraph as pg
+from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore 
@@ -389,6 +390,11 @@ class plotWidget(qtw.QMainWindow):
         """
         self.vbMenu = self.vb.menu
         self.mouseModeAction = self._context_menu_action("Mouse Mode")
+        self._remove_scene_export_context_menu()
+
+        self.exportPlotAction = qtw.QAction("&Export Plot...", self)
+        self.exportPlotAction.setStatusTip("Open the plot export dialog")
+        self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
         contextAction = qtw.QAction("Show Context Menu", self)
         self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
@@ -413,6 +419,311 @@ class plotWidget(qtw.QMainWindow):
         self.vbMenu.insertAction(x_action, toggleAction)
         self.vbMenu.insertSeparator(x_action)
 
+        self._init_axis_scale_dialogs()
+
+
+    def _init_axis_scale_dialogs(self):
+        """
+        Move pyqtgraph's X/Y axis scaling controls into double-click dialogs.
+
+        """
+        self._axis_scale_controls = {}
+        self._axis_scale_dialogs = {}
+
+        for axis, menu_text in (("x", "X axis"), ("y", "Y axis")):
+            action = self._context_menu_action(menu_text)
+            if action is None or action.menu() is None:
+                continue
+
+            self.vbMenu.removeAction(action)
+
+        self._install_axis_scale_double_click_handlers()
+
+
+    def _menu_control_widget(self, menu):
+        """
+        Returns the embedded control widget from a QWidgetAction menu.
+
+        """
+        for action in menu.actions():
+            if isinstance(action, qtw.QWidgetAction):
+                return action.defaultWidget()
+        return None
+
+
+    def _install_axis_scale_double_click_handlers(self):
+        """
+        Open the relevant axis scale dialog when an axis is double-clicked.
+
+        """
+        for axis, side in (("x", "bottom"), ("y", "left")):
+            axis_item = self.plot.getAxis(side)
+            if axis_item is None:
+                continue
+
+            previous_handler = getattr(axis_item, "mouseDoubleClickEvent", None)
+
+            def mouse_double_click(event, axis=axis, previous_handler=previous_handler):
+                if event.button() == QtCore.Qt.LeftButton:
+                    self.open_axis_scale_dialog(axis)
+                    event.accept()
+                    return
+
+                if previous_handler is not None:
+                    previous_handler(event)
+
+            axis_item.mouseDoubleClickEvent = mouse_double_click
+
+
+    def _axis_scale_dialog_title(self, axis):
+        return f"{axis.upper()} axis scaling"
+
+
+    def _axis_scale_axis_number(self, axis):
+        return 0 if axis == "x" else 1
+
+
+    def _axis_scale_axis_constant(self, axis):
+        return pg.ViewBox.XAxis if axis == "x" else pg.ViewBox.YAxis
+
+
+    def _new_axis_scale_controls(self, axis):
+        """
+        Build a fresh copy of pyqtgraph's axis scaling controls for a dialog.
+
+        """
+        widget = qtw.QWidget()
+        ui = axisCtrlTemplate_generic.Ui_Form()
+        ui.setupUi(widget)
+        self._axis_scale_controls[axis] = ui
+
+        ui.mouseCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_mouse_toggled(axis, checked)
+            )
+        ui.manualRadio.clicked.connect(
+            lambda _checked=False, axis=axis: self._axis_scale_manual_clicked(axis)
+            )
+        ui.minText.editingFinished.connect(
+            lambda axis=axis: self._axis_scale_range_text_changed(axis)
+            )
+        ui.maxText.editingFinished.connect(
+            lambda axis=axis: self._axis_scale_range_text_changed(axis)
+            )
+        ui.autoRadio.clicked.connect(
+            lambda _checked=False, axis=axis: self._axis_scale_auto_clicked(axis)
+            )
+        ui.autoPercentSpin.valueChanged.connect(
+            lambda value, axis=axis: self._axis_scale_auto_spin_changed(axis, value)
+            )
+        ui.linkCombo.currentIndexChanged.connect(
+            lambda _index, axis=axis: self._axis_scale_link_changed(axis)
+            )
+        ui.autoPanCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_auto_pan_toggled(axis, checked)
+            )
+        ui.visibleOnlyCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_visible_only_toggled(axis, checked)
+            )
+        ui.invertCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_invert_toggled(axis, checked)
+            )
+
+        return widget
+
+
+    def _sync_axis_scale_controls(self, axis):
+        """
+        Update a dialog's controls from the current view state.
+
+        """
+        ui = self._axis_scale_controls.get(axis)
+        if ui is None:
+            return
+
+        axis_number = self._axis_scale_axis_number(axis)
+        state = self.vb.getState(copy=False)
+
+        for widget in (
+                ui.minText,
+                ui.maxText,
+                ui.manualRadio,
+                ui.autoRadio,
+                ui.autoPercentSpin,
+                ui.linkCombo,
+                ui.autoPanCheck,
+                ui.visibleOnlyCheck,
+                ui.invertCheck,
+                ui.mouseCheck,
+                ):
+            widget.blockSignals(True)
+
+        try:
+            target_range = state["targetRange"][axis_number]
+            ui.minText.setText("%0.5g" % target_range[0])
+            ui.maxText.setText("%0.5g" % target_range[1])
+
+            auto_range = state["autoRange"][axis_number]
+            ui.autoRadio.setChecked(auto_range is not False)
+            ui.manualRadio.setChecked(auto_range is False)
+            if auto_range is not False and auto_range is not True:
+                ui.autoPercentSpin.setValue(int(auto_range * 100))
+
+            ui.mouseCheck.setChecked(state["mouseEnabled"][axis_number])
+            ui.autoPanCheck.setChecked(state["autoPan"][axis_number])
+            ui.visibleOnlyCheck.setChecked(state["autoVisibleOnly"][axis_number])
+            ui.invertCheck.setChecked(state.get(axis + "Inverted", False))
+            self._sync_axis_scale_link_combo(axis)
+        finally:
+            for widget in (
+                    ui.minText,
+                    ui.maxText,
+                    ui.manualRadio,
+                    ui.autoRadio,
+                    ui.autoPercentSpin,
+                    ui.linkCombo,
+                    ui.autoPanCheck,
+                    ui.visibleOnlyCheck,
+                    ui.invertCheck,
+                    ui.mouseCheck,
+                    ):
+                widget.blockSignals(False)
+
+
+    def _sync_axis_scale_link_combo(self, axis):
+        """
+        Mirror pyqtgraph's available linked views into the dialog link combo.
+
+        """
+        ui = self._axis_scale_controls[axis]
+        axis_number = self._axis_scale_axis_number(axis)
+        source_combo = self.vbMenu.ctrl[axis_number].linkCombo
+        current = self.vb.getState(copy=False)["linkedViews"][axis_number] or ""
+
+        ui.linkCombo.clear()
+        for index in range(source_combo.count()):
+            ui.linkCombo.addItem(source_combo.itemText(index))
+
+        index = ui.linkCombo.findText(current)
+        ui.linkCombo.setCurrentIndex(max(index, 0))
+
+
+    def _axis_scale_mouse_toggled(self, axis, checked):
+        if axis == "x":
+            self.vb.setMouseEnabled(x=checked)
+        else:
+            self.vb.setMouseEnabled(y=checked)
+
+
+    def _axis_scale_manual_clicked(self, axis):
+        self.vb.enableAutoRange(self._axis_scale_axis_constant(axis), False)
+
+
+    def _axis_scale_range_text_changed(self, axis):
+        ui = self._axis_scale_controls[axis]
+        axis_number = self._axis_scale_axis_number(axis)
+        values = list(self.vb.viewRange()[axis_number])
+        for index, text in enumerate((ui.minText.text(), ui.maxText.text())):
+            try:
+                values[index] = float(text)
+            except ValueError:
+                pass
+
+        ui.manualRadio.setChecked(True)
+        if axis == "x":
+            self.vb.setXRange(*values, padding=0)
+        else:
+            self.vb.setYRange(*values, padding=0)
+
+
+    def _axis_scale_auto_clicked(self, axis):
+        ui = self._axis_scale_controls[axis]
+        self.vb.enableAutoRange(
+            self._axis_scale_axis_constant(axis),
+            ui.autoPercentSpin.value() * 0.01,
+            )
+
+
+    def _axis_scale_auto_spin_changed(self, axis, value):
+        ui = self._axis_scale_controls[axis]
+        ui.autoRadio.setChecked(True)
+        self.vb.enableAutoRange(self._axis_scale_axis_constant(axis), value * 0.01)
+
+
+    def _axis_scale_link_changed(self, axis):
+        ui = self._axis_scale_controls[axis]
+        if axis == "x":
+            self.vb.setXLink(str(ui.linkCombo.currentText()))
+        else:
+            self.vb.setYLink(str(ui.linkCombo.currentText()))
+
+
+    def _axis_scale_auto_pan_toggled(self, axis, checked):
+        if axis == "x":
+            self.vb.setAutoPan(x=checked)
+        else:
+            self.vb.setAutoPan(y=checked)
+
+
+    def _axis_scale_visible_only_toggled(self, axis, checked):
+        if axis == "x":
+            self.vb.setAutoVisible(x=checked)
+        else:
+            self.vb.setAutoVisible(y=checked)
+
+
+    def _axis_scale_invert_toggled(self, axis, checked):
+        if axis == "x":
+            self.vb.invertX(checked)
+        else:
+            self.vb.invertY(checked)
+
+
+    @QtCore.pyqtSlot(str)
+    def open_axis_scale_dialog(self, axis):
+        """
+        Opens the scaling dialog for the requested axis.
+
+        """
+        if hasattr(self.vb, "updateViewLists"):
+            self.vb.updateViewLists()
+
+        if hasattr(self.vbMenu, "updateState"):
+            self.vbMenu.updateState()
+
+        dialog = self._axis_scale_dialogs.get(axis)
+        if dialog is None:
+            dialog = qtw.QDialog(self)
+            dialog.setWindowTitle(self._axis_scale_dialog_title(axis))
+            layout = qtw.QVBoxLayout(dialog)
+            layout.addWidget(self._new_axis_scale_controls(axis))
+
+            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
+            buttons.rejected.connect(dialog.close)
+            layout.addWidget(buttons)
+
+            self._axis_scale_dialogs[axis] = dialog
+
+        self._sync_axis_scale_controls(axis)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+
+    def _remove_scene_export_context_menu(self):
+        """
+        Removes pyqtgraph's scene-level export action from right-click menus.
+
+        """
+        scene = self.widget.scene()
+        context_menu = getattr(scene, "contextMenu", None)
+        if context_menu is None:
+            return
+
+        scene.contextMenu = [
+            action for action in context_menu
+            if action.text().replace("&", "") != "Export..."
+            ]
+
 
     def _context_menu_action(self, text):
         """
@@ -432,6 +743,17 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.vbMenu.exec_(self.widget.mapToGlobal(self.widget.rect().center()))
+
+
+    @QtCore.pyqtSlot()
+    def open_export_dialog(self):
+        """
+        Opens pyqtgraph's export dialog for this plot.
+
+        """
+        scene = self.widget.scene()
+        scene.contextMenuItem = self.plot
+        scene.showExportDialog()
         
         
     def initAxes(self):
@@ -536,6 +858,11 @@ class plotWidget(qtw.QMainWindow):
         menu = self.menuBar()
 
         file_menu = menu.addMenu("&File")
+
+        export_plot_action = getattr(self, "exportPlotAction", None)
+        if export_plot_action is not None:
+            file_menu.addAction(export_plot_action)
+            file_menu.addSeparator()
 
         close_all_plots_action = qtw.QAction("Close All &Plot Windows", self)
         close_all_plots_action.setShortcut("Ctrl+Shift+W")
@@ -829,6 +1156,10 @@ class plotWidget(qtw.QMainWindow):
                     # Note that pyqtgraph indexes [column, row]
                     i = min(self.dataGrid.shape[1] - 1, int(i * self.dataGrid.shape[1]))
                     j = min(self.dataGrid.shape[0] - 1, int(j * self.dataGrid.shape[0]))
+                    x = rect.x() + (i + 0.5) * rect.width() / self.dataGrid.shape[1]
+                    y = rect.y() + (j + 0.5) * rect.height() / self.dataGrid.shape[0]
+                    x_txt = f"x = {self.formatNum(x)};"
+                    y_txt = f"y = {self.formatNum(y)};"
                     self.pos_labels["z"].setText(f"z = {self.formatNum(self.dataGrid[j, i])}")
                     
                     # Save z location for subplot use

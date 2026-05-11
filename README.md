@@ -150,6 +150,8 @@ Common plot controls:
 * Left-click drag: pan.
 * Right-click drag: scale the view.
 * Right-click the plot: open the plot context menu.
+* Double-click an X, Y, or colour-scale axis: open its scaling dialog.
+* `File -> Export Plot...`: open the plot export dialog.
 * `Autoscale`: reset the plot view.
 * The bottom toolbar shows cursor coordinates.
 * The left panel controls assigned axes and plot-specific options.
@@ -179,6 +181,10 @@ When multiple lines use different y axes:
 
 Heatmaps
 --------
+
+Use `Color Scale...` from the heatmap context menu or the colour-scale axis
+right-click menu, or double-click the colour-scale axis, to set manual or
+automatic colour scaling and choose the colour map.
 
 Heatmaps support 1D cut extraction:
 

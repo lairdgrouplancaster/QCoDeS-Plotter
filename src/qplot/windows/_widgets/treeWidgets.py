@@ -240,6 +240,7 @@ def measured_parameter_count(metadata):
 
 class RunPreviewCell(qtw.QWidget):
     plotRequested = QtCore.pyqtSignal(str, str)
+    exportRequested = QtCore.pyqtSignal(str, str)
 
     def __init__(self, guid, count, parent=None, icon_size=MEASUREMENT_PREVIEW_SIZE):
         super().__init__(parent)
@@ -291,6 +292,7 @@ class RunPreviewCell(qtw.QWidget):
                     )
                 )
             label.plotRequested.connect(self._emit_plot_requested)
+            label.exportRequested.connect(self._emit_export_requested)
             self.content_layout.addWidget(label)
             preview_count += 1
 
@@ -311,6 +313,10 @@ class RunPreviewCell(qtw.QWidget):
 
     def _emit_plot_requested(self, parameter):
         self.plotRequested.emit(self.guid, parameter)
+
+
+    def _emit_export_requested(self, parameter):
+        self.exportRequested.emit(self.guid, parameter)
 
 
     def _clear_layout(self):
@@ -445,6 +451,7 @@ class RunList(qtw.QTreeWidget):
     selected = QtCore.pyqtSignal([str])
     plot = QtCore.pyqtSignal([str])
     previewPlotRequested = QtCore.pyqtSignal(str, str)
+    previewExportRequested = QtCore.pyqtSignal(str, str)
     _shortcut_keys = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     
     def __init__(self, *args, initalize=False, **kargs):
@@ -598,6 +605,7 @@ class RunList(qtw.QTreeWidget):
         column = self.cols.index("Measurements")
         cell = RunPreviewCell(item.guid, measurement_count, self)
         cell.plotRequested.connect(self._preview_plot_requested)
+        cell.exportRequested.connect(self._preview_export_requested)
         self.preview_cells[item.guid] = cell
         self.setItemWidget(item, column, cell)
 
@@ -615,6 +623,14 @@ class RunList(qtw.QTreeWidget):
         if item is not None:
             self.setCurrentItem(item)
         self.previewPlotRequested.emit(guid, parameter)
+
+
+    @QtCore.pyqtSlot(str, str)
+    def _preview_export_requested(self, guid, parameter):
+        item = self._item_for_guid(guid)
+        if item is not None:
+            self.setCurrentItem(item)
+        self.previewExportRequested.emit(guid, parameter)
 
 
     def _item_for_guid(self, guid):
@@ -773,7 +789,6 @@ class RunList(qtw.QTreeWidget):
         
         menu = qtw.QMenu(self)
 
-        self._add_menu_section(menu, "Plot")
         open_all = qtw.QAction("&Plot all", menu)
         self._set_action_shortcut(open_all, "Ctrl+Shift+Return")
         open_all.triggered.connect(lambda _,: main.open_selected_run_all())
@@ -839,17 +854,6 @@ class RunList(qtw.QTreeWidget):
         action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
         if hasattr(action, "setShortcutVisibleInContextMenu"):
             action.setShortcutVisibleInContextMenu(True)
-
-
-    def _add_menu_section(self, menu, label):
-        """
-        Adds a disabled section label to a context menu.
-
-        """
-        section = qtw.QAction(label, menu)
-        section.setEnabled(False)
-        menu.addAction(section)
-        return section
 
 
     @QtCore.pyqtSlot()

@@ -77,6 +77,13 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(config().get("user_preference.theme"), "dark")
         self.assertIs(config().theme, dark)
 
+    def test_config_accepts_extra_color_map_preferences(self):
+        cfg = config()
+
+        cfg.update("user_preference.bar_colour", "Purples")
+
+        self.assertEqual(config().get("user_preference.bar_colour"), "Purples")
+
     def test_config_update_rejects_unknown_key(self):
         cfg = config()
 
@@ -291,12 +298,16 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
     class Colorbar:
         def __init__(self):
             self.values = None
+            self.color_map = None
 
         def setLevels(self, values):
             self.values = values
 
         def levels(self):
             return self.values
+
+        def setColorMap(self, color_map):
+            self.color_map = color_map
 
     class Axis:
         def __init__(self):
@@ -372,6 +383,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         plotWidget.mouseMoved(window, scene_pos)
 
         self.assertEqual(shown_indices, [(1, 1)])
+        self.assertEqual(window.pos_labels["x"].text(), "x = 0.75;")
+        self.assertEqual(window.pos_labels["y"].text(), "y = 0.75;")
         self.assertEqual(window.pos_labels["z"].text(), "z = 4.0")
 
     def test_dragged_sweep_line_snaps_to_heatmap_pixel_centre(self):
@@ -446,6 +459,28 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertIsNone(window._colorbar_manual_levels)
         self.assertTrue(window.relevel_refresh.checked)
         self.assertEqual(window.bar.values, (0.0, 40.0))
+
+    def test_colorbar_colormap_updates_bar_and_preference(self):
+        class Config:
+            def __init__(self):
+                self.updates = []
+
+            def update(self, key, value):
+                self.updates.append((key, value))
+
+        window = plot2d.__new__(plot2d)
+        window.bar = self.Colorbar()
+        window.config = Config()
+
+        applied = window.setColorbarColorMap("Purples")
+
+        self.assertTrue(applied)
+        self.assertEqual(window._colorbar_colormap_name, "Purples")
+        self.assertEqual(
+            window.config.updates,
+            [("user_preference.bar_colour", "Purples")],
+            )
+        self.assertIsInstance(window.bar.color_map, pg.ColorMap)
 
     def test_colorbar_tick_labels_use_engineering_notation(self):
         self.assertEqual(
@@ -531,7 +566,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             run_list.prepareMenu(QtCore.QPoint(0, 0))
 
-            self.assertIn("Plot", captured)
+            self.assertEqual(captured[0], "&Plot all")
             self.assertIn("&Plot all", captured)
             self.assertIn("  - signal", captured)
             self.assertIn("  - image", captured)
@@ -543,6 +578,191 @@ class RunListParentLookupTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
             if main is not None:
                 main.deleteLater()
+
+    def test_plot_export_is_removed_from_scene_context_menu(self):
+        widget = pg.GraphicsLayoutWidget()
+        fake_plot = type("FakePlot", (), {"widget": widget})()
+
+        try:
+            self.assertIn(
+                "Export...",
+                [action.text().replace("&", "") for action in widget.scene().contextMenu],
+                )
+
+            plotWidget._remove_scene_export_context_menu(fake_plot)
+
+            self.assertNotIn(
+                "Export...",
+                [action.text().replace("&", "") for action in widget.scene().contextMenu],
+                )
+        finally:
+            widget.deleteLater()
+
+    def test_axis_scale_controls_move_from_context_menu_to_dialogs(self):
+        class Host(qtw.QMainWindow):
+            initContextMenu = plotWidget.initContextMenu
+            _init_axis_scale_dialogs = plotWidget._init_axis_scale_dialogs
+            _menu_control_widget = plotWidget._menu_control_widget
+            _install_axis_scale_double_click_handlers = (
+                plotWidget._install_axis_scale_double_click_handlers
+                )
+            _axis_scale_dialog_title = plotWidget._axis_scale_dialog_title
+            _axis_scale_axis_number = plotWidget._axis_scale_axis_number
+            _axis_scale_axis_constant = plotWidget._axis_scale_axis_constant
+            _new_axis_scale_controls = plotWidget._new_axis_scale_controls
+            _sync_axis_scale_controls = plotWidget._sync_axis_scale_controls
+            _sync_axis_scale_link_combo = plotWidget._sync_axis_scale_link_combo
+            _axis_scale_mouse_toggled = plotWidget._axis_scale_mouse_toggled
+            _axis_scale_manual_clicked = plotWidget._axis_scale_manual_clicked
+            _axis_scale_range_text_changed = plotWidget._axis_scale_range_text_changed
+            _axis_scale_auto_clicked = plotWidget._axis_scale_auto_clicked
+            _axis_scale_auto_spin_changed = plotWidget._axis_scale_auto_spin_changed
+            _axis_scale_link_changed = plotWidget._axis_scale_link_changed
+            _axis_scale_auto_pan_toggled = plotWidget._axis_scale_auto_pan_toggled
+            _axis_scale_visible_only_toggled = plotWidget._axis_scale_visible_only_toggled
+            _axis_scale_invert_toggled = plotWidget._axis_scale_invert_toggled
+            open_axis_scale_dialog = plotWidget.open_axis_scale_dialog
+            _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
+            _context_menu_action = plotWidget._context_menu_action
+
+            def register_shortcut(self, *_args, **_kwargs):
+                pass
+
+            def open_context_menu(self):
+                pass
+
+            def open_export_dialog(self):
+                pass
+
+        widget = pg.GraphicsLayoutWidget()
+        host = Host()
+        host.widget = widget
+        host.plot = widget.addPlot()
+        host.vb = host.plot.vb
+        host.oper_dock = qtw.QDockWidget()
+
+        try:
+            host.initContextMenu()
+            action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
+
+            self.assertNotIn("X axis", action_texts)
+            self.assertNotIn("Y axis", action_texts)
+
+            host.open_axis_scale_dialog("x")
+
+            dialog = host._axis_scale_dialogs["x"]
+            self.assertEqual(dialog.windowTitle(), "X axis scaling")
+            self.assertIn("x", host._axis_scale_controls)
+            self.assertEqual(host._axis_scale_controls["x"].manualRadio.text(), "Manual")
+            self.assertEqual(host._axis_scale_controls["x"].autoRadio.text(), "Auto")
+            self.assertEqual(host._axis_scale_controls["x"].invertCheck.text(), "Invert Axis")
+        finally:
+            host.deleteLater()
+            widget.deleteLater()
+
+    def test_colorbar_scale_action_opens_dialog_without_nested_menu(self):
+        class Bar:
+            def __init__(self):
+                self.color_map = None
+
+            def levels(self):
+                return 1.0, 2.0
+
+            def setColorMap(self, color_map):
+                self.color_map = color_map
+
+        class Config:
+            def __init__(self):
+                self.updates = []
+
+            def get(self, key):
+                self.get_key = key
+                return "viridis"
+
+            def update(self, key, value):
+                self.updates.append((key, value))
+
+        class Host(qtw.QMainWindow):
+            _current_colorbar_levels = plot2d._current_colorbar_levels
+            _current_colorbar_colormap_name = plot2d._current_colorbar_colormap_name
+            _colorbar_colormap = plot2d._colorbar_colormap
+            _init_colorbar_scale_controls = plot2d._init_colorbar_scale_controls
+            _add_colorbar_scale_context_action = plot2d._add_colorbar_scale_context_action
+            _install_colorbar_scale_axis_handlers = plot2d._install_colorbar_scale_axis_handlers
+            _colorbar_scale_context_menu_position = plot2d._colorbar_scale_context_menu_position
+            _sync_colorbar_scale_controls = plot2d._sync_colorbar_scale_controls
+            _sync_colorbar_level_fields = plot2d._sync_colorbar_level_fields
+            _colorbar_colormap_changed = plot2d._colorbar_colormap_changed
+            open_colorbar_scale_dialog = plot2d.open_colorbar_scale_dialog
+            _apply_colorbar_manual_fields = plot2d._apply_colorbar_manual_fields
+            setColorbarColorMap = plot2d.setColorbarColorMap
+            setColorbarManualRange = plot2d.setColorbarManualRange
+            setColorbarAuto = plot2d.setColorbarAuto
+            scaleColorbar = plot2d.scaleColorbar
+
+            def show_status(self, *_args, **_kwargs):
+                pass
+
+        host = Host()
+        host.vbMenu = qtw.QMenu(host)
+        host.autoscaleSep = host.vbMenu.addSeparator()
+        host.bar = Bar()
+        host.config = Config()
+        host._colorbar_manual_levels = None
+        old_exec = qtw.QMenu.exec_
+        captured_axis_actions = []
+
+        class Axis:
+            pass
+
+        class ContextEvent:
+            accepted = False
+
+            def screenPos(self):
+                return QtCore.QPoint(0, 0)
+
+            def accept(self):
+                self.accepted = True
+
+        def capture_menu(menu, *_args, **_kwargs):
+            captured_axis_actions.extend(menu.actions())
+
+        try:
+            qtw.QMenu.exec_ = capture_menu
+            host._init_colorbar_scale_controls()
+            host._add_colorbar_scale_context_action()
+            action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
+
+            self.assertIn("Color Scale...", action_texts)
+            self.assertIsNone(host.colorbarScaleAction.menu())
+            self.assertGreater(host.colorbar_colormap_combo.findData("Greys"), -1)
+            self.assertGreater(host.colorbar_colormap_combo.findData("Purples"), -1)
+
+            host.colorbarScaleAction.trigger()
+
+            self.assertEqual(host.colorbar_scale_dialog.windowTitle(), "Color scale")
+            self.assertIs(host.colorbar_scale_controls.parent(), host.colorbar_scale_dialog)
+
+            host.colorbar_colormap_combo.setCurrentIndex(
+                host.colorbar_colormap_combo.findData("Purples")
+                )
+            self.assertEqual(
+                host.config.updates,
+                [("user_preference.bar_colour", "Purples")],
+                )
+            self.assertIsInstance(host.bar.color_map, pg.ColorMap)
+
+            axis = Axis()
+            host._install_colorbar_scale_axis_handlers(axis)
+            event = ContextEvent()
+            axis.contextMenuEvent(event)
+
+            self.assertTrue(event.accepted)
+            self.assertEqual(captured_axis_actions[0].text(), "Color Scale...")
+            self.assertIsNone(captured_axis_actions[0].menu())
+        finally:
+            qtw.QMenu.exec_ = old_exec
+            host.deleteLater()
 
 
 class CloseAllPlotsTestCase(unittest.TestCase):
@@ -983,6 +1203,15 @@ class RunListTooltipTestCase(unittest.TestCase):
             qtw.QApplication.sendEvent(images[0], event)
 
             self.assertEqual(requested, [("run-guid", "signal")])
+            self.assertIs(run_list.currentItem(), item)
+
+            export_requested = []
+            run_list.previewExportRequested.connect(
+                lambda guid, parameter: export_requested.append((guid, parameter))
+                )
+            images[0].exportRequested.emit("signal")
+
+            self.assertEqual(export_requested, [("run-guid", "signal")])
             self.assertIs(run_list.currentItem(), item)
         finally:
             treeWidgets.isfile = old_isfile
@@ -1580,6 +1809,48 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         qtw.QApplication.sendEvent(image, event)
 
         self.assertEqual(requested, ["dmm_v2"])
+
+    def test_right_clicking_preview_can_request_export(self):
+        old_exec = qtw.QMenu.exec_
+        captured_actions = []
+        preview = PreviewTab(preview_size=100)
+        requested = []
+        preview.exportRequested.connect(requested.append)
+
+        def capture_menu(menu, *_args, **_kwargs):
+            captured_actions.extend(menu.actions())
+
+        try:
+            qtw.QMenu.exec_ = capture_menu
+            preview._show_previews([
+                {
+                    "parameter": "signal",
+                    "title": "signal vs x",
+                    "image": render_sparkline_preview(
+                        np.array([0, 1], dtype=float),
+                        np.array([1, 2], dtype=float),
+                        size=100,
+                        ),
+                    },
+                ])
+
+            image = preview.findChild(qtw.QLabel, "previewImage")
+            event = QtGui.QContextMenuEvent(
+                QtGui.QContextMenuEvent.Mouse,
+                QtCore.QPoint(10, 10),
+                QtCore.QPoint(10, 10),
+                )
+            qtw.QApplication.sendEvent(image, event)
+
+            export_action = next(
+                action for action in captured_actions
+                if action.text().replace("&", "") == "Export CSV..."
+                )
+            export_action.trigger()
+
+            self.assertEqual(requested, ["signal"])
+        finally:
+            qtw.QMenu.exec_ = old_exec
 
     def test_clicking_preview_marks_it_selected(self):
         preview = PreviewTab(preview_size=80)

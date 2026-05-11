@@ -30,6 +30,80 @@ _ENGINEERING_PREFIXES = {
 }
 
 
+_COLORBAR_COLORMAPS = (
+    "viridis",
+    "plasma",
+    "inferno",
+    "magma",
+    "cividis",
+    "turbo",
+    "Greys",
+    "Purples",
+    "Blues",
+    "Greens",
+    "Oranges",
+    "Reds",
+    "none",
+)
+
+
+_COLORBAR_COLORMAP_LABELS = {
+    "cividis": "Cividis",
+    "inferno": "Inferno",
+    "magma": "Magma",
+    "none": "None",
+    "plasma": "Plasma",
+    "turbo": "Turbo",
+    "viridis": "Viridis",
+}
+
+
+_CUSTOM_COLORBAR_COLORMAPS = {
+    "Greys": [
+        (255, 255, 255),
+        (217, 217, 217),
+        (150, 150, 150),
+        (82, 82, 82),
+        (0, 0, 0),
+    ],
+    "Purples": [
+        (252, 251, 253),
+        (218, 218, 235),
+        (158, 154, 200),
+        (106, 81, 163),
+        (63, 0, 125),
+    ],
+    "Blues": [
+        (247, 251, 255),
+        (198, 219, 239),
+        (107, 174, 214),
+        (33, 113, 181),
+        (8, 48, 107),
+    ],
+    "Greens": [
+        (247, 252, 245),
+        (199, 233, 192),
+        (116, 196, 118),
+        (35, 139, 69),
+        (0, 68, 27),
+    ],
+    "Oranges": [
+        (255, 245, 235),
+        (253, 208, 162),
+        (253, 141, 60),
+        (217, 72, 1),
+        (127, 39, 4),
+    ],
+    "Reds": [
+        (255, 245, 240),
+        (252, 187, 161),
+        (251, 106, 74),
+        (203, 24, 29),
+        (103, 0, 13),
+    ],
+}
+
+
 def _trim_decimal_places(value, decimal_places=3):
     """
     Format a float with up to decimal_places, trimming trailing zeros.
@@ -142,6 +216,8 @@ class plot2d(plotWidget):
         self.register_shortcut(autoColor, "Ctrl+Shift+C", "Autoscale color range")
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
+
+        self._add_colorbar_scale_context_action()
         
         actions = self.vbMenu.actions()
         
@@ -162,7 +238,7 @@ class plot2d(plotWidget):
         self.end_wait.connect(self.rotate_sweeps)
         self.vbMenu.insertSeparator(h_sweep)
 
-        self._init_colorbar_context_menu()
+        self._init_colorbar_scale_controls()
 
         for key, text in (
                 (QtCore.Qt.Key_Left, "Move selected cut left"),
@@ -179,6 +255,17 @@ class plot2d(plotWidget):
             self.addAction(action)
         
         
+    def _add_colorbar_scale_context_action(self):
+        """
+        Add a flat context-menu action for the color scale dialog.
+
+        """
+        self.colorbarScaleAction = qtw.QAction("Color Scale...", self)
+        self.colorbarScaleAction.setStatusTip("Open the color scale dialog")
+        self.colorbarScaleAction.triggered.connect(self.open_colorbar_scale_dialog)
+        self.vbMenu.insertAction(self.autoscaleSep, self.colorbarScaleAction)
+
+
     def initLabels(self):
         super().initLabels()
         self.z_index = None
@@ -238,7 +325,7 @@ class plot2d(plotWidget):
         if not hasattr(self, "bar"):
             self.bar = self.plot.addColorBar(
                 self.image,
-                colorMap=self.config.get("user_preference.bar_colour"),
+                colorMap=self._colorbar_colormap(),
                 label=f"{self.param.label} ({self.param.unit})",
                 rounding=(np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid))/1e5 #Add 10,000 colours
                 )
@@ -380,6 +467,53 @@ class plot2d(plotWidget):
         axis.setStyle(tickTextWidth=60)
         axis.picture = None
         axis.update()
+        self._install_colorbar_scale_axis_handlers(axis)
+
+
+    def _install_colorbar_scale_axis_handlers(self, axis):
+        """
+        Open the color-scale dialog from direct colorbar axis interactions.
+
+        """
+        if getattr(axis, "_qplot_colorbar_scale_handlers_installed", False):
+            return
+
+        previous_double_click_handler = getattr(axis, "mouseDoubleClickEvent", None)
+
+        def mouse_double_click(event, previous_handler=previous_double_click_handler):
+            if event.button() == QtCore.Qt.LeftButton:
+                self.open_colorbar_scale_dialog()
+                event.accept()
+                return
+
+            if previous_handler is not None:
+                previous_handler(event)
+
+        def context_menu(event):
+            menu = qtw.QMenu(self)
+            action = menu.addAction("Color Scale...")
+            action.triggered.connect(self.open_colorbar_scale_dialog)
+            position = self._colorbar_scale_context_menu_position(event)
+            menu.exec_(position)
+            event.accept()
+
+        axis.mouseDoubleClickEvent = mouse_double_click
+        axis.contextMenuEvent = context_menu
+        axis._qplot_colorbar_scale_handlers_installed = True
+
+
+    def _colorbar_scale_context_menu_position(self, event):
+        """
+        Return a global position for colorbar axis context menus.
+
+        """
+        if hasattr(event, "screenPos"):
+            return event.screenPos()
+
+        if hasattr(event, "globalPos"):
+            return event.globalPos()
+
+        return QtGui.QCursor.pos()
 
 
     def _current_colorbar_levels(self):
@@ -398,12 +532,52 @@ class plot2d(plotWidget):
         return self._data_colorbar_levels()
 
 
-    def _init_colorbar_context_menu(self):
+    def _current_colorbar_colormap_name(self):
         """
-        Add manual/auto color scale controls to the plot context menu.
+        Return the selected colorbar color map preference.
 
         """
-        self.colorbar_menu = qtw.QMenu("Color scale", self.vbMenu)
+        name = getattr(self, "_colorbar_colormap_name", None)
+        if name in _COLORBAR_COLORMAPS:
+            return name
+
+        try:
+            name = self.config.get("user_preference.bar_colour")
+        except (AttributeError, KeyError):
+            name = "viridis"
+
+        if name not in _COLORBAR_COLORMAPS:
+            name = "viridis"
+
+        self._colorbar_colormap_name = name
+        return name
+
+
+    def _colorbar_colormap(self, name=None):
+        """
+        Return a pyqtgraph color map or built-in map name for the colorbar.
+
+        """
+        if name is None:
+            name = self._current_colorbar_colormap_name()
+
+        colors = _CUSTOM_COLORBAR_COLORMAPS.get(name)
+        if colors is None:
+            return name
+
+        color_map = pg.ColorMap(
+            np.linspace(0.0, 1.0, len(colors)),
+            colors,
+        )
+        color_map.name = name
+        return color_map
+
+
+    def _init_colorbar_scale_controls(self):
+        """
+        Build manual/auto color scale controls for the dialog.
+
+        """
         controls = qtw.QWidget()
         layout = qtw.QGridLayout(controls)
         layout.setContentsMargins(6, 4, 6, 4)
@@ -414,6 +588,12 @@ class plot2d(plotWidget):
         self.colorbar_auto_radio = qtw.QRadioButton("Auto")
         self.colorbar_min_text = qtw.QLineEdit()
         self.colorbar_max_text = qtw.QLineEdit()
+        self.colorbar_colormap_combo = qtw.QComboBox()
+        for name in _COLORBAR_COLORMAPS:
+            self.colorbar_colormap_combo.addItem(
+                _COLORBAR_COLORMAP_LABELS.get(name, name),
+                name,
+            )
 
         validator = QtGui.QDoubleValidator(self)
         self.colorbar_min_text.setValidator(validator)
@@ -426,53 +606,43 @@ class plot2d(plotWidget):
         self.colorbar_button_group.addButton(self.colorbar_auto_radio)
         self.colorbar_button_group.setExclusive(True)
 
-        layout.addWidget(self.colorbar_manual_radio, 0, 0)
-        layout.addWidget(self.colorbar_min_text, 0, 1)
-        layout.addWidget(self.colorbar_max_text, 0, 2)
-        layout.addWidget(self.colorbar_auto_radio, 1, 0)
+        layout.addWidget(qtw.QLabel("Colors"), 0, 0)
+        layout.addWidget(self.colorbar_colormap_combo, 0, 1, 1, 2)
+        layout.addWidget(self.colorbar_manual_radio, 1, 0)
+        layout.addWidget(self.colorbar_min_text, 1, 1)
+        layout.addWidget(self.colorbar_max_text, 1, 2)
+        layout.addWidget(self.colorbar_auto_radio, 2, 0)
 
-        controls_action = qtw.QWidgetAction(self.colorbar_menu)
-        controls_action.setDefaultWidget(controls)
-        self.colorbar_menu.addAction(controls_action)
+        self.colorbar_scale_controls = controls
 
-        self.colorbar_menu.aboutToShow.connect(self._sync_colorbar_menu)
+        self.colorbar_colormap_combo.currentIndexChanged.connect(
+            self._colorbar_colormap_changed
+            )
         self.colorbar_manual_radio.clicked.connect(self._apply_colorbar_manual_fields)
         self.colorbar_min_text.editingFinished.connect(self._apply_colorbar_manual_fields)
         self.colorbar_max_text.editingFinished.connect(self._apply_colorbar_manual_fields)
         self.colorbar_auto_radio.clicked.connect(self.setColorbarAuto)
 
-        self._insert_colorbar_menu()
-        self._sync_colorbar_menu()
+        self._sync_colorbar_scale_controls()
 
 
-    def _insert_colorbar_menu(self):
+    def _sync_colorbar_scale_controls(self):
         """
-        Place the color scale menu next to pyqtgraph's X/Y axis menus.
-
-        """
-        actions = self.vbMenu.actions()
-        insert_before = None
-
-        for index, action in enumerate(actions):
-            if action.text().replace("&", "") == "Y axis":
-                if index + 1 < len(actions):
-                    insert_before = actions[index + 1]
-                break
-
-        if insert_before is None:
-            self.vbMenu.addMenu(self.colorbar_menu)
-        else:
-            self.vbMenu.insertMenu(insert_before, self.colorbar_menu)
-
-
-    def _sync_colorbar_menu(self):
-        """
-        Update color scale menu controls from the current colorbar state.
+        Update color scale controls from the current colorbar state.
 
         """
         levels = self._current_colorbar_levels()
         if levels is not None:
             self._sync_colorbar_level_fields(*levels)
+
+        combo = getattr(self, "colorbar_colormap_combo", None)
+        if combo is not None:
+            index = combo.findData(self._current_colorbar_colormap_name())
+            if index < 0:
+                index = combo.findData("viridis")
+            combo.blockSignals(True)
+            combo.setCurrentIndex(index)
+            combo.blockSignals(False)
 
         manual = getattr(self, "_colorbar_manual_levels", None) is not None
         for widget in (self.colorbar_manual_radio, self.colorbar_auto_radio):
@@ -487,7 +657,7 @@ class plot2d(plotWidget):
 
     def _sync_colorbar_level_fields(self, vmin, vmax):
         """
-        Mirror colorbar levels into the context menu text fields.
+        Mirror colorbar levels into the dialog text fields.
 
         """
         if "colorbar_min_text" not in self.__dict__:
@@ -502,10 +672,53 @@ class plot2d(plotWidget):
             widget.blockSignals(False)
 
 
+    @QtCore.pyqtSlot(int)
+    def _colorbar_colormap_changed(self, index):
+        """
+        Apply the color map selected in the dialog.
+
+        """
+        name = self.colorbar_colormap_combo.itemData(index)
+        if name is None:
+            return
+
+        self.setColorbarColorMap(name)
+
+
+    @QtCore.pyqtSlot()
+    def open_colorbar_scale_dialog(self):
+        """
+        Opens the color scale controls in a dialog.
+
+        """
+        controls = getattr(self, "colorbar_scale_controls", None)
+        if controls is None:
+            return
+
+        self._sync_colorbar_scale_controls()
+
+        dialog = getattr(self, "colorbar_scale_dialog", None)
+        if dialog is None:
+            dialog = qtw.QDialog(self)
+            dialog.setWindowTitle("Color scale")
+            layout = qtw.QVBoxLayout(dialog)
+            layout.addWidget(controls)
+
+            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
+            buttons.rejected.connect(dialog.close)
+            layout.addWidget(buttons)
+
+            self.colorbar_scale_dialog = dialog
+
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+
     @QtCore.pyqtSlot()
     def _apply_colorbar_manual_fields(self):
         """
-        Apply color scale levels entered in the context menu.
+        Apply color scale levels entered in the dialog.
 
         """
         try:
@@ -513,10 +726,31 @@ class plot2d(plotWidget):
             vmax = float(self.colorbar_max_text.text())
         except ValueError:
             self.show_status("Invalid color scale range.", 5000)
-            self._sync_colorbar_menu()
+            self._sync_colorbar_scale_controls()
             return
 
         self.setColorbarManualRange(vmin, vmax)
+
+
+    def setColorbarColorMap(self, name):
+        """
+        Set and persist the colorbar color map.
+
+        """
+        if name not in _COLORBAR_COLORMAPS:
+            self.show_status("Unknown color map.", 5000)
+            return False
+
+        self._colorbar_colormap_name = name
+        bar = self.__dict__.get("bar")
+        if bar is not None:
+            bar.setColorMap(self._colorbar_colormap(name))
+
+        config_obj = getattr(self, "config", None)
+        if config_obj is not None:
+            config_obj.update("user_preference.bar_colour", name)
+
+        return True
 
 
     def setColorbarManualRange(self, vmin, vmax):
@@ -526,7 +760,7 @@ class plot2d(plotWidget):
         """
         if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
             self.show_status("Color scale minimum must be below maximum.", 5000)
-            self._sync_colorbar_menu()
+            self._sync_colorbar_scale_controls()
             return False
 
         self._colorbar_manual_levels = (float(vmin), float(vmax))

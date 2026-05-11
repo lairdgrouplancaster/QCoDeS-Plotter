@@ -469,10 +469,12 @@ class MainWindow(qtw.QMainWindow):
         self.RunList.selected.connect(self.updateSelected)
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
+        self.RunList.previewExportRequested.connect(self.export_run_preview_csv)
         
         # Show all available info on the selected item in self.RunList
         self.infoBox = moreInfo(preview_size=self.preview_size)
         self.infoBox.preview.plotRequested.connect(self.open_preview_plot)
+        self.infoBox.preview.exportRequested.connect(self.export_preview_csv)
         self.infoBox.preview.previewsReady.connect(self.RunList.set_run_previews)
         if self.fileTextbox.text() and self.RunList.topLevelItemCount():
             self.infoBox.preview.set_database_runs(
@@ -1096,6 +1098,52 @@ class MainWindow(qtw.QMainWindow):
         params = self._selected_measurement_params(ds)
         if params is None:
             return
+
+        self._export_measurement_csv(ds, params)
+
+
+    @QtCore.pyqtSlot(str)
+    def export_preview_csv(self, parameter_name):
+        """
+        Exports the measurement represented by a selected-run preview image.
+
+        """
+        if not self.ds:
+            self.show_status("Select a run before exporting a preview.", 5000)
+            return
+
+        self._export_preview_csv(self.ds, parameter_name)
+
+
+    @QtCore.pyqtSlot(str, str)
+    def export_run_preview_csv(self, guid, parameter_name):
+        """
+        Exports the measurement represented by a run-table preview image.
+
+        """
+        if not guid:
+            self.show_status("Select a run before exporting a preview.", 5000)
+            return
+
+        try:
+            ds = self._dataset_for_guid(guid)
+        except Exception as err:
+            self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+            return
+
+        self._export_preview_csv(ds, parameter_name)
+
+
+    def _export_preview_csv(self, dataset, parameter_name):
+        param = self._measurement_param_by_name(dataset, parameter_name)
+        if param is None:
+            self.show_status(f"No preview export found for {parameter_name}.", 5000)
+            return
+
+        self._export_measurement_csv(dataset, [param])
+
+
+    def _export_measurement_csv(self, ds, params):
         if not params:
             self.show_status("No plottable measurements to export for this run.", 5000)
             return
@@ -1380,7 +1428,11 @@ class MainWindow(qtw.QMainWindow):
 
     def _parameter_from_guid(self, guid, parameter_name):
         ds = self._dataset_for_guid(guid)
-        for param in ds.get_parameters():
+        return self._measurement_param_by_name(ds, parameter_name)
+
+
+    def _measurement_param_by_name(self, dataset, parameter_name):
+        for param in dataset.get_parameters():
             if param.name == parameter_name:
                 return param
         return None

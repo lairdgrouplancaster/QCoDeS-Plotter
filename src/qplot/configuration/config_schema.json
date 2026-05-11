@@ -61,7 +61,7 @@
                 },
                 "bar_colour" : {
                     "type": "string",
-                    "enum": ["none", "cividis", "inferno", "magma", "plasma", "turbo", "viridis"],
+                    "enum": ["none", "cividis", "inferno", "magma", "plasma", "turbo", "viridis", "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds"],
                     "default": "viridis"
                 },
                 "confirm_close": {

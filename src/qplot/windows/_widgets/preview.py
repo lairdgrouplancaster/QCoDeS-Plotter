@@ -36,6 +36,7 @@ class PreviewTab(qtw.QWidget):
 
     """
     plotRequested = QtCore.pyqtSignal(str)
+    exportRequested = QtCore.pyqtSignal(str)
     previewsReady = QtCore.pyqtSignal(str, object)
 
     def __init__(self, *args, preview_size=PREVIEW_SIZE):
@@ -262,12 +263,14 @@ class PreviewTab(qtw.QWidget):
         for preview in previews:
             card = PreviewCard(preview, self.preview_size, self.current_guid, self)
             card.plotRequested.connect(self.plotRequested)
+            card.exportRequested.connect(self.exportRequested)
             self.content_layout.addWidget(card)
         self.content_layout.addStretch()
 
 
 class PreviewCard(qtw.QWidget):
     plotRequested = QtCore.pyqtSignal(str)
+    exportRequested = QtCore.pyqtSignal(str)
 
     def __init__(self, preview, preview_size, guid=None, *args):
         super().__init__(*args)
@@ -284,6 +287,7 @@ class PreviewCard(qtw.QWidget):
         image.setPixmap(QtGui.QPixmap.fromImage(preview["image"]))
         image.setToolTip(preview["title"])
         image.plotRequested.connect(self.plotRequested)
+        image.exportRequested.connect(self.exportRequested)
 
         layout = qtw.QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -293,6 +297,7 @@ class PreviewCard(qtw.QWidget):
 
 class PreviewImageLabel(qtw.QLabel):
     plotRequested = QtCore.pyqtSignal(str)
+    exportRequested = QtCore.pyqtSignal(str)
 
     def __init__(self, parameter, *args):
         super().__init__(*args)
@@ -300,6 +305,7 @@ class PreviewImageLabel(qtw.QLabel):
         self._selected = False
         self.setFocusPolicy(QtCore.Qt.ClickFocus)
         self.setProperty(PREVIEW_SELECTED_PROPERTY, False)
+        self.setContextMenuPolicy(QtCore.Qt.DefaultContextMenu)
 
 
     def set_selected(self, selected):
@@ -352,6 +358,25 @@ class PreviewImageLabel(qtw.QLabel):
             return
 
         super().mouseDoubleClickEvent(event)
+
+
+    def contextMenuEvent(self, event):
+        if not self.parameter:
+            super().contextMenuEvent(event)
+            return
+
+        self.select_preview()
+        menu = qtw.QMenu(self)
+
+        plot_action = qtw.QAction("&Plot", menu)
+        plot_action.triggered.connect(lambda: self.plotRequested.emit(self.parameter))
+        menu.addAction(plot_action)
+
+        export_action = qtw.QAction("&Export CSV...", menu)
+        export_action.triggered.connect(lambda: self.exportRequested.emit(self.parameter))
+        menu.addAction(export_action)
+
+        menu.exec_(event.globalPos())
 
 
 class DraggablePreviewImageLabel(PreviewImageLabel):
