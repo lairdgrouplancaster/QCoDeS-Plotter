@@ -53,11 +53,13 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 ```
 
 ### Option 2: For editors
-Use this if you have cloned this repository and plan to edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
+
+Use this if you want to clone this repository and edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
 
 #### Windows
 
 ```console
+git clone https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git
 cd QCoDeS-Plotter
 py -3.11 -m venv .venv
 .venv\Scripts\activate
@@ -68,6 +70,7 @@ python -m pip install -e .
 #### Mac
 
 ```console
+git clone https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git
 cd QCoDeS-Plotter
 python3 -m venv .venv
 source .venv/bin/activate
@@ -109,20 +112,19 @@ Use `File -> Refresh` or press `R` to refresh manually.
 
 `Auto-plot` opens newly detected runs automatically.
 
-Plotting a measurement
-------------------
+Plotting A Measurement
+----------------------
 There are three ways to do this:
 1. Double-click on its preview in the run table.
 2. Right-click on the run table, and use the pop-up.
 3. Set ID and measurement at the top of the window and press the plot button.
 
-You can also use this window to export measurements as .csv, either using the save button or by right-clicking on a preview.
-
+You can also use this window to export measurements as CSV, either using the save button or by right-clicking on a preview.
 
 Plot Windows
 ------------
 
-The plot window depends what kind of data you have in your measurement:
+The plot window depends on what kind of data you have in your measurement:
 
 * Parameters with one independent variable open as line plots.
 * Parameters with two or more independent variables open as heatmaps.
@@ -136,7 +138,7 @@ Common plot controls:
 * Mouse wheel over the plot: zoom.
 * Left-click drag: pan.
 * Right-click: open the plot context menu, including `Autoscale` and `Autoscale color`
-* `Alt`/`Option` + left-click drag: draw a marquee selection. Drag its handles  to resize it, right-click inside it for zoom and statistics actions, and press  `Esc` or double-click the plot to clear it.
+* `Alt`/`Option` + left-click drag: draw a marquee selection. Drag its handles to resize it, right-click inside it for zoom and statistics actions, and press `Esc` or double-click the plot to clear it.
 * Double-click an X or Y axis, or the colour scale bar: open its scaling dialog.
 * To fast scale the X or Y axis:
   - Right-drag on the plot
@@ -147,7 +149,7 @@ Common plot controls:
 
 Line Plots
 ----------
-Line plots support multiple compatible traces in one window. To add a trace, drag the preview thumbnail from the run table onto an existing line plot. You can also Use the left panel. Compatible plots are matched by independent variable name.
+Line plots support multiple compatible traces in one window. To add a trace, drag the preview thumbnail from the run table onto an existing line plot. You can also use the left panel. Compatible plots are matched by independent variable name.
 
 The source window for an added line can be closed after the line is added. Live updates continue at the same refresh rate.
 
@@ -158,12 +160,12 @@ When multiple lines use different y axes:
 * Secondary lines attached to the right axis cannot be rotated.
 
 Heatmaps
-----------
+--------
 
 * To fast scale the color bar:
   - Drag one handle to adjust its limits
   - Drag between handles to slide the range
-  - Drag the outside the handles to widen/narrow the range.
+  - Drag outside the handles to widen/narrow the range.
 
 Heatmaps support 1D cut extraction:
 
@@ -172,9 +174,9 @@ Heatmaps support 1D cut extraction:
 * A cut window opens, with a cursor shown on the heatmap.
 * Move the cut position with the cut window slider or by dragging the cursor
   on the heatmap.
-* Switch the cut and fixed parameters with the `x axis` and `fixed parameter`   dropdowns.
+* Switch the cut and fixed parameters with the `x axis` and `fixed parameter` dropdowns.
 * Cut plots are live-data compatible.
-* Cut plots can be added to compatible 1D plots when their x axis matches the   1D plot's independent variable.
+* Cut plots can be added to compatible 1D plots when their x axis matches the 1D plot's independent variable.
 
 Keyboard Shortcuts
 ------------------
@@ -287,21 +289,45 @@ qplot-cfg -reset
 Development
 -----------
 
-For local development, use an activated virtual environment and install in
-editable mode:
+For local development, use the project virtual environment and install in
+editable mode.
+
+Windows:
 
 ```console
-python -m pip install -e .
+.venv-win\Scripts\python.exe -m pip install -e .
+```
+
+macOS/Linux:
+
+```console
+.venv/bin/python -m pip install -e .
 ```
 
 Run the current non-GUI tests:
 
+Windows:
+
 ```console
-python -m unittest discover -s tests -p "test*.py"
+.venv-win\Scripts\python.exe -m pytest
+```
+
+macOS/Linux:
+
+```console
+.venv/bin/python -m pytest
 ```
 
 Run the manual GUI smoke script:
 
+Windows:
+
 ```console
-python tests/test.py
+.venv-win\Scripts\python.exe tests/test.py
+```
+
+macOS/Linux:
+
+```console
+.venv/bin/python tests/test.py
 ```
