@@ -1,5 +1,4 @@
-QCoDeS-Plotter
-==============
+# QCoDeS-Plotter
 
 QCoDeS-Plotter is a PyQt-based data viewer for QCoDeS databases. It is designed
 to inspect both completed and running experiments, with live refresh, line plots,
@@ -10,8 +9,7 @@ heatmaps, 1D cut extraction, and simple data operations.
 > status bar at the bottom of the window; unless the app stops responding or an
 > error appears, wait for loading to complete.
 
-Requirements
-------------
+## Requirements
 
 QCoDeS-Plotter requires Python 3.11 or newer.
 
@@ -24,11 +22,9 @@ The core runtime dependencies are installed automatically:
 * pandas
 * jsonschema
 
-Installation
-------------
+## Installation
 
-Using a virtual environment is recommended. Choose one of the two installation
-methods below.
+Using a virtual environment is recommended. Choose one of the two installation methods below.
 
 ### Option 1: For users
 
@@ -78,8 +74,7 @@ python -m pip install -U pip
 python -m pip install -e .
 ```
 
-Running The App
----------------
+## Running The App
 
 After installation, run:
 
@@ -95,16 +90,14 @@ import qplot
 qplot.run()
 ```
 
-Opening A Database
-------------------
+## Opening A Database
 
 1. Open the app.
 2. Drag a QCoDeS `.db` file onto the database path field, or select
    `File -> Load Database...`.
 3. You will see controls at the top, a run table in the middle, and information tabs on the bottom. The run table gives basic information about each run. The information tabs give more detail, including the full nested key-value structure created by QCoDeS.
 
-Refresh And Live Data
----------------------
+## Refresh And Live Data
 You can plot live runs from QCoDeS. The refresh interval in the top toolbar controls how often the main window checks the current database for new runs. Setting it to `0.0` disables automatic
 checks.
 
@@ -112,8 +105,7 @@ Use `File -> Refresh` or press `R` to refresh manually.
 
 `Auto-plot` opens newly detected runs automatically.
 
-Plotting A Measurement
-----------------------
+## Plotting A Measurement
 There are three ways to do this:
 1. Double-click on its preview in the run table.
 2. Right-click on the run table, and use the pop-up.
@@ -121,8 +113,7 @@ There are three ways to do this:
 
 You can also use this window to export measurements as CSV, either using the save button or by right-clicking on a preview.
 
-Plot Windows
-------------
+## Plot Windows
 
 The plot window depends on what kind of data you have in your measurement:
 
@@ -147,8 +138,7 @@ Common plot controls:
 * The left panel controls assigned axes and plot-specific options.
 * The right `Operations` panel applies data operations during refresh, after data is loaded from the database.
 
-Line Plots
-----------
+## Line Plots
 Line plots support multiple compatible traces in one window. To add a trace, drag the preview thumbnail from the run table onto an existing line plot. You can also use the left panel. Compatible plots are matched by independent variable name.
 
 The source window for an added line can be closed after the line is added. Live updates continue at the same refresh rate.
@@ -159,8 +149,7 @@ When multiple lines use different y axes:
 * Interacting with a side axis controls that axis only.
 * Secondary lines attached to the right axis cannot be rotated.
 
-Heatmaps
---------
+## Heatmaps
 
 * To fast scale the color bar:
   - Drag one handle to adjust its limits
@@ -178,8 +167,7 @@ Heatmaps support 1D cut extraction:
 * Cut plots are live-data compatible.
 * Cut plots can be added to compatible 1D plots when their x axis matches the 1D plot's independent variable.
 
-Keyboard Shortcuts
-------------------
+## Keyboard Shortcuts
 
 General shortcuts:
 
@@ -227,8 +215,7 @@ Heatmap shortcuts:
 Dynamic context menu entries are numbered or underlined. Once the menu is open,
 press the shown number or letter to trigger that entry.
 
-Configuration
--------------
+## Configuration
 
 On first run, QCoDeS-Plotter creates a configuration file at:
 
@@ -286,8 +273,7 @@ config().reset_to_defaults()
 qplot-cfg -reset
 ```
 
-Development
------------
+## Development
 
 For local development, use the project virtual environment and install in
 editable mode.
