@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qplot"
-version = "1.2.0"
+version = "1.3.0"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"}]
 license = "MIT"
 requires-python = ">=3.11"
@@ -22,7 +22,7 @@ qplot = "qplot.__main__:run"
 qplot-cfg = "qplot.configuration.scripts:scripts"
 
 [project.urls]
-Homepage = "https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git"
+Homepage = "https://github.com/EdwardLaird1/QCoDeS-Plotter.git"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

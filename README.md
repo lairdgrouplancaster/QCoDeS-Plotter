@@ -24,52 +24,38 @@ The core runtime dependencies are installed automatically:
 
 ## Installation
 
-Using a virtual environment is recommended. Choose one of the two installation methods below.
+Using a virtual environment is recommended. Create and activate one first, then
+choose one of the two installation methods below.
 
-### Option 1: For users
+### Set up your virtual environment
+Unless you have a virtual environment already (which you'll know, because your terminal prompt will start with something like (.venv)):
+
+In VSCode:
+
+1. Open the Command Palette (`Ctrl+Shift+P`).
+2. Run `Python: Create Environment`.
+3. Choose `Venv`.
+4. Choose a Python 3.11 or newer base interpreter.
+   - On Windows, a typical standalone Python path looks like `C:\Program Files\Python311\python.exe`.
+    - Do not choose an interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder.
+5. Open a new VS Code terminal (`Terminal -> New Terminal`). The prompt should start with something like `(.venv) PS`, showing that you are in the right virtual environment.
+
+### Install option 1: For users
 
 Use this if you want to install the current GitHub version without editing the source code. This requires Git to be installed.
 
-#### Windows
-
 ```console
-py -3.11 -m venv .venv
-.venv\Scripts\activate
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
+python -m pip install git+https://github.com/EdwardLaird1/QCoDeS-Plotter.git@main
 ```
 
-#### Mac
-
-```console
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
-```
-
-### Option 2: For editors
+### Install option 2: For editors
 
 Use this if you want to clone this repository and edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
 
-#### Windows
-
 ```console
-git clone https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git
+git clone https://github.com/EdwardLaird1/QCoDeS-Plotter.git
 cd QCoDeS-Plotter
-py -3.11 -m venv .venv
-.venv\Scripts\activate
-python -m pip install -U pip
-python -m pip install -e .
-```
-
-#### Mac
-
-```console
-git clone https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git
-cd QCoDeS-Plotter
-python3 -m venv .venv
-source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
 ```
