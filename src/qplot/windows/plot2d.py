@@ -149,6 +149,23 @@ _COLORBAR_COLORMAP_LABELS = {
 }
 
 
+_COLORBAR_TABLE_SORT_ROLE = QtCore.Qt.UserRole + 1
+
+
+class _ColorbarColormapTableItem(qtw.QTableWidgetItem):
+    """
+    Table item that sorts by an explicit, case-insensitive key.
+
+    """
+
+    def __lt__(self, other):
+        left = self.data(_COLORBAR_TABLE_SORT_ROLE)
+        right = other.data(_COLORBAR_TABLE_SORT_ROLE)
+        if left is not None and right is not None:
+            return str(left).casefold() < str(right).casefold()
+        return super().__lt__(other)
+
+
 _CUSTOM_COLORBAR_COLORMAPS = {
     "Greys": [
         (255, 255, 255),
@@ -326,6 +343,25 @@ def _matplotlib_colorbar_colormap_subtype(name):
     if name in _MATPLOTLIB_QUALITATIVE_COLORBAR_COLORMAPS:
         return "qualitative"
     return "other"
+
+
+def _colorbar_colormap_type_label(name):
+    """
+    Return the source/type label shown in the color scale chooser.
+
+    """
+    group = _colorbar_colormap_group(name)
+    if group == "cet":
+        subtype = _cet_colorbar_colormap_subtype(name)
+        labels = dict(_CET_COLORBAR_SUBTYPES)
+        return f"CET - {labels.get(subtype, subtype.title())}"
+    if group == "matplotlib":
+        subtype = _matplotlib_colorbar_colormap_subtype(name)
+        labels = dict(_MATPLOTLIB_COLORBAR_SUBTYPES)
+        return f"Matplotlib - {labels.get(subtype, subtype.title())}"
+    if group == "custom":
+        return "QCoDeS Plotter - Custom"
+    return "PyQtGraph - Local"
 
 
 def _colorbar_colormap_for_name(name):
@@ -581,8 +617,6 @@ class plot2d(plotWidget):
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
 
-        self._add_colorbar_scale_context_action()
-        
         actions = self.vbMenu.actions()
         
         sep = self.vbMenu.insertSeparator(actions[3])
@@ -619,17 +653,6 @@ class plot2d(plotWidget):
             self.addAction(action)
         
         
-    def _add_colorbar_scale_context_action(self):
-        """
-        Add a flat context-menu action for the color scale dialog.
-
-        """
-        self.colorbarScaleAction = qtw.QAction("Color Scale...", self)
-        self.colorbarScaleAction.setStatusTip("Open the color scale dialog")
-        self.colorbarScaleAction.triggered.connect(self.open_colorbar_scale_dialog)
-        self.vbMenu.insertAction(self.autoscaleSep, self.colorbarScaleAction)
-
-
     def initLabels(self):
         super().initLabels()
         self.z_index = None
@@ -998,8 +1021,10 @@ class plot2d(plotWidget):
             return
 
         self._restore_colorbar_default_tick_formatter(axis)
+        axis.autoSIPrefix = False
         axis.setWidth(70)
         axis.setStyle(tickTextWidth=60)
+        self._set_colorbar_label_direction(bar)
         self._install_colorbar_axis_scale_sync(bar)
         self._sync_colorbar_axis_scaling()
         self._install_colorbar_scale_bar_handlers(bar)
@@ -1078,8 +1103,51 @@ class plot2d(plotWidget):
             unit_text = scale_text
 
         text = f"{label} ({unit_text})" if unit_text else label
-        axis = "bottom" if getattr(bar, "horizontal", False) else "left"
+        axis = "bottom" if getattr(bar, "horizontal", False) else "right"
         bar.setLabel(axis, text)
+        self._set_colorbar_label_direction(bar)
+
+
+    def _set_colorbar_label_direction(self, bar):
+        if getattr(bar, "horizontal", False):
+            return
+
+        axis = getattr(bar, "axis", None)
+        label = getattr(axis, "label", None)
+        if axis is None or label is None or not hasattr(label, "setRotation"):
+            return
+
+        label.setRotation(90)
+        if not getattr(axis, "_qplot_downward_colorbar_label_installed", False):
+            previous_resize_event = getattr(axis, "resizeEvent", None)
+
+            def resize_event(event=None, previous_handler=previous_resize_event):
+                if previous_handler is not None:
+                    previous_handler(event)
+                self._position_downward_colorbar_label(axis)
+
+            axis.resizeEvent = resize_event
+            axis._qplot_downward_colorbar_label_installed = True
+
+        self._position_downward_colorbar_label(axis)
+
+
+    def _position_downward_colorbar_label(self, axis):
+        label = getattr(axis, "label", None)
+        if label is None or not all(
+                hasattr(label, name) for name in ("boundingRect", "setPos")
+                ):
+            return
+
+        nudge = 5
+        bounds = label.boundingRect()
+        size = axis.size()
+        position = QtCore.QPointF(
+            int(size.width() + nudge),
+            int(size.height() / 2 - bounds.width() / 2),
+            )
+        label.setPos(position)
+        axis.picture = None
 
 
     def _install_colorbar_scale_bar_handlers(self, bar):
@@ -1167,7 +1235,7 @@ class plot2d(plotWidget):
 
     def _install_colorbar_alt_range_drag_handler(self, bar):
         """
-        Add Alt/Option-drag on colorbar handles to widen or narrow levels.
+        Add outside-bar drag on colorbar regions to widen or narrow levels.
 
         """
         region = getattr(bar, "region", None)
@@ -1177,8 +1245,88 @@ class plot2d(plotWidget):
         if getattr(region, "_qplot_colorbar_alt_range_drag_installed", False):
             return
 
-        for index, line in enumerate(getattr(region, "lines", ())):
-            self._install_colorbar_alt_handle_drag_handler(bar, region, line, index)
+        previous_bounding_rect = getattr(region, "boundingRect", None)
+        previous_paint = getattr(region, "paint", None)
+        previous_mouse_drag_handler = getattr(region, "mouseDragEvent", None)
+        previous_hover_handler = getattr(region, "hoverEvent", None)
+
+        def bounding_rect(previous_handler=previous_bounding_rect):
+            rect = self._colorbar_full_region_rect(region)
+            if rect is not None:
+                return rect
+            if previous_handler is not None:
+                return previous_handler()
+            return QtCore.QRectF()
+
+        def paint(painter, *args, previous_handler=previous_paint):
+            mode = getattr(region, "_qplot_colorbar_drag_visual_area", "inside")
+            if mode in ("inside", "outside"):
+                rects = self._colorbar_drag_visual_rects(region, mode)
+                if rects:
+                    painter.setBrush(region.currentBrush)
+                    painter.setPen(pg.mkPen(None))
+                    for rect in rects:
+                        painter.drawRect(rect)
+                    return
+
+            if previous_handler is not None:
+                previous_handler(painter, *args)
+
+        def mouse_drag(event, previous_handler=previous_mouse_drag_handler):
+            active = getattr(region, "_qplot_colorbar_alt_range_drag_source", None)
+            source, direction = self._colorbar_alt_range_drag_source_at(
+                bar,
+                region,
+                event.buttonDownPos(),
+                )
+            if (
+                    event.button() == QtCore.Qt.LeftButton
+                    and (
+                        active is not None
+                        or (
+                            source is not None
+                            and getattr(region, "movable", True)
+                            )
+                        )
+                    ):
+                if active is not None:
+                    source = active
+                    direction = active[1]
+                self._colorbar_alt_range_drag_event(
+                    bar,
+                    region,
+                    event,
+                    source,
+                    direction,
+                    region,
+                    )
+                return
+
+            if previous_handler is not None:
+                previous_handler(event)
+
+        def hover(event, previous_handler=previous_hover_handler):
+            if previous_handler is not None:
+                previous_handler(event)
+
+            if event.isExit():
+                region._qplot_colorbar_drag_visual_area = None
+            else:
+                source, _direction = self._colorbar_alt_range_drag_source_at(
+                    bar,
+                    region,
+                    event.pos(),
+                    )
+                region._qplot_colorbar_drag_visual_area = (
+                    "outside" if source is not None else "inside"
+                )
+            region.update()
+
+        region.boundingRect = bounding_rect
+        region.paint = paint
+        region.mouseDragEvent = mouse_drag
+        region.hoverEvent = hover
+        region._qplot_colorbar_drag_visual_area = None
 
         region._qplot_colorbar_alt_range_drag_installed = True
 
@@ -1229,6 +1377,136 @@ class plot2d(plotWidget):
         line._qplot_colorbar_alt_range_drag_installed = True
 
 
+    def _colorbar_full_region_rect(self, region):
+        """
+        Return the full colorbar interaction rectangle in region coordinates.
+
+        """
+        try:
+            rect = QtCore.QRectF(region.viewRect())
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+
+        span = getattr(region, "span", (0, 1))
+        orientation = getattr(region, "orientation", None)
+        if orientation in ("vertical", 0):
+            length = rect.height()
+            rect.setBottom(rect.top() + length * span[1])
+            rect.setTop(rect.top() + length * span[0])
+        else:
+            length = rect.width()
+            rect.setRight(rect.left() + length * span[1])
+            rect.setLeft(rect.left() + length * span[0])
+
+        return rect.normalized()
+
+
+    def _colorbar_drag_visual_rects(self, region, mode):
+        """
+        Return shaded rectangles for colorbar range-slide or outside-scale zones.
+
+        """
+        rect = self._colorbar_full_region_rect(region)
+        if rect is None:
+            return ()
+
+        levels = self._colorbar_region_line_positions(region)
+        if levels is None:
+            return ()
+        low, high = levels
+
+        orientation = getattr(region, "orientation", None)
+        if orientation in ("vertical", 0):
+            inside = QtCore.QRectF(rect)
+            inside.setLeft(low)
+            inside.setRight(high)
+            outside_low = QtCore.QRectF(
+                rect.left(),
+                rect.top(),
+                low - rect.left(),
+                rect.height(),
+                )
+            outside_high = QtCore.QRectF(
+                high,
+                rect.top(),
+                rect.right() - high,
+                rect.height(),
+                )
+        else:
+            inside = QtCore.QRectF(rect)
+            inside.setTop(low)
+            inside.setBottom(high)
+            outside_low = QtCore.QRectF(
+                rect.left(),
+                rect.top(),
+                rect.width(),
+                low - rect.top(),
+                )
+            outside_high = QtCore.QRectF(
+                rect.left(),
+                high,
+                rect.width(),
+                rect.bottom() - high,
+                )
+
+        if mode == "inside":
+            return (inside.normalized(),)
+
+        return tuple(
+            outside.normalized()
+            for outside in (outside_low, outside_high)
+            if outside.width() > 0 and outside.height() > 0
+            )
+
+
+    def _colorbar_region_line_positions(self, region):
+        """
+        Return sorted colorbar handle positions in region coordinates.
+
+        """
+        lines = getattr(region, "lines", None)
+        if lines is None or len(lines) != 2:
+            return None
+
+        positions = []
+        for line in lines:
+            value = getattr(line, "value", None)
+            if callable(value):
+                positions.append(float(value()))
+            else:
+                position = getattr(line, "position", None)
+                if position is None:
+                    return None
+                positions.append(float(position))
+
+        if not all(np.isfinite(position) for position in positions):
+            return None
+
+        return tuple(sorted(positions))
+
+
+    def _colorbar_alt_range_drag_source_at(self, bar, region, position):
+        """
+        Return the outside-bar range-scale drag source and direction at a point.
+
+        """
+        levels = self._colorbar_region_line_positions(region)
+        if levels is None:
+            return None, 0.0
+
+        axis_position = self._colorbar_alt_range_drag_axis_position(
+            bar,
+            position,
+            region,
+            )
+        low, high = levels
+        if axis_position < low:
+            return ("bar", -1.0), -1.0
+        if axis_position > high:
+            return ("bar", 1.0), 1.0
+        return None, 0.0
+
+
     def _colorbar_alt_range_drag_event(
             self,
             bar,
@@ -1261,6 +1539,7 @@ class plot2d(plotWidget):
                     event_item,
                     )
                 )
+            region._qplot_colorbar_drag_visual_area = "outside"
 
         if (
                 not getattr(region, "_qplot_colorbar_alt_range_drag_active", False)
@@ -1289,6 +1568,7 @@ class plot2d(plotWidget):
         if event.isFinish():
             region._qplot_colorbar_alt_range_drag_active = False
             region._qplot_colorbar_alt_range_drag_source = None
+            region._qplot_colorbar_drag_visual_area = None
             self._set_colorbar_alt_range_drag_visual(region, 0.0)
             self._colorbar_interactive_levels_finished(bar)
 
@@ -1729,20 +2009,22 @@ class plot2d(plotWidget):
 
         """
         table = self.colorbar_colormap_table
-        table.setColumnCount(2)
-        table.setHorizontalHeaderLabels(("Color map", "Preview"))
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(("Color map", "Preview", "Type"))
         table.verticalHeader().hide()
         table.setShowGrid(False)
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
         table.setSelectionMode(qtw.QAbstractItemView.SingleSelection)
         table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
-        table.setMinimumSize(440, 360)
+        table.setSortingEnabled(True)
+        table.setMinimumSize(560, 360)
         table.setIconSize(QtCore.QSize(220, 14))
 
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, qtw.QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, qtw.QHeaderView.Stretch)
+        header.setSectionResizeMode(2, qtw.QHeaderView.ResizeToContents)
 
         self._populate_colorbar_colormap_table()
 
@@ -1754,24 +2036,34 @@ class plot2d(plotWidget):
         """
         table = self.colorbar_colormap_table
         table.blockSignals(True)
+        sorting_enabled = table.isSortingEnabled()
+        table.setSortingEnabled(False)
         table.setRowCount(0)
 
         colormaps = self._available_colorbar_colormaps()
         table.setRowCount(len(colormaps))
         for row, name in enumerate(colormaps):
-            name_item = qtw.QTableWidgetItem(
-                _COLORBAR_COLORMAP_LABELS.get(name, name)
-            )
+            label = _COLORBAR_COLORMAP_LABELS.get(name, name)
+            type_label = _colorbar_colormap_type_label(name)
+            name_item = _ColorbarColormapTableItem(label)
             name_item.setData(QtCore.Qt.UserRole, name)
-            preview_item = qtw.QTableWidgetItem()
+            name_item.setData(_COLORBAR_TABLE_SORT_ROLE, label)
+            type_item = _ColorbarColormapTableItem(type_label)
+            type_item.setData(QtCore.Qt.UserRole, name)
+            type_item.setData(_COLORBAR_TABLE_SORT_ROLE, type_label)
+            preview_item = _ColorbarColormapTableItem()
             preview_item.setData(QtCore.Qt.UserRole, name)
+            preview_item.setData(_COLORBAR_TABLE_SORT_ROLE, label)
             preview_item.setIcon(QtGui.QIcon(_colorbar_colormap_preview(name)))
 
             table.setItem(row, 0, name_item)
             table.setItem(row, 1, preview_item)
+            table.setItem(row, 2, type_item)
             table.setRowHeight(row, 20)
 
         table.resizeColumnToContents(0)
+        table.resizeColumnToContents(2)
+        table.setSortingEnabled(sorting_enabled)
         table.blockSignals(False)
 
 

@@ -420,9 +420,14 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
 
 
     def _text_color(self, option):
+        text_color = option.palette.color(QtGui.QPalette.Text)
         if option.state & qtw.QStyle.State_Selected:
-            return option.palette.color(QtGui.QPalette.HighlightedText)
-        return option.palette.color(QtGui.QPalette.Text)
+            highlight = option.palette.color(QtGui.QPalette.Highlight)
+            highlighted_text = option.palette.color(QtGui.QPalette.HighlightedText)
+            if highlight.lightness() > 140:
+                return text_color
+            return highlighted_text
+        return text_color
 
 
 class RunList(qtw.QTreeWidget):

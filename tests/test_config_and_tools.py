@@ -633,9 +633,9 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             return self.checked
 
     class ColorbarLine:
-        def __init__(self):
+        def __init__(self, position):
             self.previous_drag_calls = []
-            self.position = None
+            self.position = position
 
         def mouseDragEvent(self, event):
             self.previous_drag_calls.append(event)
@@ -646,12 +646,21 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         def setPos(self, position):
             self.position = position
 
+        def value(self):
+            return self.position
+
     class ColorbarRegion:
         movable = True
+        orientation = "horizontal"
+        span = (0, 1)
 
         def __init__(self):
             self.previous_drag_calls = []
-            self.lines = [HeatmapHoverOutlineTestCase.ColorbarLine() for _ in range(2)]
+            self.lines = [
+                HeatmapHoverOutlineTestCase.ColorbarLine(63.0),
+                HeatmapHoverOutlineTestCase.ColorbarLine(191.0),
+                ]
+            self.updated = False
 
         def mouseDragEvent(self, event):
             self.previous_drag_calls.append(event)
@@ -659,16 +668,24 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         def prepareGeometryChange(self):
             pass
 
+        def viewRect(self):
+            return QtCore.QRectF(0.0, 0.0, 24.0, 254.0)
+
+        def update(self):
+            self.updated = True
+
     class ColorbarDragEvent:
         def __init__(
                 self,
                 y,
                 *,
+                down_y=0.0,
                 modifiers=QtCore.Qt.NoModifier,
                 start=False,
                 finish=False,
                 ):
             self._y = y
+            self._down_y = down_y
             self._modifiers = modifiers
             self._start = start
             self._finish = finish
@@ -687,7 +704,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             return self._finish
 
         def buttonDownPos(self):
-            return QtCore.QPointF(0.0, 0.0)
+            return QtCore.QPointF(0.0, self._down_y)
 
         def pos(self):
             return QtCore.QPointF(0.0, self._y)
@@ -908,9 +925,9 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertTrue(window.relevel_refresh.checked)
         self.assertEqual(window.bar.values, (0.0, 40.0))
 
-    def test_alt_drag_colorbar_handle_widens_levels_about_midpoint(self):
-        for line_index, drag_y in ((0, -16.0), (1, 16.0)):
-            with self.subTest(line_index=line_index):
+    def test_outside_colorbar_drag_widens_levels_about_midpoint(self):
+        for start_y, drag_y in ((40.0, 24.0), (210.0, 226.0)):
+            with self.subTest(start_y=start_y):
                 window = plot2d.__new__(plot2d)
                 window.bar = self.Colorbar()
                 window.bar.values = (0.0, 100.0)
@@ -923,24 +940,24 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 window._colorbar_manual_levels = None
 
                 window._install_colorbar_alt_range_drag_handler(window.bar)
-                line = window.bar.region.lines[line_index]
                 start_event = self.ColorbarDragEvent(
-                    0.0,
-                    modifiers=QtCore.Qt.AltModifier,
+                    start_y,
+                    down_y=start_y,
                     start=True,
                     )
                 move_event = self.ColorbarDragEvent(
                     drag_y,
-                    modifiers=QtCore.Qt.AltModifier,
+                    down_y=start_y,
                     )
                 finish_event = self.ColorbarDragEvent(
                     drag_y,
+                    down_y=start_y,
                     finish=True,
                     )
 
-                line.mouseDragEvent(start_event)
-                line.mouseDragEvent(move_event)
-                line.mouseDragEvent(finish_event)
+                window.bar.region.mouseDragEvent(start_event)
+                window.bar.region.mouseDragEvent(move_event)
+                window.bar.region.mouseDragEvent(finish_event)
 
                 self.assertTrue(start_event.accepted)
                 self.assertTrue(move_event.accepted)
@@ -950,6 +967,20 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 self.assertFalse(window.relevel_refresh.checked)
                 self.assertEqual(window.bar.region.lines[0].position, 63.0)
                 self.assertEqual(window.bar.region.lines[1].position, 191.0)
+
+    def test_inside_colorbar_drag_keeps_pyqtgraph_range_slide_behavior(self):
+        window = plot2d.__new__(plot2d)
+        window.bar = self.Colorbar()
+        window.bar.values = (0.0, 100.0)
+        window.bar.region = self.ColorbarRegion()
+
+        window._install_colorbar_alt_range_drag_handler(window.bar)
+        event = self.ColorbarDragEvent(100.0, down_y=100.0, start=True)
+
+        window.bar.region.mouseDragEvent(event)
+
+        self.assertFalse(event.accepted)
+        self.assertEqual(window.bar.region.previous_drag_calls, [event])
 
     def test_plain_colorbar_handle_drag_keeps_pyqtgraph_behavior(self):
         window = plot2d.__new__(plot2d)
@@ -1113,8 +1144,22 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             )
         self.assertIn(
             "Gate v2 (10<sup>-3</sup> V)",
-            window.bar.getAxis("left").labelString(),
+            window.bar.getAxis("right").labelString(),
             )
+        self.assertNotIn("(x", window.bar.getAxis("right").labelString())
+
+    def test_colorbar_label_reads_downwards(self):
+        class Param:
+            label = "Gate v2"
+            unit = "V"
+
+        window = plot2d.__new__(plot2d)
+        window.param = Param()
+        window.bar = pg.ColorBarItem(values=(-1.5e-3, 1.5e-3))
+
+        window._set_colorbar_tick_formatter()
+
+        self.assertEqual(window.bar.axis.label.rotation(), 90)
 
     def test_colorbar_tick_formatter_reserves_label_space(self):
         class Param:
@@ -1391,7 +1436,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _colorbar_include_local_changed = plot2d._colorbar_include_local_changed
             _colorbar_include_custom_changed = plot2d._colorbar_include_custom_changed
             _colorbar_include_subtype_changed = plot2d._colorbar_include_subtype_changed
-            _add_colorbar_scale_context_action = plot2d._add_colorbar_scale_context_action
             _install_colorbar_scale_bar_handlers = plot2d._install_colorbar_scale_bar_handlers
             _install_colorbar_scale_axis_handlers = plot2d._install_colorbar_scale_axis_handlers
             _install_colorbar_scale_double_click_handler = (
@@ -1463,26 +1507,33 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
         try:
             host._init_colorbar_scale_controls()
-            host._add_colorbar_scale_context_action()
             action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
 
-            self.assertIn("Color Scale...", action_texts)
-            self.assertIsNone(host.colorbarScaleAction.menu())
+            self.assertNotIn("Color Scale...", action_texts)
             self.assertGreater(host._colorbar_colormap_row("Greys"), -1)
             self.assertGreater(host._colorbar_colormap_row("Purples"), -1)
             self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)
             self.assertGreater(host._colorbar_colormap_row("PAL-relaxed"), -1)
+            self.assertEqual(host.colorbar_colormap_table.columnCount(), 3)
+            self.assertTrue(host.colorbar_colormap_table.isSortingEnabled())
             self.assertEqual(
                 host.colorbar_colormap_table.rowCount(),
                 len(host._available_colorbar_colormaps()),
                 )
+            type_item = host.colorbar_colormap_table.item(
+                host._colorbar_colormap_row("viridis"),
+                2,
+                )
+            self.assertEqual(type_item.text(), "Matplotlib - Perceptual")
             preview_item = host.colorbar_colormap_table.item(
                 host._colorbar_colormap_row("viridis"),
                 1,
                 )
             self.assertFalse(preview_item.icon().isNull())
+            host.colorbar_colormap_table.sortItems(2, QtCore.Qt.AscendingOrder)
+            self.assertGreater(host._colorbar_colormap_row("viridis"), -1)
 
-            host.colorbarScaleAction.trigger()
+            host.open_colorbar_scale_dialog()
 
             self.assertEqual(host.colorbar_scale_dialog.windowTitle(), "Color scale")
             self.assertIs(host.colorbar_scale_controls.parent(), host.colorbar_scale_dialog)
@@ -2129,8 +2180,9 @@ class RunSizeTestCase(unittest.TestCase):
             )
 
     def test_storage_size_falls_back_to_schema_estimate(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as database:
-            conn = sqlite3.connect(database.name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "storage.db")
+            conn = sqlite3.connect(database_path)
             try:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -2154,6 +2206,7 @@ class RunSizeTestCase(unittest.TestCase):
                     112000
                     )
             finally:
+                cursor.close()
                 conn.close()
 
 
@@ -2470,8 +2523,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertLess(left.green(), 80)
 
     def test_generate_2d_preview_matches_full_plot_axis_defaults(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as database:
-            conn = sqlite3.connect(database.name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "preview.db")
+            conn = sqlite3.connect(database_path)
             try:
                 cursor = conn.cursor()
                 cursor.execute("CREATE TABLE results (slow_y REAL, fast_x REAL, signal REAL)")
@@ -2486,9 +2540,10 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     )
                 conn.commit()
             finally:
+                cursor.close()
                 conn.close()
 
-            previews = generate_run_previews(database.name, {
+            previews = generate_run_previews(database_path, {
                 "run_id": 8,
                 "result_table_name": "results",
                 "result_count": 4,
@@ -2694,8 +2749,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertTrue(images[1].property(PREVIEW_SELECTED_PROPERTY))
 
     def test_generate_run_previews_reads_1d_and_2d_sql_data(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as database:
-            conn = sqlite3.connect(database.name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "previews.db")
+            conn = sqlite3.connect(database_path)
             try:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -2717,9 +2773,10 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     )
                 conn.commit()
             finally:
+                cursor.close()
                 conn.close()
 
-            previews = generate_run_previews(database.name, {
+            previews = generate_run_previews(database_path, {
                 "run_id": 7,
                 "result_table_name": "results",
                 "result_count": 4,

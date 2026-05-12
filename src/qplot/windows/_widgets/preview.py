@@ -464,6 +464,7 @@ def generate_run_previews(database_path, metadata, size=PREVIEW_SIZE):
 
     previews = []
     conn = sqlite3.connect(database_path, timeout=10)
+    cursor = None
     try:
         cursor = conn.cursor()
         available_columns = _table_columns(cursor, table_name)
@@ -482,6 +483,8 @@ def generate_run_previews(database_path, metadata, size=PREVIEW_SIZE):
             if preview is not None:
                 previews.append(preview)
     finally:
+        if cursor is not None:
+            cursor.close()
         conn.close()
 
     return previews

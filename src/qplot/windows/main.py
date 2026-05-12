@@ -61,7 +61,7 @@ def database_path_from_mime_data(mime_data):
     if not url.isLocalFile():
         return None
 
-    path = url.toLocalFile()
+    path = os.path.normpath(url.toLocalFile())
     if os.path.isfile(path) and path.lower().endswith(".db"):
         return path
 
@@ -218,7 +218,8 @@ class MainWindow(qtw.QMainWindow):
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
-        self.spinBox.setFixedWidth(72)
+        self.spinBox.setSuffix(" s")
+        self.spinBox.setFixedWidth(84)
         self.spinBox.setAlignment(QtCore.Qt.AlignRight)
         self.spinBox.setToolTip("Refresh interval in seconds")
         self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
@@ -267,14 +268,6 @@ class MainWindow(qtw.QMainWindow):
         loadAction.triggered.connect(self.getfile)
         fileMenu.addAction(loadAction)
         
-        # Load accessed database
-        self.loadLastAction = qtw.QAction("&Load Last", self)
-        self.loadLastAction.setShortcut("Ctrl+Shift+L")
-        self.loadLastAction.triggered.connect(self.loadLastFile)
-        fileMenu.addAction(self.loadLastAction)
-        if not self.config.get("file.last_file_path"): # has user openned a DB before?
-            self.loadLastAction.setDisabled(True)
-
         self.recentDatabaseMenu = fileMenu.addMenu("Load &Recent Database")
         self.refresh_recent_database_menu()
 
@@ -493,7 +486,6 @@ class MainWindow(qtw.QMainWindow):
         sublayout.addSpacing(12)
         sublayout.addWidget(qtw.QLabel("Refresh:"))
         sublayout.addWidget(self.spinBox)
-        sublayout.addWidget(qtw.QLabel("s"))
         sublayout.addWidget(self.refreshDatabaseButton)
 
         self.l.addLayout(self.targetLayout)
@@ -895,29 +887,6 @@ class MainWindow(qtw.QMainWindow):
             self.show_status("Default load folder unchanged.", 3000)
               
             
-    @QtCore.pyqtSlot()
-    def loadLastFile(self):
-        """
-        Event handler for load last action in file menu.
-        Loads last openned file in application or file location stored in
-        config.json if no other files have been openned.
-
-        """
-        if not self.localLastFile:
-            last_file = self.config.get("file.last_file_path")
-        else:
-            last_file = os.path.abspath(self.localLastFile)
-        
-        if os.path.isfile(last_file):
-            self.load_database_path(last_file)
-        else:
-            self.show_error(
-                "Load Last Failed",
-                "The last database file could not be found.",
-                str(last_file)
-                )
-
-
     @QtCore.pyqtSlot(str)
     def load_database_path(self, filename):
         """
@@ -946,7 +915,6 @@ class MainWindow(qtw.QMainWindow):
         if self.load_file(abspath, load_started_at):
             self.config.update("file.last_file_path", abspath)
             self.remember_recent_database(abspath)
-            self.loadLastAction.setEnabled(True)
             return True
 
         return False
@@ -1873,7 +1841,7 @@ class MainWindow(qtw.QMainWindow):
     def load_file(self, abspath, load_started_at = None):
         """
         Updates the database for RunList display and loading datasets.
-        Used by self.loadLastFile() and self.getFile()
+        Used by file selection, drag-and-drop, recent databases, and startup loading.
 
         Parameters
         ----------
@@ -1916,7 +1884,6 @@ class MainWindow(qtw.QMainWindow):
             # Update internal last file location using self.fileTextbox text
             if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:
                 self.localLastFile = self.fileTextbox.text()
-                self.loadLastAction.setEnabled(True)
 
             # Update dsiplay and set database location within QCoDeS
             self.fileTextbox.setText(abspath)

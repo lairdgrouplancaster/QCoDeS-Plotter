@@ -30,10 +30,9 @@ Installation
 Using a virtual environment is recommended. Choose one of the two installation
 methods below.
 
-### Option 1: Install From GitHub
+### Option 1: For users
 
-Use this if you want to install the current GitHub version without editing the
-source code. This requires Git to be installed.
+Use this if you want to install the current GitHub version without editing the source code. This requires Git to be installed.
 
 #### Windows
 
@@ -53,8 +52,7 @@ python -m pip install -U pip
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 ```
 
-### Option 2: Install A Local Checkout
-
+### Option 2: For editors
 Use this if you have cloned this repository and plan to edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
 
 #### Windows
@@ -102,32 +100,29 @@ Opening A Database
    `File -> Load Database...`.
 3. You will see controls at the top, a run table in the middle, and information tabs on the bottom. The run table gives basic information about each run. The information tabs give more detail, including the full nested key-value structure created by QCoDeS.
 
-Plotting a measurement
-------------------
-There are three ways:
-1. Double-click on its preview in the run table.
-2. Right-click on the run table, and use the pop-up.
-3. Set ID and measurement at the top of the window and press the plot button.
-5. Use `Run` and `Measurement` to plot a specific measurement, or set
-   `Measurement` to `*` to plot all measurements for that run.
-
-You can also use this window to export measurements as .csv, either using the save button or by right-clicking on a preview.
-
 Refresh And Live Data
 ---------------------
-
-The refresh interval in the top toolbar controls how often the main window
-checks the current database for new runs. Setting it to `0.0` disables automatic
+You can plot live runs from QCoDeS. The refresh interval in the top toolbar controls how often the main window checks the current database for new runs. Setting it to `0.0` disables automatic
 checks.
 
 Use `File -> Refresh` or press `R` to refresh manually.
 
 `Auto-plot` opens newly detected runs automatically.
 
+Plotting a measurement
+------------------
+There are three ways to do this:
+1. Double-click on its preview in the run table.
+2. Right-click on the run table, and use the pop-up.
+3. Set ID and measurement at the top of the window and press the plot button.
+
+You can also use this window to export measurements as .csv, either using the save button or by right-clicking on a preview.
+
+
 Plot Windows
 ------------
 
-Plot windows are created for dependent parameters:
+The plot window depends what kind of data you have in your measurement:
 
 * Parameters with one independent variable open as line plots.
 * Parameters with two or more independent variables open as heatmaps.
@@ -140,31 +135,21 @@ Common plot controls:
 
 * Mouse wheel over the plot: zoom.
 * Left-click drag: pan.
-* Right-click drag: scale the view.
-* Right-click the plot: open the plot context menu, including `Autoscale` and `Autoscale color`
-* `Alt`/`Option` + left-click drag: draw a marquee selection. Drag its handles
-  to resize it, right-click inside it for zoom and statistics actions, and press
-  `Esc` or double-click the plot to clear it.
+* Right-click: open the plot context menu, including `Autoscale` and `Autoscale color`
+* `Alt`/`Option` + left-click drag: draw a marquee selection. Drag its handles  to resize it, right-click inside it for zoom and statistics actions, and press  `Esc` or double-click the plot to clear it.
 * Double-click an X or Y axis, or the colour scale bar: open its scaling dialog.
-* To scale the color bar:
-  - Drag one handle to adjust its limits
-  - Drag between handles to slide the range
-  - `Alt`/`Option` drag to widen/narrow the range.
+* To fast scale the X or Y axis:
+  - Right-drag on the plot
+  - Scroll over the axis
 * The bottom toolbar shows cursor coordinates.
 * The left panel controls assigned axes and plot-specific options.
-* The right `Operations` panel applies data operations during refresh, after
-  data is loaded from the database.
+* The right `Operations` panel applies data operations during refresh, after data is loaded from the database.
 
 Line Plots
 ----------
+Line plots support multiple compatible traces in one window. To add a trace, drag the preview thumbnail from the run table onto an existing line plot. You can also Use the left panel. Compatible plots are matched by independent variable name.
 
-Line plots support multiple compatible traces in one window.
-
-Drag preview thumbnails can also be dragged from the run table or the `Preview` tab onto an existing line plot to add that trace. You can also Use the left panel. Compatible plots are matched by independent variable
-name.
-
-The source window for an added line can be closed after the line is added. Live
-updates continue at the same refresh rate.
+The source window for an added line can be closed after the line is added. Live updates continue at the same refresh rate.
 
 When multiple lines use different y axes:
 
@@ -173,14 +158,12 @@ When multiple lines use different y axes:
 * Secondary lines attached to the right axis cannot be rotated.
 
 Heatmaps
---------
+----------
 
-Use `Color Scale...` from the heatmap context menu or double-click the colour
-scale bar to set manual or automatic colour scaling and choose the
-colour map.
-
-Drag the colour-scale handles to adjust the colour range directly. Hold
-`Alt`/`Option` while dragging a handle to expand or contract the range. Drag between handles to slide the range. The `C` plot button autoscales the colour range.
+* To fast scale the color bar:
+  - Drag one handle to adjust its limits
+  - Drag between handles to slide the range
+  - Drag the outside the handles to widen/narrow the range.
 
 Heatmaps support 1D cut extraction:
 
@@ -189,11 +172,9 @@ Heatmaps support 1D cut extraction:
 * A cut window opens, with a cursor shown on the heatmap.
 * Move the cut position with the cut window slider or by dragging the cursor
   on the heatmap.
-* Switch the cut and fixed parameters with the `x axis` and `fixed parameter`
-  dropdowns.
+* Switch the cut and fixed parameters with the `x axis` and `fixed parameter`   dropdowns.
 * Cut plots are live-data compatible.
-* Cut plots can be added to compatible 1D plots when their x axis matches the
-  1D plot's independent variable.
+* Cut plots can be added to compatible 1D plots when their x axis matches the   1D plot's independent variable.
 
 Keyboard Shortcuts
 ------------------
@@ -203,7 +184,6 @@ General shortcuts:
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+L` | Load a database |
-| `Ctrl+Shift+L` | Load the last database |
 | `R` | Refresh the current window |
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
