@@ -148,7 +148,12 @@ def time_taken_seconds(metadata):
         return None
 
     completed = metadata.get("completed_timestamp")
-    end = completed if completed else datetime.now().timestamp()
+    if completed:
+        end = completed
+    elif not run_is_complete(metadata) and metadata.get("database_modified_timestamp"):
+        end = metadata.get("database_modified_timestamp")
+    else:
+        end = datetime.now().timestamp()
     try:
         return max(0, float(end) - float(started))
     except (TypeError, ValueError):
@@ -159,7 +164,7 @@ def format_time_taken_seconds(metadata):
     seconds = time_taken_seconds(metadata)
     if seconds is None:
         return "unknown"
-    return f"{seconds:.1f} s"
+    return f"{seconds:,.1f} s"
 
 
 def format_run_duration(metadata):
@@ -208,8 +213,8 @@ def format_storage_size(bytes_value):
 
 
 def format_point_count(metadata):
-    expected = metadata.get("expected_results")
-    shape = metadata.get("point_shape")
+    expected = metadata.get("setpoint_count", metadata.get("expected_results"))
+    shape = metadata.get("setpoint_shape") or metadata.get("point_shape")
     if shape:
         try:
             shape_parts = " × ".join(f"{int(size):,}" for size in shape)
@@ -333,6 +338,8 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
     Paints values containing " = " with the equals signs vertically aligned.
     """
 
+    right_text_alignment = QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+
     def paint(self, painter, option, index):
         text = index.data(QtCore.Qt.DisplayRole)
         if not text or " = " not in text:
@@ -392,7 +399,7 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
         painter.drawText(equals_rect, QtCore.Qt.AlignCenter, equals_text)
         painter.drawText(
             right_rect,
-            QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
+            self.right_text_alignment,
             metrics.elidedText(right, QtCore.Qt.ElideRight, right_rect.width())
             )
         painter.restore()
@@ -420,14 +427,7 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
 
 
     def _text_color(self, option):
-        text_color = option.palette.color(QtGui.QPalette.Text)
-        if option.state & qtw.QStyle.State_Selected:
-            highlight = option.palette.color(QtGui.QPalette.Highlight)
-            highlighted_text = option.palette.color(QtGui.QPalette.HighlightedText)
-            if highlight.lightness() > 140:
-                return text_color
-            return highlighted_text
-        return text_color
+        return option.palette.color(QtGui.QPalette.Text)
 
 
 class RunList(qtw.QTreeWidget):
@@ -565,7 +565,9 @@ class RunList(qtw.QTreeWidget):
             item.setData(
                 self.cols.index("Setpoints"),
                 QtCore.Qt.UserRole,
-                metadata.get("expected_results") or metadata.get("result_count")
+                metadata.get("setpoint_count")
+                or metadata.get("expected_results")
+                or metadata.get("result_count")
                 )
             item.setData(
                 self.cols.index("Started"),
@@ -716,6 +718,11 @@ class RunList(qtw.QTreeWidget):
             status = get_run_status(run.guid)
             if not status:
                 continue
+
+            if status.get("database_modified_timestamp") is not None:
+                run.run_metadata["database_modified_timestamp"] = status[
+                    "database_modified_timestamp"
+                    ]
 
             if status.get("result_count") is not None:
                 run.run_metadata["result_count"] = status["result_count"]

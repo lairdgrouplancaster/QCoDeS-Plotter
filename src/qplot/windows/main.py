@@ -38,7 +38,9 @@ from qcodes.dataset.sqlite.database import (
     get_DB_location
     )
 
+import sqlite3
 import os
+from datetime import datetime
 from time import perf_counter
 
 import numpy as np
@@ -66,6 +68,171 @@ def database_path_from_mime_data(mime_data):
         return path
 
     return None
+
+
+def database_info_report(database_path):
+    """
+    Build a diagnostic text report for a QCoDeS database file.
+
+    """
+    if not database_path:
+        raise ValueError("No database is loaded.")
+
+    if not os.path.isfile(database_path):
+        raise FileNotFoundError(database_path)
+
+    path = os.path.abspath(database_path)
+    file_size = os.path.getsize(path)
+
+    conn = sqlite3.connect(path, timeout=10)
+    try:
+        cursor = conn.cursor()
+        user_version = _pragma_value(cursor, "user_version")
+        summary = {
+            "path": path,
+            "folder": os.path.dirname(path),
+            "filename": os.path.basename(path),
+            "file_size": file_size,
+            "file_modified": os.path.getmtime(path),
+            "user_version": user_version,
+            "application_id": _pragma_value(cursor, "application_id"),
+            "page_count": _pragma_value(cursor, "page_count"),
+            "page_size": _pragma_value(cursor, "page_size"),
+            "table_count": _table_count(cursor),
+            "experiment_count": _row_count(cursor, "experiments"),
+            "run_count": _row_count(cursor, "runs"),
+            "latest_run": _latest_run(cursor),
+            }
+    finally:
+        conn.close()
+
+    return _format_database_info(summary)
+
+
+def _pragma_value(cursor, name):
+    cursor.execute(f"PRAGMA {name}")
+    value = cursor.fetchone()
+    return value[0] if value else None
+
+
+def _table_count(cursor):
+    cursor.execute("""
+      SELECT COUNT(*)
+      FROM sqlite_master
+      WHERE type='table' AND name NOT LIKE 'sqlite_%'
+    """)
+    return cursor.fetchone()[0]
+
+
+def _row_count(cursor, table_name):
+    if not _table_exists(cursor, table_name):
+        return None
+
+    cursor.execute(f"SELECT COUNT(*) FROM {_sqlite_identifier(table_name)}")
+    return cursor.fetchone()[0]
+
+
+def _table_exists(cursor, table_name):
+    cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (table_name, )
+        )
+    return cursor.fetchone() is not None
+
+
+def _latest_run(cursor):
+    if not _table_exists(cursor, "runs"):
+        return None
+
+    cursor.execute("""
+      SELECT run_id, name, run_timestamp, completed_timestamp, is_completed, guid
+      FROM runs
+      ORDER BY run_id DESC
+      LIMIT 1
+    """)
+    value = cursor.fetchone()
+    if value is None:
+        return None
+
+    return {
+        "run_id": value[0],
+        "name": value[1],
+        "run_timestamp": value[2],
+        "completed_timestamp": value[3],
+        "is_completed": value[4],
+        "guid": value[5],
+        }
+
+
+def _sqlite_identifier(name):
+    return f'"{str(name).replace(chr(34), chr(34) * 2)}"'
+
+
+def _format_database_info(summary):
+    latest_run = summary["latest_run"]
+    latest_run_lines = ["Latest run: None"]
+    if latest_run:
+        status = "completed" if latest_run.get("is_completed") else "running or incomplete"
+        latest_run_lines = [
+            f"Latest run ID: {latest_run.get('run_id')}",
+            f"Latest run name: {_display_value(latest_run.get('name'))}",
+            f"Latest run status: {status}",
+            f"Latest run started: {_timestamp_value(latest_run.get('run_timestamp'))}",
+            f"Latest run completed: {_timestamp_value(latest_run.get('completed_timestamp'))}",
+            f"Latest run GUID: {_display_value(latest_run.get('guid'))}",
+            ]
+
+    page_bytes = None
+    if summary["page_count"] is not None and summary["page_size"] is not None:
+        page_bytes = int(summary["page_count"]) * int(summary["page_size"])
+
+    lines = [
+        f"Database: {summary['filename']}",
+        f"Path: {summary['path']}",
+        f"Folder: {summary['folder']}",
+        f"File size: {_format_bytes(summary['file_size'])}",
+        f"Last modified: {_timestamp_value(summary['file_modified'])}",
+        f"SQLite allocated size: {_format_bytes(page_bytes)}",
+        "",
+        f"Database schema version: {_display_value(summary['user_version'])}",
+        f"SQLite application_id: {_display_value(summary['application_id'])}",
+        "",
+        f"Tables: {_display_value(summary['table_count'])}",
+        f"Experiments: {_display_value(summary['experiment_count'])}",
+        f"Runs: {_display_value(summary['run_count'])}",
+        "",
+        *latest_run_lines,
+        ]
+    return "\n".join(lines)
+
+
+def _format_bytes(value):
+    if value is None:
+        return "Unknown"
+
+    value = int(value)
+    units = ("B", "KB", "MB", "GB", "TB")
+    size = float(value)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}" if unit != "B" else f"{value} B"
+        size /= 1024
+
+
+def _timestamp_value(value):
+    if value in (None, ""):
+        return "Not recorded"
+
+    try:
+        return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return str(value)
+
+
+def _display_value(value):
+    if value in (None, ""):
+        return "Unknown"
+    return str(value)
 
 
 class DatabasePathLineEdit(qtw.QLineEdit):
@@ -391,6 +558,17 @@ class MainWindow(qtw.QMainWindow):
         self.copyDatabasePathButton.setFixedSize(28, 26)
         self.copyDatabasePathButton.clicked.connect(self.copy_database_path)
         self.targetLayout.addWidget(self.copyDatabasePathButton)
+
+        self.databaseInfoButton = qtw.QToolButton()
+        self.databaseInfoButton.setObjectName("databaseIconButton")
+        self.databaseInfoButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_MessageBoxInformation)
+            )
+        self.databaseInfoButton.setToolTip("Show database information")
+        self.databaseInfoButton.setAccessibleName("Show database information")
+        self.databaseInfoButton.setFixedSize(28, 26)
+        self.databaseInfoButton.clicked.connect(self.show_database_info)
+        self.targetLayout.addWidget(self.databaseInfoButton)
 
         self.loadDatabaseButton = qtw.QToolButton()
         self.loadDatabaseButton.setObjectName("databaseIconButton")
@@ -785,6 +963,37 @@ class MainWindow(qtw.QMainWindow):
 
         qtw.QApplication.clipboard().setText(database_path)
         self.show_status("Copied database path.", 3000)
+
+
+    @QtCore.pyqtSlot()
+    def show_database_info(self):
+        """
+        Shows a diagnostic report for the current database.
+
+        """
+        database_path = self.fileTextbox.text()
+        if not database_path:
+            self.show_status("No database is loaded.", 5000)
+            return
+
+        try:
+            report = database_info_report(database_path)
+        except Exception as err:
+            self.show_error(
+                "Database Information Failed",
+                "Could not read database information.",
+                str(err)
+                )
+            return
+
+        box = qtw.QMessageBox(qtw.QMessageBox.Information, "Database Information", report, parent=self)
+        copy_button = box.addButton("Copy", qtw.QMessageBox.ActionRole)
+        box.addButton(qtw.QMessageBox.Close)
+        box.exec_()
+
+        if box.clickedButton() == copy_button:
+            qtw.QApplication.clipboard().setText(report)
+            self.show_status("Copied database information.", 3000)
 
 
     @QtCore.pyqtSlot()

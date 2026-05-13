@@ -1,5 +1,6 @@
 import json
 import math
+import os
 
 from qcodes.dataset.sqlite.database import connect, get_DB_location
 
@@ -79,8 +80,10 @@ def _fetch_run_rows(cursor, where="", params=(), empty_as_none=True):
     column_names = [desc[0] for desc in cursor.description]
 
     outDict = {}
+    database_modified_timestamp = _database_modified_timestamp(cursor)
     for row in values:
         metadata = dict(zip(column_names[1:], row[1:]))
+        metadata["database_modified_timestamp"] = database_modified_timestamp
         _add_run_summary_fields(cursor, metadata)
         outDict[row[0]] = metadata
 
@@ -96,9 +99,24 @@ def _add_run_summary_fields(cursor, metadata):
 
     metadata["measure_parameters"] = measure_parameters
     metadata["sweep_parameters"] = sweep_parameters
-    metadata["point_shape"] = _point_shape(run_description, measure_parameters)
-    metadata["expected_results"] = _shape_size(metadata["point_shape"])
     metadata["result_count"] = _result_count(cursor, metadata.get("result_table_name"))
+    metadata["point_shape"] = _point_shape(run_description, measure_parameters)
+    metadata["setpoint_shape"] = metadata["point_shape"]
+    if not metadata["point_shape"]:
+        metadata["setpoint_shape"] = _setpoint_shape_from_result_table(
+            cursor,
+            metadata.get("result_table_name"),
+            sweep_parameters,
+            )
+        metadata["point_shape"] = _point_shape_from_result_table(
+            cursor,
+            metadata.get("result_table_name"),
+            sweep_parameters,
+            measure_parameters,
+            metadata["result_count"],
+            )
+    metadata["expected_results"] = _shape_size(metadata["point_shape"])
+    metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
     metadata["storage_bytes"] = _table_storage_bytes(cursor, metadata.get("result_table_name"))
 
 
@@ -188,6 +206,87 @@ def _shape_size(shape):
         return math.prod(int(size) for size in shape)
     except (TypeError, ValueError):
         return None
+
+
+def _database_modified_timestamp(cursor):
+    try:
+        cursor.execute("PRAGMA database_list")
+        databases = cursor.fetchall()
+    except Exception:
+        return None
+
+    for database in databases:
+        if len(database) < 3 or database[1] != "main" or not database[2]:
+            continue
+        try:
+            return os.path.getmtime(database[2])
+        except OSError:
+            return None
+
+    return None
+
+
+def _point_shape_from_result_table(
+    cursor,
+    table_name,
+    sweep_parameters,
+    measure_parameters=None,
+    result_count=None,
+):
+    shape = _setpoint_shape_from_result_table(cursor, table_name, sweep_parameters)
+    if not shape:
+        return None
+
+    shape_size = _shape_size(shape)
+    measure_count = len(measure_parameters or [])
+    if shape_size and result_count and measure_count > 1:
+        try:
+            result_count = int(result_count)
+        except (TypeError, ValueError):
+            result_count = None
+
+        if (
+            result_count
+            and result_count % shape_size == 0
+            and result_count // shape_size == measure_count
+        ):
+            shape = shape + [measure_count]
+
+    return shape
+
+
+def _setpoint_shape_from_result_table(cursor, table_name, sweep_parameters):
+    if not table_name or not sweep_parameters:
+        return None
+
+    quoted_table_name = _sqlite_identifier(table_name)
+    try:
+        cursor.execute(f"PRAGMA table_info({quoted_table_name})")
+        columns = {row[1] for row in cursor.fetchall()}
+    except Exception:
+        return None
+
+    if not columns or any(parameter not in columns for parameter in sweep_parameters):
+        return None
+
+    shape = []
+    for parameter in sweep_parameters:
+        quoted_parameter = _sqlite_identifier(parameter)
+        try:
+            cursor.execute(f"""
+              SELECT COUNT(DISTINCT {quoted_parameter})
+              FROM {quoted_table_name}
+              WHERE {quoted_parameter} IS NOT NULL
+            """)
+            count = int(cursor.fetchone()[0])
+        except Exception:
+            return None
+
+        if count <= 0:
+            return None
+        shape.append(count)
+
+    return shape
 
 
 def _result_count(cursor, table_name):
@@ -285,6 +384,7 @@ def get_run_status(guid):
             "is_completed": value[1],
             "result_count": _result_count(cursor, value[2]),
             "storage_bytes": _table_storage_bytes(cursor, value[2]),
+            "database_modified_timestamp": _database_modified_timestamp(cursor),
             }
     finally:
         conn.close()
