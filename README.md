@@ -28,7 +28,7 @@ Using a virtual environment is recommended. Create and activate one first, then
 choose one of the two installation methods below.
 
 ### Set up your virtual environment
-Unless you have a virtual environment already (which you'll know, because your terminal prompt will start with something like (.venv)):
+Unless you have a virtual environment already (which you'll know, because your terminal prompt will start with something like `(.venv)`):
 
 In VSCode:
 
