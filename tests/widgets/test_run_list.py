@@ -90,7 +90,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "point_shape": [10, 100],
                 "expected_results": 1000,
                 }),
-            "1,000 = 10 × 100"
+            "1,000 = 10 x 100"
             )
 
     def test_format_point_count_uses_setpoint_shape_without_measurement_factor(self):
@@ -101,7 +101,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "point_shape": [108, 861, 2],
                 "expected_results": 185976,
                 }),
-            f"92,988 = 108 {chr(215)} 861"
+            "92,988 = 108 x 861"
             )
 
     def test_duration_uses_commas(self):
@@ -140,7 +140,7 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
-    def test_setpoints_delegate_right_aligns_shape_text(self):
+    def test_setpoints_delegate_left_aligns_shape_text(self):
         old_isfile = treeWidgets.isfile
         treeWidgets.isfile = lambda _: False
 
@@ -152,8 +152,139 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual(
                 int(delegate.right_text_alignment),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                int(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
                 )
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_setpoints_delegate_treats_zero_as_left_count_text(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "sweep-guid",
+                    "sweep_parameters": ["x", "y"],
+                    "measure_parameters": ["signal"],
+                    "setpoint_count": 100,
+                    "setpoint_shape": [10, 10],
+                    "result_count": 100,
+                    },
+                2: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "empty-guid",
+                    "sweep_parameters": [],
+                    "measure_parameters": ["signal"],
+                    "result_count": 0,
+                    },
+                })
+            delegate = run_list.itemDelegateForColumn(
+                run_list.cols.index("Setpoints")
+                )
+            items = {
+                run_list.topLevelItem(row).guid: run_list.topLevelItem(row)
+                for row in range(run_list.topLevelItemCount())
+                }
+            zero_item = items["empty-guid"]
+            setpoints_col = run_list.cols.index("Setpoints")
+            metrics = QtGui.QFontMetrics(run_list.font())
+
+            self.assertEqual(zero_item.text(setpoints_col), "0")
+            self.assertEqual(delegate._display_sections("0"), ("0", None))
+            self.assertGreater(
+                delegate._max_right_width(
+                    run_list.indexFromItem(zero_item, setpoints_col),
+                    metrics,
+                    ),
+                0
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_setpoints_delegate_uses_widest_shape_text_for_equals_alignment(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "small-guid",
+                    "sweep_parameters": ["x", "y"],
+                    "measure_parameters": ["signal"],
+                    "setpoint_count": 100,
+                    "setpoint_shape": [10, 10],
+                    "result_count": 100,
+                    },
+                2: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "medium-guid",
+                    "sweep_parameters": ["x", "y"],
+                    "measure_parameters": ["signal"],
+                    "setpoint_count": 10000,
+                    "setpoint_shape": [100, 100],
+                    "result_count": 10000,
+                    },
+                3: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "large-guid",
+                    "sweep_parameters": ["x", "y"],
+                    "measure_parameters": ["signal"],
+                    "setpoint_count": 1000000,
+                    "setpoint_shape": [1000, 1000],
+                    "result_count": 1000000,
+                    },
+                })
+            delegate = run_list.itemDelegateForColumn(
+                run_list.cols.index("Setpoints")
+                )
+            item = run_list.topLevelItem(0)
+            setpoints_col = run_list.cols.index("Setpoints")
+            metrics = QtGui.QFontMetrics(run_list.font())
+
+            self.assertEqual(
+                delegate._max_right_width(
+                    run_list.indexFromItem(item, setpoints_col),
+                    metrics,
+                    ),
+                metrics.horizontalAdvance("1,000 x 1,000")
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_resize_columns_prioritises_setpoints_space(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.resize(583, 300)
+            run_list.show()
+            qtw.QApplication.processEvents()
+            run_list._resize_columns()
+
+            widths = {
+                name: run_list.columnWidth(col)
+                for col, name in enumerate(run_list.cols)
+                }
+
+            self.assertGreater(widths["Setpoints"], widths["Started"])
+            self.assertLess(widths["Measurements"], 96)
+            run_list.hide()
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -298,7 +429,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                     ),
                 2
                 )
-            self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 × 100")
+            self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 x 100")
             self.assertEqual(items["finished-guid"].text(4), "✓")
             self.assertEqual(items["finished-guid"].text(5), "10.0 s")
             self.assertEqual(

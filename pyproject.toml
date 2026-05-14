@@ -17,6 +17,11 @@ dependencies = [
     "qcodes>=0.53.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 qplot = "qplot.__main__:run"
 qplot-cfg = "qplot.configuration.scripts:scripts"
@@ -33,3 +38,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "qplot" = ["**/*.json"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+pythonpath = ["src"]
+testpaths = ["tests"]

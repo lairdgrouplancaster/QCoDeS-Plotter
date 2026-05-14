@@ -265,45 +265,54 @@ qplot-cfg -reset
 
 ## Development
 
-For local development, use the project virtual environment and install in
-editable mode.
+For local development, use a virtual environment. The examples below create the
+environment inside the repository, but any activated Python 3.11+ environment is
+fine.
 
 Windows:
 
 ```console
-.venv-win\Scripts\python.exe -m pip install -e .
+py -3.11 -m venv .venv-win
+.\.venv-win\Scripts\Activate.ps1
 ```
 
 macOS/Linux:
 
 ```console
-.venv/bin/python -m pip install -e .
+python3.11 -m venv .venv
+source .venv/bin/activate
 ```
 
-Run the current non-GUI tests:
+Install qPlot in editable mode with the development dependencies:
+
+```console
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
+```
+
+Run the automated tests:
+
+```console
+python -m pytest
+```
+
+If you do not activate the virtual environment, call its Python executable
+directly instead:
 
 Windows:
 
 ```console
-.venv-win\Scripts\python.exe -m pytest
+.\.venv-win\Scripts\python.exe -m pytest
 ```
 
 macOS/Linux:
 
 ```console
-.venv/bin/python -m pytest
+./.venv/bin/python -m pytest
 ```
 
 Run the manual GUI smoke script:
 
-Windows:
-
 ```console
-.venv-win\Scripts\python.exe tests/test.py
-```
-
-macOS/Linux:
-
-```console
-.venv/bin/python tests/test.py
+python scripts/manual_run.py
 ```
