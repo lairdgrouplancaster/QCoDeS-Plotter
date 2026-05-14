@@ -25,11 +25,13 @@ Using a virtual environment is recommended. Create and activate one first, then
 install QCoDeS-Plotter into it.
 
 ### 1. Set up your virtual environment
-Unless you have a virtual environment already (which you'll know, because your terminal prompt will start with something like `(.venv)`):
 
-In VSCode:
+If you already have an activated virtual environment, your terminal prompt will usually start with something like `(.venv)`.
+If so, you can skip this step. If not, do one of the following:
 
-1. Use `File -> Open Folder...` to open a working a folder.
+#### VS Code
+
+1. Use `File -> Open Folder...` to open a working folder.
 2. Open the Command Palette (`Ctrl+Shift+P`).
 3. Run `Python: Create Environment`.
 4. Choose `Venv`.
@@ -37,6 +39,24 @@ In VSCode:
    - On Windows, a typical standalone Python path looks like `C:\Program Files\Python311\python.exe`.
    - Do not choose an interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder.
 6. Open a new VS Code terminal (`Terminal -> New Terminal`). The prompt should start with something like `(.venv) PS`, showing that you are in the right virtual environment.
+
+#### Terminal
+
+Windows PowerShell:
+
+```console
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+macOS/Linux:
+
+```console
+python3.11 -m venv .venv
+source .venv/bin/activate
+```
+
+Your prompt should now start with something like `(.venv)`.
 
 ### 2. Install QCoDeS-Plotter
 
@@ -50,9 +70,23 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 To edit the source code or contribute changes, see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### 3. Verify the install
+
+Check that the command-line tools are available:
+
+```console
+qplot-cfg -info
+```
+
+Check that Python imports the installed package:
+
+```console
+python -c "import qplot; print(qplot.__file__)"
+```
+
 ## Running The App
 
-After installation, run inside your `.venv. terminal:
+After installation, run inside your activated `.venv` terminal:
 
 ```console
 qplot
@@ -65,6 +99,40 @@ import qplot
 
 qplot.run()
 ```
+
+If the `qplot` command is not found, check that the virtual environment is
+activated. You can also start the app with:
+
+```console
+python -m qplot
+```
+
+## Setup Troubleshooting
+
+If `git` is not found, install Git, then open a new terminal before running the
+install command again.
+
+If PowerShell blocks virtual environment activation, run:
+
+```console
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Then activate the environment again:
+
+```console
+.\.venv\Scripts\Activate.ps1
+```
+
+If Python imports a different copy of `qplot` than expected, check the path
+printed by:
+
+```console
+python -c "import qplot; print(qplot.__file__)"
+```
+
+If the path points outside your virtual environment, activate the right
+environment and reinstall QCoDeS-Plotter.
 
 ### Opening A Database
 
