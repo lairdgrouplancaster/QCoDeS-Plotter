@@ -149,7 +149,7 @@ Heatmaps support 1D cut extraction:
 * Cut plots are live-data compatible.
 * Cut plots can be added to compatible 1D plots when their x axis matches the 1D plot's independent variable.
 
-## Refresh And Live Data
+### Refresh And Live Data
 You can plot live runs from QCoDeS. The refresh interval in the main window controls how often the main window checks the current database for new runs. Setting it to `0.0` disables automatic
 checks.
 
@@ -157,7 +157,7 @@ To refresh manually, use `File -> Refresh` or press `R` to refresh manually.
 
 `Auto-plot` opens newly detected runs automatically.
 
-## Keyboard Shortcuts
+### Keyboard Shortcuts
 
 General shortcuts:
 
