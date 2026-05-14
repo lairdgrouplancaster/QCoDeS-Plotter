@@ -24,7 +24,7 @@ The core runtime dependencies are installed automatically:
 Using a virtual environment is recommended. Create and activate one first, then
 choose one of the two installation methods below.
 
-### Set up your virtual environment
+### 1. Set up your virtual environment
 Unless you have a virtual environment already (which you'll know, because your terminal prompt will start with something like `(.venv)`):
 
 In VSCode:
@@ -38,7 +38,8 @@ In VSCode:
    - Do not choose an interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder.
 6. Open a new VS Code terminal (`Terminal -> New Terminal`). The prompt should start with something like `(.venv) PS`, showing that you are in the right virtual environment.
 
-### Install option 1: For users
+### 2. Install
+#### Install option A: For users
 
 Use this if you want to install the current GitHub version without editing the source code. This requires Git to be installed.
 
@@ -47,7 +48,7 @@ python -m pip install -U pip
 python -m pip install git+https://github.com/EdwardLaird1/QCoDeS-Plotter.git@main
 ```
 
-### Install option 2: For editors
+#### Install option B: For editors
 
 Use this if you want to clone this repository and edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
 
