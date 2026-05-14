@@ -45,7 +45,7 @@ Use this if you want to install the current GitHub version without editing the s
 
 ```console
 python -m pip install -U pip
-python -m pip install git+https://github.com/EdwardLaird1/QCoDeS-Plotter.git@main
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 ```
 
 #### Install option B: For editors
@@ -53,7 +53,7 @@ python -m pip install git+https://github.com/EdwardLaird1/QCoDeS-Plotter.git@mai
 Use this if you want to clone this repository and edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
 
 ```console
-git clone https://github.com/EdwardLaird1/QCoDeS-Plotter.git
+git clone https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git
 cd QCoDeS-Plotter
 python -m pip install -U pip
 python -m pip install -e .
