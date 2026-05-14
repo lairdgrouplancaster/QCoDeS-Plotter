@@ -254,6 +254,9 @@ config().reset_to_defaults()
 qplot-cfg -reset
 ```
 
+For the full key reference, defaults, validation rules, and contributor notes,
+see [docs/configuration.md](docs/configuration.md).
+
 ## Development
 
 For development setup, test commands, and contribution workflow, see

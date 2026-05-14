@@ -110,6 +110,15 @@ installed package entry path that users exercise.
 
 Other local helper scripts are documented in [scripts/README.md](scripts/README.md).
 
+## Configuration Changes
+
+Config keys, defaults, and validation rules are defined in
+`src/qplot/configuration/config_schema.json` and documented in
+[docs/configuration.md](docs/configuration.md).
+
+When adding or changing a config key, update the schema, the relevant tests, and
+the configuration reference in the same change.
+
 ## Pre-Commit Checklist
 
 Before committing:
@@ -117,8 +126,9 @@ Before committing:
 1. Run `python -m ruff check .`.
 2. Run `python -m pytest`.
 3. Run `python scripts/manual_run.py` for application or GUI changes.
-4. Update `README.md`, `CONTRIBUTING.md`, or `docs/architecture.md` when the
-   setup, workflow, or module boundaries change.
+4. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or
+   `docs/configuration.md` when the setup, workflow, module boundaries, or
+   config surface change.
 5. Keep unrelated refactors out of feature or bug-fix commits.
 
 ## Project Map

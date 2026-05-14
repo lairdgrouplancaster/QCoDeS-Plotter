@@ -84,6 +84,9 @@ plot operation functions.
 
 Theme files live in `src/qplot/configuration/themes`.
 
+The user-facing key reference and contributor checklist for config changes live
+in `docs/configuration.md`.
+
 ## Tests
 
 Tests are grouped by area:
