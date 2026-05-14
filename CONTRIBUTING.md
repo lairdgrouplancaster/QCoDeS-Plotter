@@ -108,6 +108,8 @@ python scripts/manual_run.py
 Use this after the automated tests pass. It starts the app through the same
 installed package entry path that users exercise.
 
+Other local helper scripts are documented in [scripts/README.md](scripts/README.md).
+
 ## Pre-Commit Checklist
 
 Before committing:

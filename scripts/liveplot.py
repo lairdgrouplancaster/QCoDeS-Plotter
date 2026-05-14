@@ -1,3 +1,11 @@
+"""Generate a synthetic QCoDeS database for local live-plot testing.
+
+This script creates or updates `tests/data/experiments_for_15_mins.db` using
+QCoDeS mock instruments, then writes a large 2D measurement into it. The
+database file is ignored by Git. Run this only when you intentionally want fresh
+synthetic data for manual testing.
+"""
+
 import numpy as np
 import os
 import qcodes as qc
