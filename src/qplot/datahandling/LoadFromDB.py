@@ -10,6 +10,13 @@ from qcodes.dataset.sqlite.queries import (
     completed,
     get_parameter_data_for_one_paramtree,
     )
+from typing import TYPE_CHECKING
+
+import numpy.typing as npt
+
+
+if TYPE_CHECKING:
+    import qcodes
 
 
 def append_shaped_parameter_data_to_existing_arrays(
@@ -64,8 +71,8 @@ def append_shaped_parameter_data_to_existing_arrays(
 
 
 def load_param_data_from_db_prep(
-        cache : "DataSetCacheWithDBBackend",
-        param : "paramSpec"
+        cache : "qcodes.dataset.data_set_cache.DataSetCacheWithDBBackend",
+        param : "qcodes.dataset.descriptions.param_spec.ParamSpec"
         ):
     if cache.live:
         raise RuntimeError(

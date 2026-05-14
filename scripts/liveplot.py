@@ -7,12 +7,8 @@ from qcodes.dataset import (
     LinSweep,
     Measurement,
     dond,
-    do1d,
-    experiments,
     initialise_or_create_database_at,
-    load_by_run_spec,
     load_or_create_experiment,
-    plot_dataset,
 )
 
 ## Dummy instruments for generating synthetic data

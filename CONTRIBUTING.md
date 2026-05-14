@@ -69,9 +69,15 @@ it. In that layout, use:
 ..\.venv-win\Scripts\python.exe -m pytest
 ```
 
-## Tests
+## Checks
 
-Run the automated test suite before committing:
+Run the lightweight static check before committing:
+
+```console
+python -m ruff check .
+```
+
+Run the automated test suite:
 
 ```console
 python -m pytest
@@ -97,11 +103,12 @@ installed package entry path that users exercise.
 
 Before committing:
 
-1. Run `python -m pytest`.
-2. Run `python scripts/manual_run.py` for application or GUI changes.
-3. Update `README.md`, `CONTRIBUTING.md`, or `docs/architecture.md` when the
+1. Run `python -m ruff check .`.
+2. Run `python -m pytest`.
+3. Run `python scripts/manual_run.py` for application or GUI changes.
+4. Update `README.md`, `CONTRIBUTING.md`, or `docs/architecture.md` when the
    setup, workflow, or module boundaries change.
-4. Keep unrelated refactors out of feature or bug-fix commits.
+5. Keep unrelated refactors out of feature or bug-fix commits.
 
 ## Project Map
 

@@ -6,7 +6,7 @@ import numpy as np
 
 from . import data2matrix
 
-from qcodes.dataset.sqlite.database import connect, get_DB_location
+from qcodes.dataset.sqlite.database import connect
 
 from qplot.datahandling import load_param_data_from_db
 

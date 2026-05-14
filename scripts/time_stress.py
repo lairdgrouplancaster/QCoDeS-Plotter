@@ -7,7 +7,6 @@ from qplot.windows import (
     )
 
 from time import time
-import numpy as np
 
 from PyQt5 import (
     QtWidgets as qtw,
