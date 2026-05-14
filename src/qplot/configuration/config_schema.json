@@ -147,7 +147,7 @@
                 },
                 "default_refresh_rate": {
                     "type": "number",
-                    "minimum": 1,
+                    "minimum": 0,
                     "default": 1
                 }
             },

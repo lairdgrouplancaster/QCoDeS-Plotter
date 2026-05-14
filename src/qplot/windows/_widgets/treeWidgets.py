@@ -217,7 +217,7 @@ def format_point_count(metadata):
     shape = metadata.get("setpoint_shape") or metadata.get("point_shape")
     if shape:
         try:
-            shape_parts = " × ".join(f"{int(size):,}" for size in shape)
+            shape_parts = " x ".join(f"{int(size):,}" for size in shape)
         except (TypeError, ValueError):
             shape_parts = ""
 
@@ -335,20 +335,26 @@ class RunPreviewCell(qtw.QWidget):
 
 class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
     """
-    Paints values containing " = " with the equals signs vertically aligned.
+    Paints setpoint counts with equals signs aligned.
     """
 
-    right_text_alignment = QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+    right_text_alignment = QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter
 
     def paint(self, painter, option, index):
         text = index.data(QtCore.Qt.DisplayRole)
-        if not text or " = " not in text:
+        if text is None or text == "":
             super().paint(painter, option, index)
             return
 
         opt = qtw.QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
-        left, right = str(text).split(" = ", 1)
+        text = str(text)
+        sections = self._display_sections(text)
+        if sections is None:
+            super().paint(painter, option, index)
+            return
+        left, right = sections
+
         opt.text = ""
 
         widget = opt.widget
@@ -364,6 +370,18 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
         equals_text = " = "
         equals_width = metrics.horizontalAdvance(equals_text)
         max_right_width = self._max_right_width(index, metrics)
+        if right is None and max_right_width <= 0:
+            painter.save()
+            painter.setFont(opt.font)
+            painter.setPen(self._text_color(opt))
+            painter.drawText(
+                text_rect,
+                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
+                metrics.elidedText(left, QtCore.Qt.ElideLeft, text_rect.width())
+                )
+            painter.restore()
+            return
+
         equals_left = max(
             text_rect.left(),
             text_rect.right() - max_right_width - equals_width
@@ -396,13 +414,34 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
             metrics.elidedText(left, QtCore.Qt.ElideLeft, left_rect.width())
             )
-        painter.drawText(equals_rect, QtCore.Qt.AlignCenter, equals_text)
+        if right is not None:
+            painter.drawText(equals_rect, QtCore.Qt.AlignCenter, equals_text)
+            self._draw_right_text(painter, right_rect, right, metrics)
+        painter.restore()
+
+
+    def _display_sections(self, text):
+        if " = " in text:
+            return str(text).split(" = ", 1)
+        if self._is_count_text(text):
+            return str(text), None
+        return None
+
+
+    def _is_count_text(self, text):
+        try:
+            int(str(text).replace(",", ""))
+        except (TypeError, ValueError):
+            return False
+        return True
+
+
+    def _draw_right_text(self, painter, right_rect, right, metrics):
         painter.drawText(
             right_rect,
             self.right_text_alignment,
             metrics.elidedText(right, QtCore.Qt.ElideRight, right_rect.width())
             )
-        painter.restore()
 
 
     def _max_right_width(self, index, metrics):
@@ -417,11 +456,14 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
             if item is None:
                 continue
 
-            text = item.text(column)
-            if " = " not in text:
+            sections = self._display_sections(item.text(column))
+            if sections is None:
                 continue
 
-            right = text.split(" = ", 1)[1]
+            _, right = sections
+            if right is None:
+                continue
+
             max_width = max(max_width, metrics.horizontalAdvance(right))
         return max_width
 
@@ -443,10 +485,10 @@ class RunList(qtw.QTreeWidget):
     cols = ['ID', 'Measurements', 'Setpoints', 'Started', 'Complete', 'Duration', 'Size']
     column_widths = {
         "ID": 34,
-        "Measurements": 96,
-        "Complete": 76,
+        "Measurements": 84,
+        "Complete": 66,
         "Duration": 68,
-        "Size": 54,
+        "Size": 50,
         }
     elastic_column_widths = {
         "Setpoints": 80,
@@ -664,8 +706,9 @@ class RunList(qtw.QTreeWidget):
 
         extra_width = max(0, available_width - fixed_width - elastic_min_width)
         elastic_widths = dict(self.elastic_column_widths)
-        elastic_widths["Setpoints"] += extra_width // 2
-        elastic_widths["Started"] += extra_width - extra_width // 2
+        setpoints_extra = (extra_width * 2) // 3
+        elastic_widths["Setpoints"] += setpoints_extra
+        elastic_widths["Started"] += extra_width - setpoints_extra
 
         for col, name in enumerate(self.cols):
             width = self.column_widths.get(name, elastic_widths.get(name))

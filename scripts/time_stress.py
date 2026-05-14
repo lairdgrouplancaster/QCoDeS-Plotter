@@ -1,3 +1,11 @@
+"""Run qPlot with timing instrumentation for 2D refresh performance checks.
+
+This manual profiling helper opens qPlot with a custom 2D plot subclass. When a
+2D plot refreshes with new data, it appends timing rows to a CSV file in the
+configured qPlot directory, usually `~/.qplot`. Use it only for local
+performance investigation.
+"""
+
 from qplot import config
 
 from qplot.windows import (
@@ -7,7 +15,6 @@ from qplot.windows import (
     )
 
 from time import time
-import numpy as np
 
 from PyQt5 import (
     QtWidgets as qtw,

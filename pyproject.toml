@@ -17,12 +17,18 @@ dependencies = [
     "qcodes>=0.53.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
 [project.scripts]
 qplot = "qplot.__main__:run"
 qplot-cfg = "qplot.configuration.scripts:scripts"
 
 [project.urls]
-Homepage = "https://github.com/EdwardLaird1/QCoDeS-Plotter.git"
+Homepage = "https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -33,3 +39,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "qplot" = ["**/*.json"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+select = ["F"]

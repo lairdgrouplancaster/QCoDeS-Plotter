@@ -19,17 +19,20 @@ The core runtime dependencies are installed automatically:
 * pandas
 * jsonschema
 
-## Set up environment and install
+## Set Up Environment and Install
 
 Using a virtual environment is recommended. Create and activate one first, then
-choose one of the two installation methods below.
+install QCoDeS-Plotter into it.
 
-### 1. Set up your virtual environment
-Unless you have a virtual environment already (which you'll know, because your terminal prompt will start with something like `(.venv)`):
+### 1. Set Up Your Virtual Environment
 
-In VSCode:
+If you already have an activated virtual environment, your terminal prompt will
+usually start with something like `(.venv)`. If so, you can skip this step. If
+not, do one of the following:
 
-1. Use `File -> Open Folder...` to open a working a folder.
+#### VS Code
+
+1. Use `File -> Open Folder...` to open a working folder.
 2. Open the Command Palette (`Ctrl+Shift+P`).
 3. Run `Python: Create Environment`.
 4. Choose `Venv`.
@@ -38,30 +41,53 @@ In VSCode:
    - Do not choose an interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder.
 6. Open a new VS Code terminal (`Terminal -> New Terminal`). The prompt should start with something like `(.venv) PS`, showing that you are in the right virtual environment.
 
-### 2. Install
-#### Install option A: For users
+#### Terminal
 
-Use this if you want to install the current GitHub version without editing the source code. This requires Git to be installed.
+Windows PowerShell:
+
+```console
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+macOS/Linux:
+
+```console
+python3.11 -m venv .venv
+source .venv/bin/activate
+```
+
+Your prompt should now start with something like `(.venv)`.
+
+### 2. Install QCoDeS-Plotter
+
+Install the current GitHub version. This requires Git to be installed.
 
 ```console
 python -m pip install -U pip
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 ```
 
-#### Install option B: For editors
+To edit the source code or contribute changes, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-Use this if you want to clone this repository and edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
+### 3. Verify the Install
+
+Check that the command-line tools are available:
 
 ```console
-git clone https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git
-cd QCoDeS-Plotter
-python -m pip install -U pip
-python -m pip install -e .
+qplot-cfg -info
 ```
 
-## Running The App
+Check that Python imports the installed package:
 
-After installation, run inside your `.venv. terminal:
+```console
+python -c "import qplot; print(qplot.__file__)"
+```
+
+## Running the App
+
+After installation, run inside your activated `.venv` terminal:
 
 ```console
 qplot
@@ -75,14 +101,48 @@ import qplot
 qplot.run()
 ```
 
-### Opening A Database
+If the `qplot` command is not found, check that the virtual environment is
+activated. You can also start the app with:
+
+```console
+python -m qplot
+```
+
+## Setup Troubleshooting
+
+If `git` is not found, install Git, then open a new terminal before running the
+install command again.
+
+If PowerShell blocks virtual environment activation, run:
+
+```console
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Then activate the environment again:
+
+```console
+.\.venv\Scripts\Activate.ps1
+```
+
+If Python imports a different copy of `qplot` than expected, check the path
+printed by:
+
+```console
+python -c "import qplot; print(qplot.__file__)"
+```
+
+If the path points outside your virtual environment, activate the right
+environment and reinstall QCoDeS-Plotter.
+
+### Opening a Database
 
 1. Open the app.
 2. Drag a QCoDeS `.db` file onto the database path field, or select
    `File -> Load Database...`.
 3. You will see controls at the top, a run table in the middle, and information tabs on the bottom. The run table gives basic information about each run. The information tabs give more detail, including the full nested key-value structure created by QCoDeS.
 
-### Plotting A Measurement
+### Plotting a Measurement
 There are three ways to do this:
 1. Double-click on its preview in the run table.
 2. Right-click on the run table, and use the pop-up.
@@ -149,7 +209,7 @@ Heatmaps support 1D cut extraction:
 * Cut plots are live-data compatible.
 * Cut plots can be added to compatible 1D plots when their x axis matches the 1D plot's independent variable.
 
-### Refresh And Live Data
+### Refresh and Live Data
 You can plot live runs from QCoDeS. The refresh interval in the main window controls how often the main window checks the current database for new runs. Setting it to `0.0` disables automatic
 checks.
 
@@ -207,103 +267,31 @@ press the shown number or letter to trigger that entry.
 
 ## Configuration
 
-On first run, QCoDeS-Plotter creates a configuration file at:
+On first run, QCoDeS-Plotter creates:
 
 ```text
 ~/.qplot/config.json
 ```
 
-Show available config commands:
+Show available configuration commands:
 
 ```console
 qplot-cfg -info
 ```
 
-Show help for a specific command:
-
-```console
-qplot-cfg -info dump
-```
-
 Print the current config:
-
-```python
-from qplot import config
-
-config().dump()
-```
 
 ```console
 qplot-cfg -dump
 ```
 
-Update a config value:
-
-```python
-from qplot import config
-
-config().update("file.default_load_path", r"C:\Users\<user>\Desktop")
-```
-
-```console
-qplot-cfg -set_value file.default_load_path "C:\Users\<user>\Desktop"
-```
-
-Use quotes around terminal values that contain spaces.
-
-Reset config to defaults:
-
-```python
-from qplot import config
-
-config().reset_to_defaults()
-```
-
-```console
-qplot-cfg -reset
-```
+For all config keys, defaults, validation rules, and contributor notes,
+see [docs/configuration.md](docs/configuration.md).
 
 ## Development
 
-For local development, use the project virtual environment and install in
-editable mode.
+For development setup, test commands, and contribution workflow, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-Windows:
-
-```console
-.venv-win\Scripts\python.exe -m pip install -e .
-```
-
-macOS/Linux:
-
-```console
-.venv/bin/python -m pip install -e .
-```
-
-Run the current non-GUI tests:
-
-Windows:
-
-```console
-.venv-win\Scripts\python.exe -m pytest
-```
-
-macOS/Linux:
-
-```console
-.venv/bin/python -m pytest
-```
-
-Run the manual GUI smoke script:
-
-Windows:
-
-```console
-.venv-win\Scripts\python.exe tests/test.py
-```
-
-macOS/Linux:
-
-```console
-.venv/bin/python tests/test.py
-```
+For a short map of the codebase, see
+[docs/architecture.md](docs/architecture.md).

@@ -1,62 +1,19 @@
-import io
-import json
-import os
 import sqlite3
-import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-import numpy as np
 from PyQt5 import QtCore
-from PyQt5 import QtGui
 from PyQt5 import QtWidgets as qtw
-import pyqtgraph as pg
 
-from qplot.configuration.config import config
-from qplot.configuration.scripts import scripts, sysHandle, try_as_num
-from qplot.configuration.themes import dark, light
 from qplot.windows import main as main_window
-from qplot.windows import _plotWin as plotwin_module
-from qplot.windows.plot1d import plot1d
-from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
-from qplot.windows._subplots import custom_viewbox
-from qplot.windows._plotWin import plotWidget
 from qplot.windows._window_controls import (
     add_confirmation_options,
     add_restore_defaults_option,
     )
-from qplot.windows._dragdrop import (
-    make_run_preview_mime,
-    preview_drop_is_compatible,
-    run_preview_payload_from_mime,
-    )
-from qplot.windows._widgets.operations import operations_options_1d
-from qplot.windows._widgets.toolbar import QDock_context
-from qplot.windows._widgets import treeWidgets
-from qplot.windows._widgets.preview import (
-    DraggablePreviewImageLabel,
-    PREVIEW_BACKGROUND_COLOR,
-    PREVIEW_SIZE,
-    PREVIEW_SELECTED_PROPERTY,
-    PreviewTab,
-    generate_run_previews,
-    render_heatmap_preview,
-    render_sparkline_preview,
-    )
-from qplot.datahandling import readSQL
-from qplot.tools.general import data2matrix
-from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 
 
 class CloseAllPlotsTestCase(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
-
     def test_close_all_can_be_cancelled_when_warning_enabled(self):
         old_question = qtw.QMessageBox.question
         closed = []
@@ -73,6 +30,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         class Harness:
             closeAll = main_window.MainWindow.closeAll
+            close_plot_windows = main_window.MainWindow.close_plot_windows
 
             def __init__(self):
                 self.config = FakeConfig()
@@ -107,6 +65,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         class Harness:
             closeAll = main_window.MainWindow.closeAll
+            close_plot_windows = main_window.MainWindow.close_plot_windows
 
             def __init__(self):
                 self.config = FakeConfig()
@@ -202,6 +161,12 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.config = FakeConfig()
                 self.status_messages = []
 
+            def close_plot_windows(self, confirm=True, status=True):
+                raise AssertionError("Plot windows should not close after cancelling")
+
+            def close_database(self, status=True):
+                raise AssertionError("Database should not close after cancelling")
+
             def apply_current_settings(self):
                 raise AssertionError("Settings should not be applied after cancelling")
 
@@ -234,7 +199,15 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             def __init__(self):
                 self.config = FakeConfig()
                 self.applied = False
+                self.closed_plots = []
+                self.closed_database = []
                 self.status_messages = []
+
+            def close_plot_windows(self, confirm=True, status=True):
+                self.closed_plots.append((confirm, status))
+
+            def close_database(self, status=True):
+                self.closed_database.append(status)
 
             def apply_current_settings(self):
                 self.applied = True
@@ -251,7 +224,107 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         self.assertTrue(harness.config.reset_called)
         self.assertTrue(harness.applied)
+        self.assertEqual(harness.closed_plots, [(False, False)])
+        self.assertEqual(harness.closed_database, [False])
         self.assertEqual(harness.status_messages[-1][0], "Default settings restored.")
+
+
+    def test_close_database_clears_loaded_database_state(self):
+        class Field:
+            def __init__(self, text=""):
+                self.value = text
+
+            def setText(self, text):
+                self.value = text
+
+            def text(self):
+                return self.value
+
+        class Timer:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        class RunList:
+            def __init__(self):
+                self.signals_blocked = None
+                self.cleared = False
+                self.selection_cleared = False
+                self.scrolled = False
+                self.watching = ["run"]
+                self.maxTime = 123
+
+            def blockSignals(self, blocked):
+                self.signals_blocked = blocked
+
+            def clearSelection(self):
+                self.selection_cleared = True
+
+            def clear(self):
+                self.cleared = True
+
+            def scrollToTop(self):
+                self.scrolled = True
+
+        class Preview:
+            def __init__(self):
+                self.database_runs = None
+
+            def set_database_runs(self, database_path, runs):
+                self.database_runs = (database_path, runs)
+
+        class InfoBox:
+            def __init__(self):
+                self.preview = Preview()
+                self.cleared = False
+                self.scrolled = False
+
+            def clear(self):
+                self.cleared = True
+
+            def scrollToTop(self):
+                self.scrolled = True
+
+        class Harness:
+            close_database = main_window.MainWindow.close_database
+
+            def __init__(self):
+                self.monitor = Timer()
+                self.fileTextbox = Field("test.db")
+                self.run_idBox = Field("7")
+                self.measurementBox = Field("x")
+                self.selected_run_id = 7
+                self.ds = object()
+                self.localLastFile = "test.db"
+                self.dataset_holder = {"guid": {"del_timer": Timer()}}
+                self.RunList = RunList()
+                self.infoBox = InfoBox()
+
+            def show_status(self, message, timeout=5000):
+                raise AssertionError("Status should not be shown when disabled")
+
+        harness = Harness()
+        del_timer = harness.dataset_holder["guid"]["del_timer"]
+
+        harness.close_database(status=False)
+
+        self.assertTrue(harness.monitor.stopped)
+        self.assertEqual(harness.fileTextbox.text(), "")
+        self.assertEqual(harness.run_idBox.text(), "")
+        self.assertEqual(harness.measurementBox.text(), "*")
+        self.assertIsNone(harness.selected_run_id)
+        self.assertIsNone(harness.ds)
+        self.assertIsNone(harness.localLastFile)
+        self.assertTrue(del_timer.stopped)
+        self.assertEqual(harness.dataset_holder, {})
+        self.assertTrue(harness.RunList.selection_cleared)
+        self.assertTrue(harness.RunList.cleared)
+        self.assertEqual(harness.RunList.watching, [])
+        self.assertEqual(harness.RunList.maxTime, 0)
+        self.assertTrue(harness.infoBox.cleared)
+        self.assertEqual(harness.infoBox.preview.database_runs, ("", {}))
 
 
 

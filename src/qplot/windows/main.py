@@ -765,12 +765,21 @@ class MainWindow(qtw.QMainWindow):
         Closes all windows other than the main window.
 
         """
+        self.close_plot_windows(confirm=True, status=True)
+
+
+    def close_plot_windows(self, confirm=True, status=True):
+        """
+        Closes all plot windows, optionally asking for confirmation.
+
+        """
         plot_windows = self.windows.copy()
         if not plot_windows:
-            self.show_status("No plot windows to close.", 3000)
-            return
+            if status:
+                self.show_status("No plot windows to close.", 3000)
+            return True
 
-        if close_all_warning_enabled(self.config):
+        if confirm and close_all_warning_enabled(self.config):
             count = len(plot_windows)
             noun = "window" if count == 1 else "windows"
             reply = qtw.QMessageBox.question(
@@ -781,12 +790,15 @@ class MainWindow(qtw.QMainWindow):
                 qtw.QMessageBox.No,
                 )
             if reply != qtw.QMessageBox.Yes:
-                self.show_status("Close all plot windows cancelled.", 3000)
-                return
+                if status:
+                    self.show_status("Close all plot windows cancelled.", 3000)
+                return False
 
-        self.show_status("Closing plot windows...", 3000)
+        if status:
+            self.show_status("Closing plot windows...", 3000)
         for win in plot_windows:
             win.close()
+        return True
         
         
     @QtCore.pyqtSlot(object)
@@ -914,9 +926,33 @@ class MainWindow(qtw.QMainWindow):
             Refresh interval to be set, in seconds.
 
         """
+        self._save_refresh_interval(interval)
+        self._apply_refresh_interval(interval)
+
+
+    def _apply_refresh_interval(self, interval):
+        """
+        Applies the current refresh interval to the main-window timer.
+
+        """
         self.monitor.stop()
         if interval > 0:
             self.monitor.start(int(interval * 1000)) #convert to seconds
+
+
+    def _save_refresh_interval(self, interval):
+        """
+        Persists the main refresh interval as the user's default.
+
+        """
+        interval = float(interval)
+        try:
+            current_interval = float(self.config.get("user_preference.default_refresh_rate"))
+        except (KeyError, TypeError, ValueError):
+            current_interval = None
+
+        if current_interval != interval:
+            self.config.update("user_preference.default_refresh_rate", interval)
 
 
     @QtCore.pyqtSlot()
@@ -963,6 +999,41 @@ class MainWindow(qtw.QMainWindow):
 
         qtw.QApplication.clipboard().setText(database_path)
         self.show_status("Copied database path.", 3000)
+
+
+    def close_database(self, status=True):
+        """
+        Clears the current database from the main window state.
+
+        """
+        self.monitor.stop()
+        self.fileTextbox.setText("")
+        self.run_idBox.setText("")
+        self.measurementBox.setText("*")
+        self.selected_run_id = None
+        self.ds = None
+        self.localLastFile = None
+
+        for holder in self.dataset_holder.values():
+            del_timer = holder.get("del_timer")
+            if del_timer is not None:
+                del_timer.stop()
+        self.dataset_holder.clear()
+
+        self.RunList.blockSignals(True)
+        self.RunList.clearSelection()
+        self.RunList.clear()
+        self.RunList.watching = []
+        self.RunList.maxTime = 0
+        self.RunList.blockSignals(False)
+        self.RunList.scrollToTop()
+
+        self.infoBox.clear()
+        self.infoBox.preview.set_database_runs("", {})
+        self.infoBox.scrollToTop()
+
+        if status:
+            self.show_status("Database closed.", 3000)
 
 
     @QtCore.pyqtSlot()
@@ -1886,8 +1957,10 @@ class MainWindow(qtw.QMainWindow):
             self.show_status("Default settings restore cancelled.", 3000)
             return
 
+        self.close_plot_windows(confirm=False, status=False)
         self.config.reset_to_defaults()
         self.apply_current_settings()
+        self.close_database(status=False)
         self.show_status("Default settings restored.", 5000)
 
 
@@ -1898,6 +1971,7 @@ class MainWindow(qtw.QMainWindow):
         """
         self._sync_theme_actions()
         self._sync_preview_size_actions()
+        self._sync_refresh_interval()
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
@@ -1922,6 +1996,17 @@ class MainWindow(qtw.QMainWindow):
             self.infoBox.set_preview_size(self.preview_size)
             if hasattr(self, "runInfoSplitter"):
                 self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+
+
+    def _sync_refresh_interval(self):
+        interval = self.config.get("user_preference.default_refresh_rate")
+        if not hasattr(self, "spinBox"):
+            return
+
+        self.spinBox.blockSignals(True)
+        self.spinBox.setValue(interval)
+        self.spinBox.blockSignals(False)
+        self._apply_refresh_interval(self.spinBox.value())
 
 
     def _configured_preview_size(self):
@@ -2061,7 +2146,8 @@ class MainWindow(qtw.QMainWindow):
         if load_started_at is None:
             load_started_at = perf_counter()
         
-        if abspath == get_DB_location(): # Already initialised in QCoDeS
+        if abspath == get_DB_location() and self.fileTextbox.text() == abspath:
+            # Already initialised in QCoDeS and still open in this window.
             if not self.infoBox.preview.has_database(abspath):
                 self.infoBox.preview.set_database_runs(
                     abspath,
