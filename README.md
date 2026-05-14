@@ -6,11 +6,6 @@ QCoDeS-Plotter is a PyQt-based data viewer for QCoDeS databases. It is designed
 to inspect both completed and running experiments, with live refresh, line plots,
 heatmaps, 1D cut extraction, and simple data operations.
 
-> [!IMPORTANT]
-> Plot windows may appear before their data has finished loading. Check the
-> status bar at the bottom of the window; unless the app stops responding or an
-> error appears, wait for loading to complete.
-
 ## Requirements
 
 QCoDeS-Plotter requires Python 3.11 or newer.
@@ -93,6 +88,11 @@ There are three ways to do this:
 3. Set ID and measurement at the top of the window and press the plot button.
 
 You can also use this window to export measurements as CSV, either using the save button or by right-clicking on a preview.
+
+> [!IMPORTANT]
+> Plot windows may appear before their data has finished loading. Check the
+> status bar at the bottom of the window; unless the app stops responding or an
+> error appears, wait for loading to complete.
 
 #### Plot Windows
 
