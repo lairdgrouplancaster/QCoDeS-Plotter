@@ -30,9 +30,8 @@ class light:
             border-width: 1px; border-radius: 4px;
             border-color: rgb(160, 160, 160);
             border-style: solid;
-            padding: 0 8px;
+            padding: 2px 10px;
             color: #000000;
-            padding: 2px;
             background-color: #f0f0f0;
         }
         QPushButton::default {
@@ -43,7 +42,7 @@ class light:
             border-bottom-color: #0a84ff;
             border-width: 1px;
             color: #000000;
-            padding: 2px;
+            padding: 2px 10px;
             background-color: #f0f0f0;
         }
         QToolButton {
@@ -79,7 +78,7 @@ class light:
             border-bottom-width: 1px;
             border-style: solid;
             color: #000000;
-            padding-bottom: 2px;
+            padding: 2px 10px;
             background-color: #f0f0f0;
         }
         QPushButton:pressed {
@@ -88,10 +87,10 @@ class light:
             border-right-color: transparent;
             border-left-color: transparent;
             border-bottom-color: #6666cc;
-            border-bottom-width: 2px;
+            border-bottom-width: 1px;
             border-style: solid;
             color: #404040;
-            padding-bottom: 1px;
+            padding: 2px 10px;
             background-color: #f0f0f0;
         }
         QPushButton:disabled {
@@ -100,11 +99,14 @@ class light:
             border-right-color: transparent;
             border-left-color: transparent;
             border-bottom-color: #a0a0a0;
-            border-bottom-width: 2px;
+            border-bottom-width: 1px;
             border-style: solid;
             color: #a0a0a0;
-            padding-bottom: 1px;
+            padding: 2px 10px;
             background-color: #f0f0f0;
+        }
+        QToolButton#closeAllPlotsButton {
+            margin-right: 8px;
         }
         QLineEdit {
             border-width: 1px; border-radius: 4px;
@@ -120,6 +122,14 @@ class light:
             background: #f0f0f0;
             color: #505050;
             border: 1px solid #a0a0a0;
+        }
+        QSplitter::handle:vertical {
+            background-color: #c8c8c8;
+            height: 6px;
+            margin: 1px 0px;
+        }
+        QSplitter::handle:vertical:hover {
+            background-color: #9a9a9a;
         }
         QLabel {
             color: #000000;
@@ -396,7 +406,6 @@ class light:
             background-color: #500a84ff;
             color: #000000;
         }
-        }
         QListWidget {
             color: #a9b7c6;
             border: 1px solid #80202060;
@@ -413,6 +422,212 @@ class light:
         QListWidget::item:hover {
             background-color: #500a84ff;
             color: #ffffff;
+        }
+        QMainWindow, QDialog, QWidget {
+            font-size: 13px;
+        }
+        QToolBar {
+            background-color: #eceef1;
+            border: none;
+            border-bottom: 1px solid #c9ced6;
+            spacing: 6px;
+            padding: 2px 8px;
+        }
+        QToolBar QLabel {
+            color: #1f2933;
+        }
+        QPushButton {
+            min-height: 20px;
+            border: 1px solid #aeb4bd;
+            border-radius: 5px;
+            padding: 1px 10px;
+            background-color: #f7f8fa;
+            color: #111827;
+        }
+        QPushButton:hover {
+            border: 1px solid #0a84ff;
+            background-color: #ffffff;
+            color: #111827;
+        }
+        QPushButton:pressed {
+            background-color: #e6f1ff;
+            color: #111827;
+        }
+        QToolButton#databaseIconButton, QToolButton#plotIconButton, QToolButton#exportIconButton, QToolButton#closeAllPlotsButton {
+            border: 1px solid #aeb4bd;
+            border-radius: 5px;
+            padding: 1px;
+            background-color: #f7f8fa;
+        }
+        QToolButton#databaseIconButton:hover, QToolButton#plotIconButton:hover, QToolButton#exportIconButton:hover {
+            border: 1px solid #0a84ff;
+            background-color: #ffffff;
+        }
+        QToolButton#closeAllPlotsButton:hover {
+            border: 1px solid #c2410c;
+            background-color: #fff7ed;
+        }
+        QToolButton#databaseIconButton:pressed, QToolButton#plotIconButton:pressed, QToolButton#exportIconButton:pressed {
+            background-color: #e6f1ff;
+        }
+        QToolButton#closeAllPlotsButton:pressed {
+            background-color: #ffedd5;
+        }
+        QLineEdit, QDoubleSpinBox {
+            min-height: 20px;
+            border: 1px solid #b8bec7;
+            border-radius: 5px;
+            padding: 0 6px;
+            background-color: #ffffff;
+            color: #111827;
+            selection-background-color: #0a84ff;
+            selection-color: #ffffff;
+        }
+        QLineEdit#databasePathField {
+            background-color: #f8f9fb;
+            color: #3f4a59;
+        }
+        QCheckBox {
+            spacing: 6px;
+        }
+        QCheckBox::indicator {
+            width: 14px;
+            height: 14px;
+        }
+        QCheckBox::indicator:checked {
+            border: 1px solid #0a84ff;
+            background-color: #0a84ff;
+        }
+        QCheckBox::indicator:unchecked {
+            border: 1px solid #7a8491;
+            background-color: #ffffff;
+        }
+        QSplitter::handle:vertical {
+            background-color: #d7dbe1;
+            height: 6px;
+            margin: 2px 0px;
+        }
+        QSplitter::handle:vertical:hover {
+            background-color: #0a84ff;
+        }
+        QTabWidget {
+            background-color: #f0f2f5;
+        }
+        QTabWidget::pane {
+            border: 1px solid #bfc5ce;
+            border-radius: 6px;
+            background-color: #ffffff;
+            top: -1px;
+        }
+        QTabBar::tab {
+            min-height: 24px;
+            min-width: 84px;
+            padding: 3px 10px;
+            margin-left: 0px;
+            border: 1px solid #c8ced6;
+            border-left: none;
+            background-color: #f7f8fa;
+            color: #2d3745;
+        }
+        QTabBar::tab:first {
+            border-left: 1px solid #c8ced6;
+            border-top-left-radius: 6px;
+            border-bottom-left-radius: 6px;
+        }
+        QTabBar::tab:last {
+            border-top-right-radius: 6px;
+            border-bottom-right-radius: 6px;
+        }
+        QTabBar::tab:selected {
+            background-color: #dcecff;
+            color: #075eb8;
+            border: 1px solid #8dbdf4;
+            padding: 3px 10px;
+        }
+        QTabBar::tab:hover {
+            background-color: #eef6ff;
+            color: #075eb8;
+            border: 1px solid #8dbdf4;
+            padding: 3px 10px;
+        }
+        QTabWidget#runDetailsTabs QTabBar::tab {
+            min-height: 18px;
+            min-width: 74px;
+            padding: 1px 8px;
+        }
+        QTabWidget#runDetailsTabs QTabBar::tab:selected,
+        QTabWidget#runDetailsTabs QTabBar::tab:hover {
+            padding: 1px 8px;
+        }
+        QTreeWidget, QTableView, QTableWidget {
+            background-color: #ffffff;
+            alternate-background-color: #f3f5f7;
+            color: #111827;
+            border: 1px solid #c8ced6;
+            gridline-color: #d7dce3;
+            outline: 0;
+            font-size: 13px;
+        }
+        QTreeWidget::item, QTableView::item, QTableWidget::item {
+            padding: 2px 6px;
+            border: none;
+        }
+        QTreeWidget::item:selected, QTableView::item:selected, QTableWidget::item:selected {
+            background-color: #0a84ff;
+            color: #ffffff;
+        }
+        QTreeWidget::item:hover, QTableView::item:hover, QTableWidget::item:hover {
+            background-color: #dcecff;
+            color: #111827;
+        }
+        QHeaderView::section {
+            background-color: #eef0f3;
+            color: #1f2933;
+            padding: 4px 8px;
+            border: none;
+            border-right: 1px solid #c8ced6;
+            border-bottom: 1px solid #c8ced6;
+        }
+        QTableWidget#detailsTable::item {
+            padding: 0px 6px;
+        }
+        QTableWidget#detailsTable QHeaderView::section {
+            padding: 1px 6px;
+            font-size: 12px;
+        }
+        QScrollBar:vertical {
+            width: 10px;
+            background: #eef0f3;
+            margin: 0px;
+            border: none;
+        }
+        QScrollBar:horizontal {
+            height: 10px;
+            background: #eef0f3;
+            margin: 0px;
+            border: none;
+        }
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+            background: #8b929b;
+            border-radius: 5px;
+            min-height: 20px;
+            min-width: 20px;
+        }
+        QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
+            background: #66707c;
+        }
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical,
+        QScrollBar::add-line:horizontal,
+        QScrollBar::sub-line:horizontal,
+        QScrollBar::up-arrow:vertical,
+        QScrollBar::down-arrow:vertical,
+        QScrollBar::left-arrow:horizontal,
+        QScrollBar::right-arrow:horizontal {
+            width: 0;
+            height: 0;
+            background: none;
+            border: none;
         }
     """
     colors = [pg.mkColor(col) for col in ["red", "green", "blue", "black", "darkcyan", "darkorange"]]

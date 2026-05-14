@@ -1,6 +1,7 @@
 from .readSQL import (
     get_runs_via_sql,
     find_new_runs,
+    get_run_status,
     has_finished,
     )
 
@@ -12,6 +13,7 @@ from .LoadFromDB import (
 __all__ = [
     "get_runs_via_sql",
     "find_new_runs",
+    "get_run_status",
     "has_finished",
     "load_param_data_from_db_prep",
     "load_param_data_from_db",

@@ -5,10 +5,17 @@ from copy import deepcopy
 
 from os import makedirs
 from os import path
+from shutil import copy2
 
 from importlib.resources import files
 
-from .themes import * # ignore error, used in self.theme()
+from .themes import dark, light, pyqt
+
+THEME_CLASSES = {
+    "light": light,
+    "dark": dark,
+    "pyqt": pyqt,
+}
 
 class config:
     """
@@ -42,25 +49,22 @@ class config:
             self.reset_to_defaults()
         else:
             try:
-                self.config = self.load_config(self.default_file)
-                jsonschema.validate(self.config, self.schema)
+                loaded_config = self.load_config(self.default_file)
+                if not isinstance(loaded_config, dict):
+                    raise jsonschema.ValidationError(
+                        "config.json root must be a JSON object"
+                    )
+
+                changed = self.add_missing_defaults(loaded_config)
+                jsonschema.validate(loaded_config, self.schema)
+                self.config = loaded_config
+                if changed:
+                    self.save_config(self.default_file)
             
             # config.json does not meet schema requirements
-            except jsonschema.ValidationError as err:
-                print("!!! config.json is invalid and cannot be loaded !!!\n"
-                      "Please reset config.json to defaults or fix manually.")
-                
-                while True:
-                    user_in = input("Would you like to reset to default? [y/n]: ")
-                    if user_in.lower() == "y":
-                        self.reset_to_defaults()
-                        break
-                    elif user_in.lower() == "n":
-                        print(f"Please see: {self.default_file}, and fix "
-                              "the following error.")
-                        raise err
-                    else:
-                        print("Invalid Input.")
+            except (json.JSONDecodeError, jsonschema.ValidationError):
+                self.invalid_config_backup_file = self.backup_invalid_config()
+                self.reset_to_defaults()
         
     
     def __str__(self) -> str:
@@ -76,7 +80,7 @@ class config:
     
     
     def __repr__(self):
-        return self.config
+        return str(self)
     
     
     def dump(self):
@@ -147,16 +151,30 @@ class config:
 
         """
         keys = key.split(".")
-        
+
         # Create copy to prevent unwanted changes to file
         config = deepcopy(self.config)
-        
-        #to anyone reading this, good luck
-        run_str = ""
-        for key in keys:
-            run_str += f"['{key}']" # chain .get(keys) for dic item
-        
-        exec(f"config{run_str} = value") #add value to dic under key
+
+        target = config
+        for part in keys[:-1]:
+            try:
+                target = target[part]
+            except KeyError as err:
+                raise KeyError(
+                    f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
+                ) from err
+
+            if not isinstance(target, dict):
+                raise KeyError(
+                    f"Key: {key}, cannot be updated because {part} is not a section"
+                )
+
+        if keys[-1] not in target:
+            raise KeyError(
+                f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
+            )
+
+        target[keys[-1]] = value
         
         # Check update is allowed by schema
         jsonschema.validate(config, self.schema)
@@ -226,6 +244,58 @@ class config:
         # Save reset to file
         self.config = config
         self.save_config(self.default_file)
+
+
+    def backup_invalid_config(self):
+        """
+        Copies an invalid config file aside before resetting to defaults.
+
+        """
+        backup_file = self.next_invalid_config_backup_file()
+        makedirs(path.dirname(backup_file), exist_ok=True)
+        copy2(self.default_file, backup_file)
+        return backup_file
+
+
+    def next_invalid_config_backup_file(self):
+        """
+        Returns a non-existing path for an invalid config backup.
+
+        """
+        directory = path.dirname(self.default_file)
+        stem, suffix = path.splitext(path.basename(self.default_file))
+        candidate = path.join(directory, f"{stem}.invalid{suffix}")
+        if not path.exists(candidate):
+            return candidate
+
+        index = 1
+        while True:
+            candidate = path.join(directory, f"{stem}.invalid.{index}{suffix}")
+            if not path.exists(candidate):
+                return candidate
+            index += 1
+
+
+    def add_missing_defaults(self, target_config):
+        """
+        Adds newly introduced default settings to existing config files.
+
+        """
+        changed = False
+        for section, section_schema in self.schema["properties"].items():
+            if section not in target_config:
+                target_config[section] = {}
+                changed = True
+
+            if not isinstance(target_config[section], dict):
+                continue
+
+            for key, key_schema in section_schema["properties"].items():
+                if key not in target_config[section]:
+                    target_config[section][key] = deepcopy(key_schema["default"])
+                    changed = True
+
+        return changed
         
 ###############################################################################    
 #handled functions
@@ -242,5 +312,5 @@ class config:
             set config value
 
         """
-        config_theme = self.get("user_preference.theme")        
-        return eval(config_theme)
+        config_theme = self.get("user_preference.theme")
+        return THEME_CLASSES[config_theme]

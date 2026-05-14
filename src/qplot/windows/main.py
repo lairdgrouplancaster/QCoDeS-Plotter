@@ -2,7 +2,11 @@ from PyQt5 import (
     QtWidgets as qtw,
     QtCore
     )
-from PyQt5.QtGui import QIntValidator
+from PyQt5.QtGui import (
+    QDesktopServices,
+    QIntValidator,
+    QKeySequence,
+    )
 
 from qplot.windows import (
     plot1d,
@@ -11,6 +15,14 @@ from qplot.windows import (
 from ._widgets import (
     RunList,
     moreInfo,
+    )
+from ._widgets.preview import PREVIEW_SIZE
+from ._shortcuts import standard_key_sequences
+from ._window_controls import (
+    add_confirmation_options,
+    add_restore_defaults_option,
+    add_standard_window_controls,
+    close_all_warning_enabled,
     )
 from qplot.datahandling import (
     find_new_runs
@@ -26,9 +38,252 @@ from qcodes.dataset.sqlite.database import (
     get_DB_location
     )
 
+import sqlite3
 import os
+from datetime import datetime
+from time import perf_counter
 
 import numpy as np
+import pandas as pd
+
+
+def database_path_from_mime_data(mime_data):
+    """
+    Return a dropped local .db path, if the drop contains exactly one.
+
+    """
+    if not mime_data.hasUrls():
+        return None
+
+    urls = mime_data.urls()
+    if len(urls) != 1:
+        return None
+
+    url = urls[0]
+    if not url.isLocalFile():
+        return None
+
+    path = os.path.normpath(url.toLocalFile())
+    if os.path.isfile(path) and path.lower().endswith(".db"):
+        return path
+
+    return None
+
+
+def database_info_report(database_path):
+    """
+    Build a diagnostic text report for a QCoDeS database file.
+
+    """
+    if not database_path:
+        raise ValueError("No database is loaded.")
+
+    if not os.path.isfile(database_path):
+        raise FileNotFoundError(database_path)
+
+    path = os.path.abspath(database_path)
+    file_size = os.path.getsize(path)
+
+    conn = sqlite3.connect(path, timeout=10)
+    try:
+        cursor = conn.cursor()
+        user_version = _pragma_value(cursor, "user_version")
+        summary = {
+            "path": path,
+            "folder": os.path.dirname(path),
+            "filename": os.path.basename(path),
+            "file_size": file_size,
+            "file_modified": os.path.getmtime(path),
+            "user_version": user_version,
+            "application_id": _pragma_value(cursor, "application_id"),
+            "page_count": _pragma_value(cursor, "page_count"),
+            "page_size": _pragma_value(cursor, "page_size"),
+            "table_count": _table_count(cursor),
+            "experiment_count": _row_count(cursor, "experiments"),
+            "run_count": _row_count(cursor, "runs"),
+            "latest_run": _latest_run(cursor),
+            }
+    finally:
+        conn.close()
+
+    return _format_database_info(summary)
+
+
+def _pragma_value(cursor, name):
+    cursor.execute(f"PRAGMA {name}")
+    value = cursor.fetchone()
+    return value[0] if value else None
+
+
+def _table_count(cursor):
+    cursor.execute("""
+      SELECT COUNT(*)
+      FROM sqlite_master
+      WHERE type='table' AND name NOT LIKE 'sqlite_%'
+    """)
+    return cursor.fetchone()[0]
+
+
+def _row_count(cursor, table_name):
+    if not _table_exists(cursor, table_name):
+        return None
+
+    cursor.execute(f"SELECT COUNT(*) FROM {_sqlite_identifier(table_name)}")
+    return cursor.fetchone()[0]
+
+
+def _table_exists(cursor, table_name):
+    cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (table_name, )
+        )
+    return cursor.fetchone() is not None
+
+
+def _latest_run(cursor):
+    if not _table_exists(cursor, "runs"):
+        return None
+
+    cursor.execute("""
+      SELECT run_id, name, run_timestamp, completed_timestamp, is_completed, guid
+      FROM runs
+      ORDER BY run_id DESC
+      LIMIT 1
+    """)
+    value = cursor.fetchone()
+    if value is None:
+        return None
+
+    return {
+        "run_id": value[0],
+        "name": value[1],
+        "run_timestamp": value[2],
+        "completed_timestamp": value[3],
+        "is_completed": value[4],
+        "guid": value[5],
+        }
+
+
+def _sqlite_identifier(name):
+    return f'"{str(name).replace(chr(34), chr(34) * 2)}"'
+
+
+def _format_database_info(summary):
+    latest_run = summary["latest_run"]
+    latest_run_lines = ["Latest run: None"]
+    if latest_run:
+        status = "completed" if latest_run.get("is_completed") else "running or incomplete"
+        latest_run_lines = [
+            f"Latest run ID: {latest_run.get('run_id')}",
+            f"Latest run name: {_display_value(latest_run.get('name'))}",
+            f"Latest run status: {status}",
+            f"Latest run started: {_timestamp_value(latest_run.get('run_timestamp'))}",
+            f"Latest run completed: {_timestamp_value(latest_run.get('completed_timestamp'))}",
+            f"Latest run GUID: {_display_value(latest_run.get('guid'))}",
+            ]
+
+    page_bytes = None
+    if summary["page_count"] is not None and summary["page_size"] is not None:
+        page_bytes = int(summary["page_count"]) * int(summary["page_size"])
+
+    lines = [
+        f"Database: {summary['filename']}",
+        f"Path: {summary['path']}",
+        f"Folder: {summary['folder']}",
+        f"File size: {_format_bytes(summary['file_size'])}",
+        f"Last modified: {_timestamp_value(summary['file_modified'])}",
+        f"SQLite allocated size: {_format_bytes(page_bytes)}",
+        "",
+        f"Database schema version: {_display_value(summary['user_version'])}",
+        f"SQLite application_id: {_display_value(summary['application_id'])}",
+        "",
+        f"Tables: {_display_value(summary['table_count'])}",
+        f"Experiments: {_display_value(summary['experiment_count'])}",
+        f"Runs: {_display_value(summary['run_count'])}",
+        "",
+        *latest_run_lines,
+        ]
+    return "\n".join(lines)
+
+
+def _format_bytes(value):
+    if value is None:
+        return "Unknown"
+
+    value = int(value)
+    units = ("B", "KB", "MB", "GB", "TB")
+    size = float(value)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}" if unit != "B" else f"{value} B"
+        size /= 1024
+
+
+def _timestamp_value(value):
+    if value in (None, ""):
+        return "Not recorded"
+
+    try:
+        return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return str(value)
+
+
+def _display_value(value):
+    if value in (None, ""):
+        return "Unknown"
+    return str(value)
+
+
+class DatabasePathLineEdit(qtw.QLineEdit):
+    """
+    Read-only database path field that accepts dropped QCoDeS database files.
+
+    """
+    databaseDropped = QtCore.pyqtSignal(str)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self._database_path = ""
+        self.setAcceptDrops(True)
+
+    def setText(self, text):
+        self._database_path = str(text or "")
+
+        if not self._database_path:
+            super().setText("")
+            self.setToolTip("Current database path. Drop a QCoDeS .db file here to load it.")
+            return
+
+        super().setText(os.path.basename(self._database_path) or self._database_path)
+        self.setCursorPosition(0)
+        self.setToolTip(
+            "Current database:\n"
+            f"{self._database_path}\n\n"
+            "Drop a QCoDeS .db file here to load it."
+            )
+
+    def text(self):
+        return self._database_path
+
+    def dragEnterEvent(self, event):
+        if database_path_from_mime_data(event.mimeData()) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        path = database_path_from_mime_data(event.mimeData())
+        if path is None:
+            event.ignore()
+            return
+
+        event.acceptProposedAction()
+        self.databaseDropped.emit(os.path.abspath(path))
 
 
 class MainWindow(qtw.QMainWindow):
@@ -43,12 +298,14 @@ class MainWindow(qtw.QMainWindow):
     """
     
     def __init__(self):
+        startup_start = perf_counter()
         super().__init__()
        
         #vars
         self.config = config() # Connect to config.json in :/users/<user>/.qplot/
         self.windows = [] # prevent auto delete of windows
         self.ds = None
+        self.preview_size = self._configured_preview_size()
         self.dataset_holder = {}
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
@@ -62,12 +319,16 @@ class MainWindow(qtw.QMainWindow):
         
         #widgets
         self.l = qtw.QVBoxLayout()
+        self.l.setContentsMargins(8, 8, 8, 4)
+        self.l.setSpacing(6)
         
         #Core initialisation functions
         self.initRefresh()
         self.initMenu()
         self.initFile()
         self.initRunDisplay()
+        self.initShortcuts()
+        self.load_startup_database()
         
         #Final Setup
         w = qtw.QFrame()
@@ -77,6 +338,8 @@ class MainWindow(qtw.QMainWindow):
         # Fetch window size from config.json
         self.resize(*self.config.get("GUI.main_frame_size"))
         self.setWindowTitle("qPlot")
+        startup_elapsed = perf_counter() - startup_start
+        self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         
         # Get user's window dimensions to control new window position
         self.screenrect = qtw.QApplication.primaryScreen().availableGeometry()
@@ -90,45 +353,70 @@ class MainWindow(qtw.QMainWindow):
         self.show()
 
 
+    def load_startup_database(self):
+        """
+        Load the last database on startup when it is still available.
+
+        Missing or unset paths are ignored so first-run and moved-file startup
+        behaviour stays the same as an empty launch.
+
+        """
+        try:
+            last_file = self.config.get("file.last_file_path")
+        except KeyError:
+            return False
+
+        if not last_file:
+            return False
+
+        last_file = os.path.abspath(last_file)
+        if not os.path.isfile(last_file):
+            return False
+
+        return self.load_database_path(last_file)
+
+
     def initRefresh(self):
         """
         Initialise the main window refresh.Refresh checks for any new runs 
         added to the dataset.
         
         """
-        toolbar = self.addToolBar("Refresh Timer")
-        toolbar.setContextMenuPolicy(QtCore.Qt.PreventContextMenu)
-        toolbar.setMovable(False)
-        
-        # Widget production
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
-        
-        toolbar.addWidget(qtw.QLabel("Refresh interval (s): "))
-        toolbar.addWidget(self.spinBox)
+        self.spinBox.setSuffix(" s")
+        self.spinBox.setFixedWidth(84)
+        self.spinBox.setAlignment(QtCore.Qt.AlignRight)
+        self.spinBox.setToolTip("Refresh interval in seconds")
+        self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
     
         # Slot connections
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshMain)
         
-        # Produces tick box for whether to automatically open newly found plots
-        toolbar.addSeparator()
-        
-        toolbar.addWidget(qtw.QLabel("Toggle Auto-plot "))
-        
         self.autoPlotBox = qtw.QCheckBox()
-        toolbar.addWidget(self.autoPlotBox)
-        
-        # Make makeshift addStrech()
-        spacer = qtw.QWidget()
-        spacer.setSizePolicy(qtw.QSizePolicy.Expanding, qtw.QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
-        
-        # Add button to close all subplots
-        close_all_but = qtw.QPushButton("Close All Plots")
-        close_all_but.clicked.connect(self.closeAll)
-        toolbar.addWidget(close_all_but)
+        self.autoPlotBox.setToolTip("Automatically open plots for newly detected runs")
+
+        self.refreshDatabaseButton = qtw.QToolButton()
+        self.refreshDatabaseButton.setObjectName("refreshIconButton")
+        self.refreshDatabaseButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_BrowserReload)
+            )
+        self.refreshDatabaseButton.setToolTip("Refresh the database run list (R)")
+        self.refreshDatabaseButton.setAccessibleName("Refresh database")
+        self.refreshDatabaseButton.setFixedSize(28, 26)
+        self.refreshDatabaseButton.clicked.connect(self.refreshMain)
+
+        self.closeAllPlotsButton = qtw.QToolButton()
+        self.closeAllPlotsButton.setObjectName("closeAllPlotsButton")
+        self.closeAllPlotsButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_TitleBarCloseButton)
+            )
+        self.closeAllPlotsButton.setToolTip("Close all plot windows (Ctrl+Shift+W)")
+        self.closeAllPlotsButton.setAccessibleName("Close all plot windows")
+        self.closeAllPlotsButton.setFixedSize(28, 26)
+        self.closeAllPlotsButton.clicked.connect(self.closeAll)
     
     
     def initMenu(self):
@@ -141,24 +429,55 @@ class MainWindow(qtw.QMainWindow):
         fileMenu = menu.addMenu("&File") # Not sure why these all have &, but they do
         
         # Load database file
-        loadAction = qtw.QAction("&Load", self)
+        loadAction = qtw.QAction("&Load Database...", self)
         loadAction.setShortcut("Ctrl+L")
+        loadAction.setStatusTip("Load a QCoDeS database")
         loadAction.triggered.connect(self.getfile)
         fileMenu.addAction(loadAction)
         
-        # Load accessed database
-        self.loadLastAction = qtw.QAction("&Load Last", self)
-        self.loadLastAction.setShortcut("Ctrl+Shift+L")
-        self.loadLastAction.triggered.connect(self.loadLastFile)
-        fileMenu.addAction(self.loadLastAction)
-        if not self.config.get("file.last_file_path"): # has user openned a DB before?
-            self.loadLastAction.setDisabled(True)
+        self.recentDatabaseMenu = fileMenu.addMenu("Load &Recent Database")
+        self.refresh_recent_database_menu()
+
+        open_folder_action = qtw.QAction("Open Database &Folder", self)
+        open_folder_action.setShortcut("Ctrl+Shift+D")
+        open_folder_action.setStatusTip("Open the folder containing the current database")
+        open_folder_action.triggered.connect(self.open_database_location)
+        fileMenu.addAction(open_folder_action)
         
         # Force update check on database
         refreshAction = qtw.QAction("&Refresh", self)
         refreshAction.setShortcut("R")
         refreshAction.triggered.connect(self.refreshMain)
         fileMenu.addAction(refreshAction)
+
+        fileMenu.addSeparator()
+
+        self.closeAllPlotsAction = qtw.QAction("Close All &Plot Windows", self)
+        self.closeAllPlotsAction.setShortcut("Ctrl+Shift+W")
+        self.closeAllPlotsAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        self.closeAllPlotsAction.setStatusTip("Close all open plot windows")
+        self.closeAllPlotsAction.triggered.connect(self.closeAll)
+        fileMenu.addAction(self.closeAllPlotsAction)
+
+        closeAction = qtw.QAction("&Close Window", self)
+        closeAction.setShortcuts(
+            standard_key_sequences(QKeySequence.Close, ["Ctrl+W"])
+            )
+        closeAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        closeAction.setStatusTip("Close the main qPlot window")
+        closeAction.triggered.connect(self.close)
+        fileMenu.addAction(closeAction)
+
+        quitAction = qtw.QAction("&Quit qPlot", self)
+        quitAction.setShortcuts(
+            standard_key_sequences(QKeySequence.Quit, ["Ctrl+Q"])
+            )
+        quitAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        quitAction.setStatusTip("Quit qPlot")
+        quitAction.triggered.connect(self.close)
+        fileMenu.addAction(quitAction)
+
+        add_standard_window_controls(self)
         
         # Second dropdown menu
         prefMenu = menu.addMenu("&Options")
@@ -185,25 +504,99 @@ class MainWindow(qtw.QMainWindow):
             themeMenu.addAction(self.themes[itr])
             if theme.lower() == current_theme:
                 self.themes[itr].setChecked(True)
-                
-        confirm_exit = qtw.QAction("Confirm on Exit?", self, checkable=True)
-        confirm_exit.setChecked(self.config.get("user_preference.confirm_close"))
-        prefMenu.addAction(confirm_exit)
-        confirm_exit.toggled.connect(lambda checked: 
-                self.config.update("user_preference.confirm_close", checked)
-            )
-        
-        
+
+        preview_menu = prefMenu.addMenu("&Preview Size")
+        self.previewSizeGroup = qtw.QActionGroup(self)
+        self.previewSizeGroup.setExclusive(True)
+        self.previewSizeActions = []
+        for size in (100, 150, 200, 300, 500):
+            action = qtw.QAction(f"{size} px", self, checkable=True)
+            action.setData(size)
+            action.setChecked(size == self.preview_size)
+            action.triggered.connect(
+                lambda _, preview_size=size: self.change_preview_size(preview_size)
+                )
+            self.previewSizeGroup.addAction(action)
+            self.previewSizeActions.append(action)
+            preview_menu.addAction(action)
+
+        prefMenu.addSeparator()
+        add_restore_defaults_option(self, prefMenu)
+        prefMenu.addSeparator()
+        add_confirmation_options(self, prefMenu)
+
     def initFile(self):
         """
         Display text box for current selected database
         
         """
-        self.l.addWidget(qtw.QLabel("File Directory:"))
-        
-        self.fileTextbox = qtw.QLineEdit()
-        self.fileTextbox.setDisabled(True)
-        self.l.addWidget(self.fileTextbox)
+        self.targetLayout = qtw.QHBoxLayout()
+        self.targetLayout.setContentsMargins(8, 2, 8, 2)
+        self.targetLayout.setSpacing(6)
+
+        database_label = qtw.QLabel("Database:")
+        database_label.setToolTip("Current QCoDeS database")
+        self.targetLayout.addWidget(database_label)
+
+        self.fileTextbox = DatabasePathLineEdit()
+        self.fileTextbox.setObjectName("databasePathField")
+        self.fileTextbox.setReadOnly(True)
+        self.fileTextbox.setPlaceholderText("Drop a QCoDeS .db file here or use File -> Load")
+        self.fileTextbox.setToolTip(
+            "Current database path. Drop a QCoDeS .db file here to load it."
+            )
+        self.fileTextbox.databaseDropped.connect(self.load_database_path)
+        self.targetLayout.addWidget(self.fileTextbox, 1)
+
+        self.copyDatabasePathButton = qtw.QToolButton()
+        self.copyDatabasePathButton.setObjectName("databaseIconButton")
+        self.copyDatabasePathButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_FileDialogDetailedView)
+            )
+        self.copyDatabasePathButton.setToolTip("Copy the full database path")
+        self.copyDatabasePathButton.setAccessibleName("Copy database path")
+        self.copyDatabasePathButton.setFixedSize(28, 26)
+        self.copyDatabasePathButton.clicked.connect(self.copy_database_path)
+        self.targetLayout.addWidget(self.copyDatabasePathButton)
+
+        self.databaseInfoButton = qtw.QToolButton()
+        self.databaseInfoButton.setObjectName("databaseIconButton")
+        self.databaseInfoButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_MessageBoxInformation)
+            )
+        self.databaseInfoButton.setToolTip("Show database information")
+        self.databaseInfoButton.setAccessibleName("Show database information")
+        self.databaseInfoButton.setFixedSize(28, 26)
+        self.databaseInfoButton.clicked.connect(self.show_database_info)
+        self.targetLayout.addWidget(self.databaseInfoButton)
+
+        self.loadDatabaseButton = qtw.QToolButton()
+        self.loadDatabaseButton.setObjectName("databaseIconButton")
+        self.loadDatabaseButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_DialogOpenButton)
+            )
+        self.loadDatabaseButton.setToolTip("Load a QCoDeS .db database (Ctrl+L)")
+        self.loadDatabaseButton.setAccessibleName("Load database")
+        self.loadDatabaseButton.setFixedSize(28, 26)
+        self.loadDatabaseButton.clicked.connect(self.getfile)
+        self.targetLayout.addWidget(self.loadDatabaseButton)
+
+        self.openDatabaseFolderButton = qtw.QToolButton()
+        self.openDatabaseFolderButton.setObjectName("databaseIconButton")
+        self.openDatabaseFolderButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_DirOpenIcon)
+            )
+        self.openDatabaseFolderButton.setToolTip(
+            "Open the folder containing the current database (Ctrl+Shift+D)"
+        )
+        self.openDatabaseFolderButton.setAccessibleName("Open database folder")
+        self.openDatabaseFolderButton.setFixedSize(28, 26)
+        self.openDatabaseFolderButton.clicked.connect(self.open_database_location)
+        self.targetLayout.addWidget(self.openDatabaseFolderButton)
+
+        self.targetLayout.addStretch()
+        self.targetLayout.addSpacing(18)
+        self.targetLayout.addWidget(self.closeAllPlotsButton)
         
         if os.path.isfile(get_DB_location()):
             self.fileTextbox.setText(str(get_DB_location()))
@@ -211,37 +604,134 @@ class MainWindow(qtw.QMainWindow):
         
     def initRunDisplay(self):
         sublayout = qtw.QHBoxLayout()
-        
-        sublayout.addWidget(qtw.QLabel("Run id:"))
+        sublayout.setContentsMargins(8, 0, 8, 2)
+        sublayout.setSpacing(6)
+
+        sublayout.addWidget(qtw.QLabel("ID:"))
         
         self.selected_run_id = None
         
         # Box for User to enter specific run_id
         self.run_idBox = qtw.QLineEdit()
-        self.run_idBox.setMaximumWidth(50)
+        self.run_idBox.setMaximumWidth(58)
+        self.run_idBox.setFixedWidth(58)
         # Only allow int in box between 1 and 9999999
         self.run_idBox.setValidator(QIntValidator())
+        self.run_idBox.setPlaceholderText("ID")
+        self.run_idBox.setToolTip("Run ID to plot")
         self.run_idBox.textEdited.connect(self.update_run_id)
+        self.run_idBox.editingFinished.connect(self.sync_run_id_selection)
+        self.run_idBox.returnPressed.connect(self.openRun)
         sublayout.addWidget(self.run_idBox)
-        
-        sublayout.addStretch() # Force widgets on either side to the edge
 
-        # Opens all plots at run_id in self.run_idBox
-        pltbutton = qtw.QPushButton("Open Plots")
-        pltbutton.setFixedWidth(200)
-        pltbutton.clicked.connect(self.openRun)
-        sublayout.addWidget(pltbutton)
+        sublayout.addWidget(qtw.QLabel("Measurement:"))
+
+        self.measurementBox = qtw.QLineEdit()
+        self.measurementBox.setMaximumWidth(46)
+        self.measurementBox.setFixedWidth(46)
+        self.measurementBox.setText("*")
+        self.measurementBox.setToolTip("Measurement to plot; * to plot all")
+        self.measurementBox.returnPressed.connect(self.openRun)
+        sublayout.addWidget(self.measurementBox)
+
+        self.plotRunButton = qtw.QToolButton()
+        self.plotRunButton.setObjectName("plotIconButton")
+        self.plotRunButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_MediaPlay)
+            )
+        self.plotRunButton.setToolTip("Plot (Ctrl+Return)")
+        self.plotRunButton.setAccessibleName("Plot measurement")
+        self.plotRunButton.setFixedSize(28, 26)
+        self.plotRunButton.clicked.connect(self.openRun)
+        sublayout.addWidget(self.plotRunButton)
+
+        self.exportCsvButton = qtw.QToolButton()
+        self.exportCsvButton.setObjectName("exportIconButton")
+        self.exportCsvButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_DialogSaveButton)
+            )
+        self.exportCsvButton.setToolTip("Export CSV")
+        self.exportCsvButton.setAccessibleName("Export measurement to CSV")
+        self.exportCsvButton.setFixedSize(28, 26)
+        self.exportCsvButton.clicked.connect(self.exportRunCsv)
+        sublayout.addWidget(self.exportCsvButton)
+
+        sublayout.addStretch()
+
+        sublayout.addWidget(qtw.QLabel("Auto-plot"))
+        sublayout.addWidget(self.autoPlotBox)
+
+        sublayout.addSpacing(12)
+        sublayout.addWidget(qtw.QLabel("Refresh:"))
+        sublayout.addWidget(self.spinBox)
+        sublayout.addWidget(self.refreshDatabaseButton)
+
+        self.l.addLayout(self.targetLayout)
         self.l.addLayout(sublayout)
         
         # Long QTreeWidget/list to display all runs with small detail
         self.RunList = RunList()
-        self.l.addWidget(self.RunList)
         self.RunList.selected.connect(self.updateSelected)
         self.RunList.plot.connect(self.openPlot)
+        self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
+        self.RunList.previewExportRequested.connect(self.export_run_preview_csv)
         
         # Show all available info on the selected item in self.RunList
-        self.infoBox = moreInfo()
-        self.l.addWidget(self.infoBox)
+        self.infoBox = moreInfo(preview_size=self.preview_size)
+        self.infoBox.preview.plotRequested.connect(self.open_preview_plot)
+        self.infoBox.preview.exportRequested.connect(self.export_preview_csv)
+        self.infoBox.preview.previewsReady.connect(self.RunList.set_run_previews)
+        if self.fileTextbox.text() and self.RunList.topLevelItemCount():
+            self.infoBox.preview.set_database_runs(
+                self.fileTextbox.text(),
+                self.RunList.all_run_metadata()
+                )
+
+        self.runInfoSplitter = qtw.QSplitter(QtCore.Qt.Vertical)
+        self.runInfoSplitter.setHandleWidth(8)
+        self.runInfoSplitter.setChildrenCollapsible(True)
+        self.runInfoSplitter.setOpaqueResize(True)
+        self.runInfoSplitter.addWidget(self.RunList)
+        self.runInfoSplitter.addWidget(self.infoBox)
+        self.runInfoSplitter.setCollapsible(0, False)
+        self.runInfoSplitter.setCollapsible(1, True)
+        self.runInfoSplitter.setStretchFactor(0, 3)
+        self.runInfoSplitter.setStretchFactor(1, 2)
+        self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+        self.runInfoSplitter.handle(1).setToolTip(
+            "Drag to resize the run list and details panes"
+            )
+        self.l.addWidget(self.runInfoSplitter, 1)
+
+
+    def initShortcuts(self):
+        """
+        Register keyboard shortcuts for context menu and common run actions.
+
+        """
+        plot_entered = qtw.QAction("Plot Entered Run and Measurement", self)
+        plot_entered.setShortcut("Ctrl+Return")
+        plot_entered.setShortcutContext(QtCore.Qt.WindowShortcut)
+        plot_entered.setStatusTip("Plot the run and measurement entered above")
+        plot_entered.triggered.connect(lambda _: self.plotRunButton.click())
+        self.addAction(plot_entered)
+
+        plot_selected_all = qtw.QAction("Plot All Measurements in Selected Run", self)
+        plot_selected_all.setShortcut("Ctrl+Shift+Return")
+        plot_selected_all.setShortcutContext(QtCore.Qt.WindowShortcut)
+        plot_selected_all.setStatusTip("Plot all measurements in the selected run")
+        plot_selected_all.triggered.connect(self.open_selected_run_all)
+        self.addAction(plot_selected_all)
+
+        self.open_param_actions = []
+        for itr in range(9):
+            action = qtw.QAction(f"Plot Measurement {itr + 1} in Selected Run", self)
+            action.setShortcut(f"Ctrl+{itr + 1}")
+            action.setShortcutContext(QtCore.Qt.WindowShortcut)
+            action.setStatusTip(f"Plot measurement {itr + 1} in the selected run")
+            action.triggered.connect(lambda _, index=itr: self.open_param_by_index(index))
+            self.addAction(action)
+            self.open_param_actions.append(action)
         
 ###############################################################################
 #Open/Close events
@@ -263,7 +753,7 @@ class MainWindow(qtw.QMainWindow):
             else:
                 event.ignore()
                 return
-        
+
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
     
@@ -275,7 +765,27 @@ class MainWindow(qtw.QMainWindow):
         Closes all windows other than the main window.
 
         """
-        for win in self.windows.copy(): # Copy needed as close removes items
+        plot_windows = self.windows.copy()
+        if not plot_windows:
+            self.show_status("No plot windows to close.", 3000)
+            return
+
+        if close_all_warning_enabled(self.config):
+            count = len(plot_windows)
+            noun = "window" if count == 1 else "windows"
+            reply = qtw.QMessageBox.question(
+                self,
+                "Close All Plot Windows",
+                f"Close {count} plot {noun}?",
+                qtw.QMessageBox.Yes | qtw.QMessageBox.No,
+                qtw.QMessageBox.No,
+                )
+            if reply != qtw.QMessageBox.Yes:
+                self.show_status("Close all plot windows cancelled.", 3000)
+                return
+
+        self.show_status("Closing plot windows...", 3000)
+        for win in plot_windows:
             win.close()
         
         
@@ -294,6 +804,7 @@ class MainWindow(qtw.QMainWindow):
         self.windows.remove(win)
         self.remove_ds_at(win._guid)
         self.post_admin() # Update other plot windows
+        self.show_status(f"Closed {win.label}", 3000)
         del win
     
     
@@ -351,6 +862,7 @@ class MainWindow(qtw.QMainWindow):
         # Slot connectons
         win.closed.connect(self.onClose)
         win.make_ds.connect(self.add_ds_at)
+        win.previewTraceDropRequested.connect(self.add_dropped_preview_to_plot)
         if win.__class__.__name__ == "plot1d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
             win.remove_dataset.connect(self.remove_ds_at)
@@ -408,21 +920,106 @@ class MainWindow(qtw.QMainWindow):
 
 
     @QtCore.pyqtSlot()
+    def open_database_location(self):
+        """
+        Opens the current database folder in the system file browser.
+
+        """
+        database_path = self.fileTextbox.text()
+        if not database_path:
+            self.show_status("No database is loaded.", 5000)
+            return
+
+        folder = os.path.dirname(database_path)
+        if not os.path.isdir(folder):
+            self.show_error(
+                "Database Location Not Found",
+                "The current database folder could not be found.",
+                database_path
+                )
+            return
+
+        opened = QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(folder))
+        if opened:
+            self.show_status(f"Opened database folder: {folder}", 5000)
+        else:
+            self.show_error(
+                "Open Folder Failed",
+                "The database folder could not be opened.",
+                folder
+                )
+
+
+    @QtCore.pyqtSlot()
+    def copy_database_path(self):
+        """
+        Copies the full current database path to the clipboard.
+
+        """
+        database_path = self.fileTextbox.text()
+        if not database_path:
+            self.show_status("No database path to copy.", 3000)
+            return
+
+        qtw.QApplication.clipboard().setText(database_path)
+        self.show_status("Copied database path.", 3000)
+
+
+    @QtCore.pyqtSlot()
+    def show_database_info(self):
+        """
+        Shows a diagnostic report for the current database.
+
+        """
+        database_path = self.fileTextbox.text()
+        if not database_path:
+            self.show_status("No database is loaded.", 5000)
+            return
+
+        try:
+            report = database_info_report(database_path)
+        except Exception as err:
+            self.show_error(
+                "Database Information Failed",
+                "Could not read database information.",
+                str(err)
+                )
+            return
+
+        box = qtw.QMessageBox(qtw.QMessageBox.Information, "Database Information", report, parent=self)
+        copy_button = box.addButton("Copy", qtw.QMessageBox.ActionRole)
+        box.addButton(qtw.QMessageBox.Close)
+        box.exec_()
+
+        if box.clickedButton() == copy_button:
+            qtw.QApplication.clipboard().setText(report)
+            self.show_status("Copied database information.", 3000)
+
+
+    @QtCore.pyqtSlot()
     def refreshMain(self):
         """
         On self.monitor timer or force refresh, check for new runs in Database        
 
         """
         if not self.fileTextbox.text(): # If no selected database
+            self.show_status("Load a database before refreshing.", 5000)
+            return
+
+        self.show_status("Checking for new runs...", 0)
+
+        try:
+            # Find any runs after the last highest time
+            newRuns = find_new_runs(self.RunList.maxTime)
+
+            # Check runs markes as "Ongoing" to see if they have finished
+            self.RunList.checkWatching()
+        except Exception as err:
+            self.show_error("Refresh Failed", "Could not refresh the run list.", str(err))
             return
         
-        # Find any runs after the last highest time
-        newRuns = find_new_runs(self.RunList.maxTime)
-        
-        # Check runs markes as "Ongoing" to see if they have finished
-        self.RunList.checkWatching() 
-        
         if not newRuns: # Nothing found
+            self.show_status("No new runs found.", 3000)
             return
         
         # Convert to numpy array to handle Nan/null values which occur in rare cases
@@ -431,6 +1028,10 @@ class MainWindow(qtw.QMainWindow):
             default=0
             )
         self.RunList.addRuns(newRuns)
+        self.infoBox.preview.add_runs(newRuns)
+        count = len(newRuns)
+        noun = "run" if count == 1 else "runs"
+        self.show_status(f"Found {count} new {noun}.", 5000)
 
 
         if self.autoPlotBox.isChecked():
@@ -461,13 +1062,9 @@ class MainWindow(qtw.QMainWindow):
         
         # Confirm user did not cancel
         if os.path.isfile(filename):
-            
-            # Convert to python friendly str
-            abspath = os.path.abspath(filename)
-            
-            self.load_file(abspath)
-            
-            self.config.update("file.last_file_path", abspath)
+            self.load_database_path(filename)
+        else:
+            self.show_status("Database load cancelled.", 3000)
             
     
     @QtCore.pyqtSlot()
@@ -494,23 +1091,115 @@ class MainWindow(qtw.QMainWindow):
         # Confirm user did not cancel
         if os.path.isdir(foldername):
             self.config.update("file.default_load_path", foldername)
+            self.show_status(f"Default load folder set to {foldername}", 5000)
+        else:
+            self.show_status("Default load folder unchanged.", 3000)
               
             
-    @QtCore.pyqtSlot()
-    def loadLastFile(self):
+    @QtCore.pyqtSlot(str)
+    def load_database_path(self, filename):
         """
-        Event handler for load last action in file menu.
-        Loads last openned file in application or file location stored in
-        config.json if no other files have been openned.
+        Load a database path chosen from the file dialog or dropped by the user.
 
         """
-        if not self.localLastFile:
+        load_started_at = perf_counter()
+
+        if not os.path.isfile(filename):
+            self.show_error(
+                "Database Load Failed",
+                "The selected database file could not be found.",
+                str(filename)
+                )
+            return False
+
+        abspath = os.path.abspath(filename)
+        if not abspath.lower().endswith(".db"):
+            self.show_error(
+                "Database Load Failed",
+                "qPlot can only load QCoDeS .db database files.",
+                abspath
+                )
+            return False
+
+        if self.load_file(abspath, load_started_at):
+            self.config.update("file.last_file_path", abspath)
+            self.remember_recent_database(abspath)
+            return True
+
+        return False
+
+
+    def recent_database_paths(self):
+        """
+        Returns recent database paths, newest first.
+
+        """
+        try:
+            paths = list(self.config.get("file.recent_file_paths"))
+        except KeyError:
+            paths = []
+
+        try:
             last_file = self.config.get("file.last_file_path")
-        else:
-            last_file = os.path.abspath(self.localLastFile)
-        
-        if os.path.isfile(last_file):
-            self.load_file(last_file)
+        except KeyError:
+            last_file = ""
+
+        if last_file:
+            paths.insert(0, last_file)
+
+        deduped = []
+        seen = set()
+        for path in paths:
+            abspath = os.path.abspath(path)
+            if abspath in seen:
+                continue
+            seen.add(abspath)
+            deduped.append(abspath)
+
+        return deduped[:10]
+
+
+    def remember_recent_database(self, filename):
+        """
+        Stores a database path in the recent database list.
+
+        """
+        abspath = os.path.abspath(filename)
+        paths = [path for path in self.recent_database_paths() if path != abspath]
+        paths.insert(0, abspath)
+        paths = paths[:10]
+
+        self.config.config.setdefault("file", {})["recent_file_paths"] = paths
+        self.config.save_config(self.config.default_file)
+        self.refresh_recent_database_menu()
+
+
+    def refresh_recent_database_menu(self):
+        """
+        Rebuilds the File -> Load Recent Database menu.
+
+        """
+        if not hasattr(self, "recentDatabaseMenu"):
+            return
+
+        self.recentDatabaseMenu.clear()
+        paths = self.recent_database_paths()
+        self.recentDatabaseMenu.setEnabled(bool(paths))
+
+        if not paths:
+            empty_action = qtw.QAction("No Recent Databases", self)
+            empty_action.setEnabled(False)
+            self.recentDatabaseMenu.addAction(empty_action)
+            return
+
+        for index, path in enumerate(paths, start=1):
+            label = f"{index}. {os.path.basename(path) or path}"
+            action = qtw.QAction(label, self)
+            action.setToolTip(path)
+            action.setStatusTip(path)
+            action.setEnabled(os.path.isfile(path))
+            action.triggered.connect(lambda _, filename=path: self.load_database_path(filename))
+            self.recentDatabaseMenu.addAction(action)
     
     
     @QtCore.pyqtSlot(str)
@@ -526,13 +1215,18 @@ class MainWindow(qtw.QMainWindow):
             The unique id to load the dataset from.
 
         """
-        # Load from store if possible
-        if self.dataset_holder.get(guid, 0) == 0:
-            self.ds = load_by_guid(guid)
-        else:
-            self.ds = self.dataset_holder[guid]["dataset"]
+        self.show_status("Loading selected run...", 0)
+        try:
+            # Load from store if possible
+            if self.dataset_holder.get(guid, 0) == 0:
+                self.ds = load_by_guid(guid)
+            else:
+                self.ds = self.dataset_holder[guid]["dataset"]
+        except Exception as err:
+            self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+            return
         
-        self.selected_run_id = None # Prevents reloading the dataset through run_idbox
+        self.selected_run_id = self.ds.run_id
         self.run_idBox.blockSignals(True)
         self.run_idBox.setText(str(self.ds.run_id))
         self.run_idBox.blockSignals(False)
@@ -562,30 +1256,135 @@ class MainWindow(qtw.QMainWindow):
                 "Snapshot" : snap
                 }
         # Update infoBox
-        self.infoBox.setInfo(info)
+        self.infoBox.setInfo(info, self.ds)
+        self.show_status(
+            f"Selected run {self.ds.run_id} with {self.ds.number_of_results:,} points.",
+            5000
+            )
         
         
     @QtCore.pyqtSlot()
     def openRun(self):
         """
-        Event handler for Open Plots button.
-        Confirms that a run dataset is loaded into memory then passes to 
-        self.openPlot
+        Event handler for the plot button.
+        Plots the requested measurement for the requested run.
 
         Required in specific cases for error catching.
 
         """
-        if self.selected_run_id and self.fileTextbox.text():
-            try:
-                ds = load_by_id(self.selected_run_id)
-            except NameError as error:
-                print(type(error), error)
-                return
-            self.ds = ds
-        
-        # Last check that a dataset is loaded
-        if self.ds:
-            self.openPlot()
+        ds = self._dataset_for_plot_target()
+        if ds is None:
+            return
+
+        params = self._selected_measurement_params(ds)
+        if params is None:
+            return
+
+        self.ds = ds
+        self.openPlot(params=params)
+
+
+    @QtCore.pyqtSlot()
+    def open_selected_run_all(self):
+        """
+        Opens every plottable measurement in the currently selected table row.
+
+        """
+        if self.ds is None:
+            self.show_status("Select a run before plotting all measurements.", 5000)
+            return
+
+        self.openPlot()
+
+
+    @QtCore.pyqtSlot()
+    def exportRunCsv(self):
+        """
+        Exports the requested run and measurement data to a CSV file.
+
+        """
+        ds = self._dataset_for_plot_target()
+        if ds is None:
+            return
+
+        params = self._selected_measurement_params(ds)
+        if params is None:
+            return
+
+        self._export_measurement_csv(ds, params)
+
+
+    @QtCore.pyqtSlot(str)
+    def export_preview_csv(self, parameter_name):
+        """
+        Exports the measurement represented by a selected-run preview image.
+
+        """
+        if not self.ds:
+            self.show_status("Select a run before exporting a preview.", 5000)
+            return
+
+        self._export_preview_csv(self.ds, parameter_name)
+
+
+    @QtCore.pyqtSlot(str, str)
+    def export_run_preview_csv(self, guid, parameter_name):
+        """
+        Exports the measurement represented by a run-table preview image.
+
+        """
+        if not guid:
+            self.show_status("Select a run before exporting a preview.", 5000)
+            return
+
+        try:
+            ds = self._dataset_for_guid(guid)
+        except Exception as err:
+            self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+            return
+
+        self._export_preview_csv(ds, parameter_name)
+
+
+    def _export_preview_csv(self, dataset, parameter_name):
+        param = self._measurement_param_by_name(dataset, parameter_name)
+        if param is None:
+            self.show_status(f"No preview export found for {parameter_name}.", 5000)
+            return
+
+        self._export_measurement_csv(dataset, [param])
+
+
+    def _export_measurement_csv(self, ds, params):
+        if not params:
+            self.show_status("No plottable measurements to export for this run.", 5000)
+            return
+
+        default_name = self._default_export_filename(ds, params)
+        filename = qtw.QFileDialog.getSaveFileName(
+            self,
+            "Export CSV",
+            default_name,
+            "CSV files (*.csv)"
+            )[0]
+        if not filename:
+            self.show_status("CSV export cancelled.", 3000)
+            return
+        if not filename.lower().endswith(".csv"):
+            filename = f"{filename}.csv"
+
+        try:
+            frame = self._measurement_dataframe(ds, params)
+            frame.to_csv(filename, index=False)
+        except Exception as err:
+            self.show_error(
+                "CSV Export Failed",
+                "Could not export the selected measurement data.",
+                str(err)
+                )
+            return
+
+        self.show_status(f"Exported CSV: {filename}", 5000)
     
     
     @QtCore.pyqtSlot(str)
@@ -596,7 +1395,7 @@ class MainWindow(qtw.QMainWindow):
                  ):
         """
         Event handler for:
-            Open Plots button,
+            Plot button,
             RunList double click
             RunList context menu actions
         Takes the currently selected run and passes to Open Win to produce 
@@ -616,19 +1415,31 @@ class MainWindow(qtw.QMainWindow):
             Whether to display the window to the user. The default is True.
         
         """
-        # Get dataset with GUID or default
-        if not self.ds or (guid and self.ds.guid != guid):
-            # Load from store if possible
-            if self.dataset_holder.get(guid, 0) == 0:
-                ds = load_by_guid(guid)
+        if not self.ds and not guid:
+            self.show_status("Select a run before opening plots.", 5000)
+            return
+
+        self.show_status("Opening plots...", 0)
+
+        try:
+            # Get dataset with GUID or default
+            if not self.ds or (guid and self.ds.guid != guid):
+                # Load from store if possible
+                if self.dataset_holder.get(guid, 0) == 0:
+                    ds = load_by_guid(guid)
+                else:
+                    ds = self.dataset_holder[guid]["dataset"]
             else:
-                ds = self.dataset_holder[guid]["dataset"]
-        else:
-            ds = self.ds
+                ds = self.ds
+        except Exception as err:
+            self.show_error("Run Load Failed", "Could not load the selected run.", str(err))
+            return
             
         if not params:
             params = ds.get_parameters()
            
+        opened = 0
+        skipped = 0
         try:
             for param in params:
                 if param.depends_on != "":
@@ -639,7 +1450,7 @@ class MainWindow(qtw.QMainWindow):
                         for win in self.windows:
                             # Check if window is open
                             if win.ds == ds and win.param == param and isinstance(win, plot1d):
-                                print("Target parameter is already open.")
+                                skipped += 1
                                 skip = True
                                 break
                         if skip: continue
@@ -651,12 +1462,13 @@ class MainWindow(qtw.QMainWindow):
                             refrate = self.spinBox.value(),
                             show = show
                             )
+                        opened += 1
                         
                     else:
                         for win in self.windows:
                             # Check if window is open
                             if (win.ds == ds and win.param == param and isinstance(win, plot2d)):
-                                print("Target parameter is already open.")
+                                skipped += 1
                                 skip = True
                                 break
                         if skip: continue
@@ -668,32 +1480,344 @@ class MainWindow(qtw.QMainWindow):
                             refrate = self.spinBox.value(),
                             show = show
                             )
+                        opened += 1
                         
             self.post_admin() # Updates currently open windows
+
+            if opened:
+                noun = "plot" if opened == 1 else "plots"
+                self.show_status(f"Opened {opened} {noun}.", 5000)
+            elif skipped:
+                self.show_status("Selected plot windows are already open.", 5000)
+            else:
+                self.show_status("No plottable parameters found for this run.", 5000)
             
         except Exception as err:
             # atempt to prevent SQL lock outs
-            ds.conn.close()
-            raise err
+            try:
+                ds.conn.close()
+            except Exception:
+                pass
+            self.show_error("Plot Open Failed", "Could not open plot windows.", str(err))
+
+
+    def open_param_by_index(self, index : int):
+        """
+        Open the indexed dependent parameter for the selected run.
+
+        """
+        if not self.ds:
+            self.show_status("Select a run before opening a parameter.", 5000)
+            return
+
+        params = [param for param in self.ds.get_parameters() if param.depends_on != ""]
+        if index >= len(params):
+            self.show_status(f"Run has no parameter {index + 1}.", 5000)
+            return
+
+        self.openPlot(params=[params[index]])
+
+
+    @QtCore.pyqtSlot(str)
+    def open_preview_plot(self, parameter_name):
+        """
+        Open the plot represented by a double-clicked preview image.
+
+        """
+        if not self.ds:
+            self.show_status("Select a run before opening a preview plot.", 5000)
+            return
+
+        for param in self.ds.get_parameters():
+            if param.name == parameter_name and param.depends_on != "":
+                self.openPlot(params=[param])
+                return
+
+        self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+
+
+    @QtCore.pyqtSlot(str, str)
+    def open_run_preview_plot(self, guid, parameter_name):
+        """
+        Open the plot represented by a double-clicked run-table preview image.
+
+        """
+        if not guid:
+            self.show_status("Select a run before opening a preview plot.", 5000)
+            return
+
+        if not self.ds or self.ds.guid != guid:
+            try:
+                if self.dataset_holder.get(guid, 0) == 0:
+                    self.ds = load_by_guid(guid)
+                else:
+                    self.ds = self.dataset_holder[guid]["dataset"]
+            except Exception as err:
+                self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+                return
+
+        self.open_preview_plot(parameter_name)
+
+
+    @QtCore.pyqtSlot(object, str, str)
+    def add_dropped_preview_to_plot(self, target_win, guid, parameter_name):
+        """
+        Add a run-table preview trace to the plot it was dropped onto.
+
+        """
+        self.add_trace_to_plot(target_win, guid, parameter_name)
+
+
+    def add_trace_to_plot(self, target_win, source_guid, parameter_name, param=None):
+        """
+        Adds a plottable 1D parameter to an existing compatible 1D plot.
+
+        This is the shared implementation for the run-table context menu and
+        run-table preview drag/drop.
+
+        """
+        if target_win is None or not hasattr(target_win, "option_boxes"):
+            self.show_status("Drop traces onto a compatible line plot.", 5000)
+            return False
+
+        if param is None:
+            try:
+                param = self._parameter_from_guid(source_guid, parameter_name)
+            except Exception as err:
+                self.show_error(
+                    "Run Load Failed",
+                    f"Could not load run with GUID {source_guid}.",
+                    str(err)
+                    )
+                return False
+
+        if param is None or not getattr(param, "depends_on", ""):
+            self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+            return False
+
+        if len(getattr(param, "depends_on_", ())) != 1:
+            self.show_status("Only 1D measurements can be added as traces.", 5000)
+            return False
+
+        if tuple(param.depends_on_) != tuple(target_win.param.depends_on_):
+            self.show_status(
+                f"Cannot add {parameter_name}; the plot axes do not match.",
+                5000
+                )
+            return False
+
+        from_win = self._plot_window_for_param(source_guid, param)
+        if from_win == target_win:
+            self.show_status(f"Skipped {target_win.label}; source and target are the same.", 5000)
+            return False
+
+        if from_win is None:
+            from_win = self._open_hidden_trace_window(source_guid, param, target_win)
+            if from_win is None:
+                return False
+
+        self.get_1d_wins(target_win)
+        if target_win.option_boxes[-1].isEnabled():
+            box = target_win.option_boxes[-1]
+        else:
+            target_win.add_option_box()
+            box = target_win.option_boxes[-1]
+
+        index = box.option_box.findText(from_win.label)
+        if index < 0:
+            self.show_status(
+                f"Cannot add {parameter_name}; it is already shown or incompatible.",
+                5000
+                )
+            if not from_win.visible:
+                from_win.close()
+            return False
+
+        box.option_box.setCurrentIndex(index)
+        from_win.close()
+        return True
+
+
+    def _parameter_from_guid(self, guid, parameter_name):
+        ds = self._dataset_for_guid(guid)
+        return self._measurement_param_by_name(ds, parameter_name)
+
+
+    def _measurement_param_by_name(self, dataset, parameter_name):
+        for param in dataset.get_parameters():
+            if param.name == parameter_name:
+                return param
+        return None
+
+
+    def _dataset_for_guid(self, guid):
+        if self.dataset_holder.get(guid, 0) != 0:
+            return self.dataset_holder[guid]["dataset"]
+        return load_by_guid(guid)
+
+
+    def _plot_window_for_param(self, guid, param):
+        for win in self.windows:
+            try:
+                if win.ds.guid == guid and win.param.name == param.name:
+                    return win
+            except AttributeError:
+                continue
+        return None
+
+
+    def _open_hidden_trace_window(self, source_guid, param, target_win):
+        before = set(id(win) for win in self.windows)
+        self.openPlot(guid=source_guid, params=[param], show=False)
+
+        for win in reversed(self.windows):
+            if id(win) in before:
+                continue
+            try:
+                if win.ds.guid == source_guid and win.param.name == param.name:
+                    if win.ds.running and not target_win.monitor.isActive():
+                        target_win.monitorIntervalChanged(target_win.spinBox.value())
+                        target_win.toolbarRef.show()
+                    return win
+            except AttributeError:
+                continue
+
+        self.show_status(f"Could not prepare {param.name} for adding to the plot.", 5000)
+        return None
+
+
+    def _selected_measurement_params(self, dataset):
+        """
+        Returns the measurement parameters requested by the Measurement field.
+
+        """
+        params = [param for param in dataset.get_parameters() if param.depends_on != ""]
+        measurement = self.measurementBox.text().strip()
+
+        if measurement in ("", "*"):
+            return params
+
+        try:
+            index = int(measurement)
+        except ValueError:
+            self.show_status("Measurement must be a number or *.", 5000)
+            return None
+
+        if index < 1 or index > len(params):
+            self.show_status(
+                f"Run {dataset.run_id} has no measurement {index}.",
+                5000
+                )
+            return None
+
+        return [params[index - 1]]
+
+
+    def _dataset_for_plot_target(self):
+        """
+        Loads the dataset requested by the Run field.
+
+        """
+        if not self.fileTextbox.text():
+            self.show_status("Load a database before plotting or exporting.", 5000)
+            return None
+
+        if self.selected_run_id is None:
+            self.show_status("Enter a Run ID before plotting or exporting.", 5000)
+            return None
+
+        try:
+            return load_by_id(self.selected_run_id)
+        except Exception as error:
+            self.show_error(
+                "Run Load Failed",
+                f"Could not load Run ID {self.selected_run_id}.",
+                str(error)
+                )
+            return None
+
+
+    def _measurement_dataframe(self, dataset, params):
+        """
+        Builds a flat CSV-friendly dataframe for the selected measurement data.
+
+        """
+        frames = []
+        prefix_columns = len(params) > 1
+        for param in params:
+            param_data = dataset.get_parameter_data(param.name).get(param.name, {})
+            columns = {}
+            for name, values in param_data.items():
+                column_name = f"{param.name}.{name}" if prefix_columns else name
+                columns[column_name] = pd.Series(np.asarray(values).ravel())
+            frames.append(pd.DataFrame(columns))
+
+        return pd.concat(frames, axis=1) if frames else pd.DataFrame()
+
+
+    def _default_export_filename(self, dataset, params):
+        """
+        Returns a default CSV export path.
+
+        """
+        database_folder = os.path.dirname(self.fileTextbox.text())
+        measurement = "all" if len(params) != 1 else params[0].name
+        filename = self._safe_filename(f"run_{dataset.run_id}_{measurement}.csv")
+        return os.path.join(database_folder or os.getcwd(), filename)
+
+
+    def _safe_filename(self, filename):
+        """
+        Replaces path-hostile characters in a suggested filename.
+
+        """
+        return "".join(char if char.isalnum() or char in "._-" else "_" for char in filename)
     
     
     @QtCore.pyqtSlot(str)
     def update_run_id(self, text):
         """
-        Updates the select run id which is entered into the run id: text box.
-        Note that self.selected_run_id is set to None on RunList selection
+        Updates the Run ID target entered into the Run text box.
 
         Parameters
         ----------
         text : str/int
-            Run id number to be openned.
+            Run ID number to be plotted.
 
         """
+        self.RunList.blockSignals(True)
+        self.RunList.clearSelection()
+        self.RunList.blockSignals(False)
+        self.ds = None
+        self.infoBox.clear()
+
         try:
             self.selected_run_id = int(text)
         except ValueError:
             self.selected_run_id = None
             return
+
+
+    @QtCore.pyqtSlot()
+    def sync_run_id_selection(self):
+        """
+        Selects the typed Run ID in the table if it is currently visible.
+
+        """
+        if self.selected_run_id is None:
+            return
+
+        matches = self.RunList.findItems(
+            str(self.selected_run_id),
+            QtCore.Qt.MatchExactly,
+            0
+            )
+        if not matches:
+            return
+
+        item = matches[0]
+        self.RunList.setCurrentItem(item)
+        self.RunList.scrollToItem(item, qtw.QAbstractItemView.PositionAtCenter)
         
         
     def change_theme(self, theme, action):
@@ -711,6 +1835,7 @@ class MainWindow(qtw.QMainWindow):
         """
         if self.config.get("user_preference.theme") == theme: #already selected
             action.setChecked(True)
+            self.show_status(f"{theme.title()} theme already selected.", 3000)
             return
         for QActions in self.themes: # Untick other options
             if QActions != action:
@@ -723,9 +1848,122 @@ class MainWindow(qtw.QMainWindow):
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
+        self.show_status(f"Theme changed to {theme}.", 2000)
+
+
+    def change_preview_size(self, preview_size):
+        """
+        Updates preview image size and regenerates preview thumbnails.
+
+        """
+        preview_size = int(preview_size)
+        if preview_size == self.preview_size:
+            return
+
+        self.preview_size = preview_size
+        self._save_preview_size(preview_size)
+        if hasattr(self, "infoBox"):
+            self.infoBox.set_preview_size(preview_size)
+            if hasattr(self, "runInfoSplitter"):
+                self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+        self.show_status(f"Preview size set to {preview_size} px.", 3000)
+
+
+    @QtCore.pyqtSlot()
+    def restore_default_settings(self):
+        """
+        Confirms and restores all user settings to schema defaults.
+
+        """
+        reply = qtw.QMessageBox.question(
+            self,
+            "Restore Default Settings",
+            "Restore all qPlot settings to their defaults?",
+            qtw.QMessageBox.Yes | qtw.QMessageBox.No,
+            qtw.QMessageBox.No,
+            )
+        if reply != qtw.QMessageBox.Yes:
+            self.show_status("Default settings restore cancelled.", 3000)
+            return
+
+        self.config.reset_to_defaults()
+        self.apply_current_settings()
+        self.show_status("Default settings restored.", 5000)
+
+
+    def apply_current_settings(self):
+        """
+        Applies config-backed settings that can be updated in open windows.
+
+        """
+        self._sync_theme_actions()
+        self._sync_preview_size_actions()
+        self.setStyleSheet(self.config.theme.main)
+        for win in self.windows:
+            win.update_theme(self.config)
+
+
+    def _sync_theme_actions(self):
+        current_theme = self.config.get("user_preference.theme")
+        for action in getattr(self, "themes", []):
+            action.blockSignals(True)
+            action.setChecked(action.text().replace("&", "").lower() == current_theme)
+            action.blockSignals(False)
+
+
+    def _sync_preview_size_actions(self):
+        self.preview_size = self._configured_preview_size()
+        for action in getattr(self, "previewSizeActions", []):
+            action.blockSignals(True)
+            action.setChecked(action.data() == self.preview_size)
+            action.blockSignals(False)
+
+        if hasattr(self, "infoBox"):
+            self.infoBox.set_preview_size(self.preview_size)
+            if hasattr(self, "runInfoSplitter"):
+                self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+
+
+    def _configured_preview_size(self):
+        try:
+            return int(self.config.get("GUI.preview_size"))
+        except (KeyError, TypeError, ValueError):
+            return PREVIEW_SIZE
+
+
+    def _save_preview_size(self, preview_size):
+        gui_config = self.config.config.setdefault("GUI", {})
+        if "preview_size" not in gui_config:
+            gui_config["preview_size"] = self.preview_size
+        self.config.update("GUI.preview_size", int(preview_size))
+
+
+    def _details_pane_height(self):
+        return max(260, int(self.preview_size) + 84)
 
 ###############################################################################
 #Other funcs
+
+    def show_status(self, message : str, timeout : int = 5000):
+        """
+        Shows a short message in the main window status bar.
+
+        """
+        self.statusBar().showMessage(message, timeout)
+
+
+    def show_error(self, title : str, message : str, details : str = None):
+        """
+        Shows an error both in the status bar and in a message box.
+
+        """
+        self.show_status(message, 10000)
+
+        box = qtw.QMessageBox(qtw.QMessageBox.Warning, title, message, parent=self)
+        if details:
+            box.setDetailedText(details)
+        box.exec_()
+
 
     @QtCore.pyqtSlot(str)
     def add_ds_at(self, guid : str, ds = None):
@@ -782,7 +2020,7 @@ class MainWindow(qtw.QMainWindow):
         """
         # Check dataset is available to be removed
         if self.dataset_holder.get(guid, 0) == 0:
-            print("Trying to remove dataset that does not exist")
+            self.show_status("Trying to remove dataset that does not exist.", 5000)
             return
         
         # Track removal
@@ -809,10 +2047,10 @@ class MainWindow(qtw.QMainWindow):
                 del_timer.start(int(del_time*1000)) # convert to seconds
         
 
-    def load_file(self, abspath):
+    def load_file(self, abspath, load_started_at = None):
         """
         Updates the database for RunList display and loading datasets.
-        Used by self.loadLastFile() and self.getFile()
+        Used by file selection, drag-and-drop, recent databases, and startup loading.
 
         Parameters
         ----------
@@ -820,39 +2058,90 @@ class MainWindow(qtw.QMainWindow):
             Path to database.
 
         """
+        if load_started_at is None:
+            load_started_at = perf_counter()
         
         if abspath == get_DB_location(): # Already initialised in QCoDeS
-            return
-        
+            if not self.infoBox.preview.has_database(abspath):
+                self.infoBox.preview.set_database_runs(
+                    abspath,
+                    self.RunList.all_run_metadata()
+                    )
+            elapsed = perf_counter() - load_started_at
+            self.show_status(f"Database is already loaded ({elapsed:.2f} s).", 3000)
+            return True
+
+        previous_file = self.fileTextbox.text()
+        monitorTimer = self.spinBox.value()
+        self.show_status(f"Loading database {os.path.basename(abspath)}...", 0)
+
         # Pause refresh while working
         self.monitor.stop()
-        
-        # Clear widgets from last Database
-        self.run_idBox.setText("")
-        
-        self.RunList.clearSelection()
-        self.RunList.watching = []
-        self.RunList.scrollToTop()
-        
-        self.infoBox.clear()
-        self.infoBox.scrollToTop()
-        
-        # Update internal last file location using self.fileTextbox text
-        if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:
-            self.localLastFile = self.fileTextbox.text()
-            self.loadLastAction.setEnabled(True)
-        
-        # Update dsiplay and set database location within QCoDeS
-        self.fileTextbox.setText(abspath)
-        
-        initialise_or_create_database_at(abspath)
-            
-        self.RunList.setRuns()
-        
+
+        try:
+            # Clear widgets from last Database
+            self.run_idBox.setText("")
+            self.measurementBox.setText("*")
+
+            self.RunList.clearSelection()
+            self.RunList.watching = []
+            self.RunList.scrollToTop()
+
+            self.infoBox.clear()
+            self.infoBox.scrollToTop()
+
+            # Update internal last file location using self.fileTextbox text
+            if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:
+                self.localLastFile = self.fileTextbox.text()
+
+            # Update dsiplay and set database location within QCoDeS
+            self.fileTextbox.setText(abspath)
+
+            initialise_or_create_database_at(abspath)
+
+            runs = self.RunList.setRuns()
+            self.infoBox.preview.set_database_runs(abspath, runs)
+            self.select_default_run()
+
+        except Exception as err:
+            self.fileTextbox.setText(previous_file)
+            self.show_error(
+                "Database Load Failed",
+                f"Could not load database {abspath}.",
+                str(err)
+                )
+            if monitorTimer > 0:
+                self.monitor.start(int(monitorTimer * 1000))
+            return False
+
         # Restart refresh
-        monitorTimer = self.spinBox.value()
         if monitorTimer > 0:
             self.monitor.start(int(monitorTimer * 1000))
+        elapsed = perf_counter() - load_started_at
+        self.show_status(
+            (
+                f"Loaded {self.RunList.topLevelItemCount()} runs from "
+                f"{os.path.basename(abspath)} in {elapsed:.2f} s."
+                ),
+            5000
+            )
+        return True
+
+
+    def select_default_run(self):
+        """
+        Select the first visible run so the details pane is not left empty.
+
+        """
+        if self.RunList.topLevelItemCount() == 0:
+            return
+
+        first_item = self.RunList.topLevelItem(0)
+        if first_item is None:
+            return
+
+        self.RunList.setCurrentItem(first_item)
+        self.RunList.scrollToItem(first_item, qtw.QAbstractItemView.PositionAtTop)
             
     
     def post_admin(self):

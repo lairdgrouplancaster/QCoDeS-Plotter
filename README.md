@@ -1,112 +1,305 @@
-QCodes-Plotter
-==============
+# QCoDeS-Plotter
 
-QCodes-Plotter is an alternative data plotter aimed to provide fast data display of running and completed experiments using QCoDeS databases.
-
-<br/>
+QCoDeS-Plotter is a PyQt-based data viewer for QCoDeS databases. It is designed
+to inspect both completed and running experiments, with live refresh, line plots,
+heatmaps, 1D cut extraction, and simple data operations.
 
 > [!IMPORTANT]
-> Please note that plots will open empty while loading. Unless the app stops responding or errors appear in console, please wait for loading to finish.
+> Plot windows may appear before their data has finished loading. Check the
+> status bar at the bottom of the window; unless the app stops responding or an
+> error appears, wait for loading to complete.
 
-Installation
-------------
+## Requirements
 
-Install with, requires Git:
+QCoDeS-Plotter requires Python 3.11 or newer.
+
+The core runtime dependencies are installed automatically:
+
+* QCoDeS
+* PyQt5
+* pyqtgraph
+* numpy
+* pandas
+* jsonschema
+
+## Installation
+
+Using a virtual environment is recommended. Create and activate one first, then
+choose one of the two installation methods below.
+
+### Set up your virtual environment
+Unless you have a virtual environment already (which you'll know, because your terminal prompt will start with something like `(.venv)`):
+
+In VSCode:
+
+1. Open the Command Palette (`Ctrl+Shift+P`).
+2. Run `Python: Create Environment`.
+3. Choose `Venv`.
+4. Choose a Python 3.11 or newer base interpreter.
+   - On Windows, a typical standalone Python path looks like `C:\Program Files\Python311\python.exe`.
+    - Do not choose an interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder.
+5. Open a new VS Code terminal (`Terminal -> New Terminal`). The prompt should start with something like `(.venv) PS`, showing that you are in the right virtual environment.
+
+### Install option 1: For users
+
+Use this if you want to install the current GitHub version without editing the source code. This requires Git to be installed.
+
 ```console
-    pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
+python -m pip install -U pip
+python -m pip install git+https://github.com/EdwardLaird1/QCoDeS-Plotter.git@main
 ```
-Recommended to create and activate a virtual environment to avoid conflicts.
-<br/>
 
-How to Run
-----------
+### Install option 2: For editors
 
-After installing with pip into a virtual environment
-To run, either:
-* In its own IDE consol
-```python  
-      import qplot
-      qplot.run()
-```
-* open a powershell, activate the virtual environment and enter, (**Recomended**)
+Use this if you want to clone this repository and edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
+
 ```console
-      qplot
+git clone https://github.com/EdwardLaird1/QCoDeS-Plotter.git
+cd QCoDeS-Plotter
+python -m pip install -U pip
+python -m pip install -e .
 ```
-<br/>
 
-How to Use
-----------
-After opening a QCoDeS database (.db) with File -> Load, all runs within the database will be displayed in the central table. The table is sortable by clicking on any column header.
-Clicking on a run displays a more detailed view in the table below. <br/>
-After selecting a run, it can be opened with the "Open Plots" button or by double clicking the row in the central table. Alternatively you may enter a run ID into the text box above the central table, then use the "Open Plots" Button. <br/>
-Both double clicking and using the button will open a window with a plot display for each dependent parameter. To open a specific parameter, right click on the row and use the "Open" context menu. <br/> 
-The "Add _ to _" context menu is used to add additional lines to a plot window. It displays the parameters in the selected row (Add _) and then which plots that parameter can be added to (to _) by matching independent variable names. This can also be done within a line plot window and is mentioned later.
-<br/>
-You can alter how frequently the app checks for new runs by changing the interval box in the top toolbar. Setting the value to 0.0, will stop any checks. You can also manually refresh using File -> Refresh or by pressing R. The "Toggle Auto-plot" tickbox will open any new runs once ticked.
-<br/>
-The "Options" menu in the menu bar allows for: changing between light and dark mode and the default PyQt display, and allows for changing the default directory for the File -> Load dialog box. Both of these can also be changed using configuration options, see below. 
-<br/>
-<br/>
-Plot windows are separated into 2 types, line graphs and heatmaps. They both have toolbars which can be displayed or hidden using View -> Toolbars or by right-clicking on a toolbar. <br/>
-* The top refresh toolbar is only shown on runs which are live, but can be displayed on static runs. The refresh timer takes the same value as the main window if it is set to update, otherwise it tries to refresh every 5.0s.
-* The bottom toolbar displays the current coordinates of the mouse.
-* The left toolbar is used to change to assigned axes, this is mainly used for heatmaps with more than 2 independent variables but can be used to flip axes.
-* The left toolbar also contains specialist functionality.
-* The right toolbar controls operations, which are ran during the refresh process but after the data is collected from the database. After selecting from the bottom table, they appear in the top table. You can then enter inputs as needed and drag to sort the order in which the operations are run. (top to bottom)
-  The right toolbar is hidden by default but can be opened through any method or the plot context menu.
+## Running The App
 
+After installation, run:
 
-### Line Graphs
-* For Line graphs, you can change the colour of the line in the left toolbar. You may also add other lines from other open line graphs using the dropdown menu, control which y axis these are attached to, and change the color. The "X" button can be used to remove a line.
-* When multiple lines are connected to different sides, using scroll or drag on the central area of the plot controls both axes, while placing your cursor on a side axis will control only that axis.
-* Once a line is added, the source window can be closed. Live updates will continue with the same refresh rate.
-* Please note that secondary lines cannot be rotated when attached to the right axis.
+```console
+qplot
+```
 
-### Heatmaps
-* 1d sweeps can be performed on heatmaps by right clicking on the row/column that you wish to sweep and using "Plot Horizontal/Vertical Sweep".
-* This will create a new window with the sweep, and a cursor of the sweep location on the heatmap. The sweep is <ins>live data compatible</ins>.
-* Within the sweep plot, you may move the sweep location with the slider on the left, this can also be done by dragging the cursor on the heatmap.
-* You may also switch which is the sweep parameter and the fixed parameter using the "x axis" or "fixed parameter" dropdown boxes.
-* Any changes in the sweep plot will be reflected in the cursor, including parameter and <ins>colour change</ins>.
-* Once a sweep is open, the heatmap can be closed and the sweep will remain open and live.
-* Sweeps can be added to 1d plots if the sweep's x axis matches the 1d plots independant variable. Manual refresh may be needed to pick the option and update any changes.
+You can also start it from Python:
 
-<br/>
+```python
+import qplot
 
-Configuration Options
----------------------
-On first run, a config.json file is created in your user directory under C:/Users/\<User\>/.qplot/config.json. Values can maually be changed from there or using commands.
-To see all config options, in terminal run:
+qplot.run()
+```
+
+## Opening A Database
+
+1. Open the app.
+2. Drag a QCoDeS `.db` file onto the database path field, or select
+   `File -> Load Database...`.
+3. You will see controls at the top, a run table in the middle, and information tabs on the bottom. The run table gives basic information about each run. The information tabs give more detail, including the full nested key-value structure created by QCoDeS.
+
+## Refresh And Live Data
+You can plot live runs from QCoDeS. The refresh interval in the top toolbar controls how often the main window checks the current database for new runs. Setting it to `0.0` disables automatic
+checks.
+
+Use `File -> Refresh` or press `R` to refresh manually.
+
+`Auto-plot` opens newly detected runs automatically.
+
+## Plotting A Measurement
+There are three ways to do this:
+1. Double-click on its preview in the run table.
+2. Right-click on the run table, and use the pop-up.
+3. Set ID and measurement at the top of the window and press the plot button.
+
+You can also use this window to export measurements as CSV, either using the save button or by right-clicking on a preview.
+
+## Plot Windows
+
+The plot window depends on what kind of data you have in your measurement:
+
+* Parameters with one independent variable open as line plots.
+* Parameters with two or more independent variables open as heatmaps.
+
+Each plot window has toolbars or dock panels that can be shown or hidden from
+`View -> Toolbars`, by right-clicking a toolbar/panel, or with keyboard
+shortcuts.
+
+Common plot controls:
+
+* Mouse wheel over the plot: zoom.
+* Left-click drag: pan.
+* Right-click: open the plot context menu, including `Autoscale` and `Autoscale color`
+* `Alt`/`Option` + left-click drag: draw a marquee selection. Drag its handles to resize it, right-click inside it for zoom and statistics actions, and press `Esc` or double-click the plot to clear it.
+* Double-click an X or Y axis, or the colour scale bar: open its scaling dialog.
+* To fast scale the X or Y axis:
+  - Right-drag on the plot
+  - Scroll over the axis
+* The bottom toolbar shows cursor coordinates.
+* The left panel controls assigned axes and plot-specific options.
+* The right `Operations` panel applies data operations during refresh, after data is loaded from the database.
+
+## Line Plots
+Line plots support multiple compatible traces in one window. To add a trace, drag the preview thumbnail from the run table onto an existing line plot. You can also use the left panel. Compatible plots are matched by independent variable name.
+
+The source window for an added line can be closed after the line is added. Live updates continue at the same refresh rate.
+
+When multiple lines use different y axes:
+
+* Zooming or dragging in the central plot controls both axes.
+* Interacting with a side axis controls that axis only.
+* Secondary lines attached to the right axis cannot be rotated.
+
+## Heatmaps
+
+* To fast scale the color bar:
+  - Drag one handle to adjust its limits
+  - Drag between handles to slide the range
+  - Drag outside the handles to widen/narrow the range.
+
+Heatmaps support 1D cut extraction:
+
+* Right-click the heatmap and select `Plot Horizontal Cut` or
+  `Plot Vertical Cut`.
+* A cut window opens, with a cursor shown on the heatmap.
+* Move the cut position with the cut window slider or by dragging the cursor
+  on the heatmap.
+* Switch the cut and fixed parameters with the `x axis` and `fixed parameter` dropdowns.
+* Cut plots are live-data compatible.
+* Cut plots can be added to compatible 1D plots when their x axis matches the 1D plot's independent variable.
+
+## Keyboard Shortcuts
+
+General shortcuts:
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+L` | Load a database |
+| `R` | Refresh the current window |
+| `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
+| `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
+| `Ctrl+M` / `Alt+Space, N` | Minimize the current window |
+| `Alt+Space, X` / `Alt+Space, R` | Maximize or restore the current window on Windows |
+| `Ctrl+Cmd+F` / `F11` | Enter or leave full screen |
+| `Ctrl+C` / `Cmd+C` | Copy selected cells or rows in the run details pane |
+| `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the current cell or value in the run details pane |
+| `Shift+F10` | Open the focused widget's context menu |
+| `Ctrl+Shift+D` | Open the current database folder |
+| `Ctrl+Shift+M` | Bring the main window to front, or behind the graph windows |
+| `Ctrl+Return` | Plot the requested run and measurement |
+| `Ctrl+Shift+Return` | Plot all measurements in the selected run |
+| `Ctrl+1` to `Ctrl+9` | Plot measurements 1 to 9 in the selected run |
+| `Ctrl+Shift+W` | Close all plot windows |
+
+Plot-window shortcuts:
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+0` | Autoscale the plot view |
+| `Ctrl+E` | Export the plot |
+| `Ctrl+Shift+O` | Show or hide the operations panel |
+| `Ctrl+Alt+R` | Show or hide the refresh toolbar |
+| `Ctrl+Alt+C` | Show or hide the coordinate toolbar |
+| `Ctrl+Alt+A` | Show or hide the axis control panel |
+| `Ctrl+Alt+O` | Show or hide the operations dock |
+| `Ctrl+Alt+S` | Snap the 1D coordinate readout to the nearest trace point |
+
+Heatmap shortcuts:
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+Shift+C` | Autoscale the colour range |
+| `Ctrl+Shift+H` | Open a horizontal cut |
+| `Ctrl+Shift+V` | Open a vertical cut |
+| Arrow keys | Move the selected cut cursor by one pixel |
+
+Dynamic context menu entries are numbered or underlined. Once the menu is open,
+press the shown number or letter to trigger that entry.
+
+## Configuration
+
+On first run, QCoDeS-Plotter creates a configuration file at:
+
+```text
+~/.qplot/config.json
+```
+
+Show available config commands:
+
 ```console
 qplot-cfg -info
 ```
-You may also get more infomation on a desired command using `-info <command>`, i.e.
+
+Show help for a specific command:
+
 ```console
 qplot-cfg -info dump
 ```
 
-Changes to config file can be done in file, IDE, or terminal. (Top box is python IDE, bottom is terminal)
-* To see the current config file, use:
+Print the current config:
+
 ```python
-    from qplot import config
-    config().dump()
+from qplot import config
+
+config().dump()
 ```
+
 ```console
-    qplot-cfg -dump
+qplot-cfg -dump
 ```
-* To manually change a config value, use: (both take `key, value`, as such).
+
+Update a config value:
+
 ```python
-    config().update("file.default_load_path", "C:\Users\<user>\Desktop")
+from qplot import config
+
+config().update("file.default_load_path", r"C:\Users\<user>\Desktop")
 ```
+
 ```console
-    qplot-cfg set_value file.default_load_path C:\Users\<user>\Desktop
+qplot-cfg -set_value file.default_load_path "C:\Users\<user>\Desktop"
 ```
-> You will need to use "" if the value has spaces, this will not affect object typing.
-  
-* To reset config to defaults
+
+Use quotes around terminal values that contain spaces.
+
+Reset config to defaults:
+
 ```python
-    config().reset_to_defaults()
+from qplot import config
+
+config().reset_to_defaults()
 ```
+
 ```console
-    qplot-cfg -reset
+qplot-cfg -reset
+```
+
+## Development
+
+For local development, use the project virtual environment and install in
+editable mode.
+
+Windows:
+
+```console
+.venv-win\Scripts\python.exe -m pip install -e .
+```
+
+macOS/Linux:
+
+```console
+.venv/bin/python -m pip install -e .
+```
+
+Run the current non-GUI tests:
+
+Windows:
+
+```console
+.venv-win\Scripts\python.exe -m pytest
+```
+
+macOS/Linux:
+
+```console
+.venv/bin/python -m pytest
+```
+
+Run the manual GUI smoke script:
+
+Windows:
+
+```console
+.venv-win\Scripts\python.exe tests/test.py
+```
+
+macOS/Linux:
+
+```console
+.venv/bin/python tests/test.py
 ```

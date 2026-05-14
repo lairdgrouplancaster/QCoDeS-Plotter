@@ -1,7 +1,7 @@
-import pyqtgraph as pg
-
 from PyQt5 import QtCore
 from PyQt5.QtGui import QColor
+
+import pyqtgraph as pg
 
 class subplot1d(pg.PlotDataItem):
     """
@@ -134,8 +134,118 @@ class custom_viewbox(pg.ViewBox):
     """
     main_moved = QtCore.pyqtSignal([object])
     autoRange_triggered = QtCore.pyqtSignal()
+
+    def __init__(self, *args, **kargs):
+        super().__init__(*args, **kargs)
+        self._marquee_owner = None
+        self.setAcceptHoverEvents(True)
+
+
+    def set_marquee_owner(self, owner):
+        self._marquee_owner = owner
+
+
+    def _handle_marquee_mouse_drag(self, ev):
+        owner = self._marquee_owner
+        if owner is None or ev.button() != QtCore.Qt.LeftButton:
+            return False
+
+        if ev.isStart():
+            mode = owner.marquee_drag_mode_at(ev.buttonDownScenePos())
+            if mode is None and not ev.modifiers() & QtCore.Qt.AltModifier:
+                return False
+
+            owner.begin_marquee_drag(
+                self.mapSceneToView(ev.buttonDownScenePos()),
+                mode,
+                )
+
+        if not owner.is_marquee_dragging():
+            return False
+
+        self._update_marquee_cursor(ev.scenePos(), ev.modifiers())
+        owner.drag_marquee_to(
+            self.mapSceneToView(ev.scenePos()),
+            ev.modifiers(),
+            )
+        if ev.isFinish():
+            owner.finish_marquee_drag()
+            self._update_marquee_cursor(ev.scenePos(), ev.modifiers())
+
+        ev.accept()
+        return True
+
+
+    def _update_marquee_cursor(self, scene_pos, modifiers=QtCore.Qt.NoModifier):
+        owner = self._marquee_owner
+        if owner is None:
+            self.unsetCursor()
+            return
+
+        cursor_shape = owner.marquee_cursor_shape_at(scene_pos, modifiers)
+        if cursor_shape is None:
+            self.unsetCursor()
+        else:
+            self.setCursor(cursor_shape)
     
+
+    def hoverMoveEvent(self, ev):
+        self._update_marquee_cursor(ev.scenePos(), ev.modifiers())
+        super().hoverMoveEvent(ev)
+
+
+    def hoverLeaveEvent(self, ev):
+        owner = self._marquee_owner
+        if owner is None or not owner.is_marquee_dragging():
+            self.unsetCursor()
+        super().hoverLeaveEvent(ev)
+
+
+    def mouseDoubleClickEvent(self, ev):
+        owner = self._marquee_owner
+        if owner is not None and getattr(owner, "marquee", None) is not None:
+            owner.clear_marquee()
+            self.unsetCursor()
+            ev.accept()
+            return
+
+        super().mouseDoubleClickEvent(ev)
+
+
+    def mouseClickEvent(self, ev):
+        owner = self._marquee_owner
+        if (
+                owner is not None
+                and ev.button() == QtCore.Qt.RightButton
+                and owner.open_marquee_context_menu(
+                    ev.scenePos(),
+                    self._mouse_event_global_pos(ev),
+                    )
+                ):
+            ev.accept()
+            return
+
+        super().mouseClickEvent(ev)
+
+
+    def _mouse_event_global_pos(self, ev):
+        for attr_name in ("screenPos", "globalPos"):
+            attr = getattr(ev, attr_name, None)
+            if attr is None:
+                continue
+            pos = attr() if callable(attr) else attr
+            if isinstance(pos, QtCore.QPointF):
+                return pos.toPoint()
+            if isinstance(pos, QtCore.QPoint):
+                return pos
+
+        return None
+
+
     def mouseDragEvent(self, ev, axis=None):
+        if axis is None and self._handle_marquee_mouse_drag(ev):
+            return
+
         super().mouseDragEvent(ev, axis=axis)
         
         if axis is None:

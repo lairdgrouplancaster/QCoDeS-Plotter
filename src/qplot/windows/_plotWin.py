@@ -1,11 +1,15 @@
 from typing import TYPE_CHECKING
 
-from math import log10
-
-import pyqtgraph as pg
+from math import isclose, isfinite, log10
+from os import path
+from time import perf_counter
 
 from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore 
+from PyQt5 import QtCore, QtGui
+from PyQt5.QtGui import QKeySequence
+
+import pyqtgraph as pg
+from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -21,10 +25,59 @@ from ._widgets import (
     QDock_context,
     operations_widget,
     )
+from ._shortcuts import standard_key_sequences
+from ._dragdrop import (
+    preview_drop_is_compatible,
+    run_preview_payload_from_mime,
+    )
+from ._window_controls import (
+    add_confirmation_options,
+    add_standard_window_controls,
+    )
 
 if TYPE_CHECKING:
     import qplot
     import qcodes
+
+
+def _axis_scale_power_text(scale):
+    """
+    Return a compact HTML power-of-ten label for an axis display scale.
+
+    """
+    if not isfinite(scale) or scale <= 0 or isclose(scale, 1.0):
+        return ""
+
+    exponent = round(log10(scale))
+    if isclose(scale, 10**exponent, rel_tol=1e-9, abs_tol=0.0):
+        return f"10<sup>{exponent}</sup>"
+
+    return f"{scale:g}"
+
+
+class _PowerScaledAxisItem(pg.AxisItem):
+    """
+    Display pyqtgraph's auto SI scaling as powers of ten in the axis unit.
+
+    """
+
+    def labelString(self) -> str:
+        if self.autoSIPrefix and not isclose(self.autoSIPrefixScale, 1.0):
+            unit_scale = 1.0 / self.autoSIPrefixScale
+        else:
+            unit_scale = 1.0
+
+        scale_text = _axis_scale_power_text(unit_scale)
+        if self.labelUnits == "":
+            units = f"({scale_text})" if scale_text else ""
+        elif scale_text:
+            units = f"({scale_text} {self.labelUnits})"
+        else:
+            units = f"({self.labelUnitPrefix}{self.labelUnits})"
+
+        text = f"{self.labelText} {units}"
+        style = ";".join([f"{k}: {self.labelStyle[k]}" for k in self.labelStyle])
+        return f"<span style='{style}'>{text}</span>"
 
 
 class plotWidget(qtw.QMainWindow):
@@ -49,8 +102,15 @@ class plotWidget(qtw.QMainWindow):
     closed = QtCore.pyqtSignal([object])
     end_wait = QtCore.pyqtSignal()
     make_ds = QtCore.pyqtSignal([str])
+    previewTraceDropRequested = QtCore.pyqtSignal(object, str, str)
     
     _label_width = 95 #About the size of 3 s.f. scientific
+    _toggle_shortcuts = {
+        "Refresh Timer": "Ctrl+Alt+R",
+        "Co-ordinates": "Ctrl+Alt+C",
+        "Line control": "Ctrl+Alt+A",
+        "Operations": "Ctrl+Alt+O",
+    }
     
     def __init__(self, 
                  guid : str, 
@@ -83,7 +143,6 @@ class plotWidget(qtw.QMainWindow):
             When false reduces produced widgets to reduce workload.
 
         """
-        print("Working, please wait")
         super().__init__()
         
         ### CORE VARIABLES
@@ -100,15 +159,27 @@ class plotWidget(qtw.QMainWindow):
         self.config = config
         self.visible = show
         self.operations = {}
+        self._last_error_text = None
+        self.show_status("Working, please wait", 0)
         
         ### WIDGETS
         self.layout = qtw.QVBoxLayout()
         
         self.widget = pg.GraphicsLayoutWidget()
+        self._install_preview_drop_target()
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
-        self.plot = self.widget.addPlot(viewBox=self.vb)
+        self.vb.setDefaultPadding(0)
+        self.plot = self.widget.addPlot(
+            viewBox=self.vb,
+            axisItems={
+                "bottom": _PowerScaledAxisItem("bottom"),
+                "left": _PowerScaledAxisItem("left"),
+                },
+            )
         self.vb.setParent(self.plot)
+        self.vb.set_marquee_owner(self)
+        self._init_marquee()
         self.layout.addWidget(self.widget)
         
         ### CORE INIT FUNCTIONS
@@ -145,17 +216,601 @@ class plotWidget(qtw.QMainWindow):
         #start refresh cycle if live
         if self.ds.running: 
             self.monitor.start((int(self.spinBox.value() * 1000)))
+
+
+    def _install_preview_drop_target(self):
+        self.setAcceptDrops(True)
+        self.widget.setAcceptDrops(True)
+        self.widget.installEventFilter(self)
+
+        viewport = self.widget.viewport() if hasattr(self.widget, "viewport") else None
+        if viewport is not None:
+            viewport.setAcceptDrops(True)
+            viewport.installEventFilter(self)
+
+
+    def _set_param_axis_label(self, axis, param):
+        self.plot.setLabel(axis=axis, text=param.label, units=param.unit)
+
+
+    def _set_param_axis_labels(self):
+        self._set_param_axis_label("bottom", self.axis_param["x"])
+        self._set_param_axis_label("left", self.axis_param["y"])
+
+
+    def eventFilter(self, source, event):
+        if event.type() in (
+            QtCore.QEvent.DragEnter,
+            QtCore.QEvent.DragMove,
+            QtCore.QEvent.Drop,
+            ):
+            if self._handle_preview_drag_drop(event):
+                return True
+
+        return super().eventFilter(source, event)
+
+
+    def dragEnterEvent(self, event):
+        if self._handle_preview_drag_drop(event):
+            return
+        super().dragEnterEvent(event)
+
+
+    def dragMoveEvent(self, event):
+        if self._handle_preview_drag_drop(event):
+            return
+        super().dragMoveEvent(event)
+
+
+    def dropEvent(self, event):
+        if self._handle_preview_drag_drop(event):
+            return
+        super().dropEvent(event)
+
+
+    def _handle_preview_drag_drop(self, event):
+        payload = run_preview_payload_from_mime(event.mimeData())
+        if payload is None:
+            return False
+
+        if not self.accepts_preview_trace_drop(payload):
+            event.ignore()
+            return True
+
+        if event.type() == QtCore.QEvent.Drop:
+            event.setDropAction(QtCore.Qt.CopyAction)
+            event.accept()
+            self.previewTraceDropRequested.emit(
+                self,
+                payload["guid"],
+                payload["parameter"]
+                )
+            return True
+
+        event.acceptProposedAction()
+        return True
+
+
+    def accepts_preview_trace_drop(self, payload):
+        if not hasattr(self, "option_boxes"):
+            return False
+
+        return preview_drop_is_compatible(
+            getattr(self.param, "depends_on_", ()),
+            payload
+            )
+
+
+    def _init_marquee(self):
+        """
+        Create the reusable marquee graphics shown after Alt-dragging.
+
+        """
+        self.marquee = None
+        self._marquee_drag_state = None
+
+        self.marquee_highlight = qtw.QGraphicsRectItem()
+        highlight_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 135))
+        highlight_pen.setWidthF(3)
+        highlight_pen.setCosmetic(True)
+        self.marquee_highlight.setPen(highlight_pen)
+        self.marquee_highlight.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+        self.marquee_highlight.setZValue(18)
+        self.marquee_highlight.hide()
+        self.marquee_highlight.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.plot.addItem(self.marquee_highlight)
+
+        self.marquee_outline = qtw.QGraphicsRectItem()
+        pen = QtGui.QPen(QtGui.QColor(65, 65, 65, 220))
+        pen.setWidthF(1.2)
+        pen.setCosmetic(True)
+        pen.setStyle(QtCore.Qt.DashLine)
+        self.marquee_outline.setPen(pen)
+        self.marquee_outline.setBrush(QtGui.QBrush(QtGui.QColor(40, 40, 40, 24)))
+        self.marquee_outline.setZValue(19)
+        self.marquee_outline.hide()
+        self.marquee_outline.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.plot.addItem(self.marquee_outline)
+
+        self.marquee_handles = pg.ScatterPlotItem(
+            symbol="s",
+            size=6,
+            pen=pg.mkPen((20, 20, 20, 230), width=1, cosmetic=True),
+            brush=pg.mkBrush(245, 245, 245, 230),
+            )
+        self.marquee_handles.setZValue(20)
+        self.marquee_handles.hide()
+        self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.plot.addItem(self.marquee_handles)
+
+
+    def is_marquee_dragging(self):
+        return self._marquee_drag_state is not None
+
+
+    def current_marquee_drag_mode(self):
+        if self._marquee_drag_state is None:
+            return None
+
+        return self._marquee_drag_state["mode"]
+
+
+    def begin_marquee_drag(self, start, mode=None):
+        """
+        Start creating or resizing a marquee in plot coordinates.
+
+        """
+        start = QtCore.QPointF(start)
+        if mode is None:
+            mode = "new"
+
+        handle_offset = QtCore.QPointF()
+        if mode != "new" and self.marquee is not None:
+            handle_point = self._marquee_handle_points_for_rect(self.marquee)[mode]
+            handle_offset = start - handle_point
+
+        self._marquee_drag_state = {
+            "anchor": QtCore.QPointF(start),
+            "handle_offset": QtCore.QPointF(handle_offset),
+            "mode": mode,
+            "rect": QtCore.QRectF(self.marquee) if self.marquee is not None else None,
+            }
+
+        if mode == "new":
+            self.set_marquee_rect(QtCore.QRectF(start, start))
+
+
+    def drag_marquee_to(self, point, modifiers=QtCore.Qt.NoModifier):
+        """
+        Update the marquee during an active drag.
+
+        """
+        point = QtCore.QPointF(point)
+        state = self._marquee_drag_state
+        if state is None:
+            return
+
+        if state["mode"] == "new" or state["rect"] is None:
+            rect = QtCore.QRectF(state["anchor"], point)
+        else:
+            rect = QtCore.QRectF(state["rect"])
+            offset = state.get("handle_offset", QtCore.QPointF())
+            point = QtCore.QPointF(
+                point.x() - offset.x(),
+                point.y() - offset.y(),
+                )
+            self._resize_marquee_rect(rect, state["mode"], point, modifiers)
+
+        self.set_marquee_rect(rect)
+
+
+    def finish_marquee_drag(self):
+        self._marquee_drag_state = None
+
+
+    def marquee_contains_scene_pos(self, scene_pos):
+        """
+        Return whether a scene position is inside the current marquee.
+
+        """
+        if self.marquee is None:
+            return False
+
+        point = self.plot.vb.mapSceneToView(scene_pos)
+        return self.marquee.normalized().contains(point)
+
+
+    def open_marquee_context_menu(self, scene_pos, global_pos=None):
+        """
+        Open the marquee context menu when a right-click lands inside it.
+
+        """
+        if not self.marquee_contains_scene_pos(scene_pos):
+            return False
+
+        menu = self._new_marquee_context_menu()
+        if global_pos is None:
+            global_pos = QtGui.QCursor.pos()
+        elif isinstance(global_pos, QtCore.QPointF):
+            global_pos = global_pos.toPoint()
+
+        menu.exec_(global_pos)
+        return True
+
+
+    def _new_marquee_context_menu(self):
+        menu = qtw.QMenu()
+        if hasattr(menu, "setToolTipsVisible"):
+            menu.setToolTipsVisible(True)
+
+        self._add_marquee_context_action(
+            menu,
+            "Zoom",
+            lambda: self.zoom_marquee("xy"),
+            )
+        self._add_marquee_context_action(
+            menu,
+            "Zoom X",
+            lambda: self.zoom_marquee("x"),
+            )
+        self._add_marquee_context_action(
+            menu,
+            "Zoom Y",
+            lambda: self.zoom_marquee("y"),
+            )
+        self._add_marquee_color_context_action(menu)
+        self._add_marquee_stats_context_action(menu)
+        return menu
+
+
+    def _add_marquee_context_action(self, menu, text, callback):
+        action = menu.addAction(text)
+        action.triggered.connect(
+            lambda _checked=False, callback=callback: self._execute_marquee_action(callback)
+            )
+        return action
+
+
+    def _add_marquee_color_context_action(self, menu):
+        return None
+
+
+    def _add_marquee_stats_context_action(self, menu):
+        stats_text = self._marquee_stats_text()
+        action = self._add_marquee_context_action(
+            menu,
+            "Stats...",
+            lambda stats_text=stats_text: self.show_marquee_stats_dialog(stats_text),
+            )
+        if stats_text is None:
+            action.setEnabled(False)
+            action.setToolTip("No data points inside the marquee.")
+        else:
+            action.setToolTip("Show statistics for the marquee selection.")
+            action.setStatusTip("Show statistics for the marquee selection.")
+        return action
+
+
+    def _execute_marquee_action(self, callback):
+        if callback():
+            self.clear_marquee()
+
+
+    def zoom_marquee(self, axes):
+        rect = self.marquee.normalized() if self.marquee is not None else None
+        if rect is None:
+            return False
+
+        if "x" in axes:
+            self.vb.setXRange(rect.left(), rect.right(), padding=0)
+        if "y" in axes:
+            self.vb.setYRange(rect.top(), rect.bottom(), padding=0)
+        return True
+
+
+    def _marquee_stats_text(self):
+        return None
+
+
+    def show_marquee_stats_dialog(self, stats_text=None):
+        if stats_text is None:
+            stats_text = self._marquee_stats_text()
+        if stats_text is None:
+            return False
+
+        dialog = self._new_marquee_stats_dialog(stats_text)
+        self._marquee_stats_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return True
+
+
+    def _new_marquee_stats_dialog(self, stats_text):
+        dialog = qtw.QDialog(self)
+        dialog.setWindowTitle("Marquee stats")
+
+        layout = qtw.QVBoxLayout(dialog)
+        stats_view = qtw.QPlainTextEdit(stats_text)
+        stats_view.setReadOnly(True)
+        stats_view.setMinimumWidth(280)
+        stats_view.setMinimumHeight(170)
+        layout.addWidget(stats_view)
+
+        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
+        copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ActionRole)
+
+        def copy_stats(_checked=False):
+            self.copy_marquee_stats_to_clipboard(stats_text)
+
+        copy_button.clicked.connect(copy_stats)
+        buttons.rejected.connect(dialog.close)
+        layout.addWidget(buttons)
+
+        return dialog
+
+
+    def _format_marquee_stats_text(self, size_text, values, rect=None):
+        if rect is None and self.__dict__.get("marquee") is not None:
+            rect = self.marquee.normalized()
+
+        lines = [size_text]
+        if rect is not None:
+            lines.extend((
+                f"X range: {self.formatNum(rect.left())} to {self.formatNum(rect.right())}",
+                f"Y range: {self.formatNum(rect.top())} to {self.formatNum(rect.bottom())}",
+                ))
+
+        lines.extend((
+            f"Average: {self.formatNum(float(values.mean()))}",
+            f"Standard deviation: {self.formatNum(float(values.std()))}",
+            f"Max: {self.formatNum(float(values.max()))}",
+            f"Min: {self.formatNum(float(values.min()))}",
+            ))
+
+        return "\n".join(lines)
+
+
+    def copy_marquee_stats_to_clipboard(self, stats_text=None):
+        if stats_text is None:
+            stats_text = self._marquee_stats_text()
+        if stats_text is None:
+            return False
+
+        clipboard = qtw.QApplication.clipboard()
+        if clipboard is None:
+            return False
+
+        clipboard.setText(stats_text)
+        return True
+
+
+    def _resize_marquee_rect(self, rect, handle, point, modifiers=QtCore.Qt.NoModifier):
+        symmetric = bool(modifiers & QtCore.Qt.AltModifier)
+        asymmetric = bool(modifiers & QtCore.Qt.ShiftModifier) and not symmetric
+        original = QtCore.QRectF(rect)
+        anchor = self._marquee_handle_points_for_rect(original)[handle]
+
+        if "w" in handle:
+            rect.setLeft(point.x())
+        if "e" in handle:
+            rect.setRight(point.x())
+        if "s" in handle:
+            rect.setTop(point.y())
+        if "n" in handle:
+            rect.setBottom(point.y())
+
+        dx = point.x() - anchor.x()
+        dy = point.y() - anchor.y()
+
+        if ("w" in handle or "e" in handle) and (symmetric or asymmetric):
+            offset = -dx if symmetric else dx if asymmetric else None
+            if "w" in handle:
+                rect.setRight(original.right() + offset)
+            else:
+                rect.setLeft(original.left() + offset)
+
+        if ("n" in handle or "s" in handle) and (symmetric or asymmetric):
+            offset = -dy if symmetric else dy if asymmetric else None
+            if "s" in handle:
+                rect.setBottom(original.bottom() + offset)
+            else:
+                rect.setTop(original.top() + offset)
+
+        if asymmetric:
+            self._snap_translated_marquee_rect(rect, original, handle)
+
+
+    def _snap_translated_marquee_rect(self, rect, original, handle):
+        snapped = self._snap_marquee_rect(QtCore.QRectF(rect).normalized())
+        if snapped is None:
+            return
+
+        adjusted = QtCore.QRectF(snapped)
+        if "w" in handle or "e" in handle:
+            width = original.width()
+            if "w" in handle:
+                adjusted.setLeft(snapped.left())
+                adjusted.setRight(snapped.left() + width)
+            else:
+                adjusted.setRight(snapped.right())
+                adjusted.setLeft(snapped.right() - width)
+
+        if "n" in handle or "s" in handle:
+            height = original.height()
+            if "s" in handle:
+                adjusted.setTop(snapped.top())
+                adjusted.setBottom(snapped.top() + height)
+            else:
+                adjusted.setBottom(snapped.bottom())
+                adjusted.setTop(snapped.bottom() - height)
+
+        rect.setRect(adjusted.left(), adjusted.top(), adjusted.width(), adjusted.height())
+
+
+    def set_marquee_rect(self, rect):
+        """
+        Snap, store, and draw the marquee rectangle.
+
+        """
+        rect = self._snap_marquee_rect(rect.normalized())
+        if rect is None or rect.width() <= 0 or rect.height() <= 0:
+            self.clear_marquee()
+            return
+
+        self.marquee = QtCore.QRectF(rect)
+        self.marquee_highlight.setRect(rect)
+        self.marquee_outline.setRect(rect)
+        self.marquee_highlight.show()
+        self.marquee_outline.show()
+        self._update_marquee_handles()
+
+
+    def clear_marquee(self):
+        self.marquee = None
+        self.marquee_highlight.hide()
+        self.marquee_outline.hide()
+        self.marquee_handles.hide()
+
+
+    def _snap_marquee_rect(self, rect):
+        return rect
+
+
+    def marquee_drag_mode_at(self, scene_pos):
+        """
+        Return the resize handle under a scene position, if there is one.
+
+        """
+        if self.marquee is None or not self.marquee_handles.isVisible():
+            return None
+
+        threshold = 8
+        for handle, point in self._marquee_handle_points().items():
+            handle_scene_pos = self.plot.vb.mapViewToScene(point)
+            distance = (
+                (handle_scene_pos.x() - scene_pos.x()) ** 2
+                + (handle_scene_pos.y() - scene_pos.y()) ** 2
+                )
+            if distance <= threshold ** 2:
+                return handle
+
+        return None
+
+
+    def marquee_cursor_shape_at(self, scene_pos, modifiers=QtCore.Qt.NoModifier):
+        mode = self.current_marquee_drag_mode()
+        if mode == "new":
+            return QtCore.Qt.CrossCursor
+        if mode is not None:
+            return self._marquee_cursor_shape_for_handle(mode)
+
+        handle = self.marquee_drag_mode_at(scene_pos)
+        if handle is not None:
+            return self._marquee_cursor_shape_for_handle(handle)
+        if modifiers & QtCore.Qt.AltModifier:
+            return QtCore.Qt.CrossCursor
+
+        return None
+
+
+    def _marquee_cursor_shape_for_handle(self, handle):
+        if handle in ("e", "w"):
+            return QtCore.Qt.SizeHorCursor
+        if handle in ("n", "s"):
+            return QtCore.Qt.SizeVerCursor
+        if handle in ("nw", "se"):
+            return QtCore.Qt.SizeFDiagCursor
+        if handle in ("ne", "sw"):
+            return QtCore.Qt.SizeBDiagCursor
+
+        return QtCore.Qt.CrossCursor
+
+
+    def _update_marquee_handles(self):
+        points = list(self._marquee_handle_points().values())
+        self.marquee_handles.setData(
+            [point.x() for point in points],
+            [point.y() for point in points],
+            )
+        self.marquee_handles.show()
+
+
+    def _marquee_handle_points(self):
+        return self._marquee_handle_points_for_rect(self.marquee)
+
+
+    def _marquee_handle_points_for_rect(self, rect):
+        centre_x = rect.center().x()
+        centre_y = rect.center().y()
+        return {
+            "nw": QtCore.QPointF(rect.left(), rect.bottom()),
+            "n": QtCore.QPointF(centre_x, rect.bottom()),
+            "ne": QtCore.QPointF(rect.right(), rect.bottom()),
+            "e": QtCore.QPointF(rect.right(), centre_y),
+            "se": QtCore.QPointF(rect.right(), rect.top()),
+            "s": QtCore.QPointF(centre_x, rect.top()),
+            "sw": QtCore.QPointF(rect.left(), rect.top()),
+            "w": QtCore.QPointF(rect.left(), centre_y),
+            }
         
         
     def __str__(self):
-        filenameStr = get_DB_location().split('\\')[-1]
+        filenameStr = path.basename(get_DB_location())
         fstr = (f"{filenameStr} | " 
-                f"run ID: {self.ds.run_id} | "
+                f"Run ID: {self.ds.run_id} | "
                 f"{self.param.name} ({self.param.label})"
                 )
         return fstr
 
     
+    def show_status(self, message : str, timeout : int = 5000):
+        """
+        Shows a short message in the plot window status bar.
+
+        """
+        if getattr(self, "visible", False):
+            self.statusBar().showMessage(message, timeout)
+
+
+    def show_error(self, title : str, message : str, details : str = None):
+        """
+        Shows an error both in the status bar and, for visible windows, in a
+        message box.
+
+        """
+        self.show_status(message, 10000)
+
+        if not self.visible:
+            return
+
+        box = qtw.QMessageBox(qtw.QMessageBox.Warning, title, message, parent=self)
+        if details:
+            box.setDetailedText(details)
+        box.exec_()
+
+
+    def register_shortcut(self, action, shortcut, status_tip : str = None):
+        """
+        Registers a QAction shortcut on the plot window.
+
+        """
+        if isinstance(shortcut, (list, tuple)):
+            action.setShortcuts(shortcut)
+            shortcut_text = shortcut[0].toString(QKeySequence.NativeText)
+        else:
+            action.setShortcut(shortcut)
+            shortcut_text = QKeySequence(shortcut).toString(QKeySequence.NativeText)
+        action.setShortcutContext(QtCore.Qt.WindowShortcut)
+        if hasattr(action, "setShortcutVisibleInContextMenu"):
+            action.setShortcutVisibleInContextMenu(True)
+        if status_tip:
+            action.setStatusTip(status_tip)
+            action.setToolTip(f"{status_tip} ({shortcut_text})")
+        if action not in self.actions():
+            self.addAction(action)
+
+
     @property
     def ds(self):
         """
@@ -168,7 +823,7 @@ class plotWidget(qtw.QMainWindow):
         """
         # Check dataset exists, produce new one if needed.
         if self._dataset_holder.get(self._guid, 0) == 0:
-            print(f"KeyError: guid: {self._guid} not found. Producing new dataset.")
+            self.show_status(f"Dataset {self._guid} not found. Reloading...", 5000)
             self.make_ds.emit(self._guid)
         
         # Check a deletion timer is not active and stop
@@ -245,11 +900,26 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.vbMenu = self.vb.menu
+        self.mouseModeAction = self._context_menu_action("Mouse Mode")
+        self._remove_scene_export_context_menu()
+
+        self.exportPlotAction = qtw.QAction("&Export Plot...", self)
+        self.register_shortcut(
+            self.exportPlotAction,
+            "Ctrl+E",
+            "Open the plot export dialog",
+            )
+        self.exportPlotAction.triggered.connect(self.open_export_dialog)
+
+        contextAction = qtw.QAction("Show Context Menu", self)
+        self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
+        contextAction.triggered.connect(self.open_context_menu)
         
         actions = self.vbMenu.actions()
         for action in actions:
             if action.text() == "View All":
                 action.setText("Autoscale")
+                self.register_shortcut(action, "Ctrl+0", "Autoscale plot")
                 break
         
         x_action = actions[1]
@@ -258,10 +928,347 @@ class plotWidget(qtw.QMainWindow):
         
         # Create visibility
         toggleAction = qtw.QAction("View Operations", self, checkable=True)
+        self.register_shortcut(toggleAction, "Ctrl+Shift+O", "Toggle operations panel")
         toggleAction.triggered.connect(self.oper_dock.setVisible)
         self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
         self.vbMenu.insertAction(x_action, toggleAction)
         self.vbMenu.insertSeparator(x_action)
+
+        self._init_axis_scale_dialogs()
+
+
+    def _init_axis_scale_dialogs(self):
+        """
+        Move pyqtgraph's X/Y axis scaling controls into double-click dialogs.
+
+        """
+        self._axis_scale_controls = {}
+        self._axis_scale_dialogs = {}
+
+        for axis, menu_text in (("x", "X axis"), ("y", "Y axis")):
+            action = self._context_menu_action(menu_text)
+            if action is None or action.menu() is None:
+                continue
+
+            self.vbMenu.removeAction(action)
+
+        self._install_axis_scale_double_click_handlers()
+
+
+    def _menu_control_widget(self, menu):
+        """
+        Returns the embedded control widget from a QWidgetAction menu.
+
+        """
+        for action in menu.actions():
+            if isinstance(action, qtw.QWidgetAction):
+                return action.defaultWidget()
+        return None
+
+
+    def _install_axis_scale_double_click_handlers(self):
+        """
+        Open the relevant axis scale dialog when an axis is double-clicked.
+
+        """
+        for axis, side in (("x", "bottom"), ("y", "left")):
+            axis_item = self.plot.getAxis(side)
+            if axis_item is None:
+                continue
+
+            previous_handler = getattr(axis_item, "mouseDoubleClickEvent", None)
+
+            def mouse_double_click(event, axis=axis, previous_handler=previous_handler):
+                if event.button() == QtCore.Qt.LeftButton:
+                    self.open_axis_scale_dialog(axis)
+                    event.accept()
+                    return
+
+                if previous_handler is not None:
+                    previous_handler(event)
+
+            axis_item.mouseDoubleClickEvent = mouse_double_click
+
+
+    def _axis_scale_dialog_title(self, axis):
+        return f"{axis.upper()} axis scaling"
+
+
+    def _axis_scale_axis_number(self, axis):
+        return 0 if axis == "x" else 1
+
+
+    def _axis_scale_axis_constant(self, axis):
+        return pg.ViewBox.XAxis if axis == "x" else pg.ViewBox.YAxis
+
+
+    def _new_axis_scale_controls(self, axis):
+        """
+        Build a fresh copy of pyqtgraph's axis scaling controls for a dialog.
+
+        """
+        widget = qtw.QWidget()
+        ui = axisCtrlTemplate_generic.Ui_Form()
+        ui.setupUi(widget)
+        self._axis_scale_controls[axis] = ui
+
+        ui.mouseCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_mouse_toggled(axis, checked)
+            )
+        ui.manualRadio.clicked.connect(
+            lambda _checked=False, axis=axis: self._axis_scale_manual_clicked(axis)
+            )
+        ui.minText.editingFinished.connect(
+            lambda axis=axis: self._axis_scale_range_text_changed(axis)
+            )
+        ui.maxText.editingFinished.connect(
+            lambda axis=axis: self._axis_scale_range_text_changed(axis)
+            )
+        ui.autoRadio.clicked.connect(
+            lambda _checked=False, axis=axis: self._axis_scale_auto_clicked(axis)
+            )
+        ui.autoPercentSpin.valueChanged.connect(
+            lambda value, axis=axis: self._axis_scale_auto_spin_changed(axis, value)
+            )
+        ui.linkCombo.currentIndexChanged.connect(
+            lambda _index, axis=axis: self._axis_scale_link_changed(axis)
+            )
+        ui.autoPanCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_auto_pan_toggled(axis, checked)
+            )
+        ui.visibleOnlyCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_visible_only_toggled(axis, checked)
+            )
+        ui.invertCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_invert_toggled(axis, checked)
+            )
+
+        return widget
+
+
+    def _sync_axis_scale_controls(self, axis):
+        """
+        Update a dialog's controls from the current view state.
+
+        """
+        ui = self._axis_scale_controls.get(axis)
+        if ui is None:
+            return
+
+        axis_number = self._axis_scale_axis_number(axis)
+        state = self.vb.getState(copy=False)
+
+        for widget in (
+                ui.minText,
+                ui.maxText,
+                ui.manualRadio,
+                ui.autoRadio,
+                ui.autoPercentSpin,
+                ui.linkCombo,
+                ui.autoPanCheck,
+                ui.visibleOnlyCheck,
+                ui.invertCheck,
+                ui.mouseCheck,
+                ):
+            widget.blockSignals(True)
+
+        try:
+            target_range = state["targetRange"][axis_number]
+            ui.minText.setText("%0.5g" % target_range[0])
+            ui.maxText.setText("%0.5g" % target_range[1])
+
+            auto_range = state["autoRange"][axis_number]
+            ui.autoRadio.setChecked(auto_range is not False)
+            ui.manualRadio.setChecked(auto_range is False)
+            if auto_range is not False and auto_range is not True:
+                ui.autoPercentSpin.setValue(int(auto_range * 100))
+
+            ui.mouseCheck.setChecked(state["mouseEnabled"][axis_number])
+            ui.autoPanCheck.setChecked(state["autoPan"][axis_number])
+            ui.visibleOnlyCheck.setChecked(state["autoVisibleOnly"][axis_number])
+            ui.invertCheck.setChecked(state.get(axis + "Inverted", False))
+            self._sync_axis_scale_link_combo(axis)
+        finally:
+            for widget in (
+                    ui.minText,
+                    ui.maxText,
+                    ui.manualRadio,
+                    ui.autoRadio,
+                    ui.autoPercentSpin,
+                    ui.linkCombo,
+                    ui.autoPanCheck,
+                    ui.visibleOnlyCheck,
+                    ui.invertCheck,
+                    ui.mouseCheck,
+                    ):
+                widget.blockSignals(False)
+
+
+    def _sync_axis_scale_link_combo(self, axis):
+        """
+        Mirror pyqtgraph's available linked views into the dialog link combo.
+
+        """
+        ui = self._axis_scale_controls[axis]
+        axis_number = self._axis_scale_axis_number(axis)
+        source_combo = self.vbMenu.ctrl[axis_number].linkCombo
+        current = self.vb.getState(copy=False)["linkedViews"][axis_number] or ""
+
+        ui.linkCombo.clear()
+        for index in range(source_combo.count()):
+            ui.linkCombo.addItem(source_combo.itemText(index))
+
+        index = ui.linkCombo.findText(current)
+        ui.linkCombo.setCurrentIndex(max(index, 0))
+
+
+    def _axis_scale_mouse_toggled(self, axis, checked):
+        if axis == "x":
+            self.vb.setMouseEnabled(x=checked)
+        else:
+            self.vb.setMouseEnabled(y=checked)
+
+
+    def _axis_scale_manual_clicked(self, axis):
+        self.vb.enableAutoRange(self._axis_scale_axis_constant(axis), False)
+
+
+    def _axis_scale_range_text_changed(self, axis):
+        ui = self._axis_scale_controls[axis]
+        axis_number = self._axis_scale_axis_number(axis)
+        values = list(self.vb.viewRange()[axis_number])
+        for index, text in enumerate((ui.minText.text(), ui.maxText.text())):
+            try:
+                values[index] = float(text)
+            except ValueError:
+                pass
+
+        ui.manualRadio.setChecked(True)
+        if axis == "x":
+            self.vb.setXRange(*values, padding=0)
+        else:
+            self.vb.setYRange(*values, padding=0)
+
+
+    def _axis_scale_auto_clicked(self, axis):
+        ui = self._axis_scale_controls[axis]
+        self.vb.enableAutoRange(
+            self._axis_scale_axis_constant(axis),
+            ui.autoPercentSpin.value() * 0.01,
+            )
+
+
+    def _axis_scale_auto_spin_changed(self, axis, value):
+        ui = self._axis_scale_controls[axis]
+        ui.autoRadio.setChecked(True)
+        self.vb.enableAutoRange(self._axis_scale_axis_constant(axis), value * 0.01)
+
+
+    def _axis_scale_link_changed(self, axis):
+        ui = self._axis_scale_controls[axis]
+        if axis == "x":
+            self.vb.setXLink(str(ui.linkCombo.currentText()))
+        else:
+            self.vb.setYLink(str(ui.linkCombo.currentText()))
+
+
+    def _axis_scale_auto_pan_toggled(self, axis, checked):
+        if axis == "x":
+            self.vb.setAutoPan(x=checked)
+        else:
+            self.vb.setAutoPan(y=checked)
+
+
+    def _axis_scale_visible_only_toggled(self, axis, checked):
+        if axis == "x":
+            self.vb.setAutoVisible(x=checked)
+        else:
+            self.vb.setAutoVisible(y=checked)
+
+
+    def _axis_scale_invert_toggled(self, axis, checked):
+        if axis == "x":
+            self.vb.invertX(checked)
+        else:
+            self.vb.invertY(checked)
+
+
+    @QtCore.pyqtSlot(str)
+    def open_axis_scale_dialog(self, axis):
+        """
+        Opens the scaling dialog for the requested axis.
+
+        """
+        if hasattr(self.vb, "updateViewLists"):
+            self.vb.updateViewLists()
+
+        if hasattr(self.vbMenu, "updateState"):
+            self.vbMenu.updateState()
+
+        dialog = self._axis_scale_dialogs.get(axis)
+        if dialog is None:
+            dialog = qtw.QDialog(self)
+            dialog.setWindowTitle(self._axis_scale_dialog_title(axis))
+            layout = qtw.QVBoxLayout(dialog)
+            layout.addWidget(self._new_axis_scale_controls(axis))
+
+            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
+            buttons.rejected.connect(dialog.close)
+            layout.addWidget(buttons)
+
+            self._axis_scale_dialogs[axis] = dialog
+
+        self._sync_axis_scale_controls(axis)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+
+    def _remove_scene_export_context_menu(self):
+        """
+        Removes pyqtgraph's scene-level export action from right-click menus.
+
+        """
+        scene = self.widget.scene()
+        context_menu = getattr(scene, "contextMenu", None)
+        if context_menu is None:
+            return
+
+        scene.contextMenu = [
+            action for action in context_menu
+            if action.text().replace("&", "") != "Export..."
+            ]
+
+
+    def _context_menu_action(self, text):
+        """
+        Returns a pyqtgraph context-menu action by display text.
+
+        """
+        for action in self.vbMenu.actions():
+            if action.text().replace("&", "") == text:
+                return action
+        return None
+
+
+    @QtCore.pyqtSlot()
+    def open_context_menu(self):
+        """
+        Opens the plot context menu from the keyboard.
+
+        """
+        self.vbMenu.exec_(self.widget.mapToGlobal(self.widget.rect().center()))
+
+
+    @QtCore.pyqtSlot()
+    def open_export_dialog(self):
+        """
+        Opens pyqtgraph's export dialog for this plot.
+
+        """
+        scene = self.widget.scene()
+        scene.contextMenuItem = self.plot
+        scene.showExportDialog()
         
         
     def initAxes(self):
@@ -364,6 +1371,48 @@ class plotWidget(qtw.QMainWindow):
 
         """
         menu = self.menuBar()
+
+        file_menu = menu.addMenu("&File")
+
+        export_plot_action = getattr(self, "exportPlotAction", None)
+        if export_plot_action is not None:
+            file_menu.addAction(export_plot_action)
+            file_menu.addSeparator()
+
+        close_all_plots_action = qtw.QAction("Close All &Plot Windows", self)
+        close_all_plots_action.setShortcut("Ctrl+Shift+W")
+        close_all_plots_action.setShortcutContext(QtCore.Qt.WindowShortcut)
+        close_all_plots_action.setStatusTip("Close all open plot windows")
+        close_all_plots_action.triggered.connect(self.request_close_all_plots)
+        file_menu.addAction(close_all_plots_action)
+
+        closeAction = qtw.QAction("&Close Window", self)
+        closeAction.setShortcuts(
+            standard_key_sequences(QKeySequence.Close, ["Ctrl+W"])
+            )
+        closeAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        closeAction.setStatusTip("Close this plot window")
+        closeAction.triggered.connect(self.close)
+        file_menu.addAction(closeAction)
+
+        quitAction = qtw.QAction("&Quit qPlot", self)
+        quitAction.setShortcuts(
+            standard_key_sequences(QKeySequence.Quit, ["Ctrl+Q"])
+            )
+        quitAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        quitAction.setStatusTip("Quit qPlot")
+        quitAction.triggered.connect(self.request_application_quit)
+        file_menu.addAction(quitAction)
+
+        add_standard_window_controls(self)
+
+        options_menu = menu.addMenu("&Options")
+        mouse_mode_action = getattr(self, "mouseModeAction", None)
+        if mouse_mode_action is not None:
+            self.vbMenu.removeAction(mouse_mode_action)
+            options_menu.addAction(mouse_mode_action)
+            options_menu.addSeparator()
+        add_confirmation_options(self, options_menu)
         
         main_menu = menu.addMenu("&View")
         
@@ -425,6 +1474,40 @@ class plotWidget(qtw.QMainWindow):
         
         self.setStyleSheet(self.config.theme.main)
         self.config.theme.style_plotItem(self)
+
+
+    @staticmethod
+    def request_application_quit():
+        """
+        Closes the main window first so its normal quit handling still applies.
+
+        """
+        app = qtw.QApplication.instance()
+        if app is None:
+            return
+
+        for window in app.topLevelWidgets():
+            if window.__class__.__name__ == "MainWindow":
+                window.close()
+                return
+
+        app.closeAllWindows()
+
+
+    @staticmethod
+    def request_close_all_plots():
+        """
+        Closes all plot windows through the main window.
+
+        """
+        app = qtw.QApplication.instance()
+        if app is None:
+            return
+
+        for window in app.topLevelWidgets():
+            if hasattr(window, "closeAll"):
+                window.closeAll()
+                return
     
     
     #Note, this is an overwrite of core QMainWindow function
@@ -448,6 +1531,13 @@ class plotWidget(qtw.QMainWindow):
         for widget in widgets:
             action = widget.toggleViewAction()
             if isinstance(action, qtw.QAction):
+                shortcut = self._toggle_shortcuts.get(widget.windowTitle())
+                if shortcut:
+                    self.register_shortcut(
+                        action,
+                        shortcut,
+                        f"Toggle {widget.windowTitle()}"
+                        )
                 menu.addAction(action)
     
         return menu
@@ -482,6 +1572,10 @@ class plotWidget(qtw.QMainWindow):
 
         """
         complete = load_param_data_from_db_prep(self.ds.cache, self.param)
+        if complete:
+            self.show_status(f"Processing cached data for {self.param.name}...", 0)
+        else:
+            self.show_status(f"Loading data for {self.param.name}...", 0)
          
         worker = loader(
             self.ds.cache, 
@@ -491,9 +1585,12 @@ class plotWidget(qtw.QMainWindow):
             read_data = not complete,
             operations = self.oper_widget.get_data()
             )
+        worker.started_at = perf_counter()
         
         # Callback
-        worker.emitter.finished.connect(self.refreshPlot)
+        worker.emitter.finished.connect(
+            lambda finished, worker=worker: self.refreshPlot(finished, worker=worker)
+            )
         # Error event handling
         worker.emitter.errorOccurred.connect(self.err_raiser)
         worker.emitter.printer.connect(self.worker_printer)
@@ -512,6 +1609,15 @@ class plotWidget(qtw.QMainWindow):
             
 ###############################################################################
 #Events
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape and self.__dict__.get("marquee") is not None:
+            self.clear_marquee()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
     
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
@@ -544,6 +1650,8 @@ class plotWidget(qtw.QMainWindow):
         """
         # Ignore if not in plot widget
         if not self.plot.sceneBoundingRect().contains(pos):
+            if hasattr(self, "hide_hover_pixel_outline"):
+                self.hide_hover_pixel_outline()
             return
     
         # get x, y values.
@@ -570,14 +1678,24 @@ class plotWidget(qtw.QMainWindow):
                 if (i >= 0 and i <= 1) and (j >= 0 and j <= 1):
                     # Convert to true index
                     # Note that pyqtgraph indexes [column, row]
-                    i = int(i * self.dataGrid.shape[1])
-                    j = int(j * self.dataGrid.shape[0])
+                    i = min(self.dataGrid.shape[1] - 1, int(i * self.dataGrid.shape[1]))
+                    j = min(self.dataGrid.shape[0] - 1, int(j * self.dataGrid.shape[0]))
+                    x = rect.x() + (i + 0.5) * rect.width() / self.dataGrid.shape[1]
+                    y = rect.y() + (j + 0.5) * rect.height() / self.dataGrid.shape[0]
+                    x_txt = f"x = {self.formatNum(x)};"
+                    y_txt = f"y = {self.formatNum(y)};"
                     self.pos_labels["z"].setText(f"z = {self.formatNum(self.dataGrid[j, i])}")
                     
                     # Save z location for subplot use
-                    self.z_index = [i, j]
+                    if hasattr(self, "show_hover_pixel_outline"):
+                        self.show_hover_pixel_outline(i, j)
+                    else:
+                        self.z_index = [i, j]
                 else:
-                    self.z_index = None
+                    if hasattr(self, "hide_hover_pixel_outline"):
+                        self.hide_hover_pixel_outline()
+                    else:
+                        self.z_index = None
 
         # Update text
         self.pos_labels["x"].setText(x_txt)
@@ -651,7 +1769,7 @@ class plotWidget(qtw.QMainWindow):
 
 
     @QtCore.pyqtSlot(bool)
-    def refreshPlot(self, finished : bool = True):
+    def refreshPlot(self, finished : bool = True, worker=None):
         """
         Produces a shallow copy of data produced by worker.
         This is inhertited by plot<1/2>d to actually use the loaded data.
@@ -665,9 +1783,16 @@ class plotWidget(qtw.QMainWindow):
         """
         try:
             if not finished: # error in worker
-                return
+                if worker is not None:
+                    worker.running = False
+                return False
             
-            worker = self.worker
+            if worker is None:
+                worker = self.worker
+
+            if worker is not self.worker:
+                worker.running = False
+                return False
             
             # Update qcodes dataset variables if db read happened
             if worker.read_data:
@@ -703,13 +1828,20 @@ class plotWidget(qtw.QMainWindow):
             # I didnt want to make this a dedicated callback for the few times 
             # it is used, as the performace hit is neglible
             # Update text
-            self.plot.setLabel(axis="bottom", text=f"{self.axis_param['x'].label} ({self.axis_param['x'].unit})")
-            self.plot.setLabel(axis="left", text=f"{self.axis_param['y'].label} ({self.axis_param['y'].unit})")
+            self._set_param_axis_labels()
+            elapsed = perf_counter() - worker.started_at
+
+            self.show_status(
+                f"Loaded {self.ds.number_of_results:,} points for {self.param.name} "
+                f"in {elapsed:.2f} seconds",
+                5000
+                )
+            return True
                 
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
             # This should no longer be possible so making error soft error.
-            print(type(err), err)
+            self.show_status(f"Refresh skipped: {err}", 10000)
         
         finally: # Allow code to move on from wait_on_thread
             self.end_wait.emit()
@@ -717,14 +1849,20 @@ class plotWidget(qtw.QMainWindow):
         
     @QtCore.pyqtSlot(Exception)
     def err_raiser(self, err : Exception):
-        # Worker cannot raise errors so much be done through event handlers
-        print("WORKER ERROR:")
-        raise err
+        message = f"{type(err).__name__}: {err}"
+        self.show_status(f"Worker error: {message}", 10000)
+
+        if message == self._last_error_text:
+            return
+
+        self._last_error_text = message
+        self.show_error("Plot Error", "A plot worker failed.", message)
         
         
     @QtCore.pyqtSlot(str)
     def worker_printer(self, fstr : str):
         # Worker print() often does not work, so done through event handlers
+        self.show_status(fstr, 5000)
         print(fstr)
     
     
@@ -803,5 +1941,4 @@ class plotWidget(qtw.QMainWindow):
             
         else:
             # get new data
-            self.refreshWindow(force=True) 
-        
+            self.refreshWindow(force=True)

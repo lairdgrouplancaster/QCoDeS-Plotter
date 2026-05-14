@@ -70,10 +70,12 @@ class operations_options_base(qtw.QWidget):
         self.layout.addWidget(self.list_order)
 
         # Buttons
-        but_l = self.parent.oper_dock.HBox_context(self.filter, self)
+        but_l = self.parent.oper_dock.HBox_context(self.filter)
         self.apply_but = qtw.QPushButton("Apply/Refresh")
+        self.apply_but.setToolTip("Apply selected operations and refresh the plot")
         but_l.addWidget(self.apply_but)
         clear_but = qtw.QPushButton("Clear")
+        clear_but.setToolTip("Clear all selected operations")
         clear_but.clicked.connect(self.hide_all)
         but_l.addWidget(clear_but)
         
@@ -277,6 +279,7 @@ class rowItem(qtw.QListWidgetItem):
         
         if input_type is bool: # on/off tickbox
             self.input = qtw.QCheckBox()
+            self.input.setToolTip(f"Enable or disable {label}")
             self.reset = lambda: self.input.setChecked(False)
             self.output = lambda: bool(self.input.isChecked())
         
@@ -378,12 +381,12 @@ class operations_options_sweep(operations_options_common):
         # display Name : {"func" : lambda input, data: function_to_run(input, data), 
         #                 "input_type" : input_type_needed,
         #                 "default" : (optional) None | default_value},
-        "Subtract Sweep Mean" : {"func" : lambda data: subtract_mean("x", data),
-                                  "input_type" : None},
+        "Subtract Cut Mean" : {"func" : lambda data: subtract_mean("x", data),
+                               "input_type" : None},
         "Subtract Fixed Mean" : {"func" : lambda data: subtract_mean("y", data),
                                "input_type" : None},
-        "Differentiate Sweep" : {"func" : lambda data: differentiate("x", data), 
-                                 "input_type" : None},
+        "Differentiate Cut" : {"func" : lambda data: differentiate("x", data),
+                               "input_type" : None},
         "Differentiate Fixed" : {"func" : lambda data: differentiate("y", data),
                                  "input_type" : None},
         }
