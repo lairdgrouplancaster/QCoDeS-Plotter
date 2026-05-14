@@ -1,14 +1,11 @@
 import io
 import json
-import os
 import sqlite3
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 from PyQt5 import QtCore
@@ -53,10 +50,6 @@ from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 
 
 class RunListTooltipTestCase(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
-
     def test_run_tooltip_summarises_parameters(self):
         tooltip = treeWidgets.run_tooltip_text({
             "sweep_parameters": ["dac_ch1", "dac_ch2"],

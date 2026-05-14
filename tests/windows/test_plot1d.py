@@ -1,14 +1,11 @@
 import io
 import json
-import os
 import sqlite3
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 from PyQt5 import QtCore
@@ -53,10 +50,6 @@ from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 
 
 class SnapToTraceTestCase(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
-
     def test_axis_label_uses_power_scaled_units_for_auto_si_prefix(self):
         axis = plotwin_module._PowerScaledAxisItem("bottom")
         axis.setLabel(text="Gate ch2", units="V")

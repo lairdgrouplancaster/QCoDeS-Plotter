@@ -8,8 +8,6 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 import numpy as np
 from PyQt5 import QtCore
 from PyQt5 import QtGui
@@ -53,10 +51,6 @@ from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 
 
 class TemporaryConfigTestCase(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
-
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_default_path = config.default_path
@@ -163,6 +157,17 @@ class TemporaryConfigTestCase(unittest.TestCase):
             window.monitor.stop()
             window.deleteLater()
 
+    def test_main_window_refresh_interval_changes_are_persistent(self):
+        window = main_window.MainWindow()
+
+        try:
+            window.spinBox.setValue(2.5)
+
+            self.assertEqual(config().get("user_preference.default_refresh_rate"), 2.5)
+        finally:
+            window.monitor.stop()
+            window.deleteLater()
+
     def test_main_window_loads_last_database_on_startup_when_available(self):
         cfg = config()
         calls = []
@@ -225,5 +230,12 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg = config()
 
         self.assertEqual(cfg.get("user_preference.default_refresh_rate"), 1)
+
+    def test_default_refresh_rate_allows_zero_to_disable_auto_refresh(self):
+        cfg = config()
+
+        cfg.update("user_preference.default_refresh_rate", 0.0)
+
+        self.assertEqual(config().get("user_preference.default_refresh_rate"), 0.0)
 
 

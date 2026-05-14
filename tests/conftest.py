@@ -8,7 +8,6 @@ import pytest
 from PyQt5 import QtWidgets as qtw
 
 
-
 def ensure_qapplication():
     """Return the process-wide QApplication, creating it for headless tests."""
     app = qtw.QApplication.instance()

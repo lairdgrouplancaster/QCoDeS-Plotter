@@ -8,8 +8,6 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 import numpy as np
 from PyQt5 import QtCore
 from PyQt5 import QtGui
@@ -53,10 +51,6 @@ from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 
 
 class RunDetailsTabsTestCase(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = qtw.QApplication.instance() or qtw.QApplication([])
-
     def test_run_details_show_overview_parameters_metadata_and_raw_tabs(self):
         class Param:
             def __init__(self, name, label, unit, axes=()):

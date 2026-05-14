@@ -1,14 +1,11 @@
 import io
 import json
-import os
 import sqlite3
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 from PyQt5 import QtCore
