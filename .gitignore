@@ -6,6 +6,9 @@
 .venv/
 .venv-win/
 .pytest_cache/
+.ruff_cache/
 __pycache__/
+*.egg-info/
+build/
+dist/
 other/*
-src/qplot.egg-info/*

@@ -88,6 +88,15 @@ The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `QApplication` creation unless a test has a specific reason to override the
 shared setup.
 
+## Generated Files
+
+Local installs and test runs create generated files such as `*.egg-info/`,
+`__pycache__/`, `.pytest_cache/`, and `.ruff_cache/`. These are ignored by Git
+and should not be committed.
+
+It is safe to delete those directories after local installs or checks if they
+get in the way of searches or file listings.
+
 ## Manual GUI Check
 
 For changes that affect runtime behavior or the GUI, run:
