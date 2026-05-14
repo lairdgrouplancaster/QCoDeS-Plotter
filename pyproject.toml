@@ -27,7 +27,7 @@ qplot = "qplot.__main__:run"
 qplot-cfg = "qplot.configuration.scripts:scripts"
 
 [project.urls]
-Homepage = "https://github.com/EdwardLaird1/QCoDeS-Plotter.git"
+Homepage = "https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

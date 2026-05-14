@@ -22,7 +22,7 @@ The core runtime dependencies are installed automatically:
 ## Set up environment and install
 
 Using a virtual environment is recommended. Create and activate one first, then
-choose one of the two installation methods below.
+install QCoDeS-Plotter into it.
 
 ### 1. Set up your virtual environment
 Unless you have a virtual environment already (which you'll know, because your terminal prompt will start with something like `(.venv)`):
@@ -38,26 +38,17 @@ In VSCode:
    - Do not choose an interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder.
 6. Open a new VS Code terminal (`Terminal -> New Terminal`). The prompt should start with something like `(.venv) PS`, showing that you are in the right virtual environment.
 
-### 2. Install
-#### Install option A: For users
+### 2. Install QCoDeS-Plotter
 
-Use this if you want to install the current GitHub version without editing the source code. This requires Git to be installed.
+Install the current GitHub version. This requires Git to be installed.
 
 ```console
 python -m pip install -U pip
-python -m pip install git+https://github.com/EdwardLaird1/QCoDeS-Plotter.git@main
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 ```
 
-#### Install option B: For editors
-
-Use this if you want to clone this repository and edit the source code in `src/qplot/` in a way that will be reflected when you restart the app.
-
-```console
-git clone https://github.com/EdwardLaird1/QCoDeS-Plotter.git
-cd QCoDeS-Plotter
-python -m pip install -U pip
-python -m pip install -e .
-```
+To edit the source code or contribute changes, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Running The App
 
@@ -265,54 +256,8 @@ qplot-cfg -reset
 
 ## Development
 
-For local development, use a virtual environment. The examples below create the
-environment inside the repository, but any activated Python 3.11+ environment is
-fine.
+For development setup, test commands, and contribution workflow, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-Windows:
-
-```console
-py -3.11 -m venv .venv-win
-.\.venv-win\Scripts\Activate.ps1
-```
-
-macOS/Linux:
-
-```console
-python3.11 -m venv .venv
-source .venv/bin/activate
-```
-
-Install qPlot in editable mode with the development dependencies:
-
-```console
-python -m pip install -U pip
-python -m pip install -e ".[dev]"
-```
-
-Run the automated tests:
-
-```console
-python -m pytest
-```
-
-If you do not activate the virtual environment, call its Python executable
-directly instead:
-
-Windows:
-
-```console
-.\.venv-win\Scripts\python.exe -m pytest
-```
-
-macOS/Linux:
-
-```console
-./.venv/bin/python -m pytest
-```
-
-Run the manual GUI smoke script:
-
-```console
-python scripts/manual_run.py
-```
+For a short map of the codebase, see
+[docs/architecture.md](docs/architecture.md).
