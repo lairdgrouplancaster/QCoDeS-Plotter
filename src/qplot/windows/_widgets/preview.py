@@ -4,6 +4,7 @@ import sqlite3
 import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets as qtw
 
+from qplot.diagnostics import log_exception
 from qplot.tools.general import data2matrix
 
 from .._dragdrop import make_run_preview_mime
@@ -443,9 +444,10 @@ class PreviewWorker(QtCore.QRunnable):
                 self.database_path,
                 self.metadata,
                 size=self.preview_size,
-                )
+            )
             self.signals.finished.emit(self.generation, self.guid, previews, None)
         except Exception as error:
+            log_exception("Preview generation failed", error, __name__)
             self.signals.finished.emit(self.generation, self.guid, [], error)
 
 

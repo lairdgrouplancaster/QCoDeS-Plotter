@@ -1,8 +1,15 @@
-from qplot.windows import MainWindow
-
 import sys
 
 from PyQt5 import QtWidgets as qtw
+
+from qplot.diagnostics import (
+    configure_logging,
+    install_excepthook,
+    log_event,
+    log_exception,
+    )
+from qplot.windows import MainWindow
+
 
 def run(return_objects=False):
     """
@@ -21,11 +28,20 @@ def run(return_objects=False):
         Returned only when return_objects is true.
         
     """
+    configure_logging()
+    install_excepthook()
+    log_event("Starting qPlot")
     print("Initialising GUI, this may take a few seconds.\n")
-    
-    app = qtw.QApplication(sys.argv)
-    w = MainWindow()
-    app.exec()
+
+    try:
+        app = qtw.QApplication(sys.argv)
+        w = MainWindow()
+        exit_code = app.exec()
+    except Exception as err:
+        log_exception("qPlot startup failed", err)
+        raise
+
+    log_event("qPlot event loop exited with code %s", exit_code)
 
     if return_objects:
         return app, w

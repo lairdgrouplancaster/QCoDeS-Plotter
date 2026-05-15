@@ -35,6 +35,7 @@ from ._window_controls import (
     add_confirmation_options,
     add_standard_window_controls,
     )
+from qplot.diagnostics import log_exception, log_user_error
 
 if TYPE_CHECKING:
     import qplot
@@ -780,6 +781,7 @@ class plotWidget(qtw.QMainWindow):
         message box.
 
         """
+        log_user_error(title, message, details, __name__)
         self.show_status(message, 10000)
 
         if not self.visible:
@@ -1852,6 +1854,7 @@ class plotWidget(qtw.QMainWindow):
     @QtCore.pyqtSlot(Exception)
     def err_raiser(self, err : Exception):
         message = f"{type(err).__name__}: {err}"
+        log_exception("Plot worker error", err, __name__)
         self.show_status(f"Worker error: {message}", 10000)
 
         if message == self._last_error_text:

@@ -9,6 +9,7 @@ from . import data2matrix
 from qcodes.dataset.sqlite.database import connect
 
 from qplot.datahandling import load_param_data_from_db
+from qplot.diagnostics import log_exception
 
 
 if TYPE_CHECKING:
@@ -136,6 +137,7 @@ class loader(QtCore.QRunnable):
         
         except Exception as err: # Raise error in main thread
             did_error = True
+            log_exception("Plot worker failed", err, __name__)
             self.emitter.errorOccurred.emit(err)
             self.emitter.finished.emit(False) # False: Failed
             
@@ -285,6 +287,7 @@ class loader(QtCore.QRunnable):
                 one_succeeded = True
                 
             except Exception as err:
+                log_exception("Plot operation failed", err, __name__)
                 self.emitter.errorOccurred.emit(err)
                 
         if one_succeeded:

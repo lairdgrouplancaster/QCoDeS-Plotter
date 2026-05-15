@@ -25,6 +25,7 @@ from ._window_controls import (
     add_standard_window_controls,
     close_all_warning_enabled,
     )
+from qplot.diagnostics import log_event, log_exception, log_user_error
 from qplot.datahandling import (
     find_new_runs
     )
@@ -1052,6 +1053,7 @@ class MainWindow(qtw.QMainWindow):
         try:
             report = database_info_report(database_path)
         except Exception as err:
+            log_exception("Database information failed", err, __name__)
             self.show_error(
                 "Database Information Failed",
                 "Could not read database information.",
@@ -1088,6 +1090,7 @@ class MainWindow(qtw.QMainWindow):
             # Check runs markes as "Ongoing" to see if they have finished
             self.RunList.checkWatching()
         except Exception as err:
+            log_exception("Main-window refresh failed", err, __name__)
             self.show_error("Refresh Failed", "Could not refresh the run list.", str(err))
             return
         
@@ -1176,6 +1179,7 @@ class MainWindow(qtw.QMainWindow):
 
         """
         load_started_at = perf_counter()
+        log_event("Database load requested: %s", filename, logger_name=__name__)
 
         if not os.path.isfile(filename):
             self.show_error(
@@ -1296,6 +1300,7 @@ class MainWindow(qtw.QMainWindow):
             else:
                 self.ds = self.dataset_holder[guid]["dataset"]
         except Exception as err:
+            log_exception("Selected run load failed", err, __name__)
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
             return
         
@@ -1413,6 +1418,7 @@ class MainWindow(qtw.QMainWindow):
         try:
             ds = self._dataset_for_guid(guid)
         except Exception as err:
+            log_exception("Preview CSV run load failed", err, __name__)
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
             return
 
@@ -1450,6 +1456,7 @@ class MainWindow(qtw.QMainWindow):
             frame = self._measurement_dataframe(ds, params)
             frame.to_csv(filename, index=False)
         except Exception as err:
+            log_exception("CSV export failed", err, __name__)
             self.show_error(
                 "CSV Export Failed",
                 "Could not export the selected measurement data.",
@@ -1505,6 +1512,7 @@ class MainWindow(qtw.QMainWindow):
             else:
                 ds = self.ds
         except Exception as err:
+            log_exception("Plot run load failed", err, __name__)
             self.show_error("Run Load Failed", "Could not load the selected run.", str(err))
             return
             
@@ -1571,6 +1579,7 @@ class MainWindow(qtw.QMainWindow):
                 ds.conn.close()
             except Exception:
                 pass
+            log_exception("Plot open failed", err, __name__)
             self.show_error("Plot Open Failed", "Could not open plot windows.", str(err))
 
 
@@ -1626,6 +1635,7 @@ class MainWindow(qtw.QMainWindow):
                 else:
                     self.ds = self.dataset_holder[guid]["dataset"]
             except Exception as err:
+                log_exception("Preview plot run load failed", err, __name__)
                 self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
                 return
 
@@ -1657,6 +1667,7 @@ class MainWindow(qtw.QMainWindow):
             try:
                 param = self._parameter_from_guid(source_guid, parameter_name)
             except Exception as err:
+                log_exception("Trace source run load failed", err, __name__)
                 self.show_error(
                     "Run Load Failed",
                     f"Could not load run with GUID {source_guid}.",
@@ -1802,6 +1813,7 @@ class MainWindow(qtw.QMainWindow):
         try:
             return load_by_id(self.selected_run_id)
         except Exception as error:
+            log_exception("Run ID load failed", error, __name__)
             self.show_error(
                 "Run Load Failed",
                 f"Could not load Run ID {self.selected_run_id}.",
@@ -2044,6 +2056,7 @@ class MainWindow(qtw.QMainWindow):
         Shows an error both in the status bar and in a message box.
 
         """
+        log_user_error(title, message, details, __name__)
         self.show_status(message, 10000)
 
         box = qtw.QMessageBox(qtw.QMessageBox.Warning, title, message, parent=self)
@@ -2147,6 +2160,7 @@ class MainWindow(qtw.QMainWindow):
         """
         if load_started_at is None:
             load_started_at = perf_counter()
+        log_event("Loading database file: %s", abspath, logger_name=__name__)
         
         if abspath == get_DB_location() and self.fileTextbox.text() == abspath:
             # Already initialised in QCoDeS and still open in this window.
@@ -2193,6 +2207,7 @@ class MainWindow(qtw.QMainWindow):
 
         except Exception as err:
             self.fileTextbox.setText(previous_file)
+            log_exception("Database load failed", err, __name__)
             self.show_error(
                 "Database Load Failed",
                 f"Could not load database {abspath}.",
@@ -2212,6 +2227,13 @@ class MainWindow(qtw.QMainWindow):
                 f"{os.path.basename(abspath)} in {elapsed:.2f} s."
                 ),
             5000
+            )
+        log_event(
+            "Loaded %s runs from %s in %.2f s",
+            self.RunList.topLevelItemCount(),
+            abspath,
+            elapsed,
+            logger_name=__name__,
             )
         return True
 

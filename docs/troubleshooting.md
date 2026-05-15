@@ -153,6 +153,19 @@ If `config.json` is invalid JSON or fails validation, qPlot backs it up in
 `~/.qplot` with a name such as `config.invalid.json` and creates a fresh config
 from defaults.
 
+## Diagnostic Logs
+
+qPlot writes diagnostic messages and tracebacks to:
+
+```text
+~/.qplot/qplot.log
+```
+
+Check this file when a user-facing error dialog does not contain enough detail.
+The log records startup, database loads, refresh failures, CSV export failures,
+plot-opening failures, preview-generation failures, and background worker
+errors.
+
 ## Theme or Preference Changes Do Not Look Right
 
 Use `Options -> Restore Default Settings...` from the app, or run:
