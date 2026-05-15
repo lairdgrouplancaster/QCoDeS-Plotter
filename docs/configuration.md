@@ -18,6 +18,12 @@ Show available config commands:
 qplot-cfg -info
 ```
 
+Show the installed qPlot version:
+
+```console
+qplot-cfg -version
+```
+
 Print the current config:
 
 ```console

@@ -8,6 +8,7 @@ from qplot.diagnostics import (
     log_event,
     log_exception,
     )
+from qplot._version import package_version
 from qplot.windows import MainWindow
 
 
@@ -30,7 +31,7 @@ def run(return_objects=False):
     """
     configure_logging()
     install_excepthook()
-    log_event("Starting qPlot")
+    log_event("Starting qPlot %s", package_version())
     print("Initialising GUI, this may take a few seconds.\n")
 
     try:

@@ -18,6 +18,11 @@ from qplot.tools import (
     loader,
     )
 from qplot.datahandling import load_param_data_from_db_prep
+from qplot.datahandling.qcodes_cache import (
+    cache_has_no_written_data,
+    set_parameter_complete,
+    update_cache_parameter_data,
+    )
     
 from ._subplots import custom_viewbox
 from ._widgets import (
@@ -152,7 +157,7 @@ class plotWidget(qtw.QMainWindow):
         self._guid = guid
         self.param = param
         if not hasattr(self.param, "_complete"): # Add completed load track
-            self.param._complete = False
+            set_parameter_complete(self.param, False)
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
@@ -1803,17 +1808,16 @@ class plotWidget(qtw.QMainWindow):
                 cache = self.ds.cache
                 name = self.param.name
                 
-                cache._read_status[name] = worker.updated_read_status[name]
-                cache._write_status[name] = worker.updated_write_status[name]
-                cache._data[name] = worker.cache_data[name]
+                update_cache_parameter_data(
+                    cache,
+                    name,
+                    worker.updated_read_status,
+                    worker.updated_write_status,
+                    worker.cache_data,
+                    )
                 
-                ### Copied from qcodes functions
-                data_not_read = all(
-                    status is None or status == 0 for status in cache._write_status.values()
-                )
-                if not data_not_read:
+                if not cache_has_no_written_data(cache):
                     self._live = False
-                ###
             
             #set data to be called by plot<1/2>d.refreshPlot()
             self.axis_data = {

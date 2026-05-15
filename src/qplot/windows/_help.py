@@ -1,6 +1,8 @@
 from PyQt5 import QtCore
 from PyQt5 import QtWidgets as qtw
 
+from qplot.diagnostics import default_log_file
+
 
 _OPEN_HELP_DIALOGS = []
 
@@ -90,6 +92,14 @@ def add_help_menu(window):
     shortcuts_action.triggered.connect(lambda: show_keyboard_shortcuts(window))
     help_menu.addAction(shortcuts_action)
 
+    help_menu.addSeparator()
+
+    copy_log_path_action = qtw.QAction("Copy &Diagnostic Log Path", window)
+    copy_log_path_action.setObjectName("copyDiagnosticLogPathAction")
+    copy_log_path_action.setStatusTip("Copy the qPlot diagnostic log file path")
+    copy_log_path_action.triggered.connect(lambda: copy_diagnostic_log_path(window))
+    help_menu.addAction(copy_log_path_action)
+
     return help_menu
 
 
@@ -117,6 +127,18 @@ def show_keyboard_shortcuts(parent=None):
         KEYBOARD_SHORTCUTS_HTML,
         "qplotKeyboardShortcutsDialog",
         )
+
+
+def copy_diagnostic_log_path(parent=None):
+    """
+    Copies qPlot's diagnostic log path to the clipboard.
+
+    """
+    path = str(default_log_file())
+    qtw.QApplication.clipboard().setText(path)
+    if parent is not None and hasattr(parent, "show_status"):
+        parent.show_status(f"Copied diagnostic log path: {path}", 5000)
+    return path
 
 
 def _show_help_dialog(parent, title, html, object_name):

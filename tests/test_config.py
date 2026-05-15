@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PyQt5 import QtWidgets as qtw
 
+from qplot import __version__
 from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
 from qplot.configuration.themes import dark
@@ -110,6 +111,13 @@ class TemporaryConfigTestCase(unittest.TestCase):
             sys.argv = old_argv
 
         self.assertIn("Valid Commands", output.getvalue())
+
+    def test_config_cli_version_prints_package_version(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            sysHandle("-version")
+
+        self.assertEqual(output.getvalue().strip(), __version__)
 
     def test_main_window_uses_configured_default_refresh_rate(self):
         cfg = config()

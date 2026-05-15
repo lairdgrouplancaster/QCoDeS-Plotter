@@ -182,6 +182,9 @@ The log records startup, database loads, refresh failures, CSV export failures,
 plot-opening failures, preview-generation failures, and background worker
 errors.
 
+Inside qPlot, use `Help -> Copy Diagnostic Log Path` to copy this path to the
+clipboard.
+
 ## Theme or Preference Changes Do Not Look Right
 
 Use `Options -> Restore Default Settings...` from the app, or run:

@@ -88,9 +88,9 @@ The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `QApplication` creation unless a test has a specific reason to override the
 shared setup.
 
-GitHub Actions runs the same Ruff and pytest checks on Windows 2025 with Python
-3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. The workflow lives in
-`.github/workflows/ci.yml`.
+GitHub Actions runs the same Ruff and pytest checks on Windows 2025 and macOS
+with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. The
+workflow lives in `.github/workflows/ci.yml`.
 
 ## Generated Files
 

@@ -65,15 +65,25 @@ reusable UI controls used inside plot windows.
 QCoDeS SQLite database. It also computes summary fields used by the run table,
 including status, point counts, and storage size estimates.
 
+`src/qplot/datahandling/database.py` contains database-file access helpers,
+cloud-storage hydration, background main-window load workers, and database
+diagnostic report generation.
+
 `src/qplot/datahandling/LoadFromDB.py` adapts QCoDeS database loading for
 threaded refreshes.
+
+`src/qplot/datahandling/qcodes_cache.py` is the compatibility boundary for
+QCoDeS cache internals used by per-parameter refreshes. Prefer adding cache
+private-attribute access there instead of spreading it through GUI modules.
 
 `src/qplot/tools/worker.py` defines the background loader used by plot windows.
 It loads data, reshapes it for the plot type, applies selected operations, and
 emits results back to the GUI thread.
 
 `src/qplot/tools/general.py` and `plot_tools.py` contain small data helpers and
-plot operation functions.
+plot operation functions. `src/qplot/tools/operation_registry.py` maps those
+operation functions to the plot-window surfaces and input controls that expose
+them.
 
 ## Configuration
 

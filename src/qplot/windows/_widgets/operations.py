@@ -4,12 +4,7 @@ from PyQt5 import (
     QtCore,
     )
 
-from qplot.tools.plot_tools import (
-    subtract_mean,
-    pass_filter,
-    differentiate,
-    fill_heatmap
-    )
+from qplot.tools.operation_registry import operation_specs_for
 from .dropbox import expandingComboBox
 
 
@@ -159,20 +154,12 @@ class operations_options_base(qtw.QWidget):
         Then adds these to available options.
 
         """
-        for key, subdict in self.common_operation_options.items():
+        for spec in operation_specs_for(self.operation_kind):
             self.add_option(
-                key, 
-                subdict["func"], 
-                subdict["input_type"],
-                subdict.get("default", "")
-                )
-            
-        for key, subdict in self.operation_options.items():
-            self.add_option(
-                key, 
-                subdict["func"], 
-                subdict["input_type"],
-                subdict.get("default", "")
+                spec.name,
+                spec.func,
+                spec.input_type,
+                spec.default,
                 )
         self.list_options.adjustSize()
             
@@ -329,64 +316,15 @@ class rowItem(qtw.QListWidgetItem):
 
 
 
-###############################################################################
-### AVAILABLE OPERATIONS ###
-
 class operations_options_common(operations_options_base):
-    # For common between all 3 window types.
-    common_operation_options = {
-        # display Name : {"func" : lambda input, data: function_to_run(input, data), 
-        #                 "input_type" : input_type_needed,
-        #                 "default" : (optional) None | default_value},
-        "Limit Maxiumum" : {"func": lambda limit, data: pass_filter("low", limit, data),
-                             "input_type": float},
-        "Limit Minimum" : {"func": lambda limit, data: pass_filter("high", limit, data),
-                             "input_type": float},
-        }
+    operation_kind = None
 
 
 class operations_options_1d(operations_options_common):
-    operation_options = {
-        # display Name : {"func" : lambda input, data: function_to_run(input, data), 
-        #                 "input_type" : input_type_needed,
-        #                 "default" : (optional) None | default_value},
-        "dy/dx" : {"func" : lambda data: differentiate("x", data), 
-                   "input_type" : None},
-        }
+    operation_kind = "plot1d"
 
 class operations_options_2d(operations_options_common):
-    operation_options = {
-        # display Name : {"func" : lambda input, data: function_to_run(input, data), 
-        #                 "input_type" : input_type_needed,
-        #                 "default" : (optional) None | default_value},
-        "Subtract Row Mean" : {"func" : lambda data: subtract_mean("x", data),
-                               "input_type" : None},
-        "Subtract Column Mean" : {"func" : lambda data: subtract_mean("y", data),
-                                  "input_type" : None},
-        "dz/dx" : {"func" : lambda data: differentiate("x", data), 
-                   "input_type" : None},
-        "dz/dy" : {"func" : lambda data: differentiate("y", data),
-                   "input_type" : None},
-        "Fill Below" : {"func" : lambda value, data: fill_heatmap("below", data, max_depth=value),
-                        "input_type" : int,
-                        "default" : 10},
-        "Fill Right" : {"func" : lambda value, data: fill_heatmap("right", data, max_depth=value),
-                        "input_type" : int,
-                        "default" : 10},
-        
-        }
+    operation_kind = "plot2d"
     
 class operations_options_sweep(operations_options_common):
-    operation_options = {
-        # display Name : {"func" : lambda input, data: function_to_run(input, data), 
-        #                 "input_type" : input_type_needed,
-        #                 "default" : (optional) None | default_value},
-        "Subtract Cut Mean" : {"func" : lambda data: subtract_mean("x", data),
-                               "input_type" : None},
-        "Subtract Fixed Mean" : {"func" : lambda data: subtract_mean("y", data),
-                               "input_type" : None},
-        "Differentiate Cut" : {"func" : lambda data: differentiate("x", data),
-                               "input_type" : None},
-        "Differentiate Fixed" : {"func" : lambda data: differentiate("y", data),
-                                 "input_type" : None},
-        }
+    operation_kind = "sweeper"

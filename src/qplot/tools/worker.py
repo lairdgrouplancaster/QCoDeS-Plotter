@@ -9,6 +9,15 @@ from . import data2matrix
 from qcodes.dataset.sqlite.database import connect
 
 from qplot.datahandling import load_param_data_from_db
+from qplot.datahandling.qcodes_cache import (
+    cache_data,
+    cache_database_path,
+    cache_parameter_data,
+    cache_read_status,
+    cache_rundescriber,
+    cache_table_name,
+    cache_write_status,
+    )
 from qplot.diagnostics import log_exception
 
 
@@ -60,7 +69,7 @@ class loader(QtCore.QRunnable):
         
         # Required working data
         self.cache = cache
-        self.table_name = cache._dataset.table_name # This property is an SQL check
+        self.table_name = cache_table_name(cache)
         self.param = param
         self.param_dict = param_dict
         
@@ -75,7 +84,7 @@ class loader(QtCore.QRunnable):
             cache = self.cache
             
             if self.read_data:
-                conn = connect(cache._dataset.path_to_db)
+                conn = connect(cache_database_path(cache))
                 (
                     self.updated_read_status,
                     self.updated_write_status,
@@ -83,18 +92,18 @@ class loader(QtCore.QRunnable):
                 ) = load_param_data_from_db (
                     conn,
                     self.table_name,
-                    cache.rundescriber,
+                    cache_rundescriber(cache),
                     self.param.name,
-                    cache._write_status,
-                    cache._read_status,
-                    cache._data
+                    cache_write_status(cache),
+                    cache_read_status(cache),
+                    cache_data(cache)
                 )
                 conn.close()
                 
                 data = self.cache_data[self.param.name]
                 
             else:
-                data = cache._data[self.param.name]
+                data = cache_parameter_data(cache, self.param.name)
                 
             depvarData = data[self.param.name]
             

@@ -9,12 +9,13 @@ permissions:
 
 jobs:
   checks:
-    name: Windows 2025 Python ${{ matrix.python-version }}
-    runs-on: windows-2025
+    name: ${{ matrix.os }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
+        os: [windows-2025, macos-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     env:

@@ -29,6 +29,8 @@ Common actions:
   database.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
 * `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
+* `Help -> Copy Diagnostic Log Path` copies the log file location for support
+  or troubleshooting.
 * The refresh interval controls how often qPlot checks for new runs. Set it to
   `0.0 s` to disable automatic checks.
 * `Auto-plot` opens newly detected runs automatically.

@@ -1,4 +1,5 @@
 from .config import config
+from qplot._version import package_version
 
 from jsonschema import ValidationError
 
@@ -165,6 +166,16 @@ class sysHandle:
             raise KeyError(f"Command: ({attr}), not found. Valid options: {self.valid_args}, '-' may be ommited")
         
         print(func.__doc__)
+
+
+    def version(self):
+        """
+        -version
+        --------
+        Prints the installed qPlot package version.
+
+        """
+        print(package_version())
 
 
 def try_as_num(item):

@@ -120,6 +120,7 @@ Useful commands:
 
 ```console
 qplot-cfg -info
+qplot-cfg -version
 qplot-cfg -dump
 qplot-cfg -find user_preference.theme
 qplot-cfg -set_value user_preference.theme dark

@@ -4,6 +4,7 @@ from PyQt5 import QtWidgets as qtw
 
 from qplot.windows._help import (
     add_help_menu,
+    copy_diagnostic_log_path,
     show_keyboard_shortcuts,
     show_quick_start,
     )
@@ -31,6 +32,29 @@ class HelpMenuTestCase(unittest.TestCase):
                 actions["keyboardShortcutsHelpAction"].text(),
                 "&Keyboard Shortcuts",
                 )
+            self.assertEqual(
+                actions["copyDiagnosticLogPathAction"].text(),
+                "Copy &Diagnostic Log Path",
+                )
+        finally:
+            window.deleteLater()
+
+    def test_copy_diagnostic_log_path_copies_path_and_reports_status(self):
+        class Window(qtw.QMainWindow):
+            def __init__(self):
+                super().__init__()
+                self.status_messages = []
+
+            def show_status(self, message, timeout=5000):
+                self.status_messages.append((message, timeout))
+
+        window = Window()
+
+        try:
+            path = copy_diagnostic_log_path(window)
+            self.assertEqual(qtw.QApplication.clipboard().text(), path)
+            self.assertIn("qplot.log", path)
+            self.assertEqual(window.status_messages[-1][1], 5000)
         finally:
             window.deleteLater()
 

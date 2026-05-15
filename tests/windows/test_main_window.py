@@ -7,6 +7,7 @@ from PyQt5 import QtCore
 from PyQt5 import QtWidgets as qtw
 
 from qplot.windows import main as main_window
+from qplot.datahandling import database as database_module
 from qplot.windows._window_controls import (
     add_confirmation_options,
     add_restore_defaults_option,
@@ -400,22 +401,22 @@ class DatabaseAccessProbeTestCase(unittest.TestCase):
             finally:
                 conn.close()
 
-            self.assertIsNone(main_window.database_access_error(database.name))
+            self.assertIsNone(database_module.database_access_error(database.name))
 
     def test_database_access_error_reports_timeout(self):
-        old_run = main_window.subprocess.run
+        old_run = database_module.subprocess.run
 
         def run(*args, **kwargs):
-            raise main_window.subprocess.TimeoutExpired(
+            raise database_module.subprocess.TimeoutExpired(
                 cmd=args[0],
                 timeout=kwargs["timeout"],
                 )
 
-        main_window.subprocess.run = run
+        database_module.subprocess.run = run
         try:
-            error = main_window.database_access_error("locked.db", timeout=0.5)
+            error = database_module.database_access_error("locked.db", timeout=0.5)
         finally:
-            main_window.subprocess.run = old_run
+            database_module.subprocess.run = old_run
 
         self.assertIn("Timed out after 0.5 s", error)
         self.assertIn("locked", error)
@@ -601,17 +602,17 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
             database.write(b"x" * 10)
             database.flush()
             statuses = []
-            old_label = main_window.database_cloud_storage_label
-            main_window.database_cloud_storage_label = lambda _path: "OneDrive"
+            old_label = database_module.database_cloud_storage_label
+            database_module.database_cloud_storage_label = lambda _path: "OneDrive"
             try:
-                bytes_read = main_window.prefetch_database_file(
+                bytes_read = database_module.prefetch_database_file(
                     database.name,
                     status_callback=statuses.append,
                     chunk_size=4,
                     status_interval=0,
                     )
             finally:
-                main_window.database_cloud_storage_label = old_label
+                database_module.database_cloud_storage_label = old_label
 
         self.assertEqual(bytes_read, 10)
         self.assertTrue(statuses[0].startswith("Waiting for OneDrive sync..."))
@@ -622,23 +623,23 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
             database.write(b"x" * 10)
             database.flush()
             statuses = []
-            old_label = main_window.database_cloud_storage_label
-            main_window.database_cloud_storage_label = lambda _path: "OneDrive"
+            old_label = database_module.database_cloud_storage_label
+            database_module.database_cloud_storage_label = lambda _path: "OneDrive"
             try:
-                bytes_read = main_window.prefetch_database_file_with_timeout(
+                bytes_read = database_module.prefetch_database_file_with_timeout(
                     database.name,
                     timeout=5,
                     status_callback=statuses.append,
                     )
             finally:
-                main_window.database_cloud_storage_label = old_label
+                database_module.database_cloud_storage_label = old_label
 
         self.assertEqual(bytes_read, 10)
         self.assertIn("Waiting for OneDrive sync...", statuses)
         self.assertIn("Waiting for OneDrive sync... 100% available", statuses)
 
     def test_prefetch_database_file_with_timeout_kills_stalled_process(self):
-        old_popen = main_window.subprocess.Popen
+        old_popen = database_module.subprocess.Popen
         killed = []
 
         class Pipe:
@@ -662,23 +663,23 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
             def wait(self):
                 self.returncode = -9
 
-        main_window.subprocess.Popen = lambda *args, **kwargs: Process()
+        database_module.subprocess.Popen = lambda *args, **kwargs: Process()
         try:
             with self.assertRaises(TimeoutError) as caught:
-                main_window.prefetch_database_file_with_timeout(
+                database_module.prefetch_database_file_with_timeout(
                     "OneDrive/test.db",
                     timeout=0.01,
                     status_callback=lambda _message: None,
                     )
         finally:
-            main_window.subprocess.Popen = old_popen
+            database_module.subprocess.Popen = old_popen
 
         self.assertEqual(killed, [True])
         self.assertIn("Timed out after 0.01 s", str(caught.exception))
         self.assertIn("OneDrive", str(caught.exception))
 
     def test_prefetch_database_file_with_timeout_stops_when_cancelled(self):
-        old_popen = main_window.subprocess.Popen
+        old_popen = database_module.subprocess.Popen
         killed = []
 
         class Pipe:
@@ -702,25 +703,25 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
             def wait(self):
                 self.returncode = -9
 
-        main_window.subprocess.Popen = lambda *args, **kwargs: Process()
+        database_module.subprocess.Popen = lambda *args, **kwargs: Process()
         try:
             with self.assertRaises(InterruptedError):
-                main_window.prefetch_database_file_with_timeout(
+                database_module.prefetch_database_file_with_timeout(
                     "OneDrive/test.db",
                     timeout=5,
                     cancelled_callback=lambda: True,
                     )
         finally:
-            main_window.subprocess.Popen = old_popen
+            database_module.subprocess.Popen = old_popen
 
         self.assertEqual(killed, [True])
 
 
 class DatabaseLoadWorkerTestCase(unittest.TestCase):
     def test_database_load_worker_initialises_database_and_returns_runs(self):
-        old_access_error = main_window.database_access_error
-        old_initialise = main_window.initialise_or_create_database_at
-        old_get_runs = main_window.get_runs_via_sql
+        old_access_error = database_module.database_access_error
+        old_initialise = database_module.initialise_or_create_database_at
+        old_get_runs = database_module.get_runs_via_sql
         calls = []
 
         def access_error(database_path):
@@ -734,9 +735,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             calls.append(("runs", None))
             return {1: {"guid": "guid-1", "run_timestamp": 123.0}}
 
-        main_window.database_access_error = access_error
-        main_window.initialise_or_create_database_at = initialise
-        main_window.get_runs_via_sql = get_runs
+        database_module.database_access_error = access_error
+        database_module.initialise_or_create_database_at = initialise
+        database_module.get_runs_via_sql = get_runs
         try:
             worker = main_window.DatabaseLoadWorker(7, "example.db")
             statuses = []
@@ -746,9 +747,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
             worker.run()
         finally:
-            main_window.database_access_error = old_access_error
-            main_window.initialise_or_create_database_at = old_initialise
-            main_window.get_runs_via_sql = old_get_runs
+            database_module.database_access_error = old_access_error
+            database_module.initialise_or_create_database_at = old_initialise
+            database_module.get_runs_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", "example.db"),
@@ -765,11 +766,11 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             ])
 
     def test_database_load_worker_reports_access_error(self):
-        old_access_error = main_window.database_access_error
-        old_initialise = main_window.initialise_or_create_database_at
+        old_access_error = database_module.database_access_error
+        old_initialise = database_module.initialise_or_create_database_at
 
-        main_window.database_access_error = lambda _path: "locked database"
-        main_window.initialise_or_create_database_at = lambda _path: self.fail(
+        database_module.database_access_error = lambda _path: "locked database"
+        database_module.initialise_or_create_database_at = lambda _path: self.fail(
             "Database should not initialise after an access error"
             )
         try:
@@ -779,8 +780,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
             worker.run()
         finally:
-            main_window.database_access_error = old_access_error
-            main_window.initialise_or_create_database_at = old_initialise
+            database_module.database_access_error = old_access_error
+            database_module.initialise_or_create_database_at = old_initialise
 
         self.assertEqual(len(finished), 1)
         self.assertEqual(finished[0][:3], (3, "locked.db", {}))
@@ -788,14 +789,14 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         self.assertIn("locked database", str(finished[0][3]))
 
     def test_database_load_worker_does_not_start_when_cancelled(self):
-        old_placeholder = main_window.database_is_likely_cloud_placeholder
-        old_access_error = main_window.database_access_error
+        old_placeholder = database_module.database_is_likely_cloud_placeholder
+        old_access_error = database_module.database_access_error
         calls = []
 
-        main_window.database_is_likely_cloud_placeholder = lambda _path: calls.append(
+        database_module.database_is_likely_cloud_placeholder = lambda _path: calls.append(
             "placeholder"
             )
-        main_window.database_access_error = lambda _path: calls.append("access")
+        database_module.database_access_error = lambda _path: calls.append("access")
         try:
             worker = main_window.DatabaseLoadWorker(4, "example.db")
             finished = []
@@ -804,16 +805,16 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker.cancel()
             worker.run()
         finally:
-            main_window.database_is_likely_cloud_placeholder = old_placeholder
-            main_window.database_access_error = old_access_error
+            database_module.database_is_likely_cloud_placeholder = old_placeholder
+            database_module.database_access_error = old_access_error
 
         self.assertEqual(calls, [])
         self.assertEqual(finished, [])
 
     def test_database_load_worker_stops_after_cancelled_prefetch(self):
-        old_placeholder = main_window.database_is_likely_cloud_placeholder
-        old_prefetch = main_window.prefetch_database_file_with_timeout
-        old_access_error = main_window.database_access_error
+        old_placeholder = database_module.database_is_likely_cloud_placeholder
+        old_prefetch = database_module.prefetch_database_file_with_timeout
+        old_access_error = database_module.database_access_error
         calls = []
 
         def prefetch(
@@ -825,9 +826,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             calls.append(("prefetch", database_path, timeout))
             raise InterruptedError("Database load cancelled.")
 
-        main_window.database_is_likely_cloud_placeholder = lambda _path: True
-        main_window.prefetch_database_file_with_timeout = prefetch
-        main_window.database_access_error = lambda _path: calls.append("access")
+        database_module.database_is_likely_cloud_placeholder = lambda _path: True
+        database_module.prefetch_database_file_with_timeout = prefetch
+        database_module.database_access_error = lambda _path: calls.append("access")
         try:
             worker = main_window.DatabaseLoadWorker(5, "cloud.db", 8)
             finished = []
@@ -835,9 +836,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
             worker.run()
         finally:
-            main_window.database_is_likely_cloud_placeholder = old_placeholder
-            main_window.prefetch_database_file_with_timeout = old_prefetch
-            main_window.database_access_error = old_access_error
+            database_module.database_is_likely_cloud_placeholder = old_placeholder
+            database_module.prefetch_database_file_with_timeout = old_prefetch
+            database_module.database_access_error = old_access_error
 
         self.assertEqual(calls, [("prefetch", "cloud.db", 8)])
         self.assertEqual(finished, [])
@@ -860,12 +861,12 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         worker._emit_finished({}, None)
 
     def test_database_load_worker_waits_for_cloud_sync_and_retries_probe(self):
-        old_access_error = main_window.database_access_error
-        old_label = main_window.database_cloud_storage_label
-        old_placeholder = main_window.database_is_likely_cloud_placeholder
-        old_prefetch = main_window.prefetch_database_file_with_timeout
-        old_initialise = main_window.initialise_or_create_database_at
-        old_get_runs = main_window.get_runs_via_sql
+        old_access_error = database_module.database_access_error
+        old_label = database_module.database_cloud_storage_label
+        old_placeholder = database_module.database_is_likely_cloud_placeholder
+        old_prefetch = database_module.prefetch_database_file_with_timeout
+        old_initialise = database_module.initialise_or_create_database_at
+        old_get_runs = database_module.get_runs_via_sql
         calls = []
 
         access_results = iter(["timed out", None])
@@ -885,14 +886,14 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             status_callback("Waiting for OneDrive sync... 100% available")
             return 10
 
-        main_window.database_access_error = access_error
-        main_window.database_cloud_storage_label = lambda _path: "OneDrive"
-        main_window.database_is_likely_cloud_placeholder = lambda _path: False
-        main_window.prefetch_database_file_with_timeout = prefetch
-        main_window.initialise_or_create_database_at = lambda path: calls.append(
+        database_module.database_access_error = access_error
+        database_module.database_cloud_storage_label = lambda _path: "OneDrive"
+        database_module.database_is_likely_cloud_placeholder = lambda _path: False
+        database_module.prefetch_database_file_with_timeout = prefetch
+        database_module.initialise_or_create_database_at = lambda path: calls.append(
             ("initialise", path)
             )
-        main_window.get_runs_via_sql = lambda: {}
+        database_module.get_runs_via_sql = lambda: {}
         try:
             with tempfile.NamedTemporaryFile(suffix=".db") as database:
                 worker = main_window.DatabaseLoadWorker(9, database.name, 12)
@@ -904,12 +905,12 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 worker.run()
                 expected_path = database.name
         finally:
-            main_window.database_access_error = old_access_error
-            main_window.database_cloud_storage_label = old_label
-            main_window.database_is_likely_cloud_placeholder = old_placeholder
-            main_window.prefetch_database_file_with_timeout = old_prefetch
-            main_window.initialise_or_create_database_at = old_initialise
-            main_window.get_runs_via_sql = old_get_runs
+            database_module.database_access_error = old_access_error
+            database_module.database_cloud_storage_label = old_label
+            database_module.database_is_likely_cloud_placeholder = old_placeholder
+            database_module.prefetch_database_file_with_timeout = old_prefetch
+            database_module.initialise_or_create_database_at = old_initialise
+            database_module.get_runs_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", expected_path),
