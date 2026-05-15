@@ -421,6 +421,174 @@ class DatabaseAccessProbeTestCase(unittest.TestCase):
         self.assertIn("locked", error)
 
 
+class CloudDatabasePrefetchTestCase(unittest.TestCase):
+    def test_prefetch_database_file_reads_file_and_reports_cloud_sync_progress(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database.write(b"x" * 10)
+            database.flush()
+            statuses = []
+            old_label = main_window.database_cloud_storage_label
+            main_window.database_cloud_storage_label = lambda _path: "OneDrive"
+            try:
+                bytes_read = main_window.prefetch_database_file(
+                    database.name,
+                    status_callback=statuses.append,
+                    chunk_size=4,
+                    status_interval=0,
+                    )
+            finally:
+                main_window.database_cloud_storage_label = old_label
+
+        self.assertEqual(bytes_read, 10)
+        self.assertTrue(statuses[0].startswith("Waiting for OneDrive sync..."))
+        self.assertIn("100% available", statuses[-1])
+
+
+class DatabaseLoadWorkerTestCase(unittest.TestCase):
+    def test_database_load_worker_initialises_database_and_returns_runs(self):
+        old_access_error = main_window.database_access_error
+        old_initialise = main_window.initialise_or_create_database_at
+        old_get_runs = main_window.get_runs_via_sql
+        calls = []
+
+        def access_error(database_path):
+            calls.append(("access", database_path))
+            return None
+
+        def initialise(database_path):
+            calls.append(("initialise", database_path))
+
+        def get_runs():
+            calls.append(("runs", None))
+            return {1: {"guid": "guid-1", "run_timestamp": 123.0}}
+
+        main_window.database_access_error = access_error
+        main_window.initialise_or_create_database_at = initialise
+        main_window.get_runs_via_sql = get_runs
+        try:
+            worker = main_window.DatabaseLoadWorker(7, "example.db")
+            statuses = []
+            finished = []
+            worker.signals.status.connect(lambda *args: statuses.append(args))
+            worker.signals.finished.connect(lambda *args: finished.append(args))
+
+            worker.run()
+        finally:
+            main_window.database_access_error = old_access_error
+            main_window.initialise_or_create_database_at = old_initialise
+            main_window.get_runs_via_sql = old_get_runs
+
+        self.assertEqual(calls, [
+            ("access", "example.db"),
+            ("initialise", "example.db"),
+            ("runs", None),
+            ])
+        self.assertEqual(statuses, [
+            (7, "Checking database access..."),
+            (7, "Initialising database..."),
+            (7, "Loading run list..."),
+            ])
+        self.assertEqual(finished, [
+            (7, "example.db", {1: {"guid": "guid-1", "run_timestamp": 123.0}}, None)
+            ])
+
+    def test_database_load_worker_reports_access_error(self):
+        old_access_error = main_window.database_access_error
+        old_initialise = main_window.initialise_or_create_database_at
+
+        main_window.database_access_error = lambda _path: "locked database"
+        main_window.initialise_or_create_database_at = lambda _path: self.fail(
+            "Database should not initialise after an access error"
+            )
+        try:
+            worker = main_window.DatabaseLoadWorker(3, "locked.db")
+            finished = []
+            worker.signals.finished.connect(lambda *args: finished.append(args))
+
+            worker.run()
+        finally:
+            main_window.database_access_error = old_access_error
+            main_window.initialise_or_create_database_at = old_initialise
+
+        self.assertEqual(len(finished), 1)
+        self.assertEqual(finished[0][:3], (3, "locked.db", {}))
+        self.assertIsInstance(finished[0][3], RuntimeError)
+        self.assertIn("locked database", str(finished[0][3]))
+
+    def test_database_load_worker_waits_for_cloud_sync_and_retries_probe(self):
+        old_access_error = main_window.database_access_error
+        old_label = main_window.database_cloud_storage_label
+        old_placeholder = main_window.database_is_likely_cloud_placeholder
+        old_prefetch = main_window.prefetch_database_file
+        old_initialise = main_window.initialise_or_create_database_at
+        old_get_runs = main_window.get_runs_via_sql
+        calls = []
+
+        access_results = iter(["timed out", None])
+
+        def access_error(database_path):
+            calls.append(("access", database_path))
+            return next(access_results)
+
+        def prefetch(database_path, status_callback=None):
+            calls.append(("prefetch", database_path))
+            status_callback("Waiting for OneDrive sync... 100% available")
+            return 10
+
+        main_window.database_access_error = access_error
+        main_window.database_cloud_storage_label = lambda _path: "OneDrive"
+        main_window.database_is_likely_cloud_placeholder = lambda _path: False
+        main_window.prefetch_database_file = prefetch
+        main_window.initialise_or_create_database_at = lambda path: calls.append(
+            ("initialise", path)
+            )
+        main_window.get_runs_via_sql = lambda: {}
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".db") as database:
+                worker = main_window.DatabaseLoadWorker(9, database.name)
+                statuses = []
+                finished = []
+                worker.signals.status.connect(lambda *args: statuses.append(args))
+                worker.signals.finished.connect(lambda *args: finished.append(args))
+
+                worker.run()
+                expected_path = database.name
+        finally:
+            main_window.database_access_error = old_access_error
+            main_window.database_cloud_storage_label = old_label
+            main_window.database_is_likely_cloud_placeholder = old_placeholder
+            main_window.prefetch_database_file = old_prefetch
+            main_window.initialise_or_create_database_at = old_initialise
+            main_window.get_runs_via_sql = old_get_runs
+
+        self.assertEqual(calls, [
+            ("access", expected_path),
+            ("prefetch", expected_path),
+            ("access", expected_path),
+            ("initialise", expected_path),
+            ])
+        self.assertIn((9, "Waiting for OneDrive sync... 100% available"), statuses)
+        self.assertEqual(finished, [(9, expected_path, {}, None)])
+
+
+class DatabaseLoadRequestTestCase(unittest.TestCase):
+    def test_load_database_path_rejects_missing_file_before_starting_worker(self):
+        class Harness:
+            load_database_path = main_window.MainWindow.load_database_path
+
+            def __init__(self):
+                self.errors = []
+
+            def show_error(self, title, message, details=None):
+                self.errors.append((title, message, details))
+
+        harness = Harness()
+
+        self.assertFalse(harness.load_database_path("missing.db"))
+        self.assertEqual(harness.errors[0][0], "Database Load Failed")
+        self.assertIn("could not be found", harness.errors[0][1])
+
+
 class DatabaseDropTestCase(unittest.TestCase):
     def test_database_info_report_summarises_qcodes_tables(self):
         with tempfile.TemporaryDirectory() as temp_dir:

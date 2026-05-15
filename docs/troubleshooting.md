@@ -106,6 +106,19 @@ If the database is being written by a running experiment, try again after a
 short wait. For persistent failures, use the `Database Information` button in
 the main window if the file can be opened far enough for diagnostics.
 
+## A OneDrive Database Waits for Sync
+
+On macOS, OneDrive and other cloud providers can leave a `.db` file as an
+online-only placeholder until an application reads it. When qPlot detects this
+kind of cloud-backed path, or when the first database access check fails for a
+cloud-backed path, it reads the file in the background to trigger the provider's
+Files On-Demand download. The status bar shows progress such as `Waiting for
+OneDrive sync...`.
+
+If the message stays visible for a long time, check that OneDrive is running,
+signed in, and allowed to download the file. You can also mark important
+database folders as always available in Finder.
+
 ## Plot Windows Look Empty
 
 Plot windows can open before data loading has finished. Check the status bar at

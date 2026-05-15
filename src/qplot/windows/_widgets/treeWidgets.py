@@ -501,8 +501,10 @@ class RunList(qtw.QTreeWidget):
     previewExportRequested = QtCore.pyqtSignal(str, str)
     _shortcut_keys = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     
-    def __init__(self, *args, initalize=False, **kargs):
+    def __init__(self, *args, initalize=False, initialize=None, **kargs):
         super().__init__(*args, **kargs)
+        if initialize is not None:
+            initalize = initialize
         
         self.watching = []
         self.preview_cells = {}
@@ -519,8 +521,8 @@ class RunList(qtw.QTreeWidget):
             )
         self._resize_columns()
         
-        # Only used in IDE
-        if isfile(get_DB_location()):
+        # Optional IDE convenience; MainWindow loads databases asynchronously.
+        if initalize and isfile(get_DB_location()):
             self.setRuns()
             
         # Slot connections

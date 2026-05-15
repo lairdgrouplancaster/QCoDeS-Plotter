@@ -27,7 +27,8 @@ from ._window_controls import (
     )
 from qplot.diagnostics import log_event, log_exception, log_user_error
 from qplot.datahandling import (
-    find_new_runs
+    find_new_runs,
+    get_runs_via_sql,
     )
 from qplot import config
 
@@ -51,6 +52,13 @@ import numpy as np
 import pandas as pd
 
 DATABASE_ACCESS_TIMEOUT_SECONDS = 3
+DATABASE_CLOUD_SYNC_CHUNK_BYTES = 4 * 1024 * 1024
+DATABASE_CLOUD_SYNC_STATUS_INTERVAL = 1.0
+CLOUD_PLACEHOLDER_XATTR_MARKERS = (
+    "com.apple.fileprovider",
+    "com.apple.fileutil.PlaceholderData",
+    "com.microsoft.OneDrive",
+    )
 
 
 def database_path_from_mime_data(mime_data):
@@ -121,6 +129,172 @@ def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS
     if not details:
         details = f"SQLite access probe exited with code {result.returncode}."
     return details
+
+
+def database_cloud_storage_label(database_path):
+    """
+    Returns a user-facing cloud provider label when the path looks cloud-backed.
+
+    """
+    path = os.path.abspath(str(database_path or ""))
+    lower_path = path.lower()
+    if "onedrive" in lower_path:
+        return "OneDrive"
+    if "dropbox" in lower_path:
+        return "Dropbox"
+    if "google drive" in lower_path:
+        return "Google Drive"
+    if f"{os.sep}box{os.sep}" in lower_path:
+        return "Box"
+    if f"{os.sep}library{os.sep}cloudstorage{os.sep}" in lower_path:
+        return "cloud storage"
+    return None
+
+
+def database_is_likely_cloud_placeholder(database_path):
+    """
+    Returns true when a database appears to be a cloud placeholder.
+
+    """
+    listxattr = getattr(os, "listxattr", None)
+    if listxattr is None:
+        attributes = []
+    else:
+        try:
+            attributes = listxattr(database_path)
+        except OSError:
+            attributes = []
+
+    for attribute in attributes:
+        if any(marker in attribute for marker in CLOUD_PLACEHOLDER_XATTR_MARKERS):
+            return True
+
+    if database_cloud_storage_label(database_path) is None:
+        return False
+
+    try:
+        info = os.stat(database_path)
+    except OSError:
+        return False
+
+    logical_size = getattr(info, "st_size", 0)
+    allocated_size = getattr(info, "st_blocks", 0) * 512
+    return logical_size > 0 and allocated_size == 0
+
+
+def prefetch_database_file(
+        database_path,
+        status_callback=None,
+        chunk_size=DATABASE_CLOUD_SYNC_CHUNK_BYTES,
+        status_interval=DATABASE_CLOUD_SYNC_STATUS_INTERVAL,
+        ):
+    """
+    Reads a database sequentially to trigger cloud Files-On-Demand hydration.
+
+    """
+    total_bytes = os.path.getsize(database_path)
+    if total_bytes <= 0:
+        return 0
+
+    provider = database_cloud_storage_label(database_path) or "cloud storage"
+    bytes_read = 0
+    last_status = 0.0
+
+    def emit_status(force=False):
+        nonlocal last_status
+        if status_callback is None:
+            return
+
+        now = perf_counter()
+        if not force and now - last_status < status_interval:
+            return
+
+        percent = min(100.0, (bytes_read / total_bytes) * 100.0)
+        status_callback(
+            f"Waiting for {provider} sync... {percent:.0f}% available"
+            )
+        last_status = now
+
+    emit_status(force=True)
+    with open(database_path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            bytes_read += len(chunk)
+            emit_status()
+
+    emit_status(force=True)
+    return bytes_read
+
+
+class DatabaseLoadSignals(QtCore.QObject):
+    """
+    Signals emitted by a background database load.
+
+    """
+    status = QtCore.pyqtSignal(int, str)
+    finished = QtCore.pyqtSignal(int, str, object, object)
+
+
+class DatabaseLoadWorker(QtCore.QRunnable):
+    """
+    Loads database metadata away from the GUI thread.
+
+    The worker is responsible for the blocking parts of opening a database:
+    access probing, QCoDeS initialisation, and collecting the run table
+    metadata. Widget updates stay in MainWindow on the GUI thread.
+
+    """
+
+    def __init__(self, generation, database_path):
+        super().__init__()
+        self.signals = DatabaseLoadSignals()
+        self.generation = generation
+        self.database_path = database_path
+
+
+    def run(self):
+        try:
+            if database_is_likely_cloud_placeholder(self.database_path):
+                self._prefetch_cloud_file()
+
+            self._emit_status("Checking database access...")
+            access_error = database_access_error(self.database_path)
+            if (
+                    access_error
+                    and database_cloud_storage_label(self.database_path)
+                    and os.path.isfile(self.database_path)
+                    ):
+                self._prefetch_cloud_file()
+                self._emit_status("Checking database access...")
+                access_error = database_access_error(self.database_path)
+
+            if access_error:
+                raise RuntimeError(access_error)
+
+            self._emit_status("Initialising database...")
+            initialise_or_create_database_at(self.database_path)
+
+            self._emit_status("Loading run list...")
+            runs = get_runs_via_sql() or {}
+        except Exception as err:
+            log_exception("Database load worker failed", err, __name__)
+            self.signals.finished.emit(self.generation, self.database_path, {}, err)
+            return
+
+        self.signals.finished.emit(self.generation, self.database_path, runs, None)
+
+
+    def _emit_status(self, message):
+        self.signals.status.emit(self.generation, message)
+
+
+    def _prefetch_cloud_file(self):
+        prefetch_database_file(
+            self.database_path,
+            status_callback=self._emit_status,
+            )
 
 
 def database_info_report(database_path):
@@ -363,6 +537,11 @@ class MainWindow(qtw.QMainWindow):
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
         self.threadPool.setMaxThreadCount(self.config.get("runtime_settings.max_threads"))
+        self.databaseLoadThreadPool = QtCore.QThreadPool(self)
+        self.databaseLoadThreadPool.setMaxThreadCount(1)
+        self._database_load_generation = 0
+        self._database_load_active = False
+        self._database_load_state = None
         self.x = 0
         self.y = 0
         self.localLastFile = None
@@ -1063,6 +1242,12 @@ class MainWindow(qtw.QMainWindow):
         Clears the current database from the main window state.
 
         """
+        self._database_load_generation = getattr(self, "_database_load_generation", 0) + 1
+        self._database_load_active = False
+        self._database_load_state = None
+        if hasattr(self, "_set_database_load_controls_enabled"):
+            self._set_database_load_controls_enabled(True)
+
         self.monitor.stop()
         self.fileTextbox.setText("")
         self.run_idBox.setText("")
@@ -1268,18 +1453,7 @@ class MainWindow(qtw.QMainWindow):
                 )
             return False
 
-        if self.load_file(abspath, load_started_at):
-            try:
-                current_last_file = self.config.get("file.last_file_path")
-            except KeyError:
-                current_last_file = None
-
-            if current_last_file != abspath:
-                self.config.update("file.last_file_path", abspath)
-            self.remember_recent_database(abspath)
-            return True
-
-        return False
+        return self.load_file(abspath, load_started_at)
 
 
     def recent_database_paths(self):
@@ -1333,6 +1507,25 @@ class MainWindow(qtw.QMainWindow):
         self.config.config.setdefault("file", {})["recent_file_paths"] = paths
         self.config.save_config(self.config.default_file)
         self.refresh_recent_database_menu()
+
+
+    def remember_loaded_database(self, filename):
+        """
+        Persists the successfully loaded database path.
+
+        """
+        abspath = os.path.abspath(filename)
+        try:
+            current_last_file = self.config.get("file.last_file_path")
+        except KeyError:
+            current_last_file = None
+
+        try:
+            if current_last_file != abspath:
+                self.config.update("file.last_file_path", abspath)
+            self.remember_recent_database(abspath)
+        except Exception as err:
+            log_exception("Remember database path failed", err, __name__)
 
 
     def refresh_recent_database_menu(self):
@@ -2255,7 +2448,12 @@ class MainWindow(qtw.QMainWindow):
                     )
             elapsed = perf_counter() - load_started_at
             self.show_status(f"Database is already loaded ({elapsed:.2f} s).", 3000)
+            self.remember_loaded_database(abspath)
             return True
+
+        if self._database_load_active:
+            self.show_status("Wait for the current database load to finish.", 5000)
+            return False
 
         previous_file = self.fileTextbox.text()
         monitorTimer = self.spinBox.value()
@@ -2264,51 +2462,122 @@ class MainWindow(qtw.QMainWindow):
         # Pause refresh while working
         self.monitor.stop()
 
-        try:
-            access_error = database_access_error(abspath)
-            if access_error:
-                raise RuntimeError(access_error)
+        self._database_load_generation += 1
+        generation = self._database_load_generation
+        self._database_load_active = True
+        self._database_load_state = {
+            "abspath": abspath,
+            "load_started_at": load_started_at,
+            "monitorTimer": monitorTimer,
+            "previous_file": previous_file,
+            }
 
-            # Clear widgets from last Database
-            self.run_idBox.setText("")
-            self.measurementBox.setText("*")
+        self._prepare_database_load_ui(abspath)
+        self._set_database_load_controls_enabled(False)
 
-            self.RunList.clearSelection()
-            self.RunList.watching = []
-            self.RunList.scrollToTop()
+        worker = DatabaseLoadWorker(generation, abspath)
+        worker.signals.status.connect(self.database_load_status)
+        worker.signals.finished.connect(self.database_load_finished)
+        self.databaseLoadThreadPool.start(worker)
+        return True
 
-            self.infoBox.clear()
-            self.infoBox.scrollToTop()
 
-            # Update internal last file location using self.fileTextbox text
-            if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:
-                self.localLastFile = self.fileTextbox.text()
+    def _prepare_database_load_ui(self, abspath):
+        """
+        Clears the main-window state for a new database load.
 
-            # Update dsiplay and set database location within QCoDeS
-            self.fileTextbox.setText(abspath)
+        """
+        self.run_idBox.setText("")
+        self.measurementBox.setText("*")
+        self.selected_run_id = None
+        self.ds = None
 
-            initialise_or_create_database_at(abspath)
+        self.RunList.clearSelection()
+        self.RunList.clear()
+        self.RunList.watching = []
+        self.RunList.maxTime = 0
+        self.RunList.scrollToTop()
 
-            runs = self.RunList.setRuns()
-            self.infoBox.preview.set_database_runs(abspath, runs)
-            self.select_default_run()
+        self.infoBox.clear()
+        self.infoBox.scrollToTop()
 
-        except Exception as err:
+        if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:
+            self.localLastFile = self.fileTextbox.text()
+
+        self.fileTextbox.setText(abspath)
+
+
+    def _set_database_load_controls_enabled(self, enabled):
+        """
+        Enables or disables controls that start overlapping database actions.
+
+        """
+        for attr in (
+            "loadDatabaseButton",
+            "refreshDatabaseButton",
+            "databaseInfoButton",
+            "openDatabaseFolderButton",
+            ):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setEnabled(enabled)
+
+
+    @QtCore.pyqtSlot(int, str)
+    def database_load_status(self, generation, message):
+        """
+        Shows progress from the active database load.
+
+        """
+        if generation != self._database_load_generation or not self._database_load_active:
+            return
+
+        self.show_status(message, 0)
+
+
+    @QtCore.pyqtSlot(int, str, object, object)
+    def database_load_finished(self, generation, abspath, runs, error):
+        """
+        Applies the background database load result on the GUI thread.
+
+        """
+        if generation != self._database_load_generation:
+            return
+
+        state = self._database_load_state or {}
+        self._database_load_active = False
+        self._database_load_state = None
+        self._set_database_load_controls_enabled(True)
+
+        monitorTimer = state.get("monitorTimer", 0)
+        load_started_at = state.get("load_started_at") or perf_counter()
+
+        if error is not None:
+            previous_file = state.get("previous_file", "")
             self.fileTextbox.setText(previous_file)
-            log_exception("Database load failed", err, __name__)
+            log_exception("Database load failed", error, __name__)
             self.show_error(
                 "Database Load Failed",
                 f"Could not load database {abspath}.",
-                str(err)
+                str(error)
                 )
             if monitorTimer > 0:
                 self.monitor.start(int(monitorTimer * 1000))
-            return False
+            return
 
-        # Restart refresh
+        runs = runs or {}
+        self.RunList.clear()
+        self.RunList.watching = []
+        self.RunList.maxTime = 0
+        self.RunList.addRuns(runs)
+        self.infoBox.preview.set_database_runs(abspath, runs)
+        self.select_default_run()
+
         if monitorTimer > 0:
             self.monitor.start(int(monitorTimer * 1000))
+
         elapsed = perf_counter() - load_started_at
+        self.remember_loaded_database(abspath)
         self.show_status(
             (
                 f"Loaded {self.RunList.topLevelItemCount()} runs from "
@@ -2323,7 +2592,6 @@ class MainWindow(qtw.QMainWindow):
             elapsed,
             logger_name=__name__,
             )
-        return True
 
 
     def select_default_run(self):
