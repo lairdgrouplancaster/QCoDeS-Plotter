@@ -27,8 +27,8 @@ install QCoDeS-Plotter into it.
 ### 1. Set Up Your Virtual Environment
 
 If you already have an activated virtual environment, your terminal prompt will
-usually start with something like `(.venv)`. If so, you can skip this step. If
-not, do one of the following:
+usually start with something like `(.venv)` on Windows or `(.venv-mac)` on
+macOS/Linux. If so, you can skip this step. If not, do one of the following:
 
 #### VS Code
 
@@ -39,7 +39,9 @@ not, do one of the following:
 5. Choose a Python 3.11 or newer base interpreter.
    - On Windows, a typical standalone Python path looks like `C:\Program Files\Python311\python.exe`.
    - Do not choose an interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder.
-6. Open a new VS Code terminal (`Terminal -> New Terminal`). The prompt should start with something like `(.venv) PS`, showing that you are in the right virtual environment.
+6. Open a new VS Code terminal (`Terminal -> New Terminal`). The prompt should
+   start with the virtual environment name, such as `(.venv)` on Windows or
+   `(.venv-mac)` on macOS/Linux.
 
 #### Terminal
 
@@ -53,11 +55,12 @@ py -3.11 -m venv .venv
 macOS/Linux:
 
 ```console
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv .venv-mac
+source .venv-mac/bin/activate
 ```
 
-Your prompt should now start with something like `(.venv)`.
+Your prompt should now start with something like `(.venv)` on Windows or
+`(.venv-mac)` on macOS/Linux.
 
 ### 2. Install QCoDeS-Plotter
 
@@ -87,7 +90,7 @@ python -c "import qplot; print(qplot.__file__)"
 
 ## Running the App
 
-After installation, run inside your activated `.venv` terminal:
+After installation, run inside your activated virtual environment terminal:
 
 ```console
 qplot

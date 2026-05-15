@@ -29,15 +29,15 @@ Use Python 3.11 or newer in a virtual environment.
 Windows:
 
 ```console
-py -3.11 -m venv .venv-win
-.\.venv-win\Scripts\Activate.ps1
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
 macOS/Linux:
 
 ```console
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv .venv-mac
+source .venv-mac/bin/activate
 ```
 
 Install qPlot in editable mode with the development dependencies:
@@ -53,20 +53,20 @@ directly:
 Windows:
 
 ```console
-.\.venv-win\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 macOS/Linux:
 
 ```console
-./.venv/bin/python -m pytest
+./.venv-mac/bin/python -m pytest
 ```
 
-Some local checkouts keep `.venv-win` next to the repository rather than inside
-it. In that layout, use:
+Some local checkouts keep `.venv` next to the repository rather than inside it.
+In that layout, use:
 
 ```console
-..\.venv-win\Scripts\python.exe -m pytest
+..\.venv\Scripts\python.exe -m pytest
 ```
 
 ## Checks
