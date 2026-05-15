@@ -113,11 +113,13 @@ online-only placeholder until an application reads it. When qPlot detects this
 kind of cloud-backed path, or when the first database access check fails for a
 cloud-backed path, it reads the file in the background to trigger the provider's
 Files On-Demand download. The status bar shows progress such as `Waiting for
-OneDrive sync...`.
+OneDrive sync...`. If the provider does not make the file available within the
+configured timeout, qPlot stops waiting and reports a database-load error.
 
 If the message stays visible for a long time, check that OneDrive is running,
 signed in, and allowed to download the file. You can also mark important
-database folders as always available in Finder.
+database folders as always available in Finder. The timeout can be changed with
+`qplot-cfg -set_value runtime_settings.cloud_sync_timeout 180`.
 
 ## Plot Windows Look Empty
 

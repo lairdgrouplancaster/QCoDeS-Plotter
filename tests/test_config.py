@@ -198,6 +198,11 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(cfg.get("user_preference.default_refresh_rate"), 1)
 
+    def test_cloud_sync_timeout_default_is_two_minutes(self):
+        cfg = config()
+
+        self.assertEqual(cfg.get("runtime_settings.cloud_sync_timeout"), 120)
+
     def test_default_refresh_rate_allows_zero_to_disable_auto_refresh(self):
         cfg = config()
 

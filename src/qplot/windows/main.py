@@ -34,6 +34,8 @@ from qplot import config
 
 import subprocess
 import sys
+import queue
+import threading
 from qcodes.dataset import (
     initialise_or_create_database_at,
     load_by_id,
@@ -52,8 +54,10 @@ import numpy as np
 import pandas as pd
 
 DATABASE_ACCESS_TIMEOUT_SECONDS = 3
+DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS = 120
 DATABASE_CLOUD_SYNC_CHUNK_BYTES = 4 * 1024 * 1024
 DATABASE_CLOUD_SYNC_STATUS_INTERVAL = 1.0
+DATABASE_PREFETCH_STATUS_PREFIX = "QPLOT_PREFETCH_PROGRESS:"
 CLOUD_PLACEHOLDER_XATTR_MARKERS = (
     "com.apple.fileprovider",
     "com.apple.fileutil.PlaceholderData",
@@ -228,6 +232,177 @@ def prefetch_database_file(
     return bytes_read
 
 
+def prefetch_database_file_with_timeout(
+        database_path,
+        timeout=DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
+        status_callback=None,
+        ):
+    """
+    Runs cloud prefetch in a subprocess so stalled providers can be timed out.
+
+    """
+    timeout = float(timeout)
+    provider = database_cloud_storage_label(database_path) or "cloud storage"
+    if status_callback is not None:
+        status_callback(f"Waiting for {provider} sync...")
+
+    script = (
+        "import os, sys, time\n"
+        f"prefix = {DATABASE_PREFETCH_STATUS_PREFIX!r}\n"
+        f"chunk_size = {DATABASE_CLOUD_SYNC_CHUNK_BYTES!r}\n"
+        f"status_interval = {DATABASE_CLOUD_SYNC_STATUS_INTERVAL!r}\n"
+        "path = sys.argv[1]\n"
+        "total = os.path.getsize(path)\n"
+        "read = 0\n"
+        "last = 0.0\n"
+        "def report(force=False):\n"
+        "    global last\n"
+        "    if total <= 0:\n"
+        "        percent = 100.0\n"
+        "    else:\n"
+        "        percent = min(100.0, (read / total) * 100.0)\n"
+        "    now = time.perf_counter()\n"
+        "    if force or now - last >= status_interval:\n"
+        "        print(prefix + f'{percent:.0f}', flush=True)\n"
+        "        last = now\n"
+        "report(True)\n"
+        "with open(path, 'rb') as handle:\n"
+        "    while True:\n"
+        "        chunk = handle.read(chunk_size)\n"
+        "        if not chunk:\n"
+        "            break\n"
+        "        read += len(chunk)\n"
+        "        report(False)\n"
+        "report(True)\n"
+        "print(read, flush=True)\n"
+    )
+
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-c", script, database_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            )
+    except OSError as err:
+        raise RuntimeError(str(err)) from err
+
+    output_queue = queue.Queue()
+    stdout_thread = threading.Thread(
+        target=_read_prefetch_pipe,
+        args=(process.stdout, "stdout", output_queue),
+        daemon=True,
+        )
+    stderr_thread = threading.Thread(
+        target=_read_prefetch_pipe,
+        args=(process.stderr, "stderr", output_queue),
+        daemon=True,
+        )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    start = perf_counter()
+    stderr_lines = []
+    bytes_read = 0
+
+    try:
+        while True:
+            try:
+                stream, line = output_queue.get(timeout=0.1)
+            except queue.Empty:
+                stream = line = None
+
+            if stream == "stdout":
+                parsed = _handle_prefetch_stdout_line(line, provider, status_callback)
+                if parsed is not None:
+                    bytes_read = parsed
+            elif stream == "stderr" and line:
+                stderr_lines.append(line)
+
+            if process.poll() is not None:
+                stdout_thread.join(timeout=0.2)
+                stderr_thread.join(timeout=0.2)
+                parsed = _drain_prefetch_queue(
+                    output_queue,
+                    provider,
+                    status_callback,
+                    stderr_lines,
+                    )
+                if parsed is not None:
+                    bytes_read = parsed
+                break
+
+            if perf_counter() - start > timeout:
+                process.kill()
+                process.wait()
+                raise TimeoutError(
+                    (
+                        f"Timed out after {timeout:g} s while waiting for "
+                        f"{provider} to download the database. Check that "
+                        f"{provider} is running and signed in, or mark the "
+                        "database folder as always available on this device."
+                    )
+                    )
+    finally:
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
+
+    stdout_thread.join(timeout=0.5)
+    stderr_thread.join(timeout=0.5)
+
+    if process.returncode != 0:
+        details = "\n".join(line for line in stderr_lines if line)
+        if not details:
+            details = f"Cloud sync prefetch exited with code {process.returncode}."
+        raise RuntimeError(details)
+
+    return bytes_read
+
+
+def _read_prefetch_pipe(pipe, stream_name, output_queue):
+    if pipe is None:
+        return
+
+    for line in pipe:
+        output_queue.put((stream_name, line.rstrip()))
+
+
+def _handle_prefetch_stdout_line(line, provider, status_callback):
+    if not line:
+        return None
+
+    if line.startswith(DATABASE_PREFETCH_STATUS_PREFIX):
+        percent = line[len(DATABASE_PREFETCH_STATUS_PREFIX):]
+        if status_callback is not None:
+            status_callback(f"Waiting for {provider} sync... {percent}% available")
+        return None
+
+    try:
+        return int(line)
+    except ValueError:
+        return None
+
+
+def _drain_prefetch_queue(output_queue, provider, status_callback, stderr_lines):
+    bytes_read = None
+    while True:
+        try:
+            stream, line = output_queue.get_nowait()
+        except queue.Empty:
+            break
+
+        if stream == "stdout":
+            parsed = _handle_prefetch_stdout_line(line, provider, status_callback)
+            if parsed is not None:
+                bytes_read = parsed
+        elif stream == "stderr" and line:
+            stderr_lines.append(line)
+
+    return bytes_read
+
+
 class DatabaseLoadSignals(QtCore.QObject):
     """
     Signals emitted by a background database load.
@@ -247,11 +422,17 @@ class DatabaseLoadWorker(QtCore.QRunnable):
 
     """
 
-    def __init__(self, generation, database_path):
+    def __init__(
+            self,
+            generation,
+            database_path,
+            cloud_sync_timeout=DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
+            ):
         super().__init__()
         self.signals = DatabaseLoadSignals()
         self.generation = generation
         self.database_path = database_path
+        self.cloud_sync_timeout = cloud_sync_timeout
 
 
     def run(self):
@@ -291,8 +472,9 @@ class DatabaseLoadWorker(QtCore.QRunnable):
 
 
     def _prefetch_cloud_file(self):
-        prefetch_database_file(
+        prefetch_database_file_with_timeout(
             self.database_path,
+            timeout=self.cloud_sync_timeout,
             status_callback=self._emit_status,
             )
 
@@ -2475,7 +2657,12 @@ class MainWindow(qtw.QMainWindow):
         self._prepare_database_load_ui(abspath)
         self._set_database_load_controls_enabled(False)
 
-        worker = DatabaseLoadWorker(generation, abspath)
+        try:
+            cloud_sync_timeout = self.config.get("runtime_settings.cloud_sync_timeout")
+        except KeyError:
+            cloud_sync_timeout = DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS
+
+        worker = DatabaseLoadWorker(generation, abspath, cloud_sync_timeout)
         worker.signals.status.connect(self.database_load_status)
         worker.signals.finished.connect(self.database_load_finished)
         self.databaseLoadThreadPool.start(worker)

@@ -443,6 +443,66 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
         self.assertTrue(statuses[0].startswith("Waiting for OneDrive sync..."))
         self.assertIn("100% available", statuses[-1])
 
+    def test_prefetch_database_file_with_timeout_uses_subprocess(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database.write(b"x" * 10)
+            database.flush()
+            statuses = []
+            old_label = main_window.database_cloud_storage_label
+            main_window.database_cloud_storage_label = lambda _path: "OneDrive"
+            try:
+                bytes_read = main_window.prefetch_database_file_with_timeout(
+                    database.name,
+                    timeout=5,
+                    status_callback=statuses.append,
+                    )
+            finally:
+                main_window.database_cloud_storage_label = old_label
+
+        self.assertEqual(bytes_read, 10)
+        self.assertIn("Waiting for OneDrive sync...", statuses)
+        self.assertIn("Waiting for OneDrive sync... 100% available", statuses)
+
+    def test_prefetch_database_file_with_timeout_kills_stalled_process(self):
+        old_popen = main_window.subprocess.Popen
+        killed = []
+
+        class Pipe:
+            def __iter__(self):
+                return iter(())
+
+            def close(self):
+                pass
+
+        class Process:
+            stdout = Pipe()
+            stderr = Pipe()
+            returncode = None
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                killed.append(True)
+
+            def wait(self):
+                self.returncode = -9
+
+        main_window.subprocess.Popen = lambda *args, **kwargs: Process()
+        try:
+            with self.assertRaises(TimeoutError) as caught:
+                main_window.prefetch_database_file_with_timeout(
+                    "OneDrive/test.db",
+                    timeout=0.01,
+                    status_callback=lambda _message: None,
+                    )
+        finally:
+            main_window.subprocess.Popen = old_popen
+
+        self.assertEqual(killed, [True])
+        self.assertIn("Timed out after 0.01 s", str(caught.exception))
+        self.assertIn("OneDrive", str(caught.exception))
+
 
 class DatabaseLoadWorkerTestCase(unittest.TestCase):
     def test_database_load_worker_initialises_database_and_returns_runs(self):
@@ -519,7 +579,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_access_error = main_window.database_access_error
         old_label = main_window.database_cloud_storage_label
         old_placeholder = main_window.database_is_likely_cloud_placeholder
-        old_prefetch = main_window.prefetch_database_file
+        old_prefetch = main_window.prefetch_database_file_with_timeout
         old_initialise = main_window.initialise_or_create_database_at
         old_get_runs = main_window.get_runs_via_sql
         calls = []
@@ -530,22 +590,22 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             calls.append(("access", database_path))
             return next(access_results)
 
-        def prefetch(database_path, status_callback=None):
-            calls.append(("prefetch", database_path))
+        def prefetch(database_path, timeout=None, status_callback=None):
+            calls.append(("prefetch", database_path, timeout))
             status_callback("Waiting for OneDrive sync... 100% available")
             return 10
 
         main_window.database_access_error = access_error
         main_window.database_cloud_storage_label = lambda _path: "OneDrive"
         main_window.database_is_likely_cloud_placeholder = lambda _path: False
-        main_window.prefetch_database_file = prefetch
+        main_window.prefetch_database_file_with_timeout = prefetch
         main_window.initialise_or_create_database_at = lambda path: calls.append(
             ("initialise", path)
             )
         main_window.get_runs_via_sql = lambda: {}
         try:
             with tempfile.NamedTemporaryFile(suffix=".db") as database:
-                worker = main_window.DatabaseLoadWorker(9, database.name)
+                worker = main_window.DatabaseLoadWorker(9, database.name, 12)
                 statuses = []
                 finished = []
                 worker.signals.status.connect(lambda *args: statuses.append(args))
@@ -557,13 +617,13 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             main_window.database_access_error = old_access_error
             main_window.database_cloud_storage_label = old_label
             main_window.database_is_likely_cloud_placeholder = old_placeholder
-            main_window.prefetch_database_file = old_prefetch
+            main_window.prefetch_database_file_with_timeout = old_prefetch
             main_window.initialise_or_create_database_at = old_initialise
             main_window.get_runs_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", expected_path),
-            ("prefetch", expected_path),
+            ("prefetch", expected_path, 12),
             ("access", expected_path),
             ("initialise", expected_path),
             ])
