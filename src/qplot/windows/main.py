@@ -236,6 +236,7 @@ def prefetch_database_file_with_timeout(
         database_path,
         timeout=DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
         status_callback=None,
+        cancelled_callback=None,
         ):
     """
     Runs cloud prefetch in a subprocess so stalled providers can be timed out.
@@ -332,6 +333,11 @@ def prefetch_database_file_with_timeout(
                 if parsed is not None:
                     bytes_read = parsed
                 break
+
+            if cancelled_callback is not None and cancelled_callback():
+                process.kill()
+                process.wait()
+                raise InterruptedError("Database load cancelled.")
 
             if perf_counter() - start > timeout:
                 process.kill()
@@ -433,42 +439,90 @@ class DatabaseLoadWorker(QtCore.QRunnable):
         self.generation = generation
         self.database_path = database_path
         self.cloud_sync_timeout = cloud_sync_timeout
+        self._cancelled = threading.Event()
+
+
+    def cancel(self):
+        """
+        Marks this load as cancelled so later phases do not run.
+
+        """
+        self._cancelled.set()
 
 
     def run(self):
         try:
+            if self._is_cancelled():
+                return
+
             if database_is_likely_cloud_placeholder(self.database_path):
                 self._prefetch_cloud_file()
+            if self._is_cancelled():
+                return
 
             self._emit_status("Checking database access...")
             access_error = database_access_error(self.database_path)
+            if self._is_cancelled():
+                return
+
             if (
                     access_error
                     and database_cloud_storage_label(self.database_path)
                     and os.path.isfile(self.database_path)
                     ):
                 self._prefetch_cloud_file()
+                if self._is_cancelled():
+                    return
                 self._emit_status("Checking database access...")
                 access_error = database_access_error(self.database_path)
+                if self._is_cancelled():
+                    return
 
             if access_error:
                 raise RuntimeError(access_error)
 
             self._emit_status("Initialising database...")
             initialise_or_create_database_at(self.database_path)
+            if self._is_cancelled():
+                return
 
             self._emit_status("Loading run list...")
             runs = get_runs_via_sql() or {}
+            if self._is_cancelled():
+                return
+        except InterruptedError:
+            return
         except Exception as err:
             log_exception("Database load worker failed", err, __name__)
-            self.signals.finished.emit(self.generation, self.database_path, {}, err)
+            self._emit_finished({}, err)
             return
 
-        self.signals.finished.emit(self.generation, self.database_path, runs, None)
+        self._emit_finished(runs, None)
+
+
+    def _is_cancelled(self):
+        return self._cancelled.is_set()
 
 
     def _emit_status(self, message):
-        self.signals.status.emit(self.generation, message)
+        try:
+            self.signals.status.emit(self.generation, message)
+        except RuntimeError as err:
+            if not self._qt_signal_was_deleted(err):
+                raise
+
+
+    def _emit_finished(self, runs, error):
+        try:
+            self.signals.finished.emit(self.generation, self.database_path, runs, error)
+        except RuntimeError as err:
+            if not self._qt_signal_was_deleted(err):
+                raise
+
+
+    def _qt_signal_was_deleted(self, err):
+        message = str(err)
+        return "wrapped C/C++ object" in message and "has been deleted" in message
 
 
     def _prefetch_cloud_file(self):
@@ -476,6 +530,7 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             self.database_path,
             timeout=self.cloud_sync_timeout,
             status_callback=self._emit_status,
+            cancelled_callback=self._is_cancelled,
             )
 
 
@@ -724,6 +779,7 @@ class MainWindow(qtw.QMainWindow):
         self._database_load_generation = 0
         self._database_load_active = False
         self._database_load_state = None
+        self._database_load_worker = None
         self.x = 0
         self.y = 0
         self.localLastFile = None
@@ -1015,6 +1071,45 @@ class MainWindow(qtw.QMainWindow):
         self.targetLayout.addStretch()
         self.targetLayout.addSpacing(18)
         self.targetLayout.addWidget(self.closeAllPlotsButton)
+
+        self.databaseLoadFrame = qtw.QFrame()
+        self.databaseLoadFrame.setObjectName("databaseLoadFrame")
+        database_load_layout = qtw.QHBoxLayout(self.databaseLoadFrame)
+        database_load_layout.setContentsMargins(8, 0, 8, 2)
+        database_load_layout.setSpacing(6)
+
+        self.databaseLoadProgress = qtw.QProgressBar()
+        self.databaseLoadProgress.setObjectName("databaseLoadProgress")
+        self.databaseLoadProgress.setRange(0, 0)
+        self.databaseLoadProgress.setTextVisible(False)
+        self.databaseLoadProgress.setFixedWidth(120)
+        self.databaseLoadProgress.setMaximumHeight(16)
+        self.databaseLoadProgress.setAccessibleName("Database load progress")
+        database_load_layout.addWidget(self.databaseLoadProgress)
+
+        self.databaseLoadLabel = qtw.QLabel("")
+        self.databaseLoadLabel.setObjectName("databaseLoadLabel")
+        self.databaseLoadLabel.setSizePolicy(
+            qtw.QSizePolicy.Expanding,
+            qtw.QSizePolicy.Preferred,
+            )
+        database_load_layout.addWidget(self.databaseLoadLabel, 1)
+
+        self.databaseLoadCancelButton = qtw.QToolButton()
+        self.databaseLoadCancelButton.setObjectName("databaseIconButton")
+        self.databaseLoadCancelButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.SP_DialogCancelButton)
+            )
+        self.databaseLoadCancelButton.setText("Cancel")
+        self.databaseLoadCancelButton.setToolButtonStyle(
+            QtCore.Qt.ToolButtonTextBesideIcon
+            )
+        self.databaseLoadCancelButton.setToolTip("Cancel the current database load")
+        self.databaseLoadCancelButton.setAccessibleName("Cancel database load")
+        self.databaseLoadCancelButton.setFixedSize(78, 24)
+        self.databaseLoadCancelButton.clicked.connect(self.cancel_database_load)
+        database_load_layout.addWidget(self.databaseLoadCancelButton)
+        self.databaseLoadFrame.setVisible(False)
         
         if os.path.isfile(get_DB_location()):
             self.fileTextbox.setText(str(get_DB_location()))
@@ -1085,6 +1180,7 @@ class MainWindow(qtw.QMainWindow):
         sublayout.addWidget(self.refreshDatabaseButton)
 
         self.l.addLayout(self.targetLayout)
+        self.l.addWidget(self.databaseLoadFrame)
         self.l.addLayout(sublayout)
         
         # Long QTreeWidget/list to display all runs with small detail
@@ -1172,6 +1268,14 @@ class MainWindow(qtw.QMainWindow):
                 event.ignore()
                 return
 
+        self.startupDatabaseTimer.stop()
+        worker = getattr(self, "_database_load_worker", None)
+        if worker is not None:
+            worker.cancel()
+        self._database_load_generation += 1
+        self._database_load_active = False
+        self._database_load_state = None
+        self._database_load_worker = None
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
     
@@ -1424,11 +1528,18 @@ class MainWindow(qtw.QMainWindow):
         Clears the current database from the main window state.
 
         """
+        worker = getattr(self, "_database_load_worker", None)
+        if worker is not None:
+            worker.cancel()
+
         self._database_load_generation = getattr(self, "_database_load_generation", 0) + 1
         self._database_load_active = False
         self._database_load_state = None
+        self._database_load_worker = None
         if hasattr(self, "_set_database_load_controls_enabled"):
             self._set_database_load_controls_enabled(True)
+        if hasattr(self, "_hide_database_load_panel"):
+            self._hide_database_load_panel()
 
         self.monitor.stop()
         self.fileTextbox.setText("")
@@ -2638,8 +2749,9 @@ class MainWindow(qtw.QMainWindow):
             return False
 
         previous_file = self.fileTextbox.text()
+        previous_runs = self._current_run_metadata()
         monitorTimer = self.spinBox.value()
-        self.show_status(f"Loading database {os.path.basename(abspath)}...", 0)
+        load_message = f"Loading database {os.path.basename(abspath)}..."
 
         # Pause refresh while working
         self.monitor.stop()
@@ -2652,10 +2764,12 @@ class MainWindow(qtw.QMainWindow):
             "load_started_at": load_started_at,
             "monitorTimer": monitorTimer,
             "previous_file": previous_file,
+            "previous_runs": previous_runs,
             }
 
         self._prepare_database_load_ui(abspath)
         self._set_database_load_controls_enabled(False)
+        self._show_database_load_panel(load_message)
 
         try:
             cloud_sync_timeout = self.config.get("runtime_settings.cloud_sync_timeout")
@@ -2663,6 +2777,7 @@ class MainWindow(qtw.QMainWindow):
             cloud_sync_timeout = DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS
 
         worker = DatabaseLoadWorker(generation, abspath, cloud_sync_timeout)
+        self._database_load_worker = worker
         worker.signals.status.connect(self.database_load_status)
         worker.signals.finished.connect(self.database_load_finished)
         self.databaseLoadThreadPool.start(worker)
@@ -2710,6 +2825,104 @@ class MainWindow(qtw.QMainWindow):
                 widget.setEnabled(enabled)
 
 
+    def _current_run_metadata(self):
+        """
+        Returns the currently displayed run metadata, if available.
+
+        """
+        all_run_metadata = getattr(self.RunList, "all_run_metadata", None)
+        if not callable(all_run_metadata):
+            return {}
+
+        try:
+            return all_run_metadata()
+        except Exception as err:
+            log_exception("Could not capture current run metadata", err, __name__)
+            return {}
+
+
+    def _restore_database_load_previous_state(self, state):
+        """
+        Restores the visible database state after a cancelled or failed load.
+
+        """
+        previous_file = state.get("previous_file", "")
+        previous_runs = state.get("previous_runs") or {}
+
+        self.fileTextbox.setText(previous_file)
+        self.run_idBox.setText("")
+        self.measurementBox.setText("*")
+        self.selected_run_id = None
+        self.ds = None
+
+        self.RunList.clearSelection()
+        self.RunList.clear()
+        self.RunList.watching = []
+        self.RunList.maxTime = 0
+        if previous_runs:
+            self.RunList.addRuns(previous_runs)
+        self.RunList.scrollToTop()
+
+        self.infoBox.clear()
+        self.infoBox.scrollToTop()
+        self.infoBox.preview.set_database_runs(previous_file, previous_runs)
+
+
+    def _show_database_load_panel(self, message):
+        """
+        Shows the inline database-load progress panel.
+
+        """
+        if hasattr(self, "databaseLoadLabel"):
+            self.databaseLoadLabel.setText(message)
+            self.databaseLoadLabel.setToolTip(message)
+        if hasattr(self, "databaseLoadFrame"):
+            self.databaseLoadFrame.setVisible(True)
+        self.show_status(message, 0)
+
+
+    def _hide_database_load_panel(self):
+        """
+        Hides the inline database-load progress panel.
+
+        """
+        if hasattr(self, "databaseLoadLabel"):
+            self.databaseLoadLabel.setText("")
+            self.databaseLoadLabel.setToolTip("")
+        if hasattr(self, "databaseLoadFrame"):
+            self.databaseLoadFrame.setVisible(False)
+
+
+    @QtCore.pyqtSlot()
+    def cancel_database_load(self):
+        """
+        Cancels the active database load and restores the previous view.
+
+        """
+        if not getattr(self, "_database_load_active", False):
+            self._hide_database_load_panel()
+            return
+
+        state = self._database_load_state or {}
+        worker = getattr(self, "_database_load_worker", None)
+        if worker is not None:
+            worker.cancel()
+
+        self._database_load_generation += 1
+        self._database_load_active = False
+        self._database_load_state = None
+        self._database_load_worker = None
+        self._set_database_load_controls_enabled(True)
+        self._restore_database_load_previous_state(state)
+
+        monitorTimer = state.get("monitorTimer", 0)
+        if monitorTimer > 0:
+            self.monitor.start(int(monitorTimer * 1000))
+
+        self._hide_database_load_panel()
+        self.show_status("Database load cancelled.", 3000)
+
+
     @QtCore.pyqtSlot(int, str)
     def database_load_status(self, generation, message):
         """
@@ -2719,7 +2932,7 @@ class MainWindow(qtw.QMainWindow):
         if generation != self._database_load_generation or not self._database_load_active:
             return
 
-        self.show_status(message, 0)
+        self._show_database_load_panel(message)
 
 
     @QtCore.pyqtSlot(int, str, object, object)
@@ -2734,14 +2947,15 @@ class MainWindow(qtw.QMainWindow):
         state = self._database_load_state or {}
         self._database_load_active = False
         self._database_load_state = None
+        self._database_load_worker = None
         self._set_database_load_controls_enabled(True)
+        self._hide_database_load_panel()
 
         monitorTimer = state.get("monitorTimer", 0)
         load_started_at = state.get("load_started_at") or perf_counter()
 
         if error is not None:
-            previous_file = state.get("previous_file", "")
-            self.fileTextbox.setText(previous_file)
+            self._restore_database_load_previous_state(state)
             log_exception("Database load failed", error, __name__)
             self.show_error(
                 "Database Load Failed",

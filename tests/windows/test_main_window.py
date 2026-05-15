@@ -421,6 +421,180 @@ class DatabaseAccessProbeTestCase(unittest.TestCase):
         self.assertIn("locked", error)
 
 
+class DatabaseLoadUiTestCase(unittest.TestCase):
+    class Field:
+        def __init__(self, text=""):
+            self.value = text
+
+        def setText(self, text):
+            self.value = text
+
+        def text(self):
+            return self.value
+
+    class Button:
+        def __init__(self):
+            self.enabled = True
+
+        def setEnabled(self, enabled):
+            self.enabled = enabled
+
+    class Frame:
+        def __init__(self):
+            self.visible = False
+
+        def setVisible(self, visible):
+            self.visible = visible
+
+    class Label:
+        def __init__(self):
+            self.text = ""
+            self.tooltip = ""
+
+        def setText(self, text):
+            self.text = text
+
+        def setToolTip(self, tooltip):
+            self.tooltip = tooltip
+
+    class Timer:
+        def __init__(self):
+            self.started = []
+
+        def start(self, interval):
+            self.started.append(interval)
+
+    class RunList:
+        def __init__(self):
+            self.runs = {}
+            self.selection_cleared = False
+            self.scrolled = False
+            self.watching = ["old"]
+            self.maxTime = 9
+
+        def clearSelection(self):
+            self.selection_cleared = True
+
+        def clear(self):
+            self.runs = {}
+
+        def addRuns(self, runs):
+            self.runs = runs
+
+        def scrollToTop(self):
+            self.scrolled = True
+
+    class Preview:
+        def __init__(self):
+            self.database_runs = None
+
+        def set_database_runs(self, database_path, runs):
+            self.database_runs = (database_path, runs)
+
+    class InfoBox:
+        def __init__(self):
+            self.preview = DatabaseLoadUiTestCase.Preview()
+            self.cleared = False
+            self.scrolled = False
+
+        def clear(self):
+            self.cleared = True
+
+        def scrollToTop(self):
+            self.scrolled = True
+
+    class Worker:
+        def __init__(self):
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    class Harness:
+        cancel_database_load = main_window.MainWindow.cancel_database_load
+        database_load_status = main_window.MainWindow.database_load_status
+        _hide_database_load_panel = main_window.MainWindow._hide_database_load_panel
+        _restore_database_load_previous_state = (
+            main_window.MainWindow._restore_database_load_previous_state
+            )
+        _set_database_load_controls_enabled = (
+            main_window.MainWindow._set_database_load_controls_enabled
+            )
+        _show_database_load_panel = main_window.MainWindow._show_database_load_panel
+
+        def __init__(self):
+            self._database_load_generation = 2
+            self._database_load_active = False
+            self._database_load_state = None
+            self._database_load_worker = None
+            self.fileTextbox = DatabaseLoadUiTestCase.Field()
+            self.run_idBox = DatabaseLoadUiTestCase.Field()
+            self.measurementBox = DatabaseLoadUiTestCase.Field()
+            self.selected_run_id = 3
+            self.ds = object()
+            self.RunList = DatabaseLoadUiTestCase.RunList()
+            self.infoBox = DatabaseLoadUiTestCase.InfoBox()
+            self.monitor = DatabaseLoadUiTestCase.Timer()
+            self.loadDatabaseButton = DatabaseLoadUiTestCase.Button()
+            self.refreshDatabaseButton = DatabaseLoadUiTestCase.Button()
+            self.databaseInfoButton = DatabaseLoadUiTestCase.Button()
+            self.openDatabaseFolderButton = DatabaseLoadUiTestCase.Button()
+            self.databaseLoadFrame = DatabaseLoadUiTestCase.Frame()
+            self.databaseLoadLabel = DatabaseLoadUiTestCase.Label()
+            self.status_messages = []
+
+        def show_status(self, message, timeout=5000):
+            self.status_messages.append((message, timeout))
+
+    def test_database_load_status_shows_inline_progress(self):
+        harness = self.Harness()
+        harness._database_load_active = True
+
+        harness.database_load_status(2, "Waiting for OneDrive sync...")
+
+        self.assertTrue(harness.databaseLoadFrame.visible)
+        self.assertEqual(harness.databaseLoadLabel.text, "Waiting for OneDrive sync...")
+        self.assertEqual(harness.databaseLoadLabel.tooltip, "Waiting for OneDrive sync...")
+        self.assertEqual(
+            harness.status_messages,
+            [("Waiting for OneDrive sync...", 0)],
+            )
+
+    def test_cancel_database_load_cancels_worker_and_restores_previous_view(self):
+        previous_runs = {5: {"guid": "guid-5", "run_timestamp": 123.0}}
+        worker = self.Worker()
+        harness = self.Harness()
+        harness._database_load_active = True
+        harness._database_load_worker = worker
+        harness._database_load_state = {
+            "monitorTimer": 1.5,
+            "previous_file": "old.db",
+            "previous_runs": previous_runs,
+            }
+
+        harness.cancel_database_load()
+
+        self.assertTrue(worker.cancelled)
+        self.assertEqual(harness._database_load_generation, 3)
+        self.assertFalse(harness._database_load_active)
+        self.assertIsNone(harness._database_load_state)
+        self.assertIsNone(harness._database_load_worker)
+        self.assertEqual(harness.fileTextbox.text(), "old.db")
+        self.assertEqual(harness.RunList.runs, previous_runs)
+        self.assertEqual(
+            harness.infoBox.preview.database_runs,
+            ("old.db", previous_runs),
+            )
+        self.assertEqual(harness.RunList.watching, [])
+        self.assertEqual(harness.RunList.maxTime, 0)
+        self.assertEqual(harness.monitor.started, [1500])
+        self.assertFalse(harness.databaseLoadFrame.visible)
+        self.assertEqual(harness.databaseLoadLabel.text, "")
+        self.assertTrue(harness.loadDatabaseButton.enabled)
+        self.assertTrue(harness.refreshDatabaseButton.enabled)
+        self.assertEqual(harness.status_messages[-1], ("Database load cancelled.", 3000))
+
+
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
     def test_prefetch_database_file_reads_file_and_reports_cloud_sync_progress(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
@@ -503,6 +677,44 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
         self.assertIn("Timed out after 0.01 s", str(caught.exception))
         self.assertIn("OneDrive", str(caught.exception))
 
+    def test_prefetch_database_file_with_timeout_stops_when_cancelled(self):
+        old_popen = main_window.subprocess.Popen
+        killed = []
+
+        class Pipe:
+            def __iter__(self):
+                return iter(())
+
+            def close(self):
+                pass
+
+        class Process:
+            stdout = Pipe()
+            stderr = Pipe()
+            returncode = None
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                killed.append(True)
+
+            def wait(self):
+                self.returncode = -9
+
+        main_window.subprocess.Popen = lambda *args, **kwargs: Process()
+        try:
+            with self.assertRaises(InterruptedError):
+                main_window.prefetch_database_file_with_timeout(
+                    "OneDrive/test.db",
+                    timeout=5,
+                    cancelled_callback=lambda: True,
+                    )
+        finally:
+            main_window.subprocess.Popen = old_popen
+
+        self.assertEqual(killed, [True])
+
 
 class DatabaseLoadWorkerTestCase(unittest.TestCase):
     def test_database_load_worker_initialises_database_and_returns_runs(self):
@@ -575,6 +787,78 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         self.assertIsInstance(finished[0][3], RuntimeError)
         self.assertIn("locked database", str(finished[0][3]))
 
+    def test_database_load_worker_does_not_start_when_cancelled(self):
+        old_placeholder = main_window.database_is_likely_cloud_placeholder
+        old_access_error = main_window.database_access_error
+        calls = []
+
+        main_window.database_is_likely_cloud_placeholder = lambda _path: calls.append(
+            "placeholder"
+            )
+        main_window.database_access_error = lambda _path: calls.append("access")
+        try:
+            worker = main_window.DatabaseLoadWorker(4, "example.db")
+            finished = []
+            worker.signals.finished.connect(lambda *args: finished.append(args))
+
+            worker.cancel()
+            worker.run()
+        finally:
+            main_window.database_is_likely_cloud_placeholder = old_placeholder
+            main_window.database_access_error = old_access_error
+
+        self.assertEqual(calls, [])
+        self.assertEqual(finished, [])
+
+    def test_database_load_worker_stops_after_cancelled_prefetch(self):
+        old_placeholder = main_window.database_is_likely_cloud_placeholder
+        old_prefetch = main_window.prefetch_database_file_with_timeout
+        old_access_error = main_window.database_access_error
+        calls = []
+
+        def prefetch(
+                database_path,
+                timeout=None,
+                status_callback=None,
+                cancelled_callback=None,
+                ):
+            calls.append(("prefetch", database_path, timeout))
+            raise InterruptedError("Database load cancelled.")
+
+        main_window.database_is_likely_cloud_placeholder = lambda _path: True
+        main_window.prefetch_database_file_with_timeout = prefetch
+        main_window.database_access_error = lambda _path: calls.append("access")
+        try:
+            worker = main_window.DatabaseLoadWorker(5, "cloud.db", 8)
+            finished = []
+            worker.signals.finished.connect(lambda *args: finished.append(args))
+
+            worker.run()
+        finally:
+            main_window.database_is_likely_cloud_placeholder = old_placeholder
+            main_window.prefetch_database_file_with_timeout = old_prefetch
+            main_window.database_access_error = old_access_error
+
+        self.assertEqual(calls, [("prefetch", "cloud.db", 8)])
+        self.assertEqual(finished, [])
+
+    def test_database_load_worker_ignores_deleted_qt_signals_at_shutdown(self):
+        class DeletedSignal:
+            def emit(self, *args):
+                raise RuntimeError(
+                    "wrapped C/C++ object of type DatabaseLoadSignals has been deleted"
+                    )
+
+        class DeletedSignals:
+            status = DeletedSignal()
+            finished = DeletedSignal()
+
+        worker = main_window.DatabaseLoadWorker(6, "example.db")
+        worker.signals = DeletedSignals()
+
+        worker._emit_status("Checking database access...")
+        worker._emit_finished({}, None)
+
     def test_database_load_worker_waits_for_cloud_sync_and_retries_probe(self):
         old_access_error = main_window.database_access_error
         old_label = main_window.database_cloud_storage_label
@@ -590,8 +874,14 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             calls.append(("access", database_path))
             return next(access_results)
 
-        def prefetch(database_path, timeout=None, status_callback=None):
+        def prefetch(
+                database_path,
+                timeout=None,
+                status_callback=None,
+                cancelled_callback=None,
+                ):
             calls.append(("prefetch", database_path, timeout))
+            self.assertIsNotNone(cancelled_callback)
             status_callback("Waiting for OneDrive sync... 100% available")
             return 10
 
@@ -721,5 +1011,3 @@ class DatabaseDropTestCase(unittest.TestCase):
 
             self.assertIsNone(main_window.database_path_from_mime_data(text_drop))
             self.assertIsNone(main_window.database_path_from_mime_data(multiple_drop))
-
-

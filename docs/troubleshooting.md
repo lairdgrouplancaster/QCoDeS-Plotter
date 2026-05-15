@@ -112,9 +112,10 @@ On macOS, OneDrive and other cloud providers can leave a `.db` file as an
 online-only placeholder until an application reads it. When qPlot detects this
 kind of cloud-backed path, or when the first database access check fails for a
 cloud-backed path, it reads the file in the background to trigger the provider's
-Files On-Demand download. The status bar shows progress such as `Waiting for
-OneDrive sync...`. If the provider does not make the file available within the
-configured timeout, qPlot stops waiting and reports a database-load error.
+Files On-Demand download. The database loading strip and status bar show
+progress such as `Waiting for OneDrive sync...`, and the load can be cancelled
+without closing qPlot. If the provider does not make the file available within
+the configured timeout, qPlot stops waiting and reports a database-load error.
 
 If the message stays visible for a long time, check that OneDrive is running,
 signed in, and allowed to download the file. You can also mark important
