@@ -23,13 +23,40 @@ Runtime dependencies are installed automatically:
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
 
+Windows:
+
 ```console
+py -3 --version
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
 ```
 
-If you need help creating or activating a virtual environment, see
-[docs/troubleshooting.md](docs/troubleshooting.md).
+macOS:
+
+```console
+python3 --version
+python3 -m venv .venv-mac
+source .venv-mac/bin/activate
+python -m pip install -U pip
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
+```
+
+If the version check reports Python 3.10 or older, install Python 3.11 or newer
+first and use that launcher instead, for example `python3.12` on macOS.
+
+Virtual environments are not portable between Windows and macOS. If the
+checkout is synced between operating systems, make sure VS Code is using the
+interpreter for the current system:
+
+* Windows: `.\.venv\Scripts\python.exe`
+* macOS: `./.venv-mac/bin/python`
+
+If VS Code reports a broken `.venv` on macOS, it is usually a Windows virtual
+environment synced into the checkout. Delete or recreate that environment on
+the current operating system, or keep virtual environments outside the synced
+folder.
 
 Check the install:
 

@@ -7,6 +7,8 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from PyQt5 import QtWidgets as qtw
+
 from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
 from qplot.configuration.themes import dark
@@ -148,6 +150,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             window = None
             try:
                 window = main_window.MainWindow()
+                qtw.QApplication.processEvents()
                 self.assertEqual(calls, [os.path.abspath(database.name)])
             finally:
                 main_window.MainWindow.load_database_path = old_load_database_path
@@ -170,6 +173,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         window = None
         try:
             window = main_window.MainWindow()
+            qtw.QApplication.processEvents()
             self.assertEqual(calls, [])
         finally:
             main_window.MainWindow.load_database_path = old_load_database_path

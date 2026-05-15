@@ -13,6 +13,69 @@ from qplot.windows._window_controls import (
     )
 
 
+class DatabaseOpenDirectoryTestCase(unittest.TestCase):
+    def test_database_open_directory_prefers_current_database_folder(self):
+        class Field:
+            def __init__(self, text):
+                self._text = text
+
+            def text(self):
+                return self._text
+
+        class FakeConfig:
+            def __init__(self, default_path):
+                self.default_path = default_path
+
+            def get(self, key):
+                if key == "file.default_load_path":
+                    return self.default_path
+                raise KeyError(key)
+
+        class Harness:
+            database_open_directory = main_window.MainWindow.database_open_directory
+
+            def __init__(self, database_path, default_path):
+                self.fileTextbox = Field(database_path)
+                self.config = FakeConfig(default_path)
+
+        with (
+            tempfile.TemporaryDirectory() as current_dir,
+            tempfile.TemporaryDirectory() as default_dir,
+        ):
+            database_path = str(Path(current_dir) / "current.db")
+            Path(database_path).touch()
+
+            harness = Harness(database_path, default_dir)
+
+            self.assertEqual(harness.database_open_directory(), current_dir)
+
+    def test_database_open_directory_falls_back_to_default_load_path(self):
+        class Field:
+            def text(self):
+                return ""
+
+        class FakeConfig:
+            def __init__(self, default_path):
+                self.default_path = default_path
+
+            def get(self, key):
+                if key == "file.default_load_path":
+                    return self.default_path
+                raise KeyError(key)
+
+        class Harness:
+            database_open_directory = main_window.MainWindow.database_open_directory
+
+            def __init__(self, default_path):
+                self.fileTextbox = Field()
+                self.config = FakeConfig(default_path)
+
+        with tempfile.TemporaryDirectory() as default_dir:
+            harness = Harness(default_dir)
+
+            self.assertEqual(harness.database_open_directory(), default_dir)
+
+
 class CloseAllPlotsTestCase(unittest.TestCase):
     def test_close_all_can_be_cancelled_when_warning_enabled(self):
         old_question = qtw.QMessageBox.question
@@ -326,6 +389,36 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertTrue(harness.infoBox.cleared)
         self.assertEqual(harness.infoBox.preview.database_runs, ("", {}))
 
+
+
+class DatabaseAccessProbeTestCase(unittest.TestCase):
+    def test_database_access_error_returns_none_for_readable_database(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            conn = sqlite3.connect(database.name)
+            try:
+                conn.execute("PRAGMA user_version")
+            finally:
+                conn.close()
+
+            self.assertIsNone(main_window.database_access_error(database.name))
+
+    def test_database_access_error_reports_timeout(self):
+        old_run = main_window.subprocess.run
+
+        def run(*args, **kwargs):
+            raise main_window.subprocess.TimeoutExpired(
+                cmd=args[0],
+                timeout=kwargs["timeout"],
+                )
+
+        main_window.subprocess.run = run
+        try:
+            error = main_window.database_access_error("locked.db", timeout=0.5)
+        finally:
+            main_window.subprocess.run = old_run
+
+        self.assertIn("Timed out after 0.5 s", error)
+        self.assertIn("locked", error)
 
 
 class DatabaseDropTestCase(unittest.TestCase):

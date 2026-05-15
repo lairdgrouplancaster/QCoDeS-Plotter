@@ -31,6 +31,8 @@ from qplot.datahandling import (
     )
 from qplot import config
 
+import subprocess
+import sys
 from qcodes.dataset import (
     initialise_or_create_database_at,
     load_by_id,
@@ -47,6 +49,8 @@ from time import perf_counter
 
 import numpy as np
 import pandas as pd
+
+DATABASE_ACCESS_TIMEOUT_SECONDS = 3
 
 
 def database_path_from_mime_data(mime_data):
@@ -70,6 +74,53 @@ def database_path_from_mime_data(mime_data):
         return path
 
     return None
+
+
+def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS):
+    """
+    Return an error message if a database cannot be opened promptly.
+
+    QCoDeS initialisation can block inside SQLite when another process or a
+    cloud-sync provider holds the database. Probe in a short-lived interpreter
+    first so a stuck access check can be timed out without freezing qPlot.
+
+    """
+    probe = (
+        "import sqlite3, sys\n"
+        "conn = sqlite3.connect(sys.argv[1], timeout=1)\n"
+        "try:\n"
+        "    conn.isolation_level = None\n"
+        "    conn.execute('BEGIN')\n"
+        "    conn.execute('PRAGMA user_version').fetchone()\n"
+        "    conn.commit()\n"
+        "finally:\n"
+        "    conn.close()\n"
+    )
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", probe, database_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            )
+    except subprocess.TimeoutExpired:
+        return (
+            f"Timed out after {timeout:g} s while checking database access. "
+            "The database may be locked by another qPlot, QCoDeS, Python, or "
+            "notebook process, or blocked by cloud sync."
+            )
+    except OSError as err:
+        return str(err)
+
+    if result.returncode == 0:
+        return None
+
+    details = (result.stderr or result.stdout or "").strip()
+    if not details:
+        details = f"SQLite access probe exited with code {result.returncode}."
+    return details
 
 
 def database_info_report(database_path):
@@ -330,7 +381,9 @@ class MainWindow(qtw.QMainWindow):
         self.initFile()
         self.initRunDisplay()
         self.initShortcuts()
-        self.load_startup_database()
+        self.startupDatabaseTimer = QtCore.QTimer(self)
+        self.startupDatabaseTimer.setSingleShot(True)
+        self.startupDatabaseTimer.timeout.connect(self.load_startup_database)
         
         #Final Setup
         w = qtw.QFrame()
@@ -353,6 +406,7 @@ class MainWindow(qtw.QMainWindow):
         self.show() 
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint) 
         self.show()
+        self.startupDatabaseTimer.start(0)
 
 
     def load_startup_database(self):
@@ -1123,16 +1177,10 @@ class MainWindow(qtw.QMainWindow):
         database
 
         """
-        # Fetch user selected load location from config.json
-        if os.path.isdir(self.config.get("file.default_load_path")):
-            openDir = self.config.get("file.default_load_path")
-        else: # Otherwise use console directory
-            openDir = os.getcwd()
-        
         filename = qtw.QFileDialog.getOpenFileName(
             self, 
             'Open file', # Dialog button display
-            openDir, # Default look location
+            self.database_open_directory(), # Default look location
             "Data Base File (*.db)" # What to show
             )[0] # Returns array even if only 1 item is selected
         
@@ -1141,6 +1189,28 @@ class MainWindow(qtw.QMainWindow):
             self.load_database_path(filename)
         else:
             self.show_status("Database load cancelled.", 3000)
+
+
+    def database_open_directory(self):
+        """
+        Returns the directory the database-open dialog should start in.
+
+        """
+        current_database = self.fileTextbox.text()
+        if current_database:
+            current_directory = os.path.dirname(os.path.abspath(current_database))
+            if os.path.isdir(current_directory):
+                return current_directory
+
+        try:
+            default_load_path = self.config.get("file.default_load_path")
+        except KeyError:
+            default_load_path = ""
+
+        if os.path.isdir(default_load_path):
+            return default_load_path
+
+        return os.getcwd()
             
     
     @QtCore.pyqtSlot()
@@ -1199,7 +1269,13 @@ class MainWindow(qtw.QMainWindow):
             return False
 
         if self.load_file(abspath, load_started_at):
-            self.config.update("file.last_file_path", abspath)
+            try:
+                current_last_file = self.config.get("file.last_file_path")
+            except KeyError:
+                current_last_file = None
+
+            if current_last_file != abspath:
+                self.config.update("file.last_file_path", abspath)
             self.remember_recent_database(abspath)
             return True
 
@@ -1245,6 +1321,14 @@ class MainWindow(qtw.QMainWindow):
         paths = [path for path in self.recent_database_paths() if path != abspath]
         paths.insert(0, abspath)
         paths = paths[:10]
+
+        try:
+            current_paths = list(self.config.get("file.recent_file_paths"))
+        except KeyError:
+            current_paths = []
+
+        if current_paths == paths:
+            return
 
         self.config.config.setdefault("file", {})["recent_file_paths"] = paths
         self.config.save_config(self.config.default_file)
@@ -2181,6 +2265,10 @@ class MainWindow(qtw.QMainWindow):
         self.monitor.stop()
 
         try:
+            access_error = database_access_error(abspath)
+            if access_error:
+                raise RuntimeError(access_error)
+
             # Clear widgets from last Database
             self.run_idBox.setText("")
             self.measurementBox.setText("*")
