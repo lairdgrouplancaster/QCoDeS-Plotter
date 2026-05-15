@@ -26,6 +26,7 @@ from ._widgets import (
     operations_widget,
     )
 from ._shortcuts import standard_key_sequences
+from ._help import add_help_menu
 from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
@@ -1426,6 +1427,7 @@ class plotWidget(qtw.QMainWindow):
         toolbar_menu = self.createPopupMenu()
         toolbar_menu.setTitle("Toolbars")
         main_menu.addMenu(toolbar_menu)
+        add_help_menu(self)
     
 ###############################################################################
 #Other Methods  

@@ -27,6 +27,8 @@ Common actions:
 * `File -> Refresh` checks the current database for new runs.
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
+* `Help -> Quick Start` shows the core workflow inside qPlot.
+* `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
 * The refresh interval controls how often qPlot checks for new runs. Set it to
   `0.0 s` to disable automatic checks.
 * `Auto-plot` opens newly detected runs automatically.
@@ -174,6 +176,7 @@ General shortcuts:
 
 | Shortcut | Action |
 | --- | --- |
+| `F1` | Show quick start help |
 | `Ctrl+L` | Load a database |
 | `R` | Refresh the current window |
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |

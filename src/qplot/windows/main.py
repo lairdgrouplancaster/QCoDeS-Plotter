@@ -18,6 +18,7 @@ from ._widgets import (
     )
 from ._widgets.preview import PREVIEW_SIZE
 from ._shortcuts import standard_key_sequences
+from ._help import add_help_menu
 from ._window_controls import (
     add_confirmation_options,
     add_restore_defaults_option,
@@ -524,6 +525,7 @@ class MainWindow(qtw.QMainWindow):
         add_restore_defaults_option(self, prefMenu)
         prefMenu.addSeparator()
         add_confirmation_options(self, prefMenu)
+        add_help_menu(self)
 
     def initFile(self):
         """
