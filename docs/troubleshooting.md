@@ -40,6 +40,13 @@ The terminal prompt should start with the virtual environment name, such as
 interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder unless you
 intentionally manage this project with Conda.
 
+## VS Code Reports a Broken Virtual Environment
+
+If VS Code reports a broken `.venv` on macOS, it is usually a Windows virtual
+environment synced into the checkout. Delete or recreate that environment on
+the current operating system, or keep virtual environments outside the synced
+folder.
+
 ## `git` Is Not Found During Install
 
 The GitHub install command requires Git:

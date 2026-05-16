@@ -340,7 +340,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         stats_action.trigger()
 
         self.assertEqual(len(opened), 1)
-        self.assertIn("2x2 points", opened[0])
+        self.assertIn("2×2 points", opened[0])
         self.assertIn("X range: 1.000 to 3.000", opened[0])
         self.assertIn("Y range: 1.000 to 3.000", opened[0])
         self.assertEqual(qtw.QApplication.clipboard().text(), "")
@@ -349,21 +349,35 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
     def test_stats_dialog_copy_button_copies_displayed_stats(self):
         class Host(qtw.QMainWindow):
             _new_marquee_stats_dialog = plotWidget._new_marquee_stats_dialog
+            _new_marquee_stats_table = plotWidget._new_marquee_stats_table
+            _marquee_stats_table_rows = plotWidget._marquee_stats_table_rows
             copy_marquee_stats_to_clipboard = plotWidget.copy_marquee_stats_to_clipboard
 
         host = Host()
-        stats_text = "2x2 points\nAverage: 7.5"
+        stats_text = "2×2 points\nX range: 1.000 to 3.000\nAverage: 7.5"
         qtw.QApplication.clipboard().clear()
 
         dialog = host._new_marquee_stats_dialog(stats_text)
+        stats_table = dialog.findChild(qtw.QTableWidget)
         copy_button = next(
             button for button in dialog.findChildren(qtw.QPushButton)
             if button.text() == "Copy"
             )
         copy_button.click()
 
-        self.assertEqual(dialog.findChild(qtw.QPlainTextEdit).toPlainText(), stats_text)
+        self.assertIsNotNone(stats_table)
+        self.assertEqual(stats_table.rowCount(), 3)
+        self.assertEqual(stats_table.horizontalHeaderItem(0).text(), "Field")
+        self.assertEqual(stats_table.horizontalHeaderItem(1).text(), "Value")
+        self.assertEqual(stats_table.item(0, 0).text(), "Selection")
+        self.assertEqual(stats_table.item(0, 1).text(), "2×2 points")
+        self.assertEqual(stats_table.item(1, 0).text(), "X range")
+        self.assertEqual(stats_table.item(1, 1).text(), "1.000 to 3.000")
         self.assertEqual(qtw.QApplication.clipboard().text(), stats_text)
+
+        stats_table.selectRow(2)
+        stats_table.copySelection()
+        self.assertEqual(qtw.QApplication.clipboard().text(), "Average\t7.5")
 
     def test_mouse_moved_clamps_heatmap_edge_to_last_cell(self):
         widget = pg.GraphicsLayoutWidget()

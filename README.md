@@ -10,14 +10,8 @@ line plots, heatmaps, 1D cut extraction, CSV export, and simple data operations.
 
 QCoDeS-Plotter requires Python 3.11 or newer.
 
-Runtime dependencies are installed automatically:
-
-* QCoDeS
-* PyQt5
-* pyqtgraph
-* numpy
-* pandas
-* jsonschema
+Runtime dependencies are declared in `pyproject.toml` and are installed
+automatically when qPlot is installed.
 
 ## Install
 
@@ -52,11 +46,6 @@ interpreter for the current system:
 
 * Windows: `.\.venv\Scripts\python.exe`
 * macOS: `./.venv-mac/bin/python`
-
-If VS Code reports a broken `.venv` on macOS, it is usually a Windows virtual
-environment synced into the checkout. Delete or recreate that environment on
-the current operating system, or keep virtual environments outside the synced
-folder.
 
 Check the install:
 

@@ -458,7 +458,7 @@ class plot2d(plotWidget):
 
         rows, cols = selected.shape
         rect = self._snap_marquee_rect(self.marquee.normalized())
-        return self._format_marquee_stats_text(f"{cols}x{rows} points", values, rect)
+        return self._format_marquee_stats_text(f"{cols}×{rows} points", values, rect)
 
 
     def _marquee_color_levels(self):

@@ -26,6 +26,7 @@ from qplot.datahandling.qcodes_cache import (
     
 from ._subplots import custom_viewbox
 from ._widgets import (
+    CopyableTableWidget,
     expandingComboBox,
     QDock_context,
     operations_widget,
@@ -538,11 +539,8 @@ class plotWidget(qtw.QMainWindow):
         dialog.setWindowTitle("Marquee stats")
 
         layout = qtw.QVBoxLayout(dialog)
-        stats_view = qtw.QPlainTextEdit(stats_text)
-        stats_view.setReadOnly(True)
-        stats_view.setMinimumWidth(280)
-        stats_view.setMinimumHeight(170)
-        layout.addWidget(stats_view)
+        stats_table = self._new_marquee_stats_table(stats_text)
+        layout.addWidget(stats_table)
 
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
         copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ActionRole)
@@ -555,6 +553,60 @@ class plotWidget(qtw.QMainWindow):
         layout.addWidget(buttons)
 
         return dialog
+
+
+    def _new_marquee_stats_table(self, stats_text):
+        rows = self._marquee_stats_table_rows(stats_text)
+        stats_table = CopyableTableWidget()
+        stats_table.setObjectName("detailsTable")
+        stats_table.setColumnCount(2)
+        stats_table.setHorizontalHeaderLabels(["Field", "Value"])
+        stats_table.setRowCount(len(rows))
+        stats_table.setAlternatingRowColors(True)
+        stats_table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
+        stats_table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
+        stats_table.setSelectionMode(qtw.QAbstractItemView.ExtendedSelection)
+        stats_table.setTextElideMode(QtCore.Qt.ElideNone)
+        stats_table.setWordWrap(False)
+        stats_table.verticalHeader().hide()
+        stats_table.verticalHeader().setMinimumSectionSize(16)
+        stats_table.verticalHeader().setDefaultSectionSize(20)
+        stats_table.horizontalHeader().setFixedHeight(22)
+        stats_table.horizontalHeader().setStretchLastSection(True)
+        stats_table.horizontalHeader().setSectionResizeMode(
+            0,
+            qtw.QHeaderView.ResizeToContents
+            )
+        stats_table.horizontalHeader().setSectionResizeMode(
+            1,
+            qtw.QHeaderView.Stretch
+            )
+        stats_table.setMinimumWidth(280)
+        stats_table.setMinimumHeight(170)
+
+        for row, (field, value) in enumerate(rows):
+            field_item = qtw.QTableWidgetItem(field)
+            value_item = qtw.QTableWidgetItem(value)
+            stats_table.setItem(row, 0, field_item)
+            stats_table.setItem(row, 1, value_item)
+
+        return stats_table
+
+
+    def _marquee_stats_table_rows(self, stats_text):
+        rows = []
+        for line in stats_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            if ":" in line:
+                field, value = line.split(":", 1)
+                rows.append((field.strip(), value.strip()))
+            else:
+                rows.append(("Selection", line))
+
+        return rows
 
 
     def _format_marquee_stats_text(self, size_text, values, rect=None):

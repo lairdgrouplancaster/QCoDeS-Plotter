@@ -4,6 +4,7 @@ from .dropbox import (
     )
 
 from .treeWidgets import (
+    CopyableTableWidget,
     RunList,
     moreInfo,
     )
@@ -15,6 +16,7 @@ from .operations import operations_widget
 
 __all__ = [
     "expandingComboBox",
+    "CopyableTableWidget",
     "moreInfo",
     "picker_1d",
     "PreviewTab",
