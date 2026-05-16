@@ -567,14 +567,15 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
 class DatabaseAccessProbeTestCase(unittest.TestCase):
     def test_database_access_error_returns_none_for_readable_database(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as database:
-            conn = sqlite3.connect(database.name)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "readable.db")
+            conn = sqlite3.connect(database_path)
             try:
                 conn.execute("PRAGMA user_version")
             finally:
                 conn.close()
 
-            self.assertIsNone(database_module.database_access_error(database.name))
+            self.assertIsNone(database_module.database_access_error(database_path))
 
     def test_database_access_error_reports_timeout(self):
         old_run = database_module.subprocess.run
@@ -797,15 +798,15 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
     def test_prefetch_database_file_reads_file_and_reports_cloud_sync_progress(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as database:
-            database.write(b"x" * 10)
-            database.flush()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "prefetch.db")
+            Path(database_path).write_bytes(b"x" * 10)
             statuses = []
             old_label = database_module.database_cloud_storage_label
             database_module.database_cloud_storage_label = lambda _path: "OneDrive"
             try:
                 bytes_read = database_module.prefetch_database_file(
-                    database.name,
+                    database_path,
                     status_callback=statuses.append,
                     chunk_size=4,
                     status_interval=0,
@@ -818,15 +819,15 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
         self.assertIn("100% available", statuses[-1])
 
     def test_prefetch_database_file_with_timeout_uses_subprocess(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as database:
-            database.write(b"x" * 10)
-            database.flush()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "prefetch-timeout.db")
+            Path(database_path).write_bytes(b"x" * 10)
             statuses = []
             old_label = database_module.database_cloud_storage_label
             database_module.database_cloud_storage_label = lambda _path: "OneDrive"
             try:
                 bytes_read = database_module.prefetch_database_file_with_timeout(
-                    database.name,
+                    database_path,
                     timeout=5,
                     status_callback=statuses.append,
                     )
