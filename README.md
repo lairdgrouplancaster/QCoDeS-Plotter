@@ -140,6 +140,4 @@ For demo data and screenshot workflow notes, see [docs/demo-data.md](docs/demo-d
 For release and packaging notes, see [docs/distribution.md](docs/distribution.md).
 
 Local development helper scripts are documented in
-[scripts/README.md](scripts/README.md). 
-
-[Delete this test edit by Edward]
+[scripts/README.md](scripts/README.md).
