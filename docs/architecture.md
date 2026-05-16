@@ -114,6 +114,10 @@ them.
 
 `src/qplot/configuration/scripts.py` backs the `qplot-cfg` command-line helper.
 
+`src/qplot/windows/_preferences.py` exposes the common config keys through the
+main-window preferences dialog and emits a signal when applied settings need to
+be synced into the open UI.
+
 Theme files live in `src/qplot/configuration/themes`.
 
 The user-facing key reference and contributor checklist for config changes live

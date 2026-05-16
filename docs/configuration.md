@@ -54,6 +54,9 @@ Reset all settings to schema defaults:
 qplot-cfg -reset
 ```
 
+Common settings can also be edited in the application with
+`Options -> Preferences...`.
+
 Python code can use the public `config` object directly:
 
 ```python

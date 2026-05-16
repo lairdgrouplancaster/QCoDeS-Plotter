@@ -31,6 +31,8 @@ Common actions:
 * `File -> Refresh` checks the current database for new runs.
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
+* `Options -> Preferences...` edits common theme, default load location,
+  preview, refresh, confirmation, and runtime settings.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
 * `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
 * `Help -> Copy Diagnostic Log Path` copies the log file location for support
@@ -189,6 +191,7 @@ General shortcuts:
 | `R` | Refresh the current window |
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
+| `Ctrl+,` | Open preferences |
 | `Ctrl+M` / `Alt+Space, N` | Minimize the current window |
 | `Alt+Space, X` / `Alt+Space, R` | Maximize or restore the current window on Windows |
 | `Ctrl+Cmd+F` / `F11` | Enter or leave full screen |

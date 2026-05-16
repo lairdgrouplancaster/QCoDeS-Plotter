@@ -14,6 +14,7 @@ from ._widgets import (
 from ._widgets.preview import PREVIEW_SIZE
 from ._database_actions import DatabaseActionsMixin
 from ._plot_actions import PlotActionsMixin
+from ._preferences import PreferencesDialog
 from ._shortcuts import standard_key_sequences
 from ._help import add_help_menu, show_quick_start
 from ._window_controls import (
@@ -272,6 +273,13 @@ class MainWindow(DatabaseActionsMixin, PlotActionsMixin, qtw.QMainWindow):
         
         # Second dropdown menu
         prefMenu = menu.addMenu("&Options")
+
+        preferences_action = qtw.QAction("&Preferences...", self)
+        preferences_action.setShortcut("Ctrl+,")
+        preferences_action.setStatusTip("Open qPlot preferences")
+        preferences_action.triggered.connect(self.show_preferences_dialog)
+        prefMenu.addAction(preferences_action)
+        prefMenu.addSeparator()
         
         # Sets default open location for loadACtion
         default_load_picker = qtw.QAction("&Open Location", self)
@@ -889,6 +897,19 @@ class MainWindow(DatabaseActionsMixin, PlotActionsMixin, qtw.QMainWindow):
         self.show_status("Default settings restored.", 5000)
 
 
+    def show_preferences_dialog(self):
+        """
+        Opens the preferences dialog.
+
+        """
+        dialog = PreferencesDialog(self.config, self)
+        dialog.preferencesApplied.connect(self.apply_current_settings)
+        dialog.preferencesApplied.connect(
+            lambda: self.show_status("Preferences saved.", 3000)
+            )
+        dialog.exec_()
+
+
     def apply_current_settings(self):
         """
         Applies config-backed settings that can be updated in open windows.
@@ -897,6 +918,7 @@ class MainWindow(DatabaseActionsMixin, PlotActionsMixin, qtw.QMainWindow):
         self._sync_theme_actions()
         self._sync_preview_size_actions()
         self._sync_refresh_interval()
+        self._sync_thread_pool_settings()
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
@@ -932,6 +954,13 @@ class MainWindow(DatabaseActionsMixin, PlotActionsMixin, qtw.QMainWindow):
         self.spinBox.setValue(interval)
         self.spinBox.blockSignals(False)
         self._apply_refresh_interval(self.spinBox.value())
+
+
+    def _sync_thread_pool_settings(self):
+        if hasattr(self, "threadPool"):
+            self.threadPool.setMaxThreadCount(
+                self.config.get("runtime_settings.max_threads")
+                )
 
 
     def _configured_preview_size(self):
