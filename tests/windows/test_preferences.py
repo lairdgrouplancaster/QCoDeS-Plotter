@@ -1,5 +1,10 @@
+import tempfile
 import unittest
+from pathlib import Path
 
+from PyQt5 import QtWidgets as qtw
+
+from qplot.configuration.config import config
 from qplot.windows import main as main_window
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._window_controls import (
@@ -10,7 +15,7 @@ from qplot.windows._window_controls import (
 
 class FakeConfig:
     def __init__(self):
-        self.values = {
+        self.defaults = {
             "user_preference.theme": "light",
             "GUI.preview_size": 200,
             "file.default_load_path": "",
@@ -21,7 +26,9 @@ class FakeConfig:
             "runtime_settings.del_grace_period": 10.0,
             "runtime_settings.cloud_sync_timeout": 120.0,
             }
+        self.values = dict(self.defaults)
         self.updates = []
+        self.schema = self._schema_for_defaults()
 
     def get(self, key):
         return self.values[key]
@@ -29,6 +36,17 @@ class FakeConfig:
     def update(self, key, value):
         self.updates.append((key, value))
         self.values[key] = value
+
+    def _schema_for_defaults(self):
+        schema = {"properties": {}}
+        for key, value in self.defaults.items():
+            section, name = key.split(".")
+            section_schema = schema["properties"].setdefault(
+                section,
+                {"properties": {}},
+                )
+            section_schema["properties"][name] = {"default": value}
+        return schema
 
 
 class PreferencesDialogTestCase(unittest.TestCase):
@@ -102,6 +120,115 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertTrue(dialog.apply_preferences())
 
             self.assertEqual(cfg.updates, [])
+        finally:
+            dialog.deleteLater()
+
+    def test_restore_defaults_updates_displayed_preferences(self):
+        old_question = qtw.QMessageBox.question
+        cfg = FakeConfig()
+        cfg.values.update({
+            "user_preference.theme": "dark",
+            "GUI.preview_size": 500,
+            "file.default_load_path": "C:/measurements",
+            "user_preference.default_refresh_rate": 3.5,
+            CONFIRM_CLOSE_ALL_KEY: False,
+            CONFIRM_QUIT_KEY: False,
+            "runtime_settings.max_threads": 9,
+            "runtime_settings.del_grace_period": 20.0,
+            "runtime_settings.cloud_sync_timeout": 300.0,
+            })
+        applied = []
+        dialog = PreferencesDialog(cfg)
+
+        try:
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.Yes
+            dialog.preferencesApplied.connect(lambda: applied.append(True))
+
+            self.assertTrue(dialog.restore_defaults())
+
+            self.assertEqual(cfg.values, cfg.defaults)
+            self.assertEqual(dialog.themeCombo.currentData(), "light")
+            self.assertEqual(dialog.previewSizeSpin.value(), 200)
+            self.assertEqual(dialog.defaultLoadPathEdit.text(), "")
+            self.assertEqual(dialog.refreshRateSpin.value(), 1.0)
+            self.assertTrue(dialog.confirmCloseAllCheck.isChecked())
+            self.assertTrue(dialog.confirmQuitCheck.isChecked())
+            self.assertEqual(dialog.maxThreadsSpin.value(), 4)
+            self.assertEqual(dialog.delGracePeriodSpin.value(), 10.0)
+            self.assertEqual(dialog.cloudSyncTimeoutSpin.value(), 120.0)
+            self.assertEqual(applied, [True])
+        finally:
+            qtw.QMessageBox.question = old_question
+            dialog.deleteLater()
+
+    def test_restore_defaults_can_be_cancelled(self):
+        old_question = qtw.QMessageBox.question
+        cfg = FakeConfig()
+        cfg.values.update({"user_preference.theme": "dark"})
+        dialog = PreferencesDialog(cfg)
+
+        try:
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.No
+
+            self.assertFalse(dialog.restore_defaults())
+
+            self.assertEqual(cfg.values["user_preference.theme"], "dark")
+            self.assertEqual(cfg.updates, [])
+        finally:
+            qtw.QMessageBox.question = old_question
+            dialog.deleteLater()
+
+
+class PreferencesConfigFileTestCase(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.old_default_path = config.default_path
+        self.old_default_file = config.default_file
+
+        config.default_path = str(Path(self.temp_dir.name) / ".qplot")
+        config.default_file = str(Path(config.default_path) / config.config_file_name)
+
+    def tearDown(self):
+        config.default_path = self.old_default_path
+        config.default_file = self.old_default_file
+        self.temp_dir.cleanup()
+
+    def test_apply_preferences_persists_through_real_config_file(self):
+        cfg = config()
+        dialog = PreferencesDialog(cfg)
+
+        try:
+            dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
+            dialog.previewSizeSpin.setValue(300)
+            dialog.defaultLoadPathEdit.setText("C:/qcodes")
+            dialog.refreshRateSpin.setValue(2.5)
+            dialog.confirmCloseAllCheck.setChecked(False)
+            dialog.confirmQuitCheck.setChecked(False)
+            dialog.maxThreadsSpin.setValue(8)
+            dialog.delGracePeriodSpin.setValue(15.5)
+            dialog.cloudSyncTimeoutSpin.setValue(240.0)
+
+            self.assertTrue(dialog.apply_preferences())
+
+            reloaded = config()
+            self.assertEqual(reloaded.get("user_preference.theme"), "dark")
+            self.assertEqual(reloaded.get("GUI.preview_size"), 300)
+            self.assertEqual(reloaded.get("file.default_load_path"), "C:/qcodes")
+            self.assertEqual(
+                reloaded.get("user_preference.default_refresh_rate"),
+                2.5,
+                )
+            self.assertFalse(reloaded.get(CONFIRM_CLOSE_ALL_KEY))
+            self.assertFalse(reloaded.get(CONFIRM_QUIT_KEY))
+            self.assertEqual(reloaded.get("runtime_settings.max_threads"), 8)
+            self.assertEqual(
+                reloaded.get("runtime_settings.del_grace_period"),
+                15.5,
+                )
+            self.assertEqual(
+                reloaded.get("runtime_settings.cloud_sync_timeout"),
+                240.0,
+                )
         finally:
             dialog.deleteLater()
 

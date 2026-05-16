@@ -8,6 +8,7 @@ from ._window_controls import (
     CONFIRM_QUIT_KEY,
     )
 
+from copy import deepcopy
 import os
 
 
@@ -15,6 +16,18 @@ THEME_OPTIONS = (
     ("Light", "light"),
     ("Dark", "dark"),
     ("PyQt", "pyqt"),
+    )
+
+PREFERENCE_KEYS = (
+    "user_preference.theme",
+    "GUI.preview_size",
+    "file.default_load_path",
+    "user_preference.default_refresh_rate",
+    CONFIRM_CLOSE_ALL_KEY,
+    CONFIRM_QUIT_KEY,
+    "runtime_settings.max_threads",
+    "runtime_settings.del_grace_period",
+    "runtime_settings.cloud_sync_timeout",
     )
 
 
@@ -51,7 +64,8 @@ class PreferencesDialog(qtw.QDialog):
         self.buttonBox = qtw.QDialogButtonBox(
             qtw.QDialogButtonBox.Ok
             | qtw.QDialogButtonBox.Cancel
-            | qtw.QDialogButtonBox.Apply,
+            | qtw.QDialogButtonBox.Apply
+            | qtw.QDialogButtonBox.RestoreDefaults,
             self,
             )
         self.buttonBox.accepted.connect(self._accept_preferences)
@@ -59,6 +73,15 @@ class PreferencesDialog(qtw.QDialog):
         self.buttonBox.button(qtw.QDialogButtonBox.Apply).clicked.connect(
             self.apply_preferences
             )
+        self.restoreDefaultsButton = self.buttonBox.button(
+            qtw.QDialogButtonBox.RestoreDefaults
+            )
+        self.restoreDefaultsButton.setObjectName("restorePreferenceDefaultsButton")
+        self.restoreDefaultsButton.setAccessibleName("Restore preference defaults")
+        self.restoreDefaultsButton.setToolTip(
+            "Restore the preferences shown here to their defaults"
+            )
+        self.restoreDefaultsButton.clicked.connect(self.restore_defaults)
         layout.addWidget(self.buttonBox)
 
     def _appearance_tab(self):
@@ -204,32 +227,38 @@ class PreferencesDialog(qtw.QDialog):
         Loads current config values into the dialog widgets.
 
         """
-        theme_index = self.themeCombo.findData(
-            self.config.get("user_preference.theme")
-            )
+        self.set_preference_values({
+            key: self.config.get(key)
+            for key in PREFERENCE_KEYS
+            })
+
+    def set_preference_values(self, values):
+        """
+        Loads preference values into the dialog widgets.
+
+        """
+        theme_index = self.themeCombo.findData(values["user_preference.theme"])
         self.themeCombo.setCurrentIndex(max(theme_index, 0))
 
-        self.previewSizeSpin.setValue(int(self.config.get("GUI.preview_size")))
-        self.defaultLoadPathEdit.setText(
-            str(self.config.get("file.default_load_path"))
-            )
+        self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
+        self.defaultLoadPathEdit.setText(str(values["file.default_load_path"]))
         self.refreshRateSpin.setValue(
-            float(self.config.get("user_preference.default_refresh_rate"))
+            float(values["user_preference.default_refresh_rate"])
             )
         self.confirmCloseAllCheck.setChecked(
-            bool(self.config.get(CONFIRM_CLOSE_ALL_KEY))
+            bool(values[CONFIRM_CLOSE_ALL_KEY])
             )
         self.confirmQuitCheck.setChecked(
-            bool(self.config.get(CONFIRM_QUIT_KEY))
+            bool(values[CONFIRM_QUIT_KEY])
             )
         self.maxThreadsSpin.setValue(
-            int(self.config.get("runtime_settings.max_threads"))
+            int(values["runtime_settings.max_threads"])
             )
         self.delGracePeriodSpin.setValue(
-            float(self.config.get("runtime_settings.del_grace_period"))
+            float(values["runtime_settings.del_grace_period"])
             )
         self.cloudSyncTimeoutSpin.setValue(
-            float(self.config.get("runtime_settings.cloud_sync_timeout"))
+            float(values["runtime_settings.cloud_sync_timeout"])
             )
 
     def preference_values(self):
@@ -237,7 +266,7 @@ class PreferencesDialog(qtw.QDialog):
         Returns the current widget values keyed by config path.
 
         """
-        return {
+        values = {
             "user_preference.theme": self.themeCombo.currentData(),
             "GUI.preview_size": int(self.previewSizeSpin.value()),
             "file.default_load_path": self.defaultLoadPathEdit.text().strip(),
@@ -248,6 +277,25 @@ class PreferencesDialog(qtw.QDialog):
             "runtime_settings.del_grace_period": self.delGracePeriodSpin.value(),
             "runtime_settings.cloud_sync_timeout": self.cloudSyncTimeoutSpin.value(),
             }
+        return {
+            key: values[key]
+            for key in PREFERENCE_KEYS
+            }
+
+    def default_preference_values(self):
+        """
+        Returns schema defaults for the preferences shown in this dialog.
+
+        """
+        return {
+            key: self._schema_default(key)
+            for key in PREFERENCE_KEYS
+            }
+
+    def _schema_default(self, key):
+        section, name = key.split(".")
+        schema = self.config.schema["properties"][section]["properties"][name]
+        return deepcopy(schema["default"])
 
     def apply_preferences(self):
         """
@@ -268,6 +316,24 @@ class PreferencesDialog(qtw.QDialog):
 
         self.preferencesApplied.emit()
         return True
+
+    def restore_defaults(self):
+        """
+        Restores the preferences shown in this dialog to schema defaults.
+
+        """
+        reply = qtw.QMessageBox.question(
+            self,
+            "Restore Preference Defaults",
+            "Restore the preferences shown in this dialog to their defaults?",
+            qtw.QMessageBox.Yes | qtw.QMessageBox.No,
+            qtw.QMessageBox.No,
+            )
+        if reply != qtw.QMessageBox.Yes:
+            return False
+
+        self.set_preference_values(self.default_preference_values())
+        return self.apply_preferences()
 
     def choose_default_load_path(self):
         current_path = self.defaultLoadPathEdit.text().strip()

@@ -33,6 +33,8 @@ Common actions:
   database.
 * `Options -> Preferences...` edits common theme, default load location,
   preview, refresh, confirmation, and runtime settings.
+  Use `Restore Defaults` in that dialog to reset the shown preferences without
+  leaving the dialog.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
 * `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
 * `Help -> Copy Diagnostic Log Path` copies the log file location for support
