@@ -244,6 +244,23 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertLess(above.green(), 80)
         self.assertLess(left.green(), 80)
 
+    def test_heatmap_preview_uses_full_setpoint_shape_for_partial_data(self):
+        heatmap = render_heatmap_preview(
+            np.array([0, 1], dtype=float),
+            np.array([0, 0], dtype=float),
+            np.array([1, 2], dtype=float),
+            size=40,
+            grid_shape=(2, 4),
+            )
+
+        measured = QtGui.QColor(heatmap.pixel(15, 30))
+        empty_future_column = QtGui.QColor(heatmap.pixel(35, 30))
+        empty_future_row = QtGui.QColor(heatmap.pixel(15, 5))
+
+        self.assertNotEqual(measured, QtGui.QColor(230, 230, 230))
+        self.assertEqual(empty_future_column, QtGui.QColor(230, 230, 230))
+        self.assertEqual(empty_future_row, QtGui.QColor(230, 230, 230))
+
     def test_generate_2d_preview_matches_full_plot_axis_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = os.path.join(temp_dir, "preview.db")
@@ -287,6 +304,52 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         left = QtGui.QColor(heatmap.pixel(5, 15))
         self.assertGreater(high.green(), 200)
         self.assertLess(left.green(), 80)
+
+    def test_generate_2d_preview_uses_metadata_setpoint_shape_for_partial_run(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "preview.db")
+            conn = sqlite3.connect(database_path)
+            try:
+                cursor = conn.cursor()
+                cursor.execute("CREATE TABLE results (slow_y REAL, fast_x REAL, signal REAL)")
+                cursor.executemany(
+                    "INSERT INTO results VALUES (?, ?, ?)",
+                    [
+                        (0.0, 0.0, 1.0),
+                        (0.0, 1.0, 2.0),
+                        ]
+                    )
+                conn.commit()
+            finally:
+                cursor.close()
+                conn.close()
+
+            previews = generate_run_previews(database_path, {
+                "run_id": 8,
+                "result_table_name": "results",
+                "result_count": 2,
+                "setpoint_shape": [2, 4],
+                "measure_parameters": ["signal"],
+                "sweep_parameters": ["slow_y", "fast_x"],
+                "run_description": """
+                {
+                  "interdependencies_": {
+                    "dependencies": {
+                      "signal": ["slow_y", "fast_x"]
+                    }
+                  }
+                }
+                """,
+                }, size=40)
+
+        heatmap = previews[0]["image"]
+        measured = QtGui.QColor(heatmap.pixel(15, 30))
+        empty_future_column = QtGui.QColor(heatmap.pixel(35, 30))
+        empty_future_row = QtGui.QColor(heatmap.pixel(15, 5))
+
+        self.assertNotEqual(measured, QtGui.QColor(230, 230, 230))
+        self.assertEqual(empty_future_column, QtGui.QColor(230, 230, 230))
+        self.assertEqual(empty_future_row, QtGui.QColor(230, 230, 230))
 
     def test_preview_tab_arranges_images_horizontally_with_tooltips(self):
         preview = PreviewTab(preview_size=150)

@@ -15,6 +15,7 @@ from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
 from qplot.configuration.themes import dark
 from qplot.windows import main as main_window
+from qplot.windows._run_controls import AUTO_PLOT_KEY
 
 
 class TemporaryConfigTestCase(unittest.TestCase):
@@ -71,12 +72,14 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg = config()
         stored_config = cfg.config
         del stored_config["user_preference"]["confirm_close_all"]
+        del stored_config["user_preference"]["auto_plot"]
         with open(config.default_file, "w") as fp:
             json.dump(stored_config, fp)
 
         reloaded = config()
 
         self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
+        self.assertFalse(reloaded.get(AUTO_PLOT_KEY))
 
     def test_config_repr_returns_readable_json(self):
         cfg = config()
@@ -152,6 +155,28 @@ class TemporaryConfigTestCase(unittest.TestCase):
             window.spinBox.setValue(2.5)
 
             self.assertEqual(config().get("user_preference.default_refresh_rate"), 2.5)
+        finally:
+            window.monitor.stop()
+            window.deleteLater()
+
+    def test_main_window_uses_configured_auto_plot(self):
+        cfg = config()
+        cfg.update(AUTO_PLOT_KEY, True)
+        window = main_window.MainWindow()
+
+        try:
+            self.assertTrue(window.autoPlotBox.isChecked())
+        finally:
+            window.monitor.stop()
+            window.deleteLater()
+
+    def test_main_window_auto_plot_changes_are_persistent(self):
+        window = main_window.MainWindow()
+
+        try:
+            window.autoPlotBox.setChecked(True)
+
+            self.assertTrue(config().get(AUTO_PLOT_KEY))
         finally:
             window.monitor.stop()
             window.deleteLater()
@@ -250,6 +275,11 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg = config()
 
         self.assertEqual(cfg.get("user_preference.default_refresh_rate"), 1)
+
+    def test_default_auto_plot_is_disabled(self):
+        cfg = config()
+
+        self.assertFalse(cfg.get(AUTO_PLOT_KEY))
 
     def test_cloud_sync_timeout_default_is_two_minutes(self):
         cfg = config()

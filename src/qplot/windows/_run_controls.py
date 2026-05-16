@@ -12,6 +12,17 @@ from ._widgets import (
     moreInfo,
     )
 from ._widgets.preview import PREVIEW_SIZE
+from ._widgets.treeWidgets import run_is_complete
+
+
+AUTO_PLOT_KEY = "user_preference.auto_plot"
+
+
+def _run_timestamp_sort_key(metadata):
+    try:
+        return float(metadata.get("run_timestamp") or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 class RunControlsMixin:
@@ -43,7 +54,9 @@ class RunControlsMixin:
         self.monitor.timeout.connect(self.refreshMain)
 
         self.autoPlotBox = qtw.QCheckBox()
+        self.autoPlotBox.setChecked(self.config.get(AUTO_PLOT_KEY))
         self.autoPlotBox.setToolTip("Automatically open plots for newly detected runs")
+        self.autoPlotBox.toggled.connect(self._auto_plot_changed)
 
         self.refreshDatabaseButton = qtw.QToolButton()
         self.refreshDatabaseButton.setObjectName("refreshIconButton")
@@ -367,6 +380,40 @@ class RunControlsMixin:
         self._save_refresh_interval(interval)
         self._apply_refresh_interval(interval)
         self._sync_empty_state()
+
+    @QtCore.pyqtSlot(bool)
+    def _auto_plot_changed(self, checked):
+        """
+        Persists the Auto-plot checkbox state.
+
+        """
+        self.config.update(AUTO_PLOT_KEY, bool(checked))
+        if checked:
+            self._auto_plot_current_running_run()
+
+    def _auto_plot_current_running_run(self):
+        """
+        Opens the newest incomplete run already present in the run list.
+
+        """
+        run_list = getattr(self, "RunList", None)
+        if run_list is None or not hasattr(run_list, "all_run_metadata"):
+            return None
+
+        running_runs = [
+            metadata
+            for metadata in run_list.all_run_metadata().values()
+            if metadata.get("guid") and not run_is_complete(metadata)
+            ]
+        if not running_runs:
+            return None
+
+        metadata = max(
+            running_runs,
+            key=_run_timestamp_sort_key,
+            )
+        self.openPlot(metadata["guid"])
+        return metadata["guid"]
 
     def _apply_refresh_interval(self, interval):
         """

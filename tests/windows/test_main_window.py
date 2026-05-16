@@ -17,6 +17,7 @@ from qplot.windows._window_controls import (
     add_restore_defaults_option,
     ask_confirmation_with_dont_ask_again,
     )
+from qplot.windows._run_controls import AUTO_PLOT_KEY
 
 
 class DatabaseOpenDirectoryTestCase(unittest.TestCase):
@@ -1126,6 +1127,74 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             harness.status_messages[-1],
             ("Found 1 new run.", 5000),
             )
+
+
+class AutoPlotToggleTestCase(unittest.TestCase):
+    class Config:
+        def __init__(self):
+            self.updates = []
+
+        def update(self, key, value):
+            self.updates.append((key, value))
+
+    class RunList:
+        def __init__(self, metadata):
+            self.metadata = metadata
+
+        def all_run_metadata(self):
+            return self.metadata
+
+    class Harness:
+        _auto_plot_changed = main_window.MainWindow._auto_plot_changed
+        _auto_plot_current_running_run = (
+            main_window.MainWindow._auto_plot_current_running_run
+            )
+
+        def __init__(self, metadata):
+            self.config = AutoPlotToggleTestCase.Config()
+            self.RunList = AutoPlotToggleTestCase.RunList(metadata)
+            self.plotted_guids = []
+
+        def openPlot(self, guid):
+            self.plotted_guids.append(guid)
+
+    def test_enabling_auto_plot_opens_newest_incomplete_run(self):
+        harness = self.Harness({
+            1: {
+                "guid": "older-running",
+                "run_timestamp": 10.0,
+                "is_completed": False,
+                },
+            2: {
+                "guid": "complete",
+                "run_timestamp": 12.0,
+                "is_completed": True,
+                },
+            3: {
+                "guid": "newer-running",
+                "run_timestamp": 15.0,
+                "is_completed": False,
+                },
+            })
+
+        harness._auto_plot_changed(True)
+
+        self.assertEqual(harness.config.updates, [(AUTO_PLOT_KEY, True)])
+        self.assertEqual(harness.plotted_guids, ["newer-running"])
+
+    def test_disabling_auto_plot_does_not_open_running_run(self):
+        harness = self.Harness({
+            1: {
+                "guid": "running",
+                "run_timestamp": 10.0,
+                "is_completed": False,
+                },
+            })
+
+        harness._auto_plot_changed(False)
+
+        self.assertEqual(harness.config.updates, [(AUTO_PLOT_KEY, False)])
+        self.assertEqual(harness.plotted_guids, [])
 
 
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
