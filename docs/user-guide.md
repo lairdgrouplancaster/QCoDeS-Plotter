@@ -113,11 +113,13 @@ Color-scale controls:
 
 1D cut extraction:
 
-* Right-click the heatmap and select `Plot Horizontal Cut` or
-  `Plot Vertical Cut`.
+* Right-click the heatmap and select `Horizontal Cut` or
+  `Vertical Cut`.
 * A cut window opens, with a cursor shown on the heatmap.
 * Move the cut position with the cut window slider or by dragging the cursor on
   the heatmap.
+* Hold Shift while dragging a cut cursor to move all cuts with the same
+  orientation together.
 * Switch the cut and fixed parameters with the `x axis` and `fixed parameter`
   dropdowns.
 * Cut plots are live-data compatible.

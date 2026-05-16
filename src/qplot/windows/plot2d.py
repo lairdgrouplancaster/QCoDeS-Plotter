@@ -46,6 +46,7 @@ class plot2d(plotWidget):
     """
     open_subplot = QtCore.pyqtSignal([object, str, tuple])
     sweep_moved = QtCore.pyqtSignal([int, int])
+    close_sweeps_requested = QtCore.pyqtSignal([object, object])
     
     def __init__(self, 
                  *args,
@@ -204,12 +205,12 @@ class plot2d(plotWidget):
         sep = self.vbMenu.insertSeparator(actions[3])
         
         ### Sweep control
-        h_sweep = qtw.QAction("Plot Horizontal Cut", self)
+        h_sweep = qtw.QAction("Horizontal Cut", self)
         self.register_shortcut(h_sweep, "Ctrl+Shift+H", "Plot horizontal cut")
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
-        v_sweep = qtw.QAction("Plot Vertical Cut", self)
+        v_sweep = qtw.QAction("Vertical Cut", self)
         self.register_shortcut(v_sweep, "Ctrl+Shift+V", "Plot vertical cut")
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
@@ -2152,6 +2153,7 @@ class plot2d(plotWidget):
         #check exists, then remove
         if self.sweep_lines.get(sweep_id, None) is None:
             return
+        self.restore_sweep_line_hover_cursor(self.sweep_lines[sweep_id])
         self.restore_sweep_line_drag_cursor(self.sweep_lines[sweep_id])
         self.plot.removeItem(self.sweep_lines[sweep_id])
         self.sweep_lines.pop(sweep_id)
@@ -2259,11 +2261,15 @@ class plot2d(plotWidget):
 
     def set_sweep_line_cursor(self, line):
         if not getattr(line, "movable", False):
+            self.restore_sweep_line_hover_cursor(line)
+            self.restore_sweep_line_drag_cursor(line)
             line.unsetCursor()
             return
 
         line.setCursor(self.sweep_line_cursor_shape(line))
+        self.install_sweep_line_hover_cursor(line)
         self.install_sweep_line_drag_cursor(line)
+        self.update_sweep_line_hover_cursor(line)
 
 
     def install_sweep_line_drag_cursor(self, line):
@@ -2288,6 +2294,25 @@ class plot2d(plotWidget):
         line._qplot_sweep_drag_cursor_installed = True
 
 
+    def install_sweep_line_hover_cursor(self, line):
+        if getattr(line, "_qplot_sweep_hover_cursor_installed", False):
+            return
+
+        previous_hover_event = getattr(line, "hoverEvent", None)
+        if previous_hover_event is None:
+            return
+
+        def hover_event(event):
+            previous_hover_event(event)
+            if getattr(line, "mouseHovering", False):
+                self.set_sweep_line_hover_cursor(line)
+            else:
+                self.restore_sweep_line_hover_cursor(line)
+
+        line.hoverEvent = hover_event
+        line._qplot_sweep_hover_cursor_installed = True
+
+
     def _sweep_line_drag_cursor_event_applies(self, line, event):
         if not getattr(line, "movable", False):
             return False
@@ -2297,30 +2322,109 @@ class plot2d(plotWidget):
 
 
     def set_sweep_line_drag_cursor(self, line):
-        if getattr(line, "_qplot_sweep_drag_cursor_override_active", False):
-            return
-
-        if qtw.QApplication.instance() is None:
-            return
-
-        cursor = QtGui.QCursor(self.sweep_line_cursor_shape(line))
-        qtw.QApplication.setOverrideCursor(cursor)
-        line._qplot_sweep_drag_cursor_override_active = True
+        self.set_sweep_line_override_cursor(line, "drag")
 
 
     def restore_sweep_line_drag_cursor(self, line):
-        if not getattr(line, "_qplot_sweep_drag_cursor_override_active", False):
+        self.restore_sweep_line_override_cursor(line, "drag")
+
+
+    def set_sweep_line_hover_cursor(self, line):
+        self.set_sweep_line_override_cursor(line, "hover")
+
+
+    def restore_sweep_line_hover_cursor(self, line):
+        self.restore_sweep_line_override_cursor(line, "hover")
+
+
+    def set_sweep_line_override_cursor(self, line, reason):
+        if qtw.QApplication.instance() is None:
+            return
+
+        active_attribute = f"_qplot_sweep_{reason}_cursor_override_active"
+        shape_attribute = f"_qplot_sweep_{reason}_cursor_shape"
+        cursor_shape = self.sweep_line_cursor_shape(line)
+        cursor = QtGui.QCursor(cursor_shape)
+        if getattr(line, active_attribute, False):
+            if getattr(line, shape_attribute, None) != cursor_shape:
+                qtw.QApplication.changeOverrideCursor(cursor)
+                setattr(line, shape_attribute, cursor_shape)
+            return
+
+        qtw.QApplication.setOverrideCursor(cursor)
+        setattr(line, active_attribute, True)
+        setattr(line, shape_attribute, cursor_shape)
+
+
+    def restore_sweep_line_override_cursor(self, line, reason):
+        active_attribute = f"_qplot_sweep_{reason}_cursor_override_active"
+        if not getattr(line, active_attribute, False):
             return
 
         if qtw.QApplication.instance() is not None:
             qtw.QApplication.restoreOverrideCursor()
-        line._qplot_sweep_drag_cursor_override_active = False
+        setattr(line, active_attribute, False)
+        setattr(line, f"_qplot_sweep_{reason}_cursor_shape", None)
+
+
+    def update_sweep_line_hover_cursor(self, line):
+        if self.sweep_line_contains_global_cursor(line):
+            self.set_sweep_line_hover_cursor(line)
+        else:
+            self.restore_sweep_line_hover_cursor(line)
+
+
+    def sweep_line_contains_global_cursor(self, line):
+        widget = self.__dict__.get("widget")
+        if widget is None:
+            return False
+
+        try:
+            cursor_pos = QtGui.QCursor.pos()
+            view_pos = widget.mapFromGlobal(cursor_pos)
+            scene_pos = widget.mapToScene(view_pos)
+            return line.contains(line.mapFromScene(scene_pos))
+        except (AttributeError, RuntimeError, TypeError):
+            return False
 
 
     def activate_sweep_line(self, line, event=None):
         self.active_sweep_line_id = line.sweep_id
+        if self.sweep_line_remove_requested(event):
+            self.request_sweep_line_removal(line, event)
+            if event is not None:
+                event.accept()
+            return
+
+        self.set_sweep_line_hover_cursor(line)
         if event is not None:
             event.accept()
+
+
+    def sweep_line_remove_requested(self, event):
+        if event is None:
+            return False
+
+        button = getattr(event, "button", lambda: None)()
+        double_clicked = getattr(event, "double", lambda: False)()
+        return button == QtCore.Qt.LeftButton and double_clicked
+
+
+    def request_sweep_line_removal(self, line, event=None):
+        if self.sweep_line_remove_all_requested(event):
+            sweep_ids = tuple(sorted(self.sweep_lines.keys()))
+        else:
+            sweep_ids = (line.sweep_id,)
+
+        self.close_sweeps_requested.emit(self, sweep_ids)
+
+
+    def sweep_line_remove_all_requested(self, event):
+        if event is None:
+            return False
+
+        modifiers = getattr(event, "modifiers", lambda: QtCore.Qt.NoModifier)()
+        return bool(modifiers & QtCore.Qt.ShiftModifier)
 
 
     def set_sweep_line_index(self, line, index, emit=True):
@@ -2374,6 +2478,15 @@ class plot2d(plotWidget):
         self.set_sweep_line_index(line, index + step)
 
 
+    def sweep_line_index(self, line):
+        index = getattr(line, "sweep_index", None)
+        if index is not None:
+            return index
+
+        axis = self.line_sweep_axis(line)
+        return self.sweep_index_at_value(axis, line.value())
+
+
     def sweep_line_for_keyboard_move(self, axis):
         matching_lines = [
             line for line in self.sweep_lines.values()
@@ -2387,6 +2500,53 @@ class plot2d(plotWidget):
             return active_line
 
         return max(matching_lines, key=lambda line: line.sweep_id)
+
+
+    def sweep_group_drag_requested(self):
+        if qtw.QApplication.instance() is None:
+            return False
+
+        return bool(qtw.QApplication.keyboardModifiers() & QtCore.Qt.ShiftModifier)
+
+
+    def move_sweep_group(self, dragged_line, dragged_index):
+        """
+        Move all same-orientation sweep lines by the dragged line's index delta.
+
+        """
+        axis = self.line_sweep_axis(dragged_line)
+        previous_index = self.sweep_line_index(dragged_line)
+        if previous_index is None or dragged_index is None:
+            return
+
+        requested_delta = dragged_index - previous_index
+        group_lines = [
+            line for line in self.sweep_lines.values()
+            if self.line_sweep_axis(line) == axis
+            ]
+        if dragged_line not in group_lines:
+            group_lines.append(dragged_line)
+
+        indexed_lines = []
+        for line in group_lines:
+            index = self.sweep_line_index(line)
+            if index is not None:
+                indexed_lines.append((line, index))
+        if not indexed_lines:
+            return
+
+        delta = self.bounded_sweep_group_delta(axis, indexed_lines, requested_delta)
+        for line, index in indexed_lines:
+            self.set_sweep_line_index(line, index + delta)
+
+        self.active_sweep_line_id = dragged_line.sweep_id
+
+
+    def bounded_sweep_group_delta(self, axis, indexed_lines, requested_delta):
+        count = self.sweep_axis_count(axis)
+        min_delta = max(-index for _line, index in indexed_lines)
+        max_delta = min(count - 1 - index for _line, index in indexed_lines)
+        return min(max(requested_delta, min_delta), max_delta)
 
 
     @QtCore.pyqtSlot(object)
@@ -2408,4 +2568,7 @@ class plot2d(plotWidget):
         index = self.sweep_index_at_value(axis, pos)
 
         if index is not None:
-            self.set_sweep_line_index(line, index)
+            if self.sweep_group_drag_requested():
+                self.move_sweep_group(line, index)
+            else:
+                self.set_sweep_line_index(line, index)

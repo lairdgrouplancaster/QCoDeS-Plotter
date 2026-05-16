@@ -155,6 +155,41 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertEqual(closed, harness.windows)
         self.assertEqual(harness.status_messages[-1][0], "Closing plot windows...")
 
+    def test_close_sweeps_from_plot_closes_matching_cut_windows(self):
+        closed = []
+        source_ds = object()
+        source_param = object()
+
+        class Plot:
+            def __init__(self, ds, param):
+                self.ds = ds
+                self.param = param
+
+        class sweeper:
+            def __init__(self, ds, param, sweep_id):
+                self.ds = ds
+                self.param = param
+                self.sweep_id = sweep_id
+
+            def close(self):
+                closed.append(self)
+
+        class Harness:
+            close_sweeps_from_plot = main_window.MainWindow.close_sweeps_from_plot
+
+            def __init__(self, windows):
+                self.windows = windows
+
+        source = Plot(source_ds, source_param)
+        target = sweeper(source_ds, source_param, 2)
+        other_id = sweeper(source_ds, source_param, 3)
+        other_plot = sweeper(object(), source_param, 2)
+        harness = Harness([target, other_id, other_plot])
+
+        harness.close_sweeps_from_plot(source, (2,))
+
+        self.assertEqual(closed, [target])
+
     def test_confirmation_dialog_can_disable_future_warning_after_confirm(self):
         old_exec = qtw.QMessageBox.exec_
         updates = []

@@ -910,6 +910,9 @@ class plotWidget(qtw.QMainWindow):
         self.vbMenu = self.vb.menu
         self.mouseModeAction = self._context_menu_action("Mouse Mode")
         self._remove_scene_export_context_menu()
+        if getattr(self.plot, "ctrlMenu", None) is not None:
+            self.plot.ctrlMenu.setTitle("Options")
+            self.plot.ctrlMenu.menuAction().setText("Options")
 
         self.exportPlotAction = qtw.QAction("&Export Plot...", self)
         self.register_shortcut(

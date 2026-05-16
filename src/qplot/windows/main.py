@@ -844,6 +844,7 @@ class MainWindow(qtw.QMainWindow):
             
         elif win.__class__.__name__ == "plot2d":
             win.open_subplot.connect(self.openWin)
+            win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
             
         elif win.__class__.__name__ == "sweeper":
             # find win's parent
@@ -874,6 +875,30 @@ class MainWindow(qtw.QMainWindow):
                 
                 if self.y + win.height - tolerance > self.screenrect.bottom():
                     self.y = self.screenrect.top()
+
+
+    @QtCore.pyqtSlot(object, object)
+    def close_sweeps_from_plot(self, source_win, sweep_ids):
+        """
+        Close cut windows associated with a heatmap cut-line action.
+
+        """
+        target_ids = set(sweep_ids)
+        if not target_ids:
+            return
+
+        for item in list(self.windows):
+            if item.__class__.__name__ != "sweeper":
+                continue
+
+            try:
+                same_source = item.ds == source_win.ds and item.param == source_win.param
+                should_close = same_source and item.sweep_id in target_ids
+            except AttributeError:
+                continue
+
+            if should_close:
+                item.close()
         
 ###############################################################################
 #Slots

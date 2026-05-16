@@ -194,6 +194,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             self.assertNotIn("X axis", action_texts)
             self.assertNotIn("Y axis", action_texts)
+            self.assertEqual(host.plot.ctrlMenu.title(), "Options")
+            self.assertEqual(host.plot.ctrlMenu.menuAction().text(), "Options")
 
             host.open_axis_scale_dialog("x")
 

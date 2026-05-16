@@ -26,6 +26,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.movable = True
             self.cursor_shape = None
             self.drag_events = []
+            self.hover_events = []
+            self.mouseHovering = False
 
         def setBounds(self, bounds):
             self.bounds = bounds
@@ -44,6 +46,17 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         def mouseDragEvent(self, event):
             self.drag_events.append(event)
+
+        def hoverEvent(self, event):
+            self.hover_events.append(event)
+            self.mouseHovering = not event.isExit()
+
+    class SweepLineHoverEvent:
+        def __init__(self, *, exit=False):
+            self._exit = exit
+
+        def isExit(self):
+            return self._exit
 
     class Colorbar:
         def __init__(self):
@@ -182,6 +195,31 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         def isFinish(self):
             return self._finish
 
+    class SweepLineClickEvent:
+        def __init__(
+                self,
+                *,
+                button=QtCore.Qt.LeftButton,
+                double=False,
+                modifiers=QtCore.Qt.NoModifier,
+                ):
+            self._button = button
+            self._double = double
+            self._modifiers = modifiers
+            self.accepted = False
+
+        def button(self):
+            return self._button
+
+        def double(self):
+            return self._double
+
+        def modifiers(self):
+            return self._modifiers
+
+        def accept(self):
+            self.accepted = True
+
     def test_hover_outline_tracks_heatmap_cell_geometry(self):
         window = plot2d.__new__(plot2d)
         window.hover_pixel_outline = qtw.QGraphicsRectItem()
@@ -243,6 +281,36 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         action_texts = [action.text() for action in menu.actions()]
 
         self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Zoom color", "Stats..."])
+
+    def test_context_menu_uses_short_cut_labels(self):
+        class Host(plot2d):
+            def __init__(self):
+                qtw.QMainWindow.__init__(self)
+
+            def register_shortcut(self, *_args, **_kwargs):
+                pass
+
+            def _init_colorbar_scale_controls(self):
+                pass
+
+        widget = pg.GraphicsLayoutWidget()
+        host = Host()
+        host.widget = widget
+        host.plot = widget.addPlot()
+        host.vb = host.plot.vb
+        host.oper_dock = qtw.QDockWidget()
+
+        try:
+            host.initContextMenu()
+            action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
+
+            self.assertIn("Horizontal Cut", action_texts)
+            self.assertIn("Vertical Cut", action_texts)
+            self.assertNotIn("Plot Horizontal Cut", action_texts)
+            self.assertNotIn("Plot Vertical Cut", action_texts)
+        finally:
+            host.deleteLater()
+            widget.deleteLater()
 
     def test_zoom_color_uses_data_inside_marquee(self):
         window = plot2d.__new__(plot2d)
@@ -337,6 +405,58 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertEqual(line.bounds, (0.5, 3.5))
         self.assertEqual(window.sweep_moved.calls, [(5, 2)])
 
+    def test_shift_drag_moves_same_orientation_sweep_lines_together(self):
+        window = plot2d.__new__(plot2d)
+        window.rect = QtCore.QRectF(0.0, 10.0, 5.0, 4.0)
+        window.dataGrid = np.zeros((4, 5))
+        window.sweep_moved = self.SignalCatcher()
+        window.sweep_group_drag_requested = lambda: True
+        dragged_line = self.SweepLine(sweep_id=1, angle=90, value=2.7)
+        dragged_line.sweep_index = 1
+        companion_line = self.SweepLine(sweep_id=2, angle=90, value=3.5)
+        companion_line.sweep_index = 3
+        horizontal_line = self.SweepLine(sweep_id=3, angle=0, value=11.5)
+        horizontal_line.sweep_index = 1
+        window.sweep_lines = {
+            1: dragged_line,
+            2: companion_line,
+            3: horizontal_line,
+            }
+
+        window.moving_sweep(dragged_line)
+
+        self.assertEqual(dragged_line.sweep_index, 2)
+        self.assertEqual(companion_line.sweep_index, 4)
+        self.assertEqual(horizontal_line.sweep_index, 1)
+        self.assertAlmostEqual(dragged_line.value(), 2.5)
+        self.assertAlmostEqual(companion_line.value(), 4.5)
+        self.assertAlmostEqual(horizontal_line.value(), 11.5)
+        self.assertEqual(window.active_sweep_line_id, 1)
+        self.assertEqual(window.sweep_moved.calls, [(1, 2), (2, 4)])
+
+    def test_shift_drag_keeps_sweep_group_spacing_at_heatmap_edge(self):
+        window = plot2d.__new__(plot2d)
+        window.rect = QtCore.QRectF(0.0, 10.0, 5.0, 4.0)
+        window.dataGrid = np.zeros((4, 5))
+        window.sweep_moved = self.SignalCatcher()
+        window.sweep_group_drag_requested = lambda: True
+        dragged_line = self.SweepLine(sweep_id=1, angle=90, value=2.7)
+        dragged_line.sweep_index = 1
+        edge_line = self.SweepLine(sweep_id=2, angle=90, value=4.5)
+        edge_line.sweep_index = 4
+        window.sweep_lines = {
+            1: dragged_line,
+            2: edge_line,
+            }
+
+        window.moving_sweep(dragged_line)
+
+        self.assertEqual(dragged_line.sweep_index, 1)
+        self.assertEqual(edge_line.sweep_index, 4)
+        self.assertAlmostEqual(dragged_line.value(), 1.5)
+        self.assertAlmostEqual(edge_line.value(), 4.5)
+        self.assertEqual(window.active_sweep_line_id, 1)
+
     def test_sweep_line_cursor_indicates_drag_direction(self):
         window = plot2d.__new__(plot2d)
         vertical_line = self.SweepLine(sweep_id=1, angle=90, value=0.0)
@@ -347,6 +467,82 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertEqual(vertical_line.cursor_shape, QtCore.Qt.SizeHorCursor)
         self.assertEqual(horizontal_line.cursor_shape, QtCore.Qt.SizeVerCursor)
+
+    def test_sweep_line_cursor_updates_when_line_appears_under_pointer(self):
+        window = plot2d.__new__(plot2d)
+        line = self.SweepLine(sweep_id=1, angle=90, value=0.0)
+        window.sweep_line_contains_global_cursor = lambda current_line: current_line is line
+
+        while qtw.QApplication.overrideCursor() is not None:
+            qtw.QApplication.restoreOverrideCursor()
+
+        try:
+            window.set_sweep_line_cursor(line)
+
+            self.assertEqual(
+                qtw.QApplication.overrideCursor().shape(),
+                QtCore.Qt.SizeHorCursor,
+                )
+        finally:
+            window.restore_sweep_line_hover_cursor(line)
+            while qtw.QApplication.overrideCursor() is not None:
+                qtw.QApplication.restoreOverrideCursor()
+
+    def test_sweep_line_hover_cursor_restores_on_exit(self):
+        window = plot2d.__new__(plot2d)
+        line = self.SweepLine(sweep_id=1, angle=0, value=0.0)
+        window.sweep_line_contains_global_cursor = lambda _line: False
+
+        while qtw.QApplication.overrideCursor() is not None:
+            qtw.QApplication.restoreOverrideCursor()
+
+        try:
+            window.set_sweep_line_cursor(line)
+            line.hoverEvent(self.SweepLineHoverEvent())
+
+            self.assertEqual(
+                qtw.QApplication.overrideCursor().shape(),
+                QtCore.Qt.SizeVerCursor,
+                )
+
+            line.hoverEvent(self.SweepLineHoverEvent(exit=True))
+
+            self.assertIsNone(qtw.QApplication.overrideCursor())
+            self.assertEqual(len(line.hover_events), 2)
+        finally:
+            window.restore_sweep_line_hover_cursor(line)
+            while qtw.QApplication.overrideCursor() is not None:
+                qtw.QApplication.restoreOverrideCursor()
+
+    def test_double_click_cut_line_requests_single_cut_close(self):
+        window = plot2d.__new__(plot2d)
+        window.close_sweeps_requested = self.SignalCatcher()
+        line = self.SweepLine(sweep_id=5, angle=90, value=0.0)
+        other_line = self.SweepLine(sweep_id=7, angle=90, value=0.0)
+        window.sweep_lines = {5: line, 7: other_line}
+        event = self.SweepLineClickEvent(double=True)
+
+        window.activate_sweep_line(line, event)
+
+        self.assertTrue(event.accepted)
+        self.assertEqual(window.active_sweep_line_id, 5)
+        self.assertEqual(window.close_sweeps_requested.calls, [(window, (5,))])
+
+    def test_shift_double_click_cut_line_requests_all_cut_closes(self):
+        window = plot2d.__new__(plot2d)
+        window.close_sweeps_requested = self.SignalCatcher()
+        line = self.SweepLine(sweep_id=5, angle=90, value=0.0)
+        other_line = self.SweepLine(sweep_id=7, angle=0, value=0.0)
+        window.sweep_lines = {7: other_line, 5: line}
+        event = self.SweepLineClickEvent(
+            double=True,
+            modifiers=QtCore.Qt.ShiftModifier,
+            )
+
+        window.activate_sweep_line(line, event)
+
+        self.assertTrue(event.accepted)
+        self.assertEqual(window.close_sweeps_requested.calls, [(window, (5, 7))])
 
     def test_sweep_line_drag_keeps_cursor_until_drag_finishes(self):
         window = plot2d.__new__(plot2d)
