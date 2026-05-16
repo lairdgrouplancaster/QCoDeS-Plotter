@@ -18,6 +18,12 @@ Show available config commands:
 qplot-cfg -info
 ```
 
+Show the installed qPlot version:
+
+```console
+qplot-cfg -version
+```
+
 Print the current config:
 
 ```console
@@ -47,6 +53,9 @@ Reset all settings to schema defaults:
 ```console
 qplot-cfg -reset
 ```
+
+Common settings can also be edited in the application with
+`Options -> Preferences...`.
 
 Python code can use the public `config` object directly:
 
@@ -109,6 +118,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.default_refresh_rate` | number | `1` | `value >= 0` | Default plot refresh interval. |
 | `runtime_settings.max_threads` | integer | `4` | `value >= 1` | Maximum worker threads for background loading. |
 | `runtime_settings.del_grace_period` | number | `10` | `0 <= value <= 300` | Grace period before deleting temporary files. |
+| `runtime_settings.cloud_sync_timeout` | number | `120` | `1 <= value <= 3600` | Seconds to wait for cloud storage to hydrate a database before failing. |
 
 ## Adding Config Keys
 

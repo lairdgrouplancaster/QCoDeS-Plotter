@@ -8,447 +8,29 @@ from pyqtgraph.graphicsItems.ButtonItem import ButtonItem
 
 import numpy as np
 
+from ._colorbar import (
+    _CET_COLORBAR_SUBTYPES,
+    _COLORBAR_COLORMAP_LABELS,
+    _COLORBAR_COLORMAPS,
+    _COLORBAR_TABLE_SORT_ROLE,
+    _DEFAULT_HIDDEN_COLORBAR_NAMES,
+    _DEFAULT_HIDDEN_COLORBAR_PREFIXES,
+    _DEFAULT_HIDDEN_COLORBAR_SUFFIXES,
+    _MATPLOTLIB_COLORBAR_SUBTYPES,
+    _ColorbarColormapTableItem,
+    _cet_colorbar_colormap_subtype,
+    _colorbar_colormap_for_name,
+    _colorbar_colormap_group,
+    _colorbar_colormap_preview,
+    _colorbar_colormap_type_label,
+    _colorbar_subtype_config_key,
+    _config_value,
+    _letter_button_pixmap,
+    _matplotlib_colorbar_colormap_subtype,
+    _string_list,
+)
 from ._plotWin import _axis_scale_power_text, plotWidget
 from ._subplots.subplot2d import sweeper
-
-
-_PREFERRED_COLORBAR_COLORMAPS = (
-    "viridis",
-    "plasma",
-    "inferno",
-    "magma",
-    "cividis",
-    "turbo",
-    "Greys",
-    "Purples",
-    "Blues",
-    "Greens",
-    "Oranges",
-    "Reds",
-)
-
-
-_DEFAULT_HIDDEN_COLORBAR_PREFIXES = ("gist",)
-_DEFAULT_HIDDEN_COLORBAR_SUFFIXES = ("_r",)
-_DEFAULT_HIDDEN_COLORBAR_NAMES = ("gray", "grey", "Grays")
-
-
-_CET_COLORBAR_SUBTYPES = (
-    ("linear", "Linear"),
-    ("divergent", "Divergent"),
-    ("cyclic", "Cyclic"),
-    ("rainbow", "Rainbow"),
-    ("isoluminant", "Isoluminant"),
-    ("other", "Other"),
-)
-
-
-_MATPLOTLIB_COLORBAR_SUBTYPES = (
-    ("perceptual", "Perceptual"),
-    ("sequential", "Sequential"),
-    ("divergent", "Divergent"),
-    ("cyclic", "Cyclic"),
-    ("qualitative", "Qualitative"),
-    ("other", "Other"),
-)
-
-
-_MATPLOTLIB_PERCEPTUAL_COLORBAR_COLORMAPS = {
-    "cividis",
-    "inferno",
-    "magma",
-    "plasma",
-    "turbo",
-    "viridis",
-}
-
-
-_MATPLOTLIB_SEQUENTIAL_COLORBAR_COLORMAPS = {
-    "afmhot",
-    "autumn",
-    "binary",
-    "Blues",
-    "bone",
-    "BuGn",
-    "BuPu",
-    "cool",
-    "copper",
-    "GnBu",
-    "Greens",
-    "Greys",
-    "hot",
-    "Oranges",
-    "OrRd",
-    "pink",
-    "PuBu",
-    "PuBuGn",
-    "PuRd",
-    "Purples",
-    "RdPu",
-    "Reds",
-    "spring",
-    "summer",
-    "Wistia",
-    "winter",
-    "YlGn",
-    "YlGnBu",
-    "YlOrBr",
-    "YlOrRd",
-}
-
-
-_MATPLOTLIB_DIVERGENT_COLORBAR_COLORMAPS = {
-    "berlin",
-    "BrBG",
-    "bwr",
-    "coolwarm",
-    "managua",
-    "PiYG",
-    "PRGn",
-    "PuOr",
-    "RdBu",
-    "RdGy",
-    "RdYlBu",
-    "RdYlGn",
-    "seismic",
-    "Spectral",
-    "vanimo",
-}
-
-
-_MATPLOTLIB_CYCLIC_COLORBAR_COLORMAPS = {
-    "hsv",
-    "twilight",
-    "twilight_shifted",
-}
-
-
-_MATPLOTLIB_QUALITATIVE_COLORBAR_COLORMAPS = {
-    "Accent",
-    "Dark2",
-    "Paired",
-    "Pastel1",
-    "Pastel2",
-    "Set1",
-    "Set2",
-    "Set3",
-    "tab10",
-    "tab20",
-    "tab20b",
-    "tab20c",
-}
-
-
-_COLORBAR_COLORMAP_LABELS = {
-    "cividis": "Cividis",
-    "inferno": "Inferno",
-    "magma": "Magma",
-    "plasma": "Plasma",
-    "turbo": "Turbo",
-    "viridis": "Viridis",
-}
-
-
-_COLORBAR_TABLE_SORT_ROLE = QtCore.Qt.UserRole + 1
-
-
-class _ColorbarColormapTableItem(qtw.QTableWidgetItem):
-    """
-    Table item that sorts by an explicit, case-insensitive key.
-
-    """
-
-    def __lt__(self, other):
-        left = self.data(_COLORBAR_TABLE_SORT_ROLE)
-        right = other.data(_COLORBAR_TABLE_SORT_ROLE)
-        if left is not None and right is not None:
-            return str(left).casefold() < str(right).casefold()
-        return super().__lt__(other)
-
-
-_CUSTOM_COLORBAR_COLORMAPS = {
-    "Greys": [
-        (255, 255, 255),
-        (217, 217, 217),
-        (150, 150, 150),
-        (82, 82, 82),
-        (0, 0, 0),
-    ],
-    "Purples": [
-        (252, 251, 253),
-        (218, 218, 235),
-        (158, 154, 200),
-        (106, 81, 163),
-        (63, 0, 125),
-    ],
-    "Blues": [
-        (247, 251, 255),
-        (198, 219, 239),
-        (107, 174, 214),
-        (33, 113, 181),
-        (8, 48, 107),
-    ],
-    "Greens": [
-        (247, 252, 245),
-        (199, 233, 192),
-        (116, 196, 118),
-        (35, 139, 69),
-        (0, 68, 27),
-    ],
-    "Oranges": [
-        (255, 245, 235),
-        (253, 208, 162),
-        (253, 141, 60),
-        (217, 72, 1),
-        (127, 39, 4),
-    ],
-    "Reds": [
-        (255, 245, 240),
-        (252, 187, 161),
-        (251, 106, 74),
-        (203, 24, 29),
-        (103, 0, 13),
-    ],
-}
-
-
-def _list_pyqtgraph_colormaps(source=None):
-    """
-    Return color maps advertised by pyqtgraph for an optional source.
-
-    """
-    try:
-        return list(pg.colormap.listMaps(source=source))
-    except Exception:
-        return []
-
-
-def _config_value(config_obj, key, default):
-    """
-    Read a config value, falling back when running against older configs.
-
-    """
-    if config_obj is None:
-        return default
-
-    try:
-        return config_obj.get(key)
-    except (AttributeError, KeyError):
-        return default
-
-
-def _string_list(value):
-    """
-    Normalise config list values used by color-map filters.
-
-    """
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value]
-
-    try:
-        return [str(item) for item in value if str(item)]
-    except TypeError:
-        return []
-
-
-def _colorbar_subtype_config_key(group, subtype):
-    return f"user_preference.bar_colour_include_{group}_{subtype}"
-
-
-def _build_colorbar_colormap_catalog():
-    """
-    Build the colorbar map list and remember which pyqtgraph source owns each.
-
-    """
-    colormaps = []
-    sources = {}
-    default_maps = _list_pyqtgraph_colormaps()
-    matplotlib_maps = _list_pyqtgraph_colormaps(source="matplotlib")
-
-    def add_colormap(name, source=None):
-        if name in sources:
-            return
-        colormaps.append(name)
-        sources[name] = source
-
-    for name in _PREFERRED_COLORBAR_COLORMAPS:
-        if name in _CUSTOM_COLORBAR_COLORMAPS:
-            add_colormap(name, "custom")
-        elif name in matplotlib_maps:
-            add_colormap(name, "matplotlib")
-        elif name in default_maps:
-            add_colormap(name)
-
-    for source, maps in ((None, default_maps), ("matplotlib", matplotlib_maps)):
-        for name in maps:
-            add_colormap(name, source)
-
-    for name in _CUSTOM_COLORBAR_COLORMAPS:
-        add_colormap(name, "custom")
-
-    return tuple(colormaps), sources
-
-
-_COLORBAR_COLORMAPS, _COLORBAR_COLORMAP_SOURCES = _build_colorbar_colormap_catalog()
-
-
-def _colorbar_colormap_group(name):
-    """
-    Return the broad group used for color-map filtering.
-
-    """
-    source = _COLORBAR_COLORMAP_SOURCES.get(name)
-    if source == "custom":
-        return "custom"
-    if name.startswith("CET-"):
-        return "cet"
-    if source == "matplotlib":
-        return "matplotlib"
-    return "pyqtgraph"
-
-
-def _cet_colorbar_colormap_subtype(name):
-    """
-    Return the CET subtype used by the color-map filters.
-
-    """
-    if name.startswith(("CET-CBL", "CET-CBTL", "CET-L")):
-        return "linear"
-    if name.startswith(("CET-CBD", "CET-CBTD", "CET-D")):
-        return "divergent"
-    if name.startswith("CET-C"):
-        return "cyclic"
-    if name.startswith("CET-R"):
-        return "rainbow"
-    if name.startswith("CET-I"):
-        return "isoluminant"
-    return "other"
-
-
-def _matplotlib_colorbar_colormap_subtype(name):
-    """
-    Return the matplotlib subtype used by the color-map filters.
-
-    """
-    if name in _MATPLOTLIB_PERCEPTUAL_COLORBAR_COLORMAPS:
-        return "perceptual"
-    if name in _MATPLOTLIB_SEQUENTIAL_COLORBAR_COLORMAPS:
-        return "sequential"
-    if name in _MATPLOTLIB_DIVERGENT_COLORBAR_COLORMAPS:
-        return "divergent"
-    if name in _MATPLOTLIB_CYCLIC_COLORBAR_COLORMAPS:
-        return "cyclic"
-    if name in _MATPLOTLIB_QUALITATIVE_COLORBAR_COLORMAPS:
-        return "qualitative"
-    return "other"
-
-
-def _colorbar_colormap_type_label(name):
-    """
-    Return the source/type label shown in the color scale chooser.
-
-    """
-    group = _colorbar_colormap_group(name)
-    if group == "cet":
-        subtype = _cet_colorbar_colormap_subtype(name)
-        labels = dict(_CET_COLORBAR_SUBTYPES)
-        return f"CET - {labels.get(subtype, subtype.title())}"
-    if group == "matplotlib":
-        subtype = _matplotlib_colorbar_colormap_subtype(name)
-        labels = dict(_MATPLOTLIB_COLORBAR_SUBTYPES)
-        return f"Matplotlib - {labels.get(subtype, subtype.title())}"
-    if group == "custom":
-        return "QCoDeS Plotter - Custom"
-    return "PyQtGraph - Local"
-
-
-def _colorbar_colormap_for_name(name):
-    """
-    Return a color map object, custom map, or special pyqtgraph map name.
-
-    """
-    source = _COLORBAR_COLORMAP_SOURCES.get(name)
-    if source == "custom":
-        colors = _CUSTOM_COLORBAR_COLORMAPS.get(name)
-        if colors is not None:
-            color_map = pg.ColorMap(
-                np.linspace(0.0, 1.0, len(colors)),
-                colors,
-            )
-            color_map.name = name
-            return color_map
-
-    try:
-        return pg.colormap.get(name, source=source)
-    except Exception:
-        pass
-
-    colors = _CUSTOM_COLORBAR_COLORMAPS.get(name)
-    if colors is None:
-        return name
-
-    color_map = pg.ColorMap(
-        np.linspace(0.0, 1.0, len(colors)),
-        colors,
-    )
-    color_map.name = name
-    return color_map
-
-
-def _colorbar_colormap_preview(name, width=220, height=14):
-    """
-    Render a compact pixmap preview for a colorbar color map.
-
-    """
-    pixmap = QtGui.QPixmap(width, height)
-    pixmap.fill(QtGui.QColor("transparent"))
-
-    painter = QtGui.QPainter(pixmap)
-    try:
-        color_map = _colorbar_colormap_for_name(name)
-        if isinstance(color_map, pg.ColorMap):
-            lookup_table = color_map.getLookupTable(nPts=width, alpha=True)
-            for x, color in enumerate(lookup_table):
-                painter.setPen(QtGui.QColor(*[int(channel) for channel in color[:4]]))
-                painter.drawLine(x, 0, x, height - 1)
-        else:
-            painter.fillRect(0, 0, width, height, QtGui.QColor(255, 255, 255))
-
-        painter.setPen(QtGui.QColor(120, 120, 120))
-        painter.drawRect(0, 0, width - 1, height - 1)
-    finally:
-        painter.end()
-
-    return pixmap
-
-
-def _letter_button_pixmap(letter, size=20):
-    """
-    Render a pyqtgraph-style circular letter button.
-
-    """
-    pixmap = QtGui.QPixmap(size, size)
-    pixmap.fill(QtCore.Qt.transparent)
-
-    painter = QtGui.QPainter(pixmap)
-    try:
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        painter.setPen(QtGui.QPen(QtGui.QColor(70, 70, 70, 230), 1.2))
-        painter.setBrush(QtGui.QColor(235, 235, 235, 225))
-        painter.drawEllipse(QtCore.QRectF(1, 1, size - 2, size - 2))
-
-        font = QtGui.QFont()
-        font.setBold(True)
-        font.setPointSize(11)
-        painter.setFont(font)
-        painter.setPen(QtGui.QColor(40, 40, 40))
-        painter.drawText(pixmap.rect(), QtCore.Qt.AlignCenter, letter)
-    finally:
-        painter.end()
-
-    return pixmap
 
 
 class plot2d(plotWidget):
@@ -464,6 +46,7 @@ class plot2d(plotWidget):
     """
     open_subplot = QtCore.pyqtSignal([object, str, tuple])
     sweep_moved = QtCore.pyqtSignal([int, int])
+    close_sweeps_requested = QtCore.pyqtSignal([object, object])
     
     def __init__(self, 
                  *args,
@@ -622,13 +205,13 @@ class plot2d(plotWidget):
         sep = self.vbMenu.insertSeparator(actions[3])
         
         ### Sweep control
-        h_sweep = qtw.QAction("Plot Horizontal Cut", self)
-        self.register_shortcut(h_sweep, "Ctrl+Shift+H", "Plot horizontal cut")
+        h_sweep = qtw.QAction("Horizontal Cut", self)
+        self.register_shortcut(h_sweep, "H", "Plot horizontal cut")
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
-        v_sweep = qtw.QAction("Plot Vertical Cut", self)
-        self.register_shortcut(v_sweep, "Ctrl+Shift+V", "Plot vertical cut")
+        v_sweep = qtw.QAction("Vertical Cut", self)
+        self.register_shortcut(v_sweep, "V", "Plot vertical cut")
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         
@@ -677,66 +260,89 @@ class plot2d(plotWidget):
             In the event the worker had to abort, finished is False and refresh
             is not ran.
         """
+        plot_worker = worker if worker is not None else self.worker
         if not super().refreshPlot(finished, worker=worker):
+            plot_worker.running = False
             return
-        
-        autoLevels=self.relevel_refresh.isChecked()
-        # Produce Heatmap
-        self.image.setImage(
-            self.dataGrid,
-            autoLevels=autoLevels,
-            autoRange=True
-            )
-        
-        #set axis values
-        xmin = min(self.axis_data["x"])
-        ymin = min(self.axis_data["y"])
-        xrange = max(self.axis_data["x"]) - xmin
-        yrange = max(self.axis_data["y"]) - ymin
-        
-        if xrange == 0:
-            xrange = xmin / 100 
-        if yrange == 0:
-            yrange = ymin / 100 
-        
-        # Link x/y axis values with Heatmap data
-        self.rect = pg.QtCore.QRectF(
-            xmin,
-            ymin, 
-            xrange,
-            yrange
-        )
-        self.image.setRect(self.rect)
-        
-        # Produce color bar on first run
-        if not hasattr(self, "bar"):
-            self.bar = self.plot.addColorBar(
-                self.image,
-                colorMap=self._colorbar_colormap(),
-                rounding=(
-                    np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid)
-                    ) / 1e5,  # Add 10,000 colours
-                colorMapMenu=False,
+
+        try:
+            if not self._has_plottable_heatmap_data():
+                self.show_status(
+                    f"Waiting for plottable data for {self.param.name}...",
+                    5000,
+                    )
+                return
+
+            autoLevels=self.relevel_refresh.isChecked()
+            # Produce Heatmap
+            self.image.setImage(
+                self.dataGrid,
+                autoLevels=autoLevels,
+                autoRange=True
                 )
-            self._set_colorbar_tick_formatter()
-            if self._colorbar_manual_levels is None:
+
+            #set axis values
+            xmin = min(self.axis_data["x"])
+            ymin = min(self.axis_data["y"])
+            xrange = max(self.axis_data["x"]) - xmin
+            yrange = max(self.axis_data["y"]) - ymin
+
+            if xrange == 0:
+                xrange = xmin / 100
+            if yrange == 0:
+                yrange = ymin / 100
+
+            # Link x/y axis values with Heatmap data
+            self.rect = pg.QtCore.QRectF(
+                xmin,
+                ymin,
+                xrange,
+                yrange
+            )
+            self.image.setRect(self.rect)
+
+            # Produce color bar on first run
+            if not hasattr(self, "bar"):
+                self.bar = self.plot.addColorBar(
+                    self.image,
+                    colorMap=self._colorbar_colormap(),
+                    rounding=(
+                        np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid)
+                        ) / 1e5,  # Add 10,000 colours
+                    colorMapMenu=False,
+                    )
+                self._set_colorbar_tick_formatter()
+                if self._colorbar_manual_levels is None:
+                    self.scaleColorbar()
+                else:
+                    self._set_colorbar_levels(*self._colorbar_manual_levels)
+
+            if autoLevels:
+                self._colorbar_manual_levels = None
                 self.scaleColorbar()
-            else:
+            elif self._colorbar_manual_levels is not None:
                 self._set_colorbar_levels(*self._colorbar_manual_levels)
-        
-        if autoLevels:
-            self._colorbar_manual_levels = None
-            self.scaleColorbar()
-        elif self._colorbar_manual_levels is not None:
-            self._set_colorbar_levels(*self._colorbar_manual_levels)
-        
-        self._update_hover_pixel_outline_from_index()
-        if self.marquee is not None:
-            self.set_marquee_rect(self.marquee)
-        self._snap_sweep_lines_to_pixel_centres()
             
-        # Allow new worker to be produced
-        self.worker.running = False
+            self._update_hover_pixel_outline_from_index()
+            if self.marquee is not None:
+                self.set_marquee_rect(self.marquee)
+            self._snap_sweep_lines_to_pixel_centres()
+        finally:
+            # Allow new workers after empty live loads or display errors.
+            plot_worker.running = False
+
+
+    def _has_plottable_heatmap_data(self):
+        x_data = np.asarray(self.axis_data.get("x", []), dtype=float)
+        y_data = np.asarray(self.axis_data.get("y", []), dtype=float)
+        z_data = np.asarray(self.dataGrid, dtype=float)
+
+        return (
+            x_data.size > 0
+            and y_data.size > 0
+            and z_data.size > 0
+            and np.any(np.isfinite(z_data))
+            )
 
 
     def show_hover_pixel_outline(self, i, j):
@@ -875,7 +481,7 @@ class plot2d(plotWidget):
 
         rows, cols = selected.shape
         rect = self._snap_marquee_rect(self.marquee.normalized())
-        return self._format_marquee_stats_text(f"{cols}x{rows} points", values, rect)
+        return self._format_marquee_stats_text(f"{cols}×{rows} points", values, rect)
 
 
     def _marquee_color_levels(self):
@@ -2525,6 +2131,7 @@ class plot2d(plotWidget):
             line.resetTransform()
             line.setRotation(line.angle)
             line.setPos(at_value)
+            self.set_sweep_line_cursor(line)
             
     
         # Set up new line
@@ -2549,6 +2156,7 @@ class plot2d(plotWidget):
             line.sigClicked.connect(self.activate_sweep_line)
             self.sweep_lines[sweep_id] = line # Track for update/delete
             line.sweep_id = sweep_id # give copy of id if needed
+            self.set_sweep_line_cursor(line)
         
         self.set_sweep_line_index(line, fixed_index, emit=False)
     
@@ -2568,6 +2176,8 @@ class plot2d(plotWidget):
         #check exists, then remove
         if self.sweep_lines.get(sweep_id, None) is None:
             return
+        self.restore_sweep_line_hover_cursor(self.sweep_lines[sweep_id])
+        self.restore_sweep_line_drag_cursor(self.sweep_lines[sweep_id])
         self.plot.removeItem(self.sweep_lines[sweep_id])
         self.sweep_lines.pop(sweep_id)
         
@@ -2618,6 +2228,7 @@ class plot2d(plotWidget):
             line.resetTransform()
             line.setRotation(line.angle)
             line.setPos(pos) # force line placement into correct spot
+            self.set_sweep_line_cursor(line)
             
         self.rotate = None
     
@@ -2665,10 +2276,178 @@ class plot2d(plotWidget):
         return "x" if line.angle == 90 else "y"
 
 
+    def sweep_line_cursor_shape(self, line):
+        if self.line_sweep_axis(line) == "x":
+            return QtCore.Qt.SizeHorCursor
+        return QtCore.Qt.SizeVerCursor
+
+
+    def set_sweep_line_cursor(self, line):
+        if not getattr(line, "movable", False):
+            self.restore_sweep_line_hover_cursor(line)
+            self.restore_sweep_line_drag_cursor(line)
+            line.unsetCursor()
+            return
+
+        line.setCursor(self.sweep_line_cursor_shape(line))
+        self.install_sweep_line_hover_cursor(line)
+        self.install_sweep_line_drag_cursor(line)
+        self.update_sweep_line_hover_cursor(line)
+
+
+    def install_sweep_line_drag_cursor(self, line):
+        if getattr(line, "_qplot_sweep_drag_cursor_installed", False):
+            return
+
+        previous_mouse_drag_event = getattr(line, "mouseDragEvent", None)
+        if previous_mouse_drag_event is None:
+            return
+
+        def mouse_drag_event(event):
+            if self._sweep_line_drag_cursor_event_applies(line, event):
+                self.set_sweep_line_drag_cursor(line)
+
+            try:
+                return previous_mouse_drag_event(event)
+            finally:
+                if event.isFinish():
+                    self.restore_sweep_line_drag_cursor(line)
+
+        line.mouseDragEvent = mouse_drag_event
+        line._qplot_sweep_drag_cursor_installed = True
+
+
+    def install_sweep_line_hover_cursor(self, line):
+        if getattr(line, "_qplot_sweep_hover_cursor_installed", False):
+            return
+
+        previous_hover_event = getattr(line, "hoverEvent", None)
+        if previous_hover_event is None:
+            return
+
+        def hover_event(event):
+            previous_hover_event(event)
+            if getattr(line, "mouseHovering", False):
+                self.set_sweep_line_hover_cursor(line)
+            else:
+                self.restore_sweep_line_hover_cursor(line)
+
+        line.hoverEvent = hover_event
+        line._qplot_sweep_hover_cursor_installed = True
+
+
+    def _sweep_line_drag_cursor_event_applies(self, line, event):
+        if not getattr(line, "movable", False):
+            return False
+
+        button = getattr(event, "button", lambda: None)()
+        return button == QtCore.Qt.LeftButton
+
+
+    def set_sweep_line_drag_cursor(self, line):
+        self.set_sweep_line_override_cursor(line, "drag")
+
+
+    def restore_sweep_line_drag_cursor(self, line):
+        self.restore_sweep_line_override_cursor(line, "drag")
+
+
+    def set_sweep_line_hover_cursor(self, line):
+        self.set_sweep_line_override_cursor(line, "hover")
+
+
+    def restore_sweep_line_hover_cursor(self, line):
+        self.restore_sweep_line_override_cursor(line, "hover")
+
+
+    def set_sweep_line_override_cursor(self, line, reason):
+        if qtw.QApplication.instance() is None:
+            return
+
+        active_attribute = f"_qplot_sweep_{reason}_cursor_override_active"
+        shape_attribute = f"_qplot_sweep_{reason}_cursor_shape"
+        cursor_shape = self.sweep_line_cursor_shape(line)
+        cursor = QtGui.QCursor(cursor_shape)
+        if getattr(line, active_attribute, False):
+            if getattr(line, shape_attribute, None) != cursor_shape:
+                qtw.QApplication.changeOverrideCursor(cursor)
+                setattr(line, shape_attribute, cursor_shape)
+            return
+
+        qtw.QApplication.setOverrideCursor(cursor)
+        setattr(line, active_attribute, True)
+        setattr(line, shape_attribute, cursor_shape)
+
+
+    def restore_sweep_line_override_cursor(self, line, reason):
+        active_attribute = f"_qplot_sweep_{reason}_cursor_override_active"
+        if not getattr(line, active_attribute, False):
+            return
+
+        if qtw.QApplication.instance() is not None:
+            qtw.QApplication.restoreOverrideCursor()
+        setattr(line, active_attribute, False)
+        setattr(line, f"_qplot_sweep_{reason}_cursor_shape", None)
+
+
+    def update_sweep_line_hover_cursor(self, line):
+        if self.sweep_line_contains_global_cursor(line):
+            self.set_sweep_line_hover_cursor(line)
+        else:
+            self.restore_sweep_line_hover_cursor(line)
+
+
+    def sweep_line_contains_global_cursor(self, line):
+        widget = self.__dict__.get("widget")
+        if widget is None:
+            return False
+
+        try:
+            cursor_pos = QtGui.QCursor.pos()
+            view_pos = widget.mapFromGlobal(cursor_pos)
+            scene_pos = widget.mapToScene(view_pos)
+            return line.contains(line.mapFromScene(scene_pos))
+        except (AttributeError, RuntimeError, TypeError):
+            return False
+
+
     def activate_sweep_line(self, line, event=None):
         self.active_sweep_line_id = line.sweep_id
+        if self.sweep_line_remove_requested(event):
+            self.request_sweep_line_removal(line, event)
+            if event is not None:
+                event.accept()
+            return
+
+        self.set_sweep_line_hover_cursor(line)
         if event is not None:
             event.accept()
+
+
+    def sweep_line_remove_requested(self, event):
+        if event is None:
+            return False
+
+        button = getattr(event, "button", lambda: None)()
+        double_clicked = getattr(event, "double", lambda: False)()
+        return button == QtCore.Qt.LeftButton and double_clicked
+
+
+    def request_sweep_line_removal(self, line, event=None):
+        if self.sweep_line_remove_all_requested(event):
+            sweep_ids = tuple(sorted(self.sweep_lines.keys()))
+        else:
+            sweep_ids = (line.sweep_id,)
+
+        self.close_sweeps_requested.emit(self, sweep_ids)
+
+
+    def sweep_line_remove_all_requested(self, event):
+        if event is None:
+            return False
+
+        modifiers = getattr(event, "modifiers", lambda: QtCore.Qt.NoModifier)()
+        return bool(modifiers & QtCore.Qt.ShiftModifier)
 
 
     def set_sweep_line_index(self, line, index, emit=True):
@@ -2722,6 +2501,15 @@ class plot2d(plotWidget):
         self.set_sweep_line_index(line, index + step)
 
 
+    def sweep_line_index(self, line):
+        index = getattr(line, "sweep_index", None)
+        if index is not None:
+            return index
+
+        axis = self.line_sweep_axis(line)
+        return self.sweep_index_at_value(axis, line.value())
+
+
     def sweep_line_for_keyboard_move(self, axis):
         matching_lines = [
             line for line in self.sweep_lines.values()
@@ -2735,6 +2523,53 @@ class plot2d(plotWidget):
             return active_line
 
         return max(matching_lines, key=lambda line: line.sweep_id)
+
+
+    def sweep_group_drag_requested(self):
+        if qtw.QApplication.instance() is None:
+            return False
+
+        return bool(qtw.QApplication.keyboardModifiers() & QtCore.Qt.ShiftModifier)
+
+
+    def move_sweep_group(self, dragged_line, dragged_index):
+        """
+        Move all same-orientation sweep lines by the dragged line's index delta.
+
+        """
+        axis = self.line_sweep_axis(dragged_line)
+        previous_index = self.sweep_line_index(dragged_line)
+        if previous_index is None or dragged_index is None:
+            return
+
+        requested_delta = dragged_index - previous_index
+        group_lines = [
+            line for line in self.sweep_lines.values()
+            if self.line_sweep_axis(line) == axis
+            ]
+        if dragged_line not in group_lines:
+            group_lines.append(dragged_line)
+
+        indexed_lines = []
+        for line in group_lines:
+            index = self.sweep_line_index(line)
+            if index is not None:
+                indexed_lines.append((line, index))
+        if not indexed_lines:
+            return
+
+        delta = self.bounded_sweep_group_delta(axis, indexed_lines, requested_delta)
+        for line, index in indexed_lines:
+            self.set_sweep_line_index(line, index + delta)
+
+        self.active_sweep_line_id = dragged_line.sweep_id
+
+
+    def bounded_sweep_group_delta(self, axis, indexed_lines, requested_delta):
+        count = self.sweep_axis_count(axis)
+        min_delta = max(-index for _line, index in indexed_lines)
+        max_delta = min(count - 1 - index for _line, index in indexed_lines)
+        return min(max(requested_delta, min_delta), max_delta)
 
 
     @QtCore.pyqtSlot(object)
@@ -2756,4 +2591,7 @@ class plot2d(plotWidget):
         index = self.sweep_index_at_value(axis, pos)
 
         if index is not None:
-            self.set_sweep_line_index(line, index)
+            if self.sweep_group_drag_requested():
+                self.move_sweep_group(line, index)
+            else:
+                self.set_sweep_line_index(line, index)

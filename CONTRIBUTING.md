@@ -29,15 +29,15 @@ Use Python 3.11 or newer in a virtual environment.
 Windows:
 
 ```console
-py -3.11 -m venv .venv-win
-.\.venv-win\Scripts\Activate.ps1
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
 macOS/Linux:
 
 ```console
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv .venv-mac
+source .venv-mac/bin/activate
 ```
 
 Install qPlot in editable mode with the development dependencies:
@@ -53,20 +53,20 @@ directly:
 Windows:
 
 ```console
-.\.venv-win\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 macOS/Linux:
 
 ```console
-./.venv/bin/python -m pytest
+./.venv-mac/bin/python -m pytest
 ```
 
-Some local checkouts keep `.venv-win` next to the repository rather than inside
-it. In that layout, use:
+Some local checkouts keep `.venv` next to the repository rather than inside it.
+In that layout, use:
 
 ```console
-..\.venv-win\Scripts\python.exe -m pytest
+..\.venv\Scripts\python.exe -m pytest
 ```
 
 ## Checks
@@ -88,9 +88,9 @@ The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `QApplication` creation unless a test has a specific reason to override the
 shared setup.
 
-GitHub Actions runs the same Ruff and pytest checks on Windows 2025 with Python
-3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. The workflow lives in
-`.github/workflows/ci.yml`.
+GitHub Actions runs the same Ruff and pytest checks on Windows 2025 and macOS
+with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. The
+workflow lives in `.github/workflows/ci.yml`.
 
 ## Generated Files
 
@@ -113,6 +113,8 @@ Use this after the automated tests pass. It starts the app through the same
 installed package entry path that users exercise.
 
 Other local helper scripts are documented in [scripts/README.md](scripts/README.md).
+Demo-data and screenshot workflow notes live in [docs/demo-data.md](docs/demo-data.md).
+Release and packaging notes are documented in [docs/distribution.md](docs/distribution.md).
 
 ## Configuration Changes
 

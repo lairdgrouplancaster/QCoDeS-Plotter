@@ -487,6 +487,18 @@ class light:
             background-color: #f8f9fb;
             color: #3f4a59;
         }
+        QFrame#mainEmptyState {
+            background-color: #f6f8fb;
+            border-top: 1px solid #d4d9e2;
+            border-bottom: 1px solid #d4d9e2;
+        }
+        QLabel#mainEmptyStateTitle {
+            color: #111827;
+            font-weight: 600;
+        }
+        QLabel#mainEmptyStateDetail {
+            color: #526173;
+        }
         QCheckBox {
             spacing: 6px;
         }

@@ -7,15 +7,15 @@ environment is activated, use `python -m ...`; otherwise call the environment's
 Python executable directly.
 
 On Windows:
-- Prefer `.venv-win\Scripts\python.exe` if the environment lives inside the
+- Prefer `.venv\Scripts\python.exe` if the environment lives inside the
   repository.
 - In local checkouts where the environment is next to the repository, use
-  `..\.venv-win\Scripts\python.exe`.
+  `..\.venv\Scripts\python.exe`.
 - Use the selected venv Python with `-m pytest` instead of bare `pytest`.
 - Use the selected venv Python with `-m pip` instead of bare `pip`.
 
 On macOS/Linux:
-- Use `.venv/bin/python` if the environment is not already activated.
+- Use `.venv-mac/bin/python` if the environment is not already activated.
 - Use the selected venv Python with `-m pytest` instead of bare `pytest`.
 - Use the selected venv Python with `-m pip` instead of bare `pip`.
 
@@ -45,5 +45,11 @@ If you modify application code, before the final response:
 On Windows, prefer:
 
 ```powershell
-..\.venv-win\Scripts\python.exe -m qplot
+..\.venv\Scripts\python.exe -m qplot
+```
+
+On macOS/Linux, prefer:
+
+```bash
+.venv-mac/bin/python -m qplot
 ```

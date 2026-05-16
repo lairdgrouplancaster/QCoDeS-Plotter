@@ -14,6 +14,18 @@ from typing import TYPE_CHECKING
 
 import numpy.typing as npt
 
+from qplot.datahandling.qcodes_cache import (
+    cache_data,
+    cache_dataset_completed,
+    cache_dataset_connection,
+    cache_dataset_run_id,
+    cache_is_live,
+    parameter_is_complete,
+    prepare_cache_if_empty,
+    set_cache_dataset_completed,
+    set_parameter_complete,
+    )
+
 
 if TYPE_CHECKING:
     import qcodes
@@ -74,23 +86,23 @@ def load_param_data_from_db_prep(
         cache : "qcodes.dataset.data_set_cache.DataSetCacheWithDBBackend",
         param : "qcodes.dataset.descriptions.param_spec.ParamSpec"
         ):
-    if cache.live:
+    if cache_is_live(cache):
         raise RuntimeError(
             "Cannot load data into this cache from the "
             "database because this dataset is being built "
             "in-memory."
         )
 
-    if param._complete == True: # Altered to be per param
+    if parameter_is_complete(param): # Altered to be per param
         return True
 
-    is_completed = completed(cache._dataset.conn, cache._dataset.run_id)
-    if cache._dataset.completed != is_completed:
-        cache._dataset.completed = is_completed
-    if cache._dataset.completed:
-        param._complete = True
-    if cache._data == {}:
-        cache.prepare()
+    is_completed = completed(cache_dataset_connection(cache), cache_dataset_run_id(cache))
+    if cache_dataset_completed(cache) != is_completed:
+        set_cache_dataset_completed(cache, is_completed)
+    if cache_dataset_completed(cache):
+        set_parameter_complete(param, True)
+    if cache_data(cache) == {}:
+        prepare_cache_if_empty(cache)
     
     return False
 

@@ -18,14 +18,21 @@ from qplot.tools import (
     loader,
     )
 from qplot.datahandling import load_param_data_from_db_prep
+from qplot.datahandling.qcodes_cache import (
+    cache_has_no_written_data,
+    set_parameter_complete,
+    update_cache_parameter_data,
+    )
     
 from ._subplots import custom_viewbox
 from ._widgets import (
+    CopyableTableWidget,
     expandingComboBox,
     QDock_context,
     operations_widget,
     )
 from ._shortcuts import standard_key_sequences
+from ._help import add_help_menu
 from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
@@ -34,6 +41,7 @@ from ._window_controls import (
     add_confirmation_options,
     add_standard_window_controls,
     )
+from qplot.diagnostics import log_exception, log_user_error
 
 if TYPE_CHECKING:
     import qplot
@@ -150,7 +158,7 @@ class plotWidget(qtw.QMainWindow):
         self._guid = guid
         self.param = param
         if not hasattr(self.param, "_complete"): # Add completed load track
-            self.param._complete = False
+            set_parameter_complete(self.param, False)
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self.monitor = QtCore.QTimer()
@@ -531,11 +539,8 @@ class plotWidget(qtw.QMainWindow):
         dialog.setWindowTitle("Marquee stats")
 
         layout = qtw.QVBoxLayout(dialog)
-        stats_view = qtw.QPlainTextEdit(stats_text)
-        stats_view.setReadOnly(True)
-        stats_view.setMinimumWidth(280)
-        stats_view.setMinimumHeight(170)
-        layout.addWidget(stats_view)
+        stats_table = self._new_marquee_stats_table(stats_text)
+        layout.addWidget(stats_table)
 
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
         copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ActionRole)
@@ -548,6 +553,60 @@ class plotWidget(qtw.QMainWindow):
         layout.addWidget(buttons)
 
         return dialog
+
+
+    def _new_marquee_stats_table(self, stats_text):
+        rows = self._marquee_stats_table_rows(stats_text)
+        stats_table = CopyableTableWidget()
+        stats_table.setObjectName("detailsTable")
+        stats_table.setColumnCount(2)
+        stats_table.setHorizontalHeaderLabels(["Field", "Value"])
+        stats_table.setRowCount(len(rows))
+        stats_table.setAlternatingRowColors(True)
+        stats_table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
+        stats_table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
+        stats_table.setSelectionMode(qtw.QAbstractItemView.ExtendedSelection)
+        stats_table.setTextElideMode(QtCore.Qt.ElideNone)
+        stats_table.setWordWrap(False)
+        stats_table.verticalHeader().hide()
+        stats_table.verticalHeader().setMinimumSectionSize(16)
+        stats_table.verticalHeader().setDefaultSectionSize(20)
+        stats_table.horizontalHeader().setFixedHeight(22)
+        stats_table.horizontalHeader().setStretchLastSection(True)
+        stats_table.horizontalHeader().setSectionResizeMode(
+            0,
+            qtw.QHeaderView.ResizeToContents
+            )
+        stats_table.horizontalHeader().setSectionResizeMode(
+            1,
+            qtw.QHeaderView.Stretch
+            )
+        stats_table.setMinimumWidth(280)
+        stats_table.setMinimumHeight(170)
+
+        for row, (field, value) in enumerate(rows):
+            field_item = qtw.QTableWidgetItem(field)
+            value_item = qtw.QTableWidgetItem(value)
+            stats_table.setItem(row, 0, field_item)
+            stats_table.setItem(row, 1, value_item)
+
+        return stats_table
+
+
+    def _marquee_stats_table_rows(self, stats_text):
+        rows = []
+        for line in stats_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            if ":" in line:
+                field, value = line.split(":", 1)
+                rows.append((field.strip(), value.strip()))
+            else:
+                rows.append(("Selection", line))
+
+        return rows
 
 
     def _format_marquee_stats_text(self, size_text, values, rect=None):
@@ -779,6 +838,7 @@ class plotWidget(qtw.QMainWindow):
         message box.
 
         """
+        log_user_error(title, message, details, __name__)
         self.show_status(message, 10000)
 
         if not self.visible:
@@ -902,6 +962,9 @@ class plotWidget(qtw.QMainWindow):
         self.vbMenu = self.vb.menu
         self.mouseModeAction = self._context_menu_action("Mouse Mode")
         self._remove_scene_export_context_menu()
+        if getattr(self.plot, "ctrlMenu", None) is not None:
+            self.plot.ctrlMenu.setTitle("Options")
+            self.plot.ctrlMenu.menuAction().setText("Options")
 
         self.exportPlotAction = qtw.QAction("&Export Plot...", self)
         self.register_shortcut(
@@ -1426,6 +1489,7 @@ class plotWidget(qtw.QMainWindow):
         toolbar_menu = self.createPopupMenu()
         toolbar_menu.setTitle("Toolbars")
         main_menu.addMenu(toolbar_menu)
+        add_help_menu(self)
     
 ###############################################################################
 #Other Methods  
@@ -1734,6 +1798,8 @@ class plotWidget(qtw.QMainWindow):
         """
         self.monitor.stop()
         retry = False
+        skipped_busy_worker = False
+        current_ds_len = self.ds.number_of_results
 
         try:
             # Plot has started, worker first defined in initFrame
@@ -1743,9 +1809,10 @@ class plotWidget(qtw.QMainWindow):
                 return
             
             # Check if new data has been added to the dataset
-            if self.ds.number_of_results != self.last_ds_len or force:
+            if current_ds_len != self.last_ds_len or force:
                 if self.worker.running: # No need to run if already updating
                     if not force:
+                        skipped_busy_worker = True
                         return
                     
                 # The actual refresh line
@@ -1754,7 +1821,8 @@ class plotWidget(qtw.QMainWindow):
         finally: #Ran after return or otherwise
         
             # number_of_results Uses SQL check so can be used regardless of loader progress
-            self.last_ds_len = self.ds.number_of_results 
+            if not skipped_busy_worker:
+                self.last_ds_len = current_ds_len
 
             #restart monitor
             if self.ds.running or retry:
@@ -1799,17 +1867,16 @@ class plotWidget(qtw.QMainWindow):
                 cache = self.ds.cache
                 name = self.param.name
                 
-                cache._read_status[name] = worker.updated_read_status[name]
-                cache._write_status[name] = worker.updated_write_status[name]
-                cache._data[name] = worker.cache_data[name]
+                update_cache_parameter_data(
+                    cache,
+                    name,
+                    worker.updated_read_status,
+                    worker.updated_write_status,
+                    worker.cache_data,
+                    )
                 
-                ### Copied from qcodes functions
-                data_not_read = all(
-                    status is None or status == 0 for status in cache._write_status.values()
-                )
-                if not data_not_read:
+                if not cache_has_no_written_data(cache):
                     self._live = False
-                ###
             
             #set data to be called by plot<1/2>d.refreshPlot()
             self.axis_data = {
@@ -1850,6 +1917,7 @@ class plotWidget(qtw.QMainWindow):
     @QtCore.pyqtSlot(Exception)
     def err_raiser(self, err : Exception):
         message = f"{type(err).__name__}: {err}"
+        log_exception("Plot worker error", err, __name__)
         self.show_status(f"Worker error: {message}", 10000)
 
         if message == self._last_error_text:

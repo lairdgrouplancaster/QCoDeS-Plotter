@@ -4,6 +4,7 @@
 *.pyc
 .DS_Store
 .venv/
+.venv-mac/
 .venv-win/
 .pytest_cache/
 .ruff_cache/

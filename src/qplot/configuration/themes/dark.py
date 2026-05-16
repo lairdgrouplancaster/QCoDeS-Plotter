@@ -582,6 +582,18 @@ class dark:
             background-color: #202127;
             color: #aebacc;
         }
+        QFrame#mainEmptyState {
+            background-color: #20242a;
+            border-top: 1px solid #343842;
+            border-bottom: 1px solid #343842;
+        }
+        QLabel#mainEmptyStateTitle {
+            color: #eef2f7;
+            font-weight: 600;
+        }
+        QLabel#mainEmptyStateDetail {
+            color: #9aa7b7;
+        }
         QCheckBox {
             spacing: 6px;
         }

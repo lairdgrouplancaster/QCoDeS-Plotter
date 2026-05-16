@@ -1,10 +1,37 @@
-from qplot.windows import MainWindow
-
 import sys
+from pathlib import Path
 
 from PyQt5 import QtWidgets as qtw
 
-def run(return_objects=False):
+from qplot.diagnostics import (
+    configure_logging,
+    install_excepthook,
+    log_event,
+    log_exception,
+    )
+from qplot._version import package_version
+from qplot.windows import MainWindow
+
+
+def _database_path_from_arguments(args):
+    """
+    Return the first database path passed on the command line.
+
+    File managers pass the double-clicked file as a plain positional argument.
+    Qt options are ignored here so they can still be handled by QApplication.
+
+    """
+    for arg in args:
+        if arg.startswith("-"):
+            continue
+
+        if Path(arg).suffix.lower() == ".db":
+            return arg
+
+    return None
+
+
+def run(return_objects=False, database_path=None):
     """
     Entry point for opening the qplot app.
 
@@ -14,6 +41,9 @@ def run(return_objects=False):
         If true, returns the QApplication and MainWindow after the event loop
         exits. The default is false so the command-line entry point exits
         quietly and successfully.
+    database_path : str, optional
+        QCoDeS database path to load after the main window opens. When omitted,
+        qPlot uses the first `.db` path passed on the command line, if any.
 
     Returns
     -------
@@ -21,11 +51,22 @@ def run(return_objects=False):
         Returned only when return_objects is true.
         
     """
+    configure_logging()
+    install_excepthook()
+    log_event("Starting qPlot %s", package_version())
     print("Initialising GUI, this may take a few seconds.\n")
-    
-    app = qtw.QApplication(sys.argv)
-    w = MainWindow()
-    app.exec()
+
+    try:
+        app = qtw.QApplication(sys.argv)
+        if database_path is None:
+            database_path = _database_path_from_arguments(sys.argv[1:])
+        w = MainWindow(startup_database_path=database_path)
+        exit_code = app.exec()
+    except Exception as err:
+        log_exception("qPlot startup failed", err)
+        raise
+
+    log_event("qPlot event loop exited with code %s", exit_code)
 
     if return_objects:
         return app, w

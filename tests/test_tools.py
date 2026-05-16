@@ -7,6 +7,7 @@ from qplot.windows import _plotWin as plotwin_module
 from qplot.windows._plotWin import plotWidget
 from qplot.tools.general import data2matrix
 from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
+from qplot.tools.worker import loader
 
 
 class ToolFunctionTestCase(unittest.TestCase):
@@ -25,6 +26,58 @@ class ToolFunctionTestCase(unittest.TestCase):
 
         self.assertEqual(matrix.loc[0, 0], 10)
         self.assertEqual(matrix.loc[1, 1], 13)
+
+    def test_shaped_2d_loader_handles_sparse_live_grids(self):
+        worker = loader.__new__(loader)
+        worker.axes_dict = {"x": "fast", "y": "slow"}
+        worker.param = type("Param", (), {"depends_on_": ("slow", "fast")})()
+        worker.param_dict = {
+            "slow": type("Param", (), {"name": "slow"})(),
+            "fast": type("Param", (), {"name": "fast"})(),
+            }
+
+        slow = np.full((10, 100), np.nan)
+        fast = np.full((10, 100), np.nan)
+        signal = np.full((10, 100), np.nan)
+        slow[0, :2] = 0.0
+        fast[0, :2] = [0.0, 1.0]
+        signal[0, :2] = [42.0, 43.0]
+
+        axis_data, _axis_param, data_grid = loader.for_shaped_2d(
+            worker,
+            {"slow": slow, "fast": fast},
+            signal,
+            )
+
+        np.testing.assert_array_equal(axis_data["x"], np.array([0.0, 1.0]))
+        np.testing.assert_array_equal(axis_data["y"], np.array([0.0]))
+        np.testing.assert_array_equal(data_grid, np.array([[42.0, 43.0]]))
+
+    def test_shaped_2d_loader_transposes_when_axes_are_swapped(self):
+        worker = loader.__new__(loader)
+        worker.axes_dict = {"x": "slow", "y": "fast"}
+        worker.param = type("Param", (), {"depends_on_": ("slow", "fast")})()
+        worker.param_dict = {
+            "slow": type("Param", (), {"name": "slow"})(),
+            "fast": type("Param", (), {"name": "fast"})(),
+            }
+
+        slow = np.full((10, 100), np.nan)
+        fast = np.full((10, 100), np.nan)
+        signal = np.full((10, 100), np.nan)
+        slow[0, :2] = 0.0
+        fast[0, :2] = [0.0, 1.0]
+        signal[0, :2] = [42.0, 43.0]
+
+        axis_data, _axis_param, data_grid = loader.for_shaped_2d(
+            worker,
+            {"slow": slow, "fast": fast},
+            signal,
+            )
+
+        np.testing.assert_array_equal(axis_data["x"], np.array([0.0]))
+        np.testing.assert_array_equal(axis_data["y"], np.array([0.0, 1.0]))
+        np.testing.assert_array_equal(data_grid, np.array([[42.0], [43.0]]))
 
     def test_plot_operations_return_updated_arrays(self):
         data = {

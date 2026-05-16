@@ -9,6 +9,16 @@ from . import data2matrix
 from qcodes.dataset.sqlite.database import connect
 
 from qplot.datahandling import load_param_data_from_db
+from qplot.datahandling.qcodes_cache import (
+    cache_data,
+    cache_database_path,
+    cache_parameter_data,
+    cache_read_status,
+    cache_rundescriber,
+    cache_table_name,
+    cache_write_status,
+    )
+from qplot.diagnostics import log_exception
 
 
 if TYPE_CHECKING:
@@ -59,7 +69,7 @@ class loader(QtCore.QRunnable):
         
         # Required working data
         self.cache = cache
-        self.table_name = cache._dataset.table_name # This property is an SQL check
+        self.table_name = cache_table_name(cache)
         self.param = param
         self.param_dict = param_dict
         
@@ -74,7 +84,7 @@ class loader(QtCore.QRunnable):
             cache = self.cache
             
             if self.read_data:
-                conn = connect(cache._dataset.path_to_db)
+                conn = connect(cache_database_path(cache))
                 (
                     self.updated_read_status,
                     self.updated_write_status,
@@ -82,18 +92,18 @@ class loader(QtCore.QRunnable):
                 ) = load_param_data_from_db (
                     conn,
                     self.table_name,
-                    cache.rundescriber,
+                    cache_rundescriber(cache),
                     self.param.name,
-                    cache._write_status,
-                    cache._read_status,
-                    cache._data
+                    cache_write_status(cache),
+                    cache_read_status(cache),
+                    cache_data(cache)
                 )
                 conn.close()
                 
                 data = self.cache_data[self.param.name]
                 
             else:
-                data = cache._data[self.param.name]
+                data = cache_parameter_data(cache, self.param.name)
                 
             depvarData = data[self.param.name]
             
@@ -136,6 +146,7 @@ class loader(QtCore.QRunnable):
         
         except Exception as err: # Raise error in main thread
             did_error = True
+            log_exception("Plot worker failed", err, __name__)
             self.emitter.errorOccurred.emit(err)
             self.emitter.finished.emit(False) # False: Failed
             
@@ -186,42 +197,91 @@ class loader(QtCore.QRunnable):
     def for_shaped_2d(self, data, depvarData):
         axis_data = {}
         axis_param = {}
+        axis_dimension = {}
         valid = {}
+        depvarData = np.asarray(depvarData, dtype=float)
         
         # Find correct data for each axis
         for axis in ["x", "y"]:
             name = self.axes_dict[axis]
             param = self.param_dict[name]
-            
-            param_data = data[name]
-            
-            # indep data in data is in either identical rows or 
-            # columns to match size of depvar Data, so find either col 
-            # or row as need.
-            if param_data[0, 0] == param_data[0, 1] and param_data[1, 0] == param_data[1, 1]: # identical columns (double check for safety)
-                param_data = param_data[:, 0]
-                
-                # Find non nan index values
-                valid[axis] = ~np.isnan(param_data)
-                param_data = param_data[valid[axis]]
-                
-            else: # identical rows, set using column
-                param_data = param_data[0, :]
-                
-                # Find non nan index values
-                valid[axis] = ~np.isnan(param_data)
-                param_data = param_data[valid[axis]]
-                
-                if axis == "y": #rotate data to match axis data
-                    depvarData = depvarData.transpose()
-            
-            axis_data[axis] = param_data
+
+            param_data = np.asarray(data[name], dtype=float)
+            dimension = self._shaped_axis_dimension(name, param_data, depvarData)
+            param_data = self._shaped_axis_values(param_data, dimension)
+
+            valid[axis] = np.isfinite(param_data)
+            axis_data[axis] = param_data[valid[axis]]
             axis_param[axis] = param
-          
-        # Access non nan indexed values
-        dataGrid = depvarData[valid["y"]][:, valid["x"]]
+            axis_dimension[axis] = dimension
+
+        dataGrid = self._shaped_data_grid(
+            data,
+            depvarData,
+            axis_dimension,
+            valid,
+            )
         
         return axis_data, axis_param, dataGrid
+
+
+    def _shaped_axis_dimension(self, name, param_data, depvarData):
+        depends_on = list(getattr(self.param, "depends_on_", ()))
+        if (
+                param_data.shape == depvarData.shape
+                and len(depends_on) == depvarData.ndim
+                and name in depends_on
+                ):
+            return depends_on.index(name)
+
+        residuals = [
+            self._shaped_axis_residual(param_data, dimension)
+            for dimension in range(depvarData.ndim)
+            ]
+        return int(np.nanargmin(residuals))
+
+
+    def _shaped_axis_values(self, param_data, dimension):
+        moved = np.moveaxis(param_data, dimension, 0)
+        rows = moved.reshape(moved.shape[0], -1)
+        values = np.full(rows.shape[0], np.nan, dtype=float)
+
+        for index, row in enumerate(rows):
+            finite = np.flatnonzero(np.isfinite(row))
+            if finite.size:
+                values[index] = row[finite[0]]
+
+        return values
+
+
+    def _shaped_axis_residual(self, param_data, dimension):
+        values = self._shaped_axis_values(param_data, dimension)
+        shape = [1] * param_data.ndim
+        shape[dimension] = values.size
+        expected = np.broadcast_to(values.reshape(shape), param_data.shape)
+        valid = np.isfinite(param_data) & np.isfinite(expected)
+        if not np.any(valid):
+            return np.inf
+
+        return float(np.nanmax(np.abs(param_data[valid] - expected[valid])))
+
+
+    def _shaped_data_grid(self, data, depvarData, axis_dimension, valid):
+        x_dimension = axis_dimension["x"]
+        y_dimension = axis_dimension["y"]
+
+        if x_dimension == 1 and y_dimension == 0:
+            return depvarData[np.ix_(valid["y"], valid["x"])]
+
+        if x_dimension == 0 and y_dimension == 1:
+            return depvarData[np.ix_(valid["x"], valid["y"])].transpose()
+
+        valid_rows = np.isfinite(depvarData)
+        for axis in ["x", "y"]:
+            name = self.axes_dict[axis]
+            valid_rows = valid_rows & np.isfinite(np.asarray(data[name], dtype=float))
+
+        return self.for_unshaped_2d(data, valid_rows, depvarData)[2]
     
     
     def for_unshaped_2d(self, data, valid_rows, depvarData):
@@ -285,6 +345,7 @@ class loader(QtCore.QRunnable):
                 one_succeeded = True
                 
             except Exception as err:
+                log_exception("Plot operation failed", err, __name__)
                 self.emitter.errorOccurred.emit(err)
                 
         if one_succeeded:

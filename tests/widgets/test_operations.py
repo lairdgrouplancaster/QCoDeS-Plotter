@@ -3,6 +3,7 @@ import unittest
 from PyQt5 import QtCore
 from PyQt5 import QtWidgets as qtw
 
+from qplot.tools.operation_registry import operation_specs_for
 from qplot.windows._widgets.operations import operations_options_1d
 from qplot.windows._widgets.toolbar import QDock_context
 
@@ -30,5 +31,12 @@ class OperationsPanelTestCase(unittest.TestCase):
             if "Attempting to add QLayout" in message
             ]
         self.assertEqual(layout_warnings, [])
+
+    def test_operation_registry_lists_common_and_plot_specific_options(self):
+        names = [spec.name for spec in operation_specs_for("plot2d")]
+
+        self.assertEqual(names[:2], ["Limit Maximum", "Limit Minimum"])
+        self.assertIn("Subtract Row Mean", names)
+        self.assertIn("Fill Below", names)
 
 

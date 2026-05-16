@@ -7,10 +7,15 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from PyQt5 import QtWidgets as qtw
+
+import qplot.__main__ as qplot_main
+from qplot import __version__
 from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
 from qplot.configuration.themes import dark
 from qplot.windows import main as main_window
+from qplot.windows._run_controls import AUTO_PLOT_KEY
 
 
 class TemporaryConfigTestCase(unittest.TestCase):
@@ -67,12 +72,14 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg = config()
         stored_config = cfg.config
         del stored_config["user_preference"]["confirm_close_all"]
+        del stored_config["user_preference"]["auto_plot"]
         with open(config.default_file, "w") as fp:
             json.dump(stored_config, fp)
 
         reloaded = config()
 
         self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
+        self.assertFalse(reloaded.get(AUTO_PLOT_KEY))
 
     def test_config_repr_returns_readable_json(self):
         cfg = config()
@@ -109,6 +116,27 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertIn("Valid Commands", output.getvalue())
 
+    def test_config_cli_version_prints_package_version(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            sysHandle("-version")
+
+        self.assertEqual(output.getvalue().strip(), __version__)
+
+    def test_database_path_from_arguments_finds_database_file_argument(self):
+        self.assertEqual(
+            qplot_main._database_path_from_arguments([
+                "-style",
+                "Fusion",
+                "/tmp/example.db",
+                "/tmp/notes.txt",
+                ]),
+            "/tmp/example.db",
+            )
+        self.assertIsNone(
+            qplot_main._database_path_from_arguments(["-style", "Fusion", "notes.txt"])
+            )
+
     def test_main_window_uses_configured_default_refresh_rate(self):
         cfg = config()
         cfg.update("user_preference.default_refresh_rate", 3.5)
@@ -131,6 +159,28 @@ class TemporaryConfigTestCase(unittest.TestCase):
             window.monitor.stop()
             window.deleteLater()
 
+    def test_main_window_uses_configured_auto_plot(self):
+        cfg = config()
+        cfg.update(AUTO_PLOT_KEY, True)
+        window = main_window.MainWindow()
+
+        try:
+            self.assertTrue(window.autoPlotBox.isChecked())
+        finally:
+            window.monitor.stop()
+            window.deleteLater()
+
+    def test_main_window_auto_plot_changes_are_persistent(self):
+        window = main_window.MainWindow()
+
+        try:
+            window.autoPlotBox.setChecked(True)
+
+            self.assertTrue(config().get(AUTO_PLOT_KEY))
+        finally:
+            window.monitor.stop()
+            window.deleteLater()
+
     def test_main_window_loads_last_database_on_startup_when_available(self):
         cfg = config()
         calls = []
@@ -148,7 +198,38 @@ class TemporaryConfigTestCase(unittest.TestCase):
             window = None
             try:
                 window = main_window.MainWindow()
+                qtw.QApplication.processEvents()
                 self.assertEqual(calls, [os.path.abspath(database.name)])
+            finally:
+                main_window.MainWindow.load_database_path = old_load_database_path
+                if window is not None:
+                    window.monitor.stop()
+                    window.deleteLater()
+
+    def test_main_window_loads_startup_database_argument_before_last_database(self):
+        cfg = config()
+        calls = []
+        old_load_database_path = main_window.MainWindow.load_database_path
+
+        with (
+            tempfile.NamedTemporaryFile(suffix=".db") as startup_database,
+            tempfile.NamedTemporaryFile(suffix=".db") as last_database,
+        ):
+            cfg.update("file.last_file_path", last_database.name)
+
+            def load_database_path(window, filename):
+                calls.append(filename)
+                window.fileTextbox.setText(filename)
+                return True
+
+            main_window.MainWindow.load_database_path = load_database_path
+            window = None
+            try:
+                window = main_window.MainWindow(
+                    startup_database_path=startup_database.name
+                    )
+                qtw.QApplication.processEvents()
+                self.assertEqual(calls, [startup_database.name])
             finally:
                 main_window.MainWindow.load_database_path = old_load_database_path
                 if window is not None:
@@ -170,6 +251,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         window = None
         try:
             window = main_window.MainWindow()
+            qtw.QApplication.processEvents()
             self.assertEqual(calls, [])
         finally:
             main_window.MainWindow.load_database_path = old_load_database_path
@@ -193,6 +275,16 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg = config()
 
         self.assertEqual(cfg.get("user_preference.default_refresh_rate"), 1)
+
+    def test_default_auto_plot_is_disabled(self):
+        cfg = config()
+
+        self.assertFalse(cfg.get(AUTO_PLOT_KEY))
+
+    def test_cloud_sync_timeout_default_is_two_minutes(self):
+        cfg = config()
+
+        self.assertEqual(cfg.get("runtime_settings.cloud_sync_timeout"), 120)
 
     def test_default_refresh_rate_allows_zero_to_disable_auto_refresh(self):
         cfg = config()

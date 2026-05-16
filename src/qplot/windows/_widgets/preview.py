@@ -4,6 +4,7 @@ import sqlite3
 import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets as qtw
 
+from qplot.diagnostics import log_exception
 from qplot.tools.general import data2matrix
 
 from .._dragdrop import make_run_preview_mime
@@ -52,6 +53,7 @@ class PreviewTab(qtw.QWidget):
         self.errors = {}
         self.queue = {}
         self.active = set()
+        self.metadata_signatures = {}
 
         self.thread_pool = QtCore.QThreadPool(self)
         self.thread_pool.setMaxThreadCount(1)
@@ -100,6 +102,10 @@ class PreviewTab(qtw.QWidget):
         self.cache = {}
         self.errors = {}
         self.queue = {}
+        self.metadata_signatures = {
+            guid: self._metadata_signature(metadata)
+            for guid, metadata in self.run_metadata.items()
+            }
 
         for guid in self.run_metadata:
             priority = 100 if guid == self.current_guid else 0
@@ -119,6 +125,10 @@ class PreviewTab(qtw.QWidget):
         self.errors = {}
         self.queue = {}
         self.active = set()
+        self.metadata_signatures = {
+            guid: self._metadata_signature(metadata)
+            for guid, metadata in self.run_metadata.items()
+            }
 
         self._show_message("Select a run")
         for guid in self.run_metadata:
@@ -131,8 +141,17 @@ class PreviewTab(qtw.QWidget):
             return
 
         for guid, metadata in self._normalise_runs(runs).items():
+            signature = self._metadata_signature(metadata)
+            old_signature = self.metadata_signatures.get(guid)
+            changed = old_signature is not None and signature != old_signature
             self.run_metadata[guid] = metadata
-            self._enqueue(guid, priority=0)
+            self.metadata_signatures[guid] = signature
+
+            if changed:
+                self.cache.pop(guid, None)
+                self.errors.pop(guid, None)
+
+            self._enqueue(guid, priority=0, allow_active=changed)
         self._start_next()
 
 
@@ -179,6 +198,20 @@ class PreviewTab(qtw.QWidget):
             run_metadata["run_id"] = run_id
             out[guid] = run_metadata
         return out
+
+
+    def _metadata_signature(self, metadata):
+        return tuple(
+            metadata.get(key)
+            for key in (
+                "result_table_name",
+                "result_count",
+                "completed_timestamp",
+                "is_completed",
+                "database_modified_timestamp",
+                "storage_bytes",
+                )
+            )
 
 
     def _enqueue(self, guid, priority=0, allow_active=False):
@@ -443,9 +476,10 @@ class PreviewWorker(QtCore.QRunnable):
                 self.database_path,
                 self.metadata,
                 size=self.preview_size,
-                )
+            )
             self.signals.finished.emit(self.generation, self.guid, previews, None)
         except Exception as error:
+            log_exception("Preview generation failed", error, __name__)
             self.signals.finished.emit(self.generation, self.guid, [], error)
 
 
@@ -503,7 +537,13 @@ def _preview_1d(cursor, table_name, metadata, parameter, axis, size):
 
 def _preview_2d(cursor, table_name, metadata, parameter, axes, size):
     x, y, z = _select_arrays(cursor, table_name, [axes[1], axes[0], parameter], metadata)
-    image = render_heatmap_preview(x, y, z, size=size)
+    image = render_heatmap_preview(
+        x,
+        y,
+        z,
+        size=size,
+        grid_shape=_preview_grid_shape(metadata, parameter),
+        )
     return {
         "parameter": parameter,
         "axes": list(axes),
@@ -571,7 +611,7 @@ def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
     return image
 
 
-def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE):
+def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE, grid_shape=None):
     image = QtGui.QImage(size, size, QtGui.QImage.Format_RGB32)
     image.fill(QtGui.QColor(PREVIEW_BACKGROUND_COLOR))
 
@@ -582,7 +622,9 @@ def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE):
     if not np.any(valid):
         return image
 
-    grid = data2matrix(y[valid], x[valid], z[valid]).to_numpy(float)
+    grid = _fixed_heatmap_grid(x[valid], y[valid], z[valid], grid_shape)
+    if grid is None:
+        grid = data2matrix(y[valid], x[valid], z[valid]).to_numpy(float)
     if grid.size == 0 or np.all(np.isnan(grid)):
         return image
 
@@ -605,6 +647,68 @@ def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE):
         ).convertToFormat(QtGui.QImage.Format_RGB32)
 
 
+def _fixed_heatmap_grid(x, y, z, grid_shape):
+    shape = _normalise_grid_shape(grid_shape)
+    if shape is None:
+        return None
+
+    rows, columns = shape
+    grid = np.full((rows, columns), np.nan, dtype=float)
+    x_index = _axis_value_indices(x, columns)
+    y_index = _axis_value_indices(y, rows)
+    placed = 0
+
+    if x_index is not None and y_index is not None:
+        for x_value, y_value, z_value in zip(x, y, z):
+            column = x_index.get(float(x_value))
+            row = y_index.get(float(y_value))
+            if row is None or column is None:
+                continue
+
+            grid[row, column] = z_value
+            placed += 1
+
+    if placed:
+        return grid
+
+    flat_grid = grid.ravel()
+    point_count = min(flat_grid.size, z.size)
+    flat_grid[:point_count] = z[:point_count]
+    return grid
+
+
+def _axis_value_indices(values, size):
+    unique_values = np.unique(values[np.isfinite(values)])
+    if unique_values.size == 0 or unique_values.size > size:
+        return None
+
+    return {
+        float(value): index
+        for index, value in enumerate(unique_values)
+        }
+
+
+def _normalise_grid_shape(grid_shape):
+    if grid_shape is None:
+        return None
+
+    try:
+        if len(grid_shape) < 2:
+            return None
+    except TypeError:
+        return None
+
+    try:
+        rows = int(grid_shape[0])
+        columns = int(grid_shape[1])
+    except (TypeError, ValueError):
+        return None
+
+    if rows <= 0 or columns <= 0:
+        return None
+    return rows, columns
+
+
 def _viridis_rgb(values):
     low = np.nanmin(values)
     high = np.nanmax(values)
@@ -624,6 +728,23 @@ def _viridis_rgb(values):
     rgb = np.clip(rgb, 0, 255).astype(np.uint8)
     rgb[nan_values] = np.array([230, 230, 230], dtype=np.uint8)
     return rgb
+
+
+def _preview_grid_shape(metadata, parameter):
+    run_description = _json_dict(metadata.get("run_description"))
+    shapes = run_description.get("shapes")
+    if isinstance(shapes, dict):
+        shape = shapes.get(parameter)
+        normalised = _normalise_grid_shape(shape)
+        if normalised is not None:
+            return normalised
+
+    for key in ("setpoint_shape", "point_shape"):
+        normalised = _normalise_grid_shape(metadata.get(key))
+        if normalised is not None:
+            return normalised
+
+    return None
 
 
 def _select_arrays(cursor, table_name, columns, metadata):

@@ -13,16 +13,40 @@ interactive users.
 
 ## Main Window
 
-`src/qplot/windows/main.py` owns the top-level application window. It handles:
+`src/qplot/windows/main.py` owns the top-level application window. It handles
+layout, menus, shortcuts, themes, global status messages, and coordination of
+the extracted main-window action mixins.
+
+`src/qplot/windows/_database_actions.py` contains the database-facing main
+window actions. It handles:
 
 * loading and remembering QCoDeS database paths
 * refreshing the run list
+* recent database menus
+* database-load progress, cancellation, and restore handling
+
+`src/qplot/windows/_plot_actions.py` contains the plot-facing main window
+actions. It handles:
+
 * opening 1D and 2D plot windows
 * exporting measurement data
-* application menus, shortcuts, themes, and global status messages
+* preview plot/export actions
+* adding compatible preview traces to existing 1D plots
+* tracking datasets currently used by plot windows
+
+`src/qplot/windows/_run_controls.py` contains the run-selection and refresh
+controls owned by the main window. It handles:
+
+* the run ID and measurement entry widgets
+* refresh interval controls and persistence
+* run-list and selected-run detail widget creation
+* the empty-database prompt
+* run-action keyboard shortcuts
 
 When adding a new top-level command, menu action, or workflow that coordinates
-multiple windows, start here.
+multiple windows, start in `main.py`; put database-specific behavior in
+`_database_actions.py`, plot-opening/export behavior in `_plot_actions.py`, and
+run-selection or refresh-control behavior in `_run_controls.py`.
 
 ## Plot Windows
 
@@ -36,8 +60,12 @@ owns 1D-specific trace handling, secondary axes, snap-to-trace behavior, and
 line-plot marquee statistics.
 
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
-owns 2D-specific colorbar controls, color map filtering, hover pixel display,
-marquee color scaling, and 1D cut extraction.
+owns 2D-specific colorbar controls, hover pixel display, marquee color scaling,
+and 1D cut extraction.
+
+`src/qplot/windows/_colorbar.py` contains the heatmap color-map catalog,
+filtering helpers, preview rendering, and colorbar table items used by
+`plot2d.py`.
 
 Use the shared base only for behavior that should apply to both line plots and
 heatmaps. Keep plot-type-specific interaction details in `plot1d.py` or
@@ -65,15 +93,29 @@ reusable UI controls used inside plot windows.
 QCoDeS SQLite database. It also computes summary fields used by the run table,
 including status, point counts, and storage size estimates.
 
+`src/qplot/datahandling/database.py` contains database-file access helpers,
+cloud-storage hydration, background main-window load workers, and database
+diagnostic report generation.
+
 `src/qplot/datahandling/LoadFromDB.py` adapts QCoDeS database loading for
 threaded refreshes.
+
+`src/qplot/datahandling/qcodes_cache.py` is the compatibility boundary for
+QCoDeS cache internals used by per-parameter refreshes. Prefer adding cache
+private-attribute access there instead of spreading it through GUI modules.
+QCoDeS upgrades should be checked against this module first: the rest of qPlot
+should call helpers such as `cache_data`, `cache_rundescriber`, and
+`set_parameter_complete` instead of reaching into `_data`, `_dataset`, or
+`_complete` directly.
 
 `src/qplot/tools/worker.py` defines the background loader used by plot windows.
 It loads data, reshapes it for the plot type, applies selected operations, and
 emits results back to the GUI thread.
 
 `src/qplot/tools/general.py` and `plot_tools.py` contain small data helpers and
-plot operation functions.
+plot operation functions. `src/qplot/tools/operation_registry.py` maps those
+operation functions to the plot-window surfaces and input controls that expose
+them.
 
 ## Configuration
 
@@ -81,6 +123,10 @@ plot operation functions.
 `~/.qplot/config.json` using `config_schema.json`.
 
 `src/qplot/configuration/scripts.py` backs the `qplot-cfg` command-line helper.
+
+`src/qplot/windows/_preferences.py` exposes the common config keys through the
+main-window preferences dialog and emits a signal when applied settings need to
+be synced into the open UI.
 
 Theme files live in `src/qplot/configuration/themes`.
 
