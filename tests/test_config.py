@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PyQt5 import QtWidgets as qtw
 
+import qplot.__main__ as qplot_main
 from qplot import __version__
 from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
@@ -119,6 +120,20 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(output.getvalue().strip(), __version__)
 
+    def test_database_path_from_arguments_finds_database_file_argument(self):
+        self.assertEqual(
+            qplot_main._database_path_from_arguments([
+                "-style",
+                "Fusion",
+                "/tmp/example.db",
+                "/tmp/notes.txt",
+                ]),
+            "/tmp/example.db",
+            )
+        self.assertIsNone(
+            qplot_main._database_path_from_arguments(["-style", "Fusion", "notes.txt"])
+            )
+
     def test_main_window_uses_configured_default_refresh_rate(self):
         cfg = config()
         cfg.update("user_preference.default_refresh_rate", 3.5)
@@ -160,6 +175,36 @@ class TemporaryConfigTestCase(unittest.TestCase):
                 window = main_window.MainWindow()
                 qtw.QApplication.processEvents()
                 self.assertEqual(calls, [os.path.abspath(database.name)])
+            finally:
+                main_window.MainWindow.load_database_path = old_load_database_path
+                if window is not None:
+                    window.monitor.stop()
+                    window.deleteLater()
+
+    def test_main_window_loads_startup_database_argument_before_last_database(self):
+        cfg = config()
+        calls = []
+        old_load_database_path = main_window.MainWindow.load_database_path
+
+        with (
+            tempfile.NamedTemporaryFile(suffix=".db") as startup_database,
+            tempfile.NamedTemporaryFile(suffix=".db") as last_database,
+        ):
+            cfg.update("file.last_file_path", last_database.name)
+
+            def load_database_path(window, filename):
+                calls.append(filename)
+                window.fileTextbox.setText(filename)
+                return True
+
+            main_window.MainWindow.load_database_path = load_database_path
+            window = None
+            try:
+                window = main_window.MainWindow(
+                    startup_database_path=startup_database.name
+                    )
+                qtw.QApplication.processEvents()
+                self.assertEqual(calls, [startup_database.name])
             finally:
                 main_window.MainWindow.load_database_path = old_load_database_path
                 if window is not None:

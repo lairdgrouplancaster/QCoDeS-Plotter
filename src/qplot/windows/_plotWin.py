@@ -1798,6 +1798,8 @@ class plotWidget(qtw.QMainWindow):
         """
         self.monitor.stop()
         retry = False
+        skipped_busy_worker = False
+        current_ds_len = self.ds.number_of_results
 
         try:
             # Plot has started, worker first defined in initFrame
@@ -1807,9 +1809,10 @@ class plotWidget(qtw.QMainWindow):
                 return
             
             # Check if new data has been added to the dataset
-            if self.ds.number_of_results != self.last_ds_len or force:
+            if current_ds_len != self.last_ds_len or force:
                 if self.worker.running: # No need to run if already updating
                     if not force:
+                        skipped_busy_worker = True
                         return
                     
                 # The actual refresh line
@@ -1818,7 +1821,8 @@ class plotWidget(qtw.QMainWindow):
         finally: #Ran after return or otherwise
         
             # number_of_results Uses SQL check so can be used regardless of loader progress
-            self.last_ds_len = self.ds.number_of_results 
+            if not skipped_busy_worker:
+                self.last_ds_len = current_ds_len
 
             #restart monitor
             if self.ds.running or retry:

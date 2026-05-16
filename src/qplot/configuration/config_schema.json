@@ -145,6 +145,10 @@
                     "type": "boolean",
                     "default": true
                 },
+                "auto_plot": {
+                    "type": "boolean",
+                    "default": false
+                },
                 "default_refresh_rate": {
                     "type": "number",
                     "minimum": 0,

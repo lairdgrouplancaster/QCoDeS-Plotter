@@ -351,6 +351,38 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(image.parameter, "signal")
         self.assertEqual(image.axes, ["x"])
 
+    def test_preview_tab_requeues_cached_preview_when_run_metadata_changes(self):
+        preview = PreviewTab(preview_size=100)
+        preview.database_path = "previews.db"
+        preview._start_next = lambda: None
+
+        old_metadata = {
+            "guid": "run-guid",
+            "run_id": 7,
+            "result_table_name": "results",
+            "result_count": 1,
+            "is_completed": False,
+            }
+        preview.run_metadata = {"run-guid": old_metadata}
+        preview.metadata_signatures = {
+            "run-guid": preview._metadata_signature(old_metadata)
+            }
+        preview.cache = {"run-guid": ["stale preview"]}
+        preview.errors = {"run-guid": "stale error"}
+
+        preview.add_runs({
+            7: {
+                **old_metadata,
+                "result_count": 100,
+                "is_completed": True,
+                "completed_timestamp": 123.0,
+                },
+            })
+
+        self.assertNotIn("run-guid", preview.cache)
+        self.assertNotIn("run-guid", preview.errors)
+        self.assertIn("run-guid", preview.queue)
+
     def test_double_clicking_preview_requests_matching_parameter_plot(self):
         preview = PreviewTab(preview_size=100)
         requested = []

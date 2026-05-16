@@ -9,6 +9,63 @@ from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 from qplot.windows._plotWin import plotWidget
 
 
+class Plot2dLiveRefreshTestCase(unittest.TestCase):
+    def test_empty_live_worker_data_releases_worker_without_rendering(self):
+        class Signal:
+            def __init__(self):
+                self.emitted = 0
+
+            def emit(self):
+                self.emitted += 1
+
+        class Worker:
+            read_data = False
+            running = True
+            axis_data = {"x": np.array([]), "y": np.array([])}
+            axis_param = {"x": object(), "y": object()}
+            dataGrid = np.empty((0, 0))
+            started_at = 0
+
+        class Dataset:
+            number_of_results = 0
+
+        class Param:
+            name = "signal"
+
+        window = plot2d.__new__(plot2d)
+        worker = Worker()
+        window.worker = worker
+        window._guid = "guid"
+        window._dataset_holder = {
+            "guid": {
+                "dataset": Dataset(),
+                "del_timer": None,
+                }
+            }
+        window.param = Param()
+        window.end_wait = Signal()
+        window._set_param_axis_labels = lambda: None
+        window.show_status_messages = []
+        window.show_status = lambda *args: window.show_status_messages.append(args)
+
+        plot2d.refreshPlot(window, True, worker=worker)
+
+        self.assertFalse(worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertIn("Waiting for plottable data", window.show_status_messages[-1][0])
+
+    def test_plottable_heatmap_data_requires_axes_and_finite_grid(self):
+        window = plot2d.__new__(plot2d)
+        window.axis_data = {"x": np.array([0.0]), "y": np.array([1.0])}
+        window.dataGrid = np.array([[np.nan]])
+
+        self.assertFalse(window._has_plottable_heatmap_data())
+
+        window.dataGrid = np.array([[2.0]])
+
+        self.assertTrue(window._has_plottable_heatmap_data())
+
+
 class HeatmapHoverOutlineTestCase(unittest.TestCase):
     class SignalCatcher:
         def __init__(self):

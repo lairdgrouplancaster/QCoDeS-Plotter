@@ -64,6 +64,15 @@ Start the app from an activated virtual environment:
 qplot
 ```
 
+To open a database directly:
+
+```console
+qplot path/to/database.db
+```
+
+For file-manager `Open With` and double-click setup, see
+[Opening Databases from the File Manager](docs/user-guide.md#opening-databases-from-the-file-manager).
+
 You can also run:
 
 ```console

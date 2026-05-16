@@ -26,12 +26,16 @@ class DatabaseActionsMixin:
 
     def load_startup_database(self):
         """
-        Load the last database on startup when it is still available.
+        Load a requested startup database, or the last database when available.
 
         Missing or unset paths are ignored so first-run and moved-file startup
         behaviour stays the same as an empty launch.
 
         """
+        startup_database_path = getattr(self, "startup_database_path", None)
+        if startup_database_path:
+            return self.load_database_path(startup_database_path)
+
         try:
             last_file = self.config.get("file.last_file_path")
         except KeyError:
@@ -193,7 +197,9 @@ class DatabaseActionsMixin:
 
         try:
             newRuns = find_new_runs(self.RunList.maxTime)
-            self.RunList.checkWatching()
+            updatedRuns = self.RunList.checkWatching()
+            if updatedRuns:
+                self.infoBox.preview.add_runs(updatedRuns)
         except Exception as err:
             log_exception("Main-window refresh failed", err, __name__)
             self.show_error("Refresh Failed", "Could not refresh the run list.", str(err))

@@ -60,6 +60,29 @@ class RunListTooltipTestCase(unittest.TestCase):
             "92,988 = 108 x 861"
             )
 
+    def test_progress_uses_measured_row_count_while_setpoints_use_setpoint_count(self):
+        metadata = {
+            "setpoint_shape": [10, 100],
+            "setpoint_count": 1000,
+            "point_shape": [10, 100],
+            "expected_results": 2000,
+            "result_count": 1000,
+            "is_completed": False,
+            }
+
+        self.assertEqual(treeWidgets.format_point_count(metadata), "1,000 = 10 x 100")
+        self.assertEqual(treeWidgets.format_complete_cell(metadata), "50.0%")
+
+    def test_incomplete_progress_never_formats_as_one_hundred_percent(self):
+        self.assertEqual(
+            treeWidgets.format_complete_cell({
+                "expected_results": 100,
+                "result_count": 100,
+                "is_completed": False,
+                }),
+            "99.9%"
+            )
+
     def test_duration_uses_commas(self):
         self.assertEqual(
             treeWidgets.format_time_taken_seconds({

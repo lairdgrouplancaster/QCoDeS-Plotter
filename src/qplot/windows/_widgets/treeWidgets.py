@@ -121,7 +121,8 @@ def progress_percent_value(metadata):
         return None
 
     try:
-        return max(0, min(100, (float(count) / float(expected)) * 100))
+        maximum = 100 if run_is_complete(metadata) else 99.9
+        return max(0, min(maximum, (float(count) / float(expected)) * 100))
     except (TypeError, ValueError, ZeroDivisionError):
         return None
 
@@ -758,6 +759,7 @@ class RunList(qtw.QTreeWidget):
 
         """
         to_remove = []
+        updated_runs = {}
         for run in self.watching:
 
             status = get_run_status(run.guid)
@@ -814,10 +816,17 @@ class RunList(qtw.QTreeWidget):
                 to_remove.append(run)
 
             run.update_tooltip()
+            try:
+                run_id = int(run.text(0))
+            except ValueError:
+                run_id = run.text(0)
+            updated_runs[run_id] = dict(run.run_metadata)
         
         # Remove runs outside for loops to prevent interfering with loop indexing
         for run in to_remove:
-            self.watching.remove(run)      
+            self.watching.remove(run)
+
+        return updated_runs
             
     
     @QtCore.pyqtSlot(QtCore.QPoint)

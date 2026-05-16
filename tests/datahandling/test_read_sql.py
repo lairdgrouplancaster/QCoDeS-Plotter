@@ -21,6 +21,34 @@ class RunSizeTestCase(unittest.TestCase):
             [10, 100]
             )
 
+    def test_expected_results_sums_all_measured_parameter_shapes(self):
+        self.assertEqual(
+            readSQL._expected_results_from_shapes(
+                {
+                    "shapes": {
+                        "dmm_v1": [10, 100],
+                        "dmm_v2": [10, 100],
+                        }
+                    },
+                ["dmm_v1", "dmm_v2"]
+                ),
+            2000
+            )
+
+    def test_expected_results_handles_different_measured_shapes(self):
+        self.assertEqual(
+            readSQL._expected_results_from_shapes(
+                {
+                    "shapes": {
+                        "dmm_v1": [10, 100],
+                        "dmm_v2": [10],
+                        }
+                    },
+                ["dmm_v1", "dmm_v2"]
+                ),
+            1010
+            )
+
     def test_point_shape_falls_back_to_distinct_sweep_values(self):
         conn = sqlite3.connect(":memory:")
         try:

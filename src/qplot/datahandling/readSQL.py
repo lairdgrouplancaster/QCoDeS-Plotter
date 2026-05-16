@@ -102,6 +102,10 @@ def _add_run_summary_fields(cursor, metadata):
     metadata["result_count"] = _result_count(cursor, metadata.get("result_table_name"))
     metadata["point_shape"] = _point_shape(run_description, measure_parameters)
     metadata["setpoint_shape"] = metadata["point_shape"]
+    expected_results = _expected_results_from_shapes(
+        run_description,
+        measure_parameters,
+        )
     if not metadata["point_shape"]:
         metadata["setpoint_shape"] = _setpoint_shape_from_result_table(
             cursor,
@@ -115,7 +119,12 @@ def _add_run_summary_fields(cursor, metadata):
             measure_parameters,
             metadata["result_count"],
             )
-    metadata["expected_results"] = _shape_size(metadata["point_shape"])
+        expected_results = _shape_size(metadata["point_shape"])
+    metadata["expected_results"] = (
+        expected_results
+        if expected_results is not None
+        else _shape_size(metadata["point_shape"])
+        )
     metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
     metadata["storage_bytes"] = _table_storage_bytes(cursor, metadata.get("result_table_name"))
 
@@ -196,6 +205,25 @@ def _point_shape(run_description, measure_parameters):
                 best_size = size
 
     return best_shape
+
+
+def _expected_results_from_shapes(run_description, measure_parameters):
+    shapes = run_description.get("shapes")
+    if not isinstance(shapes, dict) or not measure_parameters:
+        return None
+
+    sizes = []
+    for parameter in measure_parameters:
+        shape = shapes.get(parameter)
+        if not isinstance(shape, list) or not shape:
+            return None
+
+        size = _shape_size(shape)
+        if size is None:
+            return None
+        sizes.append(size)
+
+    return sum(sizes) if sizes else None
 
 
 def _shape_size(shape):

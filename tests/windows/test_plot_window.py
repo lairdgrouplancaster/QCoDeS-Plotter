@@ -9,6 +9,67 @@ from qplot.windows._plotWin import plotWidget
 from qplot.windows._widgets import treeWidgets
 
 
+class PlotWindowRefreshTestCase(unittest.TestCase):
+    class Timer:
+        def __init__(self):
+            self.stopped = 0
+
+        def stop(self):
+            self.stopped += 1
+
+    class SpinBox:
+        def value(self):
+            return 0.2
+
+    class Dataset:
+        def __init__(self, number_of_results=10, running=True):
+            self.number_of_results = number_of_results
+            self.running = running
+
+    class Worker:
+        def __init__(self, running):
+            self.running = running
+
+    def _window(self, *, worker_running):
+        window = plotWidget.__new__(plotWidget)
+        window.monitor = self.Timer()
+        window.spinBox = self.SpinBox()
+        window._guid = "guid"
+        window._dataset_holder = {
+            "guid": {
+                "dataset": self.Dataset(),
+                "del_timer": None,
+                }
+            }
+        window.worker = self.Worker(worker_running)
+        window.last_ds_len = 0
+        window.load_calls = []
+        window.restart_intervals = []
+        window.load_data = lambda: window.load_calls.append("load")
+        window.monitorIntervalChanged = lambda interval: (
+            window.restart_intervals.append(interval)
+            )
+        return window
+
+    def test_refresh_keeps_pending_row_count_when_worker_is_busy(self):
+        window = self._window(worker_running=True)
+
+        plotWidget.refreshWindow(window)
+
+        self.assertEqual(window.load_calls, [])
+        self.assertEqual(window.last_ds_len, 0)
+        self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_refresh_records_row_count_when_worker_is_started(self):
+        window = self._window(worker_running=False)
+
+        plotWidget.refreshWindow(window)
+
+        self.assertEqual(window.load_calls, ["load"])
+        self.assertEqual(window.last_ds_len, 10)
+        self.assertEqual(window.restart_intervals, [0.2])
+
+
 class RunListParentLookupTestCase(unittest.TestCase):
     def test_main_window_lookup_works_through_splitter(self):
         old_isfile = treeWidgets.isfile

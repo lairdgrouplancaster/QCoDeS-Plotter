@@ -260,66 +260,89 @@ class plot2d(plotWidget):
             In the event the worker had to abort, finished is False and refresh
             is not ran.
         """
+        plot_worker = worker if worker is not None else self.worker
         if not super().refreshPlot(finished, worker=worker):
+            plot_worker.running = False
             return
-        
-        autoLevels=self.relevel_refresh.isChecked()
-        # Produce Heatmap
-        self.image.setImage(
-            self.dataGrid,
-            autoLevels=autoLevels,
-            autoRange=True
-            )
-        
-        #set axis values
-        xmin = min(self.axis_data["x"])
-        ymin = min(self.axis_data["y"])
-        xrange = max(self.axis_data["x"]) - xmin
-        yrange = max(self.axis_data["y"]) - ymin
-        
-        if xrange == 0:
-            xrange = xmin / 100 
-        if yrange == 0:
-            yrange = ymin / 100 
-        
-        # Link x/y axis values with Heatmap data
-        self.rect = pg.QtCore.QRectF(
-            xmin,
-            ymin, 
-            xrange,
-            yrange
-        )
-        self.image.setRect(self.rect)
-        
-        # Produce color bar on first run
-        if not hasattr(self, "bar"):
-            self.bar = self.plot.addColorBar(
-                self.image,
-                colorMap=self._colorbar_colormap(),
-                rounding=(
-                    np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid)
-                    ) / 1e5,  # Add 10,000 colours
-                colorMapMenu=False,
+
+        try:
+            if not self._has_plottable_heatmap_data():
+                self.show_status(
+                    f"Waiting for plottable data for {self.param.name}...",
+                    5000,
+                    )
+                return
+
+            autoLevels=self.relevel_refresh.isChecked()
+            # Produce Heatmap
+            self.image.setImage(
+                self.dataGrid,
+                autoLevels=autoLevels,
+                autoRange=True
                 )
-            self._set_colorbar_tick_formatter()
-            if self._colorbar_manual_levels is None:
+
+            #set axis values
+            xmin = min(self.axis_data["x"])
+            ymin = min(self.axis_data["y"])
+            xrange = max(self.axis_data["x"]) - xmin
+            yrange = max(self.axis_data["y"]) - ymin
+
+            if xrange == 0:
+                xrange = xmin / 100
+            if yrange == 0:
+                yrange = ymin / 100
+
+            # Link x/y axis values with Heatmap data
+            self.rect = pg.QtCore.QRectF(
+                xmin,
+                ymin,
+                xrange,
+                yrange
+            )
+            self.image.setRect(self.rect)
+
+            # Produce color bar on first run
+            if not hasattr(self, "bar"):
+                self.bar = self.plot.addColorBar(
+                    self.image,
+                    colorMap=self._colorbar_colormap(),
+                    rounding=(
+                        np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid)
+                        ) / 1e5,  # Add 10,000 colours
+                    colorMapMenu=False,
+                    )
+                self._set_colorbar_tick_formatter()
+                if self._colorbar_manual_levels is None:
+                    self.scaleColorbar()
+                else:
+                    self._set_colorbar_levels(*self._colorbar_manual_levels)
+
+            if autoLevels:
+                self._colorbar_manual_levels = None
                 self.scaleColorbar()
-            else:
+            elif self._colorbar_manual_levels is not None:
                 self._set_colorbar_levels(*self._colorbar_manual_levels)
-        
-        if autoLevels:
-            self._colorbar_manual_levels = None
-            self.scaleColorbar()
-        elif self._colorbar_manual_levels is not None:
-            self._set_colorbar_levels(*self._colorbar_manual_levels)
-        
-        self._update_hover_pixel_outline_from_index()
-        if self.marquee is not None:
-            self.set_marquee_rect(self.marquee)
-        self._snap_sweep_lines_to_pixel_centres()
             
-        # Allow new worker to be produced
-        self.worker.running = False
+            self._update_hover_pixel_outline_from_index()
+            if self.marquee is not None:
+                self.set_marquee_rect(self.marquee)
+            self._snap_sweep_lines_to_pixel_centres()
+        finally:
+            # Allow new workers after empty live loads or display errors.
+            plot_worker.running = False
+
+
+    def _has_plottable_heatmap_data(self):
+        x_data = np.asarray(self.axis_data.get("x", []), dtype=float)
+        y_data = np.asarray(self.axis_data.get("y", []), dtype=float)
+        z_data = np.asarray(self.dataGrid, dtype=float)
+
+        return (
+            x_data.size > 0
+            and y_data.size > 0
+            and z_data.size > 0
+            and np.any(np.isfinite(z_data))
+            )
 
 
     def show_hover_pixel_outline(self, i, j):

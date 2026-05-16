@@ -11,6 +11,75 @@ problems, see [troubleshooting.md](troubleshooting.md).
 3. The main window shows database controls at the top, the run table in the
    middle, and selected-run details at the bottom.
 
+You can also open a database directly from the command line:
+
+```console
+qplot path/to/database.db
+```
+
+### Opening Databases from the File Manager
+
+qPlot can be added to a file manager's `Open With` menu by pointing the file
+manager at a small launcher that runs qPlot with the selected database path.
+Because `.db` is a generic SQLite extension used by many applications, prefer
+adding qPlot to `Open With` before making it the default app for every `.db`
+file.
+
+#### macOS
+
+1. Open Automator.
+2. Create a new `Application`.
+3. Add the `Run Shell Script` action.
+4. Set `Pass input` to `as arguments`.
+5. Use this script, replacing `PYTHON` with the Python executable from the
+   qPlot virtual environment:
+
+```bash
+PYTHON="/path/to/QCoDeS-Plotter/.venv-mac/bin/python"
+
+for database in "$@"; do
+  "$PYTHON" -m qplot "$database" &
+done
+```
+
+6. Save the Automator application as `qPlot.app`.
+7. In Finder, right-click a QCoDeS `.db` file and choose
+   `Open With -> Other...`.
+8. Select `qPlot.app`. To make qPlot the default for `.db` files, tick
+   `Always Open With` before opening.
+
+For a development checkout using the repository virtual environment, `PYTHON`
+will usually look like:
+
+```bash
+PYTHON="/Users/you/path/to/QCoDeS-Plotter/.venv-mac/bin/python"
+```
+
+#### Windows
+
+For a development checkout using the repository virtual environment, create a
+launcher file such as `qplot-open-db.cmd`:
+
+```batch
+@echo off
+set "PYTHON=C:\path\to\QCoDeS-Plotter\.venv\Scripts\pythonw.exe"
+start "" "%PYTHON%" -m qplot "%~1"
+```
+
+Then right-click a QCoDeS `.db` file and choose
+`Open with -> Choose another app`. If Windows does not show the launcher in
+the app picker, set a per-user `.db` association from Command Prompt after
+replacing the Python path:
+
+```batch
+reg add HKCU\Software\Classes\qplot.db\shell\open\command /ve /d "\"C:\path\to\QCoDeS-Plotter\.venv\Scripts\pythonw.exe\" -m qplot \"%%1\"" /f
+reg add HKCU\Software\Classes\.db /ve /d qplot.db /f
+```
+
+This makes double-clicking `.db` files open them with qPlot for the current
+Windows user. Use it only if that is the default behavior you want for `.db`
+files on that account.
+
 On first launch, qPlot shows a small empty-database prompt with direct load and
 quick-start actions. It disappears once a database is loaded or a load is in
 progress.

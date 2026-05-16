@@ -53,6 +53,7 @@ class PreviewTab(qtw.QWidget):
         self.errors = {}
         self.queue = {}
         self.active = set()
+        self.metadata_signatures = {}
 
         self.thread_pool = QtCore.QThreadPool(self)
         self.thread_pool.setMaxThreadCount(1)
@@ -101,6 +102,10 @@ class PreviewTab(qtw.QWidget):
         self.cache = {}
         self.errors = {}
         self.queue = {}
+        self.metadata_signatures = {
+            guid: self._metadata_signature(metadata)
+            for guid, metadata in self.run_metadata.items()
+            }
 
         for guid in self.run_metadata:
             priority = 100 if guid == self.current_guid else 0
@@ -120,6 +125,10 @@ class PreviewTab(qtw.QWidget):
         self.errors = {}
         self.queue = {}
         self.active = set()
+        self.metadata_signatures = {
+            guid: self._metadata_signature(metadata)
+            for guid, metadata in self.run_metadata.items()
+            }
 
         self._show_message("Select a run")
         for guid in self.run_metadata:
@@ -132,8 +141,17 @@ class PreviewTab(qtw.QWidget):
             return
 
         for guid, metadata in self._normalise_runs(runs).items():
+            signature = self._metadata_signature(metadata)
+            old_signature = self.metadata_signatures.get(guid)
+            changed = old_signature is not None and signature != old_signature
             self.run_metadata[guid] = metadata
-            self._enqueue(guid, priority=0)
+            self.metadata_signatures[guid] = signature
+
+            if changed:
+                self.cache.pop(guid, None)
+                self.errors.pop(guid, None)
+
+            self._enqueue(guid, priority=0, allow_active=changed)
         self._start_next()
 
 
@@ -180,6 +198,20 @@ class PreviewTab(qtw.QWidget):
             run_metadata["run_id"] = run_id
             out[guid] = run_metadata
         return out
+
+
+    def _metadata_signature(self, metadata):
+        return tuple(
+            metadata.get(key)
+            for key in (
+                "result_table_name",
+                "result_count",
+                "completed_timestamp",
+                "is_completed",
+                "database_modified_timestamp",
+                "storage_bytes",
+                )
+            )
 
 
     def _enqueue(self, guid, priority=0, allow_active=False):

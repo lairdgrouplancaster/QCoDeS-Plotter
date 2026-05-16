@@ -953,6 +953,72 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             )
 
 
+class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
+    class RunList:
+        def __init__(self, updated_runs):
+            self.maxTime = 12.0
+            self.updated_runs = updated_runs
+
+        def checkWatching(self):
+            return self.updated_runs
+
+        def topLevelItemCount(self):
+            return 1
+
+    class Preview:
+        def __init__(self):
+            self.added_runs = []
+
+        def add_runs(self, runs):
+            self.added_runs.append(runs)
+
+    class InfoBox:
+        def __init__(self):
+            self.preview = RefreshMainPreviewUpdateTestCase.Preview()
+
+    class Harness:
+        refreshMain = main_window.MainWindow.refreshMain
+
+        def __init__(self, updated_runs):
+            self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
+            self.RunList = RefreshMainPreviewUpdateTestCase.RunList(updated_runs)
+            self.infoBox = RefreshMainPreviewUpdateTestCase.InfoBox()
+            self.status_messages = []
+            self.sync_count = 0
+
+        def _sync_empty_state(self):
+            self.sync_count += 1
+
+        def show_status(self, message, timeout=5000):
+            self.status_messages.append((message, timeout))
+
+        def show_error(self, title, message, details=None):
+            raise AssertionError((title, message, details))
+
+    def test_refresh_requeues_previews_for_updated_watched_runs(self):
+        updated_runs = {
+            4: {
+                "guid": "guid-4",
+                "result_count": 1000,
+                "is_completed": True,
+                },
+            }
+        old_find_new_runs = database_actions.find_new_runs
+        database_actions.find_new_runs = lambda _last_time: {}
+
+        try:
+            harness = self.Harness(updated_runs)
+            harness.refreshMain()
+        finally:
+            database_actions.find_new_runs = old_find_new_runs
+
+        self.assertEqual(harness.infoBox.preview.added_runs, [updated_runs])
+        self.assertEqual(
+            harness.status_messages[-1],
+            ("No new runs found.", 3000),
+            )
+
+
 class RefreshMainAutoPlotTestCase(unittest.TestCase):
     class RunList:
         def __init__(self):

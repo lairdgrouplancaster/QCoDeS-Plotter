@@ -101,7 +101,7 @@ class MainWindow(
     python's garbarge collector
     """
     
-    def __init__(self):
+    def __init__(self, startup_database_path=None):
         startup_start = perf_counter()
         super().__init__()
        
@@ -123,6 +123,7 @@ class MainWindow(
         self.x = 0
         self.y = 0
         self.localLastFile = None
+        self.startup_database_path = startup_database_path
         
         # Set GUI color and style from user choice in qplot.configuration.themes
         self.setStyleSheet(self.config.theme.main)
