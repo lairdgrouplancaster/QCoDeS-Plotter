@@ -194,7 +194,7 @@ clipboard.
 
 ## Theme or Preference Changes Do Not Look Right
 
-Use `Options -> Restore Default Settings...` from the app, or run:
+Use `Options -> Reset All Settings...` from the app, or run:
 
 ```console
 qplot-cfg -reset

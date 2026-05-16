@@ -276,7 +276,7 @@ class DatabaseActionsMixin:
     @QtCore.pyqtSlot()
     def change_default_file(self):
         """
-        Event handle for Open Location action in the options menu.
+        Chooses the default database-open location.
 
         """
         if os.path.isdir(self.config.get("file.default_load_path")):

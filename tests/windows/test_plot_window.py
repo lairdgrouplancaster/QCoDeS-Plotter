@@ -177,8 +177,16 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 for action in menus["Options"].actions()
                 if not action.isSeparator()
                 ]
+            preferences_action = next(
+                action for action in menus["Options"].actions()
+                if action.text().replace("&", "") == "Preferences..."
+                )
 
             self.assertIn("Preferences...", option_texts)
+            self.assertEqual(
+                preferences_action.menuRole(),
+                qtw.QAction.PreferencesRole,
+                )
             self.assertIn("Mouse Mode", option_texts)
             self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
             self.assertNotIn("Confirm Before Quit", option_texts)

@@ -378,3 +378,17 @@ class PreferencesDialog(qtw.QDialog):
     def _accept_preferences(self):
         if self.apply_preferences():
             self.accept()
+
+
+def create_preferences_action(window, triggered):
+    """
+    Creates the shared Preferences action used by main and plot windows.
+
+    """
+    action = qtw.QAction("&Preferences...", window)
+    action.setMenuRole(qtw.QAction.PreferencesRole)
+    action.setShortcut("Ctrl+,")
+    action.setShortcutContext(QtCore.Qt.WindowShortcut)
+    action.setStatusTip("Open qPlot preferences")
+    action.triggered.connect(triggered)
+    return action

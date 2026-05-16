@@ -55,7 +55,8 @@ qplot-cfg -reset
 ```
 
 Common settings can also be edited in the application with
-`Options -> Preferences...`.
+`Options -> Preferences...`. On macOS this appears as
+`qPlot -> Preferences...`.
 
 Python code can use the public `config` object directly:
 

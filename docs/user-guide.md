@@ -101,9 +101,12 @@ Common actions:
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
 * `Options -> Preferences...` edits common theme, plot mouse mode, default
-  load location, preview, refresh, confirmation, and runtime settings.
+  load location, preview, refresh, confirmation, and runtime settings. On
+  macOS this appears as `qPlot -> Preferences...`.
   Use `Restore Defaults` in that dialog to reset the shown preferences without
   leaving the dialog.
+* `Options -> Reset All Settings...` resets all qPlot settings to their
+  defaults.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
 * `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
 * `Help -> Copy Diagnostic Log Path` copies the log file location for support

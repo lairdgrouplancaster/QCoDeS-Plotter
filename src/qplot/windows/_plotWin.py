@@ -44,6 +44,7 @@ from ._dragdrop import (
 from ._preferences import (
     MOUSE_MODE_KEY,
     PreferencesDialog,
+    create_preferences_action,
     )
 from ._window_controls import (
     add_standard_window_controls,
@@ -652,12 +653,9 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         add_standard_window_controls(self)
 
         options_menu = menu.addMenu("&Options")
-        preferences_action = qtw.QAction("&Preferences...", self)
-        preferences_action.setShortcut("Ctrl+,")
-        preferences_action.setShortcutContext(QtCore.Qt.WindowShortcut)
-        preferences_action.setStatusTip("Open qPlot preferences")
-        preferences_action.triggered.connect(self.show_preferences_dialog)
-        options_menu.addAction(preferences_action)
+        options_menu.addAction(
+            create_preferences_action(self, self.show_preferences_dialog)
+            )
 
         mouse_mode_action = getattr(self, "mouseModeAction", None)
         if mouse_mode_action is not None:

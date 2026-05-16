@@ -6,7 +6,10 @@ from PyQt5.QtGui import QKeySequence
 
 from ._database_actions import DatabaseActionsMixin
 from ._plot_actions import PlotActionsMixin
-from ._preferences import PreferencesDialog
+from ._preferences import (
+    PreferencesDialog,
+    create_preferences_action,
+    )
 from ._run_controls import RunControlsMixin
 from ._shortcuts import standard_key_sequences
 from ._help import add_help_menu
@@ -229,36 +232,9 @@ class MainWindow(
         # Second dropdown menu
         prefMenu = menu.addMenu("&Options")
 
-        preferences_action = qtw.QAction("&Preferences...", self)
-        preferences_action.setShortcut("Ctrl+,")
-        preferences_action.setStatusTip("Open qPlot preferences")
-        preferences_action.triggered.connect(self.show_preferences_dialog)
-        prefMenu.addAction(preferences_action)
-        prefMenu.addSeparator()
-        
-        # Sets default open location for loadACtion
-        default_load_picker = qtw.QAction("&Open Location", self)
-        default_load_picker.triggered.connect(self.change_default_file)
-        prefMenu.addAction(default_load_picker)
-        
-        # Change app stylesheet/theme
-        themeMenu = prefMenu.addMenu("&Theme")
-        
-        current_theme = self.config.get("user_preference.theme")
-        self.themes = []
-        # Add all options to menu
-        for itr, theme in enumerate(["Light", "Dark", "PyQt"]):
-            self.themes.append(qtw.QAction(f'&{theme}', self, checkable=True))
-            
-            self.themes[itr].triggered.connect(
-                lambda _, theme=theme.lower(), action=self.themes[itr]:
-                    self.change_theme(theme, action) 
-                )
-                
-            themeMenu.addAction(self.themes[itr])
-            if theme.lower() == current_theme:
-                self.themes[itr].setChecked(True)
-
+        prefMenu.addAction(
+            create_preferences_action(self, self.show_preferences_dialog)
+            )
         prefMenu.addSeparator()
         add_restore_defaults_option(self, prefMenu)
         add_help_menu(self)
@@ -474,7 +450,7 @@ class MainWindow(
             action.setChecked(True)
             self.show_status(f"{theme.title()} theme already selected.", 3000)
             return
-        for QActions in self.themes: # Untick other options
+        for QActions in getattr(self, "themes", []): # Untick other options
             if QActions != action:
                 QActions.setChecked(False)
                 
@@ -509,25 +485,25 @@ class MainWindow(
     @QtCore.pyqtSlot()
     def restore_default_settings(self):
         """
-        Confirms and restores all user settings to schema defaults.
+        Confirms and resets all user settings to schema defaults.
 
         """
         reply = qtw.QMessageBox.question(
             self,
-            "Restore Default Settings",
-            "Restore all qPlot settings to their defaults?",
+            "Reset All Settings",
+            "Reset all qPlot settings to their defaults?",
             qtw.QMessageBox.Yes | qtw.QMessageBox.No,
             qtw.QMessageBox.No,
             )
         if reply != qtw.QMessageBox.Yes:
-            self.show_status("Default settings restore cancelled.", 3000)
+            self.show_status("Settings reset cancelled.", 3000)
             return
 
         self.close_plot_windows(confirm=False, status=False)
         self.config.reset_to_defaults()
         self.apply_current_settings()
         self.close_database(status=False)
-        self.show_status("Default settings restored.", 5000)
+        self.show_status("Settings reset to defaults.", 5000)
 
 
     def show_preferences_dialog(self):

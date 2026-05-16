@@ -31,6 +31,16 @@ def _database_path_from_arguments(args):
     return None
 
 
+def _configure_application_identity(app):
+    """
+    Sets the application name used by native desktop menus.
+
+    """
+    app.setApplicationName("qPlot")
+    if hasattr(app, "setApplicationDisplayName"):
+        app.setApplicationDisplayName("qPlot")
+
+
 def run(return_objects=False, database_path=None):
     """
     Entry point for opening the qplot app.
@@ -58,6 +68,7 @@ def run(return_objects=False, database_path=None):
 
     try:
         app = qtw.QApplication(sys.argv)
+        _configure_application_identity(app)
         if database_path is None:
             database_path = _database_path_from_arguments(sys.argv[1:])
         w = MainWindow(startup_database_path=database_path)

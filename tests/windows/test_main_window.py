@@ -113,12 +113,6 @@ class OptionsMenuTestCase(unittest.TestCase):
         def closeAll(self):
             pass
 
-        def change_default_file(self):
-            pass
-
-        def change_theme(self, *_args):
-            pass
-
         def restore_default_settings(self):
             pass
 
@@ -139,9 +133,19 @@ class OptionsMenuTestCase(unittest.TestCase):
                 for action in menus["Options"].actions()
                 if not action.isSeparator()
                 ]
+            preferences_action = next(
+                action for action in menus["Options"].actions()
+                if action.text().replace("&", "") == "Preferences..."
+                )
 
             self.assertIn("Preferences...", option_texts)
-            self.assertIn("Theme", option_texts)
+            self.assertEqual(
+                preferences_action.menuRole(),
+                qtw.QAction.PreferencesRole,
+                )
+            self.assertIn("Reset All Settings...", option_texts)
+            self.assertNotIn("Open Location", option_texts)
+            self.assertNotIn("Theme", option_texts)
             self.assertNotIn("Preview Size", option_texts)
             self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
             self.assertNotIn("Confirm Before Quit", option_texts)
@@ -463,7 +467,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         try:
             action = add_restore_defaults_option(window, menu)
-            self.assertEqual(action.text(), "Restore Default Settings...")
+            self.assertEqual(action.text(), "Reset All Settings...")
 
             action.trigger()
 
@@ -508,7 +512,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             qtw.QMessageBox.question = old_question
 
         self.assertFalse(harness.config.reset_called)
-        self.assertEqual(harness.status_messages[-1][0], "Default settings restore cancelled.")
+        self.assertEqual(harness.status_messages[-1][0], "Settings reset cancelled.")
 
     def test_restore_default_settings_resets_and_applies_defaults(self):
         old_question = qtw.QMessageBox.question
@@ -553,7 +557,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertTrue(harness.applied)
         self.assertEqual(harness.closed_plots, [(False, False)])
         self.assertEqual(harness.closed_database, [False])
-        self.assertEqual(harness.status_messages[-1][0], "Default settings restored.")
+        self.assertEqual(harness.status_messages[-1][0], "Settings reset to defaults.")
 
 
     def test_close_database_clears_loaded_database_state(self):

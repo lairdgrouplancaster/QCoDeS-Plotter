@@ -100,11 +100,11 @@ def add_confirmation_options(window, menu):
 
 def add_restore_defaults_option(window, menu):
     """
-    Adds a restore-default-settings action to a menu.
+    Adds a reset-all-settings action to a menu.
 
     """
-    action = qtw.QAction("Restore Default Settings...", window)
-    action.setStatusTip("Restore all qPlot settings to their defaults")
+    action = qtw.QAction("Reset All Settings...", window)
+    action.setStatusTip("Reset all qPlot settings to their defaults")
     action.triggered.connect(lambda: request_restore_defaults(window))
     menu.addAction(action)
     return action

@@ -141,6 +141,26 @@ class TemporaryConfigTestCase(unittest.TestCase):
             qplot_main._database_path_from_arguments(["-style", "Fusion", "notes.txt"])
             )
 
+    def test_application_identity_uses_qplot_name(self):
+        app = qtw.QApplication.instance()
+        old_name = app.applicationName()
+        old_display_name = (
+            app.applicationDisplayName()
+            if hasattr(app, "applicationDisplayName")
+            else None
+            )
+
+        try:
+            qplot_main._configure_application_identity(app)
+
+            self.assertEqual(app.applicationName(), "qPlot")
+            if hasattr(app, "applicationDisplayName"):
+                self.assertEqual(app.applicationDisplayName(), "qPlot")
+        finally:
+            app.setApplicationName(old_name)
+            if old_display_name is not None and hasattr(app, "setApplicationDisplayName"):
+                app.setApplicationDisplayName(old_display_name)
+
     def test_main_window_uses_configured_default_refresh_rate(self):
         cfg = config()
         cfg.update("user_preference.default_refresh_rate", 3.5)
