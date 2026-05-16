@@ -953,6 +953,115 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             )
 
 
+class RefreshMainAutoPlotTestCase(unittest.TestCase):
+    class RunList:
+        def __init__(self):
+            self.maxTime = 10.0
+            self.checked_watching = False
+            self.added_runs = None
+
+        def checkWatching(self):
+            self.checked_watching = True
+
+        def addRuns(self, runs):
+            self.added_runs = runs
+
+    class Preview:
+        def __init__(self):
+            self.added_runs = None
+
+        def add_runs(self, runs):
+            self.added_runs = runs
+
+    class InfoBox:
+        def __init__(self):
+            self.preview = RefreshMainAutoPlotTestCase.Preview()
+
+    class AutoPlotBox:
+        def __init__(self, checked):
+            self.checked = checked
+
+        def isChecked(self):
+            return self.checked
+
+    class Harness:
+        refreshMain = main_window.MainWindow.refreshMain
+
+        def __init__(self, auto_plot_checked):
+            self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
+            self.RunList = RefreshMainAutoPlotTestCase.RunList()
+            self.infoBox = RefreshMainAutoPlotTestCase.InfoBox()
+            self.autoPlotBox = RefreshMainAutoPlotTestCase.AutoPlotBox(
+                auto_plot_checked
+                )
+            self.status_messages = []
+            self.plotted_guids = []
+            self.sync_count = 0
+
+        def _sync_empty_state(self):
+            self.sync_count += 1
+
+        def show_status(self, message, timeout=5000):
+            self.status_messages.append((message, timeout))
+
+        def show_error(self, title, message, details=None):
+            raise AssertionError((title, message, details))
+
+        def openPlot(self, guid):
+            self.plotted_guids.append(guid)
+
+    def test_refresh_auto_plots_new_runs_when_enabled(self):
+        new_runs = {
+            1: {"guid": "guid-1", "run_timestamp": 11.0},
+            2: {"guid": "guid-2", "run_timestamp": 12.5},
+            }
+        seen_last_times = []
+        old_find_new_runs = database_actions.find_new_runs
+
+        def find_new_runs(last_time):
+            seen_last_times.append(last_time)
+            return new_runs
+
+        database_actions.find_new_runs = find_new_runs
+        try:
+            harness = self.Harness(auto_plot_checked=True)
+            harness.refreshMain()
+        finally:
+            database_actions.find_new_runs = old_find_new_runs
+
+        self.assertEqual(seen_last_times, [10.0])
+        self.assertTrue(harness.RunList.checked_watching)
+        self.assertEqual(harness.RunList.maxTime, 12.5)
+        self.assertIs(harness.RunList.added_runs, new_runs)
+        self.assertIs(harness.infoBox.preview.added_runs, new_runs)
+        self.assertEqual(harness.sync_count, 1)
+        self.assertEqual(harness.plotted_guids, ["guid-1", "guid-2"])
+        self.assertEqual(
+            harness.status_messages,
+            [
+                ("Checking for new runs...", 0),
+                ("Found 2 new runs.", 5000),
+                ],
+            )
+
+    def test_refresh_does_not_auto_plot_new_runs_when_disabled(self):
+        old_find_new_runs = database_actions.find_new_runs
+        database_actions.find_new_runs = lambda _last_time: {
+            1: {"guid": "guid-1", "run_timestamp": 11.0},
+            }
+        try:
+            harness = self.Harness(auto_plot_checked=False)
+            harness.refreshMain()
+        finally:
+            database_actions.find_new_runs = old_find_new_runs
+
+        self.assertEqual(harness.plotted_guids, [])
+        self.assertEqual(
+            harness.status_messages[-1],
+            ("Found 1 new run.", 5000),
+            )
+
+
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
     def test_prefetch_database_file_reads_file_and_reports_cloud_sync_progress(self):
         with tempfile.TemporaryDirectory() as temp_dir:

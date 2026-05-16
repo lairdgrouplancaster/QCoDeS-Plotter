@@ -88,7 +88,7 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertEqual(dialog.objectName(), "qplotKeyboardShortcutsDialog")
             self.assertIn("Ctrl+L", text)
             self.assertIn("Ctrl+E", text)
-            self.assertIn("Ctrl+Shift+H", text)
+            self.assertIn("H", text)
             self.assertIn(dialog, window._help_dialogs)
         finally:
             if dialog is not None:

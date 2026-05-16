@@ -206,12 +206,12 @@ class plot2d(plotWidget):
         
         ### Sweep control
         h_sweep = qtw.QAction("Horizontal Cut", self)
-        self.register_shortcut(h_sweep, "Ctrl+Shift+H", "Plot horizontal cut")
+        self.register_shortcut(h_sweep, "H", "Plot horizontal cut")
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
         v_sweep = qtw.QAction("Vertical Cut", self)
-        self.register_shortcut(v_sweep, "Ctrl+Shift+V", "Plot vertical cut")
+        self.register_shortcut(v_sweep, "V", "Plot vertical cut")
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         

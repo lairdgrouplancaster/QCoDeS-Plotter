@@ -47,3 +47,9 @@ On Windows, prefer:
 ```powershell
 ..\.venv\Scripts\python.exe -m qplot
 ```
+
+On macOS/Linux, prefer:
+
+```bash
+.venv-mac/bin/python -m qplot
+```

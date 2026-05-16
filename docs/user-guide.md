@@ -225,8 +225,8 @@ Heatmap shortcuts:
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+Shift+C` | Autoscale the colour range |
-| `Ctrl+Shift+H` | Open a horizontal cut |
-| `Ctrl+Shift+V` | Open a vertical cut |
+| `H` | Open a horizontal cut |
+| `V` | Open a vertical cut |
 | Arrow keys | Move the selected cut cursor by one pixel |
 
 Dynamic context-menu entries are numbered or underlined. Once a menu is open,
