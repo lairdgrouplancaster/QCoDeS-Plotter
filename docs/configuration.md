@@ -115,6 +115,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.bar_colour_excluded_prefixes` | string array | `[]` | any strings | Hide colour maps with these prefixes. |
 | `user_preference.confirm_close` | boolean | `true` | `true` or `false` | Ask before closing the main window. |
 | `user_preference.confirm_close_all` | boolean | `true` | `true` or `false` | Ask before closing all plot windows. |
+| `user_preference.mouse_mode` | string | `"pan"` | `pan` or `rect` | Default plot mouse interaction mode. |
 | `user_preference.default_refresh_rate` | number | `1` | `value >= 0` | Default plot refresh interval. |
 | `runtime_settings.max_threads` | integer | `4` | `value >= 1` | Maximum worker threads for background loading. |
 | `runtime_settings.del_grace_period` | number | `10` | `0 <= value <= 300` | Grace period before deleting temporary files. |

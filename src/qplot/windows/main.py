@@ -13,7 +13,6 @@ from ._help import add_help_menu
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
-    add_confirmation_options,
     add_restore_defaults_option,
     add_standard_window_controls,
     ask_confirmation_with_dont_ask_again,
@@ -260,25 +259,8 @@ class MainWindow(
             if theme.lower() == current_theme:
                 self.themes[itr].setChecked(True)
 
-        preview_menu = prefMenu.addMenu("&Preview Size")
-        self.previewSizeGroup = qtw.QActionGroup(self)
-        self.previewSizeGroup.setExclusive(True)
-        self.previewSizeActions = []
-        for size in (100, 150, 200, 300, 500):
-            action = qtw.QAction(f"{size} px", self, checkable=True)
-            action.setData(size)
-            action.setChecked(size == self.preview_size)
-            action.triggered.connect(
-                lambda _, preview_size=size: self.change_preview_size(preview_size)
-                )
-            self.previewSizeGroup.addAction(action)
-            self.previewSizeActions.append(action)
-            preview_menu.addAction(action)
-
         prefMenu.addSeparator()
         add_restore_defaults_option(self, prefMenu)
-        prefMenu.addSeparator()
-        add_confirmation_options(self, prefMenu)
         add_help_menu(self)
 
     def initFile(self):
@@ -573,6 +555,7 @@ class MainWindow(
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
+        self._sync_mouse_mode_settings()
 
 
     def _sync_theme_actions(self):
@@ -601,6 +584,12 @@ class MainWindow(
             self.threadPool.setMaxThreadCount(
                 self.config.get("runtime_settings.max_threads")
                 )
+
+
+    def _sync_mouse_mode_settings(self):
+        for win in getattr(self, "windows", []):
+            if hasattr(win, "apply_mouse_mode_preference"):
+                win.apply_mouse_mode_preference()
 
 
     def _save_preview_size(self, preview_size):

@@ -145,6 +145,11 @@
                     "type": "boolean",
                     "default": true
                 },
+                "mouse_mode": {
+                    "type": "string",
+                    "enum": ["pan", "rect"],
+                    "default": "pan"
+                },
                 "auto_plot": {
                     "type": "boolean",
                     "default": false

@@ -18,9 +18,16 @@ THEME_OPTIONS = (
     ("PyQt", "pyqt"),
     )
 
+MOUSE_MODE_KEY = "user_preference.mouse_mode"
+MOUSE_MODE_OPTIONS = (
+    ("Rectangle zoom (1 button)", "rect"),
+    ("Pan (3 button)", "pan"),
+)
+
 PREFERENCE_KEYS = (
     "user_preference.theme",
     "GUI.preview_size",
+    MOUSE_MODE_KEY,
     "file.default_load_path",
     "user_preference.default_refresh_rate",
     CONFIRM_CLOSE_ALL_KEY,
@@ -56,6 +63,7 @@ class PreferencesDialog(qtw.QDialog):
 
         tabs = qtw.QTabWidget(self)
         tabs.addTab(self._appearance_tab(), "Appearance")
+        tabs.addTab(self._interaction_tab(), "Interaction")
         tabs.addTab(self._files_tab(), "Files")
         tabs.addTab(self._confirmations_tab(), "Confirmations")
         tabs.addTab(self._runtime_tab(), "Runtime")
@@ -114,6 +122,22 @@ class PreferencesDialog(qtw.QDialog):
         self.refreshRateSpin.setDecimals(1)
         self.refreshRateSpin.setSuffix(" s")
         self._add_row(form, "&Default refresh interval:", self.refreshRateSpin)
+
+        return tab
+
+    def _interaction_tab(self):
+        tab = qtw.QWidget(self)
+        form = qtw.QFormLayout(tab)
+        form.setFieldGrowthPolicy(qtw.QFormLayout.AllNonFixedFieldsGrow)
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setSpacing(8)
+
+        self.mouseModeCombo = qtw.QComboBox(tab)
+        self.mouseModeCombo.setObjectName("mouseModePreferenceCombo")
+        self.mouseModeCombo.setAccessibleName("Mouse mode")
+        for label, value in MOUSE_MODE_OPTIONS:
+            self.mouseModeCombo.addItem(label, value)
+        self._add_row(form, "&Mouse mode:", self.mouseModeCombo)
 
         return tab
 
@@ -241,6 +265,8 @@ class PreferencesDialog(qtw.QDialog):
         self.themeCombo.setCurrentIndex(max(theme_index, 0))
 
         self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
+        mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
+        self.mouseModeCombo.setCurrentIndex(max(mouse_mode_index, 0))
         self.defaultLoadPathEdit.setText(str(values["file.default_load_path"]))
         self.refreshRateSpin.setValue(
             float(values["user_preference.default_refresh_rate"])
@@ -269,6 +295,7 @@ class PreferencesDialog(qtw.QDialog):
         values = {
             "user_preference.theme": self.themeCombo.currentData(),
             "GUI.preview_size": int(self.previewSizeSpin.value()),
+            MOUSE_MODE_KEY: self.mouseModeCombo.currentData(),
             "file.default_load_path": self.defaultLoadPathEdit.text().strip(),
             "user_preference.default_refresh_rate": self.refreshRateSpin.value(),
             CONFIRM_CLOSE_ALL_KEY: self.confirmCloseAllCheck.isChecked(),

@@ -100,8 +100,8 @@ Common actions:
 * `File -> Refresh` checks the current database for new runs.
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
-* `Options -> Preferences...` edits common theme, default load location,
-  preview, refresh, confirmation, and runtime settings.
+* `Options -> Preferences...` edits common theme, plot mouse mode, default
+  load location, preview, refresh, confirmation, and runtime settings.
   Use `Restore Defaults` in that dialog to reset the shown preferences without
   leaving the dialog.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
@@ -142,7 +142,7 @@ by right-clicking a toolbar or panel, or with keyboard shortcuts.
 Common plot controls:
 
 * Mouse wheel over the plot: zoom.
-* Left-click drag: pan.
+* Left-click drag: pan in the default mouse mode.
 * Right-click: open the plot context menu.
 * `Alt`/`Option` + left-click drag: draw a marquee selection.
 * Drag marquee handles to resize the selection.

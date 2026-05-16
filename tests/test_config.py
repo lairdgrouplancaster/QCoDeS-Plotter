@@ -58,6 +58,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             sysHandle("-set_value", "user_preference.theme", "dark")
             sysHandle("-set_value", "user_preference.confirm_close", "false")
             sysHandle("-set_value", "user_preference.confirm_close_all", "false")
+            sysHandle("-set_value", "user_preference.mouse_mode", "rect")
             sysHandle("-set_value", "GUI.main_frame_size", "[900, 600]")
             sysHandle("-set_value", "GUI.preview_size", "300")
 
@@ -65,6 +66,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(cfg.get("user_preference.theme"), "dark")
         self.assertFalse(cfg.get("user_preference.confirm_close"))
         self.assertFalse(cfg.get("user_preference.confirm_close_all"))
+        self.assertEqual(cfg.get("user_preference.mouse_mode"), "rect")
         self.assertEqual(cfg.get("GUI.main_frame_size"), [900, 600])
         self.assertEqual(cfg.get("GUI.preview_size"), 300)
 
@@ -73,6 +75,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         stored_config = cfg.config
         del stored_config["user_preference"]["confirm_close_all"]
         del stored_config["user_preference"]["auto_plot"]
+        del stored_config["user_preference"]["mouse_mode"]
         with open(config.default_file, "w") as fp:
             json.dump(stored_config, fp)
 
@@ -80,6 +83,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
         self.assertFalse(reloaded.get(AUTO_PLOT_KEY))
+        self.assertEqual(reloaded.get("user_preference.mouse_mode"), "pan")
 
     def test_config_repr_returns_readable_json(self):
         cfg = config()
@@ -280,6 +284,11 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg = config()
 
         self.assertFalse(cfg.get(AUTO_PLOT_KEY))
+
+    def test_default_mouse_mode_is_pan(self):
+        cfg = config()
+
+        self.assertEqual(cfg.get("user_preference.mouse_mode"), "pan")
 
     def test_cloud_sync_timeout_default_is_two_minutes(self):
         cfg = config()

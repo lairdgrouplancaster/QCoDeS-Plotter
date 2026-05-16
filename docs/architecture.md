@@ -51,21 +51,34 @@ run-selection or refresh-control behavior in `_run_controls.py`.
 ## Plot Windows
 
 `src/qplot/windows/_plotWin.py` is the shared base for plot windows. It owns
-common plotting behavior such as refresh timers, worker loading, axis controls,
-context menus, export handling, operation panels, marquee selection, and status
-or error reporting.
+common plotting behavior such as refresh timers, worker loading, axis selection
+controls, context menus, export handling, operation panels, and status or error
+reporting.
+
+`src/qplot/windows/_plot_axis_scaling.py` contains the shared plot-axis scaling
+mixin and the custom axis item used for power-of-ten unit labels. It owns the
+X/Y axis scaling dialogs opened by double-clicking plot axes.
+
+`src/qplot/windows/_plot_marquee.py` contains the shared marquee selection
+mixin used by plot windows. It owns marquee drawing, dragging, zooming, stats
+dialogs, and base context-menu actions. Plot-type-specific snapping and stats
+live in `plot1d.py` and `plot2d.py`.
 
 `src/qplot/windows/plot1d.py` extends the shared plot window for line plots. It
 owns 1D-specific trace handling, secondary axes, snap-to-trace behavior, and
 line-plot marquee statistics.
 
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
-owns 2D-specific colorbar controls, hover pixel display, marquee color scaling,
-and 1D cut extraction.
+owns heatmap rendering, hover pixel display, marquee color scaling, and 1D cut
+extraction.
+
+`src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
+owns color autoscaling, colorbar interaction handlers, color-map filtering, and
+the color scale dialog used by `plot2d.py`.
 
 `src/qplot/windows/_colorbar.py` contains the heatmap color-map catalog,
 filtering helpers, preview rendering, and colorbar table items used by
-`plot2d.py`.
+`_plot2d_colorbar.py`.
 
 Use the shared base only for behavior that should apply to both line plots and
 heatmaps. Keep plot-type-specific interaction details in `plot1d.py` or

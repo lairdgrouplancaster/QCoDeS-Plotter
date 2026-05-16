@@ -143,6 +143,48 @@ class RunListParentLookupTestCase(unittest.TestCase):
             if main is not None:
                 main.deleteLater()
 
+    def test_plot_options_menu_includes_preferences_and_excludes_confirmation_duplicates(self):
+        class Host(qtw.QMainWindow):
+            initMenu = plotWidget.initMenu
+            createPopupMenu = plotWidget.createPopupMenu
+            register_shortcut = plotWidget.register_shortcut
+
+            def request_close_all_plots(self):
+                pass
+
+            def request_application_quit(self):
+                pass
+
+            def refreshWindow(self, force=False):
+                pass
+
+            def show_preferences_dialog(self):
+                pass
+
+        host = Host()
+        host.vbMenu = qtw.QMenu(host)
+        host.mouseModeAction = qtw.QAction("Mouse Mode", host)
+        host.vbMenu.addAction(host.mouseModeAction)
+
+        try:
+            host.initMenu()
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in host.menuBar().actions()
+                }
+            option_texts = [
+                action.text().replace("&", "")
+                for action in menus["Options"].actions()
+                if not action.isSeparator()
+                ]
+
+            self.assertIn("Preferences...", option_texts)
+            self.assertIn("Mouse Mode", option_texts)
+            self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
+            self.assertNotIn("Confirm Before Quit", option_texts)
+        finally:
+            host.deleteLater()
+
     def test_plot_export_is_removed_from_scene_context_menu(self):
         widget = pg.GraphicsLayoutWidget()
         fake_plot = type("FakePlot", (), {"widget": widget})()
@@ -168,6 +210,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             register_shortcut = plotWidget.register_shortcut
             _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
             _context_menu_action = plotWidget._context_menu_action
+            _connect_mouse_mode_menu_to_preferences = (
+                plotWidget._connect_mouse_mode_menu_to_preferences
+                )
 
             def _init_axis_scale_dialogs(self):
                 pass
@@ -206,11 +251,45 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host.deleteLater()
             widget.deleteLater()
 
+    def test_mouse_mode_preference_updates_viewbox_mode(self):
+        class Config:
+            def __init__(self):
+                self.values = {"user_preference.mouse_mode": "pan"}
+                self.updates = []
+
+            def get(self, key):
+                return self.values[key]
+
+            def update(self, key, value):
+                self.values[key] = value
+                self.updates.append((key, value))
+
+        window = plotWidget.__new__(plotWidget)
+        window.config = Config()
+        window.vb = pg.ViewBox()
+
+        try:
+            self.assertTrue(window.change_mouse_mode("rect"))
+
+            self.assertEqual(
+                window.config.updates,
+                [("user_preference.mouse_mode", "rect")],
+                )
+            self.assertEqual(
+                window.vb.getState(copy=False)["mouseMode"],
+                pg.ViewBox.RectMode,
+                )
+        finally:
+            window.vb.deleteLater()
+
     def test_axis_scale_controls_move_from_context_menu_to_dialogs(self):
         class Host(qtw.QMainWindow):
             initContextMenu = plotWidget.initContextMenu
             _init_axis_scale_dialogs = plotWidget._init_axis_scale_dialogs
             _menu_control_widget = plotWidget._menu_control_widget
+            _connect_mouse_mode_menu_to_preferences = (
+                plotWidget._connect_mouse_mode_menu_to_preferences
+                )
             _install_axis_scale_double_click_handlers = (
                 plotWidget._install_axis_scale_double_click_handlers
                 )

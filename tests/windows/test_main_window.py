@@ -83,6 +83,72 @@ class DatabaseOpenDirectoryTestCase(unittest.TestCase):
             self.assertEqual(harness.database_open_directory(), default_dir)
 
 
+class OptionsMenuTestCase(unittest.TestCase):
+    class FakeConfig:
+        def get(self, key):
+            if key == "user_preference.theme":
+                return "light"
+            raise KeyError(key)
+
+    class Harness(qtw.QMainWindow):
+        initMenu = main_window.MainWindow.initMenu
+
+        def __init__(self):
+            super().__init__()
+            self.config = OptionsMenuTestCase.FakeConfig()
+            self.preview_size = 200
+
+        def refresh_recent_database_menu(self):
+            pass
+
+        def getfile(self):
+            pass
+
+        def open_database_location(self):
+            pass
+
+        def refreshMain(self):
+            pass
+
+        def closeAll(self):
+            pass
+
+        def change_default_file(self):
+            pass
+
+        def change_theme(self, *_args):
+            pass
+
+        def restore_default_settings(self):
+            pass
+
+        def show_preferences_dialog(self):
+            pass
+
+    def test_main_options_menu_uses_preferences_for_shared_settings(self):
+        window = self.Harness()
+
+        try:
+            window.initMenu()
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in window.menuBar().actions()
+                }
+            option_texts = [
+                action.text().replace("&", "")
+                for action in menus["Options"].actions()
+                if not action.isSeparator()
+                ]
+
+            self.assertIn("Preferences...", option_texts)
+            self.assertIn("Theme", option_texts)
+            self.assertNotIn("Preview Size", option_texts)
+            self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
+            self.assertNotIn("Confirm Before Quit", option_texts)
+        finally:
+            window.deleteLater()
+
+
 class CloseAllPlotsTestCase(unittest.TestCase):
     def test_close_all_can_be_cancelled_when_warning_enabled(self):
         old_confirmation = main_window.ask_confirmation_with_dont_ask_again
