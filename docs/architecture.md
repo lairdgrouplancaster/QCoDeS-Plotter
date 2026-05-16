@@ -69,12 +69,15 @@ owns 1D-specific trace handling, secondary axes, snap-to-trace behavior, and
 line-plot marquee statistics.
 
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
-owns heatmap rendering, hover pixel display, marquee color scaling, and 1D cut
-extraction.
+owns heatmap rendering, hover pixel display, and marquee color scaling.
 
 `src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
 owns color autoscaling, colorbar interaction handlers, color-map filtering, and
 the color scale dialog used by `plot2d.py`.
+
+`src/qplot/windows/_plot2d_sweeps.py` contains the heatmap sweep/cut mixin. It
+owns horizontal and vertical cut creation, cut-line cursor behavior, keyboard
+movement, grouped dragging, and synchronization with 1D sweep windows.
 
 `src/qplot/windows/_colorbar.py` contains the heatmap color-map catalog,
 filtering helpers, preview rendering, and colorbar table items used by
