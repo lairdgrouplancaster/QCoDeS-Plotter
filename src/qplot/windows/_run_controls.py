@@ -1,3 +1,5 @@
+import os
+
 from PyQt5 import (
     QtCore,
     QtWidgets as qtw,
@@ -218,6 +220,7 @@ class RunControlsMixin:
         title = qtw.QLabel("No database loaded")
         title.setObjectName("mainEmptyStateTitle")
         text_layout.addWidget(title)
+        self.emptyStateTitle = title
 
         detail = qtw.QLabel(
             "Drop a QCoDeS .db file onto the database field, or load one now."
@@ -225,6 +228,7 @@ class RunControlsMixin:
         detail.setObjectName("mainEmptyStateDetail")
         detail.setWordWrap(True)
         text_layout.addWidget(detail)
+        self.emptyStateDetail = detail
         layout.addLayout(text_layout, 1)
 
         load_button = qtw.QToolButton()
@@ -237,6 +241,17 @@ class RunControlsMixin:
         load_button.clicked.connect(self.getfile)
         layout.addWidget(load_button)
         self.emptyStateLoadButton = load_button
+
+        refresh_button = qtw.QToolButton()
+        refresh_button.setObjectName("databaseIconButton")
+        refresh_button.setIcon(self.style().standardIcon(qtw.QStyle.SP_BrowserReload))
+        refresh_button.setText("Refresh")
+        refresh_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        refresh_button.setToolTip("Check for new measurements")
+        refresh_button.setAccessibleName("Refresh database")
+        refresh_button.clicked.connect(self.refreshMain)
+        layout.addWidget(refresh_button)
+        self.emptyStateRefreshButton = refresh_button
 
         help_button = qtw.QToolButton()
         help_button.setObjectName("databaseIconButton")
@@ -251,7 +266,7 @@ class RunControlsMixin:
 
     def _sync_empty_state(self):
         """
-        Show the empty prompt only while the main window has no loaded runs.
+        Show the empty prompt while no runs are available.
 
         """
         frame = getattr(self, "emptyStateFrame", None)
@@ -268,7 +283,80 @@ class RunControlsMixin:
             run_count = run_list.topLevelItemCount()
 
         loading = getattr(self, "_database_load_active", False)
-        frame.setVisible(not loading and not database_path and run_count == 0)
+        has_runs = run_count > 0
+        frame.setVisible(not loading and not has_runs)
+
+        if loading or has_runs:
+            return
+
+        if database_path:
+            sync_loaded = getattr(self, "_sync_loaded_empty_state", None)
+            if callable(sync_loaded):
+                sync_loaded(database_path)
+        else:
+            sync_empty = getattr(self, "_sync_no_database_empty_state", None)
+            if callable(sync_empty):
+                sync_empty()
+
+    def _sync_no_database_empty_state(self):
+        title = getattr(self, "emptyStateTitle", None)
+        if title is not None:
+            title.setText("No database loaded")
+
+        detail = getattr(self, "emptyStateDetail", None)
+        if detail is not None:
+            detail.setText(
+                "Drop a QCoDeS .db file onto the database field, or load one now."
+                )
+
+        self._set_empty_state_button_visible("emptyStateLoadButton", True)
+        self._set_empty_state_button_visible("emptyStateRefreshButton", False)
+        self._set_empty_state_button_visible("emptyStateHelpButton", True)
+
+    def _sync_loaded_empty_state(self, database_path):
+        title = getattr(self, "emptyStateTitle", None)
+        if title is not None:
+            title.setText("Waiting for measurements")
+
+        detail = getattr(self, "emptyStateDetail", None)
+        if detail is not None:
+            detail.setText(self._loaded_empty_database_detail(database_path))
+
+        self._set_empty_state_button_visible("emptyStateLoadButton", True)
+        self._set_empty_state_button_visible("emptyStateRefreshButton", True)
+        self._set_empty_state_button_visible("emptyStateHelpButton", False)
+
+    def _set_empty_state_button_visible(self, attr, visible):
+        button = getattr(self, attr, None)
+        if button is not None:
+            button.setVisible(visible)
+
+    def _loaded_empty_database_detail(self, database_path):
+        basename = database_path
+        if database_path:
+            basename = os.path.basename(database_path) or database_path
+
+        interval = self._current_refresh_interval()
+        if interval > 0:
+            return (
+                f"{basename} is loaded. qPlot will add measurements as they "
+                f"appear, checking every {interval:g} s."
+                )
+
+        return (
+            f"{basename} is loaded. Refresh is set to manual; press Refresh "
+            "to check for measurements."
+            )
+
+    def _current_refresh_interval(self):
+        spin_box = getattr(self, "spinBox", None)
+        if spin_box is None or not hasattr(spin_box, "value"):
+            return 0.0
+
+        try:
+            return float(spin_box.value())
+        except (TypeError, ValueError):
+            return 0.0
 
     @QtCore.pyqtSlot(float)
     def monitorIntervalChanged(self, interval):
@@ -278,6 +366,7 @@ class RunControlsMixin:
         """
         self._save_refresh_interval(interval)
         self._apply_refresh_interval(interval)
+        self._sync_empty_state()
 
     def _apply_refresh_interval(self, interval):
         """

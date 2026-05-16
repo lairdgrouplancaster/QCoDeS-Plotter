@@ -7,6 +7,7 @@ from PyQt5 import QtCore
 from PyQt5 import QtWidgets as qtw
 
 from qplot.windows import main as main_window
+from qplot.windows import _database_actions as database_actions
 from qplot.datahandling import database as database_module
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
@@ -645,9 +646,13 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
     class Button:
         def __init__(self):
             self.enabled = True
+            self.visible = True
 
         def setEnabled(self, enabled):
             self.enabled = enabled
+
+        def setVisible(self, visible):
+            self.visible = visible
 
     class Frame:
         def __init__(self):
@@ -655,6 +660,16 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         def setVisible(self, visible):
             self.visible = visible
+
+    class SpinBox:
+        def __init__(self, value=1.5):
+            self._value = value
+
+        def value(self):
+            return self._value
+
+        def setValue(self, value):
+            self._value = value
 
     class Label:
         def __init__(self):
@@ -735,6 +750,26 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
         _show_database_load_panel = main_window.MainWindow._show_database_load_panel
         _sync_empty_state = main_window.MainWindow._sync_empty_state
+        _sync_no_database_empty_state = (
+            main_window.MainWindow._sync_no_database_empty_state
+            )
+        _sync_loaded_empty_state = (
+            main_window.MainWindow._sync_loaded_empty_state
+            )
+        _set_empty_state_button_visible = (
+            main_window.MainWindow._set_empty_state_button_visible
+            )
+        _loaded_empty_database_detail = (
+            main_window.MainWindow._loaded_empty_database_detail
+            )
+        _current_refresh_interval = main_window.MainWindow._current_refresh_interval
+        _loaded_empty_database_status = (
+            main_window.MainWindow._loaded_empty_database_status
+            )
+        _empty_database_refresh_status = (
+            main_window.MainWindow._empty_database_refresh_status
+            )
+        _main_refresh_interval = main_window.MainWindow._main_refresh_interval
 
         def __init__(self):
             self._database_load_generation = 2
@@ -756,6 +791,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.databaseLoadFrame = DatabaseLoadUiTestCase.Frame()
             self.databaseLoadLabel = DatabaseLoadUiTestCase.Label()
             self.emptyStateFrame = DatabaseLoadUiTestCase.Frame()
+            self.emptyStateTitle = DatabaseLoadUiTestCase.Label()
+            self.emptyStateDetail = DatabaseLoadUiTestCase.Label()
+            self.emptyStateLoadButton = DatabaseLoadUiTestCase.Button()
+            self.emptyStateRefreshButton = DatabaseLoadUiTestCase.Button()
+            self.emptyStateHelpButton = DatabaseLoadUiTestCase.Button()
+            self.spinBox = DatabaseLoadUiTestCase.SpinBox()
             self.status_messages = []
 
         def show_status(self, message, timeout=5000):
@@ -815,10 +856,20 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         harness._sync_empty_state()
         self.assertTrue(harness.emptyStateFrame.visible)
+        self.assertEqual(harness.emptyStateTitle.text, "No database loaded")
+        self.assertTrue(harness.emptyStateLoadButton.visible)
+        self.assertFalse(harness.emptyStateRefreshButton.visible)
+        self.assertTrue(harness.emptyStateHelpButton.visible)
 
         harness.fileTextbox.setText("loaded.db")
         harness._sync_empty_state()
-        self.assertFalse(harness.emptyStateFrame.visible)
+        self.assertTrue(harness.emptyStateFrame.visible)
+        self.assertEqual(harness.emptyStateTitle.text, "Waiting for measurements")
+        self.assertIn("loaded.db is loaded", harness.emptyStateDetail.text)
+        self.assertIn("checking every 1.5 s", harness.emptyStateDetail.text)
+        self.assertTrue(harness.emptyStateLoadButton.visible)
+        self.assertTrue(harness.emptyStateRefreshButton.visible)
+        self.assertFalse(harness.emptyStateHelpButton.visible)
 
         harness.fileTextbox.setText("")
         harness.RunList.addRuns({1: {"guid": "guid-1"}})
@@ -829,6 +880,77 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         harness._database_load_active = True
         harness._sync_empty_state()
         self.assertFalse(harness.emptyStateFrame.visible)
+
+    def test_loaded_empty_state_reports_manual_refresh(self):
+        harness = self.Harness()
+        harness.spinBox.setValue(0)
+
+        detail = harness._loaded_empty_database_detail("manual.db")
+        status = harness._loaded_empty_database_status("manual.db", 0.25)
+
+        self.assertIn("Refresh is set to manual", detail)
+        self.assertIn("refresh manually", status)
+        self.assertEqual(
+            harness._empty_database_refresh_status(),
+            "No measurements found yet.",
+            )
+
+
+class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
+    class RunList:
+        def __init__(self):
+            self.maxTime = 0
+            self.checked_watching = False
+
+        def checkWatching(self):
+            self.checked_watching = True
+
+        def topLevelItemCount(self):
+            return 0
+
+    class Harness:
+        refreshMain = main_window.MainWindow.refreshMain
+        _empty_database_refresh_status = (
+            main_window.MainWindow._empty_database_refresh_status
+            )
+        _main_refresh_interval = main_window.MainWindow._main_refresh_interval
+        _current_refresh_interval = main_window.MainWindow._current_refresh_interval
+
+        def __init__(self):
+            self.fileTextbox = DatabaseLoadUiTestCase.Field("empty.db")
+            self.RunList = RefreshMainEmptyDatabaseTestCase.RunList()
+            self.spinBox = DatabaseLoadUiTestCase.SpinBox(1.5)
+            self.status_messages = []
+            self.sync_count = 0
+
+        def _sync_empty_state(self):
+            self.sync_count += 1
+
+        def show_status(self, message, timeout=5000):
+            self.status_messages.append((message, timeout))
+
+        def show_error(self, title, message, details=None):
+            raise AssertionError((title, message, details))
+
+    def test_refresh_empty_database_reports_waiting_state(self):
+        old_find_new_runs = database_actions.find_new_runs
+        database_actions.find_new_runs = lambda last_time: {}
+
+        try:
+            harness = self.Harness()
+            harness.refreshMain()
+        finally:
+            database_actions.find_new_runs = old_find_new_runs
+
+        self.assertTrue(harness.RunList.checked_watching)
+        self.assertEqual(harness.sync_count, 1)
+        self.assertEqual(
+            harness.status_messages,
+            [
+                ("Checking for new runs...", 0),
+                ("No measurements found yet; still waiting for new runs.", 3000),
+                ],
+            )
 
 
 class CloudDatabasePrefetchTestCase(unittest.TestCase):

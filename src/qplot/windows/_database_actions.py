@@ -200,7 +200,11 @@ class DatabaseActionsMixin:
             return
 
         if not newRuns:
-            self.show_status("No new runs found.", 3000)
+            self._sync_empty_state()
+            if self.RunList.topLevelItemCount() == 0:
+                self.show_status(self._empty_database_refresh_status(), 3000)
+            else:
+                self.show_status("No new runs found.", 3000)
             return
 
         self.RunList.maxTime = max(
@@ -212,6 +216,7 @@ class DatabaseActionsMixin:
         )
         self.RunList.addRuns(newRuns)
         self.infoBox.preview.add_runs(newRuns)
+        self._sync_empty_state()
         count = len(newRuns)
         noun = "run" if count == 1 else "runs"
         self.show_status(f"Found {count} new {noun}.", 5000)
@@ -675,16 +680,18 @@ class DatabaseActionsMixin:
 
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)
-        self.show_status(
-            (
-                f"Loaded {self.RunList.topLevelItemCount()} runs from "
+        run_count = self.RunList.topLevelItemCount()
+        if run_count == 0:
+            status = self._loaded_empty_database_status(abspath, elapsed)
+        else:
+            status = (
+                f"Loaded {run_count} runs from "
                 f"{os.path.basename(abspath)} in {elapsed:.2f} s."
-            ),
-            5000,
-        )
+            )
+        self.show_status(status, 5000)
         log_event(
             "Loaded %s runs from %s in %.2f s",
-            self.RunList.topLevelItemCount(),
+            run_count,
             abspath,
             elapsed,
             logger_name=__name__,
@@ -705,3 +712,30 @@ class DatabaseActionsMixin:
 
         self.RunList.setCurrentItem(first_item)
         self.RunList.scrollToItem(first_item, qtw.QAbstractItemView.PositionAtTop)
+
+
+    def _loaded_empty_database_status(self, abspath, elapsed):
+        basename = os.path.basename(abspath)
+        if self._main_refresh_interval() > 0:
+            return (
+                f"Loaded empty database {basename} in {elapsed:.2f} s; "
+                "waiting for measurements."
+            )
+
+        return (
+            f"Loaded empty database {basename} in {elapsed:.2f} s; "
+            "refresh manually to check for measurements."
+        )
+
+
+    def _empty_database_refresh_status(self):
+        if self._main_refresh_interval() > 0:
+            return "No measurements found yet; still waiting for new runs."
+        return "No measurements found yet."
+
+
+    def _main_refresh_interval(self):
+        current_refresh_interval = getattr(self, "_current_refresh_interval", None)
+        if callable(current_refresh_interval):
+            return current_refresh_interval()
+        return 0.0
