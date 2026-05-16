@@ -36,8 +36,12 @@ owns 1D-specific trace handling, secondary axes, snap-to-trace behavior, and
 line-plot marquee statistics.
 
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
-owns 2D-specific colorbar controls, color map filtering, hover pixel display,
-marquee color scaling, and 1D cut extraction.
+owns 2D-specific colorbar controls, hover pixel display, marquee color scaling,
+and 1D cut extraction.
+
+`src/qplot/windows/_colorbar.py` contains the heatmap color-map catalog,
+filtering helpers, preview rendering, and colorbar table items used by
+`plot2d.py`.
 
 Use the shared base only for behavior that should apply to both line plots and
 heatmaps. Keep plot-type-specific interaction details in `plot1d.py` or
@@ -75,6 +79,10 @@ threaded refreshes.
 `src/qplot/datahandling/qcodes_cache.py` is the compatibility boundary for
 QCoDeS cache internals used by per-parameter refreshes. Prefer adding cache
 private-attribute access there instead of spreading it through GUI modules.
+QCoDeS upgrades should be checked against this module first: the rest of qPlot
+should call helpers such as `cache_data`, `cache_rundescriber`, and
+`set_parameter_complete` instead of reaching into `_data`, `_dataset`, or
+`_complete` directly.
 
 `src/qplot/tools/worker.py` defines the background loader used by plot windows.
 It loads data, reshapes it for the plot type, applies selected operations, and

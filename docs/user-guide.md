@@ -11,6 +11,10 @@ problems, see [troubleshooting.md](troubleshooting.md).
 3. The main window shows database controls at the top, the run table in the
    middle, and selected-run details at the bottom.
 
+On first launch, qPlot shows a small empty-database prompt with direct load and
+quick-start actions. It disappears once a database is loaded or a load is in
+progress.
+
 The run table gives a compact view of each run, including measurements,
 setpoints, start time, completion state, duration, and estimated size. The
 details pane shows the selected run's overview, parameters, preview images, and

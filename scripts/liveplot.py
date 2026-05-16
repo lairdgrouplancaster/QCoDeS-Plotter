@@ -1,6 +1,6 @@
 """Generate a synthetic QCoDeS database for local live-plot testing.
 
-This script creates or updates `tests/data/experiments_for_15_mins.db` using
+This script creates or updates `tests/data/qplot-demo.db` using
 QCoDeS mock instruments, then writes a large 2D measurement into it. The
 database file is ignored by Git. Run this only when you intentionally want fresh
 synthetic data for manual testing.
@@ -27,7 +27,7 @@ from qcodes.instrument_drivers.mock_instruments import (
 
 
 qc.Instrument.close_all()
-initialise_or_create_database_at(os.path.join(os.getcwd(), "tests", "data", "experiments_for_15_mins.db"))
+initialise_or_create_database_at(os.path.join(os.getcwd(), "tests", "data", "qplot-demo.db"))
 
 
 # A dummy signal generator with two parameters ch1 and ch2

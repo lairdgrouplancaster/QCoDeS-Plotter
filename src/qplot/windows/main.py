@@ -18,11 +18,14 @@ from ._widgets import (
     )
 from ._widgets.preview import PREVIEW_SIZE
 from ._shortcuts import standard_key_sequences
-from ._help import add_help_menu
+from ._help import add_help_menu, show_quick_start
 from ._window_controls import (
+    CONFIRM_CLOSE_ALL_KEY,
+    CONFIRM_QUIT_KEY,
     add_confirmation_options,
     add_restore_defaults_option,
     add_standard_window_controls,
+    ask_confirmation_with_dont_ask_again,
     close_all_warning_enabled,
     )
 from qplot.diagnostics import log_event, log_exception, log_user_error
@@ -553,6 +556,7 @@ class MainWindow(qtw.QMainWindow):
                 self.RunList.all_run_metadata()
                 )
 
+        self._init_empty_state()
         self.runInfoSplitter = qtw.QSplitter(QtCore.Qt.Vertical)
         self.runInfoSplitter.setHandleWidth(8)
         self.runInfoSplitter.setChildrenCollapsible(True)
@@ -567,7 +571,88 @@ class MainWindow(qtw.QMainWindow):
         self.runInfoSplitter.handle(1).setToolTip(
             "Drag to resize the run list and details panes"
             )
+        self.l.addWidget(self.emptyStateFrame)
         self.l.addWidget(self.runInfoSplitter, 1)
+        self._sync_empty_state()
+
+
+    def _init_empty_state(self):
+        """
+        Create the empty-database prompt shown before any runs are available.
+
+        """
+        self.emptyStateFrame = qtw.QFrame()
+        self.emptyStateFrame.setObjectName("mainEmptyState")
+        self.emptyStateFrame.setFrameShape(qtw.QFrame.NoFrame)
+        layout = qtw.QHBoxLayout(self.emptyStateFrame)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        icon = qtw.QLabel()
+        icon.setPixmap(
+            self.style().standardIcon(qtw.QStyle.SP_DialogOpenButton).pixmap(24, 24)
+            )
+        layout.addWidget(icon)
+
+        text_layout = qtw.QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(2)
+
+        title = qtw.QLabel("No database loaded")
+        title.setObjectName("mainEmptyStateTitle")
+        text_layout.addWidget(title)
+
+        detail = qtw.QLabel(
+            "Drop a QCoDeS .db file onto the database field, or load one now."
+            )
+        detail.setObjectName("mainEmptyStateDetail")
+        detail.setWordWrap(True)
+        text_layout.addWidget(detail)
+        layout.addLayout(text_layout, 1)
+
+        load_button = qtw.QToolButton()
+        load_button.setObjectName("databaseIconButton")
+        load_button.setIcon(self.style().standardIcon(qtw.QStyle.SP_DialogOpenButton))
+        load_button.setText("Load Database...")
+        load_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        load_button.setToolTip("Load a QCoDeS .db database")
+        load_button.setAccessibleName("Load database")
+        load_button.clicked.connect(self.getfile)
+        layout.addWidget(load_button)
+        self.emptyStateLoadButton = load_button
+
+        help_button = qtw.QToolButton()
+        help_button.setObjectName("databaseIconButton")
+        help_button.setIcon(self.style().standardIcon(qtw.QStyle.SP_DialogHelpButton))
+        help_button.setText("Quick Start")
+        help_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        help_button.setToolTip("Show the basic qPlot workflow")
+        help_button.setAccessibleName("Show quick start")
+        help_button.clicked.connect(lambda: show_quick_start(self))
+        layout.addWidget(help_button)
+        self.emptyStateHelpButton = help_button
+
+
+    def _sync_empty_state(self):
+        """
+        Show the empty prompt only while the main window has no loaded runs.
+
+        """
+        frame = getattr(self, "emptyStateFrame", None)
+        if frame is None:
+            return
+
+        database_path = ""
+        if hasattr(self, "fileTextbox"):
+            database_path = self.fileTextbox.text()
+
+        run_count = 0
+        run_list = getattr(self, "RunList", None)
+        if run_list is not None and hasattr(run_list, "topLevelItemCount"):
+            run_count = run_list.topLevelItemCount()
+
+        loading = getattr(self, "_database_load_active", False)
+        frame.setVisible(not loading and not database_path and run_count == 0)
 
 
     def initShortcuts(self):
@@ -611,9 +696,13 @@ class MainWindow(qtw.QMainWindow):
 
         """
         # Confirm exit
-        if self.config.get("user_preference.confirm_close"):
-            reply = qtw.QMessageBox.question(self, "Confirm Exit", "Are you sure you want to exit?",
-                                         qtw.QMessageBox.Yes | qtw.QMessageBox.No)
+        if self.config.get(CONFIRM_QUIT_KEY):
+            reply = ask_confirmation_with_dont_ask_again(
+                self,
+                "Confirm Exit",
+                "Are you sure you want to exit?",
+                CONFIRM_QUIT_KEY,
+                )
             if reply == qtw.QMessageBox.Yes:
                 event.accept()
             else:
@@ -656,11 +745,11 @@ class MainWindow(qtw.QMainWindow):
         if confirm and close_all_warning_enabled(self.config):
             count = len(plot_windows)
             noun = "window" if count == 1 else "windows"
-            reply = qtw.QMessageBox.question(
+            reply = ask_confirmation_with_dont_ask_again(
                 self,
                 "Close All Plot Windows",
                 f"Close {count} plot {noun}?",
-                qtw.QMessageBox.Yes | qtw.QMessageBox.No,
+                CONFIRM_CLOSE_ALL_KEY,
                 qtw.QMessageBox.No,
                 )
             if reply != qtw.QMessageBox.Yes:
@@ -918,6 +1007,7 @@ class MainWindow(qtw.QMainWindow):
         self.infoBox.clear()
         self.infoBox.preview.set_database_runs("", {})
         self.infoBox.scrollToTop()
+        self._sync_empty_state()
 
         if status:
             self.show_status("Database closed.", 3000)
@@ -2159,6 +2249,7 @@ class MainWindow(qtw.QMainWindow):
             self.localLastFile = self.fileTextbox.text()
 
         self.fileTextbox.setText(abspath)
+        self._sync_empty_state()
 
 
     def _set_database_load_controls_enabled(self, enabled):
@@ -2218,6 +2309,7 @@ class MainWindow(qtw.QMainWindow):
         self.infoBox.clear()
         self.infoBox.scrollToTop()
         self.infoBox.preview.set_database_runs(previous_file, previous_runs)
+        self._sync_empty_state()
 
 
     def _show_database_load_panel(self, message):
@@ -2302,6 +2394,7 @@ class MainWindow(qtw.QMainWindow):
         self._database_load_worker = None
         self._set_database_load_controls_enabled(True)
         self._hide_database_load_panel()
+        self._sync_empty_state()
 
         monitorTimer = state.get("monitorTimer", 0)
         load_started_at = state.get("load_started_at") or perf_counter()
@@ -2325,6 +2418,7 @@ class MainWindow(qtw.QMainWindow):
         self.RunList.addRuns(runs)
         self.infoBox.preview.set_database_runs(abspath, runs)
         self.select_default_run()
+        self._sync_empty_state()
 
         if monitorTimer > 0:
             self.monitor.start(int(monitorTimer * 1000))

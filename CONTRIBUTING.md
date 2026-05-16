@@ -113,6 +113,8 @@ Use this after the automated tests pass. It starts the app through the same
 installed package entry path that users exercise.
 
 Other local helper scripts are documented in [scripts/README.md](scripts/README.md).
+Demo-data and screenshot workflow notes live in [docs/demo-data.md](docs/demo-data.md).
+Release and packaging notes are documented in [docs/distribution.md](docs/distribution.md).
 
 ## Configuration Changes
 

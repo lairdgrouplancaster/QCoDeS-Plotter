@@ -21,7 +21,7 @@ repair helper before re-raising the original exception.
 Generates synthetic QCoDeS data using mock instruments. It creates or updates:
 
 ```text
-tests/data/experiments_for_15_mins.db
+tests/data/qplot-demo.db
 ```
 
 The database is ignored by Git. Run this only when you intentionally want fresh
@@ -34,3 +34,15 @@ rows to CSV files in the configured qPlot directory, usually `~/.qplot`.
 
 Use this only for local performance investigation. The generated CSV files are
 not part of the project source.
+
+## `capture_demo_screenshots.py`
+
+Generates the PNG screenshots used by `docs/demo-data.md`:
+
+```console
+python scripts/capture_demo_screenshots.py
+```
+
+The script creates a small temporary QCoDeS database under the system temp
+directory by default, starts qPlot offscreen, and writes the screenshots into
+`docs/assets`. Set `QPLOT_DEMO_WORKDIR` to choose a different working folder.

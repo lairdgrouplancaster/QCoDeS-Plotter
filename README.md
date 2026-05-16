@@ -137,5 +137,9 @@ For development setup, test commands, and contribution workflow, see
 
 For a short map of the codebase, see [docs/architecture.md](docs/architecture.md).
 
+For demo data and screenshot workflow notes, see [docs/demo-data.md](docs/demo-data.md).
+
+For release and packaging notes, see [docs/distribution.md](docs/distribution.md).
+
 Local development helper scripts are documented in
 [scripts/README.md](scripts/README.md).

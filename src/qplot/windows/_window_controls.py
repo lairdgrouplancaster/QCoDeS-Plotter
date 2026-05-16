@@ -7,6 +7,7 @@ from ._shortcuts import platform_key_sequences, standard_key_sequences
 
 CONFIRM_CLOSE_ALL_KEY = "user_preference.confirm_close_all"
 CONFIRM_QUIT_KEY = "user_preference.confirm_close"
+DO_NOT_ASK_AGAIN_LABEL = "Don't ask again"
 
 
 def set_window_shortcuts(action, shortcuts):
@@ -151,6 +152,36 @@ def close_all_warning_enabled(config):
 
     """
     return config_bool(config, CONFIRM_CLOSE_ALL_KEY, default=True)
+
+
+def ask_confirmation_with_dont_ask_again(
+        window,
+        title,
+        message,
+        config_key,
+        default_button=qtw.QMessageBox.No,
+        ):
+    """
+    Asks for confirmation and lets the user disable future prompts.
+
+    """
+    parent = window if isinstance(window, qtw.QWidget) else None
+    box = qtw.QMessageBox(
+        qtw.QMessageBox.Question,
+        title,
+        message,
+        qtw.QMessageBox.Yes | qtw.QMessageBox.No,
+        parent,
+        )
+    box.setDefaultButton(default_button)
+
+    dont_ask_again = qtw.QCheckBox(DO_NOT_ASK_AGAIN_LABEL)
+    box.setCheckBox(dont_ask_again)
+
+    reply = box.exec_()
+    if reply == qtw.QMessageBox.Yes and dont_ask_again.isChecked():
+        window.config.update(config_key, False)
+    return reply
 
 
 def config_bool(config, key, default):

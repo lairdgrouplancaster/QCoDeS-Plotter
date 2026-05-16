@@ -9,8 +9,12 @@ from PyQt5 import QtWidgets as qtw
 from qplot.windows import main as main_window
 from qplot.datahandling import database as database_module
 from qplot.windows._window_controls import (
+    CONFIRM_CLOSE_ALL_KEY,
+    CONFIRM_QUIT_KEY,
+    DO_NOT_ASK_AGAIN_LABEL,
     add_confirmation_options,
     add_restore_defaults_option,
+    ask_confirmation_with_dont_ask_again,
     )
 
 
@@ -79,12 +83,13 @@ class DatabaseOpenDirectoryTestCase(unittest.TestCase):
 
 class CloseAllPlotsTestCase(unittest.TestCase):
     def test_close_all_can_be_cancelled_when_warning_enabled(self):
-        old_question = qtw.QMessageBox.question
+        old_confirmation = main_window.ask_confirmation_with_dont_ask_again
+        confirmation_keys = []
         closed = []
 
         class FakeConfig:
             def get(self, key):
-                if key == "user_preference.confirm_close_all":
+                if key == CONFIRM_CLOSE_ALL_KEY:
                     return True
                 raise KeyError(key)
 
@@ -105,13 +110,18 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.No
+            def fake_confirmation(window, title, message, config_key, *args):
+                confirmation_keys.append(config_key)
+                return qtw.QMessageBox.No
+
+            main_window.ask_confirmation_with_dont_ask_again = fake_confirmation
             harness = Harness()
             harness.closeAll()
         finally:
-            qtw.QMessageBox.question = old_question
+            main_window.ask_confirmation_with_dont_ask_again = old_confirmation
 
         self.assertEqual(closed, [])
+        self.assertEqual(confirmation_keys, [CONFIRM_CLOSE_ALL_KEY])
         self.assertEqual(harness.status_messages[-1][0], "Close all plot windows cancelled.")
 
     def test_close_all_without_warning_closes_each_window(self):
@@ -119,7 +129,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         class FakeConfig:
             def get(self, key):
-                if key == "user_preference.confirm_close_all":
+                if key == CONFIRM_CLOSE_ALL_KEY:
                     return False
                 raise KeyError(key)
 
@@ -144,6 +154,156 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         self.assertEqual(closed, harness.windows)
         self.assertEqual(harness.status_messages[-1][0], "Closing plot windows...")
+
+    def test_confirmation_dialog_can_disable_future_warning_after_confirm(self):
+        old_exec = qtw.QMessageBox.exec_
+        updates = []
+        labels = []
+
+        class FakeConfig:
+            def update(self, key, value):
+                updates.append((key, value))
+
+        window = qtw.QMainWindow()
+        window.config = FakeConfig()
+
+        def fake_exec(box):
+            labels.append(box.checkBox().text())
+            box.checkBox().setChecked(True)
+            return qtw.QMessageBox.Yes
+
+        try:
+            qtw.QMessageBox.exec_ = fake_exec
+            reply = ask_confirmation_with_dont_ask_again(
+                window,
+                "Close All Plot Windows",
+                "Close 2 plot windows?",
+                CONFIRM_CLOSE_ALL_KEY,
+                )
+        finally:
+            qtw.QMessageBox.exec_ = old_exec
+            window.deleteLater()
+
+        self.assertEqual(reply, qtw.QMessageBox.Yes)
+        self.assertEqual(labels, [DO_NOT_ASK_AGAIN_LABEL])
+        self.assertEqual(updates, [(CONFIRM_CLOSE_ALL_KEY, False)])
+
+    def test_confirmation_dialog_cancel_does_not_disable_future_warning(self):
+        old_exec = qtw.QMessageBox.exec_
+        updates = []
+
+        class FakeConfig:
+            def update(self, key, value):
+                updates.append((key, value))
+
+        window = qtw.QMainWindow()
+        window.config = FakeConfig()
+
+        def fake_exec(box):
+            box.checkBox().setChecked(True)
+            return qtw.QMessageBox.No
+
+        try:
+            qtw.QMessageBox.exec_ = fake_exec
+            reply = ask_confirmation_with_dont_ask_again(
+                window,
+                "Confirm Exit",
+                "Are you sure you want to exit?",
+                CONFIRM_QUIT_KEY,
+                )
+        finally:
+            qtw.QMessageBox.exec_ = old_exec
+            window.deleteLater()
+
+        self.assertEqual(reply, qtw.QMessageBox.No)
+        self.assertEqual(updates, [])
+
+    def test_close_event_can_disable_future_quit_warning_after_confirm(self):
+        old_confirmation = main_window.ask_confirmation_with_dont_ask_again
+        old_close_all_windows = qtw.QApplication.closeAllWindows
+        confirmations = []
+        closed_all_windows = []
+        updates = []
+
+        class FakeConfig:
+            def __init__(self):
+                self.values = {CONFIRM_QUIT_KEY: True}
+
+            def get(self, key):
+                return self.values[key]
+
+            def update(self, key, value):
+                updates.append((key, value))
+                self.values[key] = value
+
+        class Timer:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        class Worker:
+            def __init__(self):
+                self.cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        class Event:
+            def __init__(self):
+                self.accepted = False
+                self.ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        class Harness:
+            closeEvent = main_window.MainWindow.closeEvent
+
+            def __init__(self):
+                self.config = FakeConfig()
+                self.startupDatabaseTimer = Timer()
+                self._database_load_worker = Worker()
+                self._database_load_generation = 0
+                self._database_load_active = True
+                self._database_load_state = {"loading": True}
+                self.monitor = Timer()
+
+        def fake_confirmation(window, title, message, config_key, *args):
+            confirmations.append((title, message, config_key))
+            window.config.update(config_key, False)
+            return qtw.QMessageBox.Yes
+
+        try:
+            main_window.ask_confirmation_with_dont_ask_again = fake_confirmation
+            qtw.QApplication.closeAllWindows = lambda: closed_all_windows.append(True)
+            harness = Harness()
+            worker = harness._database_load_worker
+            event = Event()
+
+            harness.closeEvent(event)
+        finally:
+            main_window.ask_confirmation_with_dont_ask_again = old_confirmation
+            qtw.QApplication.closeAllWindows = old_close_all_windows
+
+        self.assertTrue(event.accepted)
+        self.assertFalse(event.ignored)
+        self.assertEqual(
+            confirmations,
+            [("Confirm Exit", "Are you sure you want to exit?", CONFIRM_QUIT_KEY)],
+            )
+        self.assertEqual(updates, [(CONFIRM_QUIT_KEY, False)])
+        self.assertTrue(harness.startupDatabaseTimer.stopped)
+        self.assertTrue(worker.cancelled)
+        self.assertFalse(harness._database_load_active)
+        self.assertIsNone(harness._database_load_state)
+        self.assertIsNone(harness._database_load_worker)
+        self.assertTrue(harness.monitor.stopped)
+        self.assertEqual(closed_all_windows, [True])
 
     def test_confirmation_options_use_shared_labels_and_config_keys(self):
         updates = []
@@ -332,6 +492,16 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             def scrollToTop(self):
                 self.scrolled = True
 
+            def topLevelItemCount(self):
+                return 0
+
+        class EmptyState:
+            def __init__(self):
+                self.visible = None
+
+            def setVisible(self, visible):
+                self.visible = visible
+
         class Preview:
             def __init__(self):
                 self.database_runs = None
@@ -353,6 +523,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         class Harness:
             close_database = main_window.MainWindow.close_database
+            _sync_empty_state = main_window.MainWindow._sync_empty_state
 
             def __init__(self):
                 self.monitor = Timer()
@@ -365,6 +536,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.dataset_holder = {"guid": {"del_timer": Timer()}}
                 self.RunList = RunList()
                 self.infoBox = InfoBox()
+                self.emptyStateFrame = EmptyState()
 
             def show_status(self, message, timeout=5000):
                 raise AssertionError("Status should not be shown when disabled")
@@ -389,6 +561,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertEqual(harness.RunList.maxTime, 0)
         self.assertTrue(harness.infoBox.cleared)
         self.assertEqual(harness.infoBox.preview.database_runs, ("", {}))
+        self.assertTrue(harness.emptyStateFrame.visible)
 
 
 
@@ -485,6 +658,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         def scrollToTop(self):
             self.scrolled = True
 
+        def topLevelItemCount(self):
+            return len(self.runs)
+
     class Preview:
         def __init__(self):
             self.database_runs = None
@@ -522,6 +698,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             main_window.MainWindow._set_database_load_controls_enabled
             )
         _show_database_load_panel = main_window.MainWindow._show_database_load_panel
+        _sync_empty_state = main_window.MainWindow._sync_empty_state
 
         def __init__(self):
             self._database_load_generation = 2
@@ -542,6 +719,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.openDatabaseFolderButton = DatabaseLoadUiTestCase.Button()
             self.databaseLoadFrame = DatabaseLoadUiTestCase.Frame()
             self.databaseLoadLabel = DatabaseLoadUiTestCase.Label()
+            self.emptyStateFrame = DatabaseLoadUiTestCase.Frame()
             self.status_messages = []
 
         def show_status(self, message, timeout=5000):
@@ -593,7 +771,28 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         self.assertEqual(harness.databaseLoadLabel.text, "")
         self.assertTrue(harness.loadDatabaseButton.enabled)
         self.assertTrue(harness.refreshDatabaseButton.enabled)
+        self.assertFalse(harness.emptyStateFrame.visible)
         self.assertEqual(harness.status_messages[-1], ("Database load cancelled.", 3000))
+
+    def test_empty_state_is_visible_only_without_database_runs_or_loading(self):
+        harness = self.Harness()
+
+        harness._sync_empty_state()
+        self.assertTrue(harness.emptyStateFrame.visible)
+
+        harness.fileTextbox.setText("loaded.db")
+        harness._sync_empty_state()
+        self.assertFalse(harness.emptyStateFrame.visible)
+
+        harness.fileTextbox.setText("")
+        harness.RunList.addRuns({1: {"guid": "guid-1"}})
+        harness._sync_empty_state()
+        self.assertFalse(harness.emptyStateFrame.visible)
+
+        harness.RunList.clear()
+        harness._database_load_active = True
+        harness._sync_empty_state()
+        self.assertFalse(harness.emptyStateFrame.visible)
 
 
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
