@@ -16,7 +16,6 @@ classifiers = [
     "Environment :: MacOS X",
     "Environment :: Win32 (MS Windows)",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
