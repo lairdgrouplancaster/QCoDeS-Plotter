@@ -34,9 +34,19 @@ actions. It handles:
 * adding compatible preview traces to existing 1D plots
 * tracking datasets currently used by plot windows
 
+`src/qplot/windows/_run_controls.py` contains the run-selection and refresh
+controls owned by the main window. It handles:
+
+* the run ID and measurement entry widgets
+* refresh interval controls and persistence
+* run-list and selected-run detail widget creation
+* the empty-database prompt
+* run-action keyboard shortcuts
+
 When adding a new top-level command, menu action, or workflow that coordinates
 multiple windows, start in `main.py`; put database-specific behavior in
-`_database_actions.py` and plot-opening/export behavior in `_plot_actions.py`.
+`_database_actions.py`, plot-opening/export behavior in `_plot_actions.py`, and
+run-selection or refresh-control behavior in `_run_controls.py`.
 
 ## Plot Windows
 
