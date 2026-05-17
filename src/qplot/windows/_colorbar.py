@@ -1,9 +1,7 @@
-from PyQt6 import QtCore, QtGui
-from PyQt6 import QtWidgets as qtw
-
 import numpy as np
 import pyqtgraph as pg
-
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 _PREFERRED_COLORBAR_COLORMAPS = (
     "viridis",

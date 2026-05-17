@@ -50,7 +50,14 @@ def run_is_complete(metadata):
     return bool(metadata.get("completed_timestamp") or metadata.get("is_completed"))
 
 
+def run_was_interrupted(metadata):
+    exception = metadata.get("measurement_exception")
+    return bool(exception and "KeyboardInterrupt" in str(exception))
+
+
 def format_run_status(metadata):
+    if run_was_interrupted(metadata):
+        return f"Interrupted ({format_interrupted_progress_percent(metadata)})"
     if run_is_complete(metadata):
         return "Complete"
     return f"Incomplete ({format_progress_percent(metadata)})"
@@ -77,17 +84,47 @@ def format_progress_percent(metadata):
 def progress_percent_value(metadata):
     expected = metadata.get("expected_results")
     count = metadata.get("result_count")
+    return _progress_percent_value(metadata, count, expected)
+
+
+def interrupted_progress_percent_value(metadata):
+    expected = metadata.get("setpoint_count") or metadata.get("expected_results")
+    count = metadata.get("read_setpoint_count")
+    if count is None:
+        count = metadata.get("result_count")
+    return _progress_percent_value(metadata, count, expected, cap_completed=False)
+
+
+def _progress_percent_value(metadata, count, expected, cap_completed=True):
     if not expected or count is None:
         return None
 
     try:
-        maximum = 100 if run_is_complete(metadata) else 99.9
+        maximum = 100 if cap_completed and run_is_complete(metadata) else 99.9
         return max(0, min(maximum, (float(count) / float(expected)) * 100))
     except (TypeError, ValueError, ZeroDivisionError):
         return None
 
 
+def format_interrupted_progress_percent(metadata):
+    percent = interrupted_progress_percent_value(metadata)
+    if percent is None:
+        return "unknown"
+    return f"{percent:.2f}%"
+
+
+def complete_cell_sort_value(metadata):
+    if run_was_interrupted(metadata):
+        return interrupted_progress_percent_value(metadata)
+    if run_is_complete(metadata):
+        return 100
+    return progress_percent_value(metadata)
+
+
 def format_complete_cell(metadata):
+    if run_was_interrupted(metadata):
+        return f"Interrupted ({format_interrupted_progress_percent(metadata)})"
+
     if run_is_complete(metadata):
         return "✓"
 

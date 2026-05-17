@@ -1,7 +1,7 @@
+import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6.QtGui import QColor
 
-import pyqtgraph as pg
 
 class subplot1d(pg.PlotDataItem):
     """

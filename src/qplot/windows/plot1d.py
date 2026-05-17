@@ -1,13 +1,11 @@
-from ._plotWin import plotWidget
-from ._plot1d_snap import Plot1DSnapMixin
-from ._plot1d_traces import Plot1DTraceMixin
-
-
+import numpy as np
 from PyQt6 import (
     QtCore,
-    )
+)
 
-import numpy as np
+from ._plot1d_snap import Plot1DSnapMixin
+from ._plot1d_traces import Plot1DTraceMixin
+from ._plotWin import plotWidget
 
 
 class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):

@@ -5,14 +5,14 @@ and single parameter loading. See:
     qcodes.dataset.sqlite.queries
 for the original functions of similar names as well as typing.
 """
+from typing import TYPE_CHECKING
+
+import numpy.typing as npt
 from qcodes.dataset.data_set_cache import _merge_data
 from qcodes.dataset.sqlite.queries import (
     completed,
     get_parameter_data_for_one_paramtree,
-    )
-from typing import TYPE_CHECKING
-
-import numpy.typing as npt
+)
 
 from qplot.datahandling.qcodes_cache import (
     cache_data,
@@ -24,8 +24,7 @@ from qplot.datahandling.qcodes_cache import (
     prepare_cache_if_empty,
     set_cache_dataset_completed,
     set_parameter_complete,
-    )
-
+)
 
 if TYPE_CHECKING:
     import qcodes

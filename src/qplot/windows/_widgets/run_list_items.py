@@ -4,7 +4,6 @@ from PyQt6 import QtWidgets as qtw
 from ._run_formatting import run_tooltip_text
 from .preview import DraggablePreviewImageLabel
 
-
 MEASUREMENT_PREVIEW_SIZE = 22
 MEASUREMENT_PREVIEW_SPACING = 3
 

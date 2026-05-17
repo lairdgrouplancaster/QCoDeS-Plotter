@@ -3,13 +3,13 @@ from pathlib import Path
 
 from PyQt6 import QtWidgets as qtw
 
+from qplot._version import package_version
 from qplot.diagnostics import (
     configure_logging,
     install_excepthook,
     log_event,
     log_exception,
-    )
-from qplot._version import package_version
+)
 from qplot.windows import MainWindow
 
 

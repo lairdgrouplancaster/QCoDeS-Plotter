@@ -1,30 +1,21 @@
+from datetime import datetime
+from os.path import isfile
+
+import numpy as np
 from PyQt6 import (
-    QtWidgets as qtw,
     QtCore,
     QtGui,
-    )
+)
+from PyQt6 import (
+    QtWidgets as qtw,
+)
+from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling import (
-    get_runs_via_sql,
     get_run_status,
-    )
-from .preview import (
-    COLLAPSE_MINIMUM_RATIO,
-    PreviewTab,
-    )
-from .details_tables import (
-    CopyableTableWidget,
-    WrappedValueDelegate,  # noqa: F401 - re-exported for compatibility
-    format_value,
-    infoTree,
-    snapshot_parameters,
-    )
-from .run_list_items import (
-    EqualsAlignedDelegate,
-    MEASUREMENT_PREVIEW_SIZE,
-    RunPreviewCell,
-    SortableTreeWidgetItem,
-    )
+    get_runs_via_sql,
+)
+
 from ._run_formatting import (  # noqa: F401
     format_complete_cell,
     format_duration_dhms,
@@ -44,15 +35,24 @@ from ._run_formatting import (  # noqa: F401
     run_tooltip_plain_text,
     run_tooltip_text,
     time_taken_seconds,
-    )
-
-from qcodes.dataset.sqlite.database import get_DB_location
-
-from os.path import isfile
-
-import numpy as np
-
-from datetime import datetime
+)
+from .details_tables import (
+    CopyableTableWidget,
+    WrappedValueDelegate,  # noqa: F401 - re-exported for compatibility
+    format_value,
+    infoTree,
+    snapshot_parameters,
+)
+from .preview import (
+    COLLAPSE_MINIMUM_RATIO,
+    PreviewTab,
+)
+from .run_list_items import (
+    MEASUREMENT_PREVIEW_SIZE,
+    EqualsAlignedDelegate,
+    RunPreviewCell,
+    SortableTreeWidgetItem,
+)
 
 
 class RunList(qtw.QTreeWidget):

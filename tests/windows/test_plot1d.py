@@ -1,17 +1,16 @@
 import unittest
 
 import numpy as np
-from PyQt6 import QtCore
-from PyQt6 import QtGui
-from PyQt6 import QtWidgets as qtw
 import pyqtgraph as pg
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _plotWin as plotwin_module
-from qplot.windows.plot1d import plot1d
-from qplot.windows._subplots import custom_viewbox
-from qplot.windows._plotWin import plotWidget
 from qplot.windows._plot1d_traces import Plot1DTraceMixin
+from qplot.windows._plotWin import plotWidget
+from qplot.windows._subplots import custom_viewbox
 from qplot.windows._widgets import QDock_context, picker_1d
+from qplot.windows.plot1d import plot1d
 
 
 class SnapToTraceTestCase(unittest.TestCase):

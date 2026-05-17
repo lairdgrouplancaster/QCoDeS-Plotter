@@ -209,6 +209,7 @@ Use the project virtual environment and run checks through Python:
 
 ```console
 python -m ruff check .
+python -m mypy
 python -m pytest
 ```
 

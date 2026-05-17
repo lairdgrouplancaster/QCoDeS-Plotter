@@ -1,5 +1,5 @@
-from PyQt6 import QtGui, QtWidgets as qtw
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from ._subplots.subplot2d import sweeper
 

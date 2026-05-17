@@ -77,19 +77,28 @@ Run the lightweight static check before committing:
 python -m ruff check .
 ```
 
+Run the scoped type check:
+
+```console
+python -m mypy
+```
+
 Run the automated test suite:
 
 ```console
 python -m pytest
 ```
 
+Pytest prints branch coverage for the `qplot` package and writes `coverage.xml`
+for CI or editor integrations.
+
 The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `tests/conftest.py`; do not add per-test `QT_QPA_PLATFORM` setup or one-off
 `QApplication` creation unless a test has a specific reason to override the
 shared setup.
 
-GitHub Actions runs the same Ruff and pytest checks on Windows 2025 and macOS
-with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. The
+GitHub Actions runs the same Ruff, mypy, and pytest checks on Windows 2025 and
+macOS with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. The
 workflow lives in `.github/workflows/ci.yml`.
 
 ## Generated Files
@@ -130,12 +139,13 @@ the configuration reference in the same change.
 Before committing:
 
 1. Run `python -m ruff check .`.
-2. Run `python -m pytest`.
-3. Run `python scripts/manual_run.py` for application or GUI changes.
-4. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or
+2. Run `python -m mypy`.
+3. Run `python -m pytest`.
+4. Run `python scripts/manual_run.py` for application or GUI changes.
+5. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or
    `docs/configuration.md` when the setup, workflow, module boundaries, or
    config surface change.
-5. Keep unrelated refactors out of feature or bug-fix commits.
+6. Keep unrelated refactors out of feature or bug-fix commits.
 
 ## Project Map
 

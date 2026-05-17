@@ -1,15 +1,12 @@
-from PyQt6 import QtGui, QtWidgets as qtw
-from PyQt6 import QtCore
-
-import pyqtgraph as pg
-
 import numpy as np
+import pyqtgraph as pg
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from . import _colorbar
 from ._plot2d_colorbar import Plot2DColorbarMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plotWin import plotWidget
-
 
 _COLORBAR_COLORMAPS = _colorbar._COLORBAR_COLORMAPS
 

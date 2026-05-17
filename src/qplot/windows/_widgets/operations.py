@@ -1,10 +1,13 @@
 from PyQt6 import (
-    QtWidgets as qtw,
-    QtGui,
     QtCore,
-    )
+    QtGui,
+)
+from PyQt6 import (
+    QtWidgets as qtw,
+)
 
 from qplot.tools.operation_registry import operation_specs_for
+
 from .dropbox import expandingComboBox
 
 

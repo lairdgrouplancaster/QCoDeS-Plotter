@@ -2,13 +2,13 @@ import json
 import sqlite3
 
 import numpy as np
-from PyQt6 import QtCore, QtGui, QtWidgets as qtw
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import log_exception
 from qplot.tools.general import data2matrix
 
 from .._dragdrop import make_run_preview_mime
-
 
 PREVIEW_SIZE = 200
 PREVIEW_BACKGROUND_COLOR = "#f4f7fb"

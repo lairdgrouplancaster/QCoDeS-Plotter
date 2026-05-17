@@ -3,7 +3,6 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import default_log_file
 
-
 _OPEN_HELP_DIALOGS = []
 
 

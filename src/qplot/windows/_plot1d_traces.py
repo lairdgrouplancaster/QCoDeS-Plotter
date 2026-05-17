@@ -1,10 +1,9 @@
-from PyQt6 import QtWidgets as qtw
-from PyQt6 import QtCore
-
 import pyqtgraph as pg
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
-from ._widgets import picker_1d
 from ._subplots import subplot1d
+from ._widgets import picker_1d
 
 
 class Plot1DTraceMixin:

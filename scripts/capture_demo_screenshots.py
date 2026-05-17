@@ -9,7 +9,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = REPO_ROOT / "docs" / "assets"
 DEFAULT_WORK_DIR = Path(tempfile.gettempdir()) / "qplot-demo"

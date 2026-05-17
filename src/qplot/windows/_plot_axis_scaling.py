@@ -1,9 +1,8 @@
 from math import isclose, isfinite, log10
 
+import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
-
-import pyqtgraph as pg
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
 
@@ -185,8 +184,8 @@ class PlotAxisScalingMixin:
 
         try:
             target_range = state["targetRange"][axis_number]
-            ui.minText.setText("%0.5g" % target_range[0])
-            ui.maxText.setText("%0.5g" % target_range[1])
+            ui.minText.setText(f"{target_range[0]:.5g}")
+            ui.maxText.setText(f"{target_range[1]:.5g}")
 
             auto_range = state["autoRange"][axis_number]
             ui.autoRadio.setChecked(auto_range is not False)

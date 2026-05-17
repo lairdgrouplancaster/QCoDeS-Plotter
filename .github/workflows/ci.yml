@@ -39,6 +39,9 @@ jobs:
       - name: Run Ruff
         run: python -m ruff check .
 
+      - name: Run mypy
+        run: python -m mypy
+
       - name: Run tests
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib

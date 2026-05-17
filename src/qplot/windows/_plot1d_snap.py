@@ -1,12 +1,10 @@
-from PyQt6 import QtGui, QtWidgets as qtw
-from PyQt6 import QtCore
-from PyQt6.QtGui import QKeySequence
-
 import numpy as np
 import pyqtgraph as pg
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
+from PyQt6.QtGui import QKeySequence
 
 from ._shortcuts import platform_key_sequences
-
 
 SNAP_TO_TRACE_SHORTCUTS = platform_key_sequences(
     mac=["Ctrl+Alt+S", "Meta+Alt+S"],

@@ -5,15 +5,15 @@ The functions live in ``plot_tools``; this module records which operations are
 available for each plot surface and what kind of user input they need.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from qplot.tools.plot_tools import (
     differentiate,
     fill_heatmap,
     pass_filter,
     subtract_mean,
-    )
+)
 
 
 @dataclass(frozen=True)

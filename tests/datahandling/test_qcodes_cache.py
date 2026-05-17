@@ -1,3 +1,4 @@
+from qplot.datahandling import LoadFromDB as load_from_db
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
     cache_dataset_completed,
@@ -13,7 +14,6 @@ from qplot.datahandling.qcodes_cache import (
     set_parameter_complete,
     update_cache_parameter_data,
 )
-from qplot.datahandling import LoadFromDB as load_from_db
 
 
 class Dataset:

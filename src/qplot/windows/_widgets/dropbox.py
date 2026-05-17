@@ -1,6 +1,8 @@
-from PyQt6 import QtCore, QtWidgets as qtw
-from PyQt6.QtGui import QColor
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
+
 
 class picker_1d(qtw.QWidget):
     """

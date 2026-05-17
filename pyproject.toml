@@ -35,7 +35,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "mypy>=1.14",
     "pytest>=8.0",
+    "pytest-cov>=6.0",
     "ruff>=0.8",
 ]
 
@@ -59,9 +61,38 @@ where = ["src"]
 "qplot" = ["**/*.json"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml"
 pythonpath = ["src"]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+branch = true
+source = ["qplot"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+show_missing = true
+skip_covered = true
+
 [tool.ruff.lint]
-select = ["F", "B"]
+select = ["F", "B", "I", "UP"]
+
+[tool.mypy]
+check_untyped_defs = true
+files = [
+    "src/qplot/__init__.py",
+    "src/qplot/_version.py",
+    "src/qplot/diagnostics.py",
+    "src/qplot/tools/general.py",
+    "src/qplot/tools/operation_registry.py",
+    "src/qplot/tools/plot_tools.py",
+    "src/qplot/windows/_widgets/_run_formatting.py",
+]
+ignore_missing_imports = true
+no_implicit_optional = true
+python_version = "3.11"
+warn_unused_ignores = true

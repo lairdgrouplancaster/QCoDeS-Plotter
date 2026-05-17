@@ -1,62 +1,60 @@
-from typing import TYPE_CHECKING
-
 from math import log10
 from os import path
 from time import perf_counter
-
-from PyQt6 import QtGui, QtWidgets as qtw
-from PyQt6 import QtCore
-from PyQt6.QtGui import QKeySequence
+from typing import TYPE_CHECKING
 
 import pyqtgraph as pg
-
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
+from PyQt6.QtGui import QKeySequence
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.tools import (
-    unpack_param,
-    loader,
-    )
 from qplot.datahandling import load_param_data_from_db_prep
 from qplot.datahandling.qcodes_cache import (
     cache_has_no_written_data,
     set_parameter_complete,
     update_cache_parameter_data,
-    )
-    
-from ._subplots import custom_viewbox
-from ._widgets import (
-    expandingComboBox,
-    QDock_context,
-    operations_widget,
-    )
+)
+from qplot.diagnostics import log_exception
+from qplot.tools import (
+    loader,
+    unpack_param,
+)
+
 from . import _plot_axis_scaling
-from ._plot_axis_scaling import (
-    PlotAxisScalingMixin,
-    _PowerScaledAxisItem,
-    )
-from ._plot_feedback import PlotWindowFeedbackMixin
-from ._plot_marquee import PlotMarqueeMixin
-from ._shortcuts import standard_key_sequences
-from ._help import add_help_menu
 from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
-    )
+)
+from ._help import add_help_menu
+from ._plot_axis_scaling import (
+    PlotAxisScalingMixin,
+    _PowerScaledAxisItem,
+)
+from ._plot_feedback import PlotWindowFeedbackMixin
+from ._plot_marquee import PlotMarqueeMixin
+from ._plot_state import PlotStateOverlay
 from ._preferences import (
     MOUSE_MODE_KEY,
     PreferencesDialog,
     create_preferences_action,
-    )
-from ._plot_state import PlotStateOverlay
+)
+from ._shortcuts import standard_key_sequences
+from ._subplots import custom_viewbox
+from ._widgets import (
+    QDock_context,
+    expandingComboBox,
+    operations_widget,
+)
 from ._window_controls import (
     add_standard_window_controls,
     main_window_for,
-    )
-from qplot.diagnostics import log_exception
+)
 
 if TYPE_CHECKING:
-    import qplot
     import qcodes
+
+    import qplot
 
 
 _axis_scale_power_text = _plot_axis_scaling._axis_scale_power_text
@@ -204,7 +202,7 @@ class plotWidget(
         
         #start refresh cycle if live
         if self.ds.running: 
-            self.monitor.start((int(self.spinBox.value() * 1000)))
+            self.monitor.start(int(self.spinBox.value() * 1000))
 
 
     def _install_preview_drop_target(self):

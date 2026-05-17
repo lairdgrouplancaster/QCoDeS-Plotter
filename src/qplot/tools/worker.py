@@ -1,11 +1,7 @@
 from typing import TYPE_CHECKING
 
-from PyQt6 import QtCore
-
 import numpy as np
-
-from . import data2matrix
-
+from PyQt6 import QtCore
 from qcodes.dataset.sqlite.database import connect
 
 from qplot.datahandling import load_param_data_from_db
@@ -17,9 +13,10 @@ from qplot.datahandling.qcodes_cache import (
     cache_rundescriber,
     cache_table_name,
     cache_write_status,
-    )
+)
 from qplot.diagnostics import log_exception
 
+from . import data2matrix
 
 if TYPE_CHECKING:
     import qcodes

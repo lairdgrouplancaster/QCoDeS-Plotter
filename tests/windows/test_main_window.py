@@ -6,9 +6,10 @@ from pathlib import Path
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.windows import main as main_window
-from qplot.windows import _database_actions as database_actions
 from qplot.datahandling import database as database_module
+from qplot.windows import _database_actions as database_actions
+from qplot.windows import main as main_window
+from qplot.windows._run_controls import AUTO_PLOT_KEY
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -16,8 +17,7 @@ from qplot.windows._window_controls import (
     add_confirmation_options,
     add_restore_defaults_option,
     ask_confirmation_with_dont_ask_again,
-    )
-from qplot.windows._run_controls import AUTO_PLOT_KEY
+)
 
 
 class DatabaseOpenDirectoryTestCase(unittest.TestCase):

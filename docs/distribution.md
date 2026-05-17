@@ -26,10 +26,11 @@ Before creating a tagged release:
 
 1. Update the version in `pyproject.toml` and `src/qplot/_version.py`.
 2. Run `python -m ruff check .`.
-3. Run `python -m pytest`.
-4. Run the manual GUI check from `CONTRIBUTING.md`.
-5. Confirm README install and compatibility notes still match the release.
-6. Create a GitHub release from the tag and include user-facing changes.
+3. Run `python -m mypy`.
+4. Run `python -m pytest`.
+5. Run the manual GUI check from `CONTRIBUTING.md`.
+6. Confirm README install and compatibility notes still match the release.
+7. Create a GitHub release from the tag and include user-facing changes.
 
 ## Future Options
 

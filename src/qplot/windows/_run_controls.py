@@ -3,18 +3,19 @@ import os
 from PyQt6 import (
     QtCore,
     QtGui,
+)
+from PyQt6 import (
     QtWidgets as qtw,
-    )
+)
 from PyQt6.QtGui import QIntValidator
 
 from ._help import show_quick_start
 from ._widgets import (
     RunList,
     moreInfo,
-    )
-from ._widgets.preview import PREVIEW_SIZE
+)
 from ._widgets._run_formatting import run_is_complete
-
+from ._widgets.preview import PREVIEW_SIZE
 
 AUTO_PLOT_KEY = "user_preference.auto_plot"
 

@@ -3,7 +3,6 @@ from PyQt6 import QtWidgets as qtw
 
 from .._shortcuts import standard_key_sequences
 
-
 COPY_SELECTION_SHORTCUTS = standard_key_sequences(
     QtGui.QKeySequence.StandardKey.Copy,
     ["Ctrl+C"],

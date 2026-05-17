@@ -2,7 +2,6 @@ import json
 
 from PyQt6 import QtCore
 
-
 RUN_PREVIEW_MIME = "application/x-qplot-run-preview"
 
 

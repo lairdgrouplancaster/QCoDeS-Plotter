@@ -4,7 +4,6 @@ from PyQt6.QtGui import QKeySequence
 
 from ._shortcuts import platform_key_sequences, standard_key_sequences
 
-
 CONFIRM_CLOSE_ALL_KEY = "user_preference.confirm_close_all"
 CONFIRM_QUIT_KEY = "user_preference.confirm_close"
 DO_NOT_ASK_AGAIN_LABEL = "Don't ask again"

@@ -1,9 +1,11 @@
-from .config import config
-from qplot._version import package_version
+import sys
 
 from jsonschema import ValidationError
 
-import sys
+from qplot._version import package_version
+
+from .config import config
+
 
 class sysHandle:
     """

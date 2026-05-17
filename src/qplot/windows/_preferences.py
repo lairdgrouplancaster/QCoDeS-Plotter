@@ -1,17 +1,18 @@
+import os
+from copy import deepcopy
+
 from PyQt6 import (
     QtCore,
     QtGui,
+)
+from PyQt6 import (
     QtWidgets as qtw,
-    )
+)
 
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
-    )
-
-from copy import deepcopy
-import os
-
+)
 
 THEME_OPTIONS = (
     ("Light", "light"),

@@ -1,15 +1,14 @@
 import unittest
 
 import numpy as np
-from PyQt6 import QtCore
-from PyQt6 import QtGui
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
     DraggablePreviewImageLabel,
     render_sparkline_preview,
-    )
+)
 
 
 class RunListTooltipTestCase(unittest.TestCase):

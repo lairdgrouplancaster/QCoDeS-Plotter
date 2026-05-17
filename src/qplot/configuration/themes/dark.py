@@ -1,5 +1,6 @@
 import pyqtgraph as pg
 
+
 class dark:
     main = """
         QMainWindow {

@@ -1,7 +1,5 @@
-from PyQt6 import (
-    QtWidgets as qtw,
-    QtCore
-    )
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
 
 class QDock_context(qtw.QDockWidget):

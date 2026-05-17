@@ -1,7 +1,6 @@
+import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
-
-import pyqtgraph as pg
 
 from ._widgets import CopyableTableWidget
 

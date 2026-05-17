@@ -1,8 +1,8 @@
-from PyQt6 import QtCore
-
 import math
+
 import numpy as np
 import pyqtgraph as pg
+from PyQt6 import QtCore
 from pyqtgraph.graphicsItems.ButtonItem import ButtonItem
 
 from ._colorbar import (
@@ -21,8 +21,8 @@ from ._colorbar import (
     _matplotlib_colorbar_colormap_subtype,
     _string_list,
 )
-from ._plot_axis_scaling import _axis_scale_power_text
 from ._plot2d_colorbar_dialog import ColorbarScaleDialogMixin
+from ._plot_axis_scaling import _axis_scale_power_text
 
 
 class Plot2DColorbarMixin(ColorbarScaleDialogMixin):

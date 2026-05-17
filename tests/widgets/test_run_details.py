@@ -4,21 +4,20 @@ import tempfile
 import unittest
 
 import numpy as np
-from PyQt6 import QtCore
-from PyQt6 import QtGui
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
-    DraggablePreviewImageLabel,
     PREVIEW_BACKGROUND_COLOR,
-    PREVIEW_SIZE,
     PREVIEW_SELECTED_PROPERTY,
+    PREVIEW_SIZE,
+    DraggablePreviewImageLabel,
     PreviewTab,
     generate_run_previews,
     render_heatmap_preview,
     render_sparkline_preview,
-    )
+)
 
 
 class RunDetailsTabsTestCase(unittest.TestCase):

@@ -1,17 +1,16 @@
+import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
-
-import numpy as np
 
 from ._colorbar import (
     _CET_COLORBAR_SUBTYPES,
     _COLORBAR_COLORMAP_LABELS,
     _COLORBAR_TABLE_SORT_ROLE,
     _MATPLOTLIB_COLORBAR_SUBTYPES,
-    _ColorbarColormapTableItem,
     _colorbar_colormap_preview,
     _colorbar_colormap_type_label,
     _colorbar_subtype_config_key,
+    _ColorbarColormapTableItem,
     _config_value,
 )
 

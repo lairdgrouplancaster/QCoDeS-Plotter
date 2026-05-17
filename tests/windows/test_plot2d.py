@@ -1,12 +1,12 @@
 import unittest
 
 import numpy as np
+import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
-import pyqtgraph as pg
 
-from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 from qplot.windows._plotWin import plotWidget
+from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
 
 class Plot2dLiveRefreshTestCase(unittest.TestCase):

@@ -1,19 +1,37 @@
+import os
+from time import perf_counter
+
 from PyQt6 import (
-    QtWidgets as qtw,
     QtCore,
     QtGui,
-    )
+)
+from PyQt6 import (
+    QtWidgets as qtw,
+)
 from PyQt6.QtGui import QKeySequence
+from qcodes.dataset.sqlite.database import get_DB_location
+
+from qplot import config
+from qplot.datahandling.database import (
+    DatabaseLoadWorker as DatabaseLoadWorker,
+)
+from qplot.datahandling.database import (
+    database_info_report as database_info_report,
+)
+from qplot.datahandling.database import (
+    database_path_from_mime_data as database_path_from_mime_data,
+)
+from qplot.diagnostics import log_user_error
 
 from ._database_actions import DatabaseActionsMixin
+from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
 from ._preferences import (
     PreferencesDialog,
     create_preferences_action,
-    )
+)
 from ._run_controls import RunControlsMixin
 from ._shortcuts import standard_key_sequences
-from ._help import add_help_menu
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -21,21 +39,8 @@ from ._window_controls import (
     add_standard_window_controls,
     ask_confirmation_with_dont_ask_again,
     close_all_warning_enabled,
-    )
-from qplot.diagnostics import log_user_error
-from qplot.datahandling.database import (
-    DatabaseLoadWorker as DatabaseLoadWorker,
-    database_info_report as database_info_report,
-    database_path_from_mime_data as database_path_from_mime_data,
-    )
-from qplot import config
+)
 
-from qcodes.dataset.sqlite.database import (
-    get_DB_location
-    )
-
-import os
-from time import perf_counter
 
 class DatabasePathLineEdit(qtw.QLineEdit):
     """
