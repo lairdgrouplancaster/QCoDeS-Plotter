@@ -17,6 +17,10 @@ You can also open a database directly from the command line:
 qplot path/to/database.db
 ```
 
+qPlot opens QCoDeS databases read-only. It can view runs that are still being
+written by another process, but it does not initialise, upgrade, or modify the
+loaded database file.
+
 ### Opening Databases from the File Manager
 
 qPlot can be added to a file manager's `Open With` menu by pointing the file

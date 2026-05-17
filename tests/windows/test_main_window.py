@@ -1389,9 +1389,9 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
 
 
 class DatabaseLoadWorkerTestCase(unittest.TestCase):
-    def test_database_load_worker_initialises_database_and_returns_runs(self):
+    def test_database_load_worker_opens_database_read_only_and_returns_runs(self):
         old_access_error = database_module.database_access_error
-        old_initialise = database_module.initialise_or_create_database_at
+        old_set_location = database_module.set_qcodes_database_location
         old_get_runs = database_module.get_runs_via_sql
         calls = []
 
@@ -1399,15 +1399,15 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             calls.append(("access", database_path))
             return None
 
-        def initialise(database_path):
-            calls.append(("initialise", database_path))
+        def set_location(database_path):
+            calls.append(("set_location", database_path))
 
         def get_runs():
             calls.append(("runs", None))
             return {1: {"guid": "guid-1", "run_timestamp": 123.0}}
 
         database_module.database_access_error = access_error
-        database_module.initialise_or_create_database_at = initialise
+        database_module.set_qcodes_database_location = set_location
         database_module.get_runs_via_sql = get_runs
         try:
             worker = main_window.DatabaseLoadWorker(7, "example.db")
@@ -1419,17 +1419,17 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker.run()
         finally:
             database_module.database_access_error = old_access_error
-            database_module.initialise_or_create_database_at = old_initialise
+            database_module.set_qcodes_database_location = old_set_location
             database_module.get_runs_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", "example.db"),
-            ("initialise", "example.db"),
+            ("set_location", "example.db"),
             ("runs", None),
             ])
         self.assertEqual(statuses, [
             (7, "Checking database access..."),
-            (7, "Initialising database..."),
+            (7, "Opening database read-only..."),
             (7, "Loading run list..."),
             ])
         self.assertEqual(finished, [
@@ -1438,11 +1438,11 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
     def test_database_load_worker_reports_access_error(self):
         old_access_error = database_module.database_access_error
-        old_initialise = database_module.initialise_or_create_database_at
+        old_set_location = database_module.set_qcodes_database_location
 
         database_module.database_access_error = lambda _path: "locked database"
-        database_module.initialise_or_create_database_at = lambda _path: self.fail(
-            "Database should not initialise after an access error"
+        database_module.set_qcodes_database_location = lambda _path: self.fail(
+            "Database location should not be set after an access error"
             )
         try:
             worker = main_window.DatabaseLoadWorker(3, "locked.db")
@@ -1452,7 +1452,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker.run()
         finally:
             database_module.database_access_error = old_access_error
-            database_module.initialise_or_create_database_at = old_initialise
+            database_module.set_qcodes_database_location = old_set_location
 
         self.assertEqual(len(finished), 1)
         self.assertEqual(finished[0][:3], (3, "locked.db", {}))
@@ -1536,7 +1536,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_label = database_module.database_cloud_storage_label
         old_placeholder = database_module.database_is_likely_cloud_placeholder
         old_prefetch = database_module.prefetch_database_file_with_timeout
-        old_initialise = database_module.initialise_or_create_database_at
+        old_set_location = database_module.set_qcodes_database_location
         old_get_runs = database_module.get_runs_via_sql
         calls = []
 
@@ -1561,8 +1561,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         database_module.database_cloud_storage_label = lambda _path: "OneDrive"
         database_module.database_is_likely_cloud_placeholder = lambda _path: False
         database_module.prefetch_database_file_with_timeout = prefetch
-        database_module.initialise_or_create_database_at = lambda path: calls.append(
-            ("initialise", path)
+        database_module.set_qcodes_database_location = lambda path: calls.append(
+            ("set_location", path)
             )
         database_module.get_runs_via_sql = lambda: {}
         try:
@@ -1580,14 +1580,14 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             database_module.database_cloud_storage_label = old_label
             database_module.database_is_likely_cloud_placeholder = old_placeholder
             database_module.prefetch_database_file_with_timeout = old_prefetch
-            database_module.initialise_or_create_database_at = old_initialise
+            database_module.set_qcodes_database_location = old_set_location
             database_module.get_runs_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", expected_path),
             ("prefetch", expected_path, 12),
             ("access", expected_path),
-            ("initialise", expected_path),
+            ("set_location", expected_path),
             ])
         self.assertIn((9, "Waiting for OneDrive sync... 100% available"), statuses)
         self.assertEqual(finished, [(9, expected_path, {}, None)])

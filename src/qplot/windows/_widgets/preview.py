@@ -1,10 +1,10 @@
 import json
-import sqlite3
 
 import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.diagnostics import log_exception
 from qplot.tools.general import data2matrix
 
@@ -497,7 +497,7 @@ def generate_run_previews(database_path, metadata, size=PREVIEW_SIZE):
         return []
 
     previews = []
-    conn = sqlite3.connect(database_path, timeout=10)
+    conn = sqlite_read_only_connection(database_path, timeout=10)
     cursor = None
     try:
         cursor = conn.cursor()

@@ -143,6 +143,10 @@ including status, point counts, and storage size estimates.
 cloud-storage hydration, background main-window load workers, and database
 diagnostic report generation.
 
+`src/qplot/datahandling/readonly.py` centralises enforced read-only database
+access. Use these helpers for QCoDeS and direct SQLite connections so qPlot does
+not initialise, upgrade, or write to loaded QCoDeS databases.
+
 `src/qplot/datahandling/LoadFromDB.py` adapts QCoDeS database loading for
 threaded refreshes.
 
