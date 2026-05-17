@@ -100,10 +100,13 @@ Common actions:
 * `File -> Refresh` checks the current database for new runs.
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
-* `Options -> Preferences...` edits common theme, default load location,
-  preview, refresh, confirmation, and runtime settings.
+* `Options -> Preferences...` edits common theme, plot mouse mode, default
+  load location, preview, refresh, confirmation, and runtime settings. On
+  macOS this appears as `qPlot -> Preferences...`.
   Use `Restore Defaults` in that dialog to reset the shown preferences without
   leaving the dialog.
+* `Options -> Reset All Settings...` resets all qPlot settings to their
+  defaults.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
 * `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
 * `Help -> Copy Diagnostic Log Path` copies the log file location for support
@@ -142,7 +145,7 @@ by right-clicking a toolbar or panel, or with keyboard shortcuts.
 Common plot controls:
 
 * Mouse wheel over the plot: zoom.
-* Left-click drag: pan.
+* Left-click drag: pan in the default mouse mode.
 * Right-click: open the plot context menu.
 * `Alt`/`Option` + left-click drag: draw a marquee selection.
 * Drag marquee handles to resize the selection.
@@ -240,7 +243,13 @@ The main window can export measurement data as CSV:
 * Right-click a preview and choose the export action.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
-`Ctrl+E`, using pyqtgraph's export dialog.
+`Ctrl+E`, using pyqtgraph's export dialog. Use `Edit -> Copy Plot Image`,
+`Ctrl+C`, or the plot context menu to copy the rendered plot area to the
+clipboard without the surrounding window menus or toolbars. The copy resolution
+is set in `Options -> Preferences...`: screen resolution preserves the current
+display pixels, while 300 dpi renders a higher-resolution clipboard image at the
+same logical plot size, and vector SVG copies editable SVG data for applications
+that accept SVG from the clipboard.
 
 ## Live Data
 
@@ -281,6 +290,7 @@ Plot-window shortcuts:
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+0` | Autoscale the plot view |
+| `Ctrl+C` / `Cmd+C` | Copy the plot image to the clipboard using the selected copy format/resolution |
 | `Ctrl+E` | Export the plot |
 | `Ctrl+Shift+O` | Show or hide the operations panel |
 | `Ctrl+Alt+R` | Show or hide the refresh toolbar |

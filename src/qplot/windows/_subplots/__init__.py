@@ -1,7 +1,4 @@
-from .subplot1d import (
-    subplot1d,
-    custom_viewbox
-    )
+from .subplot1d import custom_viewbox, subplot1d
 
 # Importing .subplot2d causes circular import.
 

@@ -51,21 +51,56 @@ run-selection or refresh-control behavior in `_run_controls.py`.
 ## Plot Windows
 
 `src/qplot/windows/_plotWin.py` is the shared base for plot windows. It owns
-common plotting behavior such as refresh timers, worker loading, axis controls,
-context menus, export handling, operation panels, marquee selection, and status
-or error reporting.
+common plotting behavior such as refresh timers, worker loading, axis selection
+controls, context menus, export handling, and operation panels.
+
+`src/qplot/windows/_plot_feedback.py` contains shared plot-window status,
+state-overlay, error-dialog, and shortcut helpers. Keep common plot-window user
+feedback there instead of adding more status or message-box methods to
+`_plotWin.py`.
+
+`src/qplot/windows/_plot_axis_scaling.py` contains the shared plot-axis scaling
+mixin and the custom axis item used for power-of-ten unit labels. It owns the
+X/Y axis scaling dialogs opened by double-clicking plot axes.
+
+`src/qplot/windows/_plot_marquee.py` contains the shared marquee selection
+mixin used by plot windows. It owns marquee drawing, dragging, zooming, stats
+dialogs, and base context-menu actions. Plot-type-specific snapping and stats
+live in `plot1d.py` and `plot2d.py`.
+
+`src/qplot/windows/_plot_state.py` contains the plot-area state overlay used
+for loading, waiting-for-data, and worker-error messages. Keep state-display
+styling there rather than embedding overlay widgets in individual plot types.
 
 `src/qplot/windows/plot1d.py` extends the shared plot window for line plots. It
-owns 1D-specific trace handling, secondary axes, snap-to-trace behavior, and
-line-plot marquee statistics.
+owns main line rendering and line-plot marquee statistics.
+
+`src/qplot/windows/_plot1d_snap.py` contains the line-plot snap-to-trace mixin.
+It owns the snap shortcut/menu action, nearest-point lookup, snap status
+readout, and snap marker display.
+
+`src/qplot/windows/_plot1d_traces.py` contains the line-plot trace mixin. It
+owns secondary trace controls, added-trace refresh handling, right-axis viewbox
+synchronization, and cleanup of hidden trace windows.
 
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
-owns 2D-specific colorbar controls, hover pixel display, marquee color scaling,
-and 1D cut extraction.
+owns heatmap rendering, hover pixel display, and marquee color scaling.
+
+`src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
+owns color autoscaling, colorbar interaction handlers, and color-map selection
+state used by `plot2d.py`.
+
+`src/qplot/windows/_plot2d_colorbar_dialog.py` owns the color scale dialog,
+color-map chooser table, and persistent color-map filter controls used by the
+heatmap colorbar mixin.
+
+`src/qplot/windows/_plot2d_sweeps.py` contains the heatmap sweep/cut mixin. It
+owns horizontal and vertical cut creation, cut-line cursor behavior, keyboard
+movement, grouped dragging, and synchronization with 1D sweep windows.
 
 `src/qplot/windows/_colorbar.py` contains the heatmap color-map catalog,
 filtering helpers, preview rendering, and colorbar table items used by
-`plot2d.py`.
+`_plot2d_colorbar.py`.
 
 Use the shared base only for behavior that should apply to both line plots and
 heatmaps. Keep plot-type-specific interaction details in `plot1d.py` or
@@ -74,8 +109,19 @@ heatmaps. Keep plot-type-specific interaction details in `plot1d.py` or
 ## Main Window Widgets
 
 `src/qplot/windows/_widgets/treeWidgets.py` contains the run table, run details
-tabs, copyable metadata tables, formatting helpers, and delegates used by the
-main window.
+tabs, copyable metadata tables, and delegates used by the main window.
+
+`src/qplot/windows/_widgets/run_list_items.py` contains run-table support
+widgets and items: measurement preview cells, setpoint-count delegates, and the
+sortable tree item used by the run list.
+
+`src/qplot/windows/_widgets/details_tables.py` contains copyable table/tree
+widgets, wrapped-value delegates, and helpers for rendering and copying nested
+metadata values in run details and statistics dialogs.
+
+`src/qplot/windows/_widgets/_run_formatting.py` contains pure run-list and
+run-detail formatting helpers. Prefer adding display formatting there so it can
+be tested without constructing Qt widgets.
 
 `src/qplot/windows/_widgets/preview.py` creates and renders run preview
 thumbnails. It also handles preview selection, drag payloads, and background

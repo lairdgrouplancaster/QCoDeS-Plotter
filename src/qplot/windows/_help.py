@@ -1,8 +1,7 @@
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import default_log_file
-
 
 _OPEN_HELP_DIALOGS = []
 
@@ -19,7 +18,8 @@ QUICK_START_HTML = """
   <li><b>Inspect the plot.</b> Use the mouse wheel to zoom, left-drag to pan,
       right-click for plot actions, and double-click axes for scale controls.</li>
   <li><b>Export data or plots.</b> Use the CSV button or preview context menu
-      for measurement data, and <b>File -&gt; Export Plot...</b> in plot windows.</li>
+      for measurement data, and <b>File -&gt; Export Plot...</b> or
+      <b>Edit -&gt; Copy Plot Image</b> in plot windows.</li>
 </ol>
 <p>Plot windows may appear before their data has finished loading. Check the
 status bar at the bottom of the window before assuming a load has failed.</p>
@@ -52,6 +52,7 @@ KEYBOARD_SHORTCUTS_HTML = """
 <h3>Plot Windows</h3>
 <table cellspacing="4" cellpadding="3">
   <tr><td><b>Ctrl+0</b></td><td>Autoscale the plot view</td></tr>
+  <tr><td><b>Ctrl+C / Cmd+C</b></td><td>Copy the plot image using the selected copy format or resolution</td></tr>
   <tr><td><b>Ctrl+E</b></td><td>Export the plot</td></tr>
   <tr><td><b>Ctrl+Shift+O</b></td><td>Show or hide the operations panel</td></tr>
   <tr><td><b>Ctrl+Alt+R</b></td><td>Show or hide the refresh toolbar</td></tr>
@@ -78,15 +79,15 @@ def add_help_menu(window):
     """
     help_menu = window.menuBar().addMenu("&Help")
 
-    quick_start_action = qtw.QAction("&Quick Start", window)
+    quick_start_action = QtGui.QAction("&Quick Start", window)
     quick_start_action.setObjectName("quickStartHelpAction")
     quick_start_action.setShortcut("F1")
-    quick_start_action.setShortcutContext(QtCore.Qt.WindowShortcut)
+    quick_start_action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
     quick_start_action.setStatusTip("Show the basic qPlot workflow")
     quick_start_action.triggered.connect(lambda: show_quick_start(window))
     help_menu.addAction(quick_start_action)
 
-    shortcuts_action = qtw.QAction("&Keyboard Shortcuts", window)
+    shortcuts_action = QtGui.QAction("&Keyboard Shortcuts", window)
     shortcuts_action.setObjectName("keyboardShortcutsHelpAction")
     shortcuts_action.setStatusTip("Show qPlot keyboard shortcuts")
     shortcuts_action.triggered.connect(lambda: show_keyboard_shortcuts(window))
@@ -94,7 +95,7 @@ def add_help_menu(window):
 
     help_menu.addSeparator()
 
-    copy_log_path_action = qtw.QAction("Copy &Diagnostic Log Path", window)
+    copy_log_path_action = QtGui.QAction("Copy &Diagnostic Log Path", window)
     copy_log_path_action.setObjectName("copyDiagnosticLogPathAction")
     copy_log_path_action.setStatusTip("Copy the qPlot diagnostic log file path")
     copy_log_path_action.triggered.connect(lambda: copy_diagnostic_log_path(window))
@@ -144,7 +145,7 @@ def copy_diagnostic_log_path(parent=None):
 def _show_help_dialog(parent, title, html, object_name):
     dialog = qtw.QDialog(parent)
     dialog.setObjectName(object_name)
-    dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+    dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
     dialog.setWindowTitle(title)
     dialog.resize(640, 520)
 
@@ -156,7 +157,7 @@ def _show_help_dialog(parent, title, html, object_name):
     browser.setMinimumSize(520, 360)
     layout.addWidget(browser)
 
-    buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
+    buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
     buttons.rejected.connect(dialog.close)
     layout.addWidget(buttons)
 

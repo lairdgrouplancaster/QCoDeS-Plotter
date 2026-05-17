@@ -2,9 +2,9 @@ import os
 from time import perf_counter
 
 import numpy as np
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
-from PyQt5.QtGui import QDesktopServices
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
+from PyQt6.QtGui import QDesktopServices
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling import find_new_runs
@@ -169,14 +169,14 @@ class DatabaseActionsMixin:
             return
 
         box = qtw.QMessageBox(
-            qtw.QMessageBox.Information,
+            qtw.QMessageBox.Icon.Information,
             "Database Information",
             report,
             parent=self,
         )
-        copy_button = box.addButton("Copy", qtw.QMessageBox.ActionRole)
-        box.addButton(qtw.QMessageBox.Close)
-        box.exec_()
+        copy_button = box.addButton("Copy", qtw.QMessageBox.ButtonRole.ActionRole)
+        box.addButton(qtw.QMessageBox.StandardButton.Close)
+        box.exec()
 
         if box.clickedButton() == copy_button:
             qtw.QApplication.clipboard().setText(report)
@@ -276,7 +276,7 @@ class DatabaseActionsMixin:
     @QtCore.pyqtSlot()
     def change_default_file(self):
         """
-        Event handle for Open Location action in the options menu.
+        Chooses the default database-open location.
 
         """
         if os.path.isdir(self.config.get("file.default_load_path")):
@@ -411,14 +411,14 @@ class DatabaseActionsMixin:
         self.recentDatabaseMenu.setEnabled(bool(paths))
 
         if not paths:
-            empty_action = qtw.QAction("No Recent Databases", self)
+            empty_action = QtGui.QAction("No Recent Databases", self)
             empty_action.setEnabled(False)
             self.recentDatabaseMenu.addAction(empty_action)
             return
 
         for index, path in enumerate(paths, start=1):
             label = f"{index}. {os.path.basename(path) or path}"
-            action = qtw.QAction(label, self)
+            action = QtGui.QAction(label, self)
             action.setToolTip(path)
             action.setStatusTip(path)
             action.setEnabled(os.path.isfile(path))
@@ -717,7 +717,7 @@ class DatabaseActionsMixin:
             return
 
         self.RunList.setCurrentItem(first_item)
-        self.RunList.scrollToItem(first_item, qtw.QAbstractItemView.PositionAtTop)
+        self.RunList.scrollToItem(first_item, qtw.QAbstractItemView.ScrollHint.PositionAtTop)
 
 
     def _loaded_empty_database_status(self, abspath, elapsed):

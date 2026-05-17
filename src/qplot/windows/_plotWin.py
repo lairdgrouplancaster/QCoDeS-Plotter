@@ -1,94 +1,147 @@
-from typing import TYPE_CHECKING
-
-from math import isclose, isfinite, log10
+from math import log10
 from os import path
 from time import perf_counter
-
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore, QtGui
-from PyQt5.QtGui import QKeySequence
+from typing import TYPE_CHECKING
 
 import pyqtgraph as pg
-from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
-
+from PyQt6 import QtCore, QtGui, QtSvg
+from PyQt6 import QtWidgets as qtw
+from PyQt6.QtGui import QKeySequence
+from pyqtgraph.exporters import ImageExporter
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.tools import (
-    unpack_param,
-    loader,
-    )
 from qplot.datahandling import load_param_data_from_db_prep
 from qplot.datahandling.qcodes_cache import (
     cache_has_no_written_data,
     set_parameter_complete,
     update_cache_parameter_data,
-    )
-    
-from ._subplots import custom_viewbox
-from ._widgets import (
-    CopyableTableWidget,
-    expandingComboBox,
-    QDock_context,
-    operations_widget,
-    )
-from ._shortcuts import standard_key_sequences
-from ._help import add_help_menu
+)
+from qplot.diagnostics import log_exception
+from qplot.tools import (
+    loader,
+    unpack_param,
+)
+
+from . import _plot_axis_scaling
 from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
-    )
+)
+from ._help import add_help_menu
+from ._plot_axis_scaling import (
+    PlotAxisScalingMixin,
+    _PowerScaledAxisItem,
+)
+from ._plot_feedback import PlotWindowFeedbackMixin
+from ._plot_marquee import PlotMarqueeMixin
+from ._plot_state import PlotStateOverlay
+from ._preferences import (
+    COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+    COPY_PLOT_IMAGE_RESOLUTION_SVG,
+    MOUSE_MODE_KEY,
+    PreferencesDialog,
+    create_preferences_action,
+)
+from ._shortcuts import standard_key_sequences
+from ._subplots import custom_viewbox
+from ._widgets import (
+    QDock_context,
+    expandingComboBox,
+    operations_widget,
+)
 from ._window_controls import (
-    add_confirmation_options,
     add_standard_window_controls,
-    )
-from qplot.diagnostics import log_exception, log_user_error
+    main_window_for,
+)
 
 if TYPE_CHECKING:
-    import qplot
     import qcodes
 
+    import qplot
 
-def _axis_scale_power_text(scale):
+
+_axis_scale_power_text = _plot_axis_scaling._axis_scale_power_text
+
+_A4_LANDSCAPE_PLOT_AREA_SIZE = QtCore.QSize(1123, 794)
+_A4_PORTRAIT_PLOT_AREA_SIZE = QtCore.QSize(794, 1123)
+_POWERPOINT_STANDARD_PLOT_AREA_SIZE = QtCore.QSize(960, 720)
+_POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE = QtCore.QSize(1280, 720)
+_SQUARE_PLOT_AREA_SIZE = QtCore.QSize(850, 850)
+_MAX_EXPORTED_IMAGE_SIZE = 20000
+_HIGH_DPI_COPY_RESOLUTION = 300
+_INCHES_PER_METER = 39.37007874015748
+_PLOT_AREA_RESIZE_PRESETS = (
+    (
+        "A4 Landscape",
+        "resizePlotAreaA4LandscapeAction",
+        _A4_LANDSCAPE_PLOT_AREA_SIZE,
+        ),
+    (
+        "A4 Portrait",
+        "resizePlotAreaA4PortraitAction",
+        _A4_PORTRAIT_PLOT_AREA_SIZE,
+        ),
+    (
+        "PowerPoint Standard",
+        "resizePlotAreaPowerPointStandardAction",
+        _POWERPOINT_STANDARD_PLOT_AREA_SIZE,
+        ),
+    (
+        "PowerPoint Widescreen",
+        "resizePlotAreaPowerPointWidescreenAction",
+        _POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE,
+        ),
+    (
+        "Square",
+        "resizePlotAreaSquareAction",
+        _SQUARE_PLOT_AREA_SIZE,
+        ),
+    )
+
+
+def _plot_area_size_icon(size):
     """
-    Return a compact HTML power-of-ten label for an axis display scale.
+    Builds a small aspect-ratio preview icon for plot-area resize presets.
 
     """
-    if not isfinite(scale) or scale <= 0 or isclose(scale, 1.0):
-        return ""
+    pixmap = QtGui.QPixmap(28, 18)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
 
-    exponent = round(log10(scale))
-    if isclose(scale, 10**exponent, rel_tol=1e-9, abs_tol=0.0):
-        return f"10<sup>{exponent}</sup>"
+    bounds = QtCore.QSizeF(22, 14)
+    aspect = size.width() / size.height()
+    bounds_aspect = bounds.width() / bounds.height()
+    if aspect >= bounds_aspect:
+        width = bounds.width()
+        height = width / aspect
+    else:
+        height = bounds.height()
+        width = height * aspect
 
-    return f"{scale:g}"
+    rect = QtCore.QRectF(
+        (pixmap.width() - width) / 2,
+        (pixmap.height() - height) / 2,
+        width,
+        height,
+        )
 
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter.setPen(QtGui.QPen(QtGui.QColor(70, 70, 70), 1))
+    painter.setBrush(QtGui.QColor(120, 150, 200, 70))
+    painter.drawRect(rect)
+    painter.end()
 
-class _PowerScaledAxisItem(pg.AxisItem):
-    """
-    Display pyqtgraph's auto SI scaling as powers of ten in the axis unit.
-
-    """
-
-    def labelString(self) -> str:
-        if self.autoSIPrefix and not isclose(self.autoSIPrefixScale, 1.0):
-            unit_scale = 1.0 / self.autoSIPrefixScale
-        else:
-            unit_scale = 1.0
-
-        scale_text = _axis_scale_power_text(unit_scale)
-        if self.labelUnits == "":
-            units = f"({scale_text})" if scale_text else ""
-        elif scale_text:
-            units = f"({scale_text} {self.labelUnits})"
-        else:
-            units = f"({self.labelUnitPrefix}{self.labelUnits})"
-
-        text = f"{self.labelText} {units}"
-        style = ";".join([f"{k}: {self.labelStyle[k]}" for k in self.labelStyle])
-        return f"<span style='{style}'>{text}</span>"
+    return QtGui.QIcon(pixmap)
 
 
-class plotWidget(qtw.QMainWindow):
+class plotWidget(
+    PlotWindowFeedbackMixin,
+    PlotAxisScalingMixin,
+    PlotMarqueeMixin,
+    qtw.QMainWindow,
+    ):
     """
     Base class for plot1d and plot2d.
     Controls common setup and functions for both windows.
@@ -141,7 +194,7 @@ class plotWidget(qtw.QMainWindow):
             Which parameter within dataset to plot.
         config : qplot.configuration.config.config
             Holds configuration data, mainly theme and window size.
-        threadPool : PyQt5.QtCore.QThreadPool
+        threadPool : PyQt6.QtCore.QThreadPool
             A pool of threads for the refresh worker to be placed in.
         refrate : float, optional
             Default value for the refresh timer. The default is None, which 
@@ -174,10 +227,12 @@ class plotWidget(qtw.QMainWindow):
         self.layout = qtw.QVBoxLayout()
         
         self.widget = pg.GraphicsLayoutWidget()
+        self.plot_state_overlay = PlotStateOverlay(self.widget)
         self._install_preview_drop_target()
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
         self.vb.setDefaultPadding(0)
+        self.apply_mouse_mode_preference()
         self.plot = self.widget.addPlot(
             viewBox=self.vb,
             axisItems={
@@ -223,7 +278,7 @@ class plotWidget(qtw.QMainWindow):
         
         #start refresh cycle if live
         if self.ds.running: 
-            self.monitor.start((int(self.spinBox.value() * 1000)))
+            self.monitor.start(int(self.spinBox.value() * 1000))
 
 
     def _install_preview_drop_target(self):
@@ -248,9 +303,9 @@ class plotWidget(qtw.QMainWindow):
 
     def eventFilter(self, source, event):
         if event.type() in (
-            QtCore.QEvent.DragEnter,
-            QtCore.QEvent.DragMove,
-            QtCore.QEvent.Drop,
+            QtCore.QEvent.Type.DragEnter,
+            QtCore.QEvent.Type.DragMove,
+            QtCore.QEvent.Type.Drop,
             ):
             if self._handle_preview_drag_drop(event):
                 return True
@@ -285,8 +340,8 @@ class plotWidget(qtw.QMainWindow):
             event.ignore()
             return True
 
-        if event.type() == QtCore.QEvent.Drop:
-            event.setDropAction(QtCore.Qt.CopyAction)
+        if event.type() == QtCore.QEvent.Type.Drop:
+            event.setDropAction(QtCore.Qt.DropAction.CopyAction)
             event.accept()
             self.previewTraceDropRequested.emit(
                 self,
@@ -309,511 +364,7 @@ class plotWidget(qtw.QMainWindow):
             )
 
 
-    def _init_marquee(self):
-        """
-        Create the reusable marquee graphics shown after Alt-dragging.
 
-        """
-        self.marquee = None
-        self._marquee_drag_state = None
-
-        self.marquee_highlight = qtw.QGraphicsRectItem()
-        highlight_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 135))
-        highlight_pen.setWidthF(3)
-        highlight_pen.setCosmetic(True)
-        self.marquee_highlight.setPen(highlight_pen)
-        self.marquee_highlight.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
-        self.marquee_highlight.setZValue(18)
-        self.marquee_highlight.hide()
-        self.marquee_highlight.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-        self.plot.addItem(self.marquee_highlight)
-
-        self.marquee_outline = qtw.QGraphicsRectItem()
-        pen = QtGui.QPen(QtGui.QColor(65, 65, 65, 220))
-        pen.setWidthF(1.2)
-        pen.setCosmetic(True)
-        pen.setStyle(QtCore.Qt.DashLine)
-        self.marquee_outline.setPen(pen)
-        self.marquee_outline.setBrush(QtGui.QBrush(QtGui.QColor(40, 40, 40, 24)))
-        self.marquee_outline.setZValue(19)
-        self.marquee_outline.hide()
-        self.marquee_outline.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-        self.plot.addItem(self.marquee_outline)
-
-        self.marquee_handles = pg.ScatterPlotItem(
-            symbol="s",
-            size=6,
-            pen=pg.mkPen((20, 20, 20, 230), width=1, cosmetic=True),
-            brush=pg.mkBrush(245, 245, 245, 230),
-            )
-        self.marquee_handles.setZValue(20)
-        self.marquee_handles.hide()
-        self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-        self.plot.addItem(self.marquee_handles)
-
-
-    def is_marquee_dragging(self):
-        return self._marquee_drag_state is not None
-
-
-    def current_marquee_drag_mode(self):
-        if self._marquee_drag_state is None:
-            return None
-
-        return self._marquee_drag_state["mode"]
-
-
-    def begin_marquee_drag(self, start, mode=None):
-        """
-        Start creating or resizing a marquee in plot coordinates.
-
-        """
-        start = QtCore.QPointF(start)
-        if mode is None:
-            mode = "new"
-
-        handle_offset = QtCore.QPointF()
-        if mode != "new" and self.marquee is not None:
-            handle_point = self._marquee_handle_points_for_rect(self.marquee)[mode]
-            handle_offset = start - handle_point
-
-        self._marquee_drag_state = {
-            "anchor": QtCore.QPointF(start),
-            "handle_offset": QtCore.QPointF(handle_offset),
-            "mode": mode,
-            "rect": QtCore.QRectF(self.marquee) if self.marquee is not None else None,
-            }
-
-        if mode == "new":
-            self.set_marquee_rect(QtCore.QRectF(start, start))
-
-
-    def drag_marquee_to(self, point, modifiers=QtCore.Qt.NoModifier):
-        """
-        Update the marquee during an active drag.
-
-        """
-        point = QtCore.QPointF(point)
-        state = self._marquee_drag_state
-        if state is None:
-            return
-
-        if state["mode"] == "new" or state["rect"] is None:
-            rect = QtCore.QRectF(state["anchor"], point)
-        else:
-            rect = QtCore.QRectF(state["rect"])
-            offset = state.get("handle_offset", QtCore.QPointF())
-            point = QtCore.QPointF(
-                point.x() - offset.x(),
-                point.y() - offset.y(),
-                )
-            self._resize_marquee_rect(rect, state["mode"], point, modifiers)
-
-        self.set_marquee_rect(rect)
-
-
-    def finish_marquee_drag(self):
-        self._marquee_drag_state = None
-
-
-    def marquee_contains_scene_pos(self, scene_pos):
-        """
-        Return whether a scene position is inside the current marquee.
-
-        """
-        if self.marquee is None:
-            return False
-
-        point = self.plot.vb.mapSceneToView(scene_pos)
-        return self.marquee.normalized().contains(point)
-
-
-    def open_marquee_context_menu(self, scene_pos, global_pos=None):
-        """
-        Open the marquee context menu when a right-click lands inside it.
-
-        """
-        if not self.marquee_contains_scene_pos(scene_pos):
-            return False
-
-        menu = self._new_marquee_context_menu()
-        if global_pos is None:
-            global_pos = QtGui.QCursor.pos()
-        elif isinstance(global_pos, QtCore.QPointF):
-            global_pos = global_pos.toPoint()
-
-        menu.exec_(global_pos)
-        return True
-
-
-    def _new_marquee_context_menu(self):
-        menu = qtw.QMenu()
-        if hasattr(menu, "setToolTipsVisible"):
-            menu.setToolTipsVisible(True)
-
-        self._add_marquee_context_action(
-            menu,
-            "Zoom",
-            lambda: self.zoom_marquee("xy"),
-            )
-        self._add_marquee_context_action(
-            menu,
-            "Zoom X",
-            lambda: self.zoom_marquee("x"),
-            )
-        self._add_marquee_context_action(
-            menu,
-            "Zoom Y",
-            lambda: self.zoom_marquee("y"),
-            )
-        self._add_marquee_color_context_action(menu)
-        self._add_marquee_stats_context_action(menu)
-        return menu
-
-
-    def _add_marquee_context_action(self, menu, text, callback):
-        action = menu.addAction(text)
-        action.triggered.connect(
-            lambda _checked=False, callback=callback: self._execute_marquee_action(callback)
-            )
-        return action
-
-
-    def _add_marquee_color_context_action(self, menu):
-        return None
-
-
-    def _add_marquee_stats_context_action(self, menu):
-        stats_text = self._marquee_stats_text()
-        action = self._add_marquee_context_action(
-            menu,
-            "Stats...",
-            lambda stats_text=stats_text: self.show_marquee_stats_dialog(stats_text),
-            )
-        if stats_text is None:
-            action.setEnabled(False)
-            action.setToolTip("No data points inside the marquee.")
-        else:
-            action.setToolTip("Show statistics for the marquee selection.")
-            action.setStatusTip("Show statistics for the marquee selection.")
-        return action
-
-
-    def _execute_marquee_action(self, callback):
-        if callback():
-            self.clear_marquee()
-
-
-    def zoom_marquee(self, axes):
-        rect = self.marquee.normalized() if self.marquee is not None else None
-        if rect is None:
-            return False
-
-        if "x" in axes:
-            self.vb.setXRange(rect.left(), rect.right(), padding=0)
-        if "y" in axes:
-            self.vb.setYRange(rect.top(), rect.bottom(), padding=0)
-        return True
-
-
-    def _marquee_stats_text(self):
-        return None
-
-
-    def show_marquee_stats_dialog(self, stats_text=None):
-        if stats_text is None:
-            stats_text = self._marquee_stats_text()
-        if stats_text is None:
-            return False
-
-        dialog = self._new_marquee_stats_dialog(stats_text)
-        self._marquee_stats_dialog = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-        return True
-
-
-    def _new_marquee_stats_dialog(self, stats_text):
-        dialog = qtw.QDialog(self)
-        dialog.setWindowTitle("Marquee stats")
-
-        layout = qtw.QVBoxLayout(dialog)
-        stats_table = self._new_marquee_stats_table(stats_text)
-        layout.addWidget(stats_table)
-
-        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
-        copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ActionRole)
-
-        def copy_stats(_checked=False):
-            self.copy_marquee_stats_to_clipboard(stats_text)
-
-        copy_button.clicked.connect(copy_stats)
-        buttons.rejected.connect(dialog.close)
-        layout.addWidget(buttons)
-
-        return dialog
-
-
-    def _new_marquee_stats_table(self, stats_text):
-        rows = self._marquee_stats_table_rows(stats_text)
-        stats_table = CopyableTableWidget()
-        stats_table.setObjectName("detailsTable")
-        stats_table.setColumnCount(2)
-        stats_table.setHorizontalHeaderLabels(["Field", "Value"])
-        stats_table.setRowCount(len(rows))
-        stats_table.setAlternatingRowColors(True)
-        stats_table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
-        stats_table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
-        stats_table.setSelectionMode(qtw.QAbstractItemView.ExtendedSelection)
-        stats_table.setTextElideMode(QtCore.Qt.ElideNone)
-        stats_table.setWordWrap(False)
-        stats_table.verticalHeader().hide()
-        stats_table.verticalHeader().setMinimumSectionSize(16)
-        stats_table.verticalHeader().setDefaultSectionSize(20)
-        stats_table.horizontalHeader().setFixedHeight(22)
-        stats_table.horizontalHeader().setStretchLastSection(True)
-        stats_table.horizontalHeader().setSectionResizeMode(
-            0,
-            qtw.QHeaderView.ResizeToContents
-            )
-        stats_table.horizontalHeader().setSectionResizeMode(
-            1,
-            qtw.QHeaderView.Stretch
-            )
-        stats_table.setMinimumWidth(280)
-        stats_table.setMinimumHeight(170)
-
-        for row, (field, value) in enumerate(rows):
-            field_item = qtw.QTableWidgetItem(field)
-            value_item = qtw.QTableWidgetItem(value)
-            stats_table.setItem(row, 0, field_item)
-            stats_table.setItem(row, 1, value_item)
-
-        return stats_table
-
-
-    def _marquee_stats_table_rows(self, stats_text):
-        rows = []
-        for line in stats_text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-
-            if ":" in line:
-                field, value = line.split(":", 1)
-                rows.append((field.strip(), value.strip()))
-            else:
-                rows.append(("Selection", line))
-
-        return rows
-
-
-    def _format_marquee_stats_text(self, size_text, values, rect=None):
-        if rect is None and self.__dict__.get("marquee") is not None:
-            rect = self.marquee.normalized()
-
-        lines = [size_text]
-        if rect is not None:
-            lines.extend((
-                f"X range: {self.formatNum(rect.left())} to {self.formatNum(rect.right())}",
-                f"Y range: {self.formatNum(rect.top())} to {self.formatNum(rect.bottom())}",
-                ))
-
-        lines.extend((
-            f"Average: {self.formatNum(float(values.mean()))}",
-            f"Standard deviation: {self.formatNum(float(values.std()))}",
-            f"Max: {self.formatNum(float(values.max()))}",
-            f"Min: {self.formatNum(float(values.min()))}",
-            ))
-
-        return "\n".join(lines)
-
-
-    def copy_marquee_stats_to_clipboard(self, stats_text=None):
-        if stats_text is None:
-            stats_text = self._marquee_stats_text()
-        if stats_text is None:
-            return False
-
-        clipboard = qtw.QApplication.clipboard()
-        if clipboard is None:
-            return False
-
-        clipboard.setText(stats_text)
-        return True
-
-
-    def _resize_marquee_rect(self, rect, handle, point, modifiers=QtCore.Qt.NoModifier):
-        symmetric = bool(modifiers & QtCore.Qt.AltModifier)
-        asymmetric = bool(modifiers & QtCore.Qt.ShiftModifier) and not symmetric
-        original = QtCore.QRectF(rect)
-        anchor = self._marquee_handle_points_for_rect(original)[handle]
-
-        if "w" in handle:
-            rect.setLeft(point.x())
-        if "e" in handle:
-            rect.setRight(point.x())
-        if "s" in handle:
-            rect.setTop(point.y())
-        if "n" in handle:
-            rect.setBottom(point.y())
-
-        dx = point.x() - anchor.x()
-        dy = point.y() - anchor.y()
-
-        if ("w" in handle or "e" in handle) and (symmetric or asymmetric):
-            offset = -dx if symmetric else dx if asymmetric else None
-            if "w" in handle:
-                rect.setRight(original.right() + offset)
-            else:
-                rect.setLeft(original.left() + offset)
-
-        if ("n" in handle or "s" in handle) and (symmetric or asymmetric):
-            offset = -dy if symmetric else dy if asymmetric else None
-            if "s" in handle:
-                rect.setBottom(original.bottom() + offset)
-            else:
-                rect.setTop(original.top() + offset)
-
-        if asymmetric:
-            self._snap_translated_marquee_rect(rect, original, handle)
-
-
-    def _snap_translated_marquee_rect(self, rect, original, handle):
-        snapped = self._snap_marquee_rect(QtCore.QRectF(rect).normalized())
-        if snapped is None:
-            return
-
-        adjusted = QtCore.QRectF(snapped)
-        if "w" in handle or "e" in handle:
-            width = original.width()
-            if "w" in handle:
-                adjusted.setLeft(snapped.left())
-                adjusted.setRight(snapped.left() + width)
-            else:
-                adjusted.setRight(snapped.right())
-                adjusted.setLeft(snapped.right() - width)
-
-        if "n" in handle or "s" in handle:
-            height = original.height()
-            if "s" in handle:
-                adjusted.setTop(snapped.top())
-                adjusted.setBottom(snapped.top() + height)
-            else:
-                adjusted.setBottom(snapped.bottom())
-                adjusted.setTop(snapped.bottom() - height)
-
-        rect.setRect(adjusted.left(), adjusted.top(), adjusted.width(), adjusted.height())
-
-
-    def set_marquee_rect(self, rect):
-        """
-        Snap, store, and draw the marquee rectangle.
-
-        """
-        rect = self._snap_marquee_rect(rect.normalized())
-        if rect is None or rect.width() <= 0 or rect.height() <= 0:
-            self.clear_marquee()
-            return
-
-        self.marquee = QtCore.QRectF(rect)
-        self.marquee_highlight.setRect(rect)
-        self.marquee_outline.setRect(rect)
-        self.marquee_highlight.show()
-        self.marquee_outline.show()
-        self._update_marquee_handles()
-
-
-    def clear_marquee(self):
-        self.marquee = None
-        self.marquee_highlight.hide()
-        self.marquee_outline.hide()
-        self.marquee_handles.hide()
-
-
-    def _snap_marquee_rect(self, rect):
-        return rect
-
-
-    def marquee_drag_mode_at(self, scene_pos):
-        """
-        Return the resize handle under a scene position, if there is one.
-
-        """
-        if self.marquee is None or not self.marquee_handles.isVisible():
-            return None
-
-        threshold = 8
-        for handle, point in self._marquee_handle_points().items():
-            handle_scene_pos = self.plot.vb.mapViewToScene(point)
-            distance = (
-                (handle_scene_pos.x() - scene_pos.x()) ** 2
-                + (handle_scene_pos.y() - scene_pos.y()) ** 2
-                )
-            if distance <= threshold ** 2:
-                return handle
-
-        return None
-
-
-    def marquee_cursor_shape_at(self, scene_pos, modifiers=QtCore.Qt.NoModifier):
-        mode = self.current_marquee_drag_mode()
-        if mode == "new":
-            return QtCore.Qt.CrossCursor
-        if mode is not None:
-            return self._marquee_cursor_shape_for_handle(mode)
-
-        handle = self.marquee_drag_mode_at(scene_pos)
-        if handle is not None:
-            return self._marquee_cursor_shape_for_handle(handle)
-        if modifiers & QtCore.Qt.AltModifier:
-            return QtCore.Qt.CrossCursor
-
-        return None
-
-
-    def _marquee_cursor_shape_for_handle(self, handle):
-        if handle in ("e", "w"):
-            return QtCore.Qt.SizeHorCursor
-        if handle in ("n", "s"):
-            return QtCore.Qt.SizeVerCursor
-        if handle in ("nw", "se"):
-            return QtCore.Qt.SizeFDiagCursor
-        if handle in ("ne", "sw"):
-            return QtCore.Qt.SizeBDiagCursor
-
-        return QtCore.Qt.CrossCursor
-
-
-    def _update_marquee_handles(self):
-        points = list(self._marquee_handle_points().values())
-        self.marquee_handles.setData(
-            [point.x() for point in points],
-            [point.y() for point in points],
-            )
-        self.marquee_handles.show()
-
-
-    def _marquee_handle_points(self):
-        return self._marquee_handle_points_for_rect(self.marquee)
-
-
-    def _marquee_handle_points_for_rect(self, rect):
-        centre_x = rect.center().x()
-        centre_y = rect.center().y()
-        return {
-            "nw": QtCore.QPointF(rect.left(), rect.bottom()),
-            "n": QtCore.QPointF(centre_x, rect.bottom()),
-            "ne": QtCore.QPointF(rect.right(), rect.bottom()),
-            "e": QtCore.QPointF(rect.right(), centre_y),
-            "se": QtCore.QPointF(rect.right(), rect.top()),
-            "s": QtCore.QPointF(centre_x, rect.top()),
-            "sw": QtCore.QPointF(rect.left(), rect.top()),
-            "w": QtCore.QPointF(rect.left(), centre_y),
-            }
-        
-        
     def __str__(self):
         filenameStr = path.basename(get_DB_location())
         fstr = (f"{filenameStr} | " 
@@ -823,54 +374,6 @@ class plotWidget(qtw.QMainWindow):
         return fstr
 
     
-    def show_status(self, message : str, timeout : int = 5000):
-        """
-        Shows a short message in the plot window status bar.
-
-        """
-        if getattr(self, "visible", False):
-            self.statusBar().showMessage(message, timeout)
-
-
-    def show_error(self, title : str, message : str, details : str = None):
-        """
-        Shows an error both in the status bar and, for visible windows, in a
-        message box.
-
-        """
-        log_user_error(title, message, details, __name__)
-        self.show_status(message, 10000)
-
-        if not self.visible:
-            return
-
-        box = qtw.QMessageBox(qtw.QMessageBox.Warning, title, message, parent=self)
-        if details:
-            box.setDetailedText(details)
-        box.exec_()
-
-
-    def register_shortcut(self, action, shortcut, status_tip : str = None):
-        """
-        Registers a QAction shortcut on the plot window.
-
-        """
-        if isinstance(shortcut, (list, tuple)):
-            action.setShortcuts(shortcut)
-            shortcut_text = shortcut[0].toString(QKeySequence.NativeText)
-        else:
-            action.setShortcut(shortcut)
-            shortcut_text = QKeySequence(shortcut).toString(QKeySequence.NativeText)
-        action.setShortcutContext(QtCore.Qt.WindowShortcut)
-        if hasattr(action, "setShortcutVisibleInContextMenu"):
-            action.setShortcutVisibleInContextMenu(True)
-        if status_tip:
-            action.setStatusTip(status_tip)
-            action.setToolTip(f"{status_tip} ({shortcut_text})")
-        if action not in self.actions():
-            self.addAction(action)
-
-
     @property
     def ds(self):
         """
@@ -907,7 +410,7 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.toolbarRef = qtw.QToolBar("Refresh Timer")
-        self.addToolBar(QtCore.Qt.TopToolBarArea, self.toolbarRef)
+        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.toolbarRef)
         
         if not self.ds.running:
             self.toolbarRef.hide()
@@ -934,7 +437,7 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.toolbarCo_ord = qtw.QToolBar("Co-ordinates")
-        self.addToolBar(QtCore.Qt.BottomToolBarArea, self.toolbarCo_ord)
+        self.addToolBar(QtCore.Qt.ToolBarArea.BottomToolBarArea, self.toolbarCo_ord)
         
         labelWidth = self._label_width #About the size of 3 s.f. scientific
         self.pos_labels = {}
@@ -961,12 +464,14 @@ class plotWidget(qtw.QMainWindow):
         """
         self.vbMenu = self.vb.menu
         self.mouseModeAction = self._context_menu_action("Mouse Mode")
+        self._connect_mouse_mode_menu_to_preferences()
         self._remove_scene_export_context_menu()
         if getattr(self.plot, "ctrlMenu", None) is not None:
             self.plot.ctrlMenu.setTitle("Options")
             self.plot.ctrlMenu.menuAction().setText("Options")
 
-        self.exportPlotAction = qtw.QAction("&Export Plot...", self)
+        self.exportPlotAction = QtGui.QAction("&Export Plot...", self)
+        self.exportPlotAction.setObjectName("exportPlotAction")
         self.register_shortcut(
             self.exportPlotAction,
             "Ctrl+E",
@@ -974,7 +479,16 @@ class plotWidget(qtw.QMainWindow):
             )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
-        contextAction = qtw.QAction("Show Context Menu", self)
+        self.copyPlotImageAction = QtGui.QAction("&Copy Plot Image", self)
+        self.copyPlotImageAction.setObjectName("copyPlotImageAction")
+        self.register_shortcut(
+            self.copyPlotImageAction,
+            standard_key_sequences(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
+            "Copy the plot image to the clipboard",
+            )
+        self.copyPlotImageAction.triggered.connect(self.copy_plot_image)
+
+        contextAction = QtGui.QAction("Show Context Menu", self)
         self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
         contextAction.triggered.connect(self.open_context_menu)
         
@@ -988,9 +502,12 @@ class plotWidget(qtw.QMainWindow):
         x_action = actions[1]
         
         self.autoscaleSep = self.vbMenu.insertSeparator(x_action)
+
+        self.vbMenu.insertAction(x_action, self.copyPlotImageAction)
+        self.vbMenu.insertSeparator(x_action)
         
         # Create visibility
-        toggleAction = qtw.QAction("View Operations", self, checkable=True)
+        toggleAction = QtGui.QAction("View Operations", self, checkable=True)
         self.register_shortcut(toggleAction, "Ctrl+Shift+O", "Toggle operations panel")
         toggleAction.triggered.connect(self.oper_dock.setVisible)
         self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
@@ -998,293 +515,6 @@ class plotWidget(qtw.QMainWindow):
         self.vbMenu.insertSeparator(x_action)
 
         self._init_axis_scale_dialogs()
-
-
-    def _init_axis_scale_dialogs(self):
-        """
-        Move pyqtgraph's X/Y axis scaling controls into double-click dialogs.
-
-        """
-        self._axis_scale_controls = {}
-        self._axis_scale_dialogs = {}
-
-        for axis, menu_text in (("x", "X axis"), ("y", "Y axis")):
-            action = self._context_menu_action(menu_text)
-            if action is None or action.menu() is None:
-                continue
-
-            self.vbMenu.removeAction(action)
-
-        self._install_axis_scale_double_click_handlers()
-
-
-    def _menu_control_widget(self, menu):
-        """
-        Returns the embedded control widget from a QWidgetAction menu.
-
-        """
-        for action in menu.actions():
-            if isinstance(action, qtw.QWidgetAction):
-                return action.defaultWidget()
-        return None
-
-
-    def _install_axis_scale_double_click_handlers(self):
-        """
-        Open the relevant axis scale dialog when an axis is double-clicked.
-
-        """
-        for axis, side in (("x", "bottom"), ("y", "left")):
-            axis_item = self.plot.getAxis(side)
-            if axis_item is None:
-                continue
-
-            previous_handler = getattr(axis_item, "mouseDoubleClickEvent", None)
-
-            def mouse_double_click(event, axis=axis, previous_handler=previous_handler):
-                if event.button() == QtCore.Qt.LeftButton:
-                    self.open_axis_scale_dialog(axis)
-                    event.accept()
-                    return
-
-                if previous_handler is not None:
-                    previous_handler(event)
-
-            axis_item.mouseDoubleClickEvent = mouse_double_click
-
-
-    def _axis_scale_dialog_title(self, axis):
-        return f"{axis.upper()} axis scaling"
-
-
-    def _axis_scale_axis_number(self, axis):
-        return 0 if axis == "x" else 1
-
-
-    def _axis_scale_axis_constant(self, axis):
-        return pg.ViewBox.XAxis if axis == "x" else pg.ViewBox.YAxis
-
-
-    def _new_axis_scale_controls(self, axis):
-        """
-        Build a fresh copy of pyqtgraph's axis scaling controls for a dialog.
-
-        """
-        widget = qtw.QWidget()
-        ui = axisCtrlTemplate_generic.Ui_Form()
-        ui.setupUi(widget)
-        self._axis_scale_controls[axis] = ui
-
-        ui.mouseCheck.toggled.connect(
-            lambda checked, axis=axis: self._axis_scale_mouse_toggled(axis, checked)
-            )
-        ui.manualRadio.clicked.connect(
-            lambda _checked=False, axis=axis: self._axis_scale_manual_clicked(axis)
-            )
-        ui.minText.editingFinished.connect(
-            lambda axis=axis: self._axis_scale_range_text_changed(axis)
-            )
-        ui.maxText.editingFinished.connect(
-            lambda axis=axis: self._axis_scale_range_text_changed(axis)
-            )
-        ui.autoRadio.clicked.connect(
-            lambda _checked=False, axis=axis: self._axis_scale_auto_clicked(axis)
-            )
-        ui.autoPercentSpin.valueChanged.connect(
-            lambda value, axis=axis: self._axis_scale_auto_spin_changed(axis, value)
-            )
-        ui.linkCombo.currentIndexChanged.connect(
-            lambda _index, axis=axis: self._axis_scale_link_changed(axis)
-            )
-        ui.autoPanCheck.toggled.connect(
-            lambda checked, axis=axis: self._axis_scale_auto_pan_toggled(axis, checked)
-            )
-        ui.visibleOnlyCheck.toggled.connect(
-            lambda checked, axis=axis: self._axis_scale_visible_only_toggled(axis, checked)
-            )
-        ui.invertCheck.toggled.connect(
-            lambda checked, axis=axis: self._axis_scale_invert_toggled(axis, checked)
-            )
-
-        return widget
-
-
-    def _sync_axis_scale_controls(self, axis):
-        """
-        Update a dialog's controls from the current view state.
-
-        """
-        ui = self._axis_scale_controls.get(axis)
-        if ui is None:
-            return
-
-        axis_number = self._axis_scale_axis_number(axis)
-        state = self.vb.getState(copy=False)
-
-        for widget in (
-                ui.minText,
-                ui.maxText,
-                ui.manualRadio,
-                ui.autoRadio,
-                ui.autoPercentSpin,
-                ui.linkCombo,
-                ui.autoPanCheck,
-                ui.visibleOnlyCheck,
-                ui.invertCheck,
-                ui.mouseCheck,
-                ):
-            widget.blockSignals(True)
-
-        try:
-            target_range = state["targetRange"][axis_number]
-            ui.minText.setText("%0.5g" % target_range[0])
-            ui.maxText.setText("%0.5g" % target_range[1])
-
-            auto_range = state["autoRange"][axis_number]
-            ui.autoRadio.setChecked(auto_range is not False)
-            ui.manualRadio.setChecked(auto_range is False)
-            if auto_range is not False and auto_range is not True:
-                ui.autoPercentSpin.setValue(int(auto_range * 100))
-
-            ui.mouseCheck.setChecked(state["mouseEnabled"][axis_number])
-            ui.autoPanCheck.setChecked(state["autoPan"][axis_number])
-            ui.visibleOnlyCheck.setChecked(state["autoVisibleOnly"][axis_number])
-            ui.invertCheck.setChecked(state.get(axis + "Inverted", False))
-            self._sync_axis_scale_link_combo(axis)
-        finally:
-            for widget in (
-                    ui.minText,
-                    ui.maxText,
-                    ui.manualRadio,
-                    ui.autoRadio,
-                    ui.autoPercentSpin,
-                    ui.linkCombo,
-                    ui.autoPanCheck,
-                    ui.visibleOnlyCheck,
-                    ui.invertCheck,
-                    ui.mouseCheck,
-                    ):
-                widget.blockSignals(False)
-
-
-    def _sync_axis_scale_link_combo(self, axis):
-        """
-        Mirror pyqtgraph's available linked views into the dialog link combo.
-
-        """
-        ui = self._axis_scale_controls[axis]
-        axis_number = self._axis_scale_axis_number(axis)
-        source_combo = self.vbMenu.ctrl[axis_number].linkCombo
-        current = self.vb.getState(copy=False)["linkedViews"][axis_number] or ""
-
-        ui.linkCombo.clear()
-        for index in range(source_combo.count()):
-            ui.linkCombo.addItem(source_combo.itemText(index))
-
-        index = ui.linkCombo.findText(current)
-        ui.linkCombo.setCurrentIndex(max(index, 0))
-
-
-    def _axis_scale_mouse_toggled(self, axis, checked):
-        if axis == "x":
-            self.vb.setMouseEnabled(x=checked)
-        else:
-            self.vb.setMouseEnabled(y=checked)
-
-
-    def _axis_scale_manual_clicked(self, axis):
-        self.vb.enableAutoRange(self._axis_scale_axis_constant(axis), False)
-
-
-    def _axis_scale_range_text_changed(self, axis):
-        ui = self._axis_scale_controls[axis]
-        axis_number = self._axis_scale_axis_number(axis)
-        values = list(self.vb.viewRange()[axis_number])
-        for index, text in enumerate((ui.minText.text(), ui.maxText.text())):
-            try:
-                values[index] = float(text)
-            except ValueError:
-                pass
-
-        ui.manualRadio.setChecked(True)
-        if axis == "x":
-            self.vb.setXRange(*values, padding=0)
-        else:
-            self.vb.setYRange(*values, padding=0)
-
-
-    def _axis_scale_auto_clicked(self, axis):
-        ui = self._axis_scale_controls[axis]
-        self.vb.enableAutoRange(
-            self._axis_scale_axis_constant(axis),
-            ui.autoPercentSpin.value() * 0.01,
-            )
-
-
-    def _axis_scale_auto_spin_changed(self, axis, value):
-        ui = self._axis_scale_controls[axis]
-        ui.autoRadio.setChecked(True)
-        self.vb.enableAutoRange(self._axis_scale_axis_constant(axis), value * 0.01)
-
-
-    def _axis_scale_link_changed(self, axis):
-        ui = self._axis_scale_controls[axis]
-        if axis == "x":
-            self.vb.setXLink(str(ui.linkCombo.currentText()))
-        else:
-            self.vb.setYLink(str(ui.linkCombo.currentText()))
-
-
-    def _axis_scale_auto_pan_toggled(self, axis, checked):
-        if axis == "x":
-            self.vb.setAutoPan(x=checked)
-        else:
-            self.vb.setAutoPan(y=checked)
-
-
-    def _axis_scale_visible_only_toggled(self, axis, checked):
-        if axis == "x":
-            self.vb.setAutoVisible(x=checked)
-        else:
-            self.vb.setAutoVisible(y=checked)
-
-
-    def _axis_scale_invert_toggled(self, axis, checked):
-        if axis == "x":
-            self.vb.invertX(checked)
-        else:
-            self.vb.invertY(checked)
-
-
-    @QtCore.pyqtSlot(str)
-    def open_axis_scale_dialog(self, axis):
-        """
-        Opens the scaling dialog for the requested axis.
-
-        """
-        if hasattr(self.vb, "updateViewLists"):
-            self.vb.updateViewLists()
-
-        if hasattr(self.vbMenu, "updateState"):
-            self.vbMenu.updateState()
-
-        dialog = self._axis_scale_dialogs.get(axis)
-        if dialog is None:
-            dialog = qtw.QDialog(self)
-            dialog.setWindowTitle(self._axis_scale_dialog_title(axis))
-            layout = qtw.QVBoxLayout(dialog)
-            layout.addWidget(self._new_axis_scale_controls(axis))
-
-            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
-            buttons.rejected.connect(dialog.close)
-            layout.addWidget(buttons)
-
-            self._axis_scale_dialogs[axis] = dialog
-
-        self._sync_axis_scale_controls(axis)
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
 
 
     def _remove_scene_export_context_menu(self):
@@ -1320,7 +550,7 @@ class plotWidget(qtw.QMainWindow):
         Opens the plot context menu from the keyboard.
 
         """
-        self.vbMenu.exec_(self.widget.mapToGlobal(self.widget.rect().center()))
+        self.vbMenu.exec(self.widget.mapToGlobal(self.widget.rect().center()))
 
 
     @QtCore.pyqtSlot()
@@ -1332,6 +562,510 @@ class plotWidget(qtw.QMainWindow):
         scene = self.widget.scene()
         scene.contextMenuItem = self.plot
         scene.showExportDialog()
+
+
+    @QtCore.pyqtSlot()
+    def copy_plot_image(self):
+        """
+        Copies the rendered plot widget to the clipboard as an image.
+
+        Only the pyqtgraph widget is captured, so window menus, toolbars, docks,
+        and any open context menu are excluded.
+
+        """
+        resolution = self._copy_plot_image_resolution()
+        if resolution == COPY_PLOT_IMAGE_RESOLUTION_300_DPI:
+            return self.copy_plot_image_at_dpi(_HIGH_DPI_COPY_RESOLUTION)
+        if resolution == COPY_PLOT_IMAGE_RESOLUTION_SVG:
+            return self.copy_plot_image_as_svg()
+
+        return self.copy_plot_image_at_screen_resolution()
+
+
+    def copy_plot_image_at_screen_resolution(self):
+        """
+        Copies the rendered plot widget at the current screen resolution.
+
+        """
+        clipboard = qtw.QApplication.clipboard()
+        if clipboard is None:
+            self.show_status("No clipboard available.", 5000)
+            return False
+
+        pixmap = self._plot_image_pixmap()
+        if pixmap.isNull():
+            self.show_status("Could not copy plot image.", 5000)
+            return False
+
+        clipboard.setImage(pixmap.toImage())
+        self.show_status("Plot image copied to clipboard.", 3000)
+        return True
+
+
+    def _copy_plot_image_resolution(self):
+        """
+        Returns the configured resolution mode for plot-image clipboard copies.
+
+        """
+        config = self.__dict__.get("config")
+        if config is None:
+            return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
+
+        try:
+            value = config.get(COPY_PLOT_IMAGE_RESOLUTION_KEY)
+        except Exception:
+            return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
+
+        if value in (
+            COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
+            COPY_PLOT_IMAGE_RESOLUTION_SVG,
+            ):
+            return value
+        return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
+
+
+    def _plot_image_pixmap(self):
+        """
+        Captures the plot widget without the surrounding QMainWindow chrome.
+
+        """
+        return self.widget.grab()
+
+
+    def copy_plot_image_as_svg(self):
+        """
+        Copies the current plot area to the clipboard as SVG.
+
+        """
+        clipboard = qtw.QApplication.clipboard()
+        if clipboard is None:
+            self.show_status("No clipboard available.", 5000)
+            return False
+
+        try:
+            svg_bytes = self._plot_svg_bytes()
+        except Exception as err:
+            log_exception("Plot SVG copy failed", err, __name__)
+            self.show_status("Could not copy plot SVG.", 5000)
+            return False
+
+        if not svg_bytes:
+            self.show_status("Could not copy plot SVG.", 5000)
+            return False
+
+        mime_data = QtCore.QMimeData()
+        mime_data.setData("image/svg+xml", QtCore.QByteArray(svg_bytes))
+        try:
+            mime_data.setText(svg_bytes.decode("utf-8"))
+        except UnicodeDecodeError:
+            pass
+        clipboard.setMimeData(mime_data)
+        self.show_status("Plot SVG copied to clipboard.", 3000)
+        return True
+
+
+    def _plot_svg_bytes(self):
+        """
+        Renders the current plot area as SVG bytes.
+
+        """
+        widget = self.__dict__.get("widget")
+        if widget is None or not hasattr(widget, "scene"):
+            return b""
+
+        size = widget.size()
+        if size.width() < 1 or size.height() < 1:
+            return b""
+
+        scene = widget.scene()
+        if scene is None:
+            return b""
+
+        data = QtCore.QByteArray()
+        buffer = QtCore.QBuffer(data)
+        if not buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly):
+            return b""
+
+        generator = QtSvg.QSvgGenerator()
+        generator.setOutputDevice(buffer)
+        generator.setSize(size)
+        generator.setViewBox(QtCore.QRect(0, 0, size.width(), size.height()))
+        generator.setTitle("qPlot plot")
+        generator.setDescription("Copied from qPlot")
+
+        painter = QtGui.QPainter(generator)
+        try:
+            scene.render(
+                painter,
+                QtCore.QRectF(0, 0, size.width(), size.height()),
+                self._plot_svg_source_rect(widget),
+                )
+        finally:
+            painter.end()
+            buffer.close()
+
+        return bytes(data)
+
+
+    def _plot_svg_source_rect(self, widget):
+        """
+        Returns the scene rectangle currently visible in the plot widget.
+
+        """
+        viewport_transform = getattr(widget, "viewportTransform", None)
+        if viewport_transform is not None:
+            return QtCore.QRectF(
+                viewport_transform().inverted()[0].mapRect(widget.rect())
+                )
+
+        plot = self.__dict__.get("plot")
+        if plot is not None:
+            return QtCore.QRectF(plot.sceneBoundingRect())
+
+        return QtCore.QRectF(widget.scene().sceneRect())
+
+
+    def copy_plot_image_at_dpi(self, dpi):
+        """
+        Renders the plot image at a target DPI and copies it to the clipboard.
+
+        """
+        try:
+            size = self._plot_image_size_for_dpi(dpi)
+        except Exception as err:
+            log_exception("Plot image DPI sizing failed", err, __name__)
+            self.show_status("Could not copy plot image at requested resolution.", 5000)
+            return False
+
+        if not size.isValid() or size.width() < 1 or size.height() < 1:
+            self.show_status("Could not copy plot image at requested resolution.", 5000)
+            return False
+
+        if not self.copy_plot_image_at_size(size.width(), size.height()):
+            return False
+
+        clipboard = qtw.QApplication.clipboard()
+        if clipboard is not None:
+            image = clipboard.image()
+            if not image.isNull():
+                self._set_image_dpi(image, dpi)
+                clipboard.setImage(image)
+
+        self.show_status(
+            "Plot image copied to clipboard at "
+            f"{dpi:g} dpi ({size.width()} x {size.height()} px).",
+            3000,
+            )
+        return True
+
+
+    def copy_plot_image_at_size(self, width, height):
+        """
+        Renders the plot image at a chosen pixel size and copies it to the clipboard.
+
+        """
+        size = QtCore.QSize(int(width), int(height))
+        if size.width() < 1 or size.height() < 1:
+            self.show_status("Plot image size must be at least 1 x 1 px.", 5000)
+            return False
+        if (
+            size.width() > _MAX_EXPORTED_IMAGE_SIZE
+            or size.height() > _MAX_EXPORTED_IMAGE_SIZE
+            ):
+            self.show_status(
+                "Plot image size must be no larger than "
+                f"{_MAX_EXPORTED_IMAGE_SIZE} x {_MAX_EXPORTED_IMAGE_SIZE} px.",
+                5000,
+                )
+            return False
+
+        clipboard = qtw.QApplication.clipboard()
+        if clipboard is None:
+            self.show_status("No clipboard available.", 5000)
+            return False
+
+        try:
+            image = self._plot_image_at_size(size)
+        except Exception as err:
+            log_exception("Plot image copy at size failed", err, __name__)
+            self.show_status("Could not copy plot image at requested size.", 5000)
+            return False
+
+        if image.isNull():
+            self.show_status("Could not copy plot image at requested size.", 5000)
+            return False
+
+        clipboard.setImage(image)
+        self.show_status("Plot image copied to clipboard.", 3000)
+        return True
+
+
+    def _plot_image_at_size(self, size):
+        """
+        Renders the current plot area into a QImage of the requested size.
+
+        """
+        exporter = self._plot_image_exporter()
+        if exporter is None:
+            return QtGui.QImage()
+
+        return self._export_plot_image(exporter, size)
+
+
+    def _plot_image_exporter(self):
+        """
+        Returns an image exporter for the visible plot area.
+
+        """
+        item = self._plot_image_export_item()
+        if item is None:
+            return None
+        return ImageExporter(item)
+
+
+    def _plot_image_export_item(self):
+        """
+        Returns the graphics object used for high-resolution image exports.
+
+        """
+        widget = self.__dict__.get("widget")
+        if widget is not None and hasattr(widget, "scene"):
+            scene = widget.scene()
+            if scene is not None:
+                return scene
+
+        return self.__dict__.get("plot")
+
+
+    def _export_plot_image(self, exporter, size):
+        """
+        Renders an exporter into a QImage of the requested size.
+
+        """
+        params = exporter.parameters()
+        params.param("width").setValue(
+            size.width(),
+            blockSignal=exporter.widthChanged,
+            )
+        params.param("height").setValue(
+            size.height(),
+            blockSignal=exporter.heightChanged,
+            )
+        return exporter.export(toBytes=True)
+
+
+    def _plot_image_size_for_dpi(self, dpi):
+        """
+        Returns the output pixel size needed to copy the plot at ``dpi``.
+
+        """
+        exporter = self._plot_image_exporter()
+        if exporter is None:
+            return QtCore.QSize()
+
+        params = exporter.parameters()
+        base_width = int(params["width"])
+        base_height = int(params["height"])
+        width = round(base_width * float(dpi) / self._plot_image_source_dpi("x"))
+        height = round(base_height * float(dpi) / self._plot_image_source_dpi("y"))
+
+        return QtCore.QSize(
+            min(_MAX_EXPORTED_IMAGE_SIZE, max(1, width)),
+            min(_MAX_EXPORTED_IMAGE_SIZE, max(1, height)),
+            )
+
+
+    def _plot_image_source_dpi(self, axis):
+        """
+        Returns the logical screen DPI used to convert screen pixels to inches.
+
+        """
+        widget = self.__dict__.get("widget")
+        method_name = "logicalDpiX" if axis == "x" else "logicalDpiY"
+        method = getattr(widget, method_name, None)
+        if method is not None:
+            dpi = float(method())
+            if dpi > 0:
+                return dpi
+
+        screen = qtw.QApplication.primaryScreen()
+        if screen is not None:
+            dpi = (
+                screen.logicalDotsPerInchX()
+                if axis == "x"
+                else screen.logicalDotsPerInchY()
+                )
+            if dpi > 0:
+                return float(dpi)
+
+        return 96.0
+
+
+    def _set_image_dpi(self, image, dpi):
+        """
+        Stores DPI metadata on a rendered QImage.
+
+        """
+        dots_per_meter = round(float(dpi) * _INCHES_PER_METER)
+        image.setDotsPerMeterX(dots_per_meter)
+        image.setDotsPerMeterY(dots_per_meter)
+
+
+    def _add_plot_area_resize_menu(self, window_menu):
+        """
+        Adds fixed plot-area resize actions to the Window menu.
+
+        """
+        resize_menu = qtw.QMenu("&Resize", self)
+        resize_menu.setObjectName("plotAreaResizeMenu")
+
+        for label, object_name, size in _PLOT_AREA_RESIZE_PRESETS:
+            action = QtGui.QAction(
+                _plot_area_size_icon(size),
+                f"{label} ({size.width()} x {size.height()} px)",
+                self,
+                )
+            action.setObjectName(object_name)
+            action.setStatusTip(
+                f"Resize the copied plot area to {size.width()} x {size.height()} px"
+                )
+            action.triggered.connect(
+                lambda _checked=False, size=size: self.resize_plot_area(
+                    size.width(),
+                    size.height(),
+                    )
+                )
+            resize_menu.addAction(action)
+
+        resize_menu.addSeparator()
+        custom_action = QtGui.QAction("&Custom...", self)
+        custom_action.setObjectName("resizePlotAreaCustomAction")
+        custom_action.setStatusTip("Resize the copied plot area to a custom pixel size")
+        custom_action.triggered.connect(self.open_custom_plot_area_size_dialog)
+        resize_menu.addAction(custom_action)
+
+        insert_before = next(
+            (
+                action for action in window_menu.actions()
+                if action.text().replace("&", "") == "Minimize"
+                ),
+            None,
+            )
+        if insert_before is None:
+            window_menu.addMenu(resize_menu)
+            return resize_menu
+
+        window_menu.insertMenu(insert_before, resize_menu)
+        window_menu.insertSeparator(insert_before)
+        return resize_menu
+
+
+    @QtCore.pyqtSlot()
+    def open_custom_plot_area_size_dialog(self):
+        """
+        Opens a dialog for resizing the copied plot area to an exact pixel size.
+
+        """
+        current_size = self._current_plot_area_size()
+
+        dialog = qtw.QDialog(self)
+        dialog.setWindowTitle("Custom Plot Area Size")
+
+        form = qtw.QFormLayout(dialog)
+        width_spin = qtw.QSpinBox(dialog)
+        width_spin.setRange(1, 20000)
+        width_spin.setSuffix(" px")
+        width_spin.setValue(max(1, current_size.width()))
+
+        height_spin = qtw.QSpinBox(dialog)
+        height_spin.setRange(1, 20000)
+        height_spin.setSuffix(" px")
+        height_spin.setValue(max(1, current_size.height()))
+
+        form.addRow("&Width:", width_spin)
+        form.addRow("&Height:", height_spin)
+
+        buttons = qtw.QDialogButtonBox(
+            qtw.QDialogButtonBox.StandardButton.Ok
+            | qtw.QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+            )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        if dialog.exec() == qtw.QDialog.DialogCode.Accepted:
+            self.resize_plot_area(width_spin.value(), height_spin.value())
+
+
+    def _current_plot_area_size(self):
+        """
+        Returns the current copied plot-area size.
+
+        """
+        widget = getattr(self, "widget", None)
+        if widget is None:
+            return QtCore.QSize(1, 1)
+        return widget.size()
+
+
+    def resize_plot_area(self, width, height):
+        """
+        Resizes the window so the copied plot area has the requested size.
+
+        """
+        target = QtCore.QSize(int(width), int(height))
+        if target.width() < 1 or target.height() < 1:
+            self.show_status("Plot area size must be at least 1 x 1 px.", 5000)
+            return False
+
+        widget = getattr(self, "widget", None)
+        if widget is None:
+            self.show_status("No plot area available to resize.", 5000)
+            return False
+
+        if self.isMaximized() or self.isFullScreen():
+            self.showNormal()
+
+        self._resize_window_for_plot_area(target)
+        actual = self._current_plot_area_size()
+        if actual == target:
+            self.show_status(
+                f"Plot area resized to {actual.width()} x {actual.height()} px.",
+                3000,
+                )
+            return True
+
+        self.show_status(
+            "Plot area resized to "
+            f"{actual.width()} x {actual.height()} px "
+            f"(requested {target.width()} x {target.height()} px).",
+            5000,
+            )
+        return False
+
+
+    def _resize_window_for_plot_area(self, target):
+        """
+        Applies the top-level resize, refining after layouts have updated.
+
+        """
+        for _attempt in range(3):
+            current = self._current_plot_area_size()
+            delta = target - current
+            if delta.isNull():
+                return
+
+            next_size = self.size() + delta
+            next_size.setWidth(max(1, next_size.width()))
+            next_size.setHeight(max(1, next_size.height()))
+            self.resize(next_size)
+
+            app = qtw.QApplication.instance()
+            if app is not None:
+                app.processEvents(
+                    QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+                    )
         
         
     def initAxes(self):
@@ -1353,7 +1087,7 @@ class plotWidget(qtw.QMainWindow):
         
         # Use of QDockWidget over QToolbar to allow proper widget placement
         self.axes_dock = QDock_context("Line control", self)
-        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.axes_dock)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.axes_dock)
         
         # Widget production
         x_layout = self.axes_dock.addLayout()
@@ -1399,8 +1133,8 @@ class plotWidget(qtw.QMainWindow):
             
         # Produce seperations line as QDockWidget as none inbuilt
         sep = qtw.QFrame()
-        sep.setFrameShape(qtw.QFrame.HLine)
-        sep.setFrameShadow(qtw.QFrame.Sunken)
+        sep.setFrameShape(qtw.QFrame.Shape.HLine)
+        sep.setFrameShadow(qtw.QFrame.Shadow.Sunken)
         
         self.axes_dock.addWidget(sep)
         
@@ -1419,7 +1153,7 @@ class plotWidget(qtw.QMainWindow):
 
         """
         self.oper_dock = QDock_context("Operations", self)
-        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.oper_dock)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, self.oper_dock)
         self.oper_dock.setVisible(False)# Large window so toggle off by default
         
         self.oper_widget = operations_widget(self)
@@ -1442,44 +1176,53 @@ class plotWidget(qtw.QMainWindow):
             file_menu.addAction(export_plot_action)
             file_menu.addSeparator()
 
-        close_all_plots_action = qtw.QAction("Close All &Plot Windows", self)
+        copy_plot_image_action = getattr(self, "copyPlotImageAction", None)
+        if copy_plot_image_action is not None:
+            edit_menu = menu.addMenu("&Edit")
+            edit_menu.addAction(copy_plot_image_action)
+
+        close_all_plots_action = QtGui.QAction("Close All &Plot Windows", self)
         close_all_plots_action.setShortcut("Ctrl+Shift+W")
-        close_all_plots_action.setShortcutContext(QtCore.Qt.WindowShortcut)
+        close_all_plots_action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         close_all_plots_action.setStatusTip("Close all open plot windows")
         close_all_plots_action.triggered.connect(self.request_close_all_plots)
         file_menu.addAction(close_all_plots_action)
 
-        closeAction = qtw.QAction("&Close Window", self)
+        closeAction = QtGui.QAction("&Close Window", self)
         closeAction.setShortcuts(
-            standard_key_sequences(QKeySequence.Close, ["Ctrl+W"])
+            standard_key_sequences(QKeySequence.StandardKey.Close, ["Ctrl+W"])
             )
-        closeAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        closeAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         closeAction.setStatusTip("Close this plot window")
         closeAction.triggered.connect(self.close)
         file_menu.addAction(closeAction)
 
-        quitAction = qtw.QAction("&Quit qPlot", self)
+        quitAction = QtGui.QAction("&Quit qPlot", self)
         quitAction.setShortcuts(
-            standard_key_sequences(QKeySequence.Quit, ["Ctrl+Q"])
+            standard_key_sequences(QKeySequence.StandardKey.Quit, ["Ctrl+Q"])
             )
-        quitAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        quitAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         quitAction.setStatusTip("Quit qPlot")
         quitAction.triggered.connect(self.request_application_quit)
         file_menu.addAction(quitAction)
 
-        add_standard_window_controls(self)
+        window_menu = add_standard_window_controls(self)
+        self._add_plot_area_resize_menu(window_menu)
 
         options_menu = menu.addMenu("&Options")
+        options_menu.addAction(
+            create_preferences_action(self, self.show_preferences_dialog)
+            )
+
         mouse_mode_action = getattr(self, "mouseModeAction", None)
         if mouse_mode_action is not None:
             self.vbMenu.removeAction(mouse_mode_action)
-            options_menu.addAction(mouse_mode_action)
             options_menu.addSeparator()
-        add_confirmation_options(self, options_menu)
+            options_menu.addAction(mouse_mode_action)
         
         main_menu = menu.addMenu("&View")
         
-        refreshAction = qtw.QAction("&Refresh", self)
+        refreshAction = QtGui.QAction("&Refresh", self)
         refreshAction.setShortcut("R")
         refreshAction.triggered.connect(lambda: self.refreshWindow(force=True))
         if hasattr(self, "get_mergables"): # Force refresh 1d line options
@@ -1540,6 +1283,105 @@ class plotWidget(qtw.QMainWindow):
         self.config.theme.style_plotItem(self)
 
 
+    def apply_current_settings(self):
+        """
+        Applies config-backed settings handled directly by plot windows.
+
+        """
+        self.update_theme(self.config)
+        self.apply_mouse_mode_preference()
+
+
+    def _configured_mouse_mode(self):
+        try:
+            mode = self.config.get(MOUSE_MODE_KEY)
+        except KeyError:
+            mode = "pan"
+
+        if mode not in {"pan", "rect"}:
+            return "pan"
+        return mode
+
+
+    def apply_mouse_mode_preference(self):
+        """
+        Applies the configured pyqtgraph mouse mode to this plot view.
+
+        """
+        if hasattr(self, "vb"):
+            self.vb.setLeftButtonAction(self._configured_mouse_mode())
+
+
+    def change_mouse_mode(self, mode):
+        """
+        Persists a mouse mode change made from a plot-window menu.
+
+        """
+        if mode not in {"pan", "rect"}:
+            return False
+
+        main_window = main_window_for(self)
+        target_config = getattr(main_window, "config", self.config)
+        if target_config is not self.config:
+            self.config = target_config
+
+        try:
+            current_mode = target_config.get(MOUSE_MODE_KEY)
+        except KeyError:
+            current_mode = None
+
+        if current_mode != mode:
+            target_config.update(MOUSE_MODE_KEY, mode)
+
+        if (
+                main_window is not None
+                and main_window is not self
+                and hasattr(main_window, "apply_current_settings")
+                ):
+            main_window.apply_current_settings()
+        else:
+            self.apply_mouse_mode_preference()
+        return True
+
+
+    def _connect_mouse_mode_menu_to_preferences(self):
+        menu = self.mouseModeAction.menu() if self.mouseModeAction is not None else None
+        if menu is None:
+            return
+
+        for action, mode in zip(
+                getattr(menu, "mouseModes", ()),
+                ("pan", "rect"),
+                strict=False,
+                ):
+            action.triggered.connect(
+                lambda _checked=False, mode=mode: self.change_mouse_mode(mode)
+                )
+
+
+    def show_preferences_dialog(self):
+        """
+        Opens the shared preferences dialog from a plot window.
+
+        """
+        main_window = main_window_for(self)
+        owner = main_window if main_window is not None else self
+        config = getattr(owner, "config", self.config)
+
+        if config is not self.config:
+            self.config = config
+
+        dialog = PreferencesDialog(config, self)
+        if hasattr(owner, "apply_current_settings"):
+            dialog.preferencesApplied.connect(owner.apply_current_settings)
+        else:
+            dialog.preferencesApplied.connect(self.apply_current_settings)
+        dialog.preferencesApplied.connect(
+            lambda: self.show_status("Preferences saved.", 3000)
+            )
+        dialog.exec()
+
+
     @staticmethod
     def request_application_quit():
         """
@@ -1582,7 +1424,7 @@ class plotWidget(qtw.QMainWindow):
 
         Returns
         -------
-        menu : PyQt5.QtWidgets.QMenu
+        menu : PyQt6.QtWidgets.QMenu
             Context menu to be displayed.
 
         """
@@ -1594,7 +1436,7 @@ class plotWidget(qtw.QMainWindow):
         # Set actions
         for widget in widgets:
             action = widget.toggleViewAction()
-            if isinstance(action, qtw.QAction):
+            if isinstance(action, QtGui.QAction):
                 shortcut = self._toggle_shortcuts.get(widget.windowTitle())
                 if shortcut:
                     self.register_shortcut(
@@ -1637,9 +1479,11 @@ class plotWidget(qtw.QMainWindow):
         """
         complete = load_param_data_from_db_prep(self.ds.cache, self.param)
         if complete:
-            self.show_status(f"Processing cached data for {self.param.name}...", 0)
+            message = f"Processing cached data for {self.param.name}..."
         else:
-            self.show_status(f"Loading data for {self.param.name}...", 0)
+            message = f"Loading data for {self.param.name}..."
+        self.show_status(message, 0)
+        self.show_plot_state(message, kind="loading")
          
         worker = loader(
             self.ds.cache, 
@@ -1675,7 +1519,7 @@ class plotWidget(qtw.QMainWindow):
 #Events
 
     def keyPressEvent(self, event):
-        if event.key() == QtCore.Qt.Key_Escape and self.__dict__.get("marquee") is not None:
+        if event.key() == QtCore.Qt.Key.Key_Escape and self.__dict__.get("marquee") is not None:
             self.clear_marquee()
             event.accept()
             return
@@ -1708,7 +1552,7 @@ class plotWidget(qtw.QMainWindow):
 
         Parameters
         ----------
-        pos : PyQt5.<something?>
+        pos : PyQt6.<something?>
             The cursor position object.
 
         """
@@ -1853,6 +1697,11 @@ class plotWidget(qtw.QMainWindow):
             if not finished: # error in worker
                 if worker is not None:
                     worker.running = False
+                self.show_plot_state(
+                    "Plot load failed",
+                    "Check the status bar or diagnostic log for details.",
+                    kind="error",
+                    )
                 return False
             
             if worker is None:
@@ -1903,12 +1752,14 @@ class plotWidget(qtw.QMainWindow):
                 f"in {elapsed:.2f} seconds",
                 5000
                 )
+            self.hide_plot_state()
             return True
                 
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
             # This should no longer be possible so making error soft error.
             self.show_status(f"Refresh skipped: {err}", 10000)
+            self.show_plot_state("Refresh skipped", str(err), kind="error")
         
         finally: # Allow code to move on from wait_on_thread
             self.end_wait.emit()
@@ -1919,6 +1770,7 @@ class plotWidget(qtw.QMainWindow):
         message = f"{type(err).__name__}: {err}"
         log_exception("Plot worker error", err, __name__)
         self.show_status(f"Worker error: {message}", 10000)
+        self.show_plot_state("Plot load failed", message, kind="error")
 
         if message == self._last_error_text:
             return

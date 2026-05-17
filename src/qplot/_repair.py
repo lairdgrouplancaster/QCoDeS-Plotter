@@ -1,9 +1,7 @@
-from qcodes.dataset.sqlite.database import (
-    get_DB_location,
-    conn_from_dbpath_or_conn
-    )
-
 from os.path import isfile
+
+from qcodes.dataset.sqlite.database import conn_from_dbpath_or_conn, get_DB_location
+
 
 def repair():
     """

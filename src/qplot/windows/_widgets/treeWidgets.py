@@ -1,481 +1,64 @@
-import html
-
-from PyQt5 import (
-    QtWidgets as qtw,
-    QtCore,
-    QtGui,
-    )
-
-from qplot.datahandling import (
-    get_runs_via_sql,
-    get_run_status,
-    )
-from .preview import (
-    COLLAPSE_MINIMUM_RATIO,
-    DraggablePreviewImageLabel,
-    PreviewTab,
-    )
-
-from qcodes.dataset.sqlite.database import get_DB_location
-
+from datetime import datetime
 from os.path import isfile
 
 import numpy as np
-
-from datetime import datetime
-
-from .._shortcuts import standard_key_sequences
-
-COPY_SELECTION_SHORTCUTS = standard_key_sequences(QtGui.QKeySequence.Copy, ["Ctrl+C"])
-COPY_CELL_SHORTCUTS = [QtGui.QKeySequence("Ctrl+Shift+C")]
-MEASUREMENT_PREVIEW_SIZE = 22
-MEASUREMENT_PREVIEW_SPACING = 3
-
-
-def copy_action(label, shortcuts, slot, parent):
-    action = qtw.QAction(label, parent)
-    action.setShortcuts(shortcuts)
-    action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
-    if hasattr(action, "setShortcutVisibleInContextMenu"):
-        action.setShortcutVisibleInContextMenu(True)
-    action.triggered.connect(slot)
-    return action
-
-
-def run_tooltip_text(metadata):
-    """
-    Builds the summary shown when hovering over a run table row.
-
-    """
-    sweep = format_parameter_list_html(metadata.get("sweep_parameters"))
-    measure = format_parameter_list_html(metadata.get("measure_parameters"))
-
-    return (
-        "<table style='margin:0; border-spacing:0; border-collapse:collapse'>"
-        "<tr>"
-        "<td style='padding:0 0.5em 0 0'>Sweep</td>"
-        f"<td nowrap='nowrap' style='padding:0; white-space:nowrap'>({sweep})</td>"
-        "</tr>"
-        "<tr>"
-        "<td style='padding:0 0.5em 0 0'>Measure</td>"
-        f"<td nowrap='nowrap' style='padding:0; white-space:nowrap'>({measure})</td>"
-        "</tr>"
-        "</table>"
-        )
-
-
-def run_tooltip_plain_text(metadata):
-    sweep = format_parameter_list(metadata.get("sweep_parameters"))
-    measure = format_parameter_list(metadata.get("measure_parameters"))
-
-    return "\n".join([
-        f"{'Sweep':<7}({sweep})",
-        f"Measure ({measure})",
-        ])
-
-
-def format_parameter_list(parameters):
-    if not parameters:
-        return "unknown"
-    return ", ".join(str(parameter) for parameter in parameters)
-
-
-def format_parameter_list_html(parameters):
-    if not parameters:
-        return "unknown"
-    return ",&nbsp;".join(html.escape(str(parameter)) for parameter in parameters)
-
-
-def run_is_complete(metadata):
-    return bool(metadata.get("completed_timestamp") or metadata.get("is_completed"))
-
-
-def format_run_status(metadata):
-    if run_is_complete(metadata):
-        return "Complete"
-    return f"Incomplete ({format_progress_percent(metadata)})"
-
-
-def format_progress(metadata):
-    progress = format_progress_percent(metadata)
-    if progress == "unknown":
-        return "unknown% complete"
-    return f"{progress} complete"
-
-
-def format_progress_percent(metadata):
-    if run_is_complete(metadata):
-        return "100%"
-
-    percent = progress_percent_value(metadata)
-    if percent is None:
-        return "unknown"
-
-    return f"{percent:.1f}%"
-
-
-def progress_percent_value(metadata):
-    expected = metadata.get("expected_results")
-    count = metadata.get("result_count")
-    if not expected or count is None:
-        return None
-
-    try:
-        maximum = 100 if run_is_complete(metadata) else 99.9
-        return max(0, min(maximum, (float(count) / float(expected)) * 100))
-    except (TypeError, ValueError, ZeroDivisionError):
-        return None
-
-
-def format_complete_cell(metadata):
-    if run_is_complete(metadata):
-        return "✓"
-
-    progress = format_progress_percent(metadata)
-    if progress == "unknown":
-        return "unknown"
-    return progress
-
-
-def format_timestamp(timestamp):
-    if not timestamp:
-        return "unknown"
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def time_taken_seconds(metadata):
-    started = metadata.get("run_timestamp")
-    if not started:
-        return None
-
-    completed = metadata.get("completed_timestamp")
-    if completed:
-        end = completed
-    elif not run_is_complete(metadata) and metadata.get("database_modified_timestamp"):
-        end = metadata.get("database_modified_timestamp")
-    else:
-        end = datetime.now().timestamp()
-    try:
-        return max(0, float(end) - float(started))
-    except (TypeError, ValueError):
-        return None
-
-
-def format_time_taken_seconds(metadata):
-    seconds = time_taken_seconds(metadata)
-    if seconds is None:
-        return "unknown"
-    return f"{seconds:,.1f} s"
-
-
-def format_run_duration(metadata):
-    seconds = time_taken_seconds(metadata)
-    if seconds is None:
-        return "unknown"
-
-    if seconds < 10:
-        return f"{seconds:.2f} s"
-    if seconds < 100:
-        return f"{seconds:.1f} s"
-    return f"{seconds:.0f} s"
-
-
-def format_duration_dhms(seconds):
-    total_seconds = int(round(seconds))
-    days, remainder = divmod(total_seconds, 24 * 60 * 60)
-    hours, remainder = divmod(remainder, 60 * 60)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{days}d {hours}h {minutes}m {seconds}s"
-
-
-def format_storage_size(bytes_value):
-    if bytes_value is None:
-        return "unknown"
-
-    try:
-        size = float(bytes_value)
-    except (TypeError, ValueError):
-        return "unknown"
-
-    if size < 0:
-        return "unknown"
-
-    units = ["B", "KB", "MB", "GB", "TB"]
-    unit_index = 0
-    while size >= 1024 and unit_index < len(units) - 1:
-        size /= 1024
-        unit_index += 1
-
-    if unit_index == 0:
-        return f"{int(size)} B"
-    if size < 10:
-        return f"{size:.1f} {units[unit_index]}"
-    return f"{size:.0f} {units[unit_index]}"
-
-
-def format_point_count(metadata):
-    expected = metadata.get("setpoint_count", metadata.get("expected_results"))
-    shape = metadata.get("setpoint_shape") or metadata.get("point_shape")
-    if shape:
-        try:
-            shape_parts = " x ".join(f"{int(size):,}" for size in shape)
-        except (TypeError, ValueError):
-            shape_parts = ""
-
-        if expected:
-            return f"{int(expected):,} = {shape_parts}"
-        if shape_parts:
-            return shape_parts
-
-    if expected:
-        return f"{int(expected):,}"
-
-    count = metadata.get("result_count")
-    if count is not None:
-        try:
-            return f"{int(count):,}"
-        except (TypeError, ValueError):
-            pass
-
-    return "unknown"
-
-
-def measured_parameter_count(metadata):
-    return len(metadata.get("measure_parameters") or [])
-
-
-class RunPreviewCell(qtw.QWidget):
-    plotRequested = QtCore.pyqtSignal(str, str)
-    exportRequested = QtCore.pyqtSignal(str, str)
-
-    def __init__(self, guid, count, parent=None, icon_size=MEASUREMENT_PREVIEW_SIZE):
-        super().__init__(parent)
-        self.guid = guid
-        self.placeholder_count = max(0, int(count or 0))
-        self.icon_size = int(icon_size)
-
-        self.content_layout = qtw.QHBoxLayout()
-        self.content_layout.setContentsMargins(2, 0, 2, 0)
-        self.content_layout.setSpacing(MEASUREMENT_PREVIEW_SPACING)
-        self.content_layout.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-        self.setLayout(self.content_layout)
-        self.setFixedHeight(self.icon_size + 6)
-        self.show_placeholders()
-
-
-    def show_placeholders(self, count=None):
-        self._clear_layout()
-        placeholder_count = self.placeholder_count if count is None else max(0, int(count))
-        for _ in range(placeholder_count):
-            self.content_layout.addWidget(self._placeholder_label())
-        self.content_layout.addStretch()
-
-
-    def show_previews(self, previews):
-        self._clear_layout()
-
-        preview_count = 0
-        for preview in previews or []:
-            image = preview.get("image")
-            if image is None:
-                continue
-
-            label = DraggablePreviewImageLabel(
-                self.guid,
-                preview.get("parameter", ""),
-                preview.get("axes") or [],
-                )
-            label.setObjectName("measurementPreviewImage")
-            label.setFixedSize(self.icon_size, self.icon_size)
-            label.setAlignment(QtCore.Qt.AlignCenter)
-            label.setToolTip(preview.get("title", ""))
-            label.setPixmap(
-                QtGui.QPixmap.fromImage(image).scaled(
-                    self.icon_size,
-                    self.icon_size,
-                    QtCore.Qt.KeepAspectRatio,
-                    QtCore.Qt.SmoothTransformation,
-                    )
-                )
-            label.plotRequested.connect(self._emit_plot_requested)
-            label.exportRequested.connect(self._emit_export_requested)
-            self.content_layout.addWidget(label)
-            preview_count += 1
-
-        for _ in range(max(0, self.placeholder_count - preview_count)):
-            self.content_layout.addWidget(self._placeholder_label())
-        self.content_layout.addStretch()
-
-
-    def _placeholder_label(self):
-        label = qtw.QLabel()
-        label.setObjectName("measurementPreviewPlaceholder")
-        label.setFixedSize(self.icon_size, self.icon_size)
-        label.setFrameShape(qtw.QFrame.Box)
-        label.setFrameShadow(qtw.QFrame.Plain)
-        label.setLineWidth(1)
-        return label
-
-
-    def _emit_plot_requested(self, parameter):
-        self.plotRequested.emit(self.guid, parameter)
-
-
-    def _emit_export_requested(self, parameter):
-        self.exportRequested.emit(self.guid, parameter)
-
-
-    def _clear_layout(self):
-        while self.content_layout.count():
-            item = self.content_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
-
-
-class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
-    """
-    Paints setpoint counts with equals signs aligned.
-    """
-
-    right_text_alignment = QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter
-
-    def paint(self, painter, option, index):
-        text = index.data(QtCore.Qt.DisplayRole)
-        if text is None or text == "":
-            super().paint(painter, option, index)
-            return
-
-        opt = qtw.QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        text = str(text)
-        sections = self._display_sections(text)
-        if sections is None:
-            super().paint(painter, option, index)
-            return
-        left, right = sections
-
-        opt.text = ""
-
-        widget = opt.widget
-        style = widget.style() if widget else qtw.QApplication.style()
-        style.drawControl(qtw.QStyle.CE_ItemViewItem, opt, painter, widget)
-
-        text_rect = style.subElementRect(
-            qtw.QStyle.SE_ItemViewItemText,
-            opt,
-            widget
-            ).adjusted(2, 0, -2, 0)
-        metrics = opt.fontMetrics
-        equals_text = " = "
-        equals_width = metrics.horizontalAdvance(equals_text)
-        max_right_width = self._max_right_width(index, metrics)
-        if right is None and max_right_width <= 0:
-            painter.save()
-            painter.setFont(opt.font)
-            painter.setPen(self._text_color(opt))
-            painter.drawText(
-                text_rect,
-                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
-                metrics.elidedText(left, QtCore.Qt.ElideLeft, text_rect.width())
-                )
-            painter.restore()
-            return
-
-        equals_left = max(
-            text_rect.left(),
-            text_rect.right() - max_right_width - equals_width
-            )
-
-        left_rect = QtCore.QRect(
-            text_rect.left(),
-            text_rect.top(),
-            max(0, equals_left - text_rect.left()),
-            text_rect.height()
-            )
-        equals_rect = QtCore.QRect(
-            equals_left,
-            text_rect.top(),
-            equals_width,
-            text_rect.height()
-            )
-        right_rect = QtCore.QRect(
-            equals_left + equals_width,
-            text_rect.top(),
-            max(0, text_rect.right() - equals_left - equals_width + 1),
-            text_rect.height()
-            )
-
-        painter.save()
-        painter.setFont(opt.font)
-        painter.setPen(self._text_color(opt))
-        painter.drawText(
-            left_rect,
-            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
-            metrics.elidedText(left, QtCore.Qt.ElideLeft, left_rect.width())
-            )
-        if right is not None:
-            painter.drawText(equals_rect, QtCore.Qt.AlignCenter, equals_text)
-            self._draw_right_text(painter, right_rect, right, metrics)
-        painter.restore()
-
-
-    def _display_sections(self, text):
-        if " = " in text:
-            return str(text).split(" = ", 1)
-        if self._is_count_text(text):
-            return str(text), None
-        return None
-
-
-    def _is_count_text(self, text):
-        try:
-            int(str(text).replace(",", ""))
-        except (TypeError, ValueError):
-            return False
-        return True
-
-
-    def _draw_right_text(self, painter, right_rect, right, metrics):
-        painter.drawText(
-            right_rect,
-            self.right_text_alignment,
-            metrics.elidedText(right, QtCore.Qt.ElideRight, right_rect.width())
-            )
-
-
-    def _max_right_width(self, index, metrics):
-        view = self.parent()
-        if not isinstance(view, qtw.QTreeWidget):
-            return 0
-
-        max_width = 0
-        column = index.column()
-        for row in range(view.topLevelItemCount()):
-            item = view.topLevelItem(row)
-            if item is None:
-                continue
-
-            sections = self._display_sections(item.text(column))
-            if sections is None:
-                continue
-
-            _, right = sections
-            if right is None:
-                continue
-
-            max_width = max(max_width, metrics.horizontalAdvance(right))
-        return max_width
-
-
-    def _text_color(self, option):
-        return option.palette.color(QtGui.QPalette.Text)
+from PyQt6 import (
+    QtCore,
+    QtGui,
+)
+from PyQt6 import (
+    QtWidgets as qtw,
+)
+from qcodes.dataset.sqlite.database import get_DB_location
+
+from qplot.datahandling import (
+    get_run_status,
+    get_runs_via_sql,
+)
+
+from ._run_formatting import (  # noqa: F401
+    complete_cell_sort_value,
+    format_complete_cell,
+    format_duration_dhms,
+    format_parameter_list,
+    format_parameter_list_html,
+    format_point_count,
+    format_progress,
+    format_progress_percent,
+    format_run_duration,
+    format_run_status,
+    format_storage_size,
+    format_time_taken_seconds,
+    format_timestamp,
+    measured_parameter_count,
+    progress_percent_value,
+    run_is_complete,
+    run_tooltip_plain_text,
+    run_tooltip_text,
+    time_taken_seconds,
+)
+from .details_tables import (
+    CopyableTableWidget,
+    WrappedValueDelegate,  # noqa: F401 - re-exported for compatibility
+    format_value,
+    infoTree,
+    snapshot_parameters,
+)
+from .preview import (
+    COLLAPSE_MINIMUM_RATIO,
+    PreviewTab,
+)
+from .run_list_items import (
+    MEASUREMENT_PREVIEW_SIZE,
+    EqualsAlignedDelegate,
+    RunPreviewCell,
+    SortableTreeWidgetItem,
+)
 
 
 class RunList(qtw.QTreeWidget):
     """
-    A modified PyQt5.QtWidgets.QTreeWidget, formated as a list which displays
+    A modified PyQt6.QtWidgets.QTreeWidget, formated as a list which displays
     all run_ids and other properties found in self.cols.
     
     All QTreeWidgetItem are converted to SortableTreeWidgetItem to allow the user to sort
@@ -487,7 +70,7 @@ class RunList(qtw.QTreeWidget):
     column_widths = {
         "ID": 34,
         "Measurements": 84,
-        "Complete": 66,
+        "Complete": 72,
         "Duration": 68,
         "Size": 50,
         }
@@ -515,7 +98,7 @@ class RunList(qtw.QTreeWidget):
         self.setRootIsDecorated(False)
         self.setIndentation(0)
         self.setUniformRowHeights(False)
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setItemDelegateForColumn(
             self.cols.index("Setpoints"),
             EqualsAlignedDelegate(self)
@@ -531,12 +114,12 @@ class RunList(qtw.QTreeWidget):
         self.itemDoubleClicked.connect(self.doubleClicked)
         
         # Setup Context Menu
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.prepareMenu)
 
-        context_action = qtw.QAction("Show Context Menu", self)
+        context_action = QtGui.QAction("Show Context Menu", self)
         context_action.setShortcut("Shift+F10")
-        context_action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        context_action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         context_action.triggered.connect(self.openKeyboardMenu)
         self.addAction(context_action)
         
@@ -588,19 +171,19 @@ class RunList(qtw.QTreeWidget):
             for col_name in ("ID", "Setpoints", "Size"):
                 item.setTextAlignment(
                     self.cols.index(col_name),
-                    QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                    QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
                     )
             item.setTextAlignment(
                 self.cols.index("Complete"),
-                QtCore.Qt.AlignCenter
+                QtCore.Qt.AlignmentFlag.AlignCenter
                 )
             item.setTextAlignment(
                 self.cols.index("Duration"),
-                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
                 )
             item.setData(
                 self.cols.index("Measurements"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 measurement_count
                 )
             item.setSizeHint(
@@ -609,29 +192,29 @@ class RunList(qtw.QTreeWidget):
                 )
             item.setData(
                 self.cols.index("Setpoints"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 metadata.get("setpoint_count")
                 or metadata.get("expected_results")
                 or metadata.get("result_count")
                 )
             item.setData(
                 self.cols.index("Started"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 metadata.get("run_timestamp")
                 )
             item.setData(
                 self.cols.index("Complete"),
-                QtCore.Qt.UserRole,
-                100 if run_is_complete(metadata) else progress_percent_value(metadata)
+                QtCore.Qt.ItemDataRole.UserRole,
+                complete_cell_sort_value(metadata)
                 )
             item.setData(
                 self.cols.index("Duration"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 time_taken_seconds(metadata)
                 )
             item.setData(
                 self.cols.index("Size"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 metadata.get("storage_bytes")
                 )
             item.update_tooltip()
@@ -699,7 +282,7 @@ class RunList(qtw.QTreeWidget):
         header.setMinimumSectionSize(32)
 
         for col in range(len(self.cols)):
-            header.setSectionResizeMode(col, qtw.QHeaderView.Interactive)
+            header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
 
         fixed_width = sum(self.column_widths.values())
         elastic_min_width = sum(self.elastic_column_widths.values())
@@ -776,27 +359,45 @@ class RunList(qtw.QTreeWidget):
                 if not run.run_metadata.get("expected_results"):
                     points_col = self.cols.index("Setpoints")
                     run.setText(points_col, format_point_count(run.run_metadata))
-                    run.setData(points_col, QtCore.Qt.UserRole, status["result_count"])
+                    run.setData(points_col, QtCore.Qt.ItemDataRole.UserRole, status["result_count"])
                 complete_col = self.cols.index("Complete")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
                 run.setData(
                     complete_col,
-                    QtCore.Qt.UserRole,
+                    QtCore.Qt.ItemDataRole.UserRole,
                     progress_percent_value(run.run_metadata)
                     )
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
                 run.setData(
                     time_taken_col,
-                    QtCore.Qt.UserRole,
+                    QtCore.Qt.ItemDataRole.UserRole,
                     time_taken_seconds(run.run_metadata)
+                    )
+
+            completion_metadata_changed = False
+            if status.get("read_setpoint_count") is not None:
+                run.run_metadata["read_setpoint_count"] = status["read_setpoint_count"]
+                completion_metadata_changed = True
+
+            if status.get("measurement_exception") is not None:
+                run.run_metadata["measurement_exception"] = status["measurement_exception"]
+                completion_metadata_changed = True
+
+            if completion_metadata_changed:
+                complete_col = self.cols.index("Complete")
+                run.setText(complete_col, format_complete_cell(run.run_metadata))
+                run.setData(
+                    complete_col,
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    complete_cell_sort_value(run.run_metadata)
                     )
 
             if status.get("storage_bytes") is not None:
                 storage_col = self.cols.index("Size")
                 run.run_metadata["storage_bytes"] = status["storage_bytes"]
                 run.setText(storage_col, format_storage_size(status["storage_bytes"]))
-                run.setData(storage_col, QtCore.Qt.UserRole, status["storage_bytes"])
+                run.setData(storage_col, QtCore.Qt.ItemDataRole.UserRole, status["storage_bytes"])
 
             finished = status.get("completed_timestamp")
 
@@ -805,12 +406,16 @@ class RunList(qtw.QTreeWidget):
                 run.run_metadata["is_completed"] = status.get("is_completed", True)
                 complete_col = self.cols.index("Complete")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
-                run.setData(complete_col, QtCore.Qt.UserRole, 100)
+                run.setData(
+                    complete_col,
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    complete_cell_sort_value(run.run_metadata)
+                    )
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
                 run.setData(
                     time_taken_col,
-                    QtCore.Qt.UserRole,
+                    QtCore.Qt.ItemDataRole.UserRole,
                     time_taken_seconds(run.run_metadata)
                     )
                 to_remove.append(run)
@@ -841,7 +446,7 @@ class RunList(qtw.QTreeWidget):
 
         Parameters
         ----------
-        pos : PyQt5.QtCore.QPoint
+        pos : PyQt6.QtCore.QPoint
             The cursor position to open the menu at.
 
         """
@@ -855,7 +460,7 @@ class RunList(qtw.QTreeWidget):
         
         menu = qtw.QMenu(self)
 
-        open_all = qtw.QAction("&Plot all", menu)
+        open_all = QtGui.QAction("&Plot all", menu)
         self._set_action_shortcut(open_all, "Ctrl+Shift+Return")
         open_all.triggered.connect(lambda _,: main.open_selected_run_all())
         menu.addAction(open_all)
@@ -866,7 +471,7 @@ class RunList(qtw.QTreeWidget):
         # linking the coresponding parameter to the openPlot.
         for itr, param in enumerate(params.keys()):
             
-            open_win = qtw.QAction(f"  - {param.name}", menu)
+            open_win = QtGui.QAction(f"  - {param.name}", menu)
             if itr < 9:
                 self._set_action_shortcut(open_win, f"Ctrl+{itr + 1}")
             
@@ -879,7 +484,7 @@ class RunList(qtw.QTreeWidget):
             menu.addAction(open_win)
 
         # Display context menu
-        menu.exec_(self.mapToGlobal(pos))
+        menu.exec(self.mapToGlobal(pos))
 
 
     @QtCore.pyqtSlot()
@@ -917,7 +522,7 @@ class RunList(qtw.QTreeWidget):
 
         """
         action.setShortcut(shortcut)
-        action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         if hasattr(action, "setShortcutVisibleInContextMenu"):
             action.setShortcutVisibleInContextMenu(True)
 
@@ -1000,49 +605,6 @@ class RunList(qtw.QTreeWidget):
                 self.add_plot(target_win, param)
    
     
-#3 classes/methods below are adapted from plottr and as such are not commented by me
-class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
-    """
-    QTreeWidgetItem with an overridden comparator that sorts numerical values
-    as numbers instead of sorting them alphabetically.
-    """
-    def __init__(self, strings):
-        super().__init__(strings)
-        self.run_metadata = {}
-        self._guid = ""
-
-    def __lt__(self, other: qtw.QTreeWidgetItem) -> bool:
-        col = self.treeWidget().sortColumn()
-        value1 = self.data(col, QtCore.Qt.UserRole)
-        value2 = other.data(col, QtCore.Qt.UserRole)
-        if value1 is not None and value2 is not None:
-            try:
-                return float(value1) < float(value2)
-            except (TypeError, ValueError):
-                pass
-
-        text1 = self.text(col)
-        text2 = other.text(col)
-        try:
-            return float(text1) < float(text2)
-        except ValueError:
-            return text1 < text2    
-    
-    @property
-    def guid(self): # Easier fetching for data
-        return self._guid
-
-
-    def set_guid(self, guid):
-        self._guid = guid
-
-
-    def update_tooltip(self):
-        tooltip = run_tooltip_text(self.run_metadata)
-        for col in range(self.columnCount()):
-            self.setToolTip(col, tooltip)
-
-
 class moreInfo(qtw.QTabWidget):
     
     def __init__(self, *args, preview_size=None):
@@ -1088,9 +650,9 @@ class moreInfo(qtw.QTabWidget):
         table.verticalHeader().setDefaultSectionSize(20)
         table.horizontalHeader().setFixedHeight(22)
         table.setAlternatingRowColors(True)
-        table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
-        table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
-        table.setTextElideMode(QtCore.Qt.ElideRight)
+        table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
         table.setWordWrap(False)
         table.horizontalHeader().setStretchLastSection(True)
 
@@ -1363,9 +925,9 @@ class moreInfo(qtw.QTabWidget):
 
         for col in range(table.columnCount()):
             if col in stretch_cols:
-                header.setSectionResizeMode(col, qtw.QHeaderView.Stretch)
+                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Stretch)
             else:
-                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(False)
         for row in range(table.rowCount()):
             table.setRowHeight(row, 20)
@@ -1403,281 +965,3 @@ class moreInfo(qtw.QTabWidget):
 
     def _has_value(self, value):
         return value is not None and value != ""
-
-
-class WrappedValueDelegate(qtw.QStyledItemDelegate):
-    WRAP_FLAGS = (
-        QtCore.Qt.AlignLeft
-        | QtCore.Qt.AlignTop
-        | QtCore.Qt.TextWrapAnywhere
-        )
-
-    def paint(self, painter, option, index):
-        opt = qtw.QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-
-        widget = opt.widget
-        style = widget.style() if widget is not None else qtw.QApplication.style()
-        text = opt.text
-        opt.text = ""
-
-        style.drawControl(qtw.QStyle.CE_ItemViewItem, opt, painter, widget)
-
-        text_rect = style.subElementRect(qtw.QStyle.SE_ItemViewItemText, opt, widget)
-        text_rect.adjust(0, 2, 0, -2)
-        painter.save()
-        painter.setFont(opt.font)
-        role = (
-            QtGui.QPalette.HighlightedText
-            if opt.state & qtw.QStyle.State_Selected
-            else QtGui.QPalette.Text
-            )
-        painter.setPen(opt.palette.color(role))
-        painter.drawText(text_rect, self.WRAP_FLAGS, text)
-        painter.restore()
-
-
-    def sizeHint(self, option, index):
-        opt = qtw.QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-
-        width = opt.rect.width()
-        if width <= 0 and opt.widget is not None:
-            width = opt.widget.columnWidth(index.column())
-        width = max(24, width - 6)
-
-        metrics = QtGui.QFontMetrics(opt.font)
-        text_rect = metrics.boundingRect(
-            QtCore.QRect(0, 0, width, 100000),
-            self.WRAP_FLAGS,
-            opt.text
-            )
-        base = super().sizeHint(option, index)
-        return QtCore.QSize(base.width(), max(base.height(), text_rect.height() + 6))
-
-
-class infoTree(qtw.QTreeWidget):
-    def __init__(self, expand_all=True, truncate_values=False):
-        super().__init__()
-        self.expand_all = expand_all
-        self.truncate_values = truncate_values
-        self.setHeaderLabels(["Key", "Value"])
-        self.setColumnCount(2)
-        self.setWordWrap(True)
-        self.setTextElideMode(QtCore.Qt.ElideNone)
-        self.setUniformRowHeights(False)
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.setItemDelegateForColumn(1, WrappedValueDelegate(self))
-        self.header().setSectionResizeMode(0, qtw.QHeaderView.ResizeToContents)
-        self.header().setSectionResizeMode(1, qtw.QHeaderView.Stretch)
-        self.header().setStretchLastSection(True)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.openCopyMenu)
-
-        self.copy_value_action = copy_action(
-            "Copy Value",
-            COPY_CELL_SHORTCUTS,
-            self.copyValue,
-            self
-            )
-        self.copy_selection_action = copy_action(
-            "Copy Selection",
-            COPY_SELECTION_SHORTCUTS,
-            self.copySelection,
-            self
-            )
-        self.addActions([self.copy_value_action, self.copy_selection_action])
-
-
-    def setInfo(self, info):
-        self.clear()
-
-        if not info:
-            self.addTopLevelItem(qtw.QTreeWidgetItem(["No data", ""]))
-            return
-        if not isinstance(info, dict):
-            item = qtw.QTreeWidgetItem(["Value", format_value(info, 180 if self.truncate_values else None)])
-            item.setToolTip(1, format_value(info))
-            self.addTopLevelItem(item)
-            return
-
-        items = dictToTree(info, truncate_values=self.truncate_values)
-        for item in items:
-            self.addTopLevelItem(item)
-            item.setExpanded(True)
-
-        if self.expand_all:
-            self.expandAll()
-        self.header().setSectionResizeMode(0, qtw.QHeaderView.ResizeToContents)
-        self.header().setSectionResizeMode(1, qtw.QHeaderView.Stretch)
-        self.doItemsLayout()
-
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.doItemsLayout()
-
-
-    def openCopyMenu(self, pos):
-        item = self.itemAt(pos)
-        if item is None:
-            return
-
-        self.setCurrentItem(item)
-
-        menu = qtw.QMenu(self)
-        menu.addAction(self.copy_value_action)
-
-        copy_row = qtw.QAction("Copy Row", menu)
-        copy_row.triggered.connect(lambda: copy_to_clipboard(row_text(item)))
-        menu.addAction(copy_row)
-
-        if self.selectedItems():
-            menu.addAction(self.copy_selection_action)
-
-        menu.exec_(self.viewport().mapToGlobal(pos))
-
-
-    def copyValue(self):
-        item = self.currentItem()
-        if item is not None:
-            copy_to_clipboard(item.text(1))
-
-
-    def copySelection(self):
-        items = self.selectedItems()
-        if not items and self.currentItem() is not None:
-            items = [self.currentItem()]
-        copy_to_clipboard("\n".join(row_text(item) for item in items))
-
-
-class CopyableTableWidget(qtw.QTableWidget):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.openCopyMenu)
-
-        self.copy_cell_action = copy_action(
-            "Copy Cell",
-            COPY_CELL_SHORTCUTS,
-            self.copyCell,
-            self
-            )
-        self.copy_selection_action = copy_action(
-            "Copy Selection",
-            COPY_SELECTION_SHORTCUTS,
-            self.copySelection,
-            self
-            )
-        self.addActions([self.copy_cell_action, self.copy_selection_action])
-
-
-    def openCopyMenu(self, pos):
-        item = self.itemAt(pos)
-        if item is None:
-            return
-
-        self.setCurrentItem(item)
-
-        menu = qtw.QMenu(self)
-        menu.addAction(self.copy_cell_action)
-        menu.addAction(self.copy_selection_action)
-
-        menu.exec_(self.viewport().mapToGlobal(pos))
-
-
-    def copyCell(self):
-        item = self.currentItem()
-        if item is not None:
-            copy_to_clipboard(item.text())
-
-
-    def copySelection(self):
-        ranges = self.selectedRanges()
-        if not ranges and self.currentItem() is not None:
-            self.copyCell()
-            return
-
-        sections = []
-        for selected_range in ranges:
-            rows = []
-            for row in range(selected_range.topRow(), selected_range.bottomRow() + 1):
-                values = []
-                for col in range(selected_range.leftColumn(), selected_range.rightColumn() + 1):
-                    item = self.item(row, col)
-                    values.append(item.text() if item is not None else "")
-                rows.append("\t".join(values))
-            sections.append("\n".join(rows))
-
-        copy_to_clipboard("\n".join(section for section in sections if section))
-
-
-def dictToTree(d : dict, truncate_values=False):
-    items = []
-    for k, v in d.items():
-        if not isinstance(v, dict):
-            item = qtw.QTreeWidgetItem([str(k), format_value(v, 180 if truncate_values else None)])
-            item.setToolTip(1, format_value(v))
-        else:
-            item = qtw.QTreeWidgetItem([k, ''])
-            for child in dictToTree(v, truncate_values=truncate_values):
-                item.addChild(child)
-        items.append(item)
-    return items
-
-
-def snapshot_parameters(snapshot):
-    if not isinstance(snapshot, dict):
-        return {}
-
-    out = {}
-    station = snapshot.get("station", snapshot)
-    parameter_dicts = []
-
-    if isinstance(station, dict):
-        params = station.get("parameters")
-        if isinstance(params, dict):
-            parameter_dicts.append(params)
-
-        instruments = station.get("instruments")
-        if isinstance(instruments, dict):
-            for instrument in instruments.values():
-                if isinstance(instrument, dict) and isinstance(instrument.get("parameters"), dict):
-                    parameter_dicts.append(instrument["parameters"])
-
-    for params in parameter_dicts:
-        for key, details in params.items():
-            if not isinstance(details, dict):
-                continue
-            for name in (key, details.get("name"), details.get("full_name")):
-                if name:
-                    out[str(name)] = details
-
-    return out
-
-
-def format_value(value, max_len=None):
-    if value is None:
-        text = ""
-    elif isinstance(value, float):
-        text = f"{value:.6g}"
-    elif isinstance(value, (list, tuple)):
-        text = ", ".join(format_value(item) for item in value)
-    else:
-        text = str(value)
-
-    text = text.replace("\n", " ")
-    if max_len is not None and len(text) > max_len:
-        return text[:max_len - 3] + "..."
-    return text
-
-
-def row_text(item):
-    return "\t".join(item.text(col) for col in range(item.columnCount()))
-
-
-def copy_to_clipboard(text):
-    clipboard = qtw.QApplication.clipboard()
-    if clipboard is not None:
-        clipboard.setText(text)
-        

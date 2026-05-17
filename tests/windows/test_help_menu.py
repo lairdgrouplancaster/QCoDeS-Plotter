@@ -1,6 +1,6 @@
 import unittest
 
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._help import (
     add_help_menu,

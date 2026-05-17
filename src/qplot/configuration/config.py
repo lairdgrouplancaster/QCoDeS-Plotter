@@ -1,13 +1,10 @@
 import json
-import jsonschema
-
 from copy import deepcopy
-
-from os import makedirs
-from os import path
+from importlib.resources import files
+from os import makedirs, path
 from shutil import copy2
 
-from importlib.resources import files
+import jsonschema
 
 from .themes import dark, light, pyqt
 

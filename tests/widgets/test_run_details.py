@@ -4,21 +4,20 @@ import tempfile
 import unittest
 
 import numpy as np
-from PyQt5 import QtCore
-from PyQt5 import QtGui
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
-    DraggablePreviewImageLabel,
     PREVIEW_BACKGROUND_COLOR,
-    PREVIEW_SIZE,
     PREVIEW_SELECTED_PROPERTY,
+    PREVIEW_SIZE,
+    DraggablePreviewImageLabel,
     PreviewTab,
     generate_run_previews,
     render_heatmap_preview,
     render_sparkline_preview,
-    )
+)
 
 
 class RunDetailsTabsTestCase(unittest.TestCase):
@@ -147,11 +146,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertLessEqual(len(widget.metadata.topLevelItem(0).text(1)), 180)
         self.assertTrue(widget.metadata.wordWrap())
         self.assertTrue(widget.raw.wordWrap())
-        self.assertEqual(widget.metadata.textElideMode(), QtCore.Qt.ElideNone)
-        self.assertEqual(widget.raw.textElideMode(), QtCore.Qt.ElideNone)
+        self.assertEqual(widget.metadata.textElideMode(), QtCore.Qt.TextElideMode.ElideNone)
+        self.assertEqual(widget.raw.textElideMode(), QtCore.Qt.TextElideMode.ElideNone)
         self.assertEqual(
             widget.metadata.horizontalScrollBarPolicy(),
-            QtCore.Qt.ScrollBarAlwaysOff
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
             )
         self.assertIsInstance(
             widget.raw.itemDelegateForColumn(1),
@@ -159,15 +158,15 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             )
         self.assertEqual(
             widget.metadata.header().sectionResizeMode(1),
-            qtw.QHeaderView.Stretch
+            qtw.QHeaderView.ResizeMode.Stretch
             )
         self.assertEqual(
             widget.raw.header().sectionResizeMode(1),
-            qtw.QHeaderView.Stretch
+            qtw.QHeaderView.ResizeMode.Stretch
             )
         self.assertEqual(
             widget.parameters.horizontalHeader().sectionResizeMode(7),
-            qtw.QHeaderView.Stretch
+            qtw.QHeaderView.ResizeMode.Stretch
             )
         widget.parameters.selectRow(3)
         widget.parameters.copySelection()
@@ -196,7 +195,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         widget.setInfo({"Data Structure": {"Data points": 0}}, Dataset())
         self.assertEqual(
             widget.parameters.horizontalHeader().sectionResizeMode(7),
-            qtw.QHeaderView.Stretch
+            qtw.QHeaderView.ResizeMode.Stretch
             )
 
     def test_preview_renderers_make_square_images(self):
@@ -383,7 +382,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             if preview.content_layout.itemAt(index).widget() is not None
             ]
         self.assertEqual(len(cards), 2)
-        for card, title in zip(cards, ["signal vs x", "image vs x and y"]):
+        for card, title in zip(
+                cards,
+                ["signal vs x", "image vs x and y"],
+                strict=False,
+                ):
             labels = card.findChildren(qtw.QLabel)
             self.assertEqual(len(labels), 1)
             self.assertEqual(labels[0].toolTip(), title)
@@ -465,18 +468,18 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
         image = preview.findChild(qtw.QLabel, "previewImage")
         event = QtGui.QMouseEvent(
-            QtCore.QEvent.MouseButtonDblClick,
+            QtCore.QEvent.Type.MouseButtonDblClick,
             QtCore.QPointF(10, 10),
-            QtCore.Qt.LeftButton,
-            QtCore.Qt.LeftButton,
-            QtCore.Qt.NoModifier,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
             )
         qtw.QApplication.sendEvent(image, event)
 
         self.assertEqual(requested, ["dmm_v2"])
 
     def test_right_clicking_preview_can_request_export(self):
-        old_exec = qtw.QMenu.exec_
+        old_exec = qtw.QMenu.exec
         captured_actions = []
         preview = PreviewTab(preview_size=100)
         requested = []
@@ -486,7 +489,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             captured_actions.extend(menu.actions())
 
         try:
-            qtw.QMenu.exec_ = capture_menu
+            qtw.QMenu.exec = capture_menu
             preview._show_previews([
                 {
                     "parameter": "signal",
@@ -501,7 +504,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
             image = preview.findChild(qtw.QLabel, "previewImage")
             event = QtGui.QContextMenuEvent(
-                QtGui.QContextMenuEvent.Mouse,
+                QtGui.QContextMenuEvent.Reason.Mouse,
                 QtCore.QPoint(10, 10),
                 QtCore.QPoint(10, 10),
                 )
@@ -515,7 +518,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
             self.assertEqual(requested, ["signal"])
         finally:
-            qtw.QMenu.exec_ = old_exec
+            qtw.QMenu.exec = old_exec
 
     def test_clicking_preview_marks_it_selected(self):
         preview = PreviewTab(preview_size=80)
@@ -543,18 +546,18 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
         images = preview.findChildren(qtw.QLabel, "previewImage")
         first_press = QtGui.QMouseEvent(
-            QtCore.QEvent.MouseButtonPress,
+            QtCore.QEvent.Type.MouseButtonPress,
             QtCore.QPointF(10, 10),
-            QtCore.Qt.LeftButton,
-            QtCore.Qt.LeftButton,
-            QtCore.Qt.NoModifier,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
             )
         second_press = QtGui.QMouseEvent(
-            QtCore.QEvent.MouseButtonPress,
+            QtCore.QEvent.Type.MouseButtonPress,
             QtCore.QPointF(10, 10),
-            QtCore.Qt.LeftButton,
-            QtCore.Qt.LeftButton,
-            QtCore.Qt.NoModifier,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
             )
 
         qtw.QApplication.sendEvent(images[0], first_press)

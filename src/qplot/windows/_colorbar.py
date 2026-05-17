@@ -1,9 +1,7 @@
-from PyQt5 import QtCore, QtGui
-from PyQt5 import QtWidgets as qtw
-
 import numpy as np
 import pyqtgraph as pg
-
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 _PREFERRED_COLORBAR_COLORMAPS = (
     "viridis",
@@ -142,7 +140,7 @@ _COLORBAR_COLORMAP_LABELS = {
 }
 
 
-_COLORBAR_TABLE_SORT_ROLE = QtCore.Qt.UserRole + 1
+_COLORBAR_TABLE_SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 
 
 class _ColorbarColormapTableItem(qtw.QTableWidgetItem):
@@ -423,11 +421,11 @@ def _letter_button_pixmap(letter, size=20):
 
     """
     pixmap = QtGui.QPixmap(size, size)
-    pixmap.fill(QtCore.Qt.transparent)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
 
     painter = QtGui.QPainter(pixmap)
     try:
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         painter.setPen(QtGui.QPen(QtGui.QColor(70, 70, 70, 230), 1.2))
         painter.setBrush(QtGui.QColor(235, 235, 235, 225))
         painter.drawEllipse(QtCore.QRectF(1, 1, size - 2, size - 2))
@@ -437,7 +435,7 @@ def _letter_button_pixmap(letter, size=20):
         font.setPointSize(11)
         painter.setFont(font)
         painter.setPen(QtGui.QColor(40, 40, 40))
-        painter.drawText(pixmap.rect(), QtCore.Qt.AlignCenter, letter)
+        painter.drawText(pixmap.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, letter)
     finally:
         painter.end()
 

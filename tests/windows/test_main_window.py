@@ -3,12 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
-from qplot.windows import main as main_window
-from qplot.windows import _database_actions as database_actions
 from qplot.datahandling import database as database_module
+from qplot.windows import _database_actions as database_actions
+from qplot.windows import main as main_window
+from qplot.windows._run_controls import AUTO_PLOT_KEY
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -16,8 +17,7 @@ from qplot.windows._window_controls import (
     add_confirmation_options,
     add_restore_defaults_option,
     ask_confirmation_with_dont_ask_again,
-    )
-from qplot.windows._run_controls import AUTO_PLOT_KEY
+)
 
 
 class DatabaseOpenDirectoryTestCase(unittest.TestCase):
@@ -83,6 +83,76 @@ class DatabaseOpenDirectoryTestCase(unittest.TestCase):
             self.assertEqual(harness.database_open_directory(), default_dir)
 
 
+class OptionsMenuTestCase(unittest.TestCase):
+    class FakeConfig:
+        def get(self, key):
+            if key == "user_preference.theme":
+                return "light"
+            raise KeyError(key)
+
+    class Harness(qtw.QMainWindow):
+        initMenu = main_window.MainWindow.initMenu
+
+        def __init__(self):
+            super().__init__()
+            self.config = OptionsMenuTestCase.FakeConfig()
+            self.preview_size = 200
+
+        def refresh_recent_database_menu(self):
+            pass
+
+        def getfile(self):
+            pass
+
+        def open_database_location(self):
+            pass
+
+        def refreshMain(self):
+            pass
+
+        def closeAll(self):
+            pass
+
+        def restore_default_settings(self):
+            pass
+
+        def show_preferences_dialog(self):
+            pass
+
+    def test_main_options_menu_uses_preferences_for_shared_settings(self):
+        window = self.Harness()
+
+        try:
+            window.initMenu()
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in window.menuBar().actions()
+                }
+            option_texts = [
+                action.text().replace("&", "")
+                for action in menus["Options"].actions()
+                if not action.isSeparator()
+                ]
+            preferences_action = next(
+                action for action in menus["Options"].actions()
+                if action.text().replace("&", "") == "Preferences..."
+                )
+
+            self.assertIn("Preferences...", option_texts)
+            self.assertEqual(
+                preferences_action.menuRole(),
+                QtGui.QAction.MenuRole.PreferencesRole,
+                )
+            self.assertIn("Reset All Settings...", option_texts)
+            self.assertNotIn("Open Location", option_texts)
+            self.assertNotIn("Theme", option_texts)
+            self.assertNotIn("Preview Size", option_texts)
+            self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
+            self.assertNotIn("Confirm Before Quit", option_texts)
+        finally:
+            window.deleteLater()
+
+
 class CloseAllPlotsTestCase(unittest.TestCase):
     def test_close_all_can_be_cancelled_when_warning_enabled(self):
         old_confirmation = main_window.ask_confirmation_with_dont_ask_again
@@ -114,7 +184,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         try:
             def fake_confirmation(window, title, message, config_key, *args):
                 confirmation_keys.append(config_key)
-                return qtw.QMessageBox.No
+                return qtw.QMessageBox.StandardButton.No
 
             main_window.ask_confirmation_with_dont_ask_again = fake_confirmation
             harness = Harness()
@@ -193,7 +263,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertEqual(closed, [target])
 
     def test_confirmation_dialog_can_disable_future_warning_after_confirm(self):
-        old_exec = qtw.QMessageBox.exec_
+        old_exec = qtw.QMessageBox.exec
         updates = []
         labels = []
 
@@ -207,10 +277,10 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         def fake_exec(box):
             labels.append(box.checkBox().text())
             box.checkBox().setChecked(True)
-            return qtw.QMessageBox.Yes
+            return qtw.QMessageBox.StandardButton.Yes
 
         try:
-            qtw.QMessageBox.exec_ = fake_exec
+            qtw.QMessageBox.exec = fake_exec
             reply = ask_confirmation_with_dont_ask_again(
                 window,
                 "Close All Plot Windows",
@@ -218,15 +288,15 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 CONFIRM_CLOSE_ALL_KEY,
                 )
         finally:
-            qtw.QMessageBox.exec_ = old_exec
+            qtw.QMessageBox.exec = old_exec
             window.deleteLater()
 
-        self.assertEqual(reply, qtw.QMessageBox.Yes)
+        self.assertEqual(reply, qtw.QMessageBox.StandardButton.Yes)
         self.assertEqual(labels, [DO_NOT_ASK_AGAIN_LABEL])
         self.assertEqual(updates, [(CONFIRM_CLOSE_ALL_KEY, False)])
 
     def test_confirmation_dialog_cancel_does_not_disable_future_warning(self):
-        old_exec = qtw.QMessageBox.exec_
+        old_exec = qtw.QMessageBox.exec
         updates = []
 
         class FakeConfig:
@@ -238,10 +308,10 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         def fake_exec(box):
             box.checkBox().setChecked(True)
-            return qtw.QMessageBox.No
+            return qtw.QMessageBox.StandardButton.No
 
         try:
-            qtw.QMessageBox.exec_ = fake_exec
+            qtw.QMessageBox.exec = fake_exec
             reply = ask_confirmation_with_dont_ask_again(
                 window,
                 "Confirm Exit",
@@ -249,10 +319,10 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 CONFIRM_QUIT_KEY,
                 )
         finally:
-            qtw.QMessageBox.exec_ = old_exec
+            qtw.QMessageBox.exec = old_exec
             window.deleteLater()
 
-        self.assertEqual(reply, qtw.QMessageBox.No)
+        self.assertEqual(reply, qtw.QMessageBox.StandardButton.No)
         self.assertEqual(updates, [])
 
     def test_close_event_can_disable_future_quit_warning_after_confirm(self):
@@ -313,7 +383,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         def fake_confirmation(window, title, message, config_key, *args):
             confirmations.append((title, message, config_key))
             window.config.update(config_key, False)
-            return qtw.QMessageBox.Yes
+            return qtw.QMessageBox.StandardButton.Yes
 
         try:
             main_window.ask_confirmation_with_dont_ask_again = fake_confirmation
@@ -397,7 +467,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         try:
             action = add_restore_defaults_option(window, menu)
-            self.assertEqual(action.text(), "Restore Default Settings...")
+            self.assertEqual(action.text(), "Reset All Settings...")
 
             action.trigger()
 
@@ -435,14 +505,14 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.No
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.No
             harness = Harness()
             harness.restore_default_settings()
         finally:
             qtw.QMessageBox.question = old_question
 
         self.assertFalse(harness.config.reset_called)
-        self.assertEqual(harness.status_messages[-1][0], "Default settings restore cancelled.")
+        self.assertEqual(harness.status_messages[-1][0], "Settings reset cancelled.")
 
     def test_restore_default_settings_resets_and_applies_defaults(self):
         old_question = qtw.QMessageBox.question
@@ -477,7 +547,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.Yes
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.Yes
             harness = Harness()
             harness.restore_default_settings()
         finally:
@@ -487,7 +557,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertTrue(harness.applied)
         self.assertEqual(harness.closed_plots, [(False, False)])
         self.assertEqual(harness.closed_database, [False])
-        self.assertEqual(harness.status_messages[-1][0], "Default settings restored.")
+        self.assertEqual(harness.status_messages[-1][0], "Settings reset to defaults.")
 
 
     def test_close_database_clears_loaded_database_state(self):

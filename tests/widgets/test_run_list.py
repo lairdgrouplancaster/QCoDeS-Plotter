@@ -1,15 +1,14 @@
 import unittest
 
 import numpy as np
-from PyQt5 import QtCore
-from PyQt5 import QtGui
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
     DraggablePreviewImageLabel,
     render_sparkline_preview,
-    )
+)
 
 
 class RunListTooltipTestCase(unittest.TestCase):
@@ -46,7 +45,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "point_shape": [10, 100],
                 "expected_results": 1000,
                 }),
-            "1,000 = 10 x 100"
+            "1,000 = 10 × 100"
             )
 
     def test_format_point_count_uses_setpoint_shape_without_measurement_factor(self):
@@ -57,7 +56,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "point_shape": [108, 861, 2],
                 "expected_results": 185976,
                 }),
-            "92,988 = 108 x 861"
+            "92,988 = 108 × 861"
             )
 
     def test_progress_uses_measured_row_count_while_setpoints_use_setpoint_count(self):
@@ -70,7 +69,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             "is_completed": False,
             }
 
-        self.assertEqual(treeWidgets.format_point_count(metadata), "1,000 = 10 x 100")
+        self.assertEqual(treeWidgets.format_point_count(metadata), "1,000 = 10 × 100")
         self.assertEqual(treeWidgets.format_complete_cell(metadata), "50.0%")
 
     def test_incomplete_progress_never_formats_as_one_hundred_percent(self):
@@ -81,6 +80,39 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "is_completed": False,
                 }),
             "99.9%"
+            )
+
+    def test_interrupted_completed_run_reports_setpoint_progress(self):
+        metadata = {
+            "completed_timestamp": 12345.6,
+            "is_completed": True,
+            "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
+            "result_count": 800,
+            "read_setpoint_count": 400,
+            "setpoint_count": 1000,
+            "expected_results": 2000,
+            }
+
+        self.assertEqual(
+            treeWidgets.format_complete_cell(metadata),
+            "40.00%"
+            )
+        self.assertEqual(
+            treeWidgets.format_run_status(metadata),
+            "Interrupted (40.00%)"
+            )
+        self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40.0)
+
+    def test_non_keyboard_measurement_exception_still_uses_completed_tick(self):
+        self.assertEqual(
+            treeWidgets.format_complete_cell({
+                "completed_timestamp": 12345.6,
+                "is_completed": True,
+                "measurement_exception": "Traceback...\nValueError: bad value\n",
+                "result_count": 40,
+                "setpoint_count": 100,
+                }),
+            "✓"
             )
 
     def test_duration_uses_commas(self):
@@ -104,17 +136,17 @@ class RunListTooltipTestCase(unittest.TestCase):
                 )
             option = qtw.QStyleOptionViewItem()
             option.widget = run_list
-            option.state = qtw.QStyle.State_Selected | qtw.QStyle.State_Enabled
+            option.state = qtw.QStyle.StateFlag.State_Selected | qtw.QStyle.StateFlag.State_Enabled
 
             self.assertEqual(
                 delegate._text_color(option),
-                option.palette.color(QtGui.QPalette.Text)
+                option.palette.color(QtGui.QPalette.ColorRole.Text)
                 )
 
-            option.state |= qtw.QStyle.State_Active | qtw.QStyle.State_HasFocus
+            option.state |= qtw.QStyle.StateFlag.State_Active | qtw.QStyle.StateFlag.State_HasFocus
             self.assertEqual(
                 delegate._text_color(option),
-                option.palette.color(QtGui.QPalette.Text)
+                option.palette.color(QtGui.QPalette.ColorRole.Text)
                 )
         finally:
             treeWidgets.isfile = old_isfile
@@ -131,7 +163,7 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual(
                 int(delegate.right_text_alignment),
-                int(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
         finally:
             treeWidgets.isfile = old_isfile
@@ -240,7 +272,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                     run_list.indexFromItem(item, setpoints_col),
                     metrics,
                     ),
-                metrics.horizontalAdvance("1,000 x 1,000")
+                metrics.horizontalAdvance("1,000 × 1,000")
                 )
         finally:
             treeWidgets.isfile = old_isfile
@@ -366,11 +398,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(run_list.indentation(), 0)
             self.assertEqual(
                 run_list.horizontalScrollBarPolicy(),
-                QtCore.Qt.ScrollBarAlwaysOff
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
                 )
             self.assertTrue(
                 all(
-                    run_list.header().sectionResizeMode(col) == qtw.QHeaderView.Interactive
+                    run_list.header().sectionResizeMode(col) == qtw.QHeaderView.ResizeMode.Interactive
                     for col in range(run_list.columnCount())
                     )
                 )
@@ -381,7 +413,7 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual([item.guid for item in run_list.watching], ["unfinished-guid"])
             self.assertEqual(items["unfinished-guid"].text(1), "")
-            self.assertEqual(items["unfinished-guid"].data(1, QtCore.Qt.UserRole), 1)
+            self.assertEqual(items["unfinished-guid"].data(1, QtCore.Qt.ItemDataRole.UserRole), 1)
             self.assertIsInstance(
                 run_list.itemWidget(items["unfinished-guid"], 1),
                 treeWidgets.RunPreviewCell
@@ -399,7 +431,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertRegex(items["unfinished-guid"].text(5), r"^[\d,]+\.\d s$")
             self.assertEqual(items["unfinished-guid"].text(6), "100 KB")
             self.assertEqual(items["finished-guid"].text(1), "")
-            self.assertEqual(items["finished-guid"].data(1, QtCore.Qt.UserRole), 2)
+            self.assertEqual(items["finished-guid"].data(1, QtCore.Qt.ItemDataRole.UserRole), 2)
             self.assertEqual(
                 len(
                     run_list.itemWidget(
@@ -408,40 +440,97 @@ class RunListTooltipTestCase(unittest.TestCase):
                     ),
                 2
                 )
-            self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 x 100")
+            self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 × 100")
             self.assertEqual(items["finished-guid"].text(4), "✓")
             self.assertEqual(items["finished-guid"].text(5), "10.0 s")
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(0)),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(2)),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(4)),
-                int(QtCore.Qt.AlignCenter)
+                QtCore.Qt.AlignmentFlag.AlignCenter.value
                 )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(5)),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(6)),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertIn("Measure</td>", items["unfinished-guid"].toolTip(0))
             self.assertIn("(y)</td>", items["unfinished-guid"].toolTip(0))
             self.assertNotIn("Complete", items["finished-guid"].toolTip(0))
 
-            run_list.sortItems(1, QtCore.Qt.DescendingOrder)
+            run_list.sortItems(1, QtCore.Qt.SortOrder.DescendingOrder)
             self.assertEqual(
                 [run_list.topLevelItem(row).guid for row in range(run_list.topLevelItemCount())],
                 ["finished-guid", "unfinished-guid"]
                 )
         finally:
             treeWidgets.isfile = old_isfile
+
+    def test_check_watching_reports_finished_interrupted_run(self):
+        old_isfile = treeWidgets.isfile
+        old_get_run_status = treeWidgets.get_run_status
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "exp_name": "exp",
+                    "sample_name": "sample",
+                    "name": "interrupted",
+                    "result_table_name": "results_1",
+                    "guid": "interrupted-guid",
+                    "sweep_parameters": ["x", "y"],
+                    "measure_parameters": ["signal", "other"],
+                    "result_count": 100,
+                    "read_setpoint_count": 100,
+                    "setpoint_count": 1000,
+                    "expected_results": 2000,
+                    "point_shape": [10, 100],
+                    "setpoint_shape": [10, 100],
+                    }
+                })
+            item = run_list.topLevelItem(0)
+
+            treeWidgets.get_run_status = lambda guid: {
+                "completed_timestamp": 120.0,
+                "is_completed": True,
+                "result_count": 800,
+                "read_setpoint_count": 400,
+                "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
+                "database_modified_timestamp": 120.0,
+                }
+
+            updated_runs = run_list.checkWatching()
+
+            self.assertEqual(
+                item.text(run_list.cols.index("Complete")),
+                "40.00%"
+                )
+            self.assertEqual(
+                item.data(run_list.cols.index("Complete"), QtCore.Qt.ItemDataRole.UserRole),
+                40.0
+                )
+            self.assertEqual(run_list.watching, [])
+            self.assertEqual(
+                updated_runs[1]["measurement_exception"],
+                "Traceback...\nKeyboardInterrupt\n"
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+            treeWidgets.get_run_status = old_get_run_status
 
     def test_run_table_measurement_previews_use_preview_metadata(self):
         old_isfile = treeWidgets.isfile
@@ -499,11 +588,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(images[0].height(), treeWidgets.MEASUREMENT_PREVIEW_SIZE)
 
             event = QtGui.QMouseEvent(
-                QtCore.QEvent.MouseButtonDblClick,
+                QtCore.QEvent.Type.MouseButtonDblClick,
                 QtCore.QPointF(5, 5),
-                QtCore.Qt.LeftButton,
-                QtCore.Qt.LeftButton,
-                QtCore.Qt.NoModifier,
+                QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.KeyboardModifier.NoModifier,
                 )
             qtw.QApplication.sendEvent(images[0], event)
 
@@ -520,5 +609,3 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIs(run_list.currentItem(), item)
         finally:
             treeWidgets.isfile = old_isfile
-
-

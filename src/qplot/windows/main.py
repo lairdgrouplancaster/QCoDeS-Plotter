@@ -1,38 +1,46 @@
-from PyQt5 import (
+import os
+from time import perf_counter
+
+from PyQt6 import (
+    QtCore,
+    QtGui,
+)
+from PyQt6 import (
     QtWidgets as qtw,
-    QtCore
-    )
-from PyQt5.QtGui import QKeySequence
+)
+from PyQt6.QtGui import QKeySequence
+from qcodes.dataset.sqlite.database import get_DB_location
+
+from qplot import config
+from qplot.datahandling.database import (
+    DatabaseLoadWorker as DatabaseLoadWorker,
+)
+from qplot.datahandling.database import (
+    database_info_report as database_info_report,
+)
+from qplot.datahandling.database import (
+    database_path_from_mime_data as database_path_from_mime_data,
+)
+from qplot.diagnostics import log_user_error
 
 from ._database_actions import DatabaseActionsMixin
+from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
-from ._preferences import PreferencesDialog
+from ._preferences import (
+    PreferencesDialog,
+    create_preferences_action,
+)
 from ._run_controls import RunControlsMixin
 from ._shortcuts import standard_key_sequences
-from ._help import add_help_menu
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
-    add_confirmation_options,
     add_restore_defaults_option,
     add_standard_window_controls,
     ask_confirmation_with_dont_ask_again,
     close_all_warning_enabled,
-    )
-from qplot.diagnostics import log_user_error
-from qplot.datahandling.database import (
-    DatabaseLoadWorker as DatabaseLoadWorker,
-    database_info_report as database_info_report,
-    database_path_from_mime_data as database_path_from_mime_data,
-    )
-from qplot import config
+)
 
-from qcodes.dataset.sqlite.database import (
-    get_DB_location
-    )
-
-import os
-from time import perf_counter
 
 class DatabasePathLineEdit(qtw.QLineEdit):
     """
@@ -160,9 +168,9 @@ class MainWindow(
         self.y = self.screenrect.top()
         
         # Try to bring window to top 
-        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowType.WindowStaysOnTopHint)
         self.show() 
-        self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint) 
+        self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowType.WindowStaysOnTopHint) 
         self.show()
         self.startupDatabaseTimer.start(0)
 
@@ -177,7 +185,7 @@ class MainWindow(
         fileMenu = menu.addMenu("&File") # Not sure why these all have &, but they do
         
         # Load database file
-        loadAction = qtw.QAction("&Load Database...", self)
+        loadAction = QtGui.QAction("&Load Database...", self)
         loadAction.setShortcut("Ctrl+L")
         loadAction.setStatusTip("Load a QCoDeS database")
         loadAction.triggered.connect(self.getfile)
@@ -186,41 +194,41 @@ class MainWindow(
         self.recentDatabaseMenu = fileMenu.addMenu("Load &Recent Database")
         self.refresh_recent_database_menu()
 
-        open_folder_action = qtw.QAction("Open Database &Folder", self)
+        open_folder_action = QtGui.QAction("Open Database &Folder", self)
         open_folder_action.setShortcut("Ctrl+Shift+D")
         open_folder_action.setStatusTip("Open the folder containing the current database")
         open_folder_action.triggered.connect(self.open_database_location)
         fileMenu.addAction(open_folder_action)
         
         # Force update check on database
-        refreshAction = qtw.QAction("&Refresh", self)
+        refreshAction = QtGui.QAction("&Refresh", self)
         refreshAction.setShortcut("R")
         refreshAction.triggered.connect(self.refreshMain)
         fileMenu.addAction(refreshAction)
 
         fileMenu.addSeparator()
 
-        self.closeAllPlotsAction = qtw.QAction("Close All &Plot Windows", self)
+        self.closeAllPlotsAction = QtGui.QAction("Close All &Plot Windows", self)
         self.closeAllPlotsAction.setShortcut("Ctrl+Shift+W")
-        self.closeAllPlotsAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        self.closeAllPlotsAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         self.closeAllPlotsAction.setStatusTip("Close all open plot windows")
         self.closeAllPlotsAction.triggered.connect(self.closeAll)
         fileMenu.addAction(self.closeAllPlotsAction)
 
-        closeAction = qtw.QAction("&Close Window", self)
+        closeAction = QtGui.QAction("&Close Window", self)
         closeAction.setShortcuts(
-            standard_key_sequences(QKeySequence.Close, ["Ctrl+W"])
+            standard_key_sequences(QKeySequence.StandardKey.Close, ["Ctrl+W"])
             )
-        closeAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        closeAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         closeAction.setStatusTip("Close the main qPlot window")
         closeAction.triggered.connect(self.close)
         fileMenu.addAction(closeAction)
 
-        quitAction = qtw.QAction("&Quit qPlot", self)
+        quitAction = QtGui.QAction("&Quit qPlot", self)
         quitAction.setShortcuts(
-            standard_key_sequences(QKeySequence.Quit, ["Ctrl+Q"])
+            standard_key_sequences(QKeySequence.StandardKey.Quit, ["Ctrl+Q"])
             )
-        quitAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        quitAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         quitAction.setStatusTip("Quit qPlot")
         quitAction.triggered.connect(self.close)
         fileMenu.addAction(quitAction)
@@ -230,55 +238,11 @@ class MainWindow(
         # Second dropdown menu
         prefMenu = menu.addMenu("&Options")
 
-        preferences_action = qtw.QAction("&Preferences...", self)
-        preferences_action.setShortcut("Ctrl+,")
-        preferences_action.setStatusTip("Open qPlot preferences")
-        preferences_action.triggered.connect(self.show_preferences_dialog)
-        prefMenu.addAction(preferences_action)
-        prefMenu.addSeparator()
-        
-        # Sets default open location for loadACtion
-        default_load_picker = qtw.QAction("&Open Location", self)
-        default_load_picker.triggered.connect(self.change_default_file)
-        prefMenu.addAction(default_load_picker)
-        
-        # Change app stylesheet/theme
-        themeMenu = prefMenu.addMenu("&Theme")
-        
-        current_theme = self.config.get("user_preference.theme")
-        self.themes = []
-        # Add all options to menu
-        for itr, theme in enumerate(["Light", "Dark", "PyQt"]):
-            self.themes.append(qtw.QAction(f'&{theme}', self, checkable=True))
-            
-            self.themes[itr].triggered.connect(
-                lambda _, theme=theme.lower(), action=self.themes[itr]:
-                    self.change_theme(theme, action) 
-                )
-                
-            themeMenu.addAction(self.themes[itr])
-            if theme.lower() == current_theme:
-                self.themes[itr].setChecked(True)
-
-        preview_menu = prefMenu.addMenu("&Preview Size")
-        self.previewSizeGroup = qtw.QActionGroup(self)
-        self.previewSizeGroup.setExclusive(True)
-        self.previewSizeActions = []
-        for size in (100, 150, 200, 300, 500):
-            action = qtw.QAction(f"{size} px", self, checkable=True)
-            action.setData(size)
-            action.setChecked(size == self.preview_size)
-            action.triggered.connect(
-                lambda _, preview_size=size: self.change_preview_size(preview_size)
-                )
-            self.previewSizeGroup.addAction(action)
-            self.previewSizeActions.append(action)
-            preview_menu.addAction(action)
-
+        prefMenu.addAction(
+            create_preferences_action(self, self.show_preferences_dialog)
+            )
         prefMenu.addSeparator()
         add_restore_defaults_option(self, prefMenu)
-        prefMenu.addSeparator()
-        add_confirmation_options(self, prefMenu)
         add_help_menu(self)
 
     def initFile(self):
@@ -307,7 +271,7 @@ class MainWindow(
         self.copyDatabasePathButton = qtw.QToolButton()
         self.copyDatabasePathButton.setObjectName("databaseIconButton")
         self.copyDatabasePathButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_FileDialogDetailedView)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_FileDialogDetailedView)
             )
         self.copyDatabasePathButton.setToolTip("Copy the full database path")
         self.copyDatabasePathButton.setAccessibleName("Copy database path")
@@ -318,7 +282,7 @@ class MainWindow(
         self.databaseInfoButton = qtw.QToolButton()
         self.databaseInfoButton.setObjectName("databaseIconButton")
         self.databaseInfoButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_MessageBoxInformation)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_MessageBoxInformation)
             )
         self.databaseInfoButton.setToolTip("Show database information")
         self.databaseInfoButton.setAccessibleName("Show database information")
@@ -329,7 +293,7 @@ class MainWindow(
         self.loadDatabaseButton = qtw.QToolButton()
         self.loadDatabaseButton.setObjectName("databaseIconButton")
         self.loadDatabaseButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_DialogOpenButton)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton)
             )
         self.loadDatabaseButton.setToolTip("Load a QCoDeS .db database (Ctrl+L)")
         self.loadDatabaseButton.setAccessibleName("Load database")
@@ -340,7 +304,7 @@ class MainWindow(
         self.openDatabaseFolderButton = qtw.QToolButton()
         self.openDatabaseFolderButton.setObjectName("databaseIconButton")
         self.openDatabaseFolderButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_DirOpenIcon)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DirOpenIcon)
             )
         self.openDatabaseFolderButton.setToolTip(
             "Open the folder containing the current database (Ctrl+Shift+D)"
@@ -372,19 +336,19 @@ class MainWindow(
         self.databaseLoadLabel = qtw.QLabel("")
         self.databaseLoadLabel.setObjectName("databaseLoadLabel")
         self.databaseLoadLabel.setSizePolicy(
-            qtw.QSizePolicy.Expanding,
-            qtw.QSizePolicy.Preferred,
+            qtw.QSizePolicy.Policy.Expanding,
+            qtw.QSizePolicy.Policy.Preferred,
             )
         database_load_layout.addWidget(self.databaseLoadLabel, 1)
 
         self.databaseLoadCancelButton = qtw.QToolButton()
         self.databaseLoadCancelButton.setObjectName("databaseIconButton")
         self.databaseLoadCancelButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_DialogCancelButton)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogCancelButton)
             )
         self.databaseLoadCancelButton.setText("Cancel")
         self.databaseLoadCancelButton.setToolButtonStyle(
-            QtCore.Qt.ToolButtonTextBesideIcon
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
             )
         self.databaseLoadCancelButton.setToolTip("Cancel the current database load")
         self.databaseLoadCancelButton.setAccessibleName("Cancel database load")
@@ -414,7 +378,7 @@ class MainWindow(
                 "Are you sure you want to exit?",
                 CONFIRM_QUIT_KEY,
                 )
-            if reply == qtw.QMessageBox.Yes:
+            if reply == qtw.QMessageBox.StandardButton.Yes:
                 event.accept()
             else:
                 event.ignore()
@@ -461,9 +425,9 @@ class MainWindow(
                 "Close All Plot Windows",
                 f"Close {count} plot {noun}?",
                 CONFIRM_CLOSE_ALL_KEY,
-                qtw.QMessageBox.No,
+                qtw.QMessageBox.StandardButton.No,
                 )
-            if reply != qtw.QMessageBox.Yes:
+            if reply != qtw.QMessageBox.StandardButton.Yes:
                 if status:
                     self.show_status("Close all plot windows cancelled.", 3000)
                 return False
@@ -484,7 +448,7 @@ class MainWindow(
         ----------
         theme : str
             Name of the theme to change to.
-        action : PyQt5.QtWidgets.QAction
+        action : PyQt6.QtWidgets.QAction
             Button which sent the signal for the action.
 
         """
@@ -492,7 +456,7 @@ class MainWindow(
             action.setChecked(True)
             self.show_status(f"{theme.title()} theme already selected.", 3000)
             return
-        for QActions in self.themes: # Untick other options
+        for QActions in getattr(self, "themes", []): # Untick other options
             if QActions != action:
                 QActions.setChecked(False)
                 
@@ -527,25 +491,25 @@ class MainWindow(
     @QtCore.pyqtSlot()
     def restore_default_settings(self):
         """
-        Confirms and restores all user settings to schema defaults.
+        Confirms and resets all user settings to schema defaults.
 
         """
         reply = qtw.QMessageBox.question(
             self,
-            "Restore Default Settings",
-            "Restore all qPlot settings to their defaults?",
-            qtw.QMessageBox.Yes | qtw.QMessageBox.No,
-            qtw.QMessageBox.No,
+            "Reset All Settings",
+            "Reset all qPlot settings to their defaults?",
+            qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
+            qtw.QMessageBox.StandardButton.No,
             )
-        if reply != qtw.QMessageBox.Yes:
-            self.show_status("Default settings restore cancelled.", 3000)
+        if reply != qtw.QMessageBox.StandardButton.Yes:
+            self.show_status("Settings reset cancelled.", 3000)
             return
 
         self.close_plot_windows(confirm=False, status=False)
         self.config.reset_to_defaults()
         self.apply_current_settings()
         self.close_database(status=False)
-        self.show_status("Default settings restored.", 5000)
+        self.show_status("Settings reset to defaults.", 5000)
 
 
     def show_preferences_dialog(self):
@@ -558,7 +522,7 @@ class MainWindow(
         dialog.preferencesApplied.connect(
             lambda: self.show_status("Preferences saved.", 3000)
             )
-        dialog.exec_()
+        dialog.exec()
 
 
     def apply_current_settings(self):
@@ -573,6 +537,7 @@ class MainWindow(
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
+        self._sync_mouse_mode_settings()
 
 
     def _sync_theme_actions(self):
@@ -603,6 +568,12 @@ class MainWindow(
                 )
 
 
+    def _sync_mouse_mode_settings(self):
+        for win in getattr(self, "windows", []):
+            if hasattr(win, "apply_mouse_mode_preference"):
+                win.apply_mouse_mode_preference()
+
+
     def _save_preview_size(self, preview_size):
         gui_config = self.config.config.setdefault("GUI", {})
         if "preview_size" not in gui_config:
@@ -629,9 +600,8 @@ class MainWindow(
         log_user_error(title, message, details, __name__)
         self.show_status(message, 10000)
 
-        box = qtw.QMessageBox(qtw.QMessageBox.Warning, title, message, parent=self)
+        box = qtw.QMessageBox(qtw.QMessageBox.Icon.Warning, title, message, parent=self)
         if details:
             box.setDetailedText(details)
-        box.exec_()
-
+        box.exec()
 

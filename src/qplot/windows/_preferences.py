@@ -1,16 +1,18 @@
-from PyQt5 import (
+import os
+from copy import deepcopy
+
+from PyQt6 import (
     QtCore,
+    QtGui,
+)
+from PyQt6 import (
     QtWidgets as qtw,
-    )
+)
 
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
-    )
-
-from copy import deepcopy
-import os
-
+)
 
 THEME_OPTIONS = (
     ("Light", "light"),
@@ -18,9 +20,27 @@ THEME_OPTIONS = (
     ("PyQt", "pyqt"),
     )
 
+MOUSE_MODE_KEY = "user_preference.mouse_mode"
+MOUSE_MODE_OPTIONS = (
+    ("Rectangle zoom (1 button)", "rect"),
+    ("Pan (3 button)", "pan"),
+)
+
+COPY_PLOT_IMAGE_RESOLUTION_KEY = "user_preference.copy_plot_image_resolution"
+COPY_PLOT_IMAGE_RESOLUTION_SCREEN = "screen"
+COPY_PLOT_IMAGE_RESOLUTION_300_DPI = "dpi_300"
+COPY_PLOT_IMAGE_RESOLUTION_SVG = "svg"
+COPY_PLOT_IMAGE_RESOLUTION_OPTIONS = (
+    ("Screen resolution", COPY_PLOT_IMAGE_RESOLUTION_SCREEN),
+    ("300 dpi", COPY_PLOT_IMAGE_RESOLUTION_300_DPI),
+    ("Vector SVG", COPY_PLOT_IMAGE_RESOLUTION_SVG),
+)
+
 PREFERENCE_KEYS = (
     "user_preference.theme",
     "GUI.preview_size",
+    MOUSE_MODE_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
     "file.default_load_path",
     "user_preference.default_refresh_rate",
     CONFIRM_CLOSE_ALL_KEY,
@@ -56,25 +76,26 @@ class PreferencesDialog(qtw.QDialog):
 
         tabs = qtw.QTabWidget(self)
         tabs.addTab(self._appearance_tab(), "Appearance")
+        tabs.addTab(self._interaction_tab(), "Interaction")
         tabs.addTab(self._files_tab(), "Files")
         tabs.addTab(self._confirmations_tab(), "Confirmations")
         tabs.addTab(self._runtime_tab(), "Runtime")
         layout.addWidget(tabs)
 
         self.buttonBox = qtw.QDialogButtonBox(
-            qtw.QDialogButtonBox.Ok
-            | qtw.QDialogButtonBox.Cancel
-            | qtw.QDialogButtonBox.Apply
-            | qtw.QDialogButtonBox.RestoreDefaults,
+            qtw.QDialogButtonBox.StandardButton.Ok
+            | qtw.QDialogButtonBox.StandardButton.Cancel
+            | qtw.QDialogButtonBox.StandardButton.Apply
+            | qtw.QDialogButtonBox.StandardButton.RestoreDefaults,
             self,
             )
         self.buttonBox.accepted.connect(self._accept_preferences)
         self.buttonBox.rejected.connect(self.reject)
-        self.buttonBox.button(qtw.QDialogButtonBox.Apply).clicked.connect(
+        self.buttonBox.button(qtw.QDialogButtonBox.StandardButton.Apply).clicked.connect(
             self.apply_preferences
             )
         self.restoreDefaultsButton = self.buttonBox.button(
-            qtw.QDialogButtonBox.RestoreDefaults
+            qtw.QDialogButtonBox.StandardButton.RestoreDefaults
             )
         self.restoreDefaultsButton.setObjectName("restorePreferenceDefaultsButton")
         self.restoreDefaultsButton.setAccessibleName("Restore preference defaults")
@@ -87,7 +108,7 @@ class PreferencesDialog(qtw.QDialog):
     def _appearance_tab(self):
         tab = qtw.QWidget(self)
         form = qtw.QFormLayout(tab)
-        form.setFieldGrowthPolicy(qtw.QFormLayout.AllNonFixedFieldsGrow)
+        form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
@@ -117,10 +138,41 @@ class PreferencesDialog(qtw.QDialog):
 
         return tab
 
+    def _interaction_tab(self):
+        tab = qtw.QWidget(self)
+        form = qtw.QFormLayout(tab)
+        form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setSpacing(8)
+
+        self.mouseModeCombo = qtw.QComboBox(tab)
+        self.mouseModeCombo.setObjectName("mouseModePreferenceCombo")
+        self.mouseModeCombo.setAccessibleName("Mouse mode")
+        for label, value in MOUSE_MODE_OPTIONS:
+            self.mouseModeCombo.addItem(label, value)
+        self._add_row(form, "&Mouse mode:", self.mouseModeCombo)
+
+        self.copyPlotImageResolutionCombo = qtw.QComboBox(tab)
+        self.copyPlotImageResolutionCombo.setObjectName(
+            "copyPlotImageResolutionPreferenceCombo"
+            )
+        self.copyPlotImageResolutionCombo.setAccessibleName(
+            "Copy plot image resolution"
+            )
+        for label, value in COPY_PLOT_IMAGE_RESOLUTION_OPTIONS:
+            self.copyPlotImageResolutionCombo.addItem(label, value)
+        self._add_row(
+            form,
+            "&Copy plot image:",
+            self.copyPlotImageResolutionCombo,
+            )
+
+        return tab
+
     def _files_tab(self):
         tab = qtw.QWidget(self)
         form = qtw.QFormLayout(tab)
-        form.setFieldGrowthPolicy(qtw.QFormLayout.AllNonFixedFieldsGrow)
+        form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
@@ -138,7 +190,7 @@ class PreferencesDialog(qtw.QDialog):
         self.defaultLoadPathButton = qtw.QToolButton(tab)
         self.defaultLoadPathButton.setObjectName("defaultLoadPathPreferenceButton")
         self.defaultLoadPathButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_DirOpenIcon)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DirOpenIcon)
             )
         self.defaultLoadPathButton.setToolTip("Choose default load location")
         self.defaultLoadPathButton.setAccessibleName(
@@ -183,7 +235,7 @@ class PreferencesDialog(qtw.QDialog):
     def _runtime_tab(self):
         tab = qtw.QWidget(self)
         form = qtw.QFormLayout(tab)
-        form.setFieldGrowthPolicy(qtw.QFormLayout.AllNonFixedFieldsGrow)
+        form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
@@ -241,6 +293,14 @@ class PreferencesDialog(qtw.QDialog):
         self.themeCombo.setCurrentIndex(max(theme_index, 0))
 
         self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
+        mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
+        self.mouseModeCombo.setCurrentIndex(max(mouse_mode_index, 0))
+        copy_resolution_index = self.copyPlotImageResolutionCombo.findData(
+            values[COPY_PLOT_IMAGE_RESOLUTION_KEY]
+            )
+        self.copyPlotImageResolutionCombo.setCurrentIndex(
+            max(copy_resolution_index, 0)
+            )
         self.defaultLoadPathEdit.setText(str(values["file.default_load_path"]))
         self.refreshRateSpin.setValue(
             float(values["user_preference.default_refresh_rate"])
@@ -269,6 +329,10 @@ class PreferencesDialog(qtw.QDialog):
         values = {
             "user_preference.theme": self.themeCombo.currentData(),
             "GUI.preview_size": int(self.previewSizeSpin.value()),
+            MOUSE_MODE_KEY: self.mouseModeCombo.currentData(),
+            COPY_PLOT_IMAGE_RESOLUTION_KEY: (
+                self.copyPlotImageResolutionCombo.currentData()
+                ),
             "file.default_load_path": self.defaultLoadPathEdit.text().strip(),
             "user_preference.default_refresh_rate": self.refreshRateSpin.value(),
             CONFIRM_CLOSE_ALL_KEY: self.confirmCloseAllCheck.isChecked(),
@@ -326,10 +390,10 @@ class PreferencesDialog(qtw.QDialog):
             self,
             "Restore Preference Defaults",
             "Restore the preferences shown in this dialog to their defaults?",
-            qtw.QMessageBox.Yes | qtw.QMessageBox.No,
-            qtw.QMessageBox.No,
+            qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
+            qtw.QMessageBox.StandardButton.No,
             )
-        if reply != qtw.QMessageBox.Yes:
+        if reply != qtw.QMessageBox.StandardButton.Yes:
             return False
 
         self.set_preference_values(self.default_preference_values())
@@ -351,3 +415,17 @@ class PreferencesDialog(qtw.QDialog):
     def _accept_preferences(self):
         if self.apply_preferences():
             self.accept()
+
+
+def create_preferences_action(window, triggered):
+    """
+    Creates the shared Preferences action used by main and plot windows.
+
+    """
+    action = QtGui.QAction("&Preferences...", window)
+    action.setMenuRole(QtGui.QAction.MenuRole.PreferencesRole)
+    action.setShortcut("Ctrl+,")
+    action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+    action.setStatusTip("Open qPlot preferences")
+    action.triggered.connect(triggered)
+    return action

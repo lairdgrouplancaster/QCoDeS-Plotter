@@ -1,12 +1,12 @@
 import unittest
 
 import numpy as np
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
 import pyqtgraph as pg
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
-from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 from qplot.windows._plotWin import plotWidget
+from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
 
 class Plot2dLiveRefreshTestCase(unittest.TestCase):
@@ -204,7 +204,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 y,
                 *,
                 down_y=0.0,
-                modifiers=QtCore.Qt.NoModifier,
+                modifiers=QtCore.Qt.KeyboardModifier.NoModifier,
                 start=False,
                 finish=False,
                 ):
@@ -219,7 +219,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             return self._modifiers
 
         def button(self):
-            return QtCore.Qt.LeftButton
+            return QtCore.Qt.MouseButton.LeftButton
 
         def isStart(self):
             return self._start
@@ -240,7 +240,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         def __init__(
                 self,
                 *,
-                button=QtCore.Qt.LeftButton,
+                button=QtCore.Qt.MouseButton.LeftButton,
                 finish=False,
                 ):
             self._button = button
@@ -256,9 +256,9 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         def __init__(
                 self,
                 *,
-                button=QtCore.Qt.LeftButton,
+                button=QtCore.Qt.MouseButton.LeftButton,
                 double=False,
-                modifiers=QtCore.Qt.NoModifier,
+                modifiers=QtCore.Qt.KeyboardModifier.NoModifier,
                 ):
             self._button = button
             self._double = double
@@ -322,7 +322,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             rect,
             "ne",
             QtCore.QPointF(10.1, 10.1),
-            QtCore.Qt.ShiftModifier,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
             )
         rect = window._snap_marquee_rect(rect.normalized())
 
@@ -536,8 +536,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window.set_sweep_line_cursor(vertical_line)
         window.set_sweep_line_cursor(horizontal_line)
 
-        self.assertEqual(vertical_line.cursor_shape, QtCore.Qt.SizeHorCursor)
-        self.assertEqual(horizontal_line.cursor_shape, QtCore.Qt.SizeVerCursor)
+        self.assertEqual(vertical_line.cursor_shape, QtCore.Qt.CursorShape.SizeHorCursor)
+        self.assertEqual(horizontal_line.cursor_shape, QtCore.Qt.CursorShape.SizeVerCursor)
 
     def test_sweep_line_cursor_updates_when_line_appears_under_pointer(self):
         window = plot2d.__new__(plot2d)
@@ -552,7 +552,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
             self.assertEqual(
                 qtw.QApplication.overrideCursor().shape(),
-                QtCore.Qt.SizeHorCursor,
+                QtCore.Qt.CursorShape.SizeHorCursor,
                 )
         finally:
             window.restore_sweep_line_hover_cursor(line)
@@ -573,7 +573,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
             self.assertEqual(
                 qtw.QApplication.overrideCursor().shape(),
-                QtCore.Qt.SizeVerCursor,
+                QtCore.Qt.CursorShape.SizeVerCursor,
                 )
 
             line.hoverEvent(self.SweepLineHoverEvent(exit=True))
@@ -607,7 +607,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window.sweep_lines = {7: other_line, 5: line}
         event = self.SweepLineClickEvent(
             double=True,
-            modifiers=QtCore.Qt.ShiftModifier,
+            modifiers=QtCore.Qt.KeyboardModifier.ShiftModifier,
             )
 
         window.activate_sweep_line(line, event)
@@ -628,7 +628,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
             self.assertEqual(
                 qtw.QApplication.overrideCursor().shape(),
-                QtCore.Qt.SizeHorCursor,
+                QtCore.Qt.CursorShape.SizeHorCursor,
                 )
 
             line.mouseDragEvent(self.SweepLineDragEvent(finish=True))
@@ -649,7 +649,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window.sweep_lines = {8: line}
         window.active_sweep_line_id = 8
 
-        window.move_sweep_with_arrow_key(QtCore.Qt.Key_Right)
+        window.move_sweep_with_arrow_key(QtCore.Qt.Key.Key_Right)
 
         self.assertEqual(line.sweep_index, 2)
         self.assertAlmostEqual(line.value(), 2.5)
@@ -665,7 +665,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window.sweep_lines = {8: line}
         window.active_sweep_line_id = 8
 
-        window.move_sweep_with_arrow_key(QtCore.Qt.Key_Right)
+        window.move_sweep_with_arrow_key(QtCore.Qt.Key.Key_Right)
 
         self.assertEqual(line.sweep_index, 3)
         self.assertAlmostEqual(line.value(), 3.5)

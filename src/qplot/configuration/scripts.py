@@ -1,9 +1,11 @@
-from .config import config
-from qplot._version import package_version
+import sys
 
 from jsonschema import ValidationError
 
-import sys
+from qplot._version import package_version
+
+from .config import config
+
 
 class sysHandle:
     """
@@ -129,7 +131,7 @@ class sysHandle:
         except ValidationError as error:
             err_key = f"Value: {value}, is invalid."
             err_key += str(error)
-            raise ValidationError(err_key)
+            raise ValidationError(err_key) from error
         print(f"set '{key}' to '{value}'")
         
         

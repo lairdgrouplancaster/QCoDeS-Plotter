@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtWidgets as qtw
 
 import qplot.__main__ as qplot_main
 from qplot import __version__
@@ -15,6 +15,11 @@ from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
 from qplot.configuration.themes import dark
 from qplot.windows import main as main_window
+from qplot.windows._preferences import (
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+    COPY_PLOT_IMAGE_RESOLUTION_SVG,
+)
 from qplot.windows._run_controls import AUTO_PLOT_KEY
 
 
@@ -58,6 +63,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             sysHandle("-set_value", "user_preference.theme", "dark")
             sysHandle("-set_value", "user_preference.confirm_close", "false")
             sysHandle("-set_value", "user_preference.confirm_close_all", "false")
+            sysHandle("-set_value", "user_preference.mouse_mode", "rect")
             sysHandle("-set_value", "GUI.main_frame_size", "[900, 600]")
             sysHandle("-set_value", "GUI.preview_size", "300")
 
@@ -65,6 +71,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(cfg.get("user_preference.theme"), "dark")
         self.assertFalse(cfg.get("user_preference.confirm_close"))
         self.assertFalse(cfg.get("user_preference.confirm_close_all"))
+        self.assertEqual(cfg.get("user_preference.mouse_mode"), "rect")
         self.assertEqual(cfg.get("GUI.main_frame_size"), [900, 600])
         self.assertEqual(cfg.get("GUI.preview_size"), 300)
 
@@ -73,6 +80,8 @@ class TemporaryConfigTestCase(unittest.TestCase):
         stored_config = cfg.config
         del stored_config["user_preference"]["confirm_close_all"]
         del stored_config["user_preference"]["auto_plot"]
+        del stored_config["user_preference"]["mouse_mode"]
+        del stored_config["user_preference"]["copy_plot_image_resolution"]
         with open(config.default_file, "w") as fp:
             json.dump(stored_config, fp)
 
@@ -80,6 +89,11 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
         self.assertFalse(reloaded.get(AUTO_PLOT_KEY))
+        self.assertEqual(reloaded.get("user_preference.mouse_mode"), "pan")
+        self.assertEqual(
+            reloaded.get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
+            COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+            )
 
     def test_config_repr_returns_readable_json(self):
         cfg = config()
@@ -136,6 +150,26 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertIsNone(
             qplot_main._database_path_from_arguments(["-style", "Fusion", "notes.txt"])
             )
+
+    def test_application_identity_uses_qplot_name(self):
+        app = qtw.QApplication.instance()
+        old_name = app.applicationName()
+        old_display_name = (
+            app.applicationDisplayName()
+            if hasattr(app, "applicationDisplayName")
+            else None
+            )
+
+        try:
+            qplot_main._configure_application_identity(app)
+
+            self.assertEqual(app.applicationName(), "qPlot")
+            if hasattr(app, "applicationDisplayName"):
+                self.assertEqual(app.applicationDisplayName(), "qPlot")
+        finally:
+            app.setApplicationName(old_name)
+            if old_display_name is not None and hasattr(app, "setApplicationDisplayName"):
+                app.setApplicationDisplayName(old_display_name)
 
     def test_main_window_uses_configured_default_refresh_rate(self):
         cfg = config()
@@ -281,6 +315,29 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertFalse(cfg.get(AUTO_PLOT_KEY))
 
+    def test_default_mouse_mode_is_pan(self):
+        cfg = config()
+
+        self.assertEqual(cfg.get("user_preference.mouse_mode"), "pan")
+
+    def test_default_plot_image_copy_resolution_is_screen(self):
+        cfg = config()
+
+        self.assertEqual(
+            cfg.get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
+            COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+            )
+
+    def test_plot_image_copy_resolution_accepts_svg(self):
+        cfg = config()
+
+        cfg.update(COPY_PLOT_IMAGE_RESOLUTION_KEY, COPY_PLOT_IMAGE_RESOLUTION_SVG)
+
+        self.assertEqual(
+            config().get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
+            COPY_PLOT_IMAGE_RESOLUTION_SVG,
+            )
+
     def test_cloud_sync_timeout_default_is_two_minutes(self):
         cfg = config()
 
@@ -292,5 +349,3 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg.update("user_preference.default_refresh_rate", 0.0)
 
         self.assertEqual(config().get("user_preference.default_refresh_rate"), 0.0)
-
-

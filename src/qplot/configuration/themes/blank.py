@@ -1,5 +1,6 @@
 import pyqtgraph as pg
 
+
 class blank:
     main = ""
     colors = [pg.mkColor(col) for col in ["red", "green", "blue", "black", "darkcyan", "darkorange"]]

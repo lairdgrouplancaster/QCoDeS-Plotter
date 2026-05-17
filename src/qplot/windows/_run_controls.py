@@ -1,19 +1,21 @@
 import os
 
-from PyQt5 import (
+from PyQt6 import (
     QtCore,
+    QtGui,
+)
+from PyQt6 import (
     QtWidgets as qtw,
-    )
-from PyQt5.QtGui import QIntValidator
+)
+from PyQt6.QtGui import QIntValidator
 
 from ._help import show_quick_start
 from ._widgets import (
     RunList,
     moreInfo,
-    )
+)
+from ._widgets._run_formatting import run_is_complete
 from ._widgets.preview import PREVIEW_SIZE
-from ._widgets.treeWidgets import run_is_complete
-
 
 AUTO_PLOT_KEY = "user_preference.auto_plot"
 
@@ -46,7 +48,7 @@ class RunControlsMixin:
         self.spinBox.setDecimals(1)
         self.spinBox.setSuffix(" s")
         self.spinBox.setFixedWidth(84)
-        self.spinBox.setAlignment(QtCore.Qt.AlignRight)
+        self.spinBox.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.spinBox.setToolTip("Refresh interval in seconds")
         self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
 
@@ -61,7 +63,7 @@ class RunControlsMixin:
         self.refreshDatabaseButton = qtw.QToolButton()
         self.refreshDatabaseButton.setObjectName("refreshIconButton")
         self.refreshDatabaseButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_BrowserReload)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
             )
         self.refreshDatabaseButton.setToolTip("Refresh the database run list (R)")
         self.refreshDatabaseButton.setAccessibleName("Refresh database")
@@ -71,7 +73,7 @@ class RunControlsMixin:
         self.closeAllPlotsButton = qtw.QToolButton()
         self.closeAllPlotsButton.setObjectName("closeAllPlotsButton")
         self.closeAllPlotsButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_TitleBarCloseButton)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_TitleBarCloseButton)
             )
         self.closeAllPlotsButton.setToolTip("Close all plot windows (Ctrl+Shift+W)")
         self.closeAllPlotsButton.setAccessibleName("Close all plot windows")
@@ -111,7 +113,7 @@ class RunControlsMixin:
         self.plotRunButton = qtw.QToolButton()
         self.plotRunButton.setObjectName("plotIconButton")
         self.plotRunButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_MediaPlay)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_MediaPlay)
             )
         self.plotRunButton.setToolTip("Plot (Ctrl+Return)")
         self.plotRunButton.setAccessibleName("Plot measurement")
@@ -122,7 +124,7 @@ class RunControlsMixin:
         self.exportCsvButton = qtw.QToolButton()
         self.exportCsvButton.setObjectName("exportIconButton")
         self.exportCsvButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.SP_DialogSaveButton)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogSaveButton)
             )
         self.exportCsvButton.setToolTip("Export CSV")
         self.exportCsvButton.setAccessibleName("Export measurement to CSV")
@@ -161,7 +163,7 @@ class RunControlsMixin:
                 )
 
         self._init_empty_state()
-        self.runInfoSplitter = qtw.QSplitter(QtCore.Qt.Vertical)
+        self.runInfoSplitter = qtw.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.runInfoSplitter.setHandleWidth(8)
         self.runInfoSplitter.setChildrenCollapsible(True)
         self.runInfoSplitter.setOpaqueResize(True)
@@ -184,25 +186,25 @@ class RunControlsMixin:
         Register keyboard shortcuts for common run actions.
 
         """
-        plot_entered = qtw.QAction("Plot Entered Run and Measurement", self)
+        plot_entered = QtGui.QAction("Plot Entered Run and Measurement", self)
         plot_entered.setShortcut("Ctrl+Return")
-        plot_entered.setShortcutContext(QtCore.Qt.WindowShortcut)
+        plot_entered.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         plot_entered.setStatusTip("Plot the run and measurement entered above")
         plot_entered.triggered.connect(lambda _: self.plotRunButton.click())
         self.addAction(plot_entered)
 
-        plot_selected_all = qtw.QAction("Plot All Measurements in Selected Run", self)
+        plot_selected_all = QtGui.QAction("Plot All Measurements in Selected Run", self)
         plot_selected_all.setShortcut("Ctrl+Shift+Return")
-        plot_selected_all.setShortcutContext(QtCore.Qt.WindowShortcut)
+        plot_selected_all.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         plot_selected_all.setStatusTip("Plot all measurements in the selected run")
         plot_selected_all.triggered.connect(self.open_selected_run_all)
         self.addAction(plot_selected_all)
 
         self.open_param_actions = []
         for itr in range(9):
-            action = qtw.QAction(f"Plot Measurement {itr + 1} in Selected Run", self)
+            action = QtGui.QAction(f"Plot Measurement {itr + 1} in Selected Run", self)
             action.setShortcut(f"Ctrl+{itr + 1}")
-            action.setShortcutContext(QtCore.Qt.WindowShortcut)
+            action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             action.setStatusTip(f"Plot measurement {itr + 1} in the selected run")
             action.triggered.connect(lambda _, index=itr: self.open_param_by_index(index))
             self.addAction(action)
@@ -215,14 +217,14 @@ class RunControlsMixin:
         """
         self.emptyStateFrame = qtw.QFrame()
         self.emptyStateFrame.setObjectName("mainEmptyState")
-        self.emptyStateFrame.setFrameShape(qtw.QFrame.NoFrame)
+        self.emptyStateFrame.setFrameShape(qtw.QFrame.Shape.NoFrame)
         layout = qtw.QHBoxLayout(self.emptyStateFrame)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
         icon = qtw.QLabel()
         icon.setPixmap(
-            self.style().standardIcon(qtw.QStyle.SP_DialogOpenButton).pixmap(24, 24)
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton).pixmap(24, 24)
             )
         layout.addWidget(icon)
 
@@ -246,9 +248,9 @@ class RunControlsMixin:
 
         load_button = qtw.QToolButton()
         load_button.setObjectName("databaseIconButton")
-        load_button.setIcon(self.style().standardIcon(qtw.QStyle.SP_DialogOpenButton))
+        load_button.setIcon(self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton))
         load_button.setText("Load Database...")
-        load_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        load_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         load_button.setToolTip("Load a QCoDeS .db database")
         load_button.setAccessibleName("Load database")
         load_button.clicked.connect(self.getfile)
@@ -257,9 +259,9 @@ class RunControlsMixin:
 
         refresh_button = qtw.QToolButton()
         refresh_button.setObjectName("databaseIconButton")
-        refresh_button.setIcon(self.style().standardIcon(qtw.QStyle.SP_BrowserReload))
+        refresh_button.setIcon(self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload))
         refresh_button.setText("Refresh")
-        refresh_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        refresh_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         refresh_button.setToolTip("Check for new measurements")
         refresh_button.setAccessibleName("Refresh database")
         refresh_button.clicked.connect(self.refreshMain)
@@ -268,9 +270,9 @@ class RunControlsMixin:
 
         help_button = qtw.QToolButton()
         help_button.setObjectName("databaseIconButton")
-        help_button.setIcon(self.style().standardIcon(qtw.QStyle.SP_DialogHelpButton))
+        help_button.setIcon(self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogHelpButton))
         help_button.setText("Quick Start")
-        help_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        help_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         help_button.setToolTip("Show the basic qPlot workflow")
         help_button.setAccessibleName("Show quick start")
         help_button.clicked.connect(lambda: show_quick_start(self))
@@ -468,7 +470,7 @@ class RunControlsMixin:
 
         matches = self.RunList.findItems(
             str(self.selected_run_id),
-            QtCore.Qt.MatchExactly,
+            QtCore.Qt.MatchFlag.MatchExactly,
             0,
             )
         if not matches:
@@ -476,7 +478,7 @@ class RunControlsMixin:
 
         item = matches[0]
         self.RunList.setCurrentItem(item)
-        self.RunList.scrollToItem(item, qtw.QAbstractItemView.PositionAtCenter)
+        self.RunList.scrollToItem(item, qtw.QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _sync_refresh_interval(self):
         interval = self.config.get("user_preference.default_refresh_rate")

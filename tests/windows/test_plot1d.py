@@ -1,15 +1,16 @@
 import unittest
 
 import numpy as np
-from PyQt5 import QtCore
-from PyQt5 import QtGui
-from PyQt5 import QtWidgets as qtw
 import pyqtgraph as pg
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _plotWin as plotwin_module
-from qplot.windows.plot1d import plot1d
-from qplot.windows._subplots import custom_viewbox
+from qplot.windows._plot1d_traces import Plot1DTraceMixin
 from qplot.windows._plotWin import plotWidget
+from qplot.windows._subplots import custom_viewbox
+from qplot.windows._widgets import QDock_context, picker_1d
+from qplot.windows.plot1d import plot1d
 
 
 class SnapToTraceTestCase(unittest.TestCase):
@@ -91,6 +92,109 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertIs(window.lines["main"], line)
 
+    def test_add_and_remove_secondary_trace_manages_right_axis(self):
+        class Theme:
+            colors = [
+                QtGui.QColor("#008000"),
+                QtGui.QColor("#0000ff"),
+                QtGui.QColor("#ff0000"),
+                ]
+
+        class Config:
+            theme = Theme()
+
+        class Dataset:
+            running = False
+
+        class Worker:
+            running = False
+
+        class SourceWindow:
+            label = "ID:2 voltage"
+            _guid = "source-guid"
+            visible = False
+            ds = Dataset()
+            worker = Worker()
+            monitor = QtCore.QTimer()
+            param_dict = {}
+            axis_options = {"x": "gate", "y": "voltage"}
+            axis_data = {
+                "x": np.array([0.0, 1.0, 2.0]),
+                "y": np.array([3.0, 4.0, 5.0]),
+                }
+
+            class EndWait:
+                def connect(self, _slot):
+                    pass
+
+                def disconnect(self, _slot):
+                    pass
+
+            end_wait = EndWait()
+
+        class Host(Plot1DTraceMixin, qtw.QMainWindow):
+            make_ds = QtCore.pyqtSignal([str])
+            remove_dataset = QtCore.pyqtSignal([str])
+            get_mergables = QtCore.pyqtSignal()
+
+        host = Host()
+        source = SourceWindow()
+        made_datasets = []
+        removed_datasets = []
+        picker_updates = []
+
+        try:
+            host.config = Config()
+            host.widget = pg.GraphicsLayoutWidget()
+            host.vb = custom_viewbox()
+            host.vb.setDefaultPadding(0)
+            host.plot = host.widget.addPlot(viewBox=host.vb)
+            host.vb.setParent(host.plot)
+            host.axes_dock = QDock_context("Line control", host)
+            host.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, host.axes_dock)
+            host.lineScroll = qtw.QScrollArea()
+            host.scrollWidget = qtw.QWidget()
+            host.lineScroll.setWidget(host.scrollWidget)
+            host.box_layout = qtw.QVBoxLayout(host.scrollWidget)
+            host.box_layout.addStretch()
+            host.box_count = 1
+            host.right_vb = None
+            host.line = host.plot.plot(x=[0.0, 1.0], y=[1.0, 2.0])
+            host.lines = {"main": host.line}
+            host.axis_options = {"x": "gate", "y": "current"}
+            host.mergable = [source]
+            host.make_ds.connect(made_datasets.append)
+            host.remove_dataset.connect(removed_datasets.append)
+            host.get_mergables.connect(lambda: picker_updates.append(True))
+
+            selected_box = picker_1d(host, host.config, [source.label])
+            selected_box.option_box.setCurrentIndex(0)
+            selected_box.axis_side.setCurrentText("Right")
+            selected_box.color_box.setColor(host.config.theme.colors[1])
+            host.option_boxes = [selected_box]
+
+            host.add_line(source.label)
+            secondary = host.lines[source.label]
+
+            self.assertEqual(made_datasets, ["source-guid"])
+            self.assertEqual(host.mergable, [])
+            self.assertIsNotNone(host.right_vb)
+            self.assertEqual(secondary.side, "right")
+            self.assertIn(secondary, host.right_vb.addedItems)
+            self.assertTrue(host.plot.getAxis("right").style["showValues"])
+            self.assertEqual(host.option_boxes[0], selected_box)
+            self.assertEqual(len(host.option_boxes), 2)
+
+            host.remove_line(source.label)
+
+            self.assertNotIn(source.label, host.lines)
+            self.assertNotIn(secondary, host.right_vb.addedItems)
+            self.assertFalse(host.plot.getAxis("right").style["showValues"])
+            self.assertEqual(removed_datasets, ["source-guid"])
+            self.assertEqual(picker_updates, [True])
+        finally:
+            host.deleteLater()
+
     def test_alt_drag_edge_handle_resizes_marquee_symmetrically(self):
         window = plotWidget.__new__(plotWidget)
         rect = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
@@ -99,7 +203,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             rect,
             "w",
             QtCore.QPointF(2.0, 4.0),
-            QtCore.Qt.AltModifier,
+            QtCore.Qt.KeyboardModifier.AltModifier,
             )
 
         self.assertEqual(rect.left(), 2.0)
@@ -113,7 +217,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             rect,
             "w",
             QtCore.QPointF(2.0, 4.0),
-            QtCore.Qt.ShiftModifier,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
             )
 
         self.assertEqual(rect.left(), 2.0)
@@ -127,7 +231,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             rect,
             "nw",
             QtCore.QPointF(2.0, 6.0),
-            QtCore.Qt.AltModifier,
+            QtCore.Qt.KeyboardModifier.AltModifier,
             )
 
         self.assertEqual(rect.left(), 2.0)
@@ -143,7 +247,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             rect,
             "nw",
             QtCore.QPointF(2.0, 6.0),
-            QtCore.Qt.ShiftModifier,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
             )
 
         self.assertEqual(rect.left(), 2.0)
@@ -159,7 +263,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.set_marquee_rect = lambda rect: captured.append(QtCore.QRectF(rect))
 
         window.begin_marquee_drag(QtCore.QPointF(1.0, 7.0), "nw")
-        window.drag_marquee_to(QtCore.QPointF(1.0, 7.0), QtCore.Qt.ShiftModifier)
+        window.drag_marquee_to(QtCore.QPointF(1.0, 7.0), QtCore.Qt.KeyboardModifier.ShiftModifier)
 
         self.assertEqual(captured[-1], QtCore.QRectF(0.0, 0.0, 10.0, 8.0))
 
@@ -178,7 +282,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             accepted = False
 
             def button(self):
-                return QtCore.Qt.RightButton
+                return QtCore.Qt.MouseButton.RightButton
 
             def scenePos(self):
                 return QtCore.QPointF(1.0, 2.0)
@@ -244,9 +348,9 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.marquee = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
         window.clear_marquee = lambda: setattr(window, "marquee", None)
         event = QtGui.QKeyEvent(
-            QtCore.QEvent.KeyPress,
-            QtCore.Qt.Key_Escape,
-            QtCore.Qt.NoModifier,
+            QtCore.QEvent.Type.KeyPress,
+            QtCore.Qt.Key.Key_Escape,
+            QtCore.Qt.KeyboardModifier.NoModifier,
             )
 
         plotWidget.keyPressEvent(window, event)
@@ -259,18 +363,18 @@ class SnapToTraceTestCase(unittest.TestCase):
         window._marquee_drag_state = {"mode": "new"}
 
         self.assertEqual(
-            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.NoModifier),
-            QtCore.Qt.CrossCursor,
+            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.KeyboardModifier.NoModifier),
+            QtCore.Qt.CursorShape.CrossCursor,
             )
 
         window._marquee_drag_state = {"mode": "w"}
         self.assertEqual(
-            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.NoModifier),
-            QtCore.Qt.SizeHorCursor,
+            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.KeyboardModifier.NoModifier),
+            QtCore.Qt.CursorShape.SizeHorCursor,
             )
         self.assertEqual(
             window._marquee_cursor_shape_for_handle("ne"),
-            QtCore.Qt.SizeBDiagCursor,
+            QtCore.Qt.CursorShape.SizeBDiagCursor,
             )
 
     def test_marquee_x_edges_snap_between_points_without_changing_y(self):

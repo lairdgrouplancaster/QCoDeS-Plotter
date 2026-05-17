@@ -2,8 +2,8 @@ import os
 
 import numpy as np
 import pandas as pd
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 from qcodes.dataset import load_by_guid, load_by_id
 
 from qplot.diagnostics import log_exception

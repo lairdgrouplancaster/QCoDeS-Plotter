@@ -1,11 +1,7 @@
 from typing import TYPE_CHECKING
 
-from PyQt5 import QtCore
-
 import numpy as np
-
-from . import data2matrix
-
+from PyQt6 import QtCore
 from qcodes.dataset.sqlite.database import connect
 
 from qplot.datahandling import load_param_data_from_db
@@ -17,9 +13,10 @@ from qplot.datahandling.qcodes_cache import (
     cache_rundescriber,
     cache_table_name,
     cache_write_status,
-    )
+)
 from qplot.diagnostics import log_exception
 
+from . import data2matrix
 
 if TYPE_CHECKING:
     import qcodes
@@ -37,7 +34,7 @@ class loader(QtCore.QRunnable):
                  param_dict : dict,
                  axes : dict,
                  read_data : bool = True,
-                 operations : list = []
+                 operations : list = None
                  ):
         """
         Sets up worker with required data for run()
@@ -75,12 +72,11 @@ class loader(QtCore.QRunnable):
         
         self.axes_dict = axes
         self.read_data = read_data
-        self.operations = operations
+        self.operations = [] if operations is None else operations
         
     
     def run(self):
         try:
-            did_error = False
             cache = self.cache
             
             if self.read_data:
@@ -117,63 +113,58 @@ class loader(QtCore.QRunnable):
                     data,
                     depvarData
                     )
-                return
-
-            #Remove nan values
-            valid_rows = ~np.isnan(depvarData)
-
-            # for 1d plots
-            if len(self.param.depends_on_) == 1:
-                (
-                    axis_data,
-                    axis_param
-                ) = self.for_1d(
-                    data,
-                    valid_rows
-                    )
-                return
             
-            # for >2d plots/unshaped 2d
-            (
-                axis_data,
-                axis_param,
-                dataGrid
-            ) = self.for_unshaped_2d(
-                data,
-                valid_rows,
-                depvarData
-                )
-        
+            else:
+                #Remove nan values
+                valid_rows = ~np.isnan(depvarData)
+
+                # for 1d plots
+                if len(self.param.depends_on_) == 1:
+                    (
+                        axis_data,
+                        axis_param
+                    ) = self.for_1d(
+                        data,
+                        valid_rows
+                        )
+                # for >2d plots/unshaped 2d
+                else:
+                    (
+                        axis_data,
+                        axis_param,
+                        dataGrid
+                    ) = self.for_unshaped_2d(
+                        data,
+                        valid_rows,
+                        depvarData
+                        )
+
         except Exception as err: # Raise error in main thread
-            did_error = True
             log_exception("Plot worker failed", err, __name__)
             self.emitter.errorOccurred.emit(err)
             self.emitter.finished.emit(False) # False: Failed
-            
-        finally:
-            if did_error: # errored out
-                return
-            
-            # Allow main to fetch data
-            self.axis_data = axis_data
-            self.axis_param = axis_param
-            if len(self.param.depends_on_) != 1:
-                self.dataGrid = dataGrid
-              
-            # Run additional operations
-            results = self.do_operations()
-            
-            # Update based on operations
-            if results is not None:
-                (
-                    self.axis_data["x"],
-                    self.axis_data["y"]
-                ) = results[:2]
-                if hasattr(self, "dataGrid"):
-                    self.dataGrid = results[2]
-            
-            # Callback
-            self.emitter.finished.emit(True)
+            return
+
+        # Allow main to fetch data
+        self.axis_data = axis_data
+        self.axis_param = axis_param
+        if len(self.param.depends_on_) != 1:
+            self.dataGrid = dataGrid
+
+        # Run additional operations
+        results = self.do_operations()
+
+        # Update based on operations
+        if results is not None:
+            (
+                self.axis_data["x"],
+                self.axis_data["y"]
+            ) = results[:2]
+            if hasattr(self, "dataGrid"):
+                self.dataGrid = results[2]
+
+        # Callback
+        self.emitter.finished.emit(True)
             
    
             

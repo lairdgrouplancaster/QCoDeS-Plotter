@@ -5,7 +5,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtWidgets as qtw
 
 
 def ensure_qapplication():

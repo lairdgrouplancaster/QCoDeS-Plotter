@@ -1,8 +1,7 @@
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-import sys
-
 
 LOGGER_NAME = "qplot"
 LOG_FILE_NAME = "qplot.log"
@@ -62,6 +61,7 @@ def configure_logging(
         return logger
 
     formatter = logging.Formatter(LOG_FORMAT)
+    handler: logging.Handler
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         handler = RotatingFileHandler(
@@ -75,7 +75,7 @@ def configure_logging(
 
     handler.setLevel(level)
     handler.setFormatter(formatter)
-    handler._qplot_owned = True
+    handler.__dict__["_qplot_owned"] = True
     logger.addHandler(handler)
     return logger
 

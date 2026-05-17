@@ -6,27 +6,18 @@ configured qPlot directory, usually `~/.qplot`. Use it only for local
 performance investigation.
 """
 
-from qplot import config
-
-from qplot.windows import (
-    plot1d,
-    plot2d,
-    MainWindow
-    )
-
-from time import time
-
-from PyQt5 import (
-    QtWidgets as qtw,
-    QtCore
-    )
-
-from qcodes.dataset import load_by_guid
-
+import csv
 import sys
 from os.path import join
+from time import time
 
-import csv
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
+from qcodes.dataset import load_by_guid
+
+from qplot import config
+from qplot.windows import MainWindow, plot1d, plot2d
+
 
 class test2d(plot2d):
     

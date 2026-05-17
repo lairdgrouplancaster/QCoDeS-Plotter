@@ -55,7 +55,8 @@ qplot-cfg -reset
 ```
 
 Common settings can also be edited in the application with
-`Options -> Preferences...`.
+`Options -> Preferences...`. On macOS this appears as
+`qPlot -> Preferences...`.
 
 Python code can use the public `config` object directly:
 
@@ -115,6 +116,8 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.bar_colour_excluded_prefixes` | string array | `[]` | any strings | Hide colour maps with these prefixes. |
 | `user_preference.confirm_close` | boolean | `true` | `true` or `false` | Ask before closing the main window. |
 | `user_preference.confirm_close_all` | boolean | `true` | `true` or `false` | Ask before closing all plot windows. |
+| `user_preference.mouse_mode` | string | `"pan"` | `pan` or `rect` | Default plot mouse interaction mode. |
+| `user_preference.copy_plot_image_resolution` | string | `"screen"` | `screen`, `dpi_300`, or `svg` | Format/resolution used by plot-window Copy Plot Image. |
 | `user_preference.default_refresh_rate` | number | `1` | `value >= 0` | Default plot refresh interval. |
 | `runtime_settings.max_threads` | integer | `4` | `value >= 1` | Maximum worker threads for background loading. |
 | `runtime_settings.del_grace_period` | number | `10` | `0 <= value <= 300` | Grace period before deleting temporary files. |

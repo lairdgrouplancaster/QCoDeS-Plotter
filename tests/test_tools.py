@@ -3,11 +3,11 @@ import unittest
 import numpy as np
 
 from qplot.configuration.scripts import try_as_num
-from qplot.windows import _plotWin as plotwin_module
-from qplot.windows._plotWin import plotWidget
 from qplot.tools.general import data2matrix
 from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 from qplot.tools.worker import loader
+from qplot.windows import _plotWin as plotwin_module
+from qplot.windows._plotWin import plotWidget
 
 
 class ToolFunctionTestCase(unittest.TestCase):

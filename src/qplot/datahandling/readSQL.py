@@ -54,6 +54,11 @@ def find_new_runs(last_time):
 
 
 def _fetch_run_rows(cursor, where="", params=(), empty_as_none=True):
+    optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
+    optional_select = "".join(
+        f", runs.{_sqlite_identifier(column)} AS {_sqlite_identifier(column)}"
+        for column in optional_columns
+        )
     cursor.execute(f"""
        SELECT
            runs.run_id,
@@ -68,6 +73,7 @@ def _fetch_run_rows(cursor, where="", params=(), empty_as_none=True):
            runs.run_description,
            experiments.name AS exp_name,
            experiments.sample_name
+           {optional_select}
        FROM runs
        LEFT JOIN experiments ON runs.exp_id = experiments.exp_id
        {where}
@@ -82,7 +88,7 @@ def _fetch_run_rows(cursor, where="", params=(), empty_as_none=True):
     outDict = {}
     database_modified_timestamp = _database_modified_timestamp(cursor)
     for row in values:
-        metadata = dict(zip(column_names[1:], row[1:]))
+        metadata = dict(zip(column_names[1:], row[1:], strict=False))
         metadata["database_modified_timestamp"] = database_modified_timestamp
         _add_run_summary_fields(cursor, metadata)
         outDict[row[0]] = metadata
@@ -126,6 +132,12 @@ def _add_run_summary_fields(cursor, metadata):
         else _shape_size(metadata["point_shape"])
         )
     metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
+    if _is_keyboard_interrupt(metadata.get("measurement_exception")):
+        metadata["read_setpoint_count"] = _read_setpoint_count(
+            cursor,
+            metadata.get("result_table_name"),
+            sweep_parameters,
+            )
     metadata["storage_bytes"] = _table_storage_bytes(cursor, metadata.get("result_table_name"))
 
 
@@ -254,6 +266,20 @@ def _database_modified_timestamp(cursor):
     return None
 
 
+def _existing_run_columns(cursor, column_names):
+    try:
+        cursor.execute("PRAGMA table_info(runs)")
+        columns = {row[1] for row in cursor.fetchall()}
+    except Exception:
+        return []
+
+    return [column for column in column_names if column in columns]
+
+
+def _is_keyboard_interrupt(value):
+    return bool(value and "KeyboardInterrupt" in str(value))
+
+
 def _point_shape_from_result_table(
     cursor,
     table_name,
@@ -315,6 +341,35 @@ def _setpoint_shape_from_result_table(cursor, table_name, sweep_parameters):
         shape.append(count)
 
     return shape
+
+
+def _read_setpoint_count(cursor, table_name, sweep_parameters):
+    if not table_name or not sweep_parameters:
+        return None
+
+    quoted_table_name = _sqlite_identifier(table_name)
+    try:
+        cursor.execute(f"PRAGMA table_info({quoted_table_name})")
+        columns = {row[1] for row in cursor.fetchall()}
+        if any(parameter not in columns for parameter in sweep_parameters):
+            return None
+
+        quoted_columns = ", ".join(
+            _sqlite_identifier(parameter)
+            for parameter in sweep_parameters
+            )
+        not_null = " AND ".join(
+            f"{_sqlite_identifier(parameter)} IS NOT NULL"
+            for parameter in sweep_parameters
+            )
+        cursor.execute(f"""
+          SELECT DISTINCT {quoted_columns}
+          FROM {quoted_table_name}
+          WHERE {not_null}
+        """)
+        return len(cursor.fetchall())
+    except Exception:
+        return None
 
 
 def _result_count(cursor, table_name):
@@ -393,12 +448,20 @@ def get_run_status(guid):
     conn = connect(get_DB_location())
     try:
         cursor = conn.cursor()
+        optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
+        optional_select = "".join(
+            f", {_sqlite_identifier(column)}"
+            for column in optional_columns
+            )
 
-        cursor.execute("""
+        cursor.execute(f"""
           SELECT
               completed_timestamp,
               is_completed,
-              result_table_name
+              result_table_name,
+              run_description,
+              parameters
+              {optional_select}
           FROM runs
           WHERE guid=?
           LIMIT 1
@@ -407,13 +470,26 @@ def get_run_status(guid):
         if value is None:
             return {}
 
-        return {
+        status = {
             "completed_timestamp": value[0],
             "is_completed": value[1],
             "result_count": _result_count(cursor, value[2]),
             "storage_bytes": _table_storage_bytes(cursor, value[2]),
             "database_modified_timestamp": _database_modified_timestamp(cursor),
             }
+        for index, column in enumerate(optional_columns, start=5):
+            status[column] = value[index]
+
+        if _is_keyboard_interrupt(status.get("measurement_exception")):
+            run_description = _json_dict(value[3])
+            _, sweep_parameters = _parameter_roles(run_description, value[4])
+            status["read_setpoint_count"] = _read_setpoint_count(
+                cursor,
+                value[2],
+                sweep_parameters,
+                )
+
+        return status
     finally:
         conn.close()
 

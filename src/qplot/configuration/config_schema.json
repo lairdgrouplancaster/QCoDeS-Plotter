@@ -145,6 +145,16 @@
                     "type": "boolean",
                     "default": true
                 },
+                "mouse_mode": {
+                    "type": "string",
+                    "enum": ["pan", "rect"],
+                    "default": "pan"
+                },
+                "copy_plot_image_resolution": {
+                    "type": "string",
+                    "enum": ["screen", "dpi_300", "svg"],
+                    "default": "screen"
+                },
                 "auto_plot": {
                     "type": "boolean",
                     "default": false

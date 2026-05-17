@@ -5,21 +5,20 @@ This module keeps blocking database probes, cloud-file hydration, background
 load workers, and diagnostic report generation outside the GUI class.
 """
 
-from datetime import datetime
 import os
 import queue
 import sqlite3
 import subprocess
 import sys
 import threading
+from datetime import datetime
 from time import perf_counter
 
-from PyQt5 import QtCore
+from PyQt6 import QtCore
 from qcodes.dataset import initialise_or_create_database_at
 
 from qplot.datahandling.readSQL import get_runs_via_sql
 from qplot.diagnostics import log_exception
-
 
 DATABASE_ACCESS_TIMEOUT_SECONDS = 3
 DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS = 120
@@ -311,12 +310,10 @@ def prefetch_database_file_with_timeout(
                 process.kill()
                 process.wait()
                 raise TimeoutError(
-                    (
                         f"Timed out after {timeout:g} s while waiting for "
                         f"{provider} to download the database. Check that "
                         f"{provider} is running and signed in, or mark the "
                         "database folder as always available on this device."
-                    )
                     )
     finally:
         for pipe in (process.stdout, process.stderr):

@@ -1,13 +1,11 @@
-from PyQt5 import (
-    QtCore,
-    QtWidgets as qtw
-    )
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._widgets import (
-    picker_1d,
     expandingComboBox,
-    )
+    picker_1d,
+)
 
 
 class sweeper(plotWidget):

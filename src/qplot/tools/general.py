@@ -1,10 +1,12 @@
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike
 from qcodes import dataset
-    
-def data2matrix(indep1 : np.array,
-                indep2 : np.array,
-                depvar : np.array,
+
+
+def data2matrix(indep1 : ArrayLike,
+                indep2 : ArrayLike,
+                depvar : ArrayLike,
                 ):
     """
     Converts 3 numpy.ndarry into a datagrid via pandas.DataFrame.
@@ -57,4 +59,3 @@ def unpack_param(dataset : dataset.data_set.DataSet, paramName : str):
     for ParamSpec in dataset.get_parameters():
         if ParamSpec.name == paramName:
             return ParamSpec
-    

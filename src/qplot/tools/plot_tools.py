@@ -16,6 +16,7 @@ used to find which properties to update the keyed value.
 """
 import numpy as np
 
+
 def subtract_mean(
         axis : str,
         data_dict : dict
@@ -85,6 +86,7 @@ def pass_filter(
     data = data_dict[axis]
     
     # Set the bounds
+    limit_arr: tuple[float | None, float | None]
     if which == "low":
         limit_arr = (None, limit)
     elif which == "high":
@@ -205,4 +207,4 @@ def integrate(
         data_dict : dict
         ):
     # TO DO
-    pass 
+    pass

@@ -1,6 +1,8 @@
-from PyQt5 import QtCore, QtWidgets as qtw
-from PyQt5.QtGui import QColor
-from PyQt5.QtCore import Qt
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
+
 
 class picker_1d(qtw.QWidget):
     """
@@ -33,7 +35,7 @@ class picker_1d(qtw.QWidget):
         
         # Selection box
         self.option_box = expandingComboBox(*args, **kargs)
-        self.option_box.setSizePolicy(qtw.QSizePolicy.Expanding, qtw.QSizePolicy.Fixed)
+        self.option_box.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Fixed)
         self.reset_box(items)
         self.option_box.currentIndexChanged.connect(self.selectedOption)
         row_1.addWidget(self.option_box)
@@ -161,7 +163,7 @@ class expandingComboBox(qtw.QComboBox):
 
         Parameters
         ----------
-        event : PyQt5.<something?>.QGraphicsSceneWheelEvent
+        event : PyQt6.<something?>.QGraphicsSceneWheelEvent
 
         """
         event.ignore()
@@ -186,7 +188,7 @@ class colorBox(qtw.QComboBox):
         # Get options from config.themes
         for col in cfg.theme.colors:
             self.addItem('', userData = col)
-            self.setItemData(self.count()-1, col, Qt.BackgroundRole)
+            self.setItemData(self.count()-1, col, Qt.ItemDataRole.BackgroundRole)
         self.addItem('Custom')
      
         
@@ -196,7 +198,7 @@ class colorBox(qtw.QComboBox):
 
         Returns
         -------
-        PyQt5.QtGui.QColor
+        PyQt6.QtGui.QColor
             Returns the currently select color.
 
         """
@@ -209,7 +211,7 @@ class colorBox(qtw.QComboBox):
 
         Parameters
         ----------
-        color : PyQt5.QtGui.QColor
+        color : PyQt6.QtGui.QColor
             Color to display.
 
         """
@@ -225,7 +227,7 @@ class colorBox(qtw.QComboBox):
         ----------
         index : int, optional
             The index of the selection from the options.
-        color : PyQt5.QtGui.QColor, optional
+        color : PyQt6.QtGui.QColor, optional
             Force override to a specific color. The default is None.
         emitSignal : bool, optional
             Whether to emit a signal to main. The default is True.
@@ -265,7 +267,7 @@ class colorBox(qtw.QComboBox):
 
         Parameters
         ----------
-        event : PyQt5.<something?>.QGraphicsSceneWheelEvent
+        event : PyQt6.<something?>.QGraphicsSceneWheelEvent
 
         """
         event.ignore()

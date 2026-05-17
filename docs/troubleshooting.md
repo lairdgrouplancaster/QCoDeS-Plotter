@@ -194,7 +194,7 @@ clipboard.
 
 ## Theme or Preference Changes Do Not Look Right
 
-Use `Options -> Restore Default Settings...` from the app, or run:
+Use `Options -> Reset All Settings...` from the app, or run:
 
 ```console
 qplot-cfg -reset
@@ -209,7 +209,15 @@ Use the project virtual environment and run checks through Python:
 
 ```console
 python -m ruff check .
+python -m mypy
 python -m pytest
+```
+
+For release or packaging failures, rebuild and validate the package artifacts:
+
+```console
+python -m build
+python -m twine check dist/*
 ```
 
 Do not run bare `pytest`; use `python -m pytest` from the active project

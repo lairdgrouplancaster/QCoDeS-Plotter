@@ -1,7 +1,7 @@
 import sys
 
-from PyQt5 import QtWidgets as qtw
-from PyQt5.QtGui import QKeySequence
+from PyQt6 import QtWidgets as qtw
+from PyQt6.QtGui import QKeySequence
 
 
 def key_sequences(sequences):

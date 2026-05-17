@@ -1,12 +1,19 @@
 import unittest
 
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
 import pyqtgraph as pg
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
-from qplot.windows.plot2d import plot2d
+from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plotWin import plotWidget
+from qplot.windows._preferences import (
+    COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_SVG,
+)
 from qplot.windows._widgets import treeWidgets
+from qplot.windows.plot1d import plot1d
+from qplot.windows.plot2d import plot2d
 
 
 class PlotWindowRefreshTestCase(unittest.TestCase):
@@ -70,6 +77,119 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.restart_intervals, [0.2])
 
 
+class PlotStateOverlayTestCase(unittest.TestCase):
+    def test_overlay_shows_inside_target_and_tracks_resize(self):
+        target = pg.GraphicsLayoutWidget()
+        overlay = PlotStateOverlay(target)
+
+        try:
+            target.resize(500, 300)
+            target.show()
+            qtw.QApplication.processEvents()
+            overlay.show("Loading data", "signal", kind="loading")
+            first_geometry = overlay.frame.geometry()
+
+            self.assertTrue(overlay.frame.isVisible())
+            self.assertEqual(overlay.title_label.text(), "Loading data")
+            self.assertEqual(overlay.detail_label.text(), "signal")
+            self.assertGreaterEqual(first_geometry.left(), 0)
+            self.assertGreaterEqual(first_geometry.top(), 0)
+
+            target.resize(700, 360)
+            qtw.QApplication.processEvents()
+
+            self.assertNotEqual(overlay.frame.geometry(), first_geometry)
+
+            overlay.hide()
+            self.assertFalse(overlay.frame.isVisible())
+        finally:
+            target.deleteLater()
+
+    def test_failed_refresh_shows_plot_state_overlay(self):
+        class Signal:
+            def __init__(self):
+                self.emitted = 0
+
+            def emit(self):
+                self.emitted += 1
+
+        class Worker:
+            running = True
+
+        window = plotWidget.__new__(plotWidget)
+        worker = Worker()
+        states = []
+        window.end_wait = Signal()
+        window.show_plot_state = lambda *args, **kwargs: states.append((args, kwargs))
+
+        result = plotWidget.refreshPlot(window, False, worker=worker)
+
+        self.assertFalse(result)
+        self.assertFalse(worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertEqual(states[-1][0][0], "Plot load failed")
+        self.assertEqual(states[-1][1]["kind"], "error")
+
+    def test_empty_line_refresh_shows_waiting_overlay(self):
+        class Signal:
+            def __init__(self):
+                self.emitted = 0
+
+            def emit(self):
+                self.emitted += 1
+
+        class Line:
+            def __init__(self):
+                self.calls = []
+
+            def setData(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+
+        class Worker:
+            read_data = False
+            running = True
+            axis_data = {"x": [], "y": []}
+            axis_param = {"x": object(), "y": object()}
+            started_at = 0
+
+        class Dataset:
+            number_of_results = 0
+
+        class Param:
+            name = "signal"
+
+        window = plot1d.__new__(plot1d)
+        worker = Worker()
+        line = Line()
+        states = []
+        statuses = []
+        window.worker = worker
+        window.line = line
+        window.marquee = None
+        window._guid = "guid"
+        window._dataset_holder = {
+            "guid": {
+                "dataset": Dataset(),
+                "del_timer": None,
+                }
+            }
+        window.param = Param()
+        window.end_wait = Signal()
+        window._set_param_axis_labels = lambda: None
+        window.show_status = lambda *args: statuses.append(args)
+        window.show_plot_state = lambda *args, **kwargs: states.append((args, kwargs))
+        window.hide_plot_state = lambda: None
+
+        plot1d.refreshPlot(window, True, worker=worker)
+
+        self.assertFalse(worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertEqual(line.calls[-1], (([], []), {}))
+        self.assertIn("Waiting for plottable data", statuses[-1][0])
+        self.assertEqual(states[-1][0][0], "Waiting for plottable data")
+        self.assertEqual(states[-1][1]["kind"], "empty")
+
+
 class RunListParentLookupTestCase(unittest.TestCase):
     def test_main_window_lookup_works_through_splitter(self):
         old_isfile = treeWidgets.isfile
@@ -83,7 +203,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             frame = qtw.QFrame()
             layout = qtw.QVBoxLayout(frame)
-            splitter = qtw.QSplitter(QtCore.Qt.Vertical)
+            splitter = qtw.QSplitter(QtCore.Qt.Orientation.Vertical)
             run_list = treeWidgets.RunList()
             splitter.addWidget(run_list)
             splitter.addWidget(qtw.QTreeWidget())
@@ -98,7 +218,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
     def test_run_context_menu_keeps_plot_actions_without_add_actions(self):
         old_isfile = treeWidgets.isfile
-        old_exec = qtw.QMenu.exec_
+        old_exec = qtw.QMenu.exec
         treeWidgets.isfile = lambda _: False
         captured = []
         main = None
@@ -117,7 +237,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             captured.extend(action.text() for action in menu.actions())
 
         try:
-            qtw.QMenu.exec_ = capture_menu
+            qtw.QMenu.exec = capture_menu
             main = qtw.QMainWindow()
             main.ds = Dataset()
             main.windows = []
@@ -138,10 +258,64 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertFalse(any(action.startswith("Add ") for action in captured))
             self.assertFalse(any(action.startswith("  - Add ") for action in captured))
         finally:
-            qtw.QMenu.exec_ = old_exec
+            qtw.QMenu.exec = old_exec
             treeWidgets.isfile = old_isfile
             if main is not None:
                 main.deleteLater()
+
+    def test_plot_options_menu_includes_preferences_and_excludes_confirmation_duplicates(self):
+        class Host(qtw.QMainWindow):
+            initMenu = plotWidget.initMenu
+            createPopupMenu = plotWidget.createPopupMenu
+            register_shortcut = plotWidget.register_shortcut
+            _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
+
+            def request_close_all_plots(self):
+                pass
+
+            def request_application_quit(self):
+                pass
+
+            def refreshWindow(self, force=False):
+                pass
+
+            def show_preferences_dialog(self):
+                pass
+
+            def open_custom_plot_area_size_dialog(self):
+                pass
+
+        host = Host()
+        host.vbMenu = qtw.QMenu(host)
+        host.mouseModeAction = QtGui.QAction("Mouse Mode", host)
+        host.vbMenu.addAction(host.mouseModeAction)
+
+        try:
+            host.initMenu()
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in host.menuBar().actions()
+                }
+            option_texts = [
+                action.text().replace("&", "")
+                for action in menus["Options"].actions()
+                if not action.isSeparator()
+                ]
+            preferences_action = next(
+                action for action in menus["Options"].actions()
+                if action.text().replace("&", "") == "Preferences..."
+                )
+
+            self.assertIn("Preferences...", option_texts)
+            self.assertEqual(
+                preferences_action.menuRole(),
+                QtGui.QAction.MenuRole.PreferencesRole,
+                )
+            self.assertIn("Mouse Mode", option_texts)
+            self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
+            self.assertNotIn("Confirm Before Quit", option_texts)
+        finally:
+            host.deleteLater()
 
     def test_plot_export_is_removed_from_scene_context_menu(self):
         widget = pg.GraphicsLayoutWidget()
@@ -168,6 +342,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             register_shortcut = plotWidget.register_shortcut
             _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
             _context_menu_action = plotWidget._context_menu_action
+            _connect_mouse_mode_menu_to_preferences = (
+                plotWidget._connect_mouse_mode_menu_to_preferences
+                )
 
             def _init_axis_scale_dialogs(self):
                 pass
@@ -177,6 +354,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             def open_export_dialog(self):
                 self.export_opened = True
+
+            def copy_plot_image(self):
+                pass
 
         widget = pg.GraphicsLayoutWidget()
         host = Host()
@@ -195,7 +375,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             self.assertEqual(
                 host.exportPlotAction.shortcutContext(),
-                QtCore.Qt.WindowShortcut,
+                QtCore.Qt.ShortcutContext.WindowShortcut,
                 )
             self.assertIn(host.exportPlotAction, host.actions())
 
@@ -206,11 +386,389 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host.deleteLater()
             widget.deleteLater()
 
+    def test_plot_copy_image_action_has_shortcut_context_menu_and_edit_menu(self):
+        class Host(qtw.QMainWindow):
+            initContextMenu = plotWidget.initContextMenu
+            initMenu = plotWidget.initMenu
+            createPopupMenu = plotWidget.createPopupMenu
+            register_shortcut = plotWidget.register_shortcut
+            _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
+            _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
+            _context_menu_action = plotWidget._context_menu_action
+            _connect_mouse_mode_menu_to_preferences = (
+                plotWidget._connect_mouse_mode_menu_to_preferences
+                )
+
+            def _init_axis_scale_dialogs(self):
+                pass
+
+            def open_context_menu(self):
+                pass
+
+            def open_export_dialog(self):
+                pass
+
+            def copy_plot_image(self):
+                self.copy_called = True
+                return True
+
+            def request_close_all_plots(self):
+                pass
+
+            def request_application_quit(self):
+                pass
+
+            def refreshWindow(self, force=False):
+                pass
+
+            def show_preferences_dialog(self):
+                pass
+
+            def open_custom_plot_area_size_dialog(self):
+                pass
+
+        widget = pg.GraphicsLayoutWidget()
+        host = Host()
+        host.widget = widget
+        host.plot = widget.addPlot()
+        host.vb = host.plot.vb
+        host.oper_dock = qtw.QDockWidget()
+        host.copy_called = False
+
+        try:
+            host.initContextMenu()
+            host.initMenu()
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in host.menuBar().actions()
+                }
+            context_actions = [
+                action.text().replace("&", "")
+                for action in host.vbMenu.actions()
+                if not action.isSeparator()
+                ]
+
+            self.assertEqual(
+                host.copyPlotImageAction.objectName(),
+                "copyPlotImageAction",
+                )
+            self.assertIn(host.copyPlotImageAction, host.actions())
+            self.assertGreater(len(host.copyPlotImageAction.shortcuts()), 0)
+            self.assertEqual(
+                host.copyPlotImageAction.shortcutContext(),
+                QtCore.Qt.ShortcutContext.WindowShortcut,
+                )
+            self.assertIn("Copy Plot Image", context_actions)
+            self.assertNotIn("Copy Plot Image at Size...", context_actions)
+            self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
+
+            host.copyPlotImageAction.trigger()
+
+            self.assertTrue(host.copy_called)
+        finally:
+            host.deleteLater()
+            widget.deleteLater()
+
+    def test_plot_resize_menu_has_fixed_presets_and_custom_size_action(self):
+        class Host(qtw.QMainWindow):
+            initMenu = plotWidget.initMenu
+            createPopupMenu = plotWidget.createPopupMenu
+            register_shortcut = plotWidget.register_shortcut
+            _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
+
+            def request_close_all_plots(self):
+                pass
+
+            def request_application_quit(self):
+                pass
+
+            def refreshWindow(self, force=False):
+                pass
+
+            def show_preferences_dialog(self):
+                pass
+
+            def open_custom_plot_area_size_dialog(self):
+                pass
+
+        host = Host()
+        host.vbMenu = qtw.QMenu(host)
+
+        try:
+            host.initMenu()
+
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in host.menuBar().actions()
+                }
+            window_menu = menus["Window"]
+            resize_menu = next(
+                action.menu()
+                for action in window_menu.actions()
+                if action.menu() is not None
+                and action.text().replace("&", "") == "Resize"
+                )
+            resize_actions = {
+                action.text().replace("&", ""): action
+                for action in resize_menu.actions()
+                if not action.isSeparator()
+                }
+
+            self.assertIn("A4 Landscape (1123 x 794 px)", resize_actions)
+            self.assertIn("A4 Portrait (794 x 1123 px)", resize_actions)
+            self.assertIn("PowerPoint Standard (960 x 720 px)", resize_actions)
+            self.assertIn("PowerPoint Widescreen (1280 x 720 px)", resize_actions)
+            self.assertIn("Square (850 x 850 px)", resize_actions)
+            self.assertIn("Custom...", resize_actions)
+            self.assertFalse(
+                resize_actions["A4 Landscape (1123 x 794 px)"].icon().isNull()
+                )
+            self.assertFalse(
+                resize_actions["A4 Portrait (794 x 1123 px)"].icon().isNull()
+                )
+            self.assertFalse(
+                resize_actions["PowerPoint Standard (960 x 720 px)"].icon().isNull()
+                )
+            self.assertFalse(
+                resize_actions["PowerPoint Widescreen (1280 x 720 px)"].icon().isNull()
+                )
+            self.assertFalse(
+                resize_actions["Square (850 x 850 px)"].icon().isNull()
+                )
+        finally:
+            host.deleteLater()
+
+    def test_resize_plot_area_targets_widget_grab_size(self):
+        class Host(qtw.QMainWindow):
+            resize_plot_area = plotWidget.resize_plot_area
+            _resize_window_for_plot_area = plotWidget._resize_window_for_plot_area
+            _current_plot_area_size = plotWidget._current_plot_area_size
+
+            def __init__(self):
+                super().__init__()
+                self.widget = pg.GraphicsLayoutWidget()
+                self.status_messages = []
+
+                frame = qtw.QFrame()
+                layout = qtw.QVBoxLayout(frame)
+                layout.addWidget(self.widget)
+                self.setCentralWidget(frame)
+
+                toolbar = qtw.QToolBar("Test toolbar", self)
+                toolbar.addWidget(qtw.QLabel("Tools"))
+                self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+            def show_status(self, message, timeout=0):
+                self.status_messages.append((message, timeout))
+
+        host = Host()
+        target_size = QtCore.QSize(320, 180)
+
+        try:
+            host.resize(460, 320)
+            host.show()
+            qtw.QApplication.processEvents()
+
+            self.assertTrue(host.resize_plot_area(target_size.width(), target_size.height()))
+
+            self.assertEqual(host.widget.size(), target_size)
+            self.assertEqual(
+                host.status_messages[-1],
+                ("Plot area resized to 320 x 180 px.", 3000),
+                )
+        finally:
+            host.deleteLater()
+
+    def test_copy_plot_image_copies_widget_grab_to_clipboard(self):
+        class PlotImageSource:
+            def __init__(self):
+                self.grabbed = 0
+
+            def grab(self):
+                self.grabbed += 1
+                pixmap = QtGui.QPixmap(37, 23)
+                pixmap.fill(QtGui.QColor("red"))
+                return pixmap
+
+        window = plotWidget.__new__(plotWidget)
+        window.widget = PlotImageSource()
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.clear()
+
+        self.assertTrue(plotWidget.copy_plot_image(window))
+
+        image = clipboard.image()
+        self.assertFalse(image.isNull())
+        self.assertEqual(image.size(), QtCore.QSize(37, 23))
+        self.assertEqual(window.widget.grabbed, 1)
+        self.assertEqual(
+            window.status_messages[-1],
+            ("Plot image copied to clipboard.", 3000),
+            )
+
+    def test_copy_plot_image_at_size_copies_exported_image_to_clipboard(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        window = plotWidget.__new__(plotWidget)
+        window.widget = widget
+        window.plot = plot
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.clear()
+
+        try:
+            widget.resize(120, 80)
+            widget.show()
+            qtw.QApplication.processEvents()
+
+            self.assertTrue(plotWidget.copy_plot_image_at_size(window, 320, 180))
+
+            image = clipboard.image()
+            self.assertFalse(image.isNull())
+            self.assertEqual(image.size(), QtCore.QSize(320, 180))
+            self.assertEqual(
+                window.status_messages[-1],
+                ("Plot image copied to clipboard.", 3000),
+                )
+        finally:
+            widget.deleteLater()
+
+    def test_copy_plot_image_uses_300dpi_preference(self):
+        class Config:
+            def get(self, key):
+                if key == COPY_PLOT_IMAGE_RESOLUTION_KEY:
+                    return COPY_PLOT_IMAGE_RESOLUTION_300_DPI
+                raise KeyError(key)
+
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        window = plotWidget.__new__(plotWidget)
+        window.config = Config()
+        window.widget = widget
+        window.plot = plot
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.clear()
+
+        try:
+            widget.resize(120, 80)
+            widget.show()
+            qtw.QApplication.processEvents()
+            expected_size = plotWidget._plot_image_size_for_dpi(window, 300)
+
+            self.assertTrue(plotWidget.copy_plot_image(window))
+
+            image = clipboard.image()
+            self.assertFalse(image.isNull())
+            self.assertEqual(image.size(), expected_size)
+            self.assertEqual(round(image.dotsPerMeterX() * 0.0254), 300)
+            self.assertEqual(round(image.dotsPerMeterY() * 0.0254), 300)
+            self.assertEqual(
+                window.status_messages[-1],
+                (
+                    "Plot image copied to clipboard at "
+                    f"300 dpi ({expected_size.width()} x {expected_size.height()} px).",
+                    3000,
+                    ),
+                )
+        finally:
+            widget.deleteLater()
+
+    def test_copy_plot_image_uses_svg_preference(self):
+        class Config:
+            def get(self, key):
+                if key == COPY_PLOT_IMAGE_RESOLUTION_KEY:
+                    return COPY_PLOT_IMAGE_RESOLUTION_SVG
+                raise KeyError(key)
+
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        window = plotWidget.__new__(plotWidget)
+        window.config = Config()
+        window.widget = widget
+        window.plot = plot
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.clear()
+
+        try:
+            widget.resize(120, 80)
+            widget.show()
+            qtw.QApplication.processEvents()
+
+            self.assertTrue(plotWidget.copy_plot_image(window))
+
+            mime_data = clipboard.mimeData()
+            self.assertTrue(mime_data.hasFormat("image/svg+xml"))
+            svg = bytes(mime_data.data("image/svg+xml"))
+            self.assertIn(b"<svg", svg)
+            self.assertIn("image/svg+xml", mime_data.formats())
+            self.assertIn("<svg", mime_data.text())
+            self.assertEqual(
+                window.status_messages[-1],
+                ("Plot SVG copied to clipboard.", 3000),
+                )
+        finally:
+            widget.deleteLater()
+
+    def test_mouse_mode_preference_updates_viewbox_mode(self):
+        class Config:
+            def __init__(self):
+                self.values = {"user_preference.mouse_mode": "pan"}
+                self.updates = []
+
+            def get(self, key):
+                return self.values[key]
+
+            def update(self, key, value):
+                self.values[key] = value
+                self.updates.append((key, value))
+
+        window = plotWidget.__new__(plotWidget)
+        window.config = Config()
+        window.vb = pg.ViewBox()
+
+        try:
+            self.assertTrue(window.change_mouse_mode("rect"))
+
+            self.assertEqual(
+                window.config.updates,
+                [("user_preference.mouse_mode", "rect")],
+                )
+            self.assertEqual(
+                window.vb.getState(copy=False)["mouseMode"],
+                pg.ViewBox.RectMode,
+                )
+        finally:
+            window.vb.deleteLater()
+
     def test_axis_scale_controls_move_from_context_menu_to_dialogs(self):
         class Host(qtw.QMainWindow):
             initContextMenu = plotWidget.initContextMenu
             _init_axis_scale_dialogs = plotWidget._init_axis_scale_dialogs
             _menu_control_widget = plotWidget._menu_control_widget
+            _connect_mouse_mode_menu_to_preferences = (
+                plotWidget._connect_mouse_mode_menu_to_preferences
+                )
             _install_axis_scale_double_click_handlers = (
                 plotWidget._install_axis_scale_double_click_handlers
                 )
@@ -240,6 +798,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 pass
 
             def open_export_dialog(self):
+                pass
+
+            def copy_plot_image(self):
                 pass
 
         widget = pg.GraphicsLayoutWidget()
@@ -404,6 +965,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertGreater(host._colorbar_colormap_row("PAL-relaxed"), -1)
             self.assertEqual(host.colorbar_colormap_table.columnCount(), 3)
             self.assertTrue(host.colorbar_colormap_table.isSortingEnabled())
+            self.assertIsNotNone(
+                host.colorbar_colormap_table.itemDelegateForColumn(1)
+                )
             self.assertEqual(
                 host.colorbar_colormap_table.rowCount(),
                 len(host._available_colorbar_colormaps()),
@@ -418,7 +982,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 1,
                 )
             self.assertFalse(preview_item.icon().isNull())
-            host.colorbar_colormap_table.sortItems(2, QtCore.Qt.AscendingOrder)
+            host.colorbar_colormap_table.sortItems(2, QtCore.Qt.SortOrder.AscendingOrder)
             self.assertGreater(host._colorbar_colormap_row("viridis"), -1)
 
             host.open_colorbar_scale_dialog()
@@ -469,7 +1033,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host.open_colorbar_scale_dialog = lambda: double_click_calls.append(True)
             axis = Axis()
             host._install_colorbar_scale_axis_handlers(axis)
-            event = MouseEvent(QtCore.Qt.LeftButton)
+            event = MouseEvent(QtCore.Qt.MouseButton.LeftButton)
             axis.mouseDoubleClickEvent(event)
 
             self.assertTrue(event.accepted)
@@ -482,18 +1046,16 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host._install_colorbar_scale_bar_handlers(bar)
             double_click_calls.clear()
 
-            event = MouseEvent(QtCore.Qt.LeftButton)
+            event = MouseEvent(QtCore.Qt.MouseButton.LeftButton)
             bar.mouseDoubleClickEvent(event)
 
             self.assertTrue(event.accepted)
             self.assertEqual(double_click_calls, [True])
 
-            event = MouseEvent(QtCore.Qt.RightButton)
+            event = MouseEvent(QtCore.Qt.MouseButton.RightButton)
             bar.mouseClickEvent(event)
 
             self.assertTrue(event.accepted)
             self.assertEqual(previous_bar_clicks, [])
         finally:
             host.deleteLater()
-
-

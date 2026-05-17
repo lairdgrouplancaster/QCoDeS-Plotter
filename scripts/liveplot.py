@@ -6,8 +6,9 @@ database file is ignored by Git. Run this only when you intentionally want fresh
 synthetic data for manual testing.
 """
 
-import numpy as np
 import os
+
+import numpy as np
 import qcodes as qc
 
 ## Multidimensional scanning module
@@ -24,7 +25,6 @@ from qcodes.instrument_drivers.mock_instruments import (
     DummyInstrument,
     DummyInstrumentWithMeasurement,
 )
-
 
 qc.Instrument.close_all()
 initialise_or_create_database_at(os.path.join(os.getcwd(), "tests", "data", "qplot-demo.db"))

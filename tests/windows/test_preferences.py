@@ -2,11 +2,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtWidgets as qtw
 
 from qplot.configuration.config import config
 from qplot.windows import main as main_window
-from qplot.windows._preferences import PreferencesDialog
+from qplot.windows._preferences import (
+    COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+    COPY_PLOT_IMAGE_RESOLUTION_SVG,
+    MOUSE_MODE_KEY,
+    PreferencesDialog,
+    )
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -18,6 +25,8 @@ class FakeConfig:
         self.defaults = {
             "user_preference.theme": "light",
             "GUI.preview_size": 200,
+            MOUSE_MODE_KEY: "pan",
+            COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
             "file.default_load_path": "",
             "user_preference.default_refresh_rate": 1.0,
             CONFIRM_CLOSE_ALL_KEY: True,
@@ -55,6 +64,8 @@ class PreferencesDialogTestCase(unittest.TestCase):
         cfg.values.update({
             "user_preference.theme": "dark",
             "GUI.preview_size": 300,
+            MOUSE_MODE_KEY: "rect",
+            COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
             "file.default_load_path": "C:/qcodes",
             "user_preference.default_refresh_rate": 2.5,
             CONFIRM_CLOSE_ALL_KEY: False,
@@ -68,6 +79,17 @@ class PreferencesDialogTestCase(unittest.TestCase):
         try:
             self.assertEqual(dialog.themeCombo.currentData(), "dark")
             self.assertEqual(dialog.previewSizeSpin.value(), 300)
+            self.assertEqual(dialog.mouseModeCombo.currentData(), "rect")
+            self.assertEqual(
+                dialog.copyPlotImageResolutionCombo.currentData(),
+                COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
+                )
+            self.assertGreaterEqual(
+                dialog.copyPlotImageResolutionCombo.findData(
+                    COPY_PLOT_IMAGE_RESOLUTION_SVG
+                    ),
+                0,
+                )
             self.assertEqual(dialog.defaultLoadPathEdit.text(), "C:/qcodes")
             self.assertEqual(dialog.refreshRateSpin.value(), 2.5)
             self.assertFalse(dialog.confirmCloseAllCheck.isChecked())
@@ -87,6 +109,14 @@ class PreferencesDialogTestCase(unittest.TestCase):
             dialog.preferencesApplied.connect(lambda: applied.append(True))
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("pyqt"))
             dialog.previewSizeSpin.setValue(500)
+            dialog.mouseModeCombo.setCurrentIndex(
+                dialog.mouseModeCombo.findData("rect")
+                )
+            dialog.copyPlotImageResolutionCombo.setCurrentIndex(
+                dialog.copyPlotImageResolutionCombo.findData(
+                    COPY_PLOT_IMAGE_RESOLUTION_300_DPI
+                    )
+                )
             dialog.defaultLoadPathEdit.setText("C:/measurements")
             dialog.refreshRateSpin.setValue(3.5)
             dialog.confirmCloseAllCheck.setChecked(False)
@@ -100,6 +130,11 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertEqual(cfg.updates, [
                 ("user_preference.theme", "pyqt"),
                 ("GUI.preview_size", 500),
+                (MOUSE_MODE_KEY, "rect"),
+                (
+                    COPY_PLOT_IMAGE_RESOLUTION_KEY,
+                    COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
+                    ),
                 ("file.default_load_path", "C:/measurements"),
                 ("user_preference.default_refresh_rate", 3.5),
                 (CONFIRM_CLOSE_ALL_KEY, False),
@@ -129,6 +164,8 @@ class PreferencesDialogTestCase(unittest.TestCase):
         cfg.values.update({
             "user_preference.theme": "dark",
             "GUI.preview_size": 500,
+            MOUSE_MODE_KEY: "rect",
+            COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
             "file.default_load_path": "C:/measurements",
             "user_preference.default_refresh_rate": 3.5,
             CONFIRM_CLOSE_ALL_KEY: False,
@@ -141,7 +178,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
         dialog = PreferencesDialog(cfg)
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.Yes
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.Yes
             dialog.preferencesApplied.connect(lambda: applied.append(True))
 
             self.assertTrue(dialog.restore_defaults())
@@ -149,6 +186,11 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertEqual(cfg.values, cfg.defaults)
             self.assertEqual(dialog.themeCombo.currentData(), "light")
             self.assertEqual(dialog.previewSizeSpin.value(), 200)
+            self.assertEqual(dialog.mouseModeCombo.currentData(), "pan")
+            self.assertEqual(
+                dialog.copyPlotImageResolutionCombo.currentData(),
+                COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+                )
             self.assertEqual(dialog.defaultLoadPathEdit.text(), "")
             self.assertEqual(dialog.refreshRateSpin.value(), 1.0)
             self.assertTrue(dialog.confirmCloseAllCheck.isChecked())
@@ -168,7 +210,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
         dialog = PreferencesDialog(cfg)
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.No
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.No
 
             self.assertFalse(dialog.restore_defaults())
 
@@ -200,6 +242,14 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
         try:
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
             dialog.previewSizeSpin.setValue(300)
+            dialog.mouseModeCombo.setCurrentIndex(
+                dialog.mouseModeCombo.findData("rect")
+                )
+            dialog.copyPlotImageResolutionCombo.setCurrentIndex(
+                dialog.copyPlotImageResolutionCombo.findData(
+                    COPY_PLOT_IMAGE_RESOLUTION_300_DPI
+                    )
+                )
             dialog.defaultLoadPathEdit.setText("C:/qcodes")
             dialog.refreshRateSpin.setValue(2.5)
             dialog.confirmCloseAllCheck.setChecked(False)
@@ -213,6 +263,11 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
             reloaded = config()
             self.assertEqual(reloaded.get("user_preference.theme"), "dark")
             self.assertEqual(reloaded.get("GUI.preview_size"), 300)
+            self.assertEqual(reloaded.get(MOUSE_MODE_KEY), "rect")
+            self.assertEqual(
+                reloaded.get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
+                COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
+                )
             self.assertEqual(reloaded.get("file.default_load_path"), "C:/qcodes")
             self.assertEqual(
                 reloaded.get("user_preference.default_refresh_rate"),
