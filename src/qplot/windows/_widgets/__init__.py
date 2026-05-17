@@ -3,8 +3,8 @@ from .dropbox import (
     expandingComboBox,
     )
 
+from .details_tables import CopyableTableWidget
 from .treeWidgets import (
-    CopyableTableWidget,
     RunList,
     moreInfo,
     )
