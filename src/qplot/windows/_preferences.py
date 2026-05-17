@@ -26,10 +26,21 @@ MOUSE_MODE_OPTIONS = (
     ("Pan (3 button)", "pan"),
 )
 
+COPY_PLOT_IMAGE_RESOLUTION_KEY = "user_preference.copy_plot_image_resolution"
+COPY_PLOT_IMAGE_RESOLUTION_SCREEN = "screen"
+COPY_PLOT_IMAGE_RESOLUTION_300_DPI = "dpi_300"
+COPY_PLOT_IMAGE_RESOLUTION_SVG = "svg"
+COPY_PLOT_IMAGE_RESOLUTION_OPTIONS = (
+    ("Screen resolution", COPY_PLOT_IMAGE_RESOLUTION_SCREEN),
+    ("300 dpi", COPY_PLOT_IMAGE_RESOLUTION_300_DPI),
+    ("Vector SVG", COPY_PLOT_IMAGE_RESOLUTION_SVG),
+)
+
 PREFERENCE_KEYS = (
     "user_preference.theme",
     "GUI.preview_size",
     MOUSE_MODE_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
     "file.default_load_path",
     "user_preference.default_refresh_rate",
     CONFIRM_CLOSE_ALL_KEY,
@@ -140,6 +151,21 @@ class PreferencesDialog(qtw.QDialog):
         for label, value in MOUSE_MODE_OPTIONS:
             self.mouseModeCombo.addItem(label, value)
         self._add_row(form, "&Mouse mode:", self.mouseModeCombo)
+
+        self.copyPlotImageResolutionCombo = qtw.QComboBox(tab)
+        self.copyPlotImageResolutionCombo.setObjectName(
+            "copyPlotImageResolutionPreferenceCombo"
+            )
+        self.copyPlotImageResolutionCombo.setAccessibleName(
+            "Copy plot image resolution"
+            )
+        for label, value in COPY_PLOT_IMAGE_RESOLUTION_OPTIONS:
+            self.copyPlotImageResolutionCombo.addItem(label, value)
+        self._add_row(
+            form,
+            "&Copy plot image:",
+            self.copyPlotImageResolutionCombo,
+            )
 
         return tab
 
@@ -269,6 +295,12 @@ class PreferencesDialog(qtw.QDialog):
         self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
         mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
         self.mouseModeCombo.setCurrentIndex(max(mouse_mode_index, 0))
+        copy_resolution_index = self.copyPlotImageResolutionCombo.findData(
+            values[COPY_PLOT_IMAGE_RESOLUTION_KEY]
+            )
+        self.copyPlotImageResolutionCombo.setCurrentIndex(
+            max(copy_resolution_index, 0)
+            )
         self.defaultLoadPathEdit.setText(str(values["file.default_load_path"]))
         self.refreshRateSpin.setValue(
             float(values["user_preference.default_refresh_rate"])
@@ -298,6 +330,9 @@ class PreferencesDialog(qtw.QDialog):
             "user_preference.theme": self.themeCombo.currentData(),
             "GUI.preview_size": int(self.previewSizeSpin.value()),
             MOUSE_MODE_KEY: self.mouseModeCombo.currentData(),
+            COPY_PLOT_IMAGE_RESOLUTION_KEY: (
+                self.copyPlotImageResolutionCombo.currentData()
+                ),
             "file.default_load_path": self.defaultLoadPathEdit.text().strip(),
             "user_preference.default_refresh_rate": self.refreshRateSpin.value(),
             CONFIRM_CLOSE_ALL_KEY: self.confirmCloseAllCheck.isChecked(),

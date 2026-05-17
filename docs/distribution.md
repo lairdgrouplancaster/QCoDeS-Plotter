@@ -47,14 +47,16 @@ or attach them to GitHub releases.
 Before creating a tagged release:
 
 1. Update the version in `pyproject.toml`.
-2. Run `python -m ruff check .`.
-3. Run `python -m mypy`.
-4. Run `python -m pytest`.
-5. Run `python -m build`.
-6. Run `python -m twine check dist/*`.
-7. Run the manual GUI check from `CONTRIBUTING.md`.
-8. Confirm README install and compatibility notes still match the release.
-9. Create a GitHub release from the tag and include user-facing changes.
+2. Move relevant entries from `CHANGELOG.md`'s Unreleased section into the new
+   release section.
+3. Run `python -m ruff check .`.
+4. Run `python -m mypy`.
+5. Run `python -m pytest`.
+6. Run `python -m build`.
+7. Run `python -m twine check dist/*`.
+8. Run the manual GUI check from `CONTRIBUTING.md`.
+9. Confirm README install and compatibility notes still match the release.
+10. Create a GitHub release from the tag and include user-facing changes.
 
 ## Future Options
 

@@ -6,6 +6,11 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plotWin import plotWidget
+from qplot.windows._preferences import (
+    COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_SVG,
+)
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
@@ -454,6 +459,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 QtCore.Qt.ShortcutContext.WindowShortcut,
                 )
             self.assertIn("Copy Plot Image", context_actions)
+            self.assertNotIn("Copy Plot Image at Size...", context_actions)
             self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
 
             host.copyPlotImageAction.trigger()
@@ -603,6 +609,126 @@ class RunListParentLookupTestCase(unittest.TestCase):
             window.status_messages[-1],
             ("Plot image copied to clipboard.", 3000),
             )
+
+    def test_copy_plot_image_at_size_copies_exported_image_to_clipboard(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        window = plotWidget.__new__(plotWidget)
+        window.widget = widget
+        window.plot = plot
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.clear()
+
+        try:
+            widget.resize(120, 80)
+            widget.show()
+            qtw.QApplication.processEvents()
+
+            self.assertTrue(plotWidget.copy_plot_image_at_size(window, 320, 180))
+
+            image = clipboard.image()
+            self.assertFalse(image.isNull())
+            self.assertEqual(image.size(), QtCore.QSize(320, 180))
+            self.assertEqual(
+                window.status_messages[-1],
+                ("Plot image copied to clipboard.", 3000),
+                )
+        finally:
+            widget.deleteLater()
+
+    def test_copy_plot_image_uses_300dpi_preference(self):
+        class Config:
+            def get(self, key):
+                if key == COPY_PLOT_IMAGE_RESOLUTION_KEY:
+                    return COPY_PLOT_IMAGE_RESOLUTION_300_DPI
+                raise KeyError(key)
+
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        window = plotWidget.__new__(plotWidget)
+        window.config = Config()
+        window.widget = widget
+        window.plot = plot
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.clear()
+
+        try:
+            widget.resize(120, 80)
+            widget.show()
+            qtw.QApplication.processEvents()
+            expected_size = plotWidget._plot_image_size_for_dpi(window, 300)
+
+            self.assertTrue(plotWidget.copy_plot_image(window))
+
+            image = clipboard.image()
+            self.assertFalse(image.isNull())
+            self.assertEqual(image.size(), expected_size)
+            self.assertEqual(round(image.dotsPerMeterX() * 0.0254), 300)
+            self.assertEqual(round(image.dotsPerMeterY() * 0.0254), 300)
+            self.assertEqual(
+                window.status_messages[-1],
+                (
+                    "Plot image copied to clipboard at "
+                    f"300 dpi ({expected_size.width()} x {expected_size.height()} px).",
+                    3000,
+                    ),
+                )
+        finally:
+            widget.deleteLater()
+
+    def test_copy_plot_image_uses_svg_preference(self):
+        class Config:
+            def get(self, key):
+                if key == COPY_PLOT_IMAGE_RESOLUTION_KEY:
+                    return COPY_PLOT_IMAGE_RESOLUTION_SVG
+                raise KeyError(key)
+
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        window = plotWidget.__new__(plotWidget)
+        window.config = Config()
+        window.widget = widget
+        window.plot = plot
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.clear()
+
+        try:
+            widget.resize(120, 80)
+            widget.show()
+            qtw.QApplication.processEvents()
+
+            self.assertTrue(plotWidget.copy_plot_image(window))
+
+            mime_data = clipboard.mimeData()
+            self.assertTrue(mime_data.hasFormat("image/svg+xml"))
+            svg = bytes(mime_data.data("image/svg+xml"))
+            self.assertIn(b"<svg", svg)
+            self.assertIn("image/svg+xml", mime_data.formats())
+            self.assertIn("<svg", mime_data.text())
+            self.assertEqual(
+                window.status_messages[-1],
+                ("Plot SVG copied to clipboard.", 3000),
+                )
+        finally:
+            widget.deleteLater()
 
     def test_mouse_mode_preference_updates_viewbox_mode(self):
         class Config:

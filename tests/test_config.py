@@ -15,6 +15,11 @@ from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
 from qplot.configuration.themes import dark
 from qplot.windows import main as main_window
+from qplot.windows._preferences import (
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+    COPY_PLOT_IMAGE_RESOLUTION_SVG,
+)
 from qplot.windows._run_controls import AUTO_PLOT_KEY
 
 
@@ -76,6 +81,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         del stored_config["user_preference"]["confirm_close_all"]
         del stored_config["user_preference"]["auto_plot"]
         del stored_config["user_preference"]["mouse_mode"]
+        del stored_config["user_preference"]["copy_plot_image_resolution"]
         with open(config.default_file, "w") as fp:
             json.dump(stored_config, fp)
 
@@ -84,6 +90,10 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
         self.assertFalse(reloaded.get(AUTO_PLOT_KEY))
         self.assertEqual(reloaded.get("user_preference.mouse_mode"), "pan")
+        self.assertEqual(
+            reloaded.get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
+            COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+            )
 
     def test_config_repr_returns_readable_json(self):
         cfg = config()
@@ -310,6 +320,24 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(cfg.get("user_preference.mouse_mode"), "pan")
 
+    def test_default_plot_image_copy_resolution_is_screen(self):
+        cfg = config()
+
+        self.assertEqual(
+            cfg.get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
+            COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+            )
+
+    def test_plot_image_copy_resolution_accepts_svg(self):
+        cfg = config()
+
+        cfg.update(COPY_PLOT_IMAGE_RESOLUTION_KEY, COPY_PLOT_IMAGE_RESOLUTION_SVG)
+
+        self.assertEqual(
+            config().get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
+            COPY_PLOT_IMAGE_RESOLUTION_SVG,
+            )
+
     def test_cloud_sync_timeout_default_is_two_minutes(self):
         cfg = config()
 
@@ -321,5 +349,3 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg.update("user_preference.default_refresh_rate", 0.0)
 
         self.assertEqual(config().get("user_preference.default_refresh_rate"), 0.0)
-
-

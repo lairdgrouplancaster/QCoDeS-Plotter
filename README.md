@@ -106,6 +106,8 @@ export, and keyboard shortcuts, see [docs/user-guide.md](docs/user-guide.md).
 For setup and runtime problems, see
 [docs/troubleshooting.md](docs/troubleshooting.md).
 
+For release history, see [CHANGELOG.md](CHANGELOG.md).
+
 ## Configuration
 
 On first run, qPlot creates:

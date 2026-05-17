@@ -52,7 +52,7 @@ KEYBOARD_SHORTCUTS_HTML = """
 <h3>Plot Windows</h3>
 <table cellspacing="4" cellpadding="3">
   <tr><td><b>Ctrl+0</b></td><td>Autoscale the plot view</td></tr>
-  <tr><td><b>Ctrl+C / Cmd+C</b></td><td>Copy the plot image to the clipboard</td></tr>
+  <tr><td><b>Ctrl+C / Cmd+C</b></td><td>Copy the plot image using the selected copy format or resolution</td></tr>
   <tr><td><b>Ctrl+E</b></td><td>Export the plot</td></tr>
   <tr><td><b>Ctrl+Shift+O</b></td><td>Show or hide the operations panel</td></tr>
   <tr><td><b>Ctrl+Alt+R</b></td><td>Show or hide the refresh toolbar</td></tr>
