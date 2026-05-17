@@ -92,15 +92,16 @@ def interrupted_progress_percent_value(metadata):
     count = metadata.get("read_setpoint_count")
     if count is None:
         count = metadata.get("result_count")
-    return _progress_percent_value(metadata, count, expected, cap_completed=False)
+    return _progress_percent_value(metadata, count, expected, maximum=100)
 
 
-def _progress_percent_value(metadata, count, expected, cap_completed=True):
+def _progress_percent_value(metadata, count, expected, maximum=None):
     if not expected or count is None:
         return None
 
     try:
-        maximum = 100 if cap_completed and run_is_complete(metadata) else 99.9
+        if maximum is None:
+            maximum = 100 if run_is_complete(metadata) else 99.9
         return max(0, min(maximum, (float(count) / float(expected)) * 100))
     except (TypeError, ValueError, ZeroDivisionError):
         return None
@@ -123,7 +124,7 @@ def complete_cell_sort_value(metadata):
 
 def format_complete_cell(metadata):
     if run_was_interrupted(metadata):
-        return f"Interrupted ({format_interrupted_progress_percent(metadata)})"
+        return format_interrupted_progress_percent(metadata)
 
     if run_is_complete(metadata):
         return "✓"

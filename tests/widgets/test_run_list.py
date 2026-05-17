@@ -82,6 +82,39 @@ class RunListTooltipTestCase(unittest.TestCase):
             "99.9%"
             )
 
+    def test_interrupted_completed_run_reports_setpoint_progress(self):
+        metadata = {
+            "completed_timestamp": 12345.6,
+            "is_completed": True,
+            "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
+            "result_count": 800,
+            "read_setpoint_count": 400,
+            "setpoint_count": 1000,
+            "expected_results": 2000,
+            }
+
+        self.assertEqual(
+            treeWidgets.format_complete_cell(metadata),
+            "40.00%"
+            )
+        self.assertEqual(
+            treeWidgets.format_run_status(metadata),
+            "Interrupted (40.00%)"
+            )
+        self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40.0)
+
+    def test_non_keyboard_measurement_exception_still_uses_completed_tick(self):
+        self.assertEqual(
+            treeWidgets.format_complete_cell({
+                "completed_timestamp": 12345.6,
+                "is_completed": True,
+                "measurement_exception": "Traceback...\nValueError: bad value\n",
+                "result_count": 40,
+                "setpoint_count": 100,
+                }),
+            "✓"
+            )
+
     def test_duration_uses_commas(self):
         self.assertEqual(
             treeWidgets.format_time_taken_seconds({
@@ -442,6 +475,63 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
+    def test_check_watching_reports_finished_interrupted_run(self):
+        old_isfile = treeWidgets.isfile
+        old_get_run_status = treeWidgets.get_run_status
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "exp_name": "exp",
+                    "sample_name": "sample",
+                    "name": "interrupted",
+                    "result_table_name": "results_1",
+                    "guid": "interrupted-guid",
+                    "sweep_parameters": ["x", "y"],
+                    "measure_parameters": ["signal", "other"],
+                    "result_count": 100,
+                    "read_setpoint_count": 100,
+                    "setpoint_count": 1000,
+                    "expected_results": 2000,
+                    "point_shape": [10, 100],
+                    "setpoint_shape": [10, 100],
+                    }
+                })
+            item = run_list.topLevelItem(0)
+
+            treeWidgets.get_run_status = lambda guid: {
+                "completed_timestamp": 120.0,
+                "is_completed": True,
+                "result_count": 800,
+                "read_setpoint_count": 400,
+                "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
+                "database_modified_timestamp": 120.0,
+                }
+
+            updated_runs = run_list.checkWatching()
+
+            self.assertEqual(
+                item.text(run_list.cols.index("Complete")),
+                "40.00%"
+                )
+            self.assertEqual(
+                item.data(run_list.cols.index("Complete"), QtCore.Qt.ItemDataRole.UserRole),
+                40.0
+                )
+            self.assertEqual(run_list.watching, [])
+            self.assertEqual(
+                updated_runs[1]["measurement_exception"],
+                "Traceback...\nKeyboardInterrupt\n"
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+            treeWidgets.get_run_status = old_get_run_status
+
     def test_run_table_measurement_previews_use_preview_metadata(self):
         old_isfile = treeWidgets.isfile
         treeWidgets.isfile = lambda _: False
@@ -519,5 +609,3 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIs(run_list.currentItem(), item)
         finally:
             treeWidgets.isfile = old_isfile
-
-

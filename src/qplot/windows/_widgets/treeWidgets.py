@@ -17,6 +17,7 @@ from qplot.datahandling import (
 )
 
 from ._run_formatting import (  # noqa: F401
+    complete_cell_sort_value,
     format_complete_cell,
     format_duration_dhms,
     format_parameter_list,
@@ -69,7 +70,7 @@ class RunList(qtw.QTreeWidget):
     column_widths = {
         "ID": 34,
         "Measurements": 84,
-        "Complete": 66,
+        "Complete": 72,
         "Duration": 68,
         "Size": 50,
         }
@@ -204,7 +205,7 @@ class RunList(qtw.QTreeWidget):
             item.setData(
                 self.cols.index("Complete"),
                 QtCore.Qt.ItemDataRole.UserRole,
-                100 if run_is_complete(metadata) else progress_percent_value(metadata)
+                complete_cell_sort_value(metadata)
                 )
             item.setData(
                 self.cols.index("Duration"),
@@ -374,6 +375,24 @@ class RunList(qtw.QTreeWidget):
                     time_taken_seconds(run.run_metadata)
                     )
 
+            completion_metadata_changed = False
+            if status.get("read_setpoint_count") is not None:
+                run.run_metadata["read_setpoint_count"] = status["read_setpoint_count"]
+                completion_metadata_changed = True
+
+            if status.get("measurement_exception") is not None:
+                run.run_metadata["measurement_exception"] = status["measurement_exception"]
+                completion_metadata_changed = True
+
+            if completion_metadata_changed:
+                complete_col = self.cols.index("Complete")
+                run.setText(complete_col, format_complete_cell(run.run_metadata))
+                run.setData(
+                    complete_col,
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    complete_cell_sort_value(run.run_metadata)
+                    )
+
             if status.get("storage_bytes") is not None:
                 storage_col = self.cols.index("Size")
                 run.run_metadata["storage_bytes"] = status["storage_bytes"]
@@ -387,7 +406,11 @@ class RunList(qtw.QTreeWidget):
                 run.run_metadata["is_completed"] = status.get("is_completed", True)
                 complete_col = self.cols.index("Complete")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
-                run.setData(complete_col, QtCore.Qt.ItemDataRole.UserRole, 100)
+                run.setData(
+                    complete_col,
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    complete_cell_sort_value(run.run_metadata)
+                    )
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
                 run.setData(

@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tempfile
@@ -7,6 +8,82 @@ from qplot.datahandling import readSQL
 
 
 class RunSizeTestCase(unittest.TestCase):
+    def test_fetch_run_rows_includes_keyboard_interrupt_metadata(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE experiments (
+                    exp_id INTEGER,
+                    name TEXT,
+                    sample_name TEXT
+                )
+                """
+                )
+            cursor.execute(
+                """
+                CREATE TABLE runs (
+                    run_id INTEGER,
+                    exp_id INTEGER,
+                    name TEXT,
+                    run_timestamp REAL,
+                    completed_timestamp REAL,
+                    is_completed INTEGER,
+                    guid TEXT,
+                    result_table_name TEXT,
+                    parameters TEXT,
+                    run_description TEXT,
+                    measurement_exception TEXT
+                )
+                """
+                )
+            cursor.execute("CREATE TABLE results_1 (x REAL, y REAL, signal REAL, other REAL)")
+            cursor.executemany(
+                "INSERT INTO results_1 VALUES (?, ?, ?, ?)",
+                [
+                    (0.0, 0.0, 1.0, 2.0),
+                    (0.0, 1.0, 3.0, 4.0),
+                    ]
+                )
+            run_description = json.dumps({
+                "interdependencies_": {
+                    "dependencies": {
+                        "signal": ["x", "y"],
+                        "other": ["x", "y"],
+                        }
+                    },
+                "shapes": {
+                    "signal": [2, 2],
+                    "other": [2, 2],
+                    },
+                })
+            cursor.execute(
+                """
+                INSERT INTO runs VALUES (
+                    1, 1, 'run', 100.0, 110.0, 1, 'guid',
+                    'results_1', 'x,y,signal,other', ?, ?
+                )
+                """,
+                (
+                    run_description,
+                    "Traceback (most recent call last):\nKeyboardInterrupt\n",
+                    )
+                )
+
+            runs = readSQL._fetch_run_rows(cursor, empty_as_none=False)
+
+            self.assertEqual(
+                runs[1]["measurement_exception"],
+                "Traceback (most recent call last):\nKeyboardInterrupt\n"
+                )
+            self.assertEqual(runs[1]["setpoint_count"], 4)
+            self.assertEqual(runs[1]["expected_results"], 8)
+            self.assertEqual(runs[1]["result_count"], 2)
+            self.assertEqual(runs[1]["read_setpoint_count"], 2)
+        finally:
+            conn.close()
+
     def test_point_shape_uses_largest_measured_parameter_shape(self):
         self.assertEqual(
             readSQL._point_shape(
