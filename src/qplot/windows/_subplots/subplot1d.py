@@ -1,5 +1,5 @@
-from PyQt5 import QtCore
-from PyQt5.QtGui import QColor
+from PyQt6 import QtCore
+from PyQt6.QtGui import QColor
 
 import pyqtgraph as pg
 
@@ -83,7 +83,7 @@ class subplot1d(pg.PlotDataItem):
 
         Parameters
         ----------
-        col : PyQt5.QtGui.QColor
+        col : PyQt6.QtGui.QColor
             The color to change line to.
 
         """
@@ -147,12 +147,12 @@ class custom_viewbox(pg.ViewBox):
 
     def _handle_marquee_mouse_drag(self, ev):
         owner = self._marquee_owner
-        if owner is None or ev.button() != QtCore.Qt.LeftButton:
+        if owner is None or ev.button() != QtCore.Qt.MouseButton.LeftButton:
             return False
 
         if ev.isStart():
             mode = owner.marquee_drag_mode_at(ev.buttonDownScenePos())
-            if mode is None and not ev.modifiers() & QtCore.Qt.AltModifier:
+            if mode is None and not ev.modifiers() & QtCore.Qt.KeyboardModifier.AltModifier:
                 return False
 
             owner.begin_marquee_drag(
@@ -176,7 +176,7 @@ class custom_viewbox(pg.ViewBox):
         return True
 
 
-    def _update_marquee_cursor(self, scene_pos, modifiers=QtCore.Qt.NoModifier):
+    def _update_marquee_cursor(self, scene_pos, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
         owner = self._marquee_owner
         if owner is None:
             self.unsetCursor()
@@ -216,7 +216,7 @@ class custom_viewbox(pg.ViewBox):
         owner = self._marquee_owner
         if (
                 owner is not None
-                and ev.button() == QtCore.Qt.RightButton
+                and ev.button() == QtCore.Qt.MouseButton.RightButton
                 and owner.open_marquee_context_menu(
                     ev.scenePos(),
                     self._mouse_event_global_pos(ev),

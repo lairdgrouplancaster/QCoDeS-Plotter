@@ -1,9 +1,9 @@
 import unittest
 
 import numpy as np
-from PyQt5 import QtCore
-from PyQt5 import QtGui
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtGui
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
@@ -104,17 +104,17 @@ class RunListTooltipTestCase(unittest.TestCase):
                 )
             option = qtw.QStyleOptionViewItem()
             option.widget = run_list
-            option.state = qtw.QStyle.State_Selected | qtw.QStyle.State_Enabled
+            option.state = qtw.QStyle.StateFlag.State_Selected | qtw.QStyle.StateFlag.State_Enabled
 
             self.assertEqual(
                 delegate._text_color(option),
-                option.palette.color(QtGui.QPalette.Text)
+                option.palette.color(QtGui.QPalette.ColorRole.Text)
                 )
 
-            option.state |= qtw.QStyle.State_Active | qtw.QStyle.State_HasFocus
+            option.state |= qtw.QStyle.StateFlag.State_Active | qtw.QStyle.StateFlag.State_HasFocus
             self.assertEqual(
                 delegate._text_color(option),
-                option.palette.color(QtGui.QPalette.Text)
+                option.palette.color(QtGui.QPalette.ColorRole.Text)
                 )
         finally:
             treeWidgets.isfile = old_isfile
@@ -131,7 +131,7 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual(
                 int(delegate.right_text_alignment),
-                int(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
         finally:
             treeWidgets.isfile = old_isfile
@@ -366,11 +366,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(run_list.indentation(), 0)
             self.assertEqual(
                 run_list.horizontalScrollBarPolicy(),
-                QtCore.Qt.ScrollBarAlwaysOff
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
                 )
             self.assertTrue(
                 all(
-                    run_list.header().sectionResizeMode(col) == qtw.QHeaderView.Interactive
+                    run_list.header().sectionResizeMode(col) == qtw.QHeaderView.ResizeMode.Interactive
                     for col in range(run_list.columnCount())
                     )
                 )
@@ -381,7 +381,7 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual([item.guid for item in run_list.watching], ["unfinished-guid"])
             self.assertEqual(items["unfinished-guid"].text(1), "")
-            self.assertEqual(items["unfinished-guid"].data(1, QtCore.Qt.UserRole), 1)
+            self.assertEqual(items["unfinished-guid"].data(1, QtCore.Qt.ItemDataRole.UserRole), 1)
             self.assertIsInstance(
                 run_list.itemWidget(items["unfinished-guid"], 1),
                 treeWidgets.RunPreviewCell
@@ -399,7 +399,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertRegex(items["unfinished-guid"].text(5), r"^[\d,]+\.\d s$")
             self.assertEqual(items["unfinished-guid"].text(6), "100 KB")
             self.assertEqual(items["finished-guid"].text(1), "")
-            self.assertEqual(items["finished-guid"].data(1, QtCore.Qt.UserRole), 2)
+            self.assertEqual(items["finished-guid"].data(1, QtCore.Qt.ItemDataRole.UserRole), 2)
             self.assertEqual(
                 len(
                     run_list.itemWidget(
@@ -413,29 +413,29 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(items["finished-guid"].text(5), "10.0 s")
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(0)),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(2)),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(4)),
-                int(QtCore.Qt.AlignCenter)
+                QtCore.Qt.AlignmentFlag.AlignCenter.value
                 )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(5)),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(6)),
-                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertIn("Measure</td>", items["unfinished-guid"].toolTip(0))
             self.assertIn("(y)</td>", items["unfinished-guid"].toolTip(0))
             self.assertNotIn("Complete", items["finished-guid"].toolTip(0))
 
-            run_list.sortItems(1, QtCore.Qt.DescendingOrder)
+            run_list.sortItems(1, QtCore.Qt.SortOrder.DescendingOrder)
             self.assertEqual(
                 [run_list.topLevelItem(row).guid for row in range(run_list.topLevelItemCount())],
                 ["finished-guid", "unfinished-guid"]
@@ -499,11 +499,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(images[0].height(), treeWidgets.MEASUREMENT_PREVIEW_SIZE)
 
             event = QtGui.QMouseEvent(
-                QtCore.QEvent.MouseButtonDblClick,
+                QtCore.QEvent.Type.MouseButtonDblClick,
                 QtCore.QPointF(5, 5),
-                QtCore.Qt.LeftButton,
-                QtCore.Qt.LeftButton,
-                QtCore.Qt.NoModifier,
+                QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.KeyboardModifier.NoModifier,
                 )
             qtw.QApplication.sendEvent(images[0], event)
 

@@ -1,9 +1,9 @@
 import unittest
 
 import numpy as np
-from PyQt5 import QtCore
-from PyQt5 import QtGui
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtGui
+from PyQt6 import QtWidgets as qtw
 import pyqtgraph as pg
 
 from qplot.windows import _plotWin as plotwin_module
@@ -152,7 +152,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.plot = host.widget.addPlot(viewBox=host.vb)
             host.vb.setParent(host.plot)
             host.axes_dock = QDock_context("Line control", host)
-            host.addDockWidget(QtCore.Qt.LeftDockWidgetArea, host.axes_dock)
+            host.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, host.axes_dock)
             host.lineScroll = qtw.QScrollArea()
             host.scrollWidget = qtw.QWidget()
             host.lineScroll.setWidget(host.scrollWidget)
@@ -204,7 +204,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             rect,
             "w",
             QtCore.QPointF(2.0, 4.0),
-            QtCore.Qt.AltModifier,
+            QtCore.Qt.KeyboardModifier.AltModifier,
             )
 
         self.assertEqual(rect.left(), 2.0)
@@ -218,7 +218,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             rect,
             "w",
             QtCore.QPointF(2.0, 4.0),
-            QtCore.Qt.ShiftModifier,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
             )
 
         self.assertEqual(rect.left(), 2.0)
@@ -232,7 +232,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             rect,
             "nw",
             QtCore.QPointF(2.0, 6.0),
-            QtCore.Qt.AltModifier,
+            QtCore.Qt.KeyboardModifier.AltModifier,
             )
 
         self.assertEqual(rect.left(), 2.0)
@@ -248,7 +248,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             rect,
             "nw",
             QtCore.QPointF(2.0, 6.0),
-            QtCore.Qt.ShiftModifier,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
             )
 
         self.assertEqual(rect.left(), 2.0)
@@ -264,7 +264,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.set_marquee_rect = lambda rect: captured.append(QtCore.QRectF(rect))
 
         window.begin_marquee_drag(QtCore.QPointF(1.0, 7.0), "nw")
-        window.drag_marquee_to(QtCore.QPointF(1.0, 7.0), QtCore.Qt.ShiftModifier)
+        window.drag_marquee_to(QtCore.QPointF(1.0, 7.0), QtCore.Qt.KeyboardModifier.ShiftModifier)
 
         self.assertEqual(captured[-1], QtCore.QRectF(0.0, 0.0, 10.0, 8.0))
 
@@ -283,7 +283,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             accepted = False
 
             def button(self):
-                return QtCore.Qt.RightButton
+                return QtCore.Qt.MouseButton.RightButton
 
             def scenePos(self):
                 return QtCore.QPointF(1.0, 2.0)
@@ -349,9 +349,9 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.marquee = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)
         window.clear_marquee = lambda: setattr(window, "marquee", None)
         event = QtGui.QKeyEvent(
-            QtCore.QEvent.KeyPress,
-            QtCore.Qt.Key_Escape,
-            QtCore.Qt.NoModifier,
+            QtCore.QEvent.Type.KeyPress,
+            QtCore.Qt.Key.Key_Escape,
+            QtCore.Qt.KeyboardModifier.NoModifier,
             )
 
         plotWidget.keyPressEvent(window, event)
@@ -364,18 +364,18 @@ class SnapToTraceTestCase(unittest.TestCase):
         window._marquee_drag_state = {"mode": "new"}
 
         self.assertEqual(
-            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.NoModifier),
-            QtCore.Qt.CrossCursor,
+            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.KeyboardModifier.NoModifier),
+            QtCore.Qt.CursorShape.CrossCursor,
             )
 
         window._marquee_drag_state = {"mode": "w"}
         self.assertEqual(
-            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.NoModifier),
-            QtCore.Qt.SizeHorCursor,
+            window.marquee_cursor_shape_at(QtCore.QPointF(), QtCore.Qt.KeyboardModifier.NoModifier),
+            QtCore.Qt.CursorShape.SizeHorCursor,
             )
         self.assertEqual(
             window._marquee_cursor_shape_for_handle("ne"),
-            QtCore.Qt.SizeBDiagCursor,
+            QtCore.Qt.CursorShape.SizeBDiagCursor,
             )
 
     def test_marquee_x_edges_snap_between_points_without_changing_y(self):

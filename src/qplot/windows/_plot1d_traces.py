@@ -1,5 +1,5 @@
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore
+from PyQt6 import QtWidgets as qtw
+from PyQt6 import QtCore
 
 import pyqtgraph as pg
 
@@ -39,7 +39,7 @@ class Plot1DTraceMixin:
         self.lineScroll = qtw.QScrollArea()
         self.lineScroll.setWidgetResizable(True)
         self.lineScroll.setMinimumSize(1, 1)
-        self.lineScroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.lineScroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.axes_dock.addWidget(self.lineScroll)
         
         # QScrollArea can only take 1 widget. That widget holds the layout.
@@ -313,7 +313,7 @@ class Plot1DTraceMixin:
 
         Parameters
         ----------
-        ev : PyQt5.<something?>
+        ev : PyQt6.<something?>
             
         """
         self.right_vb.setGeometry(self.vb.sceneBoundingRect())

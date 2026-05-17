@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import main as main_window
 from qplot.windows import _database_actions as database_actions
@@ -141,7 +141,7 @@ class OptionsMenuTestCase(unittest.TestCase):
             self.assertIn("Preferences...", option_texts)
             self.assertEqual(
                 preferences_action.menuRole(),
-                qtw.QAction.PreferencesRole,
+                QtGui.QAction.MenuRole.PreferencesRole,
                 )
             self.assertIn("Reset All Settings...", option_texts)
             self.assertNotIn("Open Location", option_texts)
@@ -184,7 +184,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         try:
             def fake_confirmation(window, title, message, config_key, *args):
                 confirmation_keys.append(config_key)
-                return qtw.QMessageBox.No
+                return qtw.QMessageBox.StandardButton.No
 
             main_window.ask_confirmation_with_dont_ask_again = fake_confirmation
             harness = Harness()
@@ -263,7 +263,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertEqual(closed, [target])
 
     def test_confirmation_dialog_can_disable_future_warning_after_confirm(self):
-        old_exec = qtw.QMessageBox.exec_
+        old_exec = qtw.QMessageBox.exec
         updates = []
         labels = []
 
@@ -277,10 +277,10 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         def fake_exec(box):
             labels.append(box.checkBox().text())
             box.checkBox().setChecked(True)
-            return qtw.QMessageBox.Yes
+            return qtw.QMessageBox.StandardButton.Yes
 
         try:
-            qtw.QMessageBox.exec_ = fake_exec
+            qtw.QMessageBox.exec = fake_exec
             reply = ask_confirmation_with_dont_ask_again(
                 window,
                 "Close All Plot Windows",
@@ -288,15 +288,15 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 CONFIRM_CLOSE_ALL_KEY,
                 )
         finally:
-            qtw.QMessageBox.exec_ = old_exec
+            qtw.QMessageBox.exec = old_exec
             window.deleteLater()
 
-        self.assertEqual(reply, qtw.QMessageBox.Yes)
+        self.assertEqual(reply, qtw.QMessageBox.StandardButton.Yes)
         self.assertEqual(labels, [DO_NOT_ASK_AGAIN_LABEL])
         self.assertEqual(updates, [(CONFIRM_CLOSE_ALL_KEY, False)])
 
     def test_confirmation_dialog_cancel_does_not_disable_future_warning(self):
-        old_exec = qtw.QMessageBox.exec_
+        old_exec = qtw.QMessageBox.exec
         updates = []
 
         class FakeConfig:
@@ -308,10 +308,10 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         def fake_exec(box):
             box.checkBox().setChecked(True)
-            return qtw.QMessageBox.No
+            return qtw.QMessageBox.StandardButton.No
 
         try:
-            qtw.QMessageBox.exec_ = fake_exec
+            qtw.QMessageBox.exec = fake_exec
             reply = ask_confirmation_with_dont_ask_again(
                 window,
                 "Confirm Exit",
@@ -319,10 +319,10 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 CONFIRM_QUIT_KEY,
                 )
         finally:
-            qtw.QMessageBox.exec_ = old_exec
+            qtw.QMessageBox.exec = old_exec
             window.deleteLater()
 
-        self.assertEqual(reply, qtw.QMessageBox.No)
+        self.assertEqual(reply, qtw.QMessageBox.StandardButton.No)
         self.assertEqual(updates, [])
 
     def test_close_event_can_disable_future_quit_warning_after_confirm(self):
@@ -383,7 +383,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         def fake_confirmation(window, title, message, config_key, *args):
             confirmations.append((title, message, config_key))
             window.config.update(config_key, False)
-            return qtw.QMessageBox.Yes
+            return qtw.QMessageBox.StandardButton.Yes
 
         try:
             main_window.ask_confirmation_with_dont_ask_again = fake_confirmation
@@ -505,7 +505,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.No
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.No
             harness = Harness()
             harness.restore_default_settings()
         finally:
@@ -547,7 +547,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.Yes
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.Yes
             harness = Harness()
             harness.restore_default_settings()
         finally:

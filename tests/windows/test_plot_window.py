@@ -1,8 +1,8 @@
 import unittest
 
-from PyQt5 import QtCore
-from PyQt5 import QtGui
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtGui
+from PyQt6 import QtWidgets as qtw
 import pyqtgraph as pg
 
 from qplot.windows.plot2d import plot2d
@@ -199,7 +199,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             frame = qtw.QFrame()
             layout = qtw.QVBoxLayout(frame)
-            splitter = qtw.QSplitter(QtCore.Qt.Vertical)
+            splitter = qtw.QSplitter(QtCore.Qt.Orientation.Vertical)
             run_list = treeWidgets.RunList()
             splitter.addWidget(run_list)
             splitter.addWidget(qtw.QTreeWidget())
@@ -214,7 +214,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
     def test_run_context_menu_keeps_plot_actions_without_add_actions(self):
         old_isfile = treeWidgets.isfile
-        old_exec = qtw.QMenu.exec_
+        old_exec = qtw.QMenu.exec
         treeWidgets.isfile = lambda _: False
         captured = []
         main = None
@@ -233,7 +233,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             captured.extend(action.text() for action in menu.actions())
 
         try:
-            qtw.QMenu.exec_ = capture_menu
+            qtw.QMenu.exec = capture_menu
             main = qtw.QMainWindow()
             main.ds = Dataset()
             main.windows = []
@@ -254,7 +254,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertFalse(any(action.startswith("Add ") for action in captured))
             self.assertFalse(any(action.startswith("  - Add ") for action in captured))
         finally:
-            qtw.QMenu.exec_ = old_exec
+            qtw.QMenu.exec = old_exec
             treeWidgets.isfile = old_isfile
             if main is not None:
                 main.deleteLater()
@@ -279,7 +279,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
         host = Host()
         host.vbMenu = qtw.QMenu(host)
-        host.mouseModeAction = qtw.QAction("Mouse Mode", host)
+        host.mouseModeAction = QtGui.QAction("Mouse Mode", host)
         host.vbMenu.addAction(host.mouseModeAction)
 
         try:
@@ -301,7 +301,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertIn("Preferences...", option_texts)
             self.assertEqual(
                 preferences_action.menuRole(),
-                qtw.QAction.PreferencesRole,
+                QtGui.QAction.MenuRole.PreferencesRole,
                 )
             self.assertIn("Mouse Mode", option_texts)
             self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
@@ -367,7 +367,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             self.assertEqual(
                 host.exportPlotAction.shortcutContext(),
-                QtCore.Qt.WindowShortcut,
+                QtCore.Qt.ShortcutContext.WindowShortcut,
                 )
             self.assertIn(host.exportPlotAction, host.actions())
 
@@ -444,7 +444,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertGreater(len(host.copyPlotImageAction.shortcuts()), 0)
             self.assertEqual(
                 host.copyPlotImageAction.shortcutContext(),
-                QtCore.Qt.WindowShortcut,
+                QtCore.Qt.ShortcutContext.WindowShortcut,
                 )
             self.assertIn("Copy Plot Image", context_actions)
             self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
@@ -739,7 +739,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 1,
                 )
             self.assertFalse(preview_item.icon().isNull())
-            host.colorbar_colormap_table.sortItems(2, QtCore.Qt.AscendingOrder)
+            host.colorbar_colormap_table.sortItems(2, QtCore.Qt.SortOrder.AscendingOrder)
             self.assertGreater(host._colorbar_colormap_row("viridis"), -1)
 
             host.open_colorbar_scale_dialog()
@@ -790,7 +790,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host.open_colorbar_scale_dialog = lambda: double_click_calls.append(True)
             axis = Axis()
             host._install_colorbar_scale_axis_handlers(axis)
-            event = MouseEvent(QtCore.Qt.LeftButton)
+            event = MouseEvent(QtCore.Qt.MouseButton.LeftButton)
             axis.mouseDoubleClickEvent(event)
 
             self.assertTrue(event.accepted)
@@ -803,13 +803,13 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host._install_colorbar_scale_bar_handlers(bar)
             double_click_calls.clear()
 
-            event = MouseEvent(QtCore.Qt.LeftButton)
+            event = MouseEvent(QtCore.Qt.MouseButton.LeftButton)
             bar.mouseDoubleClickEvent(event)
 
             self.assertTrue(event.accepted)
             self.assertEqual(double_click_calls, [True])
 
-            event = MouseEvent(QtCore.Qt.RightButton)
+            event = MouseEvent(QtCore.Qt.MouseButton.RightButton)
             bar.mouseClickEvent(event)
 
             self.assertTrue(event.accepted)

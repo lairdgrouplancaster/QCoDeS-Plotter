@@ -2,8 +2,8 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 from qcodes.dataset import (
     Measurement,
     initialise_or_create_database_at,
@@ -87,7 +87,7 @@ def close_main_window(window):
     window.databaseLoadThreadPool.waitForDone(1000)
     window.hide()
     window.deleteLater()
-    qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+    qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     qtw.QApplication.processEvents()
 
 

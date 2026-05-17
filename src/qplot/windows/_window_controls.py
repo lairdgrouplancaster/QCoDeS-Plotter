@@ -1,6 +1,6 @@
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
-from PyQt5.QtGui import QKeySequence
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
+from PyQt6.QtGui import QKeySequence
 
 from ._shortcuts import platform_key_sequences, standard_key_sequences
 
@@ -17,7 +17,7 @@ def set_window_shortcuts(action, shortcuts):
     """
     if shortcuts:
         action.setShortcuts(shortcuts)
-    action.setShortcutContext(QtCore.Qt.WindowShortcut)
+    action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
 
 
 def add_standard_window_controls(window):
@@ -27,7 +27,7 @@ def add_standard_window_controls(window):
     """
     window_menu = window.menuBar().addMenu("&Window")
 
-    main_front_back_action = qtw.QAction("Main Window &Front/Back", window)
+    main_front_back_action = QtGui.QAction("Main Window &Front/Back", window)
     set_window_shortcuts(main_front_back_action, [QKeySequence("Ctrl+Shift+M")])
     main_front_back_action.setStatusTip(
         "Bring the main window to front, or behind the graph windows"
@@ -37,7 +37,7 @@ def add_standard_window_controls(window):
 
     window_menu.addSeparator()
 
-    minimize_action = qtw.QAction("&Minimize", window)
+    minimize_action = QtGui.QAction("&Minimize", window)
     set_window_shortcuts(
         minimize_action,
         platform_key_sequences(
@@ -49,7 +49,7 @@ def add_standard_window_controls(window):
     minimize_action.triggered.connect(window.showMinimized)
     window_menu.addAction(minimize_action)
 
-    maximize_action = qtw.QAction("Ma&ximize / Restore", window)
+    maximize_action = QtGui.QAction("Ma&ximize / Restore", window)
     set_window_shortcuts(
         maximize_action,
         platform_key_sequences(
@@ -60,11 +60,11 @@ def add_standard_window_controls(window):
     maximize_action.triggered.connect(lambda: toggle_maximized(window))
     window_menu.addAction(maximize_action)
 
-    fullscreen_action = qtw.QAction("&Full Screen", window)
+    fullscreen_action = QtGui.QAction("&Full Screen", window)
     set_window_shortcuts(
         fullscreen_action,
         standard_key_sequences(
-            QKeySequence.FullScreen,
+            QKeySequence.StandardKey.FullScreen,
             platform_key_sequences(
                 mac=["Ctrl+Meta+F"],
                 windows=["F11", "Alt+Enter"],
@@ -103,7 +103,7 @@ def add_restore_defaults_option(window, menu):
     Adds a reset-all-settings action to a menu.
 
     """
-    action = qtw.QAction("Reset All Settings...", window)
+    action = QtGui.QAction("Reset All Settings...", window)
     action.setStatusTip("Reset all qPlot settings to their defaults")
     action.triggered.connect(lambda: request_restore_defaults(window))
     menu.addAction(action)
@@ -129,7 +129,7 @@ def add_config_checkbox_action(window, menu, text, key, status_tip):
     Adds a checkable config-backed action to a menu.
 
     """
-    action = qtw.QAction(text, window, checkable=True)
+    action = QtGui.QAction(text, window, checkable=True)
     action.setStatusTip(status_tip)
 
     def sync_checked():
@@ -159,7 +159,7 @@ def ask_confirmation_with_dont_ask_again(
         title,
         message,
         config_key,
-        default_button=qtw.QMessageBox.No,
+        default_button=qtw.QMessageBox.StandardButton.No,
         ):
     """
     Asks for confirmation and lets the user disable future prompts.
@@ -167,10 +167,10 @@ def ask_confirmation_with_dont_ask_again(
     """
     parent = window if isinstance(window, qtw.QWidget) else None
     box = qtw.QMessageBox(
-        qtw.QMessageBox.Question,
+        qtw.QMessageBox.Icon.Question,
         title,
         message,
-        qtw.QMessageBox.Yes | qtw.QMessageBox.No,
+        qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
         parent,
         )
     box.setDefaultButton(default_button)
@@ -178,8 +178,8 @@ def ask_confirmation_with_dont_ask_again(
     dont_ask_again = qtw.QCheckBox(DO_NOT_ASK_AGAIN_LABEL)
     box.setCheckBox(dont_ask_again)
 
-    reply = box.exec_()
-    if reply == qtw.QMessageBox.Yes and dont_ask_again.isChecked():
+    reply = box.exec()
+    if reply == qtw.QMessageBox.StandardButton.Yes and dont_ask_again.isChecked():
         window.config.update(config_key, False)
     return reply
 

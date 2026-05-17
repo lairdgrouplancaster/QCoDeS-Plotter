@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import (
     configure_logging,
@@ -57,7 +57,7 @@ def run(return_objects=False, database_path=None):
 
     Returns
     -------
-    tuple[PyQt5.QtWidgets.QApplication, qplot.windows.main.MainWindow] | None
+    tuple[PyQt6.QtWidgets.QApplication, qplot.windows.main.MainWindow] | None
         Returned only when return_objects is true.
         
     """

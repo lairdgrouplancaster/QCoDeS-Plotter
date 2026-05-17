@@ -1,4 +1,4 @@
-from PyQt5 import (
+from PyQt6 import (
     QtCore,
     QtWidgets as qtw
     )

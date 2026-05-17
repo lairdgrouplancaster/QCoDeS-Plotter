@@ -1,6 +1,6 @@
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore
-from PyQt5.QtGui import QKeySequence
+from PyQt6 import QtGui, QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6.QtGui import QKeySequence
 
 import numpy as np
 import pyqtgraph as pg
@@ -14,7 +14,7 @@ SNAP_TO_TRACE_SHORTCUTS = platform_key_sequences(
     other=["Ctrl+Alt+S"],
     )
 SNAP_TO_TRACE_SHORTCUT_LABEL = SNAP_TO_TRACE_SHORTCUTS[0].toString(
-    QKeySequence.NativeText
+    QKeySequence.SequenceFormat.NativeText
     )
 
 
@@ -32,7 +32,7 @@ class Plot1DSnapMixin:
         self.trace_label.setMinimumWidth(0)
         self.toolbarCo_ord.addWidget(self.trace_label)
 
-        self.snap_to_trace_action = qtw.QAction(
+        self.snap_to_trace_action = QtGui.QAction(
             f"Snap to Trace ({SNAP_TO_TRACE_SHORTCUT_LABEL})",
             self,
             checkable=True

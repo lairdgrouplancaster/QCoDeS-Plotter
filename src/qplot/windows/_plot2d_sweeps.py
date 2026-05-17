@@ -1,5 +1,5 @@
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore, QtGui
+from PyQt6 import QtGui, QtWidgets as qtw
+from PyQt6 import QtCore
 
 from ._subplots.subplot2d import sweeper
 
@@ -252,8 +252,8 @@ class Plot2DSweepMixin:
 
     def sweep_line_cursor_shape(self, line):
         if self.line_sweep_axis(line) == "x":
-            return QtCore.Qt.SizeHorCursor
-        return QtCore.Qt.SizeVerCursor
+            return QtCore.Qt.CursorShape.SizeHorCursor
+        return QtCore.Qt.CursorShape.SizeVerCursor
 
 
     def set_sweep_line_cursor(self, line):
@@ -315,7 +315,7 @@ class Plot2DSweepMixin:
             return False
 
         button = getattr(event, "button", lambda: None)()
-        return button == QtCore.Qt.LeftButton
+        return button == QtCore.Qt.MouseButton.LeftButton
 
 
     def set_sweep_line_drag_cursor(self, line):
@@ -404,7 +404,7 @@ class Plot2DSweepMixin:
 
         button = getattr(event, "button", lambda: None)()
         double_clicked = getattr(event, "double", lambda: False)()
-        return button == QtCore.Qt.LeftButton and double_clicked
+        return button == QtCore.Qt.MouseButton.LeftButton and double_clicked
 
 
     def request_sweep_line_removal(self, line, event=None):
@@ -420,8 +420,8 @@ class Plot2DSweepMixin:
         if event is None:
             return False
 
-        modifiers = getattr(event, "modifiers", lambda: QtCore.Qt.NoModifier)()
-        return bool(modifiers & QtCore.Qt.ShiftModifier)
+        modifiers = getattr(event, "modifiers", lambda: QtCore.Qt.KeyboardModifier.NoModifier)()
+        return bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
 
 
     def set_sweep_line_index(self, line, index, emit=True):
@@ -453,10 +453,10 @@ class Plot2DSweepMixin:
 
     def move_sweep_with_arrow_key(self, key):
         moves = {
-            QtCore.Qt.Key_Left: ("x", -1),
-            QtCore.Qt.Key_Right: ("x", 1),
-            QtCore.Qt.Key_Down: ("y", -1),
-            QtCore.Qt.Key_Up: ("y", 1),
+            QtCore.Qt.Key.Key_Left: ("x", -1),
+            QtCore.Qt.Key.Key_Right: ("x", 1),
+            QtCore.Qt.Key.Key_Down: ("y", -1),
+            QtCore.Qt.Key.Key_Up: ("y", 1),
             }
         if key not in moves:
             return
@@ -503,7 +503,7 @@ class Plot2DSweepMixin:
         if qtw.QApplication.instance() is None:
             return False
 
-        return bool(qtw.QApplication.keyboardModifiers() & QtCore.Qt.ShiftModifier)
+        return bool(qtw.QApplication.keyboardModifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
 
 
     def move_sweep_group(self, dragged_line, dragged_index):

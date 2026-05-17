@@ -16,7 +16,7 @@ from qplot.windows import (
 
 from time import time
 
-from PyQt5 import (
+from PyQt6 import (
     QtWidgets as qtw,
     QtCore
     )

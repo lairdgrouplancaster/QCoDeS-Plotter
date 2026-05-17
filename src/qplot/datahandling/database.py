@@ -14,7 +14,7 @@ import sys
 import threading
 from time import perf_counter
 
-from PyQt5 import QtCore
+from PyQt6 import QtCore
 from qcodes.dataset import initialise_or_create_database_at
 
 from qplot.datahandling.readSQL import get_runs_via_sql

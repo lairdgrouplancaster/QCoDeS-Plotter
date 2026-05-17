@@ -3,7 +3,7 @@ from ._plot1d_snap import Plot1DSnapMixin
 from ._plot1d_traces import Plot1DTraceMixin
 
 
-from PyQt5 import (
+from PyQt6 import (
     QtCore,
     )
 

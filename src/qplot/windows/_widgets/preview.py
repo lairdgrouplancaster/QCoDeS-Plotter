@@ -2,7 +2,7 @@ import json
 import sqlite3
 
 import numpy as np
-from PyQt5 import QtCore, QtGui, QtWidgets as qtw
+from PyQt6 import QtCore, QtGui, QtWidgets as qtw
 
 from qplot.diagnostics import log_exception
 from qplot.tools.general import data2matrix
@@ -278,7 +278,7 @@ class PreviewTab(qtw.QWidget):
     def _show_message(self, message, tooltip=None):
         self._clear_layout()
         label = qtw.QLabel(message)
-        label.setAlignment(QtCore.Qt.AlignCenter)
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         label.setMinimumHeight(120)
         if tooltip:
             label.setToolTip(tooltip)
@@ -316,7 +316,7 @@ class PreviewCard(qtw.QWidget):
             )
         image.setObjectName("previewImage")
         image.setFixedSize(preview_size, preview_size)
-        image.setAlignment(QtCore.Qt.AlignCenter)
+        image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         image.setPixmap(QtGui.QPixmap.fromImage(preview["image"]))
         image.setToolTip(preview["title"])
         image.plotRequested.connect(self.plotRequested)
@@ -336,9 +336,9 @@ class PreviewImageLabel(qtw.QLabel):
         super().__init__(*args)
         self.parameter = parameter
         self._selected = False
-        self.setFocusPolicy(QtCore.Qt.ClickFocus)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
         self.setProperty(PREVIEW_SELECTED_PROPERTY, False)
-        self.setContextMenuPolicy(QtCore.Qt.DefaultContextMenu)
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.DefaultContextMenu)
 
 
     def set_selected(self, selected):
@@ -366,7 +366,7 @@ class PreviewImageLabel(qtw.QLabel):
 
 
     def mousePressEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton and self.parameter:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton and self.parameter:
             self.select_preview()
         super().mousePressEvent(event)
 
@@ -378,14 +378,14 @@ class PreviewImageLabel(qtw.QLabel):
             return
 
         painter = QtGui.QPainter(self)
-        pen = QtGui.QPen(self.palette().color(QtGui.QPalette.Highlight))
+        pen = QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.Highlight))
         pen.setWidth(2)
         painter.setPen(pen)
         painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton and self.parameter:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton and self.parameter:
             self.plotRequested.emit(self.parameter)
             event.accept()
             return
@@ -401,15 +401,15 @@ class PreviewImageLabel(qtw.QLabel):
         self.select_preview()
         menu = qtw.QMenu(self)
 
-        plot_action = qtw.QAction("&Plot", menu)
+        plot_action = QtGui.QAction("&Plot", menu)
         plot_action.triggered.connect(lambda: self.plotRequested.emit(self.parameter))
         menu.addAction(plot_action)
 
-        export_action = qtw.QAction("&Export CSV...", menu)
+        export_action = QtGui.QAction("&Export CSV...", menu)
         export_action.triggered.connect(lambda: self.exportRequested.emit(self.parameter))
         menu.addAction(export_action)
 
-        menu.exec_(event.globalPos())
+        menu.exec(event.globalPos())
 
 
 class DraggablePreviewImageLabel(PreviewImageLabel):
@@ -419,18 +419,18 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
         self.axes = list(axes or [])
         self._drag_start_pos = None
         if self.guid:
-            self.setCursor(QtCore.Qt.OpenHandCursor)
+            self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
 
 
     def mousePressEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
             self._drag_start_pos = event.pos()
         super().mousePressEvent(event)
 
 
     def mouseMoveEvent(self, event):
         if not (
-            event.buttons() & QtCore.Qt.LeftButton
+            event.buttons() & QtCore.Qt.MouseButton.LeftButton
             and self._drag_start_pos is not None
             and self.guid
             and self.parameter
@@ -456,7 +456,7 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
             drag.setPixmap(pixmap)
             drag.setHotSpot(QtCore.QPoint(pixmap.width() // 2, pixmap.height() // 2))
 
-        drag.exec_(QtCore.Qt.CopyAction)
+        drag.exec(QtCore.Qt.DropAction.CopyAction)
 
 
 class PreviewWorker(QtCore.QRunnable):
@@ -566,7 +566,7 @@ def _preview_title(parameter, axes):
 
 
 def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
-    image = QtGui.QImage(size, size, QtGui.QImage.Format_RGB32)
+    image = QtGui.QImage(size, size, QtGui.QImage.Format.Format_RGB32)
     image.fill(QtGui.QColor(PREVIEW_BACKGROUND_COLOR))
 
     x = np.asarray(x, dtype=float)
@@ -596,7 +596,7 @@ def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
     ys = scale(y, y_range, invert=True)
 
     painter = QtGui.QPainter(image)
-    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
     painter.setPen(QtGui.QPen(QtGui.QColor(210, 0, 0), 3))
 
     if x.size == 1:
@@ -612,7 +612,7 @@ def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
 
 
 def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE, grid_shape=None):
-    image = QtGui.QImage(size, size, QtGui.QImage.Format_RGB32)
+    image = QtGui.QImage(size, size, QtGui.QImage.Format.Format_RGB32)
     image.fill(QtGui.QColor(PREVIEW_BACKGROUND_COLOR))
 
     x = np.asarray(x, dtype=float)
@@ -636,15 +636,15 @@ def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE, grid_shape=None):
         rgb.shape[1],
         rgb.shape[0],
         rgb.shape[1] * 3,
-        QtGui.QImage.Format_RGB888,
+        QtGui.QImage.Format.Format_RGB888,
         ).copy()
 
     return source.scaled(
         size,
         size,
-        QtCore.Qt.IgnoreAspectRatio,
-        QtCore.Qt.FastTransformation,
-        ).convertToFormat(QtGui.QImage.Format_RGB32)
+        QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
+        QtCore.Qt.TransformationMode.FastTransformation,
+        ).convertToFormat(QtGui.QImage.Format.Format_RGB32)
 
 
 def _fixed_heatmap_grid(x, y, z, grid_shape):

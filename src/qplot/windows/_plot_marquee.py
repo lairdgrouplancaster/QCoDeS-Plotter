@@ -1,5 +1,5 @@
-from PyQt5 import QtCore, QtGui
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 import pyqtgraph as pg
 
@@ -28,22 +28,22 @@ class PlotMarqueeMixin:
         highlight_pen.setWidthF(3)
         highlight_pen.setCosmetic(True)
         self.marquee_highlight.setPen(highlight_pen)
-        self.marquee_highlight.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+        self.marquee_highlight.setBrush(QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush))
         self.marquee_highlight.setZValue(18)
         self.marquee_highlight.hide()
-        self.marquee_highlight.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.marquee_highlight.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
         self.plot.addItem(self.marquee_highlight)
 
         self.marquee_outline = qtw.QGraphicsRectItem()
         pen = QtGui.QPen(QtGui.QColor(65, 65, 65, 220))
         pen.setWidthF(1.2)
         pen.setCosmetic(True)
-        pen.setStyle(QtCore.Qt.DashLine)
+        pen.setStyle(QtCore.Qt.PenStyle.DashLine)
         self.marquee_outline.setPen(pen)
         self.marquee_outline.setBrush(QtGui.QBrush(QtGui.QColor(40, 40, 40, 24)))
         self.marquee_outline.setZValue(19)
         self.marquee_outline.hide()
-        self.marquee_outline.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.marquee_outline.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
         self.plot.addItem(self.marquee_outline)
 
         self.marquee_handles = pg.ScatterPlotItem(
@@ -54,7 +54,7 @@ class PlotMarqueeMixin:
             )
         self.marquee_handles.setZValue(20)
         self.marquee_handles.hide()
-        self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
         self.plot.addItem(self.marquee_handles)
 
     def is_marquee_dragging(self):
@@ -90,7 +90,7 @@ class PlotMarqueeMixin:
         if mode == "new":
             self.set_marquee_rect(QtCore.QRectF(start, start))
 
-    def drag_marquee_to(self, point, modifiers=QtCore.Qt.NoModifier):
+    def drag_marquee_to(self, point, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
         """
         Update the marquee during an active drag.
 
@@ -141,7 +141,7 @@ class PlotMarqueeMixin:
         elif isinstance(global_pos, QtCore.QPointF):
             global_pos = global_pos.toPoint()
 
-        menu.exec_(global_pos)
+        menu.exec(global_pos)
         return True
 
     def _new_marquee_context_menu(self):
@@ -234,8 +234,8 @@ class PlotMarqueeMixin:
         stats_table = self._new_marquee_stats_table(stats_text)
         layout.addWidget(stats_table)
 
-        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
-        copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ActionRole)
+        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
+        copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ButtonRole.ActionRole)
 
         def copy_stats(_checked=False):
             self.copy_marquee_stats_to_clipboard(stats_text)
@@ -254,10 +254,10 @@ class PlotMarqueeMixin:
         stats_table.setHorizontalHeaderLabels(["Field", "Value"])
         stats_table.setRowCount(len(rows))
         stats_table.setAlternatingRowColors(True)
-        stats_table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
-        stats_table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
-        stats_table.setSelectionMode(qtw.QAbstractItemView.ExtendedSelection)
-        stats_table.setTextElideMode(QtCore.Qt.ElideNone)
+        stats_table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
+        stats_table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
+        stats_table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
+        stats_table.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
         stats_table.setWordWrap(False)
         stats_table.verticalHeader().hide()
         stats_table.verticalHeader().setMinimumSectionSize(16)
@@ -266,11 +266,11 @@ class PlotMarqueeMixin:
         stats_table.horizontalHeader().setStretchLastSection(True)
         stats_table.horizontalHeader().setSectionResizeMode(
             0,
-            qtw.QHeaderView.ResizeToContents
+            qtw.QHeaderView.ResizeMode.ResizeToContents
             )
         stats_table.horizontalHeader().setSectionResizeMode(
             1,
-            qtw.QHeaderView.Stretch
+            qtw.QHeaderView.ResizeMode.Stretch
             )
         stats_table.setMinimumWidth(280)
         stats_table.setMinimumHeight(170)
@@ -331,9 +331,9 @@ class PlotMarqueeMixin:
         clipboard.setText(stats_text)
         return True
 
-    def _resize_marquee_rect(self, rect, handle, point, modifiers=QtCore.Qt.NoModifier):
-        symmetric = bool(modifiers & QtCore.Qt.AltModifier)
-        asymmetric = bool(modifiers & QtCore.Qt.ShiftModifier) and not symmetric
+    def _resize_marquee_rect(self, rect, handle, point, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
+        symmetric = bool(modifiers & QtCore.Qt.KeyboardModifier.AltModifier)
+        asymmetric = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier) and not symmetric
         original = QtCore.QRectF(rect)
         anchor = self._marquee_handle_points_for_rect(original)[handle]
 
@@ -438,32 +438,32 @@ class PlotMarqueeMixin:
 
         return None
 
-    def marquee_cursor_shape_at(self, scene_pos, modifiers=QtCore.Qt.NoModifier):
+    def marquee_cursor_shape_at(self, scene_pos, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
         mode = self.current_marquee_drag_mode()
         if mode == "new":
-            return QtCore.Qt.CrossCursor
+            return QtCore.Qt.CursorShape.CrossCursor
         if mode is not None:
             return self._marquee_cursor_shape_for_handle(mode)
 
         handle = self.marquee_drag_mode_at(scene_pos)
         if handle is not None:
             return self._marquee_cursor_shape_for_handle(handle)
-        if modifiers & QtCore.Qt.AltModifier:
-            return QtCore.Qt.CrossCursor
+        if modifiers & QtCore.Qt.KeyboardModifier.AltModifier:
+            return QtCore.Qt.CursorShape.CrossCursor
 
         return None
 
     def _marquee_cursor_shape_for_handle(self, handle):
         if handle in ("e", "w"):
-            return QtCore.Qt.SizeHorCursor
+            return QtCore.Qt.CursorShape.SizeHorCursor
         if handle in ("n", "s"):
-            return QtCore.Qt.SizeVerCursor
+            return QtCore.Qt.CursorShape.SizeVerCursor
         if handle in ("nw", "se"):
-            return QtCore.Qt.SizeFDiagCursor
+            return QtCore.Qt.CursorShape.SizeFDiagCursor
         if handle in ("ne", "sw"):
-            return QtCore.Qt.SizeBDiagCursor
+            return QtCore.Qt.CursorShape.SizeBDiagCursor
 
-        return QtCore.Qt.CrossCursor
+        return QtCore.Qt.CursorShape.CrossCursor
 
     def _update_marquee_handles(self):
         points = list(self._marquee_handle_points().values())

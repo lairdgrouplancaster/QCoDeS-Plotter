@@ -1,7 +1,7 @@
 from math import isclose, isfinite, log10
 
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
 import pyqtgraph as pg
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
@@ -95,7 +95,7 @@ class PlotAxisScalingMixin:
             previous_handler = getattr(axis_item, "mouseDoubleClickEvent", None)
 
             def mouse_double_click(event, axis=axis, previous_handler=previous_handler):
-                if event.button() == QtCore.Qt.LeftButton:
+                if event.button() == QtCore.Qt.MouseButton.LeftButton:
                     self.open_axis_scale_dialog(axis)
                     event.accept()
                     return
@@ -312,7 +312,7 @@ class PlotAxisScalingMixin:
             layout = qtw.QVBoxLayout(dialog)
             layout.addWidget(self._new_axis_scale_controls(axis))
 
-            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
+            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
             buttons.rejected.connect(dialog.close)
             layout.addWidget(buttons)
 

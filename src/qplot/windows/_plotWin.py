@@ -4,9 +4,9 @@ from math import log10
 from os import path
 from time import perf_counter
 
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore
-from PyQt5.QtGui import QKeySequence
+from PyQt6 import QtGui, QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6.QtGui import QKeySequence
 
 import pyqtgraph as pg
 
@@ -114,7 +114,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
             Which parameter within dataset to plot.
         config : qplot.configuration.config.config
             Holds configuration data, mainly theme and window size.
-        threadPool : PyQt5.QtCore.QThreadPool
+        threadPool : PyQt6.QtCore.QThreadPool
             A pool of threads for the refresh worker to be placed in.
         refrate : float, optional
             Default value for the refresh timer. The default is None, which 
@@ -223,9 +223,9 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
 
     def eventFilter(self, source, event):
         if event.type() in (
-            QtCore.QEvent.DragEnter,
-            QtCore.QEvent.DragMove,
-            QtCore.QEvent.Drop,
+            QtCore.QEvent.Type.DragEnter,
+            QtCore.QEvent.Type.DragMove,
+            QtCore.QEvent.Type.Drop,
             ):
             if self._handle_preview_drag_drop(event):
                 return True
@@ -260,8 +260,8 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
             event.ignore()
             return True
 
-        if event.type() == QtCore.QEvent.Drop:
-            event.setDropAction(QtCore.Qt.CopyAction)
+        if event.type() == QtCore.QEvent.Type.Drop:
+            event.setDropAction(QtCore.Qt.DropAction.CopyAction)
             event.accept()
             self.previewTraceDropRequested.emit(
                 self,
@@ -335,10 +335,10 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         if not self.visible:
             return
 
-        box = qtw.QMessageBox(qtw.QMessageBox.Warning, title, message, parent=self)
+        box = qtw.QMessageBox(qtw.QMessageBox.Icon.Warning, title, message, parent=self)
         if details:
             box.setDetailedText(details)
-        box.exec_()
+        box.exec()
 
 
     def register_shortcut(self, action, shortcut, status_tip : str = None):
@@ -348,11 +348,11 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         """
         if isinstance(shortcut, (list, tuple)):
             action.setShortcuts(shortcut)
-            shortcut_text = shortcut[0].toString(QKeySequence.NativeText)
+            shortcut_text = shortcut[0].toString(QKeySequence.SequenceFormat.NativeText)
         else:
             action.setShortcut(shortcut)
-            shortcut_text = QKeySequence(shortcut).toString(QKeySequence.NativeText)
-        action.setShortcutContext(QtCore.Qt.WindowShortcut)
+            shortcut_text = QKeySequence(shortcut).toString(QKeySequence.SequenceFormat.NativeText)
+        action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         if hasattr(action, "setShortcutVisibleInContextMenu"):
             action.setShortcutVisibleInContextMenu(True)
         if status_tip:
@@ -398,7 +398,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
 
         """
         self.toolbarRef = qtw.QToolBar("Refresh Timer")
-        self.addToolBar(QtCore.Qt.TopToolBarArea, self.toolbarRef)
+        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.toolbarRef)
         
         if not self.ds.running:
             self.toolbarRef.hide()
@@ -425,7 +425,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
 
         """
         self.toolbarCo_ord = qtw.QToolBar("Co-ordinates")
-        self.addToolBar(QtCore.Qt.BottomToolBarArea, self.toolbarCo_ord)
+        self.addToolBar(QtCore.Qt.ToolBarArea.BottomToolBarArea, self.toolbarCo_ord)
         
         labelWidth = self._label_width #About the size of 3 s.f. scientific
         self.pos_labels = {}
@@ -458,7 +458,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
             self.plot.ctrlMenu.setTitle("Options")
             self.plot.ctrlMenu.menuAction().setText("Options")
 
-        self.exportPlotAction = qtw.QAction("&Export Plot...", self)
+        self.exportPlotAction = QtGui.QAction("&Export Plot...", self)
         self.exportPlotAction.setObjectName("exportPlotAction")
         self.register_shortcut(
             self.exportPlotAction,
@@ -467,16 +467,16 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
             )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
-        self.copyPlotImageAction = qtw.QAction("&Copy Plot Image", self)
+        self.copyPlotImageAction = QtGui.QAction("&Copy Plot Image", self)
         self.copyPlotImageAction.setObjectName("copyPlotImageAction")
         self.register_shortcut(
             self.copyPlotImageAction,
-            standard_key_sequences(QKeySequence.Copy, ["Ctrl+C"]),
+            standard_key_sequences(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
             "Copy the plot image to the clipboard",
             )
         self.copyPlotImageAction.triggered.connect(self.copy_plot_image)
 
-        contextAction = qtw.QAction("Show Context Menu", self)
+        contextAction = QtGui.QAction("Show Context Menu", self)
         self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
         contextAction.triggered.connect(self.open_context_menu)
         
@@ -495,7 +495,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         self.vbMenu.insertSeparator(x_action)
         
         # Create visibility
-        toggleAction = qtw.QAction("View Operations", self, checkable=True)
+        toggleAction = QtGui.QAction("View Operations", self, checkable=True)
         self.register_shortcut(toggleAction, "Ctrl+Shift+O", "Toggle operations panel")
         toggleAction.triggered.connect(self.oper_dock.setVisible)
         self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
@@ -538,7 +538,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         Opens the plot context menu from the keyboard.
 
         """
-        self.vbMenu.exec_(self.widget.mapToGlobal(self.widget.rect().center()))
+        self.vbMenu.exec(self.widget.mapToGlobal(self.widget.rect().center()))
 
 
     @QtCore.pyqtSlot()
@@ -603,7 +603,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         
         # Use of QDockWidget over QToolbar to allow proper widget placement
         self.axes_dock = QDock_context("Line control", self)
-        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.axes_dock)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.axes_dock)
         
         # Widget production
         x_layout = self.axes_dock.addLayout()
@@ -649,8 +649,8 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
             
         # Produce seperations line as QDockWidget as none inbuilt
         sep = qtw.QFrame()
-        sep.setFrameShape(qtw.QFrame.HLine)
-        sep.setFrameShadow(qtw.QFrame.Sunken)
+        sep.setFrameShape(qtw.QFrame.Shape.HLine)
+        sep.setFrameShadow(qtw.QFrame.Shadow.Sunken)
         
         self.axes_dock.addWidget(sep)
         
@@ -669,7 +669,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
 
         """
         self.oper_dock = QDock_context("Operations", self)
-        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.oper_dock)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, self.oper_dock)
         self.oper_dock.setVisible(False)# Large window so toggle off by default
         
         self.oper_widget = operations_widget(self)
@@ -697,27 +697,27 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
             edit_menu = menu.addMenu("&Edit")
             edit_menu.addAction(copy_plot_image_action)
 
-        close_all_plots_action = qtw.QAction("Close All &Plot Windows", self)
+        close_all_plots_action = QtGui.QAction("Close All &Plot Windows", self)
         close_all_plots_action.setShortcut("Ctrl+Shift+W")
-        close_all_plots_action.setShortcutContext(QtCore.Qt.WindowShortcut)
+        close_all_plots_action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         close_all_plots_action.setStatusTip("Close all open plot windows")
         close_all_plots_action.triggered.connect(self.request_close_all_plots)
         file_menu.addAction(close_all_plots_action)
 
-        closeAction = qtw.QAction("&Close Window", self)
+        closeAction = QtGui.QAction("&Close Window", self)
         closeAction.setShortcuts(
-            standard_key_sequences(QKeySequence.Close, ["Ctrl+W"])
+            standard_key_sequences(QKeySequence.StandardKey.Close, ["Ctrl+W"])
             )
-        closeAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        closeAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         closeAction.setStatusTip("Close this plot window")
         closeAction.triggered.connect(self.close)
         file_menu.addAction(closeAction)
 
-        quitAction = qtw.QAction("&Quit qPlot", self)
+        quitAction = QtGui.QAction("&Quit qPlot", self)
         quitAction.setShortcuts(
-            standard_key_sequences(QKeySequence.Quit, ["Ctrl+Q"])
+            standard_key_sequences(QKeySequence.StandardKey.Quit, ["Ctrl+Q"])
             )
-        quitAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+        quitAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         quitAction.setStatusTip("Quit qPlot")
         quitAction.triggered.connect(self.request_application_quit)
         file_menu.addAction(quitAction)
@@ -737,7 +737,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         
         main_menu = menu.addMenu("&View")
         
-        refreshAction = qtw.QAction("&Refresh", self)
+        refreshAction = QtGui.QAction("&Refresh", self)
         refreshAction.setShortcut("R")
         refreshAction.triggered.connect(lambda: self.refreshWindow(force=True))
         if hasattr(self, "get_mergables"): # Force refresh 1d line options
@@ -894,7 +894,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         dialog.preferencesApplied.connect(
             lambda: self.show_status("Preferences saved.", 3000)
             )
-        dialog.exec_()
+        dialog.exec()
 
 
     @staticmethod
@@ -939,7 +939,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
 
         Returns
         -------
-        menu : PyQt5.QtWidgets.QMenu
+        menu : PyQt6.QtWidgets.QMenu
             Context menu to be displayed.
 
         """
@@ -951,7 +951,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         # Set actions
         for widget in widgets:
             action = widget.toggleViewAction()
-            if isinstance(action, qtw.QAction):
+            if isinstance(action, QtGui.QAction):
                 shortcut = self._toggle_shortcuts.get(widget.windowTitle())
                 if shortcut:
                     self.register_shortcut(
@@ -1034,7 +1034,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
 #Events
 
     def keyPressEvent(self, event):
-        if event.key() == QtCore.Qt.Key_Escape and self.__dict__.get("marquee") is not None:
+        if event.key() == QtCore.Qt.Key.Key_Escape and self.__dict__.get("marquee") is not None:
             self.clear_marquee()
             event.accept()
             return
@@ -1067,7 +1067,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
 
         Parameters
         ----------
-        pos : PyQt5.<something?>
+        pos : PyQt6.<something?>
             The cursor position object.
 
         """

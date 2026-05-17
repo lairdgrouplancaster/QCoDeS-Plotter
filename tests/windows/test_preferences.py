@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtWidgets as qtw
 
 from qplot.configuration.config import config
 from qplot.windows import main as main_window
@@ -152,7 +152,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
         dialog = PreferencesDialog(cfg)
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.Yes
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.Yes
             dialog.preferencesApplied.connect(lambda: applied.append(True))
 
             self.assertTrue(dialog.restore_defaults())
@@ -180,7 +180,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
         dialog = PreferencesDialog(cfg)
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.No
+            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.No
 
             self.assertFalse(dialog.restore_defaults())
 

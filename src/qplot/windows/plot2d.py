@@ -1,5 +1,5 @@
-from PyQt5 import QtWidgets as qtw
-from PyQt5 import QtCore, QtGui
+from PyQt6 import QtGui, QtWidgets as qtw
+from PyQt6 import QtCore
 
 import pyqtgraph as pg
 
@@ -56,7 +56,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         self.hover_pixel_outline.setPen(
             pg.mkPen((255, 255, 255, 190), width=1.5, cosmetic=True)
         )
-        self.hover_pixel_outline.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+        self.hover_pixel_outline.setBrush(QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush))
         self.hover_pixel_outline.setZValue(10)
         self.hover_pixel_outline.hide()
         self.plot.addItem(self.hover_pixel_outline)
@@ -83,7 +83,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
     def initContextMenu(self):
         super().initContextMenu()
 
-        autoColor = qtw.QAction("Autoscale Color", self)
+        autoColor = QtGui.QAction("Autoscale Color", self)
         self.register_shortcut(autoColor, "Ctrl+Shift+C", "Autoscale color range")
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
@@ -93,12 +93,12 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         sep = self.vbMenu.insertSeparator(actions[3])
         
         ### Sweep control
-        h_sweep = qtw.QAction("Horizontal Cut", self)
+        h_sweep = QtGui.QAction("Horizontal Cut", self)
         self.register_shortcut(h_sweep, "H", "Plot horizontal cut")
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
-        v_sweep = qtw.QAction("Vertical Cut", self)
+        v_sweep = QtGui.QAction("Vertical Cut", self)
         self.register_shortcut(v_sweep, "V", "Plot vertical cut")
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
@@ -110,14 +110,14 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         self._init_colorbar_scale_controls()
 
         for key, text in (
-                (QtCore.Qt.Key_Left, "Move selected cut left"),
-                (QtCore.Qt.Key_Right, "Move selected cut right"),
-                (QtCore.Qt.Key_Up, "Move selected cut up"),
-                (QtCore.Qt.Key_Down, "Move selected cut down"),
+                (QtCore.Qt.Key.Key_Left, "Move selected cut left"),
+                (QtCore.Qt.Key.Key_Right, "Move selected cut right"),
+                (QtCore.Qt.Key.Key_Up, "Move selected cut up"),
+                (QtCore.Qt.Key.Key_Down, "Move selected cut down"),
                 ):
-            action = qtw.QAction(text, self)
+            action = QtGui.QAction(text, self)
             action.setShortcut(QtGui.QKeySequence(key))
-            action.setShortcutContext(QtCore.Qt.WindowShortcut)
+            action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             action.triggered.connect(
                 lambda _, key=key: self.move_sweep_with_arrow_key(key)
                 )

@@ -1,5 +1,5 @@
-from PyQt5 import QtCore, QtGui
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets as qtw
 
 import math
 import numpy as np
@@ -37,7 +37,7 @@ class _CenteredIconDelegate(qtw.QStyledItemDelegate):
     """
 
     def paint(self, painter, option, index):
-        icon = index.data(QtCore.Qt.DecorationRole)
+        icon = index.data(QtCore.Qt.ItemDataRole.DecorationRole)
         if not isinstance(icon, QtGui.QIcon) or icon.isNull():
             super().paint(painter, option, index)
             return
@@ -49,7 +49,7 @@ class _CenteredIconDelegate(qtw.QStyledItemDelegate):
 
         widget = opt.widget
         style = widget.style() if widget else qtw.QApplication.style()
-        style.drawControl(qtw.QStyle.CE_ItemViewItem, opt, painter, widget)
+        style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
 
         icon_size = opt.decorationSize
         if not icon_size.isValid() or icon_size.isEmpty():
@@ -59,12 +59,12 @@ class _CenteredIconDelegate(qtw.QStyledItemDelegate):
         icon_rect.moveCenter(opt.rect.center())
 
         mode = QtGui.QIcon.Normal
-        if not opt.state & qtw.QStyle.State_Enabled:
+        if not opt.state & qtw.QStyle.StateFlag.State_Enabled:
             mode = QtGui.QIcon.Disabled
-        elif opt.state & qtw.QStyle.State_Selected:
+        elif opt.state & qtw.QStyle.StateFlag.State_Selected:
             mode = QtGui.QIcon.Selected
 
-        icon.paint(painter, icon_rect, QtCore.Qt.AlignCenter, mode)
+        icon.paint(painter, icon_rect, QtCore.Qt.AlignmentFlag.AlignCenter, mode)
 
 
 class Plot2DColorbarMixin:
@@ -369,7 +369,7 @@ class Plot2DColorbarMixin:
         previous_double_click_handler = getattr(item, "mouseDoubleClickEvent", None)
 
         def mouse_double_click(event, previous_handler=previous_double_click_handler):
-            if event.button() == QtCore.Qt.LeftButton:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
                 self.open_colorbar_scale_dialog()
                 event.accept()
                 return
@@ -391,7 +391,7 @@ class Plot2DColorbarMixin:
         previous_mouse_click_handler = getattr(bar, "mouseClickEvent", None)
 
         def mouse_click(event, previous_handler=previous_mouse_click_handler):
-            if event.button() == QtCore.Qt.RightButton:
+            if event.button() == QtCore.Qt.MouseButton.RightButton:
                 event.accept()
                 return
 
@@ -466,7 +466,7 @@ class Plot2DColorbarMixin:
                 event.buttonDownPos(),
                 )
             if (
-                    event.button() == QtCore.Qt.LeftButton
+                    event.button() == QtCore.Qt.MouseButton.LeftButton
                     and (
                         active is not None
                         or (
@@ -535,11 +535,11 @@ class Plot2DColorbarMixin:
             modifiers = event.modifiers()
             active = getattr(region, "_qplot_colorbar_alt_range_drag_source", None)
             if (
-                    event.button() == QtCore.Qt.LeftButton
+                    event.button() == QtCore.Qt.MouseButton.LeftButton
                     and (
                         active == source
                         or (
-                            modifiers & QtCore.Qt.AltModifier
+                            modifiers & QtCore.Qt.KeyboardModifier.AltModifier
                             and getattr(line, "movable", True)
                             and getattr(region, "movable", True)
                             )
@@ -1180,18 +1180,18 @@ class Plot2DColorbarMixin:
         table.verticalHeader().hide()
         table.setShowGrid(False)
         table.setAlternatingRowColors(True)
-        table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
-        table.setSelectionMode(qtw.QAbstractItemView.SingleSelection)
-        table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.SingleSelection)
+        table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSortingEnabled(True)
         table.setMinimumSize(560, 360)
         table.setIconSize(QtCore.QSize(220, 14))
         table.setItemDelegateForColumn(1, _CenteredIconDelegate(table))
 
         header = table.horizontalHeader()
-        header.setSectionResizeMode(0, qtw.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, qtw.QHeaderView.Stretch)
-        header.setSectionResizeMode(2, qtw.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, qtw.QHeaderView.ResizeMode.ResizeToContents)
 
         self._populate_colorbar_colormap_table()
 
@@ -1212,13 +1212,13 @@ class Plot2DColorbarMixin:
             label = _COLORBAR_COLORMAP_LABELS.get(name, name)
             type_label = _colorbar_colormap_type_label(name)
             name_item = _ColorbarColormapTableItem(label)
-            name_item.setData(QtCore.Qt.UserRole, name)
+            name_item.setData(QtCore.Qt.ItemDataRole.UserRole, name)
             name_item.setData(_COLORBAR_TABLE_SORT_ROLE, label)
             type_item = _ColorbarColormapTableItem(type_label)
-            type_item.setData(QtCore.Qt.UserRole, name)
+            type_item.setData(QtCore.Qt.ItemDataRole.UserRole, name)
             type_item.setData(_COLORBAR_TABLE_SORT_ROLE, type_label)
             preview_item = _ColorbarColormapTableItem()
-            preview_item.setData(QtCore.Qt.UserRole, name)
+            preview_item.setData(QtCore.Qt.ItemDataRole.UserRole, name)
             preview_item.setData(_COLORBAR_TABLE_SORT_ROLE, label)
             preview_item.setIcon(QtGui.QIcon(_colorbar_colormap_preview(name)))
 
@@ -1400,7 +1400,7 @@ class Plot2DColorbarMixin:
 
         for row in range(table.rowCount()):
             item = table.item(row, 0)
-            if item is not None and item.data(QtCore.Qt.UserRole) == name:
+            if item is not None and item.data(QtCore.Qt.ItemDataRole.UserRole) == name:
                 return row
 
         return -1
@@ -1440,7 +1440,7 @@ class Plot2DColorbarMixin:
         if item is None:
             return
 
-        name = item.data(QtCore.Qt.UserRole)
+        name = item.data(QtCore.Qt.ItemDataRole.UserRole)
         if name is None:
             return
 
@@ -1481,7 +1481,7 @@ class Plot2DColorbarMixin:
             layout = qtw.QVBoxLayout(dialog)
             layout.addWidget(controls)
 
-            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.Close)
+            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
             buttons.rejected.connect(dialog.close)
             layout.addWidget(buttons)
 

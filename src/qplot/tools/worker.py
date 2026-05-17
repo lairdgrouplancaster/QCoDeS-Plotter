@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from PyQt5 import QtCore
+from PyQt6 import QtCore
 
 import numpy as np
 

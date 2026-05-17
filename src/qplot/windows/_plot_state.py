@@ -1,5 +1,5 @@
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
 
 class PlotStateOverlay(QtCore.QObject):
@@ -42,7 +42,7 @@ class PlotStateOverlay(QtCore.QObject):
 
         self.frame = qtw.QFrame(self.target)
         self.frame.setObjectName("plotStateOverlay")
-        self.frame.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.frame.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.frame.setAutoFillBackground(False)
 
         layout = qtw.QVBoxLayout(self.frame)
@@ -54,12 +54,12 @@ class PlotStateOverlay(QtCore.QObject):
         title_font = self.title_label.font()
         title_font.setBold(True)
         self.title_label.setFont(title_font)
-        self.title_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.title_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.title_label)
 
         self.detail_label = qtw.QLabel(self.frame)
         self.detail_label.setObjectName("plotStateOverlayDetail")
-        self.detail_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.detail_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.detail_label.setWordWrap(True)
         layout.addWidget(self.detail_label)
 
@@ -83,7 +83,7 @@ class PlotStateOverlay(QtCore.QObject):
     def eventFilter(self, source, event):
         if (
                 (source is self.owner or source is self.target)
-                and event.type() in (QtCore.QEvent.Resize, QtCore.QEvent.Show)
+                and event.type() in (QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show)
                 ):
             self._sync_geometry()
         return super().eventFilter(source, event)

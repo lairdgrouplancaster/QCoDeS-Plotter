@@ -1,4 +1,4 @@
-from PyQt5 import (
+from PyQt6 import (
     QtWidgets as qtw,
     QtCore,
     QtGui,
@@ -44,16 +44,16 @@ from datetime import datetime
 
 from .._shortcuts import standard_key_sequences
 
-COPY_SELECTION_SHORTCUTS = standard_key_sequences(QtGui.QKeySequence.Copy, ["Ctrl+C"])
+COPY_SELECTION_SHORTCUTS = standard_key_sequences(QtGui.QKeySequence.StandardKey.Copy, ["Ctrl+C"])
 COPY_CELL_SHORTCUTS = [QtGui.QKeySequence("Ctrl+Shift+C")]
 MEASUREMENT_PREVIEW_SIZE = 22
 MEASUREMENT_PREVIEW_SPACING = 3
 
 
 def copy_action(label, shortcuts, slot, parent):
-    action = qtw.QAction(label, parent)
+    action = QtGui.QAction(label, parent)
     action.setShortcuts(shortcuts)
-    action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+    action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
     if hasattr(action, "setShortcutVisibleInContextMenu"):
         action.setShortcutVisibleInContextMenu(True)
     action.triggered.connect(slot)
@@ -73,7 +73,7 @@ class RunPreviewCell(qtw.QWidget):
         self.content_layout = qtw.QHBoxLayout()
         self.content_layout.setContentsMargins(2, 0, 2, 0)
         self.content_layout.setSpacing(MEASUREMENT_PREVIEW_SPACING)
-        self.content_layout.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        self.content_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.setLayout(self.content_layout)
         self.setFixedHeight(self.icon_size + 6)
         self.show_placeholders()
@@ -103,14 +103,14 @@ class RunPreviewCell(qtw.QWidget):
                 )
             label.setObjectName("measurementPreviewImage")
             label.setFixedSize(self.icon_size, self.icon_size)
-            label.setAlignment(QtCore.Qt.AlignCenter)
+            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             label.setToolTip(preview.get("title", ""))
             label.setPixmap(
                 QtGui.QPixmap.fromImage(image).scaled(
                     self.icon_size,
                     self.icon_size,
-                    QtCore.Qt.KeepAspectRatio,
-                    QtCore.Qt.SmoothTransformation,
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                    QtCore.Qt.TransformationMode.SmoothTransformation,
                     )
                 )
             label.plotRequested.connect(self._emit_plot_requested)
@@ -127,8 +127,8 @@ class RunPreviewCell(qtw.QWidget):
         label = qtw.QLabel()
         label.setObjectName("measurementPreviewPlaceholder")
         label.setFixedSize(self.icon_size, self.icon_size)
-        label.setFrameShape(qtw.QFrame.Box)
-        label.setFrameShadow(qtw.QFrame.Plain)
+        label.setFrameShape(qtw.QFrame.Shape.Box)
+        label.setFrameShadow(qtw.QFrame.Shadow.Plain)
         label.setLineWidth(1)
         return label
 
@@ -155,10 +155,10 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
     Paints setpoint counts with equals signs aligned.
     """
 
-    right_text_alignment = QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter
+    right_text_alignment = QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter
 
     def paint(self, painter, option, index):
-        text = index.data(QtCore.Qt.DisplayRole)
+        text = index.data(QtCore.Qt.ItemDataRole.DisplayRole)
         if text is None or text == "":
             super().paint(painter, option, index)
             return
@@ -176,10 +176,10 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
 
         widget = opt.widget
         style = widget.style() if widget else qtw.QApplication.style()
-        style.drawControl(qtw.QStyle.CE_ItemViewItem, opt, painter, widget)
+        style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
 
         text_rect = style.subElementRect(
-            qtw.QStyle.SE_ItemViewItemText,
+            qtw.QStyle.SubElement.SE_ItemViewItemText,
             opt,
             widget
             ).adjusted(2, 0, -2, 0)
@@ -193,8 +193,8 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
             painter.setPen(self._text_color(opt))
             painter.drawText(
                 text_rect,
-                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
-                metrics.elidedText(left, QtCore.Qt.ElideLeft, text_rect.width())
+                QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter,
+                metrics.elidedText(left, QtCore.Qt.TextElideMode.ElideLeft, text_rect.width())
                 )
             painter.restore()
             return
@@ -228,11 +228,11 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
         painter.setPen(self._text_color(opt))
         painter.drawText(
             left_rect,
-            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
-            metrics.elidedText(left, QtCore.Qt.ElideLeft, left_rect.width())
+            QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter,
+            metrics.elidedText(left, QtCore.Qt.TextElideMode.ElideLeft, left_rect.width())
             )
         if right is not None:
-            painter.drawText(equals_rect, QtCore.Qt.AlignCenter, equals_text)
+            painter.drawText(equals_rect, QtCore.Qt.AlignmentFlag.AlignCenter, equals_text)
             self._draw_right_text(painter, right_rect, right, metrics)
         painter.restore()
 
@@ -257,7 +257,7 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
         painter.drawText(
             right_rect,
             self.right_text_alignment,
-            metrics.elidedText(right, QtCore.Qt.ElideRight, right_rect.width())
+            metrics.elidedText(right, QtCore.Qt.TextElideMode.ElideRight, right_rect.width())
             )
 
 
@@ -286,12 +286,12 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
 
 
     def _text_color(self, option):
-        return option.palette.color(QtGui.QPalette.Text)
+        return option.palette.color(QtGui.QPalette.ColorRole.Text)
 
 
 class RunList(qtw.QTreeWidget):
     """
-    A modified PyQt5.QtWidgets.QTreeWidget, formated as a list which displays
+    A modified PyQt6.QtWidgets.QTreeWidget, formated as a list which displays
     all run_ids and other properties found in self.cols.
     
     All QTreeWidgetItem are converted to SortableTreeWidgetItem to allow the user to sort
@@ -331,7 +331,7 @@ class RunList(qtw.QTreeWidget):
         self.setRootIsDecorated(False)
         self.setIndentation(0)
         self.setUniformRowHeights(False)
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setItemDelegateForColumn(
             self.cols.index("Setpoints"),
             EqualsAlignedDelegate(self)
@@ -347,12 +347,12 @@ class RunList(qtw.QTreeWidget):
         self.itemDoubleClicked.connect(self.doubleClicked)
         
         # Setup Context Menu
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.prepareMenu)
 
-        context_action = qtw.QAction("Show Context Menu", self)
+        context_action = QtGui.QAction("Show Context Menu", self)
         context_action.setShortcut("Shift+F10")
-        context_action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        context_action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         context_action.triggered.connect(self.openKeyboardMenu)
         self.addAction(context_action)
         
@@ -404,19 +404,19 @@ class RunList(qtw.QTreeWidget):
             for col_name in ("ID", "Setpoints", "Size"):
                 item.setTextAlignment(
                     self.cols.index(col_name),
-                    QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                    QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
                     )
             item.setTextAlignment(
                 self.cols.index("Complete"),
-                QtCore.Qt.AlignCenter
+                QtCore.Qt.AlignmentFlag.AlignCenter
                 )
             item.setTextAlignment(
                 self.cols.index("Duration"),
-                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
+                QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
                 )
             item.setData(
                 self.cols.index("Measurements"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 measurement_count
                 )
             item.setSizeHint(
@@ -425,29 +425,29 @@ class RunList(qtw.QTreeWidget):
                 )
             item.setData(
                 self.cols.index("Setpoints"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 metadata.get("setpoint_count")
                 or metadata.get("expected_results")
                 or metadata.get("result_count")
                 )
             item.setData(
                 self.cols.index("Started"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 metadata.get("run_timestamp")
                 )
             item.setData(
                 self.cols.index("Complete"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 100 if run_is_complete(metadata) else progress_percent_value(metadata)
                 )
             item.setData(
                 self.cols.index("Duration"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 time_taken_seconds(metadata)
                 )
             item.setData(
                 self.cols.index("Size"),
-                QtCore.Qt.UserRole,
+                QtCore.Qt.ItemDataRole.UserRole,
                 metadata.get("storage_bytes")
                 )
             item.update_tooltip()
@@ -515,7 +515,7 @@ class RunList(qtw.QTreeWidget):
         header.setMinimumSectionSize(32)
 
         for col in range(len(self.cols)):
-            header.setSectionResizeMode(col, qtw.QHeaderView.Interactive)
+            header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
 
         fixed_width = sum(self.column_widths.values())
         elastic_min_width = sum(self.elastic_column_widths.values())
@@ -592,19 +592,19 @@ class RunList(qtw.QTreeWidget):
                 if not run.run_metadata.get("expected_results"):
                     points_col = self.cols.index("Setpoints")
                     run.setText(points_col, format_point_count(run.run_metadata))
-                    run.setData(points_col, QtCore.Qt.UserRole, status["result_count"])
+                    run.setData(points_col, QtCore.Qt.ItemDataRole.UserRole, status["result_count"])
                 complete_col = self.cols.index("Complete")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
                 run.setData(
                     complete_col,
-                    QtCore.Qt.UserRole,
+                    QtCore.Qt.ItemDataRole.UserRole,
                     progress_percent_value(run.run_metadata)
                     )
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
                 run.setData(
                     time_taken_col,
-                    QtCore.Qt.UserRole,
+                    QtCore.Qt.ItemDataRole.UserRole,
                     time_taken_seconds(run.run_metadata)
                     )
 
@@ -612,7 +612,7 @@ class RunList(qtw.QTreeWidget):
                 storage_col = self.cols.index("Size")
                 run.run_metadata["storage_bytes"] = status["storage_bytes"]
                 run.setText(storage_col, format_storage_size(status["storage_bytes"]))
-                run.setData(storage_col, QtCore.Qt.UserRole, status["storage_bytes"])
+                run.setData(storage_col, QtCore.Qt.ItemDataRole.UserRole, status["storage_bytes"])
 
             finished = status.get("completed_timestamp")
 
@@ -621,12 +621,12 @@ class RunList(qtw.QTreeWidget):
                 run.run_metadata["is_completed"] = status.get("is_completed", True)
                 complete_col = self.cols.index("Complete")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
-                run.setData(complete_col, QtCore.Qt.UserRole, 100)
+                run.setData(complete_col, QtCore.Qt.ItemDataRole.UserRole, 100)
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
                 run.setData(
                     time_taken_col,
-                    QtCore.Qt.UserRole,
+                    QtCore.Qt.ItemDataRole.UserRole,
                     time_taken_seconds(run.run_metadata)
                     )
                 to_remove.append(run)
@@ -657,7 +657,7 @@ class RunList(qtw.QTreeWidget):
 
         Parameters
         ----------
-        pos : PyQt5.QtCore.QPoint
+        pos : PyQt6.QtCore.QPoint
             The cursor position to open the menu at.
 
         """
@@ -671,7 +671,7 @@ class RunList(qtw.QTreeWidget):
         
         menu = qtw.QMenu(self)
 
-        open_all = qtw.QAction("&Plot all", menu)
+        open_all = QtGui.QAction("&Plot all", menu)
         self._set_action_shortcut(open_all, "Ctrl+Shift+Return")
         open_all.triggered.connect(lambda _,: main.open_selected_run_all())
         menu.addAction(open_all)
@@ -682,7 +682,7 @@ class RunList(qtw.QTreeWidget):
         # linking the coresponding parameter to the openPlot.
         for itr, param in enumerate(params.keys()):
             
-            open_win = qtw.QAction(f"  - {param.name}", menu)
+            open_win = QtGui.QAction(f"  - {param.name}", menu)
             if itr < 9:
                 self._set_action_shortcut(open_win, f"Ctrl+{itr + 1}")
             
@@ -695,7 +695,7 @@ class RunList(qtw.QTreeWidget):
             menu.addAction(open_win)
 
         # Display context menu
-        menu.exec_(self.mapToGlobal(pos))
+        menu.exec(self.mapToGlobal(pos))
 
 
     @QtCore.pyqtSlot()
@@ -733,7 +733,7 @@ class RunList(qtw.QTreeWidget):
 
         """
         action.setShortcut(shortcut)
-        action.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         if hasattr(action, "setShortcutVisibleInContextMenu"):
             action.setShortcutVisibleInContextMenu(True)
 
@@ -829,8 +829,8 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
 
     def __lt__(self, other: qtw.QTreeWidgetItem) -> bool:
         col = self.treeWidget().sortColumn()
-        value1 = self.data(col, QtCore.Qt.UserRole)
-        value2 = other.data(col, QtCore.Qt.UserRole)
+        value1 = self.data(col, QtCore.Qt.ItemDataRole.UserRole)
+        value2 = other.data(col, QtCore.Qt.ItemDataRole.UserRole)
         if value1 is not None and value2 is not None:
             try:
                 return float(value1) < float(value2)
@@ -904,9 +904,9 @@ class moreInfo(qtw.QTabWidget):
         table.verticalHeader().setDefaultSectionSize(20)
         table.horizontalHeader().setFixedHeight(22)
         table.setAlternatingRowColors(True)
-        table.setEditTriggers(qtw.QAbstractItemView.NoEditTriggers)
-        table.setSelectionBehavior(qtw.QAbstractItemView.SelectRows)
-        table.setTextElideMode(QtCore.Qt.ElideRight)
+        table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
         table.setWordWrap(False)
         table.horizontalHeader().setStretchLastSection(True)
 
@@ -1179,9 +1179,9 @@ class moreInfo(qtw.QTabWidget):
 
         for col in range(table.columnCount()):
             if col in stretch_cols:
-                header.setSectionResizeMode(col, qtw.QHeaderView.Stretch)
+                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Stretch)
             else:
-                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(False)
         for row in range(table.rowCount()):
             table.setRowHeight(row, 20)
@@ -1223,9 +1223,9 @@ class moreInfo(qtw.QTabWidget):
 
 class WrappedValueDelegate(qtw.QStyledItemDelegate):
     WRAP_FLAGS = (
-        QtCore.Qt.AlignLeft
-        | QtCore.Qt.AlignTop
-        | QtCore.Qt.TextWrapAnywhere
+        QtCore.Qt.AlignmentFlag.AlignLeft
+        | QtCore.Qt.AlignmentFlag.AlignTop
+        | QtCore.Qt.TextFlag.TextWrapAnywhere
         )
 
     def paint(self, painter, option, index):
@@ -1237,16 +1237,16 @@ class WrappedValueDelegate(qtw.QStyledItemDelegate):
         text = opt.text
         opt.text = ""
 
-        style.drawControl(qtw.QStyle.CE_ItemViewItem, opt, painter, widget)
+        style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
 
-        text_rect = style.subElementRect(qtw.QStyle.SE_ItemViewItemText, opt, widget)
+        text_rect = style.subElementRect(qtw.QStyle.SubElement.SE_ItemViewItemText, opt, widget)
         text_rect.adjust(0, 2, 0, -2)
         painter.save()
         painter.setFont(opt.font)
         role = (
-            QtGui.QPalette.HighlightedText
-            if opt.state & qtw.QStyle.State_Selected
-            else QtGui.QPalette.Text
+            QtGui.QPalette.ColorRole.HighlightedText
+            if opt.state & qtw.QStyle.StateFlag.State_Selected
+            else QtGui.QPalette.ColorRole.Text
             )
         painter.setPen(opt.palette.color(role))
         painter.drawText(text_rect, self.WRAP_FLAGS, text)
@@ -1280,14 +1280,14 @@ class infoTree(qtw.QTreeWidget):
         self.setHeaderLabels(["Key", "Value"])
         self.setColumnCount(2)
         self.setWordWrap(True)
-        self.setTextElideMode(QtCore.Qt.ElideNone)
+        self.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
         self.setUniformRowHeights(False)
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setItemDelegateForColumn(1, WrappedValueDelegate(self))
-        self.header().setSectionResizeMode(0, qtw.QHeaderView.ResizeToContents)
-        self.header().setSectionResizeMode(1, qtw.QHeaderView.Stretch)
+        self.header().setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
+        self.header().setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
         self.header().setStretchLastSection(True)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.openCopyMenu)
 
         self.copy_value_action = copy_action(
@@ -1324,8 +1324,8 @@ class infoTree(qtw.QTreeWidget):
 
         if self.expand_all:
             self.expandAll()
-        self.header().setSectionResizeMode(0, qtw.QHeaderView.ResizeToContents)
-        self.header().setSectionResizeMode(1, qtw.QHeaderView.Stretch)
+        self.header().setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
+        self.header().setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
         self.doItemsLayout()
 
 
@@ -1344,14 +1344,14 @@ class infoTree(qtw.QTreeWidget):
         menu = qtw.QMenu(self)
         menu.addAction(self.copy_value_action)
 
-        copy_row = qtw.QAction("Copy Row", menu)
+        copy_row = QtGui.QAction("Copy Row", menu)
         copy_row.triggered.connect(lambda: copy_to_clipboard(row_text(item)))
         menu.addAction(copy_row)
 
         if self.selectedItems():
             menu.addAction(self.copy_selection_action)
 
-        menu.exec_(self.viewport().mapToGlobal(pos))
+        menu.exec(self.viewport().mapToGlobal(pos))
 
 
     def copyValue(self):
@@ -1370,7 +1370,7 @@ class infoTree(qtw.QTreeWidget):
 class CopyableTableWidget(qtw.QTableWidget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.openCopyMenu)
 
         self.copy_cell_action = copy_action(
@@ -1399,7 +1399,7 @@ class CopyableTableWidget(qtw.QTableWidget):
         menu.addAction(self.copy_cell_action)
         menu.addAction(self.copy_selection_action)
 
-        menu.exec_(self.viewport().mapToGlobal(pos))
+        menu.exec(self.viewport().mapToGlobal(pos))
 
 
     def copyCell(self):

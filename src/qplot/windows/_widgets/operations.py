@@ -1,4 +1,4 @@
-from PyQt5 import (
+from PyQt6 import (
     QtWidgets as qtw,
     QtGui,
     QtCore,
@@ -60,7 +60,7 @@ class operations_options_base(qtw.QWidget):
 
         # Controls order to perform and user inputs
         self.list_order = draggableListWidget()
-        self.list_order.setDragDropMode(qtw.QAbstractItemView.InternalMove)
+        self.list_order.setDragDropMode(qtw.QAbstractItemView.DragDropMode.InternalMove)
         self.list_order.setToolTip("Drag Items to Control Operation Order")
         self.layout.addWidget(self.list_order)
 
@@ -278,7 +278,7 @@ class rowItem(qtw.QListWidgetItem):
             # Restrict user input to reduce errors
             if input_type != str:
                 validator = QtGui.QDoubleValidator()
-                validator.setNotation(QtGui.QDoubleValidator.ScientificNotation)
+                validator.setNotation(QtGui.QDoubleValidator.Notation.ScientificNotation)
                 validator.setLocale(QtCore.QLocale("C"))  # Avoids locale issues like commas
                 self.input.setValidator(validator)
         

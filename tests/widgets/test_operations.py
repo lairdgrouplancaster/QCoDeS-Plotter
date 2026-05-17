@@ -1,7 +1,7 @@
 import unittest
 
-from PyQt5 import QtCore
-from PyQt5 import QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.operation_registry import operation_specs_for
 from qplot.windows._widgets.operations import operations_options_1d

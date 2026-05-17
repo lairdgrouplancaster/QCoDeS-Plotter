@@ -1,4 +1,4 @@
-from PyQt5 import (
+from PyQt6 import (
     QtWidgets as qtw,
     QtCore
     )
@@ -73,7 +73,7 @@ class contextMenuFilter(QtCore.QObject):
         ----------
         obj :
             Unused by required slot.
-        event : PyQt5.QtCore.QEvent.ContextMenu
+        event : PyQt6.QtCore.QEvent.Type.ContextMenu
             
         Returns
         -------
@@ -81,7 +81,7 @@ class contextMenuFilter(QtCore.QObject):
             Whether to show context menu.
 
         """
-        if event.type() == QtCore.QEvent.ContextMenu:
+        if event.type() == QtCore.QEvent.Type.ContextMenu:
             menu = qtw.QMenu(self.main_window)
 
             # Find toolbar and dock widgets to add to context menu
@@ -92,6 +92,6 @@ class contextMenuFilter(QtCore.QObject):
                 menu.addAction(dock.toggleViewAction())
 
             # Display context menu
-            menu.exec_(event.globalPos())
+            menu.exec(event.globalPos())
             return True
         return False

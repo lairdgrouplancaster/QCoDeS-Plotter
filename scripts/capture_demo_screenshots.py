@@ -118,7 +118,7 @@ def dependent_parameter(dataset, dimensions):
 
 
 def capture_screenshots(line_run_id, heatmap_run_id):
-    from PyQt5 import QtWidgets
+    from PyQt6 import QtWidgets
     from qcodes.dataset import load_by_id
 
     from qplot.diagnostics import configure_logging, install_excepthook
