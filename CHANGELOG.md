@@ -7,6 +7,13 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+### Headlines
+- Autoplot works more reliably.
+- Copy function has been added from plot windows.
+- Main GUI reports run status properly.
+
+The following lines were generated automatically:
+
 ### Added
 
 - Add configurable plot image clipboard output with screen-resolution,
