@@ -35,10 +35,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2",
     "mypy>=1.14",
     "pytest>=8.0",
     "pytest-cov>=6.0",
     "ruff>=0.8",
+    "twine>=5.0",
 ]
 
 [project.scripts]

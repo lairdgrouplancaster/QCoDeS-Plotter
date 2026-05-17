@@ -59,6 +59,56 @@ if TYPE_CHECKING:
 
 _axis_scale_power_text = _plot_axis_scaling._axis_scale_power_text
 
+_A4_LANDSCAPE_PLOT_AREA_SIZE = QtCore.QSize(1123, 794)
+_A4_PORTRAIT_PLOT_AREA_SIZE = QtCore.QSize(794, 1123)
+_PLOT_AREA_RESIZE_PRESETS = (
+    (
+        "A4 Landscape",
+        "resizePlotAreaA4LandscapeAction",
+        _A4_LANDSCAPE_PLOT_AREA_SIZE,
+        ),
+    (
+        "A4 Portrait",
+        "resizePlotAreaA4PortraitAction",
+        _A4_PORTRAIT_PLOT_AREA_SIZE,
+        ),
+    )
+
+
+def _plot_area_size_icon(size):
+    """
+    Builds a small aspect-ratio preview icon for plot-area resize presets.
+
+    """
+    pixmap = QtGui.QPixmap(28, 18)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+
+    bounds = QtCore.QSizeF(22, 14)
+    aspect = size.width() / size.height()
+    bounds_aspect = bounds.width() / bounds.height()
+    if aspect >= bounds_aspect:
+        width = bounds.width()
+        height = width / aspect
+    else:
+        height = bounds.height()
+        width = height * aspect
+
+    rect = QtCore.QRectF(
+        (pixmap.width() - width) / 2,
+        (pixmap.height() - height) / 2,
+        width,
+        height,
+        )
+
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter.setPen(QtGui.QPen(QtGui.QColor(70, 70, 70), 1))
+    painter.setBrush(QtGui.QColor(120, 150, 200, 70))
+    painter.drawRect(rect)
+    painter.end()
+
+    return QtGui.QIcon(pixmap)
+
 
 class plotWidget(
     PlotWindowFeedbackMixin,
@@ -518,6 +568,163 @@ class plotWidget(
 
         """
         return self.widget.grab()
+
+
+    def _add_plot_area_resize_menu(self, window_menu):
+        """
+        Adds fixed plot-area resize actions to the Window menu.
+
+        """
+        resize_menu = qtw.QMenu("&Resize", self)
+        resize_menu.setObjectName("plotAreaResizeMenu")
+
+        for label, object_name, size in _PLOT_AREA_RESIZE_PRESETS:
+            action = QtGui.QAction(
+                _plot_area_size_icon(size),
+                f"{label} ({size.width()} x {size.height()} px)",
+                self,
+                )
+            action.setObjectName(object_name)
+            action.setStatusTip(
+                f"Resize the copied plot area to {size.width()} x {size.height()} px"
+                )
+            action.triggered.connect(
+                lambda _checked=False, size=size: self.resize_plot_area(
+                    size.width(),
+                    size.height(),
+                    )
+                )
+            resize_menu.addAction(action)
+
+        resize_menu.addSeparator()
+        custom_action = QtGui.QAction("&Custom...", self)
+        custom_action.setObjectName("resizePlotAreaCustomAction")
+        custom_action.setStatusTip("Resize the copied plot area to a custom pixel size")
+        custom_action.triggered.connect(self.open_custom_plot_area_size_dialog)
+        resize_menu.addAction(custom_action)
+
+        insert_before = next(
+            (
+                action for action in window_menu.actions()
+                if action.text().replace("&", "") == "Minimize"
+                ),
+            None,
+            )
+        if insert_before is None:
+            window_menu.addMenu(resize_menu)
+            return resize_menu
+
+        window_menu.insertMenu(insert_before, resize_menu)
+        window_menu.insertSeparator(insert_before)
+        return resize_menu
+
+
+    @QtCore.pyqtSlot()
+    def open_custom_plot_area_size_dialog(self):
+        """
+        Opens a dialog for resizing the copied plot area to an exact pixel size.
+
+        """
+        current_size = self._current_plot_area_size()
+
+        dialog = qtw.QDialog(self)
+        dialog.setWindowTitle("Custom Plot Area Size")
+
+        form = qtw.QFormLayout(dialog)
+        width_spin = qtw.QSpinBox(dialog)
+        width_spin.setRange(1, 20000)
+        width_spin.setSuffix(" px")
+        width_spin.setValue(max(1, current_size.width()))
+
+        height_spin = qtw.QSpinBox(dialog)
+        height_spin.setRange(1, 20000)
+        height_spin.setSuffix(" px")
+        height_spin.setValue(max(1, current_size.height()))
+
+        form.addRow("&Width:", width_spin)
+        form.addRow("&Height:", height_spin)
+
+        buttons = qtw.QDialogButtonBox(
+            qtw.QDialogButtonBox.StandardButton.Ok
+            | qtw.QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+            )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        if dialog.exec() == qtw.QDialog.DialogCode.Accepted:
+            self.resize_plot_area(width_spin.value(), height_spin.value())
+
+
+    def _current_plot_area_size(self):
+        """
+        Returns the current copied plot-area size.
+
+        """
+        widget = getattr(self, "widget", None)
+        if widget is None:
+            return QtCore.QSize(1, 1)
+        return widget.size()
+
+
+    def resize_plot_area(self, width, height):
+        """
+        Resizes the window so the copied plot area has the requested size.
+
+        """
+        target = QtCore.QSize(int(width), int(height))
+        if target.width() < 1 or target.height() < 1:
+            self.show_status("Plot area size must be at least 1 x 1 px.", 5000)
+            return False
+
+        widget = getattr(self, "widget", None)
+        if widget is None:
+            self.show_status("No plot area available to resize.", 5000)
+            return False
+
+        if self.isMaximized() or self.isFullScreen():
+            self.showNormal()
+
+        self._resize_window_for_plot_area(target)
+        actual = self._current_plot_area_size()
+        if actual == target:
+            self.show_status(
+                f"Plot area resized to {actual.width()} x {actual.height()} px.",
+                3000,
+                )
+            return True
+
+        self.show_status(
+            "Plot area resized to "
+            f"{actual.width()} x {actual.height()} px "
+            f"(requested {target.width()} x {target.height()} px).",
+            5000,
+            )
+        return False
+
+
+    def _resize_window_for_plot_area(self, target):
+        """
+        Applies the top-level resize, refining after layouts have updated.
+
+        """
+        for _attempt in range(3):
+            current = self._current_plot_area_size()
+            delta = target - current
+            if delta.isNull():
+                return
+
+            next_size = self.size() + delta
+            next_size.setWidth(max(1, next_size.width()))
+            next_size.setHeight(max(1, next_size.height()))
+            self.resize(next_size)
+
+            app = qtw.QApplication.instance()
+            if app is not None:
+                app.processEvents(
+                    QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+                    )
         
         
     def initAxes(self):
@@ -658,7 +865,8 @@ class plotWidget(
         quitAction.triggered.connect(self.request_application_quit)
         file_menu.addAction(quitAction)
 
-        add_standard_window_controls(self)
+        window_menu = add_standard_window_controls(self)
+        self._add_plot_area_resize_menu(window_menu)
 
         options_menu = menu.addMenu("&Options")
         options_menu.addAction(

@@ -45,7 +45,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "point_shape": [10, 100],
                 "expected_results": 1000,
                 }),
-            "1,000 = 10 x 100"
+            "1,000 = 10 × 100"
             )
 
     def test_format_point_count_uses_setpoint_shape_without_measurement_factor(self):
@@ -56,7 +56,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "point_shape": [108, 861, 2],
                 "expected_results": 185976,
                 }),
-            "92,988 = 108 x 861"
+            "92,988 = 108 × 861"
             )
 
     def test_progress_uses_measured_row_count_while_setpoints_use_setpoint_count(self):
@@ -69,7 +69,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             "is_completed": False,
             }
 
-        self.assertEqual(treeWidgets.format_point_count(metadata), "1,000 = 10 x 100")
+        self.assertEqual(treeWidgets.format_point_count(metadata), "1,000 = 10 × 100")
         self.assertEqual(treeWidgets.format_complete_cell(metadata), "50.0%")
 
     def test_incomplete_progress_never_formats_as_one_hundred_percent(self):
@@ -272,7 +272,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                     run_list.indexFromItem(item, setpoints_col),
                     metrics,
                     ),
-                metrics.horizontalAdvance("1,000 x 1,000")
+                metrics.horizontalAdvance("1,000 × 1,000")
                 )
         finally:
             treeWidgets.isfile = old_isfile
@@ -440,7 +440,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                     ),
                 2
                 )
-            self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 x 100")
+            self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 × 100")
             self.assertEqual(items["finished-guid"].text(4), "✓")
             self.assertEqual(items["finished-guid"].text(5), "10.0 s")
             self.assertEqual(

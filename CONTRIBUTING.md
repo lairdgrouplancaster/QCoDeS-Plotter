@@ -92,20 +92,29 @@ python -m pytest
 Pytest prints branch coverage for the `qplot` package and writes `coverage.xml`
 for CI or editor integrations.
 
+For release or packaging changes, build the source distribution and wheel and
+validate their metadata:
+
+```console
+python -m build
+python -m twine check dist/*
+```
+
 The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `tests/conftest.py`; do not add per-test `QT_QPA_PLATFORM` setup or one-off
 `QApplication` creation unless a test has a specific reason to override the
 shared setup.
 
 GitHub Actions runs the same Ruff, mypy, and pytest checks on Windows 2025 and
-macOS with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. The
-workflow lives in `.github/workflows/ci.yml`.
+macOS with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. It
+also builds and checks package artifacts once on Python 3.12. The workflow
+lives in `.github/workflows/ci.yml`.
 
 ## Generated Files
 
-Local installs and test runs create generated files such as `*.egg-info/`,
-`__pycache__/`, `.pytest_cache/`, and `.ruff_cache/`. These are ignored by Git
-and should not be committed.
+Local installs, test runs, and package builds create generated files such as
+`*.egg-info/`, `__pycache__/`, `.pytest_cache/`, `.ruff_cache/`, `build/`, and
+`dist/`. These are ignored by Git and should not be committed.
 
 It is safe to delete those directories after local installs or checks if they
 get in the way of searches or file listings.
@@ -142,10 +151,12 @@ Before committing:
 2. Run `python -m mypy`.
 3. Run `python -m pytest`.
 4. Run `python scripts/manual_run.py` for application or GUI changes.
-5. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or
+5. Run `python -m build` and `python -m twine check dist/*` for packaging or
+   release changes.
+6. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or
    `docs/configuration.md` when the setup, workflow, module boundaries, or
    config surface change.
-6. Keep unrelated refactors out of feature or bug-fix commits.
+7. Keep unrelated refactors out of feature or bug-fix commits.
 
 ## Project Map
 

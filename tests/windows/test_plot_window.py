@@ -263,6 +263,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             initMenu = plotWidget.initMenu
             createPopupMenu = plotWidget.createPopupMenu
             register_shortcut = plotWidget.register_shortcut
+            _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
 
             def request_close_all_plots(self):
                 pass
@@ -274,6 +275,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 pass
 
             def show_preferences_dialog(self):
+                pass
+
+            def open_custom_plot_area_size_dialog(self):
                 pass
 
         host = Host()
@@ -383,6 +387,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             initMenu = plotWidget.initMenu
             createPopupMenu = plotWidget.createPopupMenu
             register_shortcut = plotWidget.register_shortcut
+            _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
             _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
             _context_menu_action = plotWidget._context_menu_action
             _connect_mouse_mode_menu_to_preferences = (
@@ -412,6 +417,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 pass
 
             def show_preferences_dialog(self):
+                pass
+
+            def open_custom_plot_area_size_dialog(self):
                 pass
 
         widget = pg.GraphicsLayoutWidget()
@@ -454,6 +462,104 @@ class RunListParentLookupTestCase(unittest.TestCase):
         finally:
             host.deleteLater()
             widget.deleteLater()
+
+    def test_plot_resize_menu_has_a4_presets_and_custom_size_action(self):
+        class Host(qtw.QMainWindow):
+            initMenu = plotWidget.initMenu
+            createPopupMenu = plotWidget.createPopupMenu
+            register_shortcut = plotWidget.register_shortcut
+            _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
+
+            def request_close_all_plots(self):
+                pass
+
+            def request_application_quit(self):
+                pass
+
+            def refreshWindow(self, force=False):
+                pass
+
+            def show_preferences_dialog(self):
+                pass
+
+            def open_custom_plot_area_size_dialog(self):
+                pass
+
+        host = Host()
+        host.vbMenu = qtw.QMenu(host)
+
+        try:
+            host.initMenu()
+
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in host.menuBar().actions()
+                }
+            window_menu = menus["Window"]
+            resize_menu = next(
+                action.menu()
+                for action in window_menu.actions()
+                if action.menu() is not None
+                and action.text().replace("&", "") == "Resize"
+                )
+            resize_actions = {
+                action.text().replace("&", ""): action
+                for action in resize_menu.actions()
+                if not action.isSeparator()
+                }
+
+            self.assertIn("A4 Landscape (1123 x 794 px)", resize_actions)
+            self.assertIn("A4 Portrait (794 x 1123 px)", resize_actions)
+            self.assertIn("Custom...", resize_actions)
+            self.assertFalse(
+                resize_actions["A4 Landscape (1123 x 794 px)"].icon().isNull()
+                )
+            self.assertFalse(
+                resize_actions["A4 Portrait (794 x 1123 px)"].icon().isNull()
+                )
+        finally:
+            host.deleteLater()
+
+    def test_resize_plot_area_targets_widget_grab_size(self):
+        class Host(qtw.QMainWindow):
+            resize_plot_area = plotWidget.resize_plot_area
+            _resize_window_for_plot_area = plotWidget._resize_window_for_plot_area
+            _current_plot_area_size = plotWidget._current_plot_area_size
+
+            def __init__(self):
+                super().__init__()
+                self.widget = pg.GraphicsLayoutWidget()
+                self.status_messages = []
+
+                frame = qtw.QFrame()
+                layout = qtw.QVBoxLayout(frame)
+                layout.addWidget(self.widget)
+                self.setCentralWidget(frame)
+
+                toolbar = qtw.QToolBar("Test toolbar", self)
+                toolbar.addWidget(qtw.QLabel("Tools"))
+                self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+            def show_status(self, message, timeout=0):
+                self.status_messages.append((message, timeout))
+
+        host = Host()
+        target_size = QtCore.QSize(320, 180)
+
+        try:
+            host.resize(460, 320)
+            host.show()
+            qtw.QApplication.processEvents()
+
+            self.assertTrue(host.resize_plot_area(target_size.width(), target_size.height()))
+
+            self.assertEqual(host.widget.size(), target_size)
+            self.assertEqual(
+                host.status_messages[-1],
+                ("Plot area resized to 320 x 180 px.", 3000),
+                )
+        finally:
+            host.deleteLater()
 
     def test_copy_plot_image_copies_widget_grab_to_clipboard(self):
         class PlotImageSource:

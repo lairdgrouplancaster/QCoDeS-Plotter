@@ -74,6 +74,8 @@ def add_standard_window_controls(window):
     fullscreen_action.triggered.connect(lambda: toggle_fullscreen(window))
     window_menu.addAction(fullscreen_action)
 
+    return window_menu
+
 
 def add_confirmation_options(window, menu):
     """

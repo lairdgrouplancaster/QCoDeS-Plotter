@@ -213,6 +213,13 @@ python -m mypy
 python -m pytest
 ```
 
+For release or packaging failures, rebuild and validate the package artifacts:
+
+```console
+python -m build
+python -m twine check dist/*
+```
+
 Do not run bare `pytest`; use `python -m pytest` from the active project
 environment. More development setup details are in
 [../CONTRIBUTING.md](../CONTRIBUTING.md).

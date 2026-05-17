@@ -216,7 +216,7 @@ def format_point_count(metadata):
     shape = metadata.get("setpoint_shape") or metadata.get("point_shape")
     if shape:
         try:
-            shape_parts = " x ".join(f"{int(size):,}" for size in shape)
+            shape_parts = " × ".join(f"{int(size):,}" for size in shape)
         except (TypeError, ValueError):
             shape_parts = ""
 
