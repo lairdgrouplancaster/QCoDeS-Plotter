@@ -61,6 +61,9 @@ _axis_scale_power_text = _plot_axis_scaling._axis_scale_power_text
 
 _A4_LANDSCAPE_PLOT_AREA_SIZE = QtCore.QSize(1123, 794)
 _A4_PORTRAIT_PLOT_AREA_SIZE = QtCore.QSize(794, 1123)
+_POWERPOINT_STANDARD_PLOT_AREA_SIZE = QtCore.QSize(960, 720)
+_POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE = QtCore.QSize(1280, 720)
+_SQUARE_PLOT_AREA_SIZE = QtCore.QSize(850, 850)
 _PLOT_AREA_RESIZE_PRESETS = (
     (
         "A4 Landscape",
@@ -71,6 +74,21 @@ _PLOT_AREA_RESIZE_PRESETS = (
         "A4 Portrait",
         "resizePlotAreaA4PortraitAction",
         _A4_PORTRAIT_PLOT_AREA_SIZE,
+        ),
+    (
+        "PowerPoint Standard",
+        "resizePlotAreaPowerPointStandardAction",
+        _POWERPOINT_STANDARD_PLOT_AREA_SIZE,
+        ),
+    (
+        "PowerPoint Widescreen",
+        "resizePlotAreaPowerPointWidescreenAction",
+        _POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE,
+        ),
+    (
+        "Square",
+        "resizePlotAreaSquareAction",
+        _SQUARE_PLOT_AREA_SIZE,
         ),
     )
 

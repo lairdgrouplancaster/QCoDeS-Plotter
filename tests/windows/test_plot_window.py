@@ -463,7 +463,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host.deleteLater()
             widget.deleteLater()
 
-    def test_plot_resize_menu_has_a4_presets_and_custom_size_action(self):
+    def test_plot_resize_menu_has_fixed_presets_and_custom_size_action(self):
         class Host(qtw.QMainWindow):
             initMenu = plotWidget.initMenu
             createPopupMenu = plotWidget.createPopupMenu
@@ -510,12 +510,24 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             self.assertIn("A4 Landscape (1123 x 794 px)", resize_actions)
             self.assertIn("A4 Portrait (794 x 1123 px)", resize_actions)
+            self.assertIn("PowerPoint Standard (960 x 720 px)", resize_actions)
+            self.assertIn("PowerPoint Widescreen (1280 x 720 px)", resize_actions)
+            self.assertIn("Square (850 x 850 px)", resize_actions)
             self.assertIn("Custom...", resize_actions)
             self.assertFalse(
                 resize_actions["A4 Landscape (1123 x 794 px)"].icon().isNull()
                 )
             self.assertFalse(
                 resize_actions["A4 Portrait (794 x 1123 px)"].icon().isNull()
+                )
+            self.assertFalse(
+                resize_actions["PowerPoint Standard (960 x 720 px)"].icon().isNull()
+                )
+            self.assertFalse(
+                resize_actions["PowerPoint Widescreen (1280 x 720 px)"].icon().isNull()
+                )
+            self.assertFalse(
+                resize_actions["Square (850 x 850 px)"].icon().isNull()
                 )
         finally:
             host.deleteLater()
