@@ -491,6 +491,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertGreater(host._colorbar_colormap_row("PAL-relaxed"), -1)
             self.assertEqual(host.colorbar_colormap_table.columnCount(), 3)
             self.assertTrue(host.colorbar_colormap_table.isSortingEnabled())
+            self.assertIsNotNone(
+                host.colorbar_colormap_table.itemDelegateForColumn(1)
+                )
             self.assertEqual(
                 host.colorbar_colormap_table.rowCount(),
                 len(host._available_colorbar_colormaps()),
@@ -582,5 +585,4 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(previous_bar_clicks, [])
         finally:
             host.deleteLater()
-
 

@@ -30,6 +30,43 @@ from ._colorbar import (
 from ._plot_axis_scaling import _axis_scale_power_text
 
 
+class _CenteredIconDelegate(qtw.QStyledItemDelegate):
+    """
+    Paint icon-only table cells with the icon centered in the cell.
+
+    """
+
+    def paint(self, painter, option, index):
+        icon = index.data(QtCore.Qt.DecorationRole)
+        if not isinstance(icon, QtGui.QIcon) or icon.isNull():
+            super().paint(painter, option, index)
+            return
+
+        opt = qtw.QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        opt.icon = QtGui.QIcon()
+
+        widget = opt.widget
+        style = widget.style() if widget else qtw.QApplication.style()
+        style.drawControl(qtw.QStyle.CE_ItemViewItem, opt, painter, widget)
+
+        icon_size = opt.decorationSize
+        if not icon_size.isValid() or icon_size.isEmpty():
+            icon_size = icon.actualSize(opt.rect.size())
+        icon_size = icon_size.boundedTo(opt.rect.size())
+        icon_rect = QtCore.QRect(QtCore.QPoint(0, 0), icon_size)
+        icon_rect.moveCenter(opt.rect.center())
+
+        mode = QtGui.QIcon.Normal
+        if not opt.state & qtw.QStyle.State_Enabled:
+            mode = QtGui.QIcon.Disabled
+        elif opt.state & qtw.QStyle.State_Selected:
+            mode = QtGui.QIcon.Selected
+
+        icon.paint(painter, icon_rect, QtCore.Qt.AlignCenter, mode)
+
+
 class Plot2DColorbarMixin:
     """
     Heatmap colorbar controls for plot2d windows.
@@ -1149,6 +1186,7 @@ class Plot2DColorbarMixin:
         table.setSortingEnabled(True)
         table.setMinimumSize(560, 360)
         table.setIconSize(QtCore.QSize(220, 14))
+        table.setItemDelegateForColumn(1, _CenteredIconDelegate(table))
 
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, qtw.QHeaderView.ResizeToContents)
@@ -1534,4 +1572,3 @@ class Plot2DColorbarMixin:
 
 ###############################################################################
 # Subplot control
-
