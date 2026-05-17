@@ -82,7 +82,7 @@ def _fetch_run_rows(cursor, where="", params=(), empty_as_none=True):
     outDict = {}
     database_modified_timestamp = _database_modified_timestamp(cursor)
     for row in values:
-        metadata = dict(zip(column_names[1:], row[1:]))
+        metadata = dict(zip(column_names[1:], row[1:], strict=False))
         metadata["database_modified_timestamp"] = database_modified_timestamp
         _add_run_summary_fields(cursor, metadata)
         outDict[row[0]] = metadata

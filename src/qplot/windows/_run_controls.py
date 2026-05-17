@@ -12,7 +12,7 @@ from ._widgets import (
     moreInfo,
     )
 from ._widgets.preview import PREVIEW_SIZE
-from ._widgets.treeWidgets import run_is_complete
+from ._widgets._run_formatting import run_is_complete
 
 
 AUTO_PLOT_KEY = "user_preference.auto_plot"

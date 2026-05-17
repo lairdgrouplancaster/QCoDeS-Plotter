@@ -603,7 +603,7 @@ def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
         painter.drawEllipse(QtCore.QPointF(float(xs[0]), float(ys[0])), 3, 3)
     else:
         path = QtGui.QPainterPath(QtCore.QPointF(float(xs[0]), float(ys[0])))
-        for x_value, y_value in zip(xs[1:], ys[1:]):
+        for x_value, y_value in zip(xs[1:], ys[1:], strict=False):
             path.lineTo(float(x_value), float(y_value))
         painter.drawPath(path)
 
@@ -659,7 +659,7 @@ def _fixed_heatmap_grid(x, y, z, grid_shape):
     placed = 0
 
     if x_index is not None and y_index is not None:
-        for x_value, y_value, z_value in zip(x, y, z):
+        for x_value, y_value, z_value in zip(x, y, z, strict=False):
             column = x_index.get(float(x_value))
             row = y_index.get(float(y_value))
             if row is None or column is None:

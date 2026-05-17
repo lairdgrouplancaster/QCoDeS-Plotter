@@ -129,7 +129,7 @@ class sysHandle:
         except ValidationError as error:
             err_key = f"Value: {value}, is invalid."
             err_key += str(error)
-            raise ValidationError(err_key)
+            raise ValidationError(err_key) from error
         print(f"set '{key}' to '{value}'")
         
         

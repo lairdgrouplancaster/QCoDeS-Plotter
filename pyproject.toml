@@ -64,4 +64,4 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 
 [tool.ruff.lint]
-select = ["F"]
+select = ["F", "B"]

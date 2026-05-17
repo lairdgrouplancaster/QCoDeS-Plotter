@@ -46,6 +46,7 @@ from ._preferences import (
     PreferencesDialog,
     create_preferences_action,
     )
+from ._plot_state import PlotStateOverlay
 from ._window_controls import (
     add_standard_window_controls,
     main_window_for,
@@ -146,6 +147,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         self.layout = qtw.QVBoxLayout()
         
         self.widget = pg.GraphicsLayoutWidget()
+        self.plot_state_overlay = PlotStateOverlay(self.widget)
         self._install_preview_drop_target()
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
@@ -299,6 +301,26 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         """
         if getattr(self, "visible", False):
             self.statusBar().showMessage(message, timeout)
+
+
+    def show_plot_state(self, title, detail=None, kind="info"):
+        """
+        Shows a prominent state message inside the plot area.
+
+        """
+        overlay = self.__dict__.get("plot_state_overlay")
+        if overlay is not None:
+            overlay.show(title, detail=detail, kind=kind)
+
+
+    def hide_plot_state(self):
+        """
+        Hides the plot-area state message when renderable data is available.
+
+        """
+        overlay = self.__dict__.get("plot_state_overlay")
+        if overlay is not None:
+            overlay.hide()
 
 
     def show_error(self, title : str, message : str, details : str = None):
@@ -842,7 +864,11 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         if menu is None:
             return
 
-        for action, mode in zip(getattr(menu, "mouseModes", ()), ("pan", "rect")):
+        for action, mode in zip(
+                getattr(menu, "mouseModes", ()),
+                ("pan", "rect"),
+                strict=False,
+                ):
             action.triggered.connect(
                 lambda _checked=False, mode=mode: self.change_mouse_mode(mode)
                 )
@@ -968,9 +994,11 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         """
         complete = load_param_data_from_db_prep(self.ds.cache, self.param)
         if complete:
-            self.show_status(f"Processing cached data for {self.param.name}...", 0)
+            message = f"Processing cached data for {self.param.name}..."
         else:
-            self.show_status(f"Loading data for {self.param.name}...", 0)
+            message = f"Loading data for {self.param.name}..."
+        self.show_status(message, 0)
+        self.show_plot_state(message, kind="loading")
          
         worker = loader(
             self.ds.cache, 
@@ -1184,6 +1212,11 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
             if not finished: # error in worker
                 if worker is not None:
                     worker.running = False
+                self.show_plot_state(
+                    "Plot load failed",
+                    "Check the status bar or diagnostic log for details.",
+                    kind="error",
+                    )
                 return False
             
             if worker is None:
@@ -1234,12 +1267,14 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
                 f"in {elapsed:.2f} seconds",
                 5000
                 )
+            self.hide_plot_state()
             return True
                 
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
             # This should no longer be possible so making error soft error.
             self.show_status(f"Refresh skipped: {err}", 10000)
+            self.show_plot_state("Refresh skipped", str(err), kind="error")
         
         finally: # Allow code to move on from wait_on_thread
             self.end_wait.emit()
@@ -1250,6 +1285,7 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         message = f"{type(err).__name__}: {err}"
         log_exception("Plot worker error", err, __name__)
         self.show_status(f"Worker error: {message}", 10000)
+        self.show_plot_state("Plot load failed", message, kind="error")
 
         if message == self._last_error_text:
             return

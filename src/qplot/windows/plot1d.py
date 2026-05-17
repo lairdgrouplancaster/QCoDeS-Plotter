@@ -175,6 +175,20 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         """
         if not super().refreshPlot(finished, worker=worker):
             return
+
+        if not self._has_plottable_line_data():
+            self.line.setData([], [])
+            self.show_status(
+                f"Waiting for plottable data for {self.param.name}...",
+                5000,
+                )
+            self.show_plot_state(
+                "Waiting for plottable data",
+                f"{self.param.name} has no finite line data yet.",
+                kind="empty",
+                )
+            self.worker.running = False
+            return
         
         # Main line
         self.line.setData(
@@ -188,3 +202,13 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         
         # Allow new worker to be produced
         self.worker.running = False
+
+
+    def _has_plottable_line_data(self):
+        x_data = np.asarray(self.axis_data.get("x", []), dtype=float)
+        y_data = np.asarray(self.axis_data.get("y", []), dtype=float)
+        count = min(x_data.size, y_data.size)
+        if count == 0:
+            return False
+
+        return bool(np.any(np.isfinite(x_data[:count]) & np.isfinite(y_data[:count])))

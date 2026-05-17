@@ -64,6 +64,10 @@ mixin used by plot windows. It owns marquee drawing, dragging, zooming, stats
 dialogs, and base context-menu actions. Plot-type-specific snapping and stats
 live in `plot1d.py` and `plot2d.py`.
 
+`src/qplot/windows/_plot_state.py` contains the plot-area state overlay used
+for loading, waiting-for-data, and worker-error messages. Keep state-display
+styling there rather than embedding overlay widgets in individual plot types.
+
 `src/qplot/windows/plot1d.py` extends the shared plot window for line plots. It
 owns main line rendering and line-plot marquee statistics.
 
@@ -97,8 +101,11 @@ heatmaps. Keep plot-type-specific interaction details in `plot1d.py` or
 ## Main Window Widgets
 
 `src/qplot/windows/_widgets/treeWidgets.py` contains the run table, run details
-tabs, copyable metadata tables, formatting helpers, and delegates used by the
-main window.
+tabs, copyable metadata tables, and delegates used by the main window.
+
+`src/qplot/windows/_widgets/_run_formatting.py` contains pure run-list and
+run-detail formatting helpers. Prefer adding display formatting there so it can
+be tested without constructing Qt widgets.
 
 `src/qplot/windows/_widgets/preview.py` creates and renders run preview
 thumbnails. It also handles preview selection, drag payloads, and background

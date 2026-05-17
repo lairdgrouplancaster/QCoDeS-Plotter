@@ -383,7 +383,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             if preview.content_layout.itemAt(index).widget() is not None
             ]
         self.assertEqual(len(cards), 2)
-        for card, title in zip(cards, ["signal vs x", "image vs x and y"]):
+        for card, title in zip(
+                cards,
+                ["signal vs x", "image vs x and y"],
+                strict=False,
+                ):
             labels = card.findChildren(qtw.QLabel)
             self.assertEqual(len(labels), 1)
             self.assertEqual(labels[0].toolTip(), title)

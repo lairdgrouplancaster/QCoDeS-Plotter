@@ -6,7 +6,9 @@ from PyQt5 import QtWidgets as qtw
 import pyqtgraph as pg
 
 from qplot.windows.plot2d import plot2d
+from qplot.windows.plot1d import plot1d
 from qplot.windows._plotWin import plotWidget
+from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._widgets import treeWidgets
 
 
@@ -69,6 +71,119 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.load_calls, ["load"])
         self.assertEqual(window.last_ds_len, 10)
         self.assertEqual(window.restart_intervals, [0.2])
+
+
+class PlotStateOverlayTestCase(unittest.TestCase):
+    def test_overlay_shows_inside_target_and_tracks_resize(self):
+        target = pg.GraphicsLayoutWidget()
+        overlay = PlotStateOverlay(target)
+
+        try:
+            target.resize(500, 300)
+            target.show()
+            qtw.QApplication.processEvents()
+            overlay.show("Loading data", "signal", kind="loading")
+            first_geometry = overlay.frame.geometry()
+
+            self.assertTrue(overlay.frame.isVisible())
+            self.assertEqual(overlay.title_label.text(), "Loading data")
+            self.assertEqual(overlay.detail_label.text(), "signal")
+            self.assertGreaterEqual(first_geometry.left(), 0)
+            self.assertGreaterEqual(first_geometry.top(), 0)
+
+            target.resize(700, 360)
+            qtw.QApplication.processEvents()
+
+            self.assertNotEqual(overlay.frame.geometry(), first_geometry)
+
+            overlay.hide()
+            self.assertFalse(overlay.frame.isVisible())
+        finally:
+            target.deleteLater()
+
+    def test_failed_refresh_shows_plot_state_overlay(self):
+        class Signal:
+            def __init__(self):
+                self.emitted = 0
+
+            def emit(self):
+                self.emitted += 1
+
+        class Worker:
+            running = True
+
+        window = plotWidget.__new__(plotWidget)
+        worker = Worker()
+        states = []
+        window.end_wait = Signal()
+        window.show_plot_state = lambda *args, **kwargs: states.append((args, kwargs))
+
+        result = plotWidget.refreshPlot(window, False, worker=worker)
+
+        self.assertFalse(result)
+        self.assertFalse(worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertEqual(states[-1][0][0], "Plot load failed")
+        self.assertEqual(states[-1][1]["kind"], "error")
+
+    def test_empty_line_refresh_shows_waiting_overlay(self):
+        class Signal:
+            def __init__(self):
+                self.emitted = 0
+
+            def emit(self):
+                self.emitted += 1
+
+        class Line:
+            def __init__(self):
+                self.calls = []
+
+            def setData(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+
+        class Worker:
+            read_data = False
+            running = True
+            axis_data = {"x": [], "y": []}
+            axis_param = {"x": object(), "y": object()}
+            started_at = 0
+
+        class Dataset:
+            number_of_results = 0
+
+        class Param:
+            name = "signal"
+
+        window = plot1d.__new__(plot1d)
+        worker = Worker()
+        line = Line()
+        states = []
+        statuses = []
+        window.worker = worker
+        window.line = line
+        window.marquee = None
+        window._guid = "guid"
+        window._dataset_holder = {
+            "guid": {
+                "dataset": Dataset(),
+                "del_timer": None,
+                }
+            }
+        window.param = Param()
+        window.end_wait = Signal()
+        window._set_param_axis_labels = lambda: None
+        window.show_status = lambda *args: statuses.append(args)
+        window.show_plot_state = lambda *args, **kwargs: states.append((args, kwargs))
+        window.hide_plot_state = lambda: None
+
+        plot1d.refreshPlot(window, True, worker=worker)
+
+        self.assertFalse(worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertEqual(line.calls[-1], (([], []), {}))
+        self.assertIn("Waiting for plottable data", statuses[-1][0])
+        self.assertEqual(states[-1][0][0], "Waiting for plottable data")
+        self.assertEqual(states[-1][1]["kind"], "empty")
 
 
 class RunListParentLookupTestCase(unittest.TestCase):

@@ -159,6 +159,11 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                     f"Waiting for plottable data for {self.param.name}...",
                     5000,
                     )
+                self.show_plot_state(
+                    "Waiting for plottable data",
+                    f"{self.param.name} has no finite heatmap data yet.",
+                    kind="empty",
+                    )
                 return
 
             autoLevels=self.relevel_refresh.isChecked()

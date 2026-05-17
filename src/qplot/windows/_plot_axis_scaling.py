@@ -63,7 +63,7 @@ class PlotAxisScalingMixin:
         self._axis_scale_controls = {}
         self._axis_scale_dialogs = {}
 
-        for axis, menu_text in (("x", "X axis"), ("y", "Y axis")):
+        for _axis, menu_text in (("x", "X axis"), ("y", "Y axis")):
             action = self._context_menu_action(menu_text)
             if action is None or action.menu() is None:
                 continue
