@@ -7,12 +7,15 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
-### Headlines
+No changes yet.
+
+## 1.4.0b1 - 2026-05-17
+
+### Highlights
+
 - Autoplot works more reliably.
 - Copy function has been added from plot windows.
 - Main GUI reports run status properly.
-
-The following lines were generated automatically:
 
 ### Added
 

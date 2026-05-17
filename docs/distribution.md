@@ -13,7 +13,7 @@ At runtime, `qplot.__version__` reads the installed package metadata through
 Recommended user install:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0b1
 ```
 
 Recommended development install:

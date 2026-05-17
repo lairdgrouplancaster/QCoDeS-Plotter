@@ -24,7 +24,7 @@ py -3 --version
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0b1
 ```
 
 macOS:
@@ -34,7 +34,7 @@ python3 --version
 python3 -m venv .venv-mac
 source .venv-mac/bin/activate
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0b1
 ```
 
 If the version check reports Python 3.10 or older, install Python 3.11 or newer
