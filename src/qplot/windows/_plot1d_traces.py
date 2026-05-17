@@ -280,16 +280,18 @@ class Plot1DTraceMixin:
                 self.option_boxes.remove(option)
                 break
         
-        # Remove right axis if no other secondary lines
-        if not self.option_boxes:
-            self.plot.getAxis('right').setStyle(showValues=False)
-        
         # Remove line from viewbox
         line = self.lines[label]
         self.lines.pop(label)
         # Fetch correct viewbox to remove from
         vb = self.plot if side.lower() == "left" else self.right_vb
         vb.removeItem(line)
+
+        if not any(
+                getattr(line, "side", "left") == "right"
+                for line in self.lines.values()
+                ):
+            self.plot.getAxis('right').setStyle(showValues=False)
         
         # Remove track of window
         self.remove_dataset.emit(line.from_win._guid)

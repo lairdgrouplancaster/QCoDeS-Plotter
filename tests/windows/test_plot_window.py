@@ -1,6 +1,7 @@
 import unittest
 
 from PyQt5 import QtCore
+from PyQt5 import QtGui
 from PyQt5 import QtWidgets as qtw
 import pyqtgraph as pg
 
@@ -231,6 +232,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             def open_export_dialog(self):
                 self.export_opened = True
 
+            def copy_plot_image(self):
+                pass
+
         widget = pg.GraphicsLayoutWidget()
         host = Host()
         host.widget = widget
@@ -258,6 +262,115 @@ class RunListParentLookupTestCase(unittest.TestCase):
         finally:
             host.deleteLater()
             widget.deleteLater()
+
+    def test_plot_copy_image_action_has_shortcut_context_menu_and_edit_menu(self):
+        class Host(qtw.QMainWindow):
+            initContextMenu = plotWidget.initContextMenu
+            initMenu = plotWidget.initMenu
+            createPopupMenu = plotWidget.createPopupMenu
+            register_shortcut = plotWidget.register_shortcut
+            _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
+            _context_menu_action = plotWidget._context_menu_action
+            _connect_mouse_mode_menu_to_preferences = (
+                plotWidget._connect_mouse_mode_menu_to_preferences
+                )
+
+            def _init_axis_scale_dialogs(self):
+                pass
+
+            def open_context_menu(self):
+                pass
+
+            def open_export_dialog(self):
+                pass
+
+            def copy_plot_image(self):
+                self.copy_called = True
+                return True
+
+            def request_close_all_plots(self):
+                pass
+
+            def request_application_quit(self):
+                pass
+
+            def refreshWindow(self, force=False):
+                pass
+
+            def show_preferences_dialog(self):
+                pass
+
+        widget = pg.GraphicsLayoutWidget()
+        host = Host()
+        host.widget = widget
+        host.plot = widget.addPlot()
+        host.vb = host.plot.vb
+        host.oper_dock = qtw.QDockWidget()
+        host.copy_called = False
+
+        try:
+            host.initContextMenu()
+            host.initMenu()
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in host.menuBar().actions()
+                }
+            context_actions = [
+                action.text().replace("&", "")
+                for action in host.vbMenu.actions()
+                if not action.isSeparator()
+                ]
+
+            self.assertEqual(
+                host.copyPlotImageAction.objectName(),
+                "copyPlotImageAction",
+                )
+            self.assertIn(host.copyPlotImageAction, host.actions())
+            self.assertGreater(len(host.copyPlotImageAction.shortcuts()), 0)
+            self.assertEqual(
+                host.copyPlotImageAction.shortcutContext(),
+                QtCore.Qt.WindowShortcut,
+                )
+            self.assertIn("Copy Plot Image", context_actions)
+            self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
+
+            host.copyPlotImageAction.trigger()
+
+            self.assertTrue(host.copy_called)
+        finally:
+            host.deleteLater()
+            widget.deleteLater()
+
+    def test_copy_plot_image_copies_widget_grab_to_clipboard(self):
+        class PlotImageSource:
+            def __init__(self):
+                self.grabbed = 0
+
+            def grab(self):
+                self.grabbed += 1
+                pixmap = QtGui.QPixmap(37, 23)
+                pixmap.fill(QtGui.QColor("red"))
+                return pixmap
+
+        window = plotWidget.__new__(plotWidget)
+        window.widget = PlotImageSource()
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.clear()
+
+        self.assertTrue(plotWidget.copy_plot_image(window))
+
+        image = clipboard.image()
+        self.assertFalse(image.isNull())
+        self.assertEqual(image.size(), QtCore.QSize(37, 23))
+        self.assertEqual(window.widget.grabbed, 1)
+        self.assertEqual(
+            window.status_messages[-1],
+            ("Plot image copied to clipboard.", 3000),
+            )
 
     def test_mouse_mode_preference_updates_viewbox_mode(self):
         class Config:
@@ -327,6 +440,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 pass
 
             def open_export_dialog(self):
+                pass
+
+            def copy_plot_image(self):
                 pass
 
         widget = pg.GraphicsLayoutWidget()
@@ -585,4 +701,3 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(previous_bar_clicks, [])
         finally:
             host.deleteLater()
-

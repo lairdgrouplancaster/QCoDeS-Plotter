@@ -19,7 +19,8 @@ QUICK_START_HTML = """
   <li><b>Inspect the plot.</b> Use the mouse wheel to zoom, left-drag to pan,
       right-click for plot actions, and double-click axes for scale controls.</li>
   <li><b>Export data or plots.</b> Use the CSV button or preview context menu
-      for measurement data, and <b>File -&gt; Export Plot...</b> in plot windows.</li>
+      for measurement data, and <b>File -&gt; Export Plot...</b> or
+      <b>Edit -&gt; Copy Plot Image</b> in plot windows.</li>
 </ol>
 <p>Plot windows may appear before their data has finished loading. Check the
 status bar at the bottom of the window before assuming a load has failed.</p>
@@ -52,6 +53,7 @@ KEYBOARD_SHORTCUTS_HTML = """
 <h3>Plot Windows</h3>
 <table cellspacing="4" cellpadding="3">
   <tr><td><b>Ctrl+0</b></td><td>Autoscale the plot view</td></tr>
+  <tr><td><b>Ctrl+C / Cmd+C</b></td><td>Copy the plot image to the clipboard</td></tr>
   <tr><td><b>Ctrl+E</b></td><td>Export the plot</td></tr>
   <tr><td><b>Ctrl+Shift+O</b></td><td>Show or hide the operations panel</td></tr>
   <tr><td><b>Ctrl+Alt+R</b></td><td>Show or hide the refresh toolbar</td></tr>

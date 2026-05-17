@@ -437,12 +437,22 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
             self.plot.ctrlMenu.menuAction().setText("Options")
 
         self.exportPlotAction = qtw.QAction("&Export Plot...", self)
+        self.exportPlotAction.setObjectName("exportPlotAction")
         self.register_shortcut(
             self.exportPlotAction,
             "Ctrl+E",
             "Open the plot export dialog",
             )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
+
+        self.copyPlotImageAction = qtw.QAction("&Copy Plot Image", self)
+        self.copyPlotImageAction.setObjectName("copyPlotImageAction")
+        self.register_shortcut(
+            self.copyPlotImageAction,
+            standard_key_sequences(QKeySequence.Copy, ["Ctrl+C"]),
+            "Copy the plot image to the clipboard",
+            )
+        self.copyPlotImageAction.triggered.connect(self.copy_plot_image)
 
         contextAction = qtw.QAction("Show Context Menu", self)
         self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
@@ -458,6 +468,9 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         x_action = actions[1]
         
         self.autoscaleSep = self.vbMenu.insertSeparator(x_action)
+
+        self.vbMenu.insertAction(x_action, self.copyPlotImageAction)
+        self.vbMenu.insertSeparator(x_action)
         
         # Create visibility
         toggleAction = qtw.QAction("View Operations", self, checkable=True)
@@ -515,6 +528,38 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         scene = self.widget.scene()
         scene.contextMenuItem = self.plot
         scene.showExportDialog()
+
+
+    @QtCore.pyqtSlot()
+    def copy_plot_image(self):
+        """
+        Copies the rendered plot widget to the clipboard as an image.
+
+        Only the pyqtgraph widget is captured, so window menus, toolbars, docks,
+        and any open context menu are excluded.
+
+        """
+        clipboard = qtw.QApplication.clipboard()
+        if clipboard is None:
+            self.show_status("No clipboard available.", 5000)
+            return False
+
+        pixmap = self._plot_image_pixmap()
+        if pixmap.isNull():
+            self.show_status("Could not copy plot image.", 5000)
+            return False
+
+        clipboard.setImage(pixmap.toImage())
+        self.show_status("Plot image copied to clipboard.", 3000)
+        return True
+
+
+    def _plot_image_pixmap(self):
+        """
+        Captures the plot widget without the surrounding QMainWindow chrome.
+
+        """
+        return self.widget.grab()
         
         
     def initAxes(self):
@@ -624,6 +669,11 @@ class plotWidget(PlotAxisScalingMixin, PlotMarqueeMixin, qtw.QMainWindow):
         if export_plot_action is not None:
             file_menu.addAction(export_plot_action)
             file_menu.addSeparator()
+
+        copy_plot_image_action = getattr(self, "copyPlotImageAction", None)
+        if copy_plot_image_action is not None:
+            edit_menu = menu.addMenu("&Edit")
+            edit_menu.addAction(copy_plot_image_action)
 
         close_all_plots_action = qtw.QAction("Close All &Plot Windows", self)
         close_all_plots_action.setShortcut("Ctrl+Shift+W")
