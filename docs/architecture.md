@@ -65,8 +65,12 @@ dialogs, and base context-menu actions. Plot-type-specific snapping and stats
 live in `plot1d.py` and `plot2d.py`.
 
 `src/qplot/windows/plot1d.py` extends the shared plot window for line plots. It
-owns 1D-specific trace handling, secondary axes, snap-to-trace behavior, and
-line-plot marquee statistics.
+owns main line rendering, snap-to-trace behavior, and line-plot marquee
+statistics.
+
+`src/qplot/windows/_plot1d_traces.py` contains the line-plot trace mixin. It
+owns secondary trace controls, added-trace refresh handling, right-axis viewbox
+synchronization, and cleanup of hidden trace windows.
 
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
 owns heatmap rendering, hover pixel display, and marquee color scaling.
