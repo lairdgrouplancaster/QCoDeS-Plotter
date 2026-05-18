@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -14,6 +16,75 @@ SNAP_TO_TRACE_SHORTCUTS = platform_key_sequences(
 SNAP_TO_TRACE_SHORTCUT_LABEL = SNAP_TO_TRACE_SHORTCUTS[0].toString(
     QKeySequence.SequenceFormat.NativeText
     )
+
+
+@dataclass(frozen=True)
+class _SnapTraceSample:
+    x_value: float
+    y_value: float
+    point_number: int
+
+
+def _nearest_trace_sample(x_data, y_data, cursor_x):
+    """
+    Return the finite plotted sample nearest to a cursor X coordinate.
+
+    """
+    x_data = np.asarray(x_data, dtype=float)
+    y_data = np.asarray(y_data, dtype=float)
+    count = min(x_data.size, y_data.size)
+    if count == 0:
+        return None
+
+    x_data = x_data[:count]
+    y_data = y_data[:count]
+    finite = np.isfinite(x_data) & np.isfinite(y_data)
+    if not np.any(finite):
+        return None
+
+    finite_indices = np.flatnonzero(finite)
+    x_values = x_data[finite]
+    y_values = y_data[finite]
+    index = int(np.argmin(np.abs(x_values - cursor_x)))
+
+    return _SnapTraceSample(
+        x_value=float(x_values[index]),
+        y_value=float(y_values[index]),
+        point_number=int(finite_indices[index]) + 1,
+        )
+
+
+def _line_is_snap_visible(line):
+    """
+    Return whether a plotted line should participate in snap selection.
+
+    """
+    is_visible = getattr(line, "isVisible", None)
+    if callable(is_visible):
+        return bool(is_visible())
+    return True
+
+
+def _line_snap_data(line):
+    """
+    Return line data when the item is usable for snap selection.
+
+    """
+    if line is None or not hasattr(line, "getData") or not _line_is_snap_visible(line):
+        return None
+
+    data = line.getData()
+    if data is None or data[0] is None or data[1] is None:
+        return None
+    return data
+
+
+def _scene_distance_squared(first, second):
+    """
+    Return squared distance between two scene points.
+
+    """
+    return (first.x() - second.x()) ** 2 + (first.y() - second.y()) ** 2
 
 
 class Plot1DSnapMixin:
@@ -170,43 +241,29 @@ class Plot1DSnapMixin:
         nearest_distance = None
 
         for label, line in self.lines.items():
-            if line is None or not hasattr(line, "getData"):
+            data = _line_snap_data(line)
+            if data is None:
                 continue
 
-            data = line.getData()
-            if data is None or data[0] is None or data[1] is None:
-                continue
-
-            x_data = np.asarray(data[0], dtype=float)
-            y_data = np.asarray(data[1], dtype=float)
-            if x_data.size == 0 or y_data.size == 0:
-                continue
-
-            count = min(x_data.size, y_data.size)
-            x_data = x_data[:count]
-            y_data = y_data[:count]
-            finite = np.isfinite(x_data) & np.isfinite(y_data)
-            if not np.any(finite):
-                continue
-
-            finite_indices = np.flatnonzero(finite)
-            x_values = x_data[finite]
-            y_values = y_data[finite]
             viewbox = self._viewbox_for_line(line)
             mouse_point = viewbox.mapSceneToView(scene_pos)
-            index = int(np.argmin(np.abs(x_values - mouse_point.x())))
+            sample = _nearest_trace_sample(data[0], data[1], mouse_point.x())
+            if sample is None:
+                continue
 
-            x_value = float(x_values[index])
-            y_value = float(y_values[index])
-            point_scene = viewbox.mapViewToScene(QtCore.QPointF(x_value, y_value))
-            distance = (
-                (point_scene.x() - scene_pos.x()) ** 2
-                + (point_scene.y() - scene_pos.y()) ** 2
+            point_scene = viewbox.mapViewToScene(
+                QtCore.QPointF(sample.x_value, sample.y_value)
                 )
+            distance = _scene_distance_squared(point_scene, scene_pos)
 
             if nearest_distance is None or distance < nearest_distance:
-                point_number = int(finite_indices[index]) + 1
-                nearest = (label, x_value, y_value, viewbox, point_number)
+                nearest = (
+                    label,
+                    sample.x_value,
+                    sample.y_value,
+                    viewbox,
+                    sample.point_number,
+                    )
                 nearest_distance = distance
 
         return nearest
@@ -254,5 +311,4 @@ class Plot1DSnapMixin:
 
         self._snap_marker_view.removeItem(self.snap_marker)
         self._snap_marker_view = None
-
 

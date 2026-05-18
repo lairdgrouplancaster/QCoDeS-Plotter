@@ -11,9 +11,103 @@ from qplot.datahandling import find_new_runs
 from qplot.datahandling.database import (
     DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
     DatabaseLoadWorker,
-    database_info_report,
+    database_info_rows,
 )
 from qplot.diagnostics import log_event, log_exception
+
+from ._widgets.details_tables import (
+    CopyableTableWidget,
+    copy_to_clipboard,
+    format_value,
+)
+
+
+class DatabaseInfoDialog(qtw.QDialog):
+    """
+    Copyable table dialog for current database diagnostics.
+
+    """
+
+    def __init__(self, rows, parent=None):
+        super().__init__(parent)
+        self._rows = [(format_value(label), format_value(value)) for label, value in rows]
+        self.setObjectName("databaseInfoDialog")
+        self.setWindowTitle("Database Information")
+        self.setMinimumSize(520, 260)
+        self.resize(720, 360)
+
+        layout = qtw.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        content_layout = qtw.QHBoxLayout()
+        content_layout.setSpacing(12)
+
+        icon_label = qtw.QLabel(self)
+        icon = self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_MessageBoxInformation)
+        icon_label.setPixmap(icon.pixmap(32, 32))
+        icon_label.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignHCenter
+            | QtCore.Qt.AlignmentFlag.AlignTop
+            )
+        content_layout.addWidget(icon_label)
+
+        self.table = CopyableTableWidget(self)
+        self.table.setObjectName("databaseInfoTable")
+        self._setup_table()
+        content_layout.addWidget(self.table, 1)
+        layout.addLayout(content_layout, 1)
+
+        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close, self)
+        self.copyButton = buttons.addButton(
+            "Copy",
+            qtw.QDialogButtonBox.ButtonRole.ActionRole,
+            )
+        self.copyButton.setObjectName("databaseInfoCopyButton")
+        self.copyButton.clicked.connect(self.copyAll)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+
+    def _setup_table(self):
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Field", "Value"])
+        self.table.verticalHeader().hide()
+        self.table.verticalHeader().setMinimumSectionSize(16)
+        self.table.verticalHeader().setDefaultSectionSize(20)
+        self.table.horizontalHeader().setFixedHeight(22)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
+        self.table.setWordWrap(False)
+        self.table.setRowCount(len(self._rows))
+
+        for row, (label, value) in enumerate(self._rows):
+            self.table.setItem(row, 0, self._table_item(label))
+            self.table.setItem(row, 1, self._table_item(value))
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(False)
+        for row in range(self.table.rowCount()):
+            self.table.setRowHeight(row, 20)
+
+
+    def _table_item(self, value):
+        item = qtw.QTableWidgetItem(value)
+        item.setToolTip(value)
+        return item
+
+
+    def copyAll(self):
+        copy_to_clipboard(_database_info_rows_clipboard_text(self._rows))
+
+
+def _database_info_rows_clipboard_text(rows):
+    return "\n".join("\t".join(row) for row in rows)
 
 
 class DatabaseActionsMixin:
@@ -156,7 +250,7 @@ class DatabaseActionsMixin:
             return
 
         try:
-            report = database_info_report(database_path)
+            rows = database_info_rows(database_path)
         except Exception as err:
             log_exception("Database information failed", err, __name__)
             self.show_error(
@@ -166,19 +260,11 @@ class DatabaseActionsMixin:
             )
             return
 
-        box = qtw.QMessageBox(
-            qtw.QMessageBox.Icon.Information,
-            "Database Information",
-            report,
-            parent=self,
-        )
-        copy_button = box.addButton("Copy", qtw.QMessageBox.ButtonRole.ActionRole)
-        box.addButton(qtw.QMessageBox.StandardButton.Close)
-        box.exec()
-
-        if box.clickedButton() == copy_button:
-            qtw.QApplication.clipboard().setText(report)
-            self.show_status("Copied database information.", 3000)
+        dialog = DatabaseInfoDialog(rows, parent=self)
+        dialog.copyButton.clicked.connect(
+            lambda: self.show_status("Copied database information.", 3000)
+            )
+        dialog.exec()
 
 
     @QtCore.pyqtSlot()

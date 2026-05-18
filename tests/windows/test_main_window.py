@@ -1757,17 +1757,54 @@ class DatabaseDropTestCase(unittest.TestCase):
                 conn.close()
 
             report = main_window.database_info_report(database_path)
+            rows = database_module.database_info_rows(database_path)
 
         self.assertIn("Runs: 1", report)
         self.assertIn("Experiments: 1", report)
         self.assertIn("Latest run ID: 3", report)
         self.assertIn("Latest run GUID: guid-3", report)
+        self.assertIn(("Runs", "1"), rows)
+        self.assertIn(("Latest run GUID", "guid-3"), rows)
         self.assertIn("Database schema version:", report)
         self.assertIn("Last modified:", report)
         self.assertNotIn("Selected run ID:", report)
         self.assertNotIn("Installed QCoDeS version:", report)
         self.assertNotIn("QCoDeS active database:", report)
         self.assertNotIn("SQLite version:", report)
+
+    def test_database_info_dialog_displays_copyable_table(self):
+        dialog = database_actions.DatabaseInfoDialog([
+            ("Database", "demo.db"),
+            ("Path", "C:/data/demo.db"),
+            ])
+
+        try:
+            table = dialog.table
+
+            self.assertIsInstance(table, database_actions.CopyableTableWidget)
+            self.assertEqual(dialog.windowTitle(), "Database Information")
+            self.assertEqual(table.objectName(), "databaseInfoTable")
+            self.assertEqual(
+                [table.horizontalHeaderItem(col).text() for col in range(2)],
+                ["Field", "Value"],
+                )
+            self.assertEqual(table.selectionBehavior(), qtw.QAbstractItemView.SelectionBehavior.SelectRows)
+            self.assertEqual(table.item(0, 0).text(), "Database")
+            self.assertEqual(table.item(0, 1).text(), "demo.db")
+
+            table.selectRow(1)
+            table.copySelection()
+
+            self.assertEqual(qtw.QApplication.clipboard().text(), "Path\tC:/data/demo.db")
+
+            dialog.copyAll()
+
+            self.assertEqual(
+                qtw.QApplication.clipboard().text(),
+                "Database\tdemo.db\nPath\tC:/data/demo.db",
+                )
+        finally:
+            dialog.deleteLater()
 
     def test_database_path_from_mime_data_accepts_one_local_db_file(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
