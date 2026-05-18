@@ -80,7 +80,7 @@ class sysHandle:
     def set_value(
             self,
             key : str, 
-            value : [str, list, int, float]
+            value: str,
             ):
         """
         -set_value
@@ -113,7 +113,8 @@ class sysHandle:
         
         #check if key is valid
         self.config.get(key)
-        
+
+        convrt_value: object
         if value[0] == "[" or value[0] == "(":
             convrt_value = value[1:-1].split(",")
             for itr in range(len(convrt_value)):
@@ -135,7 +136,7 @@ class sysHandle:
         print(f"set '{key}' to '{value}'")
         
         
-    def info(self, attr : str=None):
+    def info(self, attr: str | None = None):
         """
         -info
         -----
