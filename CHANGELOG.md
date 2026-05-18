@@ -9,7 +9,7 @@ installation commands and release validation, see `docs/distribution.md`.
 
 No changes yet.
 
-## 1.4.0b1 - 2026-05-17
+## 1.4.0b2 - 2026-05-18
 
 ### Highlights
 

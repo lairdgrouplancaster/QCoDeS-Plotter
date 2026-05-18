@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
-from qcodes.dataset import load_by_guid, load_by_id
 
+from qplot.datahandling.readonly import load_by_guid_read_only, load_by_id_read_only
 from qplot.diagnostics import log_exception
 
 from .plot1d import plot1d
@@ -135,7 +135,7 @@ class PlotActionsMixin:
         self.show_status("Loading selected run...", 0)
         try:
             if self.dataset_holder.get(guid, 0) == 0:
-                self.ds = load_by_guid(guid)
+                self.ds = load_by_guid_read_only(guid)
             else:
                 self.ds = self.dataset_holder[guid]["dataset"]
         except Exception as err:
@@ -317,7 +317,7 @@ class PlotActionsMixin:
         try:
             if not self.ds or (guid and self.ds.guid != guid):
                 if self.dataset_holder.get(guid, 0) == 0:
-                    ds = load_by_guid(guid)
+                    ds = load_by_guid_read_only(guid)
                 else:
                     ds = self.dataset_holder[guid]["dataset"]
             else:
@@ -443,7 +443,7 @@ class PlotActionsMixin:
         if not self.ds or self.ds.guid != guid:
             try:
                 if self.dataset_holder.get(guid, 0) == 0:
-                    self.ds = load_by_guid(guid)
+                    self.ds = load_by_guid_read_only(guid)
                 else:
                     self.ds = self.dataset_holder[guid]["dataset"]
             except Exception as err:
@@ -546,7 +546,7 @@ class PlotActionsMixin:
     def _dataset_for_guid(self, guid):
         if self.dataset_holder.get(guid, 0) != 0:
             return self.dataset_holder[guid]["dataset"]
-        return load_by_guid(guid)
+        return load_by_guid_read_only(guid)
 
 
     def _plot_window_for_param(self, guid, param):
@@ -620,7 +620,7 @@ class PlotActionsMixin:
             return None
 
         try:
-            return load_by_id(self.selected_run_id)
+            return load_by_id_read_only(self.selected_run_id)
         except Exception as error:
             log_exception("Run ID load failed", error, __name__)
             self.show_error(
@@ -675,7 +675,7 @@ class PlotActionsMixin:
 
         """
         if self.dataset_holder.get(guid, 0) == 0:
-            ds = load_by_guid(guid) if ds is None else ds
+            ds = load_by_guid_read_only(guid) if ds is None else ds
             assert ds.guid == guid
 
             self.dataset_holder[guid] = {

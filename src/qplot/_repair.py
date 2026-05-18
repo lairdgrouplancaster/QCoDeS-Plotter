@@ -9,5 +9,5 @@ def repair():
 
     """
     if isfile(get_DB_location()): #close conn is already open by mistake
-        conn_from_dbpath_or_conn(None, get_DB_location()).close()
+        conn_from_dbpath_or_conn(None, get_DB_location(), read_only=True).close()
     

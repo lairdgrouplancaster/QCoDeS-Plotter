@@ -7,7 +7,6 @@ load workers, and diagnostic report generation outside the GUI class.
 
 import os
 import queue
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -15,8 +14,11 @@ from datetime import datetime
 from time import perf_counter
 
 from PyQt6 import QtCore
-from qcodes.dataset import initialise_or_create_database_at
 
+from qplot.datahandling.readonly import (
+    set_qcodes_database_location,
+    sqlite_read_only_connection,
+)
 from qplot.datahandling.readSQL import get_runs_via_sql
 from qplot.diagnostics import log_exception
 
@@ -65,13 +67,12 @@ def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS
 
     """
     probe = (
+        "from pathlib import Path\n"
         "import sqlite3, sys\n"
-        "conn = sqlite3.connect(sys.argv[1], timeout=1)\n"
+        "uri = f'{Path(sys.argv[1]).resolve().as_uri()}?mode=ro'\n"
+        "conn = sqlite3.connect(uri, timeout=1, uri=True)\n"
         "try:\n"
-        "    conn.isolation_level = None\n"
-        "    conn.execute('BEGIN')\n"
         "    conn.execute('PRAGMA user_version').fetchone()\n"
-        "    conn.commit()\n"
         "finally:\n"
         "    conn.close()\n"
     )
@@ -446,8 +447,8 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             if access_error:
                 raise RuntimeError(access_error)
 
-            self._emit_status("Initialising database...")
-            initialise_or_create_database_at(self.database_path)
+            self._emit_status("Opening database read-only...")
+            set_qcodes_database_location(self.database_path)
             if self._is_cancelled():
                 return
 
@@ -513,7 +514,7 @@ def database_info_report(database_path):
     path = os.path.abspath(database_path)
     file_size = os.path.getsize(path)
 
-    conn = sqlite3.connect(path, timeout=10)
+    conn = sqlite_read_only_connection(path, timeout=10)
     try:
         cursor = conn.cursor()
         user_version = _pragma_value(cursor, "user_version")

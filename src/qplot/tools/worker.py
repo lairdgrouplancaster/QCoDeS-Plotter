@@ -2,7 +2,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from PyQt6 import QtCore
-from qcodes.dataset.sqlite.database import connect
 
 from qplot.datahandling import load_param_data_from_db
 from qplot.datahandling.qcodes_cache import (
@@ -14,6 +13,7 @@ from qplot.datahandling.qcodes_cache import (
     cache_table_name,
     cache_write_status,
 )
+from qplot.datahandling.readonly import qcodes_read_only_connection
 from qplot.diagnostics import log_exception
 
 from . import data2matrix
@@ -80,7 +80,7 @@ class loader(QtCore.QRunnable):
             cache = self.cache
             
             if self.read_data:
-                conn = connect(cache_database_path(cache))
+                conn = qcodes_read_only_connection(cache_database_path(cache))
                 (
                     self.updated_read_status,
                     self.updated_write_status,

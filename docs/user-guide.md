@@ -17,6 +17,10 @@ You can also open a database directly from the command line:
 qplot path/to/database.db
 ```
 
+qPlot opens QCoDeS databases read-only. It can view runs that are still being
+written by another process, but it does not initialise, upgrade, or modify the
+loaded database file.
+
 ### Opening Databases from the File Manager
 
 qPlot can be added to a file manager's `Open With` menu by pointing the file
@@ -243,8 +247,9 @@ The main window can export measurement data as CSV:
 * Right-click a preview and choose the export action.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
-`Ctrl+E`, using pyqtgraph's export dialog. Use `Edit -> Copy Plot Image`,
-`Ctrl+C`, or the plot context menu to copy the rendered plot area to the
+`Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or
+the plot context menu to save the rendered plot area as a PDF. Use
+`Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution
 is set in `Options -> Preferences...`: screen resolution preserves the current
 display pixels, while 300 dpi renders a higher-resolution clipboard image at the

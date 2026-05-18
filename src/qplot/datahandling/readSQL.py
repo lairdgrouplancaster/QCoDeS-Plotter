@@ -2,7 +2,9 @@ import json
 import math
 import os
 
-from qcodes.dataset.sqlite.database import connect, get_DB_location
+from qcodes.dataset.sqlite.database import get_DB_location
+
+from qplot.datahandling.readonly import qcodes_read_only_connection
 
 
 def get_runs_via_sql():
@@ -18,7 +20,7 @@ def get_runs_via_sql():
             run_id : {column_name: column_data}
 
     """
-    conn = connect(get_DB_location())
+    conn = qcodes_read_only_connection(get_DB_location())
     try:
         cursor = conn.cursor()
         return _fetch_run_rows(cursor, empty_as_none=False)
@@ -44,7 +46,7 @@ def find_new_runs(last_time):
         Has layout: 
             run_id : {column_name: column_data}
     """
-    conn = connect(get_DB_location())
+    conn = qcodes_read_only_connection(get_DB_location())
 
     try:
         cursor = conn.cursor()
@@ -445,7 +447,7 @@ def get_run_status(guid):
     Returns completion and result count information for one run.
 
     """
-    conn = connect(get_DB_location())
+    conn = qcodes_read_only_connection(get_DB_location())
     try:
         cursor = conn.cursor()
         optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
@@ -512,7 +514,7 @@ def has_finished(guid):
         or None if no entry is found.
 
     """
-    conn = connect(get_DB_location())
+    conn = qcodes_read_only_connection(get_DB_location())
     
     try:
         cursor = conn.cursor()

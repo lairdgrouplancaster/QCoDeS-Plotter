@@ -19,7 +19,7 @@ QUICK_START_HTML = """
       right-click for plot actions, and double-click axes for scale controls.</li>
   <li><b>Export data or plots.</b> Use the CSV button or preview context menu
       for measurement data, and <b>File -&gt; Export Plot...</b> or
-      <b>Edit -&gt; Copy Plot Image</b> in plot windows.</li>
+      <b>File -&gt; Save Plot as PDF...</b> in plot windows.</li>
 </ol>
 <p>Plot windows may appear before their data has finished loading. Check the
 status bar at the bottom of the window before assuming a load has failed.</p>
