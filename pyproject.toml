@@ -112,6 +112,8 @@ files = [
     "src/qplot/windows/_shortcuts.py",
     "src/qplot/windows/_window_controls.py",
     "src/qplot/windows/_subplots/__init__.py",
+    "src/qplot/windows/_subplots/subplot1d.py",
+    "src/qplot/windows/_subplots/subplot2d.py",
     "src/qplot/windows/_widgets/__init__.py",
     "src/qplot/windows/plot1d.py",
     "src/qplot/windows/plot2d.py",
