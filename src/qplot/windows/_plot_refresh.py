@@ -1,6 +1,8 @@
 from time import perf_counter
+from typing import TYPE_CHECKING, Any
 
 from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling import load_param_data_from_db_prep
 from qplot.datahandling.qcodes_cache import (
@@ -10,14 +12,57 @@ from qplot.datahandling.qcodes_cache import (
 from qplot.diagnostics import log_exception
 from qplot.tools import loader
 
+if TYPE_CHECKING:
+    class _PlotRefreshBase(qtw.QMainWindow):
+        _last_error_text: str | None
+        _live: bool
+        axis_data: dict[str, Any]
+        axis_param: dict[str, Any]
+        dataGrid: Any
+        ds: Any
+        end_wait: Any
+        last_ds_len: int
+        lines: dict[Any, Any]
+        monitor: QtCore.QTimer
+        oper_widget: Any
+        param: Any
+        param_dict: dict[str, Any]
+        spinBox: qtw.QDoubleSpinBox
+        threadPool: QtCore.QThreadPool
+        worker: Any
 
-class PlotRefreshMixin:
+        @property
+        def axis_options(self) -> dict[str, str]: ...
+
+        def _set_param_axis_labels(self) -> None: ...
+        def hide_plot_state(self) -> None: ...
+        def initFrame(self) -> None: ...
+        def monitorIntervalChanged(self, interval: float) -> None: ...
+        def show_error(
+                self,
+                title: str,
+                message: str,
+                details: str | None = None,
+                ) -> None: ...
+        def show_plot_state(
+                self,
+                title: object,
+                detail: object | None = None,
+                kind: str = "info",
+                ) -> None: ...
+        def show_status(self, message: str, timeout: int = 5000) -> None: ...
+else:
+    class _PlotRefreshBase:
+        pass
+
+
+class PlotRefreshMixin(_PlotRefreshBase):
     """
     Worker-backed plot refresh orchestration shared by plot windows.
 
     """
 
-    def load_data(self, wait_on_thread: bool = False):
+    def load_data(self, wait_on_thread: bool = False) -> None:
         """
         Produces a worker for loading/refreshing the dataset.
         Then adds the worker to the threadPool queue to work.
@@ -40,7 +85,7 @@ class PlotRefreshMixin:
         self.show_status(message, 0)
         self.show_plot_state(message, kind="loading")
 
-        worker = loader(
+        worker: Any = loader(
             self.ds.cache,
             self.param,
             self.param_dict,
@@ -72,7 +117,7 @@ class PlotRefreshMixin:
 
 
     @QtCore.pyqtSlot()
-    def refreshWindow(self, force: bool = False):
+    def refreshWindow(self, force: bool = False) -> None:
         """
         Event handler for monitor timeout and other refresh sources.
 
@@ -125,7 +170,11 @@ class PlotRefreshMixin:
 
 
     @QtCore.pyqtSlot(bool)
-    def refreshPlot(self, finished: bool = True, worker=None):
+    def refreshPlot(
+            self,
+            finished: bool = True,
+            worker: Any | None = None,
+            ) -> bool | None:
         """
         Produces a shallow copy of data produced by worker.
         This is inhertited by plot<1/2>d to actually use the loaded data.
@@ -204,13 +253,14 @@ class PlotRefreshMixin:
             # This should no longer be possible so making error soft error.
             self.show_status(f"Refresh skipped: {err}", 10000)
             self.show_plot_state("Refresh skipped", str(err), kind="error")
+            return None
 
         finally:  # Allow code to move on from wait_on_thread
             self.end_wait.emit()
 
 
     @QtCore.pyqtSlot(Exception)
-    def err_raiser(self, err: Exception):
+    def err_raiser(self, err: Exception) -> None:
         message = f"{type(err).__name__}: {err}"
         log_exception("Plot worker error", err, __name__)
         self.show_status(f"Worker error: {message}", 10000)
@@ -224,7 +274,7 @@ class PlotRefreshMixin:
 
 
     @QtCore.pyqtSlot(str)
-    def worker_printer(self, fstr: str):
+    def worker_printer(self, fstr: str) -> None:
         # Worker print() often does not work, so done through event handlers
         self.show_status(fstr, 5000)
         print(fstr)
