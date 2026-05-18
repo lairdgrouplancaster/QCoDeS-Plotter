@@ -119,8 +119,11 @@ files = [
     "src/qplot/windows/plot2d.py",
     "src/qplot/windows/_widgets/_run_formatting.py",
     "src/qplot/windows/_widgets/details_tables.py",
+    "src/qplot/windows/_widgets/dropbox.py",
+    "src/qplot/windows/_widgets/preview.py",
     "src/qplot/windows/_widgets/run_list_items.py",
     "src/qplot/windows/_widgets/toolbar.py",
+    "src/qplot/windows/_widgets/treeWidgets.py",
 ]
 ignore_missing_imports = true
 no_implicit_optional = true

@@ -90,8 +90,8 @@ class RunList(qtw.QTreeWidget):
         if initialize is not None:
             initalize = initialize
         
-        self.watching = []
-        self.preview_cells = {}
+        self.watching: list[SortableTreeWidgetItem] = []
+        self.preview_cells: dict[str, RunPreviewCell] = {}
         
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
@@ -111,7 +111,7 @@ class RunList(qtw.QTreeWidget):
             
         # Slot connections
         self.itemSelectionChanged.connect(self.onSelect)
-        self.itemDoubleClicked.connect(self.doubleClicked)
+        self.itemDoubleClicked.connect(self._double_clicked)
         
         # Setup Context Menu
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
@@ -271,22 +271,24 @@ class RunList(qtw.QTreeWidget):
     def _item_for_guid(self, guid):
         for row in range(self.topLevelItemCount()):
             item = self.topLevelItem(row)
-            if item is not None and item.guid == guid:
+            if isinstance(item, SortableTreeWidgetItem) and item.guid == guid:
                 return item
         return None
 
 
     def _resize_columns(self):
         header = self.header()
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(32)
+        if header is not None:
+            header.setStretchLastSection(False)
+            header.setMinimumSectionSize(32)
 
-        for col in range(len(self.cols)):
-            header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
+            for col in range(len(self.cols)):
+                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
 
         fixed_width = sum(self.column_widths.values())
         elastic_min_width = sum(self.elastic_column_widths.values())
-        available_width = self.viewport().width()
+        viewport = self.viewport()
+        available_width = viewport.width() if viewport is not None else 0
         if available_width <= 0:
             available_width = fixed_width + elastic_min_width
 
@@ -327,6 +329,7 @@ class RunList(qtw.QTreeWidget):
             if item is None:
                 continue
 
+            run_id: int | str
             try:
                 run_id = int(item.text(0))
             except ValueError:
@@ -421,6 +424,7 @@ class RunList(qtw.QTreeWidget):
                 to_remove.append(run)
 
             run.update_tooltip()
+            run_id: int | str
             try:
                 run_id = int(run.text(0))
             except ValueError:
@@ -541,12 +545,13 @@ class RunList(qtw.QTreeWidget):
 
         """
         if len(self.selectedItems()) == 1: # Check multiple items are not selected
-            selection = self.selectedItems()[0].guid #emit guid
-            self.selected.emit(selection)
+            item = self.selectedItems()[0]
+            if isinstance(item, SortableTreeWidgetItem):
+                self.selected.emit(item.guid)
 
 
     @QtCore.pyqtSlot(qtw.QTreeWidgetItem, int)
-    def doubleClicked(self, item, column):
+    def _double_clicked(self, item, column):
         """
         Emits a signal to tell qplot.windows.main.MainWindow to open all params
         of selected row.
@@ -578,10 +583,13 @@ class RunList(qtw.QTreeWidget):
         selected = self.selectedItems()
         if not selected:
             return
+        selected_item = selected[0]
+        if not isinstance(selected_item, SortableTreeWidgetItem):
+            return
 
         main.add_trace_to_plot(
             target_win,
-            selected[0].guid,
+            selected_item.guid,
             param.name,
             param=param
             )

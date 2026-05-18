@@ -88,8 +88,10 @@ class picker_1d(qtw.QWidget):
         
         # Reset display
         self.option_box.setEditable(True)
-        self.option_box.lineEdit().setReadOnly(True)
-        self.option_box.lineEdit().setPlaceholderText("Add to Plot")
+        line_edit = self.option_box.lineEdit()
+        if line_edit is not None:
+            line_edit.setReadOnly(True)
+            line_edit.setPlaceholderText("Add to Plot")
         self.option_box.setCurrentIndex(-1) # set to placeholder
         
         self.option_box.blockSignals(False)
@@ -109,7 +111,8 @@ class picker_1d(qtw.QWidget):
         self.del_box.setEnabled(True)
         
         # Find text width
-        font_metrics = self.option_box.view().fontMetrics()
+        view = self.option_box.view()
+        font_metrics = view.fontMetrics() if view is not None else self.option_box.fontMetrics()
         text_width = font_metrics.boundingRect(self.option_box.currentText()).width()
         
         # Set width with small pad, ScrollArea which is placed in struggles to
@@ -141,9 +144,14 @@ class expandingComboBox(qtw.QComboBox):
     
     """
     def showPopup(self):
+        view = self.view()
+        if view is None:
+            super().showPopup()
+            return
+
         # Get width of largest item in options
         max_width = 0
-        font_metrics = self.view().fontMetrics()
+        font_metrics = view.fontMetrics()
         for i in range(self.count()):
             text_width = font_metrics.boundingRect(self.itemText(i)).width()
             max_width = max(max_width, text_width)
@@ -151,7 +159,7 @@ class expandingComboBox(qtw.QComboBox):
         max_width += 5
 
         # Update width
-        self.view().setMinimumWidth(max_width)
+        view.setMinimumWidth(max_width)
 
         # Display options
         super().showPopup()     
@@ -181,7 +189,9 @@ class colorBox(qtw.QComboBox):
         
         # Required to allow changes but prevent user typing
         self.setEditable(True)
-        self.lineEdit().setReadOnly(True)
+        line_edit = self.lineEdit()
+        if line_edit is not None:
+            line_edit.setReadOnly(True)
         
         self.activated.connect(self._color_selected)
         
@@ -254,7 +264,9 @@ class colorBox(qtw.QComboBox):
             self.setCurrentIndex(self.findData(self._currentColor))
             
         # Update visual display of dropdown
-        self.lineEdit().setStyleSheet("background-color: " + self._currentColor.name())
+        line_edit = self.lineEdit()
+        if line_edit is not None:
+            line_edit.setStyleSheet("background-color: " + self._currentColor.name())
         # Emit signal to main for further handling
         if emitSignal:
             self.selectedColor.emit(self._currentColor)
