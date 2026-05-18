@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -355,6 +357,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             def open_export_dialog(self):
                 self.export_opened = True
 
+            def save_plot_pdf(self):
+                pass
+
             def copy_plot_image(self):
                 pass
 
@@ -408,6 +413,10 @@ class RunListParentLookupTestCase(unittest.TestCase):
             def open_export_dialog(self):
                 pass
 
+            def save_plot_pdf(self):
+                self.pdf_called = True
+                return True
+
             def copy_plot_image(self):
                 self.copy_called = True
                 return True
@@ -434,6 +443,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
         host.vb = host.plot.vb
         host.oper_dock = qtw.QDockWidget()
         host.copy_called = False
+        host.pdf_called = False
 
         try:
             host.initContextMenu()
@@ -452,6 +462,10 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 host.copyPlotImageAction.objectName(),
                 "copyPlotImageAction",
                 )
+            self.assertEqual(
+                host.savePlotPdfAction.objectName(),
+                "savePlotPdfAction",
+                )
             self.assertIn(host.copyPlotImageAction, host.actions())
             self.assertGreater(len(host.copyPlotImageAction.shortcuts()), 0)
             self.assertEqual(
@@ -459,11 +473,15 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 QtCore.Qt.ShortcutContext.WindowShortcut,
                 )
             self.assertIn("Copy Plot Image", context_actions)
+            self.assertIn("Save Plot as PDF...", context_actions)
             self.assertNotIn("Copy Plot Image at Size...", context_actions)
+            self.assertIn(host.savePlotPdfAction, menus["File"].actions())
             self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
 
+            host.savePlotPdfAction.trigger()
             host.copyPlotImageAction.trigger()
 
+            self.assertTrue(host.pdf_called)
             self.assertTrue(host.copy_called)
         finally:
             host.deleteLater()
@@ -609,6 +627,67 @@ class RunListParentLookupTestCase(unittest.TestCase):
             window.status_messages[-1],
             ("Plot image copied to clipboard.", 3000),
             )
+
+    def test_save_plot_pdf_to_file_creates_pdf(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        window = plotWidget.__new__(plotWidget)
+        window.widget = widget
+        window.plot = plot
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+
+        try:
+            widget.resize(160, 120)
+            widget.show()
+            qtw.QApplication.processEvents()
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                target = Path(temp_dir) / "plot-output"
+
+                self.assertTrue(plotWidget.save_plot_pdf_to_file(window, str(target)))
+
+                pdf_path = target.with_suffix(".pdf")
+                self.assertTrue(pdf_path.exists())
+                self.assertGreater(pdf_path.stat().st_size, 0)
+                self.assertEqual(pdf_path.read_bytes()[:4], b"%PDF")
+                self.assertEqual(
+                    window.status_messages[-1],
+                    (f"Saved PDF: {pdf_path}", 5000),
+                    )
+        finally:
+            widget.deleteLater()
+
+    def test_save_plot_pdf_uses_widget_grab(self):
+        class PlotImageSource:
+            def __init__(self):
+                self.grabbed = 0
+
+            def grab(self):
+                self.grabbed += 1
+                pixmap = QtGui.QPixmap(37, 23)
+                pixmap.fill(QtGui.QColor("red"))
+                return pixmap
+
+        window = plotWidget.__new__(plotWidget)
+        window.widget = PlotImageSource()
+        window.status_messages = []
+        window.show_status = lambda message, timeout=0: (
+            window.status_messages.append((message, timeout))
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "plot-output.pdf"
+
+            self.assertTrue(plotWidget.save_plot_pdf_to_file(window, str(target)))
+
+            self.assertEqual(window.widget.grabbed, 1)
+            self.assertTrue(target.exists())
+            self.assertEqual(target.read_bytes()[:4], b"%PDF")
 
     def test_copy_plot_image_at_size_copies_exported_image_to_clipboard(self):
         widget = pg.GraphicsLayoutWidget()
@@ -798,6 +877,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 pass
 
             def open_export_dialog(self):
+                pass
+
+            def save_plot_pdf(self):
                 pass
 
             def copy_plot_image(self):

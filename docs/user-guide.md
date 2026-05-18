@@ -247,8 +247,9 @@ The main window can export measurement data as CSV:
 * Right-click a preview and choose the export action.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
-`Ctrl+E`, using pyqtgraph's export dialog. Use `Edit -> Copy Plot Image`,
-`Ctrl+C`, or the plot context menu to copy the rendered plot area to the
+`Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or
+the plot context menu to save the rendered plot area as a PDF. Use
+`Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution
 is set in `Options -> Preferences...`: screen resolution preserves the current
 display pixels, while 300 dpi renders a higher-resolution clipboard image at the

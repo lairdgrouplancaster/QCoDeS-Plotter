@@ -479,6 +479,11 @@ class plotWidget(
             )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
+        self.savePlotPdfAction = QtGui.QAction("Save Plot as &PDF...", self)
+        self.savePlotPdfAction.setObjectName("savePlotPdfAction")
+        self.savePlotPdfAction.setStatusTip("Save the visible plot area as a PDF")
+        self.savePlotPdfAction.triggered.connect(self.save_plot_pdf)
+
         self.copyPlotImageAction = QtGui.QAction("&Copy Plot Image", self)
         self.copyPlotImageAction.setObjectName("copyPlotImageAction")
         self.register_shortcut(
@@ -503,6 +508,8 @@ class plotWidget(
         
         self.autoscaleSep = self.vbMenu.insertSeparator(x_action)
 
+        self.vbMenu.insertAction(x_action, self.savePlotPdfAction)
+        self.vbMenu.insertSeparator(x_action)
         self.vbMenu.insertAction(x_action, self.copyPlotImageAction)
         self.vbMenu.insertSeparator(x_action)
         
@@ -562,6 +569,134 @@ class plotWidget(
         scene = self.widget.scene()
         scene.contextMenuItem = self.plot
         scene.showExportDialog()
+
+
+    @QtCore.pyqtSlot()
+    def save_plot_pdf(self):
+        """
+        Prompts for a filename and saves the visible plot area as a PDF.
+
+        """
+        filename = qtw.QFileDialog.getSaveFileName(
+            self,
+            "Save Plot as PDF",
+            self._default_plot_pdf_filename(),
+            "PDF files (*.pdf)",
+        )[0]
+        if not filename:
+            self.show_status("PDF export cancelled.", 3000)
+            return False
+
+        return self.save_plot_pdf_to_file(filename)
+
+
+    def save_plot_pdf_to_file(self, filename):
+        """
+        Saves the visible plot area as a PDF at ``filename``.
+
+        """
+        if not filename:
+            self.show_status("PDF export cancelled.", 3000)
+            return False
+
+        if not filename.lower().endswith(".pdf"):
+            filename = f"{filename}.pdf"
+
+        try:
+            saved = self._write_plot_pdf(filename)
+        except Exception as err:
+            log_exception("Plot PDF export failed", err, __name__)
+            self.show_status("Could not save plot PDF.", 5000)
+            if hasattr(self, "show_error"):
+                self.show_error(
+                    "PDF Export Failed",
+                    "Could not save the plot PDF.",
+                    str(err),
+                )
+            return False
+
+        if not saved:
+            self.show_status("Could not save plot PDF.", 5000)
+            return False
+
+        self.show_status(f"Saved PDF: {filename}", 5000)
+        return True
+
+
+    def _write_plot_pdf(self, filename):
+        """
+        Saves the already-laid-out plot widget as a single-page PDF.
+
+        """
+        pixmap = self._plot_image_pixmap()
+        if pixmap.isNull():
+            return False
+
+        image = pixmap.toImage()
+        if image.isNull():
+            return False
+
+        size = image.size()
+        if size.width() < 1 or size.height() < 1:
+            return False
+
+        writer = QtGui.QPdfWriter(filename)
+        writer.setCreator("qPlot")
+        writer.setTitle("qPlot plot")
+        writer.setResolution(72)
+        page_size = QtGui.QPageSize(
+            QtCore.QSizeF(size.width(), size.height()),
+            QtGui.QPageSize.Unit.Point,
+            "qPlot plot",
+            )
+        page_layout = QtGui.QPageLayout(
+            page_size,
+            QtGui.QPageLayout.Orientation.Portrait,
+            QtCore.QMarginsF(0, 0, 0, 0),
+            QtGui.QPageLayout.Unit.Point,
+            )
+        writer.setPageLayout(page_layout)
+
+        painter = QtGui.QPainter()
+        if not painter.begin(writer):
+            return False
+
+        try:
+            target = QtCore.QRectF(0, 0, size.width(), size.height())
+            painter.fillRect(target, QtGui.QColor("white"))
+            painter.drawImage(target, image)
+        finally:
+            painter.end()
+
+        return True
+
+
+    def _default_plot_pdf_filename(self):
+        """
+        Returns a suggested PDF export filename for the current plot.
+
+        """
+        run_id = getattr(self.ds, "run_id", "plot")
+        param_name = getattr(getattr(self, "param", None), "name", "plot")
+        filename = self._safe_plot_export_filename(f"run_{run_id}_{param_name}.pdf")
+
+        try:
+            database_folder = path.dirname(get_DB_location())
+        except Exception:
+            database_folder = ""
+
+        if database_folder:
+            return path.join(database_folder, filename)
+        return path.abspath(filename)
+
+
+    @staticmethod
+    def _safe_plot_export_filename(filename):
+        """
+        Replaces path-hostile characters in a suggested plot export filename.
+
+        """
+        return "".join(char if char.isalnum() or char in "._-" else "_" for char in filename)
 
 
     @QtCore.pyqtSlot()
@@ -1174,6 +1309,12 @@ class plotWidget(
         export_plot_action = getattr(self, "exportPlotAction", None)
         if export_plot_action is not None:
             file_menu.addAction(export_plot_action)
+
+        save_plot_pdf_action = getattr(self, "savePlotPdfAction", None)
+        if save_plot_pdf_action is not None:
+            file_menu.addAction(save_plot_pdf_action)
+
+        if export_plot_action is not None or save_plot_pdf_action is not None:
             file_menu.addSeparator()
 
         copy_plot_image_action = getattr(self, "copyPlotImageAction", None)
