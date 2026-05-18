@@ -81,7 +81,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         super().initContextMenu()
 
         autoColor = QtGui.QAction("Autoscale Color", self)
-        self.register_shortcut(autoColor, "Ctrl+Shift+C", "Autoscale color range")
+        self.register_shortcut(autoColor, "C", "Autoscale color range")
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
 

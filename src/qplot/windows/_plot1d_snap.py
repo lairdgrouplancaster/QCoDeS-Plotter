@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
@@ -8,10 +10,43 @@ from PyQt6.QtGui import QKeySequence
 
 from ._shortcuts import platform_key_sequences
 
+if TYPE_CHECKING:
+    class _Plot1DSnapBase(qtw.QMainWindow):
+        toolbarCo_ord: qtw.QToolBar
+        snap_to_trace_action: QtGui.QAction | None
+        trace_label: qtw.QLabel | None
+        lines: dict[object, object]
+        pos_labels: dict[str, qtw.QLabel]
+        plot: Any
+        right_vb: Any
+        snap_marker: Any
+        _snap_marker_view: Any
+        ds: Any
+        param: Any
+
+        def initLabels(self) -> None: ...
+
+        def initMenu(self) -> None: ...
+
+        def mouseMoved(self, pos: object) -> None: ...
+
+        def register_shortcut(
+                self,
+                action: QtGui.QAction,
+                sequences: list[QKeySequence],
+                description: str,
+                ) -> None: ...
+
+        def formatNum(self, value: float) -> str: ...
+else:
+    class _Plot1DSnapBase:
+        pass
+
+
 SNAP_TO_TRACE_SHORTCUTS = platform_key_sequences(
-    mac=["Ctrl+Alt+S", "Meta+Alt+S"],
-    windows=["Ctrl+Alt+S"],
-    other=["Ctrl+Alt+S"],
+    mac=["S"],
+    windows=["S"],
+    other=["S"],
     )
 SNAP_TO_TRACE_SHORTCUT_LABEL = SNAP_TO_TRACE_SHORTCUTS[0].toString(
     QKeySequence.SequenceFormat.NativeText
@@ -25,7 +60,14 @@ class _SnapTraceSample:
     point_number: int
 
 
-def _nearest_trace_sample(x_data, y_data, cursor_x):
+_LineData = tuple[npt.ArrayLike, npt.ArrayLike]
+
+
+def _nearest_trace_sample(
+        x_data: npt.ArrayLike,
+        y_data: npt.ArrayLike,
+        cursor_x: float,
+        ) -> _SnapTraceSample | None:
     """
     Return the finite plotted sample nearest to a cursor X coordinate.
 
@@ -54,7 +96,7 @@ def _nearest_trace_sample(x_data, y_data, cursor_x):
         )
 
 
-def _line_is_snap_visible(line):
+def _line_is_snap_visible(line: object) -> bool:
     """
     Return whether a plotted line should participate in snap selection.
 
@@ -65,21 +107,28 @@ def _line_is_snap_visible(line):
     return True
 
 
-def _line_snap_data(line):
+def _line_snap_data(line: object | None) -> _LineData | None:
     """
     Return line data when the item is usable for snap selection.
 
     """
-    if line is None or not hasattr(line, "getData") or not _line_is_snap_visible(line):
+    if line is None or not _line_is_snap_visible(line):
         return None
 
-    data = line.getData()
+    get_data = getattr(line, "getData", None)
+    if not callable(get_data):
+        return None
+
+    data = get_data()
     if data is None or data[0] is None or data[1] is None:
         return None
-    return data
+    return data[0], data[1]
 
 
-def _scene_distance_squared(first, second):
+def _scene_distance_squared(
+        first: QtCore.QPointF,
+        second: QtCore.QPointF,
+        ) -> float:
     """
     Return squared distance between two scene points.
 
@@ -87,7 +136,7 @@ def _scene_distance_squared(first, second):
     return (first.x() - second.x()) ** 2 + (first.y() - second.y()) ** 2
 
 
-class Plot1DSnapMixin:
+class Plot1DSnapMixin(_Plot1DSnapBase):
     """Snap-to-trace cursor readout for 1D plot windows."""
 
     def initLabels(self):
@@ -104,8 +153,8 @@ class Plot1DSnapMixin:
         self.snap_to_trace_action = QtGui.QAction(
             f"Snap to Trace ({SNAP_TO_TRACE_SHORTCUT_LABEL})",
             self,
-            checkable=True
             )
+        self.snap_to_trace_action.setCheckable(True)
         self.snap_to_trace_action.setToolTip(
             "Lock the coordinate readout to the nearest plotted data point"
             )
@@ -139,7 +188,11 @@ class Plot1DSnapMixin:
         Returns the menu matching a top-level menu title.
 
         """
-        for action in self.menuBar().actions():
+        menu_bar = self.menuBar()
+        if menu_bar is None:
+            return None
+
+        for action in menu_bar.actions():
             if action.text() == title:
                 return action.menu()
         return None
@@ -311,4 +364,3 @@ class Plot1DSnapMixin:
 
         self._snap_marker_view.removeItem(self.snap_marker)
         self._snap_marker_view = None
-

@@ -59,12 +59,12 @@ KEYBOARD_SHORTCUTS_HTML = """
   <tr><td><b>Ctrl+Alt+C</b></td><td>Show or hide the coordinate toolbar</td></tr>
   <tr><td><b>Ctrl+Alt+A</b></td><td>Show or hide the axis control panel</td></tr>
   <tr><td><b>Ctrl+Alt+O</b></td><td>Show or hide the operations dock</td></tr>
-  <tr><td><b>Ctrl+Alt+S</b></td><td>Snap the 1D coordinate readout to the nearest trace point</td></tr>
+  <tr><td><b>S</b></td><td>Snap the 1D coordinate readout to the nearest trace point</td></tr>
 </table>
 
 <h3>Heatmaps</h3>
 <table cellspacing="4" cellpadding="3">
-  <tr><td><b>Ctrl+Shift+C</b></td><td>Autoscale the colour range</td></tr>
+  <tr><td><b>C</b></td><td>Autoscale the colour range</td></tr>
   <tr><td><b>H</b></td><td>Open a horizontal cut</td></tr>
   <tr><td><b>V</b></td><td>Open a vertical cut</td></tr>
   <tr><td><b>Arrow keys</b></td><td>Move the selected cut cursor by one pixel</td></tr>
