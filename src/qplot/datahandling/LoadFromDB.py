@@ -114,7 +114,7 @@ def load_param_data_from_db(
     write_status,
     read_status,
     existing_data,
-    end : int=None,
+    end: int | None = None,
 ):
     # Data fetch
     updated_read_status: dict[str, int] = dict(read_status)
