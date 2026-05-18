@@ -1,3 +1,5 @@
+from typing import Any
+
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
@@ -34,7 +36,7 @@ class sweeper(plotWidget):
         self.fixed_indep = fixed_indep
         self.fixed_index = fixed_index
         
-        self.line = None
+        self.line: Any = None
         
         super().__init__(guid, *args, **kargs)
         
@@ -57,7 +59,9 @@ class sweeper(plotWidget):
         # Disable y axis box, for display only
         self.axis_dropdown["y"].blockSignals(True)
         self.axis_dropdown["y"].setEditable(True)
-        self.axis_dropdown["y"].lineEdit().setReadOnly(True)
+        y_axis_line_edit = self.axis_dropdown["y"].lineEdit()
+        if y_axis_line_edit is not None:
+            y_axis_line_edit.setReadOnly(True)
         self.axis_dropdown["y"].setDisabled(True)
         self.axis_dropdown["y"].setCurrentText(self.param.name)
         
@@ -94,7 +98,7 @@ class sweeper(plotWidget):
         self.picker.slider.blockSignals(True) # Prevent use while loading
         
         # Push all widgets to top
-        self.axes_dock.layout.addStretch()
+        self.axes_dock.content_layout.addStretch()
         
         
     def initFrame(self):

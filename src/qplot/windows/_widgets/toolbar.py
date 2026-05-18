@@ -1,5 +1,9 @@
+from typing import Any
+
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
+
+_NO_ALIGNMENT = QtCore.Qt.AlignmentFlag(0)
 
 
 class QDock_context(qtw.QDockWidget):
@@ -18,17 +22,17 @@ class QDock_context(qtw.QDockWidget):
         core_widget = qtw.QFrame()
         self.setWidget(core_widget)
         
-        self.layout = self.VBox_context(self.event_filter, core_widget)
+        self.content_layout = self.VBox_context(self.event_filter, core_widget)
         
     
     ### Overwrite add functions to add to main layout
-    def addLayout(self, *args, **kargs):
+    def addLayout(self, *args: Any, **kargs: Any) -> "QDock_context.HBox_context":
         layout = self.HBox_context(self.event_filter, *args, **kargs)
-        self.layout.addLayout(layout)
+        self.content_layout.addLayout(layout)
         return layout
         
-    def addWidget(self, *args, **kargs):
-        self.layout.addWidget(*args, **kargs)
+    def addWidget(self, *args: Any, **kargs: Any) -> None:
+        self.content_layout.addWidget(*args, **kargs)
     
     ### SUB CLASS LAYOUT TO CARRY CONTEXT MENU THROUGH ###
     class VBox_context(qtw.QVBoxLayout):
@@ -36,24 +40,36 @@ class QDock_context(qtw.QDockWidget):
             super().__init__(*args, **kargs)
             self.event_filter = event_filter
             
-        def addWidget(self, widget, *args, **kargs):
-            widget.installEventFilter(self.event_filter)
+        def addWidget(
+                self,
+                widget: qtw.QWidget | None,
+                stretch: int = 0,
+                alignment: QtCore.Qt.AlignmentFlag = _NO_ALIGNMENT,
+                ) -> None:
+            if widget is not None:
+                widget.installEventFilter(self.event_filter)
             for child in self.findChildren(qtw.QWidget):
                 child.installEventFilter(self.event_filter)
 
-            super().addWidget(widget, *args, **kargs)
+            super().addWidget(widget, stretch, alignment)
             
     class HBox_context(qtw.QHBoxLayout):
         def __init__(self, event_filter, *args, **kargs):
             super().__init__(*args, **kargs)
             self.event_filter = event_filter
             
-        def addWidget(self, widget, *args, **kargs):
-            widget.installEventFilter(self.event_filter)
+        def addWidget(
+                self,
+                widget: qtw.QWidget | None,
+                stretch: int = 0,
+                alignment: QtCore.Qt.AlignmentFlag = _NO_ALIGNMENT,
+                ) -> None:
+            if widget is not None:
+                widget.installEventFilter(self.event_filter)
             for child in self.findChildren(qtw.QWidget):
                 child.installEventFilter(self.event_filter)
             
-            super().addWidget(widget, *args, **kargs)
+            super().addWidget(widget, stretch, alignment)
             
                 
 class contextMenuFilter(QtCore.QObject):

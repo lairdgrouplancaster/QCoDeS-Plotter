@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING, Any, cast
+
 import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
@@ -13,6 +15,38 @@ from ._colorbar import (
     _ColorbarColormapTableItem,
     _config_value,
 )
+
+if TYPE_CHECKING:
+    class _ColorbarScaleDialogBase:
+        _colorbar_colormap_name: str
+        _colorbar_manual_levels: tuple[float, float] | None
+        bar: Any
+        colorbar_auto_radio: qtw.QRadioButton
+        colorbar_button_group: qtw.QButtonGroup
+        colorbar_cet_subtype_checks: dict[str, qtw.QCheckBox]
+        colorbar_colormap_table: qtw.QTableWidget
+        colorbar_include_cet_check: qtw.QCheckBox
+        colorbar_include_custom_check: qtw.QCheckBox
+        colorbar_include_local_check: qtw.QCheckBox
+        colorbar_include_matplotlib_check: qtw.QCheckBox
+        colorbar_manual_radio: qtw.QRadioButton
+        colorbar_matplotlib_subtype_checks: dict[str, qtw.QCheckBox]
+        colorbar_max_text: qtw.QLineEdit
+        colorbar_min_text: qtw.QLineEdit
+        colorbar_scale_controls: qtw.QWidget
+        colorbar_scale_dialog: qtw.QDialog
+        relevel_refresh: qtw.QCheckBox
+
+        def _available_colorbar_colormaps(self) -> tuple[str, ...]: ...
+        def _colorbar_colormap(self, name: str | None = None) -> Any: ...
+        def _current_colorbar_colormap_name(self) -> str: ...
+        def _current_colorbar_levels(self) -> tuple[float, float] | None: ...
+        def _set_colorbar_levels(self, vmin: float, vmax: float) -> None: ...
+        def scaleColorbar(self, event: Any = None) -> None: ...
+        def show_status(self, message: str, timeout: int = 5000) -> None: ...
+else:
+    class _ColorbarScaleDialogBase:
+        pass
 
 
 class _CenteredIconDelegate(qtw.QStyledItemDelegate):
@@ -34,6 +68,9 @@ class _CenteredIconDelegate(qtw.QStyledItemDelegate):
 
         widget = opt.widget
         style = widget.style() if widget else qtw.QApplication.style()
+        if style is None:
+            super().paint(painter, option, index)
+            return
         style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
 
         icon_size = opt.decorationSize
@@ -43,16 +80,16 @@ class _CenteredIconDelegate(qtw.QStyledItemDelegate):
         icon_rect = QtCore.QRect(QtCore.QPoint(0, 0), icon_size)
         icon_rect.moveCenter(opt.rect.center())
 
-        mode = QtGui.QIcon.Normal
-        if not opt.state & qtw.QStyle.StateFlag.State_Enabled:
-            mode = QtGui.QIcon.Disabled
+        mode = QtGui.QIcon.Mode.Normal
+        if not (opt.state & qtw.QStyle.StateFlag.State_Enabled):
+            mode = QtGui.QIcon.Mode.Disabled
         elif opt.state & qtw.QStyle.StateFlag.State_Selected:
-            mode = QtGui.QIcon.Selected
+            mode = QtGui.QIcon.Mode.Selected
 
         icon.paint(painter, icon_rect, QtCore.Qt.AlignmentFlag.AlignCenter, mode)
 
 
-class ColorbarScaleDialogMixin:
+class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
     """
     Dialog and table controls for heatmap color-scale configuration.
 
@@ -85,13 +122,13 @@ class ColorbarScaleDialogMixin:
             self.colorbar_matplotlib_subtype_checks[subtype] = qtw.QCheckBox(label)
         self._init_colorbar_colormap_table()
 
-        validator = QtGui.QDoubleValidator(self)
+        validator = QtGui.QDoubleValidator(cast(QtCore.QObject, self))
         self.colorbar_min_text.setValidator(validator)
         self.colorbar_max_text.setValidator(validator)
         for line_edit in (self.colorbar_min_text, self.colorbar_max_text):
             line_edit.setMinimumWidth(80)
 
-        self.colorbar_button_group = qtw.QButtonGroup(self)
+        self.colorbar_button_group = qtw.QButtonGroup(cast(QtCore.QObject, self))
         self.colorbar_button_group.addButton(self.colorbar_manual_radio)
         self.colorbar_button_group.addButton(self.colorbar_auto_radio)
         self.colorbar_button_group.setExclusive(True)
@@ -195,7 +232,9 @@ class ColorbarScaleDialogMixin:
         table = self.colorbar_colormap_table
         table.setColumnCount(3)
         table.setHorizontalHeaderLabels(("Color map", "Preview", "Type"))
-        table.verticalHeader().hide()
+        vertical_header = table.verticalHeader()
+        if vertical_header is not None:
+            vertical_header.hide()
         table.setShowGrid(False)
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -207,6 +246,8 @@ class ColorbarScaleDialogMixin:
         table.setItemDelegateForColumn(1, _CenteredIconDelegate(table))
 
         header = table.horizontalHeader()
+        if header is None:
+            return
         header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, qtw.QHeaderView.ResizeMode.ResizeToContents)
@@ -493,7 +534,7 @@ class ColorbarScaleDialogMixin:
 
         dialog = getattr(self, "colorbar_scale_dialog", None)
         if dialog is None:
-            dialog = qtw.QDialog(self)
+            dialog = qtw.QDialog(cast(qtw.QWidget, self))
             dialog.setWindowTitle("Color scale")
             dialog.resize(520, 560)
             layout = qtw.QVBoxLayout(dialog)

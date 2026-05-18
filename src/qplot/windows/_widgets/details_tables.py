@@ -1,13 +1,12 @@
+from typing import Any, cast
+
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from .._shortcuts import standard_key_sequences
+from .._commands import command_spec
 
-COPY_SELECTION_SHORTCUTS = standard_key_sequences(
-    QtGui.QKeySequence.StandardKey.Copy,
-    ["Ctrl+C"],
-    )
-COPY_CELL_SHORTCUTS = [QtGui.QKeySequence("Ctrl+Shift+C")]
+COPY_SELECTION_SHORTCUTS = command_spec("copy.selection").resolved_shortcuts()
+COPY_CELL_SHORTCUTS = command_spec("copy.cell").resolved_shortcuts()
 
 
 def copy_action(label, shortcuts, slot, parent):
@@ -33,6 +32,9 @@ class WrappedValueDelegate(qtw.QStyledItemDelegate):
 
         widget = opt.widget
         style = widget.style() if widget is not None else qtw.QApplication.style()
+        if style is None:
+            super().paint(painter, option, index)
+            return
         text = opt.text
         opt.text = ""
 
@@ -57,7 +59,7 @@ class WrappedValueDelegate(qtw.QStyledItemDelegate):
         self.initStyleOption(opt, index)
 
         width = opt.rect.width()
-        if width <= 0 and opt.widget is not None:
+        if width <= 0 and isinstance(opt.widget, qtw.QTreeView):
             width = opt.widget.columnWidth(index.column())
         width = max(24, width - 6)
 
@@ -83,9 +85,11 @@ class infoTree(qtw.QTreeWidget):
         self.setUniformRowHeights(False)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setItemDelegateForColumn(1, WrappedValueDelegate(self))
-        self.header().setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
-        self.header().setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
-        self.header().setStretchLastSection(True)
+        header = self.header()
+        if header is not None:
+            header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
+            header.setStretchLastSection(True)
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.openCopyMenu)
 
@@ -125,14 +129,16 @@ class infoTree(qtw.QTreeWidget):
 
         if self.expand_all:
             self.expandAll()
-        self.header().setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
-        self.header().setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
-        self.doItemsLayout()
+        header = self.header()
+        if header is not None:
+            header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
+        cast(Any, self).doItemsLayout()
 
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.doItemsLayout()
+        cast(Any, self).doItemsLayout()
 
 
     def openCopyMenu(self, pos):
@@ -152,7 +158,9 @@ class infoTree(qtw.QTreeWidget):
         if self.selectedItems():
             menu.addAction(self.copy_selection_action)
 
-        menu.exec(self.viewport().mapToGlobal(pos))
+        viewport = self.viewport()
+        if viewport is not None:
+            menu.exec(viewport.mapToGlobal(pos))
 
 
     def copyValue(self):
@@ -163,8 +171,9 @@ class infoTree(qtw.QTreeWidget):
 
     def copySelection(self):
         items = self.selectedItems()
-        if not items and self.currentItem() is not None:
-            items = [self.currentItem()]
+        current_item = self.currentItem()
+        if not items and current_item is not None:
+            items = [current_item]
         copy_to_clipboard("\n".join(row_text(item) for item in items))
 
 
@@ -200,7 +209,9 @@ class CopyableTableWidget(qtw.QTableWidget):
         menu.addAction(self.copy_cell_action)
         menu.addAction(self.copy_selection_action)
 
-        menu.exec(self.viewport().mapToGlobal(pos))
+        viewport = self.viewport()
+        if viewport is not None:
+            menu.exec(viewport.mapToGlobal(pos))
 
 
     def copyCell(self):

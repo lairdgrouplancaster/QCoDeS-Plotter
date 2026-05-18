@@ -16,6 +16,11 @@ from qplot.datahandling import (
     get_runs_via_sql,
 )
 
+from .._commands import (
+    configure_action,
+    create_action,
+    plot_measurement_command_spec,
+)
 from ._run_formatting import (  # noqa: F401
     complete_cell_sort_value,
     format_complete_cell,
@@ -90,8 +95,8 @@ class RunList(qtw.QTreeWidget):
         if initialize is not None:
             initalize = initialize
         
-        self.watching = []
-        self.preview_cells = {}
+        self.watching: list[SortableTreeWidgetItem] = []
+        self.preview_cells: dict[str, RunPreviewCell] = {}
         
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
@@ -111,15 +116,20 @@ class RunList(qtw.QTreeWidget):
             
         # Slot connections
         self.itemSelectionChanged.connect(self.onSelect)
-        self.itemDoubleClicked.connect(self.doubleClicked)
+        self.itemDoubleClicked.connect(self._double_clicked)
         
         # Setup Context Menu
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.prepareMenu)
 
-        context_action = QtGui.QAction("Show Context Menu", self)
-        context_action.setShortcut("Shift+F10")
-        context_action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        context_action = create_action(
+            "context.show",
+            self,
+            status_tip="Show run-list context menu",
+            )
+        context_action.setShortcutContext(
+            QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
+            )
         context_action.triggered.connect(self.openKeyboardMenu)
         self.addAction(context_action)
         
@@ -271,22 +281,24 @@ class RunList(qtw.QTreeWidget):
     def _item_for_guid(self, guid):
         for row in range(self.topLevelItemCount()):
             item = self.topLevelItem(row)
-            if item is not None and item.guid == guid:
+            if isinstance(item, SortableTreeWidgetItem) and item.guid == guid:
                 return item
         return None
 
 
     def _resize_columns(self):
         header = self.header()
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(32)
+        if header is not None:
+            header.setStretchLastSection(False)
+            header.setMinimumSectionSize(32)
 
-        for col in range(len(self.cols)):
-            header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
+            for col in range(len(self.cols)):
+                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
 
         fixed_width = sum(self.column_widths.values())
         elastic_min_width = sum(self.elastic_column_widths.values())
-        available_width = self.viewport().width()
+        viewport = self.viewport()
+        available_width = viewport.width() if viewport is not None else 0
         if available_width <= 0:
             available_width = fixed_width + elastic_min_width
 
@@ -327,6 +339,7 @@ class RunList(qtw.QTreeWidget):
             if item is None:
                 continue
 
+            run_id: int | str
             try:
                 run_id = int(item.text(0))
             except ValueError:
@@ -421,6 +434,7 @@ class RunList(qtw.QTreeWidget):
                 to_remove.append(run)
 
             run.update_tooltip()
+            run_id: int | str
             try:
                 run_id = int(run.text(0))
             except ValueError:
@@ -460,8 +474,12 @@ class RunList(qtw.QTreeWidget):
         
         menu = qtw.QMenu(self)
 
-        open_all = QtGui.QAction("&Plot all", menu)
-        self._set_action_shortcut(open_all, "Ctrl+Shift+Return")
+        open_all = create_action(
+            "run.plot_selected_all",
+            menu,
+            text="&Plot all",
+            )
+        self._set_action_shortcut(open_all, "run.plot_selected_all")
         open_all.triggered.connect(lambda _,: main.open_selected_run_all())
         menu.addAction(open_all)
 
@@ -473,7 +491,10 @@ class RunList(qtw.QTreeWidget):
             
             open_win = QtGui.QAction(f"  - {param.name}", menu)
             if itr < 9:
-                self._set_action_shortcut(open_win, f"Ctrl+{itr + 1}")
+                self._set_action_shortcut(
+                    open_win,
+                    plot_measurement_command_spec(itr),
+                    )
             
             # Due to the for loop, the lambda function sets param as an optional 
             # default. Otherwise, param is set by the last iteration of the for loop.
@@ -516,12 +537,12 @@ class RunList(qtw.QTreeWidget):
         return None
 
 
-    def _set_action_shortcut(self, action, shortcut):
+    def _set_action_shortcut(self, action, command):
         """
         Sets a context-menu action shortcut.
 
         """
-        action.setShortcut(shortcut)
+        configure_action(action, command)
         action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         if hasattr(action, "setShortcutVisibleInContextMenu"):
             action.setShortcutVisibleInContextMenu(True)
@@ -541,12 +562,13 @@ class RunList(qtw.QTreeWidget):
 
         """
         if len(self.selectedItems()) == 1: # Check multiple items are not selected
-            selection = self.selectedItems()[0].guid #emit guid
-            self.selected.emit(selection)
+            item = self.selectedItems()[0]
+            if isinstance(item, SortableTreeWidgetItem):
+                self.selected.emit(item.guid)
 
 
     @QtCore.pyqtSlot(qtw.QTreeWidgetItem, int)
-    def doubleClicked(self, item, column):
+    def _double_clicked(self, item, column):
         """
         Emits a signal to tell qplot.windows.main.MainWindow to open all params
         of selected row.
@@ -578,10 +600,13 @@ class RunList(qtw.QTreeWidget):
         selected = self.selectedItems()
         if not selected:
             return
+        selected_item = selected[0]
+        if not isinstance(selected_item, SortableTreeWidgetItem):
+            return
 
         main.add_trace_to_plot(
             target_win,
-            selected[0].guid,
+            selected_item.guid,
             param.name,
             param=param
             )

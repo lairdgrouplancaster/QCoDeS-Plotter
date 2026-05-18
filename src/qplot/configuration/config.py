@@ -118,7 +118,9 @@ class config:
         if len(keys) == 1:
             out = self.config.get(key)
         elif len(keys) == 2:
-            out = self.config.get(keys[0]).get(keys[1])
+            section = self.config.get(keys[0])
+            if isinstance(section, dict):
+                out = section.get(keys[1])
         else:
             raise KeyError(f"Key length too long, {key}. Please ensure you use a dot (.) seperated key")
         

@@ -6,6 +6,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._dataset_handle import DatasetHandle
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import (
@@ -44,12 +45,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window.monitor = self.Timer()
         window.spinBox = self.SpinBox()
         window._guid = "guid"
-        window._dataset_holder = {
-            "guid": {
-                "dataset": self.Dataset(),
-                "del_timer": None,
-                }
-            }
+        window._dataset_holder = {"guid": DatasetHandle(self.Dataset())}
         window.worker = self.Worker(worker_running)
         window.last_ds_len = 0
         window.load_calls = []
@@ -169,12 +165,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window.line = line
         window.marquee = None
         window._guid = "guid"
-        window._dataset_holder = {
-            "guid": {
-                "dataset": Dataset(),
-                "del_timer": None,
-                }
-            }
+        window._dataset_holder = {"guid": DatasetHandle(Dataset())}
         window.param = Param()
         window.end_wait = Signal()
         window._set_param_axis_labels = lambda: None

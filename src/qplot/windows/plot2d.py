@@ -1,9 +1,13 @@
+from typing import Any
+
 import numpy as np
+import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from . import _colorbar
+from ._commands import command_spec, create_action
 from ._plot2d_colorbar import Plot2DColorbarMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plotWin import plotWidget
@@ -26,19 +30,20 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
     sweep_moved = QtCore.pyqtSignal([int, int])
     close_sweeps_requested = QtCore.pyqtSignal([object, object])
     
-    def __init__(self, 
-                 *args,
-                 **kargs,
-                 ):
+    def __init__(
+            self,
+            *args: Any,
+            **kargs: Any,
+            ) -> None:
         super().__init__(*args, **kargs)
         self.sweep_id = 0
-        self.sweep_lines = {}
+        self.sweep_lines: dict[int, Any] = {}
         self.active_sweep_line_id = None
-        self.rotate = None # FOR SUBPLOT CURSOR
-        self._colorbar_manual_levels = None
+        self.__dict__["rotate"] = None # FOR SUBPLOT CURSOR
+        self.__dict__["_colorbar_manual_levels"] = None
 
         
-    def initFrame(self):
+    def initFrame(self) -> None:
         """
         Sets up the initial plot and starting data.
 
@@ -63,7 +68,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         self.show_status("Heatmap ready; loading data...", 5000)
       
 
-    def initRefresh(self, refresh):
+    def initRefresh(self, refresh: Any) -> None:
         super().initRefresh(refresh)
         
         self.toolbarRef.addSeparator()
@@ -77,11 +82,11 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         self.toolbarRef.addWidget(self.relevel_refresh)
      
     
-    def initContextMenu(self):
+    def initContextMenu(self) -> None:
         super().initContextMenu()
 
-        autoColor = QtGui.QAction("Autoscale Color", self)
-        self.register_shortcut(autoColor, "Ctrl+Shift+C", "Autoscale color range")
+        autoColor = create_action("heatmap.autoscale_color", self)
+        self.register_shortcut(autoColor, command_spec("heatmap.autoscale_color"))
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
 
@@ -90,13 +95,13 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         sep = self.vbMenu.insertSeparator(actions[3])
         
         ### Sweep control
-        h_sweep = QtGui.QAction("Horizontal Cut", self)
-        self.register_shortcut(h_sweep, "H", "Plot horizontal cut")
+        h_sweep = create_action("heatmap.horizontal_cut", self)
+        self.register_shortcut(h_sweep, command_spec("heatmap.horizontal_cut"))
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
-        v_sweep = QtGui.QAction("Vertical Cut", self)
-        self.register_shortcut(v_sweep, "V", "Plot vertical cut")
+        v_sweep = create_action("heatmap.vertical_cut", self)
+        self.register_shortcut(v_sweep, command_spec("heatmap.vertical_cut"))
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         
@@ -121,9 +126,9 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             self.addAction(action)
         
         
-    def initLabels(self):
+    def initLabels(self) -> None:
         super().initLabels()
-        self.z_index = None
+        self.__dict__["z_index"] = None
         
         self.pos_labels["y"].setText(self.pos_labels["y"].text() + ";")
         
@@ -133,7 +138,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         
 ###############################################################################
     
-    def refreshPlot(self, finished : bool = True, worker=None):
+    def refreshPlot(self, finished: bool = True, worker: Any = None) -> None:
         """
         Updates plot based on data produced by the thread worker. Data is 
         assigned in plotWidget.refreshPlot, then all plot items are produced
@@ -183,13 +188,14 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 yrange = ymin / 100
 
             # Link x/y axis values with Heatmap data
-            self.rect = pg.QtCore.QRectF(
+            heatmap_rect = QtCore.QRectF(
                 xmin,
                 ymin,
                 xrange,
                 yrange
             )
-            self.image.setRect(self.rect)
+            self.__dict__["rect"] = heatmap_rect
+            self.image.setRect(heatmap_rect)
 
             # Produce color bar on first run
             if not hasattr(self, "bar"):
@@ -208,7 +214,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                     self._set_colorbar_levels(*self._colorbar_manual_levels)
 
             if autoLevels:
-                self._colorbar_manual_levels = None
+                self.__dict__["_colorbar_manual_levels"] = None
                 self.scaleColorbar()
             elif self._colorbar_manual_levels is not None:
                 self._set_colorbar_levels(*self._colorbar_manual_levels)
@@ -222,12 +228,12 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             plot_worker.running = False
 
 
-    def _has_plottable_heatmap_data(self):
+    def _has_plottable_heatmap_data(self) -> bool:
         x_data = np.asarray(self.axis_data.get("x", []), dtype=float)
         y_data = np.asarray(self.axis_data.get("y", []), dtype=float)
         z_data = np.asarray(self.dataGrid, dtype=float)
 
-        return (
+        return bool(
             x_data.size > 0
             and y_data.size > 0
             and z_data.size > 0
@@ -235,7 +241,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             )
 
 
-    def show_hover_pixel_outline(self, i, j):
+    def show_hover_pixel_outline(self, i: int, j: int) -> None:
         """
         Move the hover outline to the heatmap pixel at the given data indices.
 
@@ -246,83 +252,105 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         j : int
             Row index within the heatmap data grid.
         """
-        self.z_index = [i, j]
+        self.__dict__["z_index"] = [i, j]
         self._update_hover_pixel_outline_from_index()
 
 
-    def hide_hover_pixel_outline(self):
+    def hide_hover_pixel_outline(self) -> None:
         """
         Hide the heatmap hover outline and clear the saved hover index.
 
         """
-        self.z_index = None
+        self.__dict__["z_index"] = None
         if hasattr(self, "hover_pixel_outline"):
             self.hover_pixel_outline.hide()
 
 
-    def _update_hover_pixel_outline_from_index(self):
+    def _heatmap_rect(self) -> QtCore.QRectF | None:
+        rect = self.__dict__.get("rect")
+        if isinstance(rect, QtCore.QRectF):
+            return rect
+        return None
+
+
+    def _update_hover_pixel_outline_from_index(self) -> None:
+        heatmap_rect = self._heatmap_rect()
+        z_index = self.__dict__.get("z_index")
         if (
                 not hasattr(self, "hover_pixel_outline")
-                or not hasattr(self, "rect")
+                or heatmap_rect is None
                 or not hasattr(self, "dataGrid")
-                or getattr(self, "z_index", None) is None
+                or not isinstance(z_index, list)
                 ):
             if hasattr(self, "hover_pixel_outline"):
                 self.hover_pixel_outline.hide()
             return
 
-        i, j = self.z_index
+        i, j = z_index
         rows, cols = self.dataGrid.shape
         if rows <= 0 or cols <= 0 or i < 0 or j < 0 or i >= cols or j >= rows:
             self.hover_pixel_outline.hide()
             return
 
-        cell_width = self.rect.width() / cols
-        cell_height = self.rect.height() / rows
+        cell_width = heatmap_rect.width() / cols
+        cell_height = heatmap_rect.height() / rows
         if cell_width <= 0 or cell_height <= 0:
             self.hover_pixel_outline.hide()
             return
 
         self.hover_pixel_outline.setRect(QtCore.QRectF(
-            self.rect.x() + i * cell_width,
-            self.rect.y() + j * cell_height,
+            heatmap_rect.x() + i * cell_width,
+            heatmap_rect.y() + j * cell_height,
             cell_width,
             cell_height,
         ))
         self.hover_pixel_outline.show()
 
 
-    def _snap_marquee_rect(self, rect):
+    def _snap_marquee_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:
         """
         Snap marquee edges to heatmap pixel boundaries.
 
         """
-        if not hasattr(self, "rect") or not hasattr(self, "dataGrid"):
+        heatmap_rect = self._heatmap_rect()
+        if heatmap_rect is None or not hasattr(self, "dataGrid"):
             return rect
 
         rows, cols = self.dataGrid.shape
-        if rows <= 0 or cols <= 0 or self.rect.width() <= 0 or self.rect.height() <= 0:
+        if (
+                rows <= 0
+                or cols <= 0
+                or heatmap_rect.width() <= 0
+                or heatmap_rect.height() <= 0
+                ):
             return rect
 
         left, right = self._snap_marquee_axis_to_cells(
             rect.left(),
             rect.right(),
-            self.rect.x(),
-            self.rect.width(),
+            heatmap_rect.x(),
+            heatmap_rect.width(),
             cols,
             )
         bottom, top = self._snap_marquee_axis_to_cells(
             rect.top(),
             rect.bottom(),
-            self.rect.y(),
-            self.rect.height(),
+            heatmap_rect.y(),
+            heatmap_rect.height(),
             rows,
             )
 
         return QtCore.QRectF(left, bottom, right - left, top - bottom)
 
 
-    def _snap_marquee_axis_to_cells(self, low, high, origin, span, count):
+    def _snap_marquee_axis_to_cells(
+            self,
+            low: float,
+            high: float,
+            origin: float,
+            span: float,
+            count: int,
+            ) -> tuple[float, float]:
         cell_size = span / count
         min_value = origin
         max_value = origin + span
@@ -340,7 +368,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             )
 
 
-    def _add_marquee_color_context_action(self, menu):
+    def _add_marquee_color_context_action(self, menu: qtw.QMenu) -> QtGui.QAction:
         action = self._add_marquee_context_action(
             menu,
             "Zoom color",
@@ -352,7 +380,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         return action
 
 
-    def zoom_marquee_color(self):
+    def zoom_marquee_color(self) -> bool:
         levels = self._marquee_color_levels()
         if levels is None:
             return False
@@ -360,7 +388,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         return self.setColorbarManualRange(*levels)
 
 
-    def _marquee_stats_text(self):
+    def _marquee_stats_text(self) -> str | None:
         selected = self._marquee_selected_data()
         if selected is None:
             return None
@@ -369,12 +397,15 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         if values.size == 0:
             return None
 
+        if self.marquee is None:
+            return None
+
         rows, cols = selected.shape
         rect = self._snap_marquee_rect(self.marquee.normalized())
         return self._format_marquee_stats_text(f"{cols}×{rows} points", values, rect)
 
 
-    def _marquee_color_levels(self):
+    def _marquee_color_levels(self) -> tuple[float, float] | None:
         selected = self._marquee_selected_data()
         if selected is None:
             return None
@@ -391,10 +422,10 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         return vmin, vmax
 
 
-    def _marquee_selected_data(self):
+    def _marquee_selected_data(self) -> npt.NDArray[np.float64] | None:
         if (
                 self.__dict__.get("marquee") is None
-                or "rect" not in self.__dict__
+                or self._heatmap_rect() is None
                 or "dataGrid" not in self.__dict__
                 ):
             return None
@@ -411,9 +442,18 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         return selected
 
 
-    def _marquee_cell_slices(self):
+    def _marquee_cell_slices(self) -> tuple[slice, slice] | None:
+        heatmap_rect = self._heatmap_rect()
+        if heatmap_rect is None or self.marquee is None:
+            return None
+
         rows, cols = self.dataGrid.shape
-        if rows <= 0 or cols <= 0 or self.rect.width() <= 0 or self.rect.height() <= 0:
+        if (
+                rows <= 0
+                or cols <= 0
+                or heatmap_rect.width() <= 0
+                or heatmap_rect.height() <= 0
+                ):
             return None
 
         rect = self._snap_marquee_rect(self.marquee.normalized())
@@ -423,15 +463,15 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         col_slice = self._marquee_axis_slice(
             rect.left(),
             rect.right(),
-            self.rect.x(),
-            self.rect.width(),
+            heatmap_rect.x(),
+            heatmap_rect.width(),
             cols,
             )
         row_slice = self._marquee_axis_slice(
             rect.top(),
             rect.bottom(),
-            self.rect.y(),
-            self.rect.height(),
+            heatmap_rect.y(),
+            heatmap_rect.height(),
             rows,
             )
         if row_slice is None or col_slice is None:
@@ -440,7 +480,14 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         return row_slice, col_slice
 
 
-    def _marquee_axis_slice(self, low, high, origin, span, count):
+    def _marquee_axis_slice(
+            self,
+            low: float,
+            high: float,
+            origin: float,
+            span: float,
+            count: int,
+            ) -> slice | None:
         if count <= 0 or span <= 0:
             return None
 

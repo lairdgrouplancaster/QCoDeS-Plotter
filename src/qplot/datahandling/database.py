@@ -505,6 +505,19 @@ def database_info_report(database_path):
     Build a diagnostic text report for a QCoDeS database file.
 
     """
+    return _format_database_info(_database_info_summary(database_path))
+
+
+def database_info_rows(database_path):
+    """
+    Build display rows for the database information dialog.
+
+    """
+    groups = _database_info_groups(_database_info_summary(database_path))
+    return [row for group in groups for row in group]
+
+
+def _database_info_summary(database_path):
     if not database_path:
         raise ValueError("No database is loaded.")
 
@@ -536,7 +549,7 @@ def database_info_report(database_path):
     finally:
         conn.close()
 
-    return _format_database_info(summary)
+    return summary
 
 
 def _pragma_value(cursor, name):
@@ -598,42 +611,53 @@ def _sqlite_identifier(name):
     return f'"{str(name).replace(chr(34), chr(34) * 2)}"'
 
 
-def _format_database_info(summary):
+def _database_info_groups(summary):
     latest_run = summary["latest_run"]
-    latest_run_lines = ["Latest run: None"]
+    latest_run_rows = [("Latest run", "None")]
     if latest_run:
         status = "completed" if latest_run.get("is_completed") else "running or incomplete"
-        latest_run_lines = [
-            f"Latest run ID: {latest_run.get('run_id')}",
-            f"Latest run name: {_display_value(latest_run.get('name'))}",
-            f"Latest run status: {status}",
-            f"Latest run started: {_timestamp_value(latest_run.get('run_timestamp'))}",
-            f"Latest run completed: {_timestamp_value(latest_run.get('completed_timestamp'))}",
-            f"Latest run GUID: {_display_value(latest_run.get('guid'))}",
+        latest_run_rows = [
+            ("Latest run ID", _display_value(latest_run.get("run_id"))),
+            ("Latest run name", _display_value(latest_run.get("name"))),
+            ("Latest run status", status),
+            ("Latest run started", _timestamp_value(latest_run.get("run_timestamp"))),
+            ("Latest run completed", _timestamp_value(latest_run.get("completed_timestamp"))),
+            ("Latest run GUID", _display_value(latest_run.get("guid"))),
             ]
 
     page_bytes = None
     if summary["page_count"] is not None and summary["page_size"] is not None:
         page_bytes = int(summary["page_count"]) * int(summary["page_size"])
 
-    lines = [
-        f"Database: {summary['filename']}",
-        f"Path: {summary['path']}",
-        f"Folder: {summary['folder']}",
-        f"File size: {_format_bytes(summary['file_size'])}",
-        f"Last modified: {_timestamp_value(summary['file_modified'])}",
-        f"SQLite allocated size: {_format_bytes(page_bytes)}",
-        "",
-        f"Database schema version: {_display_value(summary['user_version'])}",
-        f"SQLite application_id: {_display_value(summary['application_id'])}",
-        "",
-        f"Tables: {_display_value(summary['table_count'])}",
-        f"Experiments: {_display_value(summary['experiment_count'])}",
-        f"Runs: {_display_value(summary['run_count'])}",
-        "",
-        *latest_run_lines,
+    return [
+        [
+            ("Database", summary["filename"]),
+            ("Path", summary["path"]),
+            ("Folder", summary["folder"]),
+            ("File size", _format_bytes(summary["file_size"])),
+            ("Last modified", _timestamp_value(summary["file_modified"])),
+            ("SQLite allocated size", _format_bytes(page_bytes)),
+            ],
+        [
+            ("Database schema version", _display_value(summary["user_version"])),
+            ("SQLite application_id", _display_value(summary["application_id"])),
+            ],
+        [
+            ("Tables", _display_value(summary["table_count"])),
+            ("Experiments", _display_value(summary["experiment_count"])),
+            ("Runs", _display_value(summary["run_count"])),
+            ],
+        latest_run_rows,
         ]
-    return "\n".join(lines)
+
+
+def _format_database_info(summary):
+    groups = _database_info_groups(summary)
+    sections = [
+        "\n".join(f"{label}: {_display_value(value)}" for label, value in group)
+        for group in groups
+        ]
+    return "\n\n".join(sections)
 
 
 def _format_bytes(value):

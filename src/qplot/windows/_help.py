@@ -1,9 +1,13 @@
+from typing import Any, cast
+
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import default_log_file
 
-_OPEN_HELP_DIALOGS = []
+from ._commands import create_action, shortcut_help_html
+
+_OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
 
 
 QUICK_START_HTML = """
@@ -28,62 +32,22 @@ status bar at the bottom of the window before assuming a load has failed.</p>
 """
 
 
-KEYBOARD_SHORTCUTS_HTML = """
-<h2>Keyboard Shortcuts</h2>
-<h3>General</h3>
-<table cellspacing="4" cellpadding="3">
-  <tr><td><b>F1</b></td><td>Show quick start help</td></tr>
-  <tr><td><b>Ctrl+L</b></td><td>Load a database</td></tr>
-  <tr><td><b>R</b></td><td>Refresh the current window</td></tr>
-  <tr><td><b>Ctrl+W / Cmd+W</b></td><td>Close the current qPlot window</td></tr>
-  <tr><td><b>Ctrl+Q / Cmd+Q</b></td><td>Quit qPlot</td></tr>
-  <tr><td><b>Ctrl+M / Alt+Space, N</b></td><td>Minimize the current window</td></tr>
-  <tr><td><b>Alt+Space, X / Alt+Space, R</b></td><td>Maximize or restore on Windows</td></tr>
-  <tr><td><b>Ctrl+Cmd+F / F11</b></td><td>Enter or leave full screen</td></tr>
-  <tr><td><b>Shift+F10</b></td><td>Open the focused widget's context menu</td></tr>
-  <tr><td><b>Ctrl+Shift+D</b></td><td>Open the current database folder</td></tr>
-  <tr><td><b>Ctrl+Shift+M</b></td><td>Bring the main window to front, or behind plot windows</td></tr>
-  <tr><td><b>Ctrl+Return</b></td><td>Plot the requested run and measurement</td></tr>
-  <tr><td><b>Ctrl+Shift+Return</b></td><td>Plot all measurements in the selected run</td></tr>
-  <tr><td><b>Ctrl+1 to Ctrl+9</b></td><td>Plot measurements 1 to 9 in the selected run</td></tr>
-  <tr><td><b>Ctrl+Shift+W</b></td><td>Close all plot windows</td></tr>
-</table>
-
-<h3>Plot Windows</h3>
-<table cellspacing="4" cellpadding="3">
-  <tr><td><b>Ctrl+0</b></td><td>Autoscale the plot view</td></tr>
-  <tr><td><b>Ctrl+C / Cmd+C</b></td><td>Copy the plot image using the selected copy format or resolution</td></tr>
-  <tr><td><b>Ctrl+E</b></td><td>Export the plot</td></tr>
-  <tr><td><b>Ctrl+Shift+O</b></td><td>Show or hide the operations panel</td></tr>
-  <tr><td><b>Ctrl+Alt+R</b></td><td>Show or hide the refresh toolbar</td></tr>
-  <tr><td><b>Ctrl+Alt+C</b></td><td>Show or hide the coordinate toolbar</td></tr>
-  <tr><td><b>Ctrl+Alt+A</b></td><td>Show or hide the axis control panel</td></tr>
-  <tr><td><b>Ctrl+Alt+O</b></td><td>Show or hide the operations dock</td></tr>
-  <tr><td><b>Ctrl+Alt+S</b></td><td>Snap the 1D coordinate readout to the nearest trace point</td></tr>
-</table>
-
-<h3>Heatmaps</h3>
-<table cellspacing="4" cellpadding="3">
-  <tr><td><b>Ctrl+Shift+C</b></td><td>Autoscale the colour range</td></tr>
-  <tr><td><b>H</b></td><td>Open a horizontal cut</td></tr>
-  <tr><td><b>V</b></td><td>Open a vertical cut</td></tr>
-  <tr><td><b>Arrow keys</b></td><td>Move the selected cut cursor by one pixel</td></tr>
-</table>
-"""
+KEYBOARD_SHORTCUTS_HTML = shortcut_help_html()
 
 
-def add_help_menu(window):
+def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     """
     Adds qPlot's shared Help menu to a main or plot window.
 
     """
-    help_menu = window.menuBar().addMenu("&Help")
+    menu_bar = window.menuBar()
+    if menu_bar is None:
+        raise RuntimeError("Help menu requires a menu bar.")
+    help_menu = menu_bar.addMenu("&Help")
+    if help_menu is None:
+        raise RuntimeError("Help menu could not be created.")
 
-    quick_start_action = QtGui.QAction("&Quick Start", window)
-    quick_start_action.setObjectName("quickStartHelpAction")
-    quick_start_action.setShortcut("F1")
-    quick_start_action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-    quick_start_action.setStatusTip("Show the basic qPlot workflow")
+    quick_start_action = create_action("help.quick_start", window)
     quick_start_action.triggered.connect(lambda: show_quick_start(window))
     help_menu.addAction(quick_start_action)
 
@@ -104,7 +68,7 @@ def add_help_menu(window):
     return help_menu
 
 
-def show_quick_start(parent=None):
+def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     """
     Opens the quick-start help dialog.
 
@@ -117,7 +81,7 @@ def show_quick_start(parent=None):
         )
 
 
-def show_keyboard_shortcuts(parent=None):
+def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     """
     Opens the keyboard-shortcuts help dialog.
 
@@ -130,19 +94,26 @@ def show_keyboard_shortcuts(parent=None):
         )
 
 
-def copy_diagnostic_log_path(parent=None):
+def copy_diagnostic_log_path(parent: Any | None = None) -> str:
     """
     Copies qPlot's diagnostic log path to the clipboard.
 
     """
     path = str(default_log_file())
-    qtw.QApplication.clipboard().setText(path)
+    clipboard = qtw.QApplication.clipboard()
+    if clipboard is not None:
+        clipboard.setText(path)
     if parent is not None and hasattr(parent, "show_status"):
         parent.show_status(f"Copied diagnostic log path: {path}", 5000)
     return path
 
 
-def _show_help_dialog(parent, title, html, object_name):
+def _show_help_dialog(
+        parent: qtw.QWidget | None,
+        title: str,
+        html: str,
+        object_name: str,
+        ) -> qtw.QDialog:
     dialog = qtw.QDialog(parent)
     dialog.setObjectName(object_name)
     dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -168,18 +139,25 @@ def _show_help_dialog(parent, title, html, object_name):
     return dialog
 
 
-def _remember_help_dialog(parent, dialog):
+def _remember_help_dialog(
+        parent: qtw.QWidget | None,
+        dialog: qtw.QDialog,
+        ) -> None:
+    dialogs: list[qtw.QDialog] | None
     if parent is None:
         dialogs = _OPEN_HELP_DIALOGS
     else:
-        dialogs = getattr(parent, "_help_dialogs", None)
+        owner = cast(Any, parent)
+        dialogs = getattr(owner, "_help_dialogs", None)
         if dialogs is None:
             dialogs = []
-            parent._help_dialogs = dialogs
+            owner._help_dialogs = dialogs
 
+    if dialogs is None:
+        return
     dialogs.append(dialog)
 
-    def forget_dialog(*_args):
+    def forget_dialog(*_args: object) -> None:
         if dialog in dialogs:
             dialogs.remove(dialog)
 

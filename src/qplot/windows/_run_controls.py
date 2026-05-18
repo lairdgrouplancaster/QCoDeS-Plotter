@@ -2,13 +2,13 @@ import os
 
 from PyQt6 import (
     QtCore,
-    QtGui,
 )
 from PyQt6 import (
     QtWidgets as qtw,
 )
 from PyQt6.QtGui import QIntValidator
 
+from ._commands import create_action, plot_measurement_command_spec
 from ._help import show_quick_start
 from ._widgets import (
     RunList,
@@ -186,26 +186,17 @@ class RunControlsMixin:
         Register keyboard shortcuts for common run actions.
 
         """
-        plot_entered = QtGui.QAction("Plot Entered Run and Measurement", self)
-        plot_entered.setShortcut("Ctrl+Return")
-        plot_entered.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        plot_entered.setStatusTip("Plot the run and measurement entered above")
+        plot_entered = create_action("run.plot_entered", self)
         plot_entered.triggered.connect(lambda _: self.plotRunButton.click())
         self.addAction(plot_entered)
 
-        plot_selected_all = QtGui.QAction("Plot All Measurements in Selected Run", self)
-        plot_selected_all.setShortcut("Ctrl+Shift+Return")
-        plot_selected_all.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        plot_selected_all.setStatusTip("Plot all measurements in the selected run")
+        plot_selected_all = create_action("run.plot_selected_all", self)
         plot_selected_all.triggered.connect(self.open_selected_run_all)
         self.addAction(plot_selected_all)
 
         self.open_param_actions = []
         for itr in range(9):
-            action = QtGui.QAction(f"Plot Measurement {itr + 1} in Selected Run", self)
-            action.setShortcut(f"Ctrl+{itr + 1}")
-            action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-            action.setStatusTip(f"Plot measurement {itr + 1} in the selected run")
+            action = create_action(plot_measurement_command_spec(itr), self)
             action.triggered.connect(lambda _, index=itr: self.open_param_by_index(index))
             self.addAction(action)
             self.open_param_actions.append(action)

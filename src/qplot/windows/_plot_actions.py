@@ -8,6 +8,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling.readonly import load_by_guid_read_only, load_by_id_read_only
 from qplot.diagnostics import log_exception
 
+from ._dataset_handle import DatasetHandle
 from .plot1d import plot1d
 from .plot2d import plot2d
 
@@ -134,10 +135,11 @@ class PlotActionsMixin:
         """
         self.show_status("Loading selected run...", 0)
         try:
-            if self.dataset_holder.get(guid, 0) == 0:
+            handle = self.dataset_holder.get(guid)
+            if handle is None:
                 self.ds = load_by_guid_read_only(guid)
             else:
-                self.ds = self.dataset_holder[guid]["dataset"]
+                self.ds = handle.dataset
         except Exception as err:
             log_exception("Selected run load failed", err, __name__)
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
@@ -316,10 +318,11 @@ class PlotActionsMixin:
 
         try:
             if not self.ds or (guid and self.ds.guid != guid):
-                if self.dataset_holder.get(guid, 0) == 0:
+                handle = self.dataset_holder.get(guid)
+                if handle is None:
                     ds = load_by_guid_read_only(guid)
                 else:
-                    ds = self.dataset_holder[guid]["dataset"]
+                    ds = handle.dataset
             else:
                 ds = self.ds
         except Exception as err:
@@ -442,10 +445,11 @@ class PlotActionsMixin:
 
         if not self.ds or self.ds.guid != guid:
             try:
-                if self.dataset_holder.get(guid, 0) == 0:
+                handle = self.dataset_holder.get(guid)
+                if handle is None:
                     self.ds = load_by_guid_read_only(guid)
                 else:
-                    self.ds = self.dataset_holder[guid]["dataset"]
+                    self.ds = handle.dataset
             except Exception as err:
                 log_exception("Preview plot run load failed", err, __name__)
                 self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
@@ -544,8 +548,9 @@ class PlotActionsMixin:
 
 
     def _dataset_for_guid(self, guid):
-        if self.dataset_holder.get(guid, 0) != 0:
-            return self.dataset_holder[guid]["dataset"]
+        handle = self.dataset_holder.get(guid)
+        if handle is not None:
+            return handle.dataset
         return load_by_guid_read_only(guid)
 
 
@@ -674,20 +679,14 @@ class PlotActionsMixin:
         Tracks a dataset used by one or more plot windows.
 
         """
-        if self.dataset_holder.get(guid, 0) == 0:
+        handle = self.dataset_holder.get(guid)
+        if handle is None:
             ds = load_by_guid_read_only(guid) if ds is None else ds
             assert ds.guid == guid
 
-            self.dataset_holder[guid] = {
-                "dataset": ds,
-                "users": 1,
-                "del_timer": None,
-            }
+            self.dataset_holder[guid] = DatasetHandle(dataset=ds)
         else:
-            self.dataset_holder[guid]["users"] += 1
-            if self.dataset_holder[guid]["del_timer"] is not None:
-                self.dataset_holder[guid]["del_timer"].stop()
-                self.dataset_holder[guid]["del_timer"] = None
+            handle.retain()
 
 
     @QtCore.pyqtSlot(str)
@@ -696,23 +695,24 @@ class PlotActionsMixin:
         Decreases the user count for a cached plot dataset.
 
         """
-        if self.dataset_holder.get(guid, 0) == 0:
+        handle = self.dataset_holder.get(guid)
+        if handle is None:
             self.show_status("Trying to remove dataset that does not exist.", 5000)
             return
 
-        self.dataset_holder[guid]["users"] -= 1
+        handle.release()
 
-        if self.dataset_holder[guid]["users"] <= 0:
+        if handle.users <= 0:
             del_time = self.config.get("runtime_settings.del_grace_period")
 
             if del_time == 0:
                 self.dataset_holder.pop(guid)
 
-            elif self.dataset_holder[guid]["del_timer"] is None:
+            elif handle.delete_timer is None:
                 del_timer = QtCore.QTimer()
                 del_timer.setSingleShot(True)
-                self.dataset_holder[guid]["del_timer"] = del_timer
-                del_timer.timeout.connect(lambda guid=guid: self.dataset_holder.pop(guid))
+                handle.delete_timer = del_timer
+                del_timer.timeout.connect(lambda guid=guid: self.dataset_holder.pop(guid, None))
                 del_timer.start(int(del_time * 1000))
 
 

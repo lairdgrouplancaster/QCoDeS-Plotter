@@ -1,4 +1,5 @@
 import math
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pyqtgraph as pg
@@ -32,6 +33,8 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     This mixin owns color autoscaling, colorbar interaction handlers, color-map
     filtering, and the color scale dialog.
     """
+    if TYPE_CHECKING:
+        plot: Any
 
     def _init_color_autoscale_button(self):
         """

@@ -9,6 +9,7 @@ from PyQt6 import (
     QtWidgets as qtw,
 )
 
+from ._commands import create_action
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -91,12 +92,17 @@ class PreferencesDialog(qtw.QDialog):
             )
         self.buttonBox.accepted.connect(self._accept_preferences)
         self.buttonBox.rejected.connect(self.reject)
-        self.buttonBox.button(qtw.QDialogButtonBox.StandardButton.Apply).clicked.connect(
-            self.apply_preferences
-            )
+        apply_button = self.buttonBox.button(qtw.QDialogButtonBox.StandardButton.Apply)
+        if apply_button is None:
+            raise RuntimeError("Preferences dialog Apply button is not available.")
+        apply_button.clicked.connect(self.apply_preferences)
         self.restoreDefaultsButton = self.buttonBox.button(
             qtw.QDialogButtonBox.StandardButton.RestoreDefaults
             )
+        if self.restoreDefaultsButton is None:
+            raise RuntimeError(
+                "Preferences dialog Restore Defaults button is not available."
+                )
         self.restoreDefaultsButton.setObjectName("restorePreferenceDefaultsButton")
         self.restoreDefaultsButton.setAccessibleName("Restore preference defaults")
         self.restoreDefaultsButton.setToolTip(
@@ -189,9 +195,11 @@ class PreferencesDialog(qtw.QDialog):
 
         self.defaultLoadPathButton = qtw.QToolButton(tab)
         self.defaultLoadPathButton.setObjectName("defaultLoadPathPreferenceButton")
-        self.defaultLoadPathButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DirOpenIcon)
-            )
+        style = self.style()
+        if style is not None:
+            self.defaultLoadPathButton.setIcon(
+                style.standardIcon(qtw.QStyle.StandardPixmap.SP_DirOpenIcon)
+                )
         self.defaultLoadPathButton.setToolTip("Choose default load location")
         self.defaultLoadPathButton.setAccessibleName(
             "Choose default load location"
@@ -422,10 +430,7 @@ def create_preferences_action(window, triggered):
     Creates the shared Preferences action used by main and plot windows.
 
     """
-    action = QtGui.QAction("&Preferences...", window)
+    action = create_action("preferences.open", window)
     action.setMenuRole(QtGui.QAction.MenuRole.PreferencesRole)
-    action.setShortcut("Ctrl+,")
-    action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-    action.setStatusTip("Open qPlot preferences")
     action.triggered.connect(triggered)
     return action

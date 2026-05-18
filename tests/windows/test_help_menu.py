@@ -2,6 +2,7 @@ import unittest
 
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._commands import command_spec
 from qplot.windows._help import (
     add_help_menu,
     copy_diagnostic_log_path,
@@ -86,8 +87,8 @@ class HelpMenuTestCase(unittest.TestCase):
             text = browser.toPlainText()
 
             self.assertEqual(dialog.objectName(), "qplotKeyboardShortcutsDialog")
-            self.assertIn("Ctrl+L", text)
-            self.assertIn("Ctrl+E", text)
+            self.assertIn(command_spec("database.load").shortcut_display_text(), text)
+            self.assertIn(command_spec("plot.export").shortcut_display_text(), text)
             self.assertIn("H", text)
             self.assertIn(dialog, window._help_dialogs)
         finally:

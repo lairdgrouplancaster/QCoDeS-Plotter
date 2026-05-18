@@ -6,6 +6,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _plotWin as plotwin_module
+from qplot.windows._plot1d_snap import _nearest_trace_sample
 from qplot.windows._plot1d_traces import Plot1DTraceMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots import custom_viewbox
@@ -14,6 +15,49 @@ from qplot.windows.plot1d import plot1d
 
 
 class SnapToTraceTestCase(unittest.TestCase):
+    def test_nearest_trace_sample_returns_none_without_finite_points(self):
+        self.assertIsNone(_nearest_trace_sample([], [], 0.0))
+        self.assertIsNone(
+            _nearest_trace_sample([0.0, np.nan, np.inf], [np.nan, 1.0, 2.0], 0.0)
+            )
+
+    def test_nearest_trace_sample_preserves_original_point_number(self):
+        sample = _nearest_trace_sample(
+            [0.0, 1.0, 2.0],
+            [np.nan, 10.0, 20.0],
+            1.1,
+            )
+
+        self.assertIsNotNone(sample)
+        self.assertEqual(sample.x_value, 1.0)
+        self.assertEqual(sample.y_value, 10.0)
+        self.assertEqual(sample.point_number, 2)
+
+    def test_nearest_trace_sample_clamps_to_endpoints_outside_range(self):
+        x_data = [1.0, 2.0, 3.0]
+        y_data = [10.0, 20.0, 30.0]
+
+        left = _nearest_trace_sample(x_data, y_data, -100.0)
+        right = _nearest_trace_sample(x_data, y_data, 100.0)
+
+        self.assertEqual(left.x_value, 1.0)
+        self.assertEqual(left.y_value, 10.0)
+        self.assertEqual(left.point_number, 1)
+        self.assertEqual(right.x_value, 3.0)
+        self.assertEqual(right.y_value, 30.0)
+        self.assertEqual(right.point_number, 3)
+
+    def test_nearest_trace_sample_uses_first_duplicate_x_value(self):
+        sample = _nearest_trace_sample(
+            [0.0, 1.0, 1.0, 2.0],
+            [0.0, 10.0, 20.0, 30.0],
+            1.0,
+            )
+
+        self.assertEqual(sample.x_value, 1.0)
+        self.assertEqual(sample.y_value, 10.0)
+        self.assertEqual(sample.point_number, 2)
+
     def test_axis_label_uses_power_scaled_units_for_auto_si_prefix(self):
         axis = plotwin_module._PowerScaledAxisItem("bottom")
         axis.setLabel(text="Gate ch2", units="V")
@@ -80,6 +124,53 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertEqual(y_value, 4.0)
         self.assertIs(viewbox, plot_item.vb)
         self.assertEqual(point_number, 3)
+
+    def test_nearest_trace_point_ignores_hidden_traces(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        hidden_line = plot_item.plot(x=[1.0], y=[100.0])
+        visible_line = plot_item.plot(x=[1.0], y=[0.0])
+        hidden_line.setVisible(False)
+        window = plot1d.__new__(plot1d)
+        window.plot = plot_item
+        window.right_vb = None
+        window.lines = {
+            "hidden": hidden_line,
+            "visible": visible_line,
+            }
+
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 100.0))
+
+        label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
+
+        self.assertEqual(label, "visible")
+        self.assertEqual(x_value, 1.0)
+        self.assertEqual(y_value, 0.0)
+        self.assertIs(viewbox, plot_item.vb)
+        self.assertEqual(point_number, 1)
+
+    def test_nearest_trace_point_chooses_closest_curve_by_scene_distance(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        low_line = plot_item.plot(x=[1.0], y=[0.0])
+        high_line = plot_item.plot(x=[1.0], y=[10.0])
+        window = plot1d.__new__(plot1d)
+        window.plot = plot_item
+        window.right_vb = None
+        window.lines = {
+            "low": low_line,
+            "high": high_line,
+            }
+
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 9.5))
+
+        label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
+
+        self.assertEqual(label, "high")
+        self.assertEqual(x_value, 1.0)
+        self.assertEqual(y_value, 10.0)
+        self.assertIs(viewbox, plot_item.vb)
+        self.assertEqual(point_number, 1)
 
     def test_register_main_line_replaces_initial_empty_trace(self):
         line = object()
@@ -390,5 +481,4 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertEqual(rect.right(), 4.0)
         self.assertEqual(rect.top(), 7.25)
         self.assertEqual(rect.bottom(), 9.75)
-
 

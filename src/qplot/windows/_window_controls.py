@@ -1,23 +1,11 @@
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
-from PyQt6.QtGui import QKeySequence
 
-from ._shortcuts import platform_key_sequences, standard_key_sequences
+from ._commands import create_action
 
 CONFIRM_CLOSE_ALL_KEY = "user_preference.confirm_close_all"
 CONFIRM_QUIT_KEY = "user_preference.confirm_close"
 DO_NOT_ASK_AGAIN_LABEL = "Don't ask again"
-
-
-def set_window_shortcuts(action, shortcuts):
-    """
-    Applies shortcuts to an action only when the platform has any.
-
-    """
-    if shortcuts:
-        action.setShortcuts(shortcuts)
-    action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-
 
 def add_standard_window_controls(window):
     """
@@ -26,51 +14,21 @@ def add_standard_window_controls(window):
     """
     window_menu = window.menuBar().addMenu("&Window")
 
-    main_front_back_action = QtGui.QAction("Main Window &Front/Back", window)
-    set_window_shortcuts(main_front_back_action, [QKeySequence("Ctrl+Shift+M")])
-    main_front_back_action.setStatusTip(
-        "Bring the main window to front, or behind the graph windows"
-        )
+    main_front_back_action = create_action("window.main_front_back", window)
     main_front_back_action.triggered.connect(lambda: toggle_main_window_front_back(window))
     window_menu.addAction(main_front_back_action)
 
     window_menu.addSeparator()
 
-    minimize_action = QtGui.QAction("&Minimize", window)
-    set_window_shortcuts(
-        minimize_action,
-        platform_key_sequences(
-            mac=["Ctrl+M"],
-            windows=["Alt+Space, N"],
-            )
-        )
-    minimize_action.setStatusTip("Minimize this window")
+    minimize_action = create_action("window.minimize", window)
     minimize_action.triggered.connect(window.showMinimized)
     window_menu.addAction(minimize_action)
 
-    maximize_action = QtGui.QAction("Ma&ximize / Restore", window)
-    set_window_shortcuts(
-        maximize_action,
-        platform_key_sequences(
-            windows=["Alt+Space, X", "Alt+Space, R"],
-            )
-        )
-    maximize_action.setStatusTip("Maximize or restore this window")
+    maximize_action = create_action("window.maximize_restore", window)
     maximize_action.triggered.connect(lambda: toggle_maximized(window))
     window_menu.addAction(maximize_action)
 
-    fullscreen_action = QtGui.QAction("&Full Screen", window)
-    set_window_shortcuts(
-        fullscreen_action,
-        standard_key_sequences(
-            QKeySequence.StandardKey.FullScreen,
-            platform_key_sequences(
-                mac=["Ctrl+Meta+F"],
-                windows=["F11", "Alt+Enter"],
-                )
-            )
-        )
-    fullscreen_action.setStatusTip("Enter or leave full screen")
+    fullscreen_action = create_action("window.full_screen", window)
     fullscreen_action.triggered.connect(lambda: toggle_fullscreen(window))
     window_menu.addAction(fullscreen_action)
 
@@ -130,7 +88,8 @@ def add_config_checkbox_action(window, menu, text, key, status_tip):
     Adds a checkable config-backed action to a menu.
 
     """
-    action = QtGui.QAction(text, window, checkable=True)
+    action = QtGui.QAction(text, window)
+    action.setCheckable(True)
     action.setStatusTip(status_tip)
 
     def sync_checked():
@@ -205,7 +164,7 @@ def main_window_for(window):
     if app is None:
         return window if window.__class__.__name__ == "MainWindow" else None
 
-    for top_level in app.topLevelWidgets():
+    for top_level in qtw.QApplication.topLevelWidgets():
         if top_level.__class__.__name__ == "MainWindow":
             return top_level
 
@@ -245,7 +204,7 @@ def send_main_window_behind_graphs(main_window, active_window):
         return
 
     graph_windows = [
-        window for window in app.topLevelWidgets()
+        window for window in qtw.QApplication.topLevelWidgets()
         if window is not main_window
         and window.isVisible()
         and hasattr(window, "_guid")

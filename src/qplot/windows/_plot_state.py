@@ -1,3 +1,5 @@
+from typing import Any
+
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
@@ -11,7 +13,7 @@ class PlotStateOverlay(QtCore.QObject):
     mouse interaction once it is hidden.
     """
 
-    _styles = {
+    _styles: dict[str, str] = {
         "info": (
             "background-color: rgba(250, 252, 255, 235);"
             "border: 1px solid rgba(119, 135, 153, 190);"
@@ -34,11 +36,12 @@ class PlotStateOverlay(QtCore.QObject):
             ),
     }
 
-    def __init__(self, target):
+    def __init__(self, target: qtw.QWidget) -> None:
         super().__init__(target)
-        self.owner = target
-        viewport = target.viewport() if hasattr(target, "viewport") else None
-        self.target = viewport or target
+        self.owner: qtw.QWidget = target
+        target_obj: Any = target
+        viewport = target_obj.viewport() if hasattr(target_obj, "viewport") else None
+        self.target: qtw.QWidget = viewport or target
 
         self.frame = qtw.QFrame(self.target)
         self.frame.setObjectName("plotStateOverlay")
@@ -68,7 +71,12 @@ class PlotStateOverlay(QtCore.QObject):
             self.owner.installEventFilter(self)
         self.hide()
 
-    def show(self, title, detail=None, kind="info"):
+    def show(
+            self,
+            title: object,
+            detail: object | None = None,
+            kind: str = "info",
+            ) -> None:
         self.title_label.setText(str(title or ""))
         self.detail_label.setText(str(detail or ""))
         self.detail_label.setVisible(bool(detail))
@@ -77,18 +85,23 @@ class PlotStateOverlay(QtCore.QObject):
         self.frame.show()
         self.frame.raise_()
 
-    def hide(self):
+    def hide(self) -> None:
         self.frame.hide()
 
-    def eventFilter(self, source, event):
+    def eventFilter(
+            self,
+            source: QtCore.QObject | None,
+            event: QtCore.QEvent | None,
+            ) -> bool:
         if (
-                (source is self.owner or source is self.target)
+                event is not None
+                and (source is self.owner or source is self.target)
                 and event.type() in (QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show)
                 ):
             self._sync_geometry()
         return super().eventFilter(source, event)
 
-    def _stylesheet(self, kind):
+    def _stylesheet(self, kind: str) -> str:
         panel_style = self._styles.get(kind, self._styles["info"])
         return (
             "QFrame#plotStateOverlay {"
@@ -105,7 +118,7 @@ class PlotStateOverlay(QtCore.QObject):
             "}"
             )
 
-    def _sync_geometry(self):
+    def _sync_geometry(self) -> None:
         if not self.frame.isVisible() and not self.title_label.text():
             return
 

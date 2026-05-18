@@ -58,8 +58,8 @@ class PreviewTab(qtw.QWidget):
         self.thread_pool = QtCore.QThreadPool(self)
         self.thread_pool.setMaxThreadCount(1)
 
-        self.scroll = qtw.QScrollArea()
-        self.scroll.setWidgetResizable(True)
+        self.scroll_area = qtw.QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
 
         self.content = qtw.QWidget()
         self.content_layout = qtw.QHBoxLayout()
@@ -67,11 +67,11 @@ class PreviewTab(qtw.QWidget):
         self.content_layout.setSpacing(8)
         self.content_layout.addStretch()
         self.content.setLayout(self.content_layout)
-        self.scroll.setWidget(self.content)
+        self.scroll_area.setWidget(self.content)
 
         layout = qtw.QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.scroll)
+        layout.addWidget(self.scroll_area)
         self.setLayout(layout)
 
         self._show_message("Select a run")
@@ -270,6 +270,8 @@ class PreviewTab(qtw.QWidget):
     def _clear_layout(self):
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()

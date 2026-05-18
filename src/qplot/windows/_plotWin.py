@@ -1,28 +1,24 @@
 from math import log10
 from os import path
-from time import perf_counter
 from typing import TYPE_CHECKING
 
 import pyqtgraph as pg
-from PyQt6 import QtCore, QtGui, QtSvg
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
-from PyQt6.QtGui import QKeySequence
-from pyqtgraph.exporters import ImageExporter
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.datahandling import load_param_data_from_db_prep
-from qplot.datahandling.qcodes_cache import (
-    cache_has_no_written_data,
-    set_parameter_complete,
-    update_cache_parameter_data,
-)
-from qplot.diagnostics import log_exception
+from qplot.datahandling.qcodes_cache import set_parameter_complete
 from qplot.tools import (
-    loader,
     unpack_param,
 )
 
 from . import _plot_axis_scaling
+from ._commands import (
+    command_spec,
+    command_with_status,
+    create_action,
+    toolbar_toggle_command_spec,
+)
 from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
@@ -32,19 +28,16 @@ from ._plot_axis_scaling import (
     PlotAxisScalingMixin,
     _PowerScaledAxisItem,
 )
+from ._plot_export import PlotExportMixin
 from ._plot_feedback import PlotWindowFeedbackMixin
 from ._plot_marquee import PlotMarqueeMixin
+from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
 from ._preferences import (
-    COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
-    COPY_PLOT_IMAGE_RESOLUTION_KEY,
-    COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
-    COPY_PLOT_IMAGE_RESOLUTION_SVG,
     MOUSE_MODE_KEY,
     PreferencesDialog,
     create_preferences_action,
 )
-from ._shortcuts import standard_key_sequences
 from ._subplots import custom_viewbox
 from ._widgets import (
     QDock_context,
@@ -69,9 +62,6 @@ _A4_PORTRAIT_PLOT_AREA_SIZE = QtCore.QSize(794, 1123)
 _POWERPOINT_STANDARD_PLOT_AREA_SIZE = QtCore.QSize(960, 720)
 _POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE = QtCore.QSize(1280, 720)
 _SQUARE_PLOT_AREA_SIZE = QtCore.QSize(850, 850)
-_MAX_EXPORTED_IMAGE_SIZE = 20000
-_HIGH_DPI_COPY_RESOLUTION = 300
-_INCHES_PER_METER = 39.37007874015748
 _PLOT_AREA_RESIZE_PRESETS = (
     (
         "A4 Landscape",
@@ -140,6 +130,8 @@ class plotWidget(
     PlotWindowFeedbackMixin,
     PlotAxisScalingMixin,
     PlotMarqueeMixin,
+    PlotExportMixin,
+    PlotRefreshMixin,
     qtw.QMainWindow,
     ):
     """
@@ -166,13 +158,6 @@ class plotWidget(
     previewTraceDropRequested = QtCore.pyqtSignal(object, str, str)
     
     _label_width = 95 #About the size of 3 s.f. scientific
-    _toggle_shortcuts = {
-        "Refresh Timer": "Ctrl+Alt+R",
-        "Co-ordinates": "Ctrl+Alt+C",
-        "Line control": "Ctrl+Alt+A",
-        "Operations": "Ctrl+Alt+O",
-    }
-    
     def __init__(self, 
                  guid : str, 
                  param : "qcodes.dataset.ParamSpec",
@@ -196,6 +181,8 @@ class plotWidget(
             Holds configuration data, mainly theme and window size.
         threadPool : PyQt6.QtCore.QThreadPool
             A pool of threads for the refresh worker to be placed in.
+        dataset_holder : dict[str, DatasetHandle]
+            Shared map of dataset GUIDs to open-dataset ownership handles.
         refrate : float, optional
             Default value for the refresh timer. The default is None, which 
             corresponds to a 5.0s refresh time.
@@ -385,16 +372,17 @@ class plotWidget(
 
         """
         # Check dataset exists, produce new one if needed.
-        if self._dataset_holder.get(self._guid, 0) == 0:
+        handle = self._dataset_holder.get(self._guid)
+        if handle is None:
             self.show_status(f"Dataset {self._guid} not found. Reloading...", 5000)
             self.make_ds.emit(self._guid)
+            handle = self._dataset_holder[self._guid]
         
         # Check a deletion timer is not active and stop
-        elif self._dataset_holder[self._guid]["del_timer"] is not None:
-            self._dataset_holder[self._guid]["del_timer"].stop() # Stop delete timer
-            self._dataset_holder[self._guid]["del_timer"] = None
+        else:
+            handle.cancel_delete_timer()
             
-        return self._dataset_holder[self._guid]["dataset"]
+        return handle.dataset
         
 ###############################################################################
 # Init functions   
@@ -470,12 +458,10 @@ class plotWidget(
             self.plot.ctrlMenu.setTitle("Options")
             self.plot.ctrlMenu.menuAction().setText("Options")
 
-        self.exportPlotAction = QtGui.QAction("&Export Plot...", self)
-        self.exportPlotAction.setObjectName("exportPlotAction")
+        self.exportPlotAction = create_action("plot.export", self)
         self.register_shortcut(
             self.exportPlotAction,
-            "Ctrl+E",
-            "Open the plot export dialog",
+            command_spec("plot.export"),
             )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
@@ -484,24 +470,29 @@ class plotWidget(
         self.savePlotPdfAction.setStatusTip("Save the visible plot area as a PDF")
         self.savePlotPdfAction.triggered.connect(self.save_plot_pdf)
 
-        self.copyPlotImageAction = QtGui.QAction("&Copy Plot Image", self)
-        self.copyPlotImageAction.setObjectName("copyPlotImageAction")
+        self.copyPlotImageAction = create_action("plot.copy_image", self)
         self.register_shortcut(
             self.copyPlotImageAction,
-            standard_key_sequences(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
-            "Copy the plot image to the clipboard",
+            command_spec("plot.copy_image"),
             )
         self.copyPlotImageAction.triggered.connect(self.copy_plot_image)
 
-        contextAction = QtGui.QAction("Show Context Menu", self)
-        self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
+        contextAction = create_action(
+            "context.show",
+            self,
+            status_tip="Show plot context menu",
+            )
+        self.register_shortcut(
+            contextAction,
+            command_with_status("context.show", "Show plot context menu"),
+            )
         contextAction.triggered.connect(self.open_context_menu)
         
         actions = self.vbMenu.actions()
         for action in actions:
             if action.text() == "View All":
-                action.setText("Autoscale")
-                self.register_shortcut(action, "Ctrl+0", "Autoscale plot")
+                self.register_shortcut(action, command_spec("plot.autoscale"))
+                action.setText(command_spec("plot.autoscale").text)
                 break
         
         x_action = actions[1]
@@ -514,8 +505,12 @@ class plotWidget(
         self.vbMenu.insertSeparator(x_action)
         
         # Create visibility
-        toggleAction = QtGui.QAction("View Operations", self, checkable=True)
-        self.register_shortcut(toggleAction, "Ctrl+Shift+O", "Toggle operations panel")
+        toggleAction = create_action(
+            "plot.toggle_operations",
+            self,
+            checkable=True,
+            )
+        self.register_shortcut(toggleAction, command_spec("plot.toggle_operations"))
         toggleAction.triggered.connect(self.oper_dock.setVisible)
         self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
         self.vbMenu.insertAction(x_action, toggleAction)
@@ -558,492 +553,6 @@ class plotWidget(
 
         """
         self.vbMenu.exec(self.widget.mapToGlobal(self.widget.rect().center()))
-
-
-    @QtCore.pyqtSlot()
-    def open_export_dialog(self):
-        """
-        Opens pyqtgraph's export dialog for this plot.
-
-        """
-        scene = self.widget.scene()
-        scene.contextMenuItem = self.plot
-        scene.showExportDialog()
-
-
-    @QtCore.pyqtSlot()
-    def save_plot_pdf(self):
-        """
-        Prompts for a filename and saves the visible plot area as a PDF.
-
-        """
-        filename = qtw.QFileDialog.getSaveFileName(
-            self,
-            "Save Plot as PDF",
-            self._default_plot_pdf_filename(),
-            "PDF files (*.pdf)",
-        )[0]
-        if not filename:
-            self.show_status("PDF export cancelled.", 3000)
-            return False
-
-        return self.save_plot_pdf_to_file(filename)
-
-
-    def save_plot_pdf_to_file(self, filename):
-        """
-        Saves the visible plot area as a PDF at ``filename``.
-
-        """
-        if not filename:
-            self.show_status("PDF export cancelled.", 3000)
-            return False
-
-        if not filename.lower().endswith(".pdf"):
-            filename = f"{filename}.pdf"
-
-        try:
-            saved = self._write_plot_pdf(filename)
-        except Exception as err:
-            log_exception("Plot PDF export failed", err, __name__)
-            self.show_status("Could not save plot PDF.", 5000)
-            if hasattr(self, "show_error"):
-                self.show_error(
-                    "PDF Export Failed",
-                    "Could not save the plot PDF.",
-                    str(err),
-                )
-            return False
-
-        if not saved:
-            self.show_status("Could not save plot PDF.", 5000)
-            return False
-
-        self.show_status(f"Saved PDF: {filename}", 5000)
-        return True
-
-
-    def _write_plot_pdf(self, filename):
-        """
-        Saves the already-laid-out plot widget as a single-page PDF.
-
-        """
-        pixmap = self._plot_image_pixmap()
-        if pixmap.isNull():
-            return False
-
-        image = pixmap.toImage()
-        if image.isNull():
-            return False
-
-        size = image.size()
-        if size.width() < 1 or size.height() < 1:
-            return False
-
-        writer = QtGui.QPdfWriter(filename)
-        writer.setCreator("qPlot")
-        writer.setTitle("qPlot plot")
-        writer.setResolution(72)
-        page_size = QtGui.QPageSize(
-            QtCore.QSizeF(size.width(), size.height()),
-            QtGui.QPageSize.Unit.Point,
-            "qPlot plot",
-            )
-        page_layout = QtGui.QPageLayout(
-            page_size,
-            QtGui.QPageLayout.Orientation.Portrait,
-            QtCore.QMarginsF(0, 0, 0, 0),
-            QtGui.QPageLayout.Unit.Point,
-            )
-        writer.setPageLayout(page_layout)
-
-        painter = QtGui.QPainter()
-        if not painter.begin(writer):
-            return False
-
-        try:
-            target = QtCore.QRectF(0, 0, size.width(), size.height())
-            painter.fillRect(target, QtGui.QColor("white"))
-            painter.drawImage(target, image)
-        finally:
-            painter.end()
-
-        return True
-
-
-    def _default_plot_pdf_filename(self):
-        """
-        Returns a suggested PDF export filename for the current plot.
-
-        """
-        run_id = getattr(self.ds, "run_id", "plot")
-        param_name = getattr(getattr(self, "param", None), "name", "plot")
-        filename = self._safe_plot_export_filename(f"run_{run_id}_{param_name}.pdf")
-
-        try:
-            database_folder = path.dirname(get_DB_location())
-        except Exception:
-            database_folder = ""
-
-        if database_folder:
-            return path.join(database_folder, filename)
-        return path.abspath(filename)
-
-
-    @staticmethod
-    def _safe_plot_export_filename(filename):
-        """
-        Replaces path-hostile characters in a suggested plot export filename.
-
-        """
-        return "".join(char if char.isalnum() or char in "._-" else "_" for char in filename)
-
-
-    @QtCore.pyqtSlot()
-    def copy_plot_image(self):
-        """
-        Copies the rendered plot widget to the clipboard as an image.
-
-        Only the pyqtgraph widget is captured, so window menus, toolbars, docks,
-        and any open context menu are excluded.
-
-        """
-        resolution = self._copy_plot_image_resolution()
-        if resolution == COPY_PLOT_IMAGE_RESOLUTION_300_DPI:
-            return self.copy_plot_image_at_dpi(_HIGH_DPI_COPY_RESOLUTION)
-        if resolution == COPY_PLOT_IMAGE_RESOLUTION_SVG:
-            return self.copy_plot_image_as_svg()
-
-        return self.copy_plot_image_at_screen_resolution()
-
-
-    def copy_plot_image_at_screen_resolution(self):
-        """
-        Copies the rendered plot widget at the current screen resolution.
-
-        """
-        clipboard = qtw.QApplication.clipboard()
-        if clipboard is None:
-            self.show_status("No clipboard available.", 5000)
-            return False
-
-        pixmap = self._plot_image_pixmap()
-        if pixmap.isNull():
-            self.show_status("Could not copy plot image.", 5000)
-            return False
-
-        clipboard.setImage(pixmap.toImage())
-        self.show_status("Plot image copied to clipboard.", 3000)
-        return True
-
-
-    def _copy_plot_image_resolution(self):
-        """
-        Returns the configured resolution mode for plot-image clipboard copies.
-
-        """
-        config = self.__dict__.get("config")
-        if config is None:
-            return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
-
-        try:
-            value = config.get(COPY_PLOT_IMAGE_RESOLUTION_KEY)
-        except Exception:
-            return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
-
-        if value in (
-            COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
-            COPY_PLOT_IMAGE_RESOLUTION_SVG,
-            ):
-            return value
-        return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
-
-
-    def _plot_image_pixmap(self):
-        """
-        Captures the plot widget without the surrounding QMainWindow chrome.
-
-        """
-        return self.widget.grab()
-
-
-    def copy_plot_image_as_svg(self):
-        """
-        Copies the current plot area to the clipboard as SVG.
-
-        """
-        clipboard = qtw.QApplication.clipboard()
-        if clipboard is None:
-            self.show_status("No clipboard available.", 5000)
-            return False
-
-        try:
-            svg_bytes = self._plot_svg_bytes()
-        except Exception as err:
-            log_exception("Plot SVG copy failed", err, __name__)
-            self.show_status("Could not copy plot SVG.", 5000)
-            return False
-
-        if not svg_bytes:
-            self.show_status("Could not copy plot SVG.", 5000)
-            return False
-
-        mime_data = QtCore.QMimeData()
-        mime_data.setData("image/svg+xml", QtCore.QByteArray(svg_bytes))
-        try:
-            mime_data.setText(svg_bytes.decode("utf-8"))
-        except UnicodeDecodeError:
-            pass
-        clipboard.setMimeData(mime_data)
-        self.show_status("Plot SVG copied to clipboard.", 3000)
-        return True
-
-
-    def _plot_svg_bytes(self):
-        """
-        Renders the current plot area as SVG bytes.
-
-        """
-        widget = self.__dict__.get("widget")
-        if widget is None or not hasattr(widget, "scene"):
-            return b""
-
-        size = widget.size()
-        if size.width() < 1 or size.height() < 1:
-            return b""
-
-        scene = widget.scene()
-        if scene is None:
-            return b""
-
-        data = QtCore.QByteArray()
-        buffer = QtCore.QBuffer(data)
-        if not buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly):
-            return b""
-
-        generator = QtSvg.QSvgGenerator()
-        generator.setOutputDevice(buffer)
-        generator.setSize(size)
-        generator.setViewBox(QtCore.QRect(0, 0, size.width(), size.height()))
-        generator.setTitle("qPlot plot")
-        generator.setDescription("Copied from qPlot")
-
-        painter = QtGui.QPainter(generator)
-        try:
-            scene.render(
-                painter,
-                QtCore.QRectF(0, 0, size.width(), size.height()),
-                self._plot_svg_source_rect(widget),
-                )
-        finally:
-            painter.end()
-            buffer.close()
-
-        return bytes(data)
-
-
-    def _plot_svg_source_rect(self, widget):
-        """
-        Returns the scene rectangle currently visible in the plot widget.
-
-        """
-        viewport_transform = getattr(widget, "viewportTransform", None)
-        if viewport_transform is not None:
-            return QtCore.QRectF(
-                viewport_transform().inverted()[0].mapRect(widget.rect())
-                )
-
-        plot = self.__dict__.get("plot")
-        if plot is not None:
-            return QtCore.QRectF(plot.sceneBoundingRect())
-
-        return QtCore.QRectF(widget.scene().sceneRect())
-
-
-    def copy_plot_image_at_dpi(self, dpi):
-        """
-        Renders the plot image at a target DPI and copies it to the clipboard.
-
-        """
-        try:
-            size = self._plot_image_size_for_dpi(dpi)
-        except Exception as err:
-            log_exception("Plot image DPI sizing failed", err, __name__)
-            self.show_status("Could not copy plot image at requested resolution.", 5000)
-            return False
-
-        if not size.isValid() or size.width() < 1 or size.height() < 1:
-            self.show_status("Could not copy plot image at requested resolution.", 5000)
-            return False
-
-        if not self.copy_plot_image_at_size(size.width(), size.height()):
-            return False
-
-        clipboard = qtw.QApplication.clipboard()
-        if clipboard is not None:
-            image = clipboard.image()
-            if not image.isNull():
-                self._set_image_dpi(image, dpi)
-                clipboard.setImage(image)
-
-        self.show_status(
-            "Plot image copied to clipboard at "
-            f"{dpi:g} dpi ({size.width()} x {size.height()} px).",
-            3000,
-            )
-        return True
-
-
-    def copy_plot_image_at_size(self, width, height):
-        """
-        Renders the plot image at a chosen pixel size and copies it to the clipboard.
-
-        """
-        size = QtCore.QSize(int(width), int(height))
-        if size.width() < 1 or size.height() < 1:
-            self.show_status("Plot image size must be at least 1 x 1 px.", 5000)
-            return False
-        if (
-            size.width() > _MAX_EXPORTED_IMAGE_SIZE
-            or size.height() > _MAX_EXPORTED_IMAGE_SIZE
-            ):
-            self.show_status(
-                "Plot image size must be no larger than "
-                f"{_MAX_EXPORTED_IMAGE_SIZE} x {_MAX_EXPORTED_IMAGE_SIZE} px.",
-                5000,
-                )
-            return False
-
-        clipboard = qtw.QApplication.clipboard()
-        if clipboard is None:
-            self.show_status("No clipboard available.", 5000)
-            return False
-
-        try:
-            image = self._plot_image_at_size(size)
-        except Exception as err:
-            log_exception("Plot image copy at size failed", err, __name__)
-            self.show_status("Could not copy plot image at requested size.", 5000)
-            return False
-
-        if image.isNull():
-            self.show_status("Could not copy plot image at requested size.", 5000)
-            return False
-
-        clipboard.setImage(image)
-        self.show_status("Plot image copied to clipboard.", 3000)
-        return True
-
-
-    def _plot_image_at_size(self, size):
-        """
-        Renders the current plot area into a QImage of the requested size.
-
-        """
-        exporter = self._plot_image_exporter()
-        if exporter is None:
-            return QtGui.QImage()
-
-        return self._export_plot_image(exporter, size)
-
-
-    def _plot_image_exporter(self):
-        """
-        Returns an image exporter for the visible plot area.
-
-        """
-        item = self._plot_image_export_item()
-        if item is None:
-            return None
-        return ImageExporter(item)
-
-
-    def _plot_image_export_item(self):
-        """
-        Returns the graphics object used for high-resolution image exports.
-
-        """
-        widget = self.__dict__.get("widget")
-        if widget is not None and hasattr(widget, "scene"):
-            scene = widget.scene()
-            if scene is not None:
-                return scene
-
-        return self.__dict__.get("plot")
-
-
-    def _export_plot_image(self, exporter, size):
-        """
-        Renders an exporter into a QImage of the requested size.
-
-        """
-        params = exporter.parameters()
-        params.param("width").setValue(
-            size.width(),
-            blockSignal=exporter.widthChanged,
-            )
-        params.param("height").setValue(
-            size.height(),
-            blockSignal=exporter.heightChanged,
-            )
-        return exporter.export(toBytes=True)
-
-
-    def _plot_image_size_for_dpi(self, dpi):
-        """
-        Returns the output pixel size needed to copy the plot at ``dpi``.
-
-        """
-        exporter = self._plot_image_exporter()
-        if exporter is None:
-            return QtCore.QSize()
-
-        params = exporter.parameters()
-        base_width = int(params["width"])
-        base_height = int(params["height"])
-        width = round(base_width * float(dpi) / self._plot_image_source_dpi("x"))
-        height = round(base_height * float(dpi) / self._plot_image_source_dpi("y"))
-
-        return QtCore.QSize(
-            min(_MAX_EXPORTED_IMAGE_SIZE, max(1, width)),
-            min(_MAX_EXPORTED_IMAGE_SIZE, max(1, height)),
-            )
-
-
-    def _plot_image_source_dpi(self, axis):
-        """
-        Returns the logical screen DPI used to convert screen pixels to inches.
-
-        """
-        widget = self.__dict__.get("widget")
-        method_name = "logicalDpiX" if axis == "x" else "logicalDpiY"
-        method = getattr(widget, method_name, None)
-        if method is not None:
-            dpi = float(method())
-            if dpi > 0:
-                return dpi
-
-        screen = qtw.QApplication.primaryScreen()
-        if screen is not None:
-            dpi = (
-                screen.logicalDotsPerInchX()
-                if axis == "x"
-                else screen.logicalDotsPerInchY()
-                )
-            if dpi > 0:
-                return float(dpi)
-
-        return 96.0
-
-
-    def _set_image_dpi(self, image, dpi):
-        """
-        Stores DPI metadata on a rendered QImage.
-
-        """
-        dots_per_meter = round(float(dpi) * _INCHES_PER_METER)
-        image.setDotsPerMeterX(dots_per_meter)
-        image.setDotsPerMeterY(dots_per_meter)
 
 
     def _add_plot_area_resize_menu(self, window_menu):
@@ -1274,7 +783,7 @@ class plotWidget(
         self.axes_dock.addWidget(sep)
         
         if self.__class__.__name__ == "plot2d":
-            self.axes_dock.layout.addStretch()
+            self.axes_dock.content_layout.addStretch()
         
     
     def initOperations(self):
@@ -1322,28 +831,23 @@ class plotWidget(
             edit_menu = menu.addMenu("&Edit")
             edit_menu.addAction(copy_plot_image_action)
 
-        close_all_plots_action = QtGui.QAction("Close All &Plot Windows", self)
-        close_all_plots_action.setShortcut("Ctrl+Shift+W")
-        close_all_plots_action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        close_all_plots_action.setStatusTip("Close all open plot windows")
+        close_all_plots_action = create_action(
+            "plots.close_all",
+            self,
+            status_tip="Close all open plot windows",
+            )
         close_all_plots_action.triggered.connect(self.request_close_all_plots)
         file_menu.addAction(close_all_plots_action)
 
-        closeAction = QtGui.QAction("&Close Window", self)
-        closeAction.setShortcuts(
-            standard_key_sequences(QKeySequence.StandardKey.Close, ["Ctrl+W"])
+        closeAction = create_action(
+            "window.close",
+            self,
+            status_tip="Close this plot window",
             )
-        closeAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        closeAction.setStatusTip("Close this plot window")
         closeAction.triggered.connect(self.close)
         file_menu.addAction(closeAction)
 
-        quitAction = QtGui.QAction("&Quit qPlot", self)
-        quitAction.setShortcuts(
-            standard_key_sequences(QKeySequence.StandardKey.Quit, ["Ctrl+Q"])
-            )
-        quitAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        quitAction.setStatusTip("Quit qPlot")
+        quitAction = create_action("app.quit", self)
         quitAction.triggered.connect(self.request_application_quit)
         file_menu.addAction(quitAction)
 
@@ -1363,8 +867,7 @@ class plotWidget(
         
         main_menu = menu.addMenu("&View")
         
-        refreshAction = QtGui.QAction("&Refresh", self)
-        refreshAction.setShortcut("R")
+        refreshAction = create_action("window.refresh", self)
         refreshAction.triggered.connect(lambda: self.refreshWindow(force=True))
         if hasattr(self, "get_mergables"): # Force refresh 1d line options
             refreshAction.triggered.connect(lambda: self.get_mergables.emit())
@@ -1578,12 +1081,11 @@ class plotWidget(
         for widget in widgets:
             action = widget.toggleViewAction()
             if isinstance(action, QtGui.QAction):
-                shortcut = self._toggle_shortcuts.get(widget.windowTitle())
-                if shortcut:
+                command = toolbar_toggle_command_spec(widget.windowTitle())
+                if command is not None:
                     self.register_shortcut(
                         action,
-                        shortcut,
-                        f"Toggle {widget.windowTitle()}"
+                        command,
                         )
                 menu.addAction(action)
     
@@ -1603,59 +1105,6 @@ class plotWidget(
         return {k: v.currentText() for k, v in self.axis_dropdown.items()}
     
     
-    def load_data(self, wait_on_thread : bool=False):
-        """
-        Produces a worker for loading/refreshing the dataset. 
-        Then adds the worker to the threadPool queue to work.
-        
-        Can use wait_on_thread=True to force main thread to wait for callback.
-        Recommend to avoid where possible, as effects all windows.
-
-        Parameters
-        ----------
-        wait_on_thread : bool, optional
-            If true uses an QEventLoop to stop main code from running until 
-            worker has finished its task. The default is False.
-
-        """
-        complete = load_param_data_from_db_prep(self.ds.cache, self.param)
-        if complete:
-            message = f"Processing cached data for {self.param.name}..."
-        else:
-            message = f"Loading data for {self.param.name}..."
-        self.show_status(message, 0)
-        self.show_plot_state(message, kind="loading")
-         
-        worker = loader(
-            self.ds.cache, 
-            self.param, 
-            self.param_dict, 
-            self.axis_options,
-            read_data = not complete,
-            operations = self.oper_widget.get_data()
-            )
-        worker.started_at = perf_counter()
-        
-        # Callback
-        worker.emitter.finished.connect(
-            lambda finished, worker=worker: self.refreshPlot(finished, worker=worker)
-            )
-        # Error event handling
-        worker.emitter.errorOccurred.connect(self.err_raiser)
-        worker.emitter.printer.connect(self.worker_printer)
-        
-        if wait_on_thread: # Force freeze main thread
-            hold_up = QtCore.QEventLoop()
-            self.end_wait.connect(hold_up.quit) # Release main thread event
-            
-        # Run worker
-        self.worker = worker
-        self.threadPool.start(worker)
-    
-        if wait_on_thread:
-            hold_up.exec() # The actual place the code waits for self.end_wait.emit
-            self.end_wait.disconnect(hold_up.quit)
-            
 ###############################################################################
 #Events
 
@@ -1768,165 +1217,6 @@ class plotWidget(
             self.monitor.start(int(interval * 1000)) #convert to seconds
             
             
-    @QtCore.pyqtSlot()
-    def refreshWindow(self, force : bool = False):
-        """
-        Event handler for monitor timeout and other refresh sources.
-        
-        Check whether refresh should be done and attempts to refresh plot.
-
-        Parameters
-        ----------
-        force : bool, optional
-            Forces a refresh regarless of checks. The default is False.
-
-        """
-        self.monitor.stop()
-        retry = False
-        skipped_busy_worker = False
-        current_ds_len = self.ds.number_of_results
-
-        try:
-            # Plot has started, worker first defined in initFrame
-            if not hasattr(self, "worker"):
-                self.initFrame() #defined in children classes
-                retry = True
-                return
-            
-            # Check if new data has been added to the dataset
-            if current_ds_len != self.last_ds_len or force:
-                if self.worker.running: # No need to run if already updating
-                    if not force:
-                        skipped_busy_worker = True
-                        return
-                    
-                # The actual refresh line
-                self.load_data()
-
-        finally: #Ran after return or otherwise
-        
-            # number_of_results Uses SQL check so can be used regardless of loader progress
-            if not skipped_busy_worker:
-                self.last_ds_len = current_ds_len
-
-            #restart monitor
-            if self.ds.running or retry:
-                self.monitorIntervalChanged(self.spinBox.value())
-               
-            #restard monitor if any subplots are live
-            elif hasattr(self, "lines") and self.lines:
-                for subplot in list(self.lines.values())[1:]:
-                    if subplot.running:
-                        self.monitorIntervalChanged(self.spinBox.value())
-                        break
-
-
-    @QtCore.pyqtSlot(bool)
-    def refreshPlot(self, finished : bool = True, worker=None):
-        """
-        Produces a shallow copy of data produced by worker.
-        This is inhertited by plot<1/2>d to actually use the loaded data.
-
-        Parameters
-        ----------
-        finished : bool
-            In the event the worker had to abort, finished is False and refresh
-            is not ran.
-
-        """
-        try:
-            if not finished: # error in worker
-                if worker is not None:
-                    worker.running = False
-                self.show_plot_state(
-                    "Plot load failed",
-                    "Check the status bar or diagnostic log for details.",
-                    kind="error",
-                    )
-                return False
-            
-            if worker is None:
-                worker = self.worker
-
-            if worker is not self.worker:
-                worker.running = False
-                return False
-            
-            # Update qcodes dataset variables if db read happened
-            if worker.read_data:
-                cache = self.ds.cache
-                name = self.param.name
-                
-                update_cache_parameter_data(
-                    cache,
-                    name,
-                    worker.updated_read_status,
-                    worker.updated_write_status,
-                    worker.cache_data,
-                    )
-                
-                if not cache_has_no_written_data(cache):
-                    self._live = False
-            
-            #set data to be called by plot<1/2>d.refreshPlot()
-            self.axis_data = {
-                "x": worker.axis_data["x"], 
-                "y": worker.axis_data["y"]
-                }
-            self.axis_param = {
-                "x": worker.axis_param["x"], 
-                "y": worker.axis_param["y"]
-                }
-            
-            # For 2d plots
-            if hasattr(worker, "dataGrid"):        
-                self.dataGrid = worker.dataGrid
-                
-            # I didnt want to make this a dedicated callback for the few times 
-            # it is used, as the performace hit is neglible
-            # Update text
-            self._set_param_axis_labels()
-            elapsed = perf_counter() - worker.started_at
-
-            self.show_status(
-                f"Loaded {self.ds.number_of_results:,} points for {self.param.name} "
-                f"in {elapsed:.2f} seconds",
-                5000
-                )
-            self.hide_plot_state()
-            return True
-                
-        except AttributeError as err:
-            # If worker starts too quickly, overwrites data and spits out error.
-            # This should no longer be possible so making error soft error.
-            self.show_status(f"Refresh skipped: {err}", 10000)
-            self.show_plot_state("Refresh skipped", str(err), kind="error")
-        
-        finally: # Allow code to move on from wait_on_thread
-            self.end_wait.emit()
-        
-        
-    @QtCore.pyqtSlot(Exception)
-    def err_raiser(self, err : Exception):
-        message = f"{type(err).__name__}: {err}"
-        log_exception("Plot worker error", err, __name__)
-        self.show_status(f"Worker error: {message}", 10000)
-        self.show_plot_state("Plot load failed", message, kind="error")
-
-        if message == self._last_error_text:
-            return
-
-        self._last_error_text = message
-        self.show_error("Plot Error", "A plot worker failed.", message)
-        
-        
-    @QtCore.pyqtSlot(str)
-    def worker_printer(self, fstr : str):
-        # Worker print() often does not work, so done through event handlers
-        self.show_status(fstr, 5000)
-        print(fstr)
-    
-    
     def add_or_remove_operations(self, key : str, func : callable = None):
         """
         Adds a callable function to be passed to the operations for the worker

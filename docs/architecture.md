@@ -48,11 +48,29 @@ multiple windows, start in `main.py`; put database-specific behavior in
 `_database_actions.py`, plot-opening/export behavior in `_plot_actions.py`, and
 run-selection or refresh-control behavior in `_run_controls.py`.
 
+`src/qplot/windows/_commands.py` is the shared command and shortcut registry.
+Use it when adding menu actions, context-menu actions, keyboard shortcuts, or
+shortcut-help rows so labels, status tips, tooltips, and in-app shortcut help
+stay in sync.
+
 ## Plot Windows
 
 `src/qplot/windows/_plotWin.py` is the shared base for plot windows. It owns
-common plotting behavior such as refresh timers, worker loading, axis selection
-controls, context menus, export handling, and operation panels.
+common plotting behavior such as refresh timers, axis selection controls,
+context menus, plot-area resizing, and operation panels.
+
+`src/qplot/windows/_plot_refresh.py` contains shared worker-backed plot refresh
+orchestration: deciding whether to read from the database or cached data,
+starting workers, applying worker results back to plot-window state, and
+surfacing worker failures.
+
+`src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
+structure used by the main window and plot windows to track an open dataset,
+its active plot-window user count, and any delayed-release timer.
+
+`src/qplot/windows/_plot_export.py` contains shared plot export behavior:
+pyqtgraph export-dialog setup, PDF rendering, clipboard image copies, high-DPI
+copies, and SVG clipboard output.
 
 `src/qplot/windows/_plot_feedback.py` contains shared plot-window status,
 state-overlay, error-dialog, and shortcut helpers. Keep common plot-window user
@@ -178,7 +196,10 @@ them.
 main-window preferences dialog and emits a signal when applied settings need to
 be synced into the open UI.
 
-Theme files live in `src/qplot/configuration/themes`.
+Theme files live in `src/qplot/configuration/themes`. The shared stylesheet
+builder and plot-item helpers live in `themes/_base.py`; light, dark, and PyQt
+themes should provide palettes or small overrides instead of duplicating full
+QSS blocks.
 
 The user-facing key reference and contributor checklist for config changes live
 in `docs/configuration.md`.

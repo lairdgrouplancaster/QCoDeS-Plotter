@@ -302,13 +302,13 @@ Plot-window shortcuts:
 | `Ctrl+Alt+C` | Show or hide the coordinate toolbar |
 | `Ctrl+Alt+A` | Show or hide the axis control panel |
 | `Ctrl+Alt+O` | Show or hide the operations dock |
-| `Ctrl+Alt+S` | Snap the 1D coordinate readout to the nearest trace point |
+| `S` | Snap the 1D coordinate readout to the nearest trace point |
 
 Heatmap shortcuts:
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+Shift+C` | Autoscale the colour range |
+| `C` | Autoscale the colour range |
 | `H` | Open a horizontal cut |
 | `V` | Open a vertical cut |
 | Arrow keys | Move the selected cut cursor by one pixel |

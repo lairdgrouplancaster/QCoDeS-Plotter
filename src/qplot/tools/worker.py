@@ -34,7 +34,7 @@ class loader(QtCore.QRunnable):
                  param_dict : dict,
                  axes : dict,
                  read_data : bool = True,
-                 operations : list = None
+                 operations: list | None = None
                  ):
         """
         Sets up worker with required data for run()

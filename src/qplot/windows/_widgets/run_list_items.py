@@ -95,6 +95,8 @@ class RunPreviewCell(qtw.QWidget):
     def _clear_layout(self):
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.setParent(None)
@@ -130,6 +132,9 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
 
         widget = opt.widget
         style = widget.style() if widget else qtw.QApplication.style()
+        if style is None:
+            super().paint(painter, option, index)
+            return
         style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
 
         text_rect = style.subElementRect(
@@ -255,7 +260,11 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
         self._guid = ""
 
     def __lt__(self, other: qtw.QTreeWidgetItem) -> bool:
-        col = self.treeWidget().sortColumn()
+        tree = self.treeWidget()
+        if tree is None:
+            return super().__lt__(other)
+
+        col = tree.sortColumn()
         value1 = self.data(col, QtCore.Qt.ItemDataRole.UserRole)
         value2 = other.data(col, QtCore.Qt.ItemDataRole.UserRole)
         if value1 is not None and value2 is not None:

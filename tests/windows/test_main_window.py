@@ -9,6 +9,8 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling import database as database_module
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
+from qplot.windows._dataset_handle import DatasetHandle
+from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._run_controls import AUTO_PLOT_KEY
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
@@ -18,6 +20,115 @@ from qplot.windows._window_controls import (
     add_restore_defaults_option,
     ask_confirmation_with_dont_ask_again,
 )
+
+
+class MeasurementExportDataFrameTestCase(unittest.TestCase):
+    def test_measurement_dataframe_flattens_and_prefixes_multiple_parameters(self):
+        class Param:
+            def __init__(self, name):
+                self.name = name
+
+        class Dataset:
+            def __init__(self):
+                self.data = {
+                    "signal": {
+                        "x": [[0.0, 1.0], [0.0, 1.0]],
+                        "signal": [[10.0, 11.0], [12.0, 13.0]],
+                        },
+                    "current": {
+                        "gate": [0.0, 1.0, 2.0, 3.0],
+                        "current": [20.0, 21.0, 22.0, 23.0],
+                        },
+                    }
+
+            def get_parameter_data(self, name):
+                return {name: self.data[name]}
+
+        frame = PlotActionsMixin._measurement_dataframe(
+            object(),
+            Dataset(),
+            [Param("signal"), Param("current")],
+            )
+
+        self.assertEqual(
+            list(frame.columns),
+            ["signal.x", "signal.signal", "current.gate", "current.current"],
+            )
+        self.assertEqual(frame["signal.signal"].tolist(), [10.0, 11.0, 12.0, 13.0])
+        self.assertEqual(frame["current.current"].tolist(), [20.0, 21.0, 22.0, 23.0])
+
+    def test_default_export_filename_uses_database_folder_and_safe_measurement_name(self):
+        class Field:
+            def text(self):
+                return str(Path("C:/data/source.db"))
+
+        class Host(PlotActionsMixin):
+            fileTextbox = Field()
+
+        class Dataset:
+            run_id = 7
+
+        class Param:
+            name = "gate/current"
+
+        filename = Host()._default_export_filename(Dataset(), [Param()])
+
+        self.assertEqual(Path(filename).name, "run_7_gate_current.csv")
+        self.assertEqual(Path(filename).parent, Path("C:/data"))
+
+
+class DatasetHandleTestCase(unittest.TestCase):
+    def test_retain_cancels_pending_delete_timer(self):
+        class Timer:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        timer = Timer()
+        handle = DatasetHandle(object(), delete_timer=timer)
+
+        handle.retain()
+
+        self.assertEqual(handle.users, 2)
+        self.assertTrue(timer.stopped)
+        self.assertIsNone(handle.delete_timer)
+
+    def test_plot_actions_manage_dataset_handles(self):
+        class Config:
+            def get(self, key):
+                if key == "runtime_settings.del_grace_period":
+                    return 0
+                raise KeyError(key)
+
+        class Dataset:
+            guid = "guid"
+
+        class Harness(PlotActionsMixin):
+            def __init__(self):
+                self.dataset_holder = {}
+                self.config = Config()
+                self.status_messages = []
+
+            def show_status(self, message, timeout=5000):
+                self.status_messages.append((message, timeout))
+
+        harness = Harness()
+        dataset = Dataset()
+
+        harness.add_ds_at("guid", dataset)
+        self.assertIs(harness.dataset_holder["guid"].dataset, dataset)
+        self.assertEqual(harness.dataset_holder["guid"].users, 1)
+
+        harness.add_ds_at("guid", dataset)
+        self.assertEqual(harness.dataset_holder["guid"].users, 2)
+
+        harness.remove_ds_at("guid")
+        self.assertEqual(harness.dataset_holder["guid"].users, 1)
+
+        harness.remove_ds_at("guid")
+        self.assertEqual(harness.dataset_holder, {})
 
 
 class DatabaseOpenDirectoryTestCase(unittest.TestCase):
@@ -640,7 +751,8 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.selected_run_id = 7
                 self.ds = object()
                 self.localLastFile = "test.db"
-                self.dataset_holder = {"guid": {"del_timer": Timer()}}
+                self.dataset_handle = DatasetHandle(object(), delete_timer=Timer())
+                self.dataset_holder = {"guid": self.dataset_handle}
                 self.RunList = RunList()
                 self.infoBox = InfoBox()
                 self.emptyStateFrame = EmptyState()
@@ -649,7 +761,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 raise AssertionError("Status should not be shown when disabled")
 
         harness = Harness()
-        del_timer = harness.dataset_holder["guid"]["del_timer"]
+        del_timer = harness.dataset_handle.delete_timer
 
         harness.close_database(status=False)
 
@@ -1645,17 +1757,54 @@ class DatabaseDropTestCase(unittest.TestCase):
                 conn.close()
 
             report = main_window.database_info_report(database_path)
+            rows = database_module.database_info_rows(database_path)
 
         self.assertIn("Runs: 1", report)
         self.assertIn("Experiments: 1", report)
         self.assertIn("Latest run ID: 3", report)
         self.assertIn("Latest run GUID: guid-3", report)
+        self.assertIn(("Runs", "1"), rows)
+        self.assertIn(("Latest run GUID", "guid-3"), rows)
         self.assertIn("Database schema version:", report)
         self.assertIn("Last modified:", report)
         self.assertNotIn("Selected run ID:", report)
         self.assertNotIn("Installed QCoDeS version:", report)
         self.assertNotIn("QCoDeS active database:", report)
         self.assertNotIn("SQLite version:", report)
+
+    def test_database_info_dialog_displays_copyable_table(self):
+        dialog = database_actions.DatabaseInfoDialog([
+            ("Database", "demo.db"),
+            ("Path", "C:/data/demo.db"),
+            ])
+
+        try:
+            table = dialog.table
+
+            self.assertIsInstance(table, database_actions.CopyableTableWidget)
+            self.assertEqual(dialog.windowTitle(), "Database Information")
+            self.assertEqual(table.objectName(), "databaseInfoTable")
+            self.assertEqual(
+                [table.horizontalHeaderItem(col).text() for col in range(2)],
+                ["Field", "Value"],
+                )
+            self.assertEqual(table.selectionBehavior(), qtw.QAbstractItemView.SelectionBehavior.SelectRows)
+            self.assertEqual(table.item(0, 0).text(), "Database")
+            self.assertEqual(table.item(0, 1).text(), "demo.db")
+
+            table.selectRow(1)
+            table.copySelection()
+
+            self.assertEqual(qtw.QApplication.clipboard().text(), "Path\tC:/data/demo.db")
+
+            dialog.copyAll()
+
+            self.assertEqual(
+                qtw.QApplication.clipboard().text(),
+                "Database\tdemo.db\nPath\tC:/data/demo.db",
+                )
+        finally:
+            dialog.deleteLater()
 
     def test_database_path_from_mime_data_accepts_one_local_db_file(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
