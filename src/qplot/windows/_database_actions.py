@@ -124,9 +124,7 @@ class DatabaseActionsMixin:
         self.localLastFile = None
 
         for holder in self.dataset_holder.values():
-            del_timer = holder.get("del_timer")
-            if del_timer is not None:
-                del_timer.stop()
+            holder.cancel_delete_timer()
         self.dataset_holder.clear()
 
         self.RunList.blockSignals(True)

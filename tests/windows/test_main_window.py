@@ -9,6 +9,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling import database as database_module
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
+from qplot.windows._dataset_handle import DatasetHandle
 from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._run_controls import AUTO_PLOT_KEY
 from qplot.windows._window_controls import (
@@ -74,6 +75,60 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
 
         self.assertEqual(Path(filename).name, "run_7_gate_current.csv")
         self.assertEqual(Path(filename).parent, Path("C:/data"))
+
+
+class DatasetHandleTestCase(unittest.TestCase):
+    def test_retain_cancels_pending_delete_timer(self):
+        class Timer:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        timer = Timer()
+        handle = DatasetHandle(object(), delete_timer=timer)
+
+        handle.retain()
+
+        self.assertEqual(handle.users, 2)
+        self.assertTrue(timer.stopped)
+        self.assertIsNone(handle.delete_timer)
+
+    def test_plot_actions_manage_dataset_handles(self):
+        class Config:
+            def get(self, key):
+                if key == "runtime_settings.del_grace_period":
+                    return 0
+                raise KeyError(key)
+
+        class Dataset:
+            guid = "guid"
+
+        class Harness(PlotActionsMixin):
+            def __init__(self):
+                self.dataset_holder = {}
+                self.config = Config()
+                self.status_messages = []
+
+            def show_status(self, message, timeout=5000):
+                self.status_messages.append((message, timeout))
+
+        harness = Harness()
+        dataset = Dataset()
+
+        harness.add_ds_at("guid", dataset)
+        self.assertIs(harness.dataset_holder["guid"].dataset, dataset)
+        self.assertEqual(harness.dataset_holder["guid"].users, 1)
+
+        harness.add_ds_at("guid", dataset)
+        self.assertEqual(harness.dataset_holder["guid"].users, 2)
+
+        harness.remove_ds_at("guid")
+        self.assertEqual(harness.dataset_holder["guid"].users, 1)
+
+        harness.remove_ds_at("guid")
+        self.assertEqual(harness.dataset_holder, {})
 
 
 class DatabaseOpenDirectoryTestCase(unittest.TestCase):
@@ -696,7 +751,8 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.selected_run_id = 7
                 self.ds = object()
                 self.localLastFile = "test.db"
-                self.dataset_holder = {"guid": {"del_timer": Timer()}}
+                self.dataset_handle = DatasetHandle(object(), delete_timer=Timer())
+                self.dataset_holder = {"guid": self.dataset_handle}
                 self.RunList = RunList()
                 self.infoBox = InfoBox()
                 self.emptyStateFrame = EmptyState()
@@ -705,7 +761,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 raise AssertionError("Status should not be shown when disabled")
 
         harness = Harness()
-        del_timer = harness.dataset_holder["guid"]["del_timer"]
+        del_timer = harness.dataset_handle.delete_timer
 
         harness.close_database(status=False)
 

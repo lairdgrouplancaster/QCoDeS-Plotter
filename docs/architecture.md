@@ -59,6 +59,10 @@ orchestration: deciding whether to read from the database or cached data,
 starting workers, applying worker results back to plot-window state, and
 surfacing worker failures.
 
+`src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
+structure used by the main window and plot windows to track an open dataset,
+its active plot-window user count, and any delayed-release timer.
+
 `src/qplot/windows/_plot_export.py` contains shared plot export behavior:
 pyqtgraph export-dialog setup, PDF rendering, clipboard image copies, high-DPI
 copies, and SVG clipboard output.

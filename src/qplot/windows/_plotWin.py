@@ -184,6 +184,8 @@ class plotWidget(
             Holds configuration data, mainly theme and window size.
         threadPool : PyQt6.QtCore.QThreadPool
             A pool of threads for the refresh worker to be placed in.
+        dataset_holder : dict[str, DatasetHandle]
+            Shared map of dataset GUIDs to open-dataset ownership handles.
         refrate : float, optional
             Default value for the refresh timer. The default is None, which 
             corresponds to a 5.0s refresh time.
@@ -373,16 +375,17 @@ class plotWidget(
 
         """
         # Check dataset exists, produce new one if needed.
-        if self._dataset_holder.get(self._guid, 0) == 0:
+        handle = self._dataset_holder.get(self._guid)
+        if handle is None:
             self.show_status(f"Dataset {self._guid} not found. Reloading...", 5000)
             self.make_ds.emit(self._guid)
+            handle = self._dataset_holder[self._guid]
         
         # Check a deletion timer is not active and stop
-        elif self._dataset_holder[self._guid]["del_timer"] is not None:
-            self._dataset_holder[self._guid]["del_timer"].stop() # Stop delete timer
-            self._dataset_holder[self._guid]["del_timer"] = None
+        else:
+            handle.cancel_delete_timer()
             
-        return self._dataset_holder[self._guid]["dataset"]
+        return handle.dataset
         
 ###############################################################################
 # Init functions   

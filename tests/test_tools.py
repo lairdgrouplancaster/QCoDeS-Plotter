@@ -7,6 +7,7 @@ from qplot.tools.general import data2matrix
 from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 from qplot.tools.worker import loader
 from qplot.windows import _plotWin as plotwin_module
+from qplot.windows._dataset_handle import DatasetHandle
 from qplot.windows._plotWin import plotWidget
 
 
@@ -150,12 +151,7 @@ class ToolFunctionTestCase(unittest.TestCase):
 
         window = plotWidget.__new__(plotWidget)
         window._guid = "guid"
-        window._dataset_holder = {
-            "guid": {
-                "dataset": Dataset(),
-                "del_timer": None,
-                }
-            }
+        window._dataset_holder = {"guid": DatasetHandle(Dataset())}
         window.param = Param()
 
         try:

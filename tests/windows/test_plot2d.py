@@ -5,6 +5,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._dataset_handle import DatasetHandle
 from qplot.windows._plotWin import plotWidget
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
@@ -36,12 +37,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         worker = Worker()
         window.worker = worker
         window._guid = "guid"
-        window._dataset_holder = {
-            "guid": {
-                "dataset": Dataset(),
-                "del_timer": None,
-                }
-            }
+        window._dataset_holder = {"guid": DatasetHandle(Dataset())}
         window.param = Param()
         window.end_wait = Signal()
         window._set_param_axis_labels = lambda: None
@@ -950,5 +946,4 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertEqual(window.bar.axis.style["tickTextWidth"], 60)
         self.assertIsNone(window.bar.axis.picture)
         self.assertTrue(window.bar.axis.updated)
-
 

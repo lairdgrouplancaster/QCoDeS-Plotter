@@ -24,6 +24,7 @@ from qplot.datahandling.database import (
 from qplot.diagnostics import log_user_error
 
 from ._database_actions import DatabaseActionsMixin
+from ._dataset_handle import DatasetHandle
 from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
 from ._preferences import (
@@ -118,7 +119,7 @@ class MainWindow(
         self.windows = [] # prevent auto delete of windows
         self.ds = None
         self.preview_size = self._configured_preview_size()
-        self.dataset_holder = {}
+        self.dataset_holder: dict[str, DatasetHandle] = {}
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
         self.threadPool.setMaxThreadCount(self.config.get("runtime_settings.max_threads"))
@@ -604,4 +605,3 @@ class MainWindow(
         if details:
             box.setDetailedText(details)
         box.exec()
-
