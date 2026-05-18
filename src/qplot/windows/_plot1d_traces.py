@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING, Any
+
 import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
@@ -5,11 +7,40 @@ from PyQt6 import QtWidgets as qtw
 from ._subplots import subplot1d
 from ._widgets import picker_1d
 
+if TYPE_CHECKING:
+    class _Plot1DTraceBase(qtw.QMainWindow):
+        axes_dock: Any
+        axis_options: dict[str, str]
+        box_count: int
+        box_layout: qtw.QVBoxLayout
+        config: Any
+        get_mergables: Any
+        label: str
+        line: Any
+        lineScroll: qtw.QScrollArea
+        lines: dict[str, Any]
+        make_ds: Any
+        mergable: list[Any]
+        option_boxes: list[Any]
+        plot: Any
+        remove_dataset: Any
+        right_vb: Any
+        scrollWidget: qtw.QWidget
+        spinBox: Any
+        vb: Any
 
-class Plot1DTraceMixin:
+        def initAxes(self) -> None: ...
+
+        def closeEvent(self, event: object) -> None: ...
+else:
+    class _Plot1DTraceBase:
+        pass
+
+
+class Plot1DTraceMixin(_Plot1DTraceBase):
     """Trace controls and secondary-axis handling for 1D plot windows."""
 
-    def _register_main_line(self):
+    def _register_main_line(self) -> None:
         """
         Keeps the main pyqtgraph line in the trace registry.
 
@@ -18,7 +49,7 @@ class Plot1DTraceMixin:
             self.lines[self.label] = self.line
 
 
-    def initAxes(self):
+    def initAxes(self) -> None:
         """
         Adds to the base axis toolbar (left) to allow adding and removing 
         secondary lines along with changing color.
@@ -69,7 +100,7 @@ class Plot1DTraceMixin:
         self.add_option_box(options=[])
         
         
-    def _resize_scrollArea(self):
+    def _resize_scrollArea(self) -> None:
         """
         Updates the width of the dock widget to match the width of the largest
         row in the Scroll area so all data is visible
@@ -80,15 +111,21 @@ class Plot1DTraceMixin:
         """
         self.scrollWidget.adjustSize()
         # Get scrollArea width
+        vertical_scrollbar = self.lineScroll.verticalScrollBar()
+        scrollbar_width = (
+            vertical_scrollbar.sizeHint().width()
+            if vertical_scrollbar is not None
+            else 0
+            )
         scrollWidth = (
             self.scrollWidget.sizeHint().width() +
             2 *  self.lineScroll.frameWidth() +
-            self.lineScroll.verticalScrollBar().sizeHint().width()
+            scrollbar_width
             )
         self.lineScroll.setMinimumWidth(scrollWidth)
         
         
-    def add_option_box(self, options = None):
+    def add_option_box(self, options: list[str] | None = None) -> None:
         """
         Produces a new box for user to add another line to the plot.
         Boxes are made from a QWidget, see qplot.windows._widgets.dropbox.picker_1d
@@ -126,7 +163,7 @@ class Plot1DTraceMixin:
         self._resize_scrollArea()
         
     
-    def update_line_picker(self, wins = None):
+    def update_line_picker(self, wins: list[Any] | None = None) -> None:
         """
         Refreshes the available options in the box dropdown menus.
 
@@ -147,7 +184,7 @@ class Plot1DTraceMixin:
                     self.option_boxes[-1].reset_box([item.label for item in self.mergable if item.label not in box_texts])
 
 
-    def refresh_secondary_lines(self):
+    def refresh_secondary_lines(self) -> None:
         """
         Refreshes added trace lines and restarts hidden live-trace monitors.
 
@@ -166,7 +203,7 @@ class Plot1DTraceMixin:
     
     
     @QtCore.pyqtSlot(str)
-    def add_line(self, label):
+    def add_line(self, label: str) -> None:
         """
         Produces a secondary plot based on user selection in dropdown menus
         
@@ -229,6 +266,7 @@ class Plot1DTraceMixin:
         self.plot.getAxis('right').setStyle(showValues=True)
         
         # Connect box options to line
+        selected_box = None
         for box in self.option_boxes:
             if label == box.option_box.currentText():
                 
@@ -239,18 +277,19 @@ class Plot1DTraceMixin:
                 box.axis_side.currentTextChanged.connect(
                     subplot.set_side
                     )
+                selected_box = box
                 break
         
         # debug line
-        assert box is not None
+        assert selected_box is not None
         
         # Set display
-        subplot.set_color(box.color_box.color())
-        subplot.set_side(box.axis_side.currentText().lower())
+        subplot.set_color(selected_box.color_box.color())
+        subplot.set_side(selected_box.axis_side.currentText().lower())
         
     
     @QtCore.pyqtSlot(bool)
-    def closeEvent(self, event):
+    def closeEvent(self, event: object) -> None:
         # Stopped lines as needed
         for line in list(self.lines.values())[1:]:
             self.remove_dataset.emit(line.from_win._guid)
@@ -262,7 +301,7 @@ class Plot1DTraceMixin:
         
     
     @QtCore.pyqtSlot(str)
-    def remove_line(self, label):
+    def remove_line(self, label: str) -> None:
         """
         Deletes line connect to box widget.
 
@@ -273,11 +312,13 @@ class Plot1DTraceMixin:
             
         """
         # Find box and remove box
+        side = None
         for option in self.option_boxes:
             if option.option_box.currentText() == label:
                 side = option.axis_side.currentText()
                 self.option_boxes.remove(option)
                 break
+        assert side is not None
         
         # Remove line from viewbox
         line = self.lines[label]
@@ -305,7 +346,7 @@ class Plot1DTraceMixin:
     
     
     @QtCore.pyqtSlot(object)
-    def updateViews(self, ev):
+    def updateViews(self, ev: object | None) -> None:
         """
         When moving main viewbox move/scale right viewbox but the same
         relative amount.
