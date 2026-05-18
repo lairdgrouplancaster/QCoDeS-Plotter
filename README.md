@@ -1,6 +1,7 @@
 # QCoDeS-Plotter
 
 [![release](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?label=release)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases/latest)
+[![beta](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?include_prereleases&label=beta&color=orange)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases)
 
 QCoDeS-Plotter, or qPlot, is a PyQt-based data viewer for QCoDeS databases. It
 is designed for inspecting completed and running experiments, with live refresh,
