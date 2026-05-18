@@ -51,8 +51,17 @@ run-selection or refresh-control behavior in `_run_controls.py`.
 ## Plot Windows
 
 `src/qplot/windows/_plotWin.py` is the shared base for plot windows. It owns
-common plotting behavior such as refresh timers, worker loading, axis selection
-controls, context menus, export handling, and operation panels.
+common plotting behavior such as refresh timers, axis selection controls,
+context menus, plot-area resizing, and operation panels.
+
+`src/qplot/windows/_plot_refresh.py` contains shared worker-backed plot refresh
+orchestration: deciding whether to read from the database or cached data,
+starting workers, applying worker results back to plot-window state, and
+surfacing worker failures.
+
+`src/qplot/windows/_plot_export.py` contains shared plot export behavior:
+pyqtgraph export-dialog setup, PDF rendering, clipboard image copies, high-DPI
+copies, and SVG clipboard output.
 
 `src/qplot/windows/_plot_feedback.py` contains shared plot-window status,
 state-overlay, error-dialog, and shortcut helpers. Keep common plot-window user

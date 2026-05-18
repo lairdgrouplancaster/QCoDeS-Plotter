@@ -36,7 +36,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.2",
-    "mypy>=1.14",
+    "mypy>=1.14,<2.0",
     "pytest>=8.0",
     "pytest-cov>=6.0",
     "ruff>=0.8",
@@ -87,7 +87,7 @@ select = ["F", "B", "I", "UP"]
 check_untyped_defs = true
 files = [
     "src/qplot/__init__.py",
-    "src/qplot/_version.py",
+    "src/qplot/_metadata.py",
     "src/qplot/diagnostics.py",
     "src/qplot/tools/general.py",
     "src/qplot/tools/operation_registry.py",
@@ -97,4 +97,5 @@ files = [
 ignore_missing_imports = true
 no_implicit_optional = true
 python_version = "3.11"
+sqlite_cache = false
 warn_unused_ignores = true

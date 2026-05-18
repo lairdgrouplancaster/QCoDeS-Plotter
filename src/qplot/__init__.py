@@ -1,6 +1,6 @@
 from qplot.configuration.config import config
 
-from ._version import package_version
+from ._metadata import package_version
 
 __version__ = package_version()
 

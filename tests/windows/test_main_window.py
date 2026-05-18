@@ -9,6 +9,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling import database as database_module
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
+from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._run_controls import AUTO_PLOT_KEY
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
@@ -18,6 +19,61 @@ from qplot.windows._window_controls import (
     add_restore_defaults_option,
     ask_confirmation_with_dont_ask_again,
 )
+
+
+class MeasurementExportDataFrameTestCase(unittest.TestCase):
+    def test_measurement_dataframe_flattens_and_prefixes_multiple_parameters(self):
+        class Param:
+            def __init__(self, name):
+                self.name = name
+
+        class Dataset:
+            def __init__(self):
+                self.data = {
+                    "signal": {
+                        "x": [[0.0, 1.0], [0.0, 1.0]],
+                        "signal": [[10.0, 11.0], [12.0, 13.0]],
+                        },
+                    "current": {
+                        "gate": [0.0, 1.0, 2.0, 3.0],
+                        "current": [20.0, 21.0, 22.0, 23.0],
+                        },
+                    }
+
+            def get_parameter_data(self, name):
+                return {name: self.data[name]}
+
+        frame = PlotActionsMixin._measurement_dataframe(
+            object(),
+            Dataset(),
+            [Param("signal"), Param("current")],
+            )
+
+        self.assertEqual(
+            list(frame.columns),
+            ["signal.x", "signal.signal", "current.gate", "current.current"],
+            )
+        self.assertEqual(frame["signal.signal"].tolist(), [10.0, 11.0, 12.0, 13.0])
+        self.assertEqual(frame["current.current"].tolist(), [20.0, 21.0, 22.0, 23.0])
+
+    def test_default_export_filename_uses_database_folder_and_safe_measurement_name(self):
+        class Field:
+            def text(self):
+                return str(Path("C:/data/source.db"))
+
+        class Host(PlotActionsMixin):
+            fileTextbox = Field()
+
+        class Dataset:
+            run_id = 7
+
+        class Param:
+            name = "gate/current"
+
+        filename = Host()._default_export_filename(Dataset(), [Param()])
+
+        self.assertEqual(Path(filename).name, "run_7_gate_current.csv")
+        self.assertEqual(Path(filename).parent, Path("C:/data"))
 
 
 class DatabaseOpenDirectoryTestCase(unittest.TestCase):

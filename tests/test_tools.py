@@ -92,6 +92,40 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(filtered["y"], np.array([2.0, 4.0, 5.0]))
         np.testing.assert_allclose(differentiated["y"], np.array([2.0, 2.0, 2.0]))
 
+    def test_worker_operations_continue_after_one_operation_fails(self):
+        class Signal:
+            def __init__(self):
+                self.values = []
+
+            def emit(self, value):
+                self.values.append(value)
+
+        class Emitter:
+            def __init__(self):
+                self.errorOccurred = Signal()
+
+        def failing_operation(_data):
+            raise ValueError("bad operation")
+
+        worker = loader.__new__(loader)
+        worker.axis_data = {
+            "x": np.array([1.0, 2.0]),
+            "y": np.array([3.0, 4.0]),
+            }
+        worker.operations = [
+            failing_operation,
+            lambda data: {"y": data["y"] * 2},
+            lambda data: {"x": data["x"] + 10},
+            ]
+        worker.emitter = Emitter()
+
+        result = loader.do_operations(worker)
+
+        self.assertEqual(len(worker.emitter.errorOccurred.values), 1)
+        np.testing.assert_array_equal(result[0], np.array([11.0, 12.0]))
+        np.testing.assert_array_equal(result[1], np.array([6.0, 8.0]))
+        self.assertIsNone(result[2])
+
     def test_subtract_mean_operates_by_axis(self):
         data = {
             "x": np.array([0.0, 1.0]),

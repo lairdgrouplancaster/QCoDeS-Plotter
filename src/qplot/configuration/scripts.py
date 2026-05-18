@@ -2,7 +2,7 @@ import sys
 
 from jsonschema import ValidationError
 
-from qplot._version import package_version
+from qplot._metadata import package_version
 
 from .config import config
 
