@@ -26,7 +26,10 @@ class CommandRegistryTestCase(unittest.TestCase):
                 action.shortcutContext(),
                 QtCore.Qt.ShortcutContext.WindowShortcut,
             )
-            self.assertIn("Ctrl+L", action.toolTip())
+            self.assertIn(
+                command_spec("database.load").shortcut_display_text(),
+                action.toolTip(),
+            )
         finally:
             window.deleteLater()
 
