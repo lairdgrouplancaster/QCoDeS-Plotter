@@ -85,6 +85,7 @@ select = ["F", "B", "I", "UP"]
 
 [tool.mypy]
 check_untyped_defs = true
+follow_imports = "silent"
 files = [
     "src/qplot/__init__.py",
     "src/qplot/__main__.py",
@@ -110,6 +111,7 @@ files = [
     "src/qplot/tools/plot_tools.py",
     "src/qplot/tools/worker.py",
     "src/qplot/windows/__init__.py",
+    "src/qplot/windows/_commands.py",
     "src/qplot/windows/_colorbar.py",
     "src/qplot/windows/_dataset_handle.py",
     "src/qplot/windows/_dragdrop.py",
@@ -137,6 +139,7 @@ files = [
     "src/qplot/windows/_widgets/_run_formatting.py",
     "src/qplot/windows/_widgets/details_tables.py",
     "src/qplot/windows/_widgets/dropbox.py",
+    "src/qplot/windows/_widgets/operations.py",
     "src/qplot/windows/_widgets/preview.py",
     "src/qplot/windows/_widgets/run_list_items.py",
     "src/qplot/windows/_widgets/toolbar.py",
