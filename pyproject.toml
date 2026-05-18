@@ -95,6 +95,7 @@ files = [
     "src/qplot/windows/_dataset_handle.py",
     "src/qplot/windows/_plot1d_snap.py",
     "src/qplot/windows/_plot1d_traces.py",
+    "src/qplot/windows/_plot2d_sweeps.py",
     "src/qplot/windows/plot1d.py",
     "src/qplot/windows/plot2d.py",
     "src/qplot/windows/_widgets/_run_formatting.py",

@@ -1,13 +1,40 @@
+from typing import TYPE_CHECKING, Any, Literal
+
+import numpy.typing as npt
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._subplots.subplot2d import sweeper
 
+_SweepAxis = Literal["x", "y"]
 
-class Plot2DSweepMixin:
+if TYPE_CHECKING:
+    class _Plot2DSweepBase(qtw.QMainWindow):
+        _guid: str
+        active_sweep_line_id: int | None
+        axis_options: dict[str, str]
+        close_sweeps_requested: Any
+        dataGrid: npt.NDArray[Any]
+        open_subplot: Any
+        param: Any
+        plot: Any
+        rotate: bool | None
+        sweep_id: int
+        sweep_lines: dict[int, Any]
+        sweep_moved: Any
+
+        def change_axis(self, key: str) -> None: ...
+
+        def _heatmap_rect(self) -> QtCore.QRectF | None: ...
+else:
+    class _Plot2DSweepBase:
+        pass
+
+
+class Plot2DSweepMixin(_Plot2DSweepBase):
     """Sweep and cut interactions for 2D heatmap plot windows."""
 
-    def openSweep(self, side):
+    def openSweep(self, side: str) -> None:
         """
         Emits a signal to the Main window to open the sweep via 
         MainWindow.openWin()
@@ -25,7 +52,8 @@ class Plot2DSweepMixin:
 
         """
         # Quit out if not on heatmap
-        if self.z_index is None:
+        z_index = self.__dict__.get("z_index")
+        if not isinstance(z_index, list):
             return
         
         # Fetch axes names
@@ -35,11 +63,11 @@ class Plot2DSweepMixin:
         if side == "v":
             fixed_var = axes["x"]
             sweep_var = axes["y"]
-            fixed_index = self.z_index[0]
+            fixed_index = z_index[0]
         elif side == "h":
             fixed_var = axes["y"]
             sweep_var = axes["x"]
-            fixed_index = self.z_index[1]
+            fixed_index = z_index[1]
         else:
             raise KeyError(f"Invalid sweep side, {side=}, must be 'v' or 'h'.")
             
@@ -60,7 +88,14 @@ class Plot2DSweepMixin:
         
 
     @QtCore.pyqtSlot(int, str, str, int, object)
-    def update_sweep_line(self, sweep_id, sweep_param, fixed_param, fixed_index, line_col):
+    def update_sweep_line(
+            self,
+            sweep_id: int,
+            sweep_param: str,
+            fixed_param: str,
+            fixed_index: int,
+            line_col: Any,
+            ) -> None:
         """
         Event handler for update to suplot sweep
         Updates the sweep cursor on the main plot in response to changes in the
@@ -88,7 +123,10 @@ class Plot2DSweepMixin:
         
         # get axis of fixed_param
         index = list(self.axis_options.values()).index(fixed_param)
-        axis = list(self.axis_options.keys())[index]
+        axis_name = list(self.axis_options.keys())[index]
+        if axis_name not in ("x", "y"):
+            return
+        axis: _SweepAxis = "x" if axis_name == "x" else "y"
     
         at_value = self.sweep_pixel_centre(axis, fixed_index)
     
@@ -136,7 +174,7 @@ class Plot2DSweepMixin:
     
     
     @QtCore.pyqtSlot(int)
-    def remove_sweep(self, sweep_id):
+    def remove_sweep(self, sweep_id: int) -> None:
         """
         Event handler for subplot closing.
         Removes line sweep display from plot
@@ -157,7 +195,7 @@ class Plot2DSweepMixin:
         
         
     @QtCore.pyqtSlot()
-    def change_axis(self, key : str):
+    def change_axis(self, key: str) -> None:
         
         # Rotate lines in case of duplciates
         options = self.axis_options
@@ -170,7 +208,7 @@ class Plot2DSweepMixin:
 
     
     @QtCore.pyqtSlot()  
-    def rotate_sweeps(self):
+    def rotate_sweeps(self) -> None:
         """
         Event handler for changing assigned axes (is connected to self.end_wait
                                                   in self.refreshPlot)
@@ -187,9 +225,9 @@ class Plot2DSweepMixin:
         
         # remote lines as parameters have changed
         if not self.rotate:
-            for key in self.sweep_lines.keys():
+            for key in list(self.sweep_lines.keys()):
                 self.remove_sweep(key)
-            self.rotate = None
+            self.__dict__["rotate"] = None
             return
             
         # Rotate lines as parameters switched
@@ -204,40 +242,49 @@ class Plot2DSweepMixin:
             line.setPos(pos) # force line placement into correct spot
             self.set_sweep_line_cursor(line)
             
-        self.rotate = None
+        self.__dict__["rotate"] = None
     
     
-    def sweep_axis_count(self, axis):
+    def sweep_axis_count(self, axis: _SweepAxis) -> int:
         if axis == "x":
             return self.dataGrid.shape[1]
         return self.dataGrid.shape[0]
 
 
-    def sweep_pixel_centre(self, axis, index):
+    def _required_heatmap_rect(self) -> QtCore.QRectF:
+        rect = self._heatmap_rect()
+        if rect is None:
+            raise RuntimeError("Heatmap geometry is not available.")
+        return rect
+
+
+    def sweep_pixel_centre(self, axis: _SweepAxis, index: int) -> float:
         """
         Return the plot coordinate at the centre of a heatmap pixel.
 
         """
         count = self.sweep_axis_count(axis)
         index = min(max(int(index), 0), count - 1)
+        rect = self._required_heatmap_rect()
 
         if axis == "x":
-            return self.rect.x() + (index + 0.5) * self.rect.width() / count
-        return self.rect.y() + (index + 0.5) * self.rect.height() / count
+            return rect.x() + (index + 0.5) * rect.width() / count
+        return rect.y() + (index + 0.5) * rect.height() / count
 
 
-    def sweep_index_at_value(self, axis, value):
+    def sweep_index_at_value(self, axis: _SweepAxis, value: float) -> int | None:
         """
         Return the heatmap pixel index containing a plot coordinate.
 
         """
         count = self.sweep_axis_count(axis)
+        rect = self._required_heatmap_rect()
         if axis == "x":
-            start = self.rect.x()
-            width = self.rect.width()
+            start = rect.x()
+            width = rect.width()
         else:
-            start = self.rect.y()
-            width = self.rect.height()
+            start = rect.y()
+            width = rect.height()
 
         if count <= 0 or width <= 0:
             return None
@@ -246,17 +293,17 @@ class Plot2DSweepMixin:
         return min(max(index, 0), count - 1)
 
 
-    def line_sweep_axis(self, line):
+    def line_sweep_axis(self, line: Any) -> _SweepAxis:
         return "x" if line.angle == 90 else "y"
 
 
-    def sweep_line_cursor_shape(self, line):
+    def sweep_line_cursor_shape(self, line: Any) -> QtCore.Qt.CursorShape:
         if self.line_sweep_axis(line) == "x":
             return QtCore.Qt.CursorShape.SizeHorCursor
         return QtCore.Qt.CursorShape.SizeVerCursor
 
 
-    def set_sweep_line_cursor(self, line):
+    def set_sweep_line_cursor(self, line: Any) -> None:
         if not getattr(line, "movable", False):
             self.restore_sweep_line_hover_cursor(line)
             self.restore_sweep_line_drag_cursor(line)
@@ -269,7 +316,7 @@ class Plot2DSweepMixin:
         self.update_sweep_line_hover_cursor(line)
 
 
-    def install_sweep_line_drag_cursor(self, line):
+    def install_sweep_line_drag_cursor(self, line: Any) -> None:
         if getattr(line, "_qplot_sweep_drag_cursor_installed", False):
             return
 
@@ -277,7 +324,7 @@ class Plot2DSweepMixin:
         if previous_mouse_drag_event is None:
             return
 
-        def mouse_drag_event(event):
+        def mouse_drag_event(event: Any) -> Any:
             if self._sweep_line_drag_cursor_event_applies(line, event):
                 self.set_sweep_line_drag_cursor(line)
 
@@ -291,7 +338,7 @@ class Plot2DSweepMixin:
         line._qplot_sweep_drag_cursor_installed = True
 
 
-    def install_sweep_line_hover_cursor(self, line):
+    def install_sweep_line_hover_cursor(self, line: Any) -> None:
         if getattr(line, "_qplot_sweep_hover_cursor_installed", False):
             return
 
@@ -299,7 +346,7 @@ class Plot2DSweepMixin:
         if previous_hover_event is None:
             return
 
-        def hover_event(event):
+        def hover_event(event: Any) -> None:
             previous_hover_event(event)
             if getattr(line, "mouseHovering", False):
                 self.set_sweep_line_hover_cursor(line)
@@ -310,7 +357,7 @@ class Plot2DSweepMixin:
         line._qplot_sweep_hover_cursor_installed = True
 
 
-    def _sweep_line_drag_cursor_event_applies(self, line, event):
+    def _sweep_line_drag_cursor_event_applies(self, line: Any, event: Any) -> bool:
         if not getattr(line, "movable", False):
             return False
 
@@ -318,23 +365,23 @@ class Plot2DSweepMixin:
         return button == QtCore.Qt.MouseButton.LeftButton
 
 
-    def set_sweep_line_drag_cursor(self, line):
+    def set_sweep_line_drag_cursor(self, line: Any) -> None:
         self.set_sweep_line_override_cursor(line, "drag")
 
 
-    def restore_sweep_line_drag_cursor(self, line):
+    def restore_sweep_line_drag_cursor(self, line: Any) -> None:
         self.restore_sweep_line_override_cursor(line, "drag")
 
 
-    def set_sweep_line_hover_cursor(self, line):
+    def set_sweep_line_hover_cursor(self, line: Any) -> None:
         self.set_sweep_line_override_cursor(line, "hover")
 
 
-    def restore_sweep_line_hover_cursor(self, line):
+    def restore_sweep_line_hover_cursor(self, line: Any) -> None:
         self.restore_sweep_line_override_cursor(line, "hover")
 
 
-    def set_sweep_line_override_cursor(self, line, reason):
+    def set_sweep_line_override_cursor(self, line: Any, reason: str) -> None:
         if qtw.QApplication.instance() is None:
             return
 
@@ -353,7 +400,7 @@ class Plot2DSweepMixin:
         setattr(line, shape_attribute, cursor_shape)
 
 
-    def restore_sweep_line_override_cursor(self, line, reason):
+    def restore_sweep_line_override_cursor(self, line: Any, reason: str) -> None:
         active_attribute = f"_qplot_sweep_{reason}_cursor_override_active"
         if not getattr(line, active_attribute, False):
             return
@@ -364,14 +411,14 @@ class Plot2DSweepMixin:
         setattr(line, f"_qplot_sweep_{reason}_cursor_shape", None)
 
 
-    def update_sweep_line_hover_cursor(self, line):
+    def update_sweep_line_hover_cursor(self, line: Any) -> None:
         if self.sweep_line_contains_global_cursor(line):
             self.set_sweep_line_hover_cursor(line)
         else:
             self.restore_sweep_line_hover_cursor(line)
 
 
-    def sweep_line_contains_global_cursor(self, line):
+    def sweep_line_contains_global_cursor(self, line: Any) -> bool:
         widget = self.__dict__.get("widget")
         if widget is None:
             return False
@@ -385,7 +432,7 @@ class Plot2DSweepMixin:
             return False
 
 
-    def activate_sweep_line(self, line, event=None):
+    def activate_sweep_line(self, line: Any, event: Any = None) -> None:
         self.active_sweep_line_id = line.sweep_id
         if self.sweep_line_remove_requested(event):
             self.request_sweep_line_removal(line, event)
@@ -398,7 +445,7 @@ class Plot2DSweepMixin:
             event.accept()
 
 
-    def sweep_line_remove_requested(self, event):
+    def sweep_line_remove_requested(self, event: Any) -> bool:
         if event is None:
             return False
 
@@ -407,7 +454,7 @@ class Plot2DSweepMixin:
         return button == QtCore.Qt.MouseButton.LeftButton and double_clicked
 
 
-    def request_sweep_line_removal(self, line, event=None):
+    def request_sweep_line_removal(self, line: Any, event: Any = None) -> None:
         if self.sweep_line_remove_all_requested(event):
             sweep_ids = tuple(sorted(self.sweep_lines.keys()))
         else:
@@ -416,7 +463,7 @@ class Plot2DSweepMixin:
         self.close_sweeps_requested.emit(self, sweep_ids)
 
 
-    def sweep_line_remove_all_requested(self, event):
+    def sweep_line_remove_all_requested(self, event: Any) -> bool:
         if event is None:
             return False
 
@@ -424,7 +471,7 @@ class Plot2DSweepMixin:
         return bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier)
 
 
-    def set_sweep_line_index(self, line, index, emit=True):
+    def set_sweep_line_index(self, line: Any, index: int, emit: bool = True) -> None:
         axis = self.line_sweep_axis(line)
         count = self.sweep_axis_count(axis)
         index = min(max(int(index), 0), count - 1)
@@ -441,7 +488,7 @@ class Plot2DSweepMixin:
             self.sweep_moved.emit(line.sweep_id, index)
 
 
-    def _snap_sweep_lines_to_pixel_centres(self):
+    def _snap_sweep_lines_to_pixel_centres(self) -> None:
         for line in self.sweep_lines.values():
             axis = self.line_sweep_axis(line)
             index = getattr(line, "sweep_index", None)
@@ -451,8 +498,8 @@ class Plot2DSweepMixin:
                 self.set_sweep_line_index(line, index, emit=False)
 
 
-    def move_sweep_with_arrow_key(self, key):
-        moves = {
+    def move_sweep_with_arrow_key(self, key: QtCore.Qt.Key) -> None:
+        moves: dict[QtCore.Qt.Key, tuple[_SweepAxis, int]] = {
             QtCore.Qt.Key.Key_Left: ("x", -1),
             QtCore.Qt.Key.Key_Right: ("x", 1),
             QtCore.Qt.Key.Key_Down: ("y", -1),
@@ -475,7 +522,7 @@ class Plot2DSweepMixin:
         self.set_sweep_line_index(line, index + step)
 
 
-    def sweep_line_index(self, line):
+    def sweep_line_index(self, line: Any) -> int | None:
         index = getattr(line, "sweep_index", None)
         if index is not None:
             return index
@@ -484,7 +531,7 @@ class Plot2DSweepMixin:
         return self.sweep_index_at_value(axis, line.value())
 
 
-    def sweep_line_for_keyboard_move(self, axis):
+    def sweep_line_for_keyboard_move(self, axis: _SweepAxis) -> Any | None:
         matching_lines = [
             line for line in self.sweep_lines.values()
             if self.line_sweep_axis(line) == axis
@@ -492,21 +539,25 @@ class Plot2DSweepMixin:
         if not matching_lines:
             return None
 
-        active_line = self.sweep_lines.get(getattr(self, "active_sweep_line_id", None))
+        active_line = (
+            self.sweep_lines.get(self.active_sweep_line_id)
+            if self.active_sweep_line_id is not None
+            else None
+            )
         if active_line in matching_lines:
             return active_line
 
         return max(matching_lines, key=lambda line: line.sweep_id)
 
 
-    def sweep_group_drag_requested(self):
+    def sweep_group_drag_requested(self) -> bool:
         if qtw.QApplication.instance() is None:
             return False
 
         return bool(qtw.QApplication.keyboardModifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
 
 
-    def move_sweep_group(self, dragged_line, dragged_index):
+    def move_sweep_group(self, dragged_line: Any, dragged_index: int | None) -> None:
         """
         Move all same-orientation sweep lines by the dragged line's index delta.
 
@@ -524,7 +575,7 @@ class Plot2DSweepMixin:
         if dragged_line not in group_lines:
             group_lines.append(dragged_line)
 
-        indexed_lines = []
+        indexed_lines: list[tuple[Any, int]] = []
         for line in group_lines:
             index = self.sweep_line_index(line)
             if index is not None:
@@ -539,7 +590,12 @@ class Plot2DSweepMixin:
         self.active_sweep_line_id = dragged_line.sweep_id
 
 
-    def bounded_sweep_group_delta(self, axis, indexed_lines, requested_delta):
+    def bounded_sweep_group_delta(
+            self,
+            axis: _SweepAxis,
+            indexed_lines: list[tuple[Any, int]],
+            requested_delta: int,
+            ) -> int:
         count = self.sweep_axis_count(axis)
         min_delta = max(-index for _line, index in indexed_lines)
         max_delta = min(count - 1 - index for _line, index in indexed_lines)
@@ -547,7 +603,7 @@ class Plot2DSweepMixin:
 
 
     @QtCore.pyqtSlot(object)
-    def moving_sweep(self, line):
+    def moving_sweep(self, line: Any) -> None:
         """
         Event handler for dragging sweep cursor.
         
