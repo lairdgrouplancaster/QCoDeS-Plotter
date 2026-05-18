@@ -1,11 +1,42 @@
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
+
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._widgets import CopyableTableWidget
 
+_MarqueeHandle = Literal["nw", "n", "ne", "e", "se", "s", "sw", "w"]
+_MarqueeDragMode = Literal["new", "nw", "n", "ne", "e", "se", "s", "sw", "w"]
+_MarqueeAction = Callable[[], bool]
 
-class PlotMarqueeMixin:
+
+class _MarqueeDragState(TypedDict):
+    anchor: QtCore.QPointF
+    handle_offset: QtCore.QPointF
+    mode: _MarqueeDragMode
+    rect: QtCore.QRectF | None
+
+
+if TYPE_CHECKING:
+    class _PlotMarqueeBase(qtw.QMainWindow):
+        _marquee_drag_state: _MarqueeDragState | None
+        _marquee_stats_dialog: qtw.QDialog
+        marquee: QtCore.QRectF | None
+        marquee_handles: Any
+        marquee_highlight: qtw.QGraphicsRectItem
+        marquee_outline: qtw.QGraphicsRectItem
+        plot: Any
+        vb: Any
+
+        def formatNum(self, value: float) -> str: ...
+else:
+    class _PlotMarqueeBase:
+        pass
+
+
+class PlotMarqueeMixin(_PlotMarqueeBase):
     """
     Shared marquee selection behavior for plot windows.
 
@@ -14,7 +45,7 @@ class PlotMarqueeMixin:
     this mixin.
     """
 
-    def _init_marquee(self):
+    def _init_marquee(self) -> None:
         """
         Create the reusable marquee graphics shown after Alt-dragging.
 
@@ -56,16 +87,20 @@ class PlotMarqueeMixin:
         self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
         self.plot.addItem(self.marquee_handles)
 
-    def is_marquee_dragging(self):
+    def is_marquee_dragging(self) -> bool:
         return self._marquee_drag_state is not None
 
-    def current_marquee_drag_mode(self):
+    def current_marquee_drag_mode(self) -> _MarqueeDragMode | None:
         if self._marquee_drag_state is None:
             return None
 
         return self._marquee_drag_state["mode"]
 
-    def begin_marquee_drag(self, start, mode=None):
+    def begin_marquee_drag(
+            self,
+            start: QtCore.QPointF,
+            mode: _MarqueeDragMode | None = None,
+            ) -> None:
         """
         Start creating or resizing a marquee in plot coordinates.
 
@@ -89,7 +124,13 @@ class PlotMarqueeMixin:
         if mode == "new":
             self.set_marquee_rect(QtCore.QRectF(start, start))
 
-    def drag_marquee_to(self, point, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
+    def drag_marquee_to(
+            self,
+            point: QtCore.QPointF,
+            modifiers: QtCore.Qt.KeyboardModifier = (
+                QtCore.Qt.KeyboardModifier.NoModifier
+                ),
+            ) -> None:
         """
         Update the marquee during an active drag.
 
@@ -112,10 +153,10 @@ class PlotMarqueeMixin:
 
         self.set_marquee_rect(rect)
 
-    def finish_marquee_drag(self):
+    def finish_marquee_drag(self) -> None:
         self._marquee_drag_state = None
 
-    def marquee_contains_scene_pos(self, scene_pos):
+    def marquee_contains_scene_pos(self, scene_pos: QtCore.QPointF) -> bool:
         """
         Return whether a scene position is inside the current marquee.
 
@@ -126,7 +167,11 @@ class PlotMarqueeMixin:
         point = self.plot.vb.mapSceneToView(scene_pos)
         return self.marquee.normalized().contains(point)
 
-    def open_marquee_context_menu(self, scene_pos, global_pos=None):
+    def open_marquee_context_menu(
+            self,
+            scene_pos: QtCore.QPointF,
+            global_pos: QtCore.QPoint | QtCore.QPointF | None = None,
+            ) -> bool:
         """
         Open the marquee context menu when a right-click lands inside it.
 
@@ -143,7 +188,7 @@ class PlotMarqueeMixin:
         menu.exec(global_pos)
         return True
 
-    def _new_marquee_context_menu(self):
+    def _new_marquee_context_menu(self) -> qtw.QMenu:
         menu = qtw.QMenu()
         if hasattr(menu, "setToolTipsVisible"):
             menu.setToolTipsVisible(True)
@@ -167,8 +212,15 @@ class PlotMarqueeMixin:
         self._add_marquee_stats_context_action(menu)
         return menu
 
-    def _add_marquee_context_action(self, menu, text, callback):
+    def _add_marquee_context_action(
+            self,
+            menu: qtw.QMenu,
+            text: str,
+            callback: _MarqueeAction,
+            ) -> QtGui.QAction:
         action = menu.addAction(text)
+        if action is None:
+            raise RuntimeError("Marquee context action could not be created.")
         action.triggered.connect(
             lambda _checked=False, callback=callback: self._execute_marquee_action(
                 callback
@@ -176,15 +228,22 @@ class PlotMarqueeMixin:
             )
         return action
 
-    def _add_marquee_color_context_action(self, menu):
+    def _add_marquee_color_context_action(
+            self,
+            menu: qtw.QMenu,
+            ) -> QtGui.QAction | None:
         return None
 
-    def _add_marquee_stats_context_action(self, menu):
+    def _add_marquee_stats_context_action(self, menu: qtw.QMenu) -> QtGui.QAction:
         stats_text = self._marquee_stats_text()
+
+        def open_stats_dialog(stats_text: str | None = stats_text) -> bool:
+            return self.show_marquee_stats_dialog(stats_text)
+
         action = self._add_marquee_context_action(
             menu,
             "Stats...",
-            lambda stats_text=stats_text: self.show_marquee_stats_dialog(stats_text),
+            open_stats_dialog,
             )
         if stats_text is None:
             action.setEnabled(False)
@@ -194,11 +253,11 @@ class PlotMarqueeMixin:
             action.setStatusTip("Show statistics for the marquee selection.")
         return action
 
-    def _execute_marquee_action(self, callback):
+    def _execute_marquee_action(self, callback: _MarqueeAction) -> None:
         if callback():
             self.clear_marquee()
 
-    def zoom_marquee(self, axes):
+    def zoom_marquee(self, axes: str) -> bool:
         rect = self.marquee.normalized() if self.marquee is not None else None
         if rect is None:
             return False
@@ -209,10 +268,10 @@ class PlotMarqueeMixin:
             self.vb.setYRange(rect.top(), rect.bottom(), padding=0)
         return True
 
-    def _marquee_stats_text(self):
+    def _marquee_stats_text(self) -> str | None:
         return None
 
-    def show_marquee_stats_dialog(self, stats_text=None):
+    def show_marquee_stats_dialog(self, stats_text: str | None = None) -> bool:
         if stats_text is None:
             stats_text = self._marquee_stats_text()
         if stats_text is None:
@@ -225,7 +284,7 @@ class PlotMarqueeMixin:
         dialog.activateWindow()
         return True
 
-    def _new_marquee_stats_dialog(self, stats_text):
+    def _new_marquee_stats_dialog(self, stats_text: str) -> qtw.QDialog:
         dialog = qtw.QDialog(self)
         dialog.setWindowTitle("Marquee stats")
 
@@ -235,8 +294,10 @@ class PlotMarqueeMixin:
 
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
         copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        if copy_button is None:
+            raise RuntimeError("Marquee stats copy button is not available.")
 
-        def copy_stats(_checked=False):
+        def copy_stats(_checked: bool = False) -> None:
             self.copy_marquee_stats_to_clipboard(stats_text)
 
         copy_button.clicked.connect(copy_stats)
@@ -245,7 +306,7 @@ class PlotMarqueeMixin:
 
         return dialog
 
-    def _new_marquee_stats_table(self, stats_text):
+    def _new_marquee_stats_table(self, stats_text: str) -> CopyableTableWidget:
         rows = self._marquee_stats_table_rows(stats_text)
         stats_table = CopyableTableWidget()
         stats_table.setObjectName("detailsTable")
@@ -258,16 +319,21 @@ class PlotMarqueeMixin:
         stats_table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
         stats_table.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
         stats_table.setWordWrap(False)
-        stats_table.verticalHeader().hide()
-        stats_table.verticalHeader().setMinimumSectionSize(16)
-        stats_table.verticalHeader().setDefaultSectionSize(20)
-        stats_table.horizontalHeader().setFixedHeight(22)
-        stats_table.horizontalHeader().setStretchLastSection(True)
-        stats_table.horizontalHeader().setSectionResizeMode(
+        vertical_header = stats_table.verticalHeader()
+        horizontal_header = stats_table.horizontalHeader()
+        if vertical_header is None or horizontal_header is None:
+            raise RuntimeError("Marquee stats table headers are not available.")
+
+        vertical_header.hide()
+        vertical_header.setMinimumSectionSize(16)
+        vertical_header.setDefaultSectionSize(20)
+        horizontal_header.setFixedHeight(22)
+        horizontal_header.setStretchLastSection(True)
+        horizontal_header.setSectionResizeMode(
             0,
             qtw.QHeaderView.ResizeMode.ResizeToContents
             )
-        stats_table.horizontalHeader().setSectionResizeMode(
+        horizontal_header.setSectionResizeMode(
             1,
             qtw.QHeaderView.ResizeMode.Stretch
             )
@@ -282,8 +348,8 @@ class PlotMarqueeMixin:
 
         return stats_table
 
-    def _marquee_stats_table_rows(self, stats_text):
-        rows = []
+    def _marquee_stats_table_rows(self, stats_text: str) -> list[tuple[str, str]]:
+        rows: list[tuple[str, str]] = []
         for line in stats_text.splitlines():
             line = line.strip()
             if not line:
@@ -297,9 +363,15 @@ class PlotMarqueeMixin:
 
         return rows
 
-    def _format_marquee_stats_text(self, size_text, values, rect=None):
-        if rect is None and self.__dict__.get("marquee") is not None:
-            rect = self.marquee.normalized()
+    def _format_marquee_stats_text(
+            self,
+            size_text: str,
+            values: Any,
+            rect: QtCore.QRectF | None = None,
+            ) -> str:
+        marquee = self.marquee
+        if rect is None and marquee is not None:
+            rect = marquee.normalized()
 
         lines = [size_text]
         if rect is not None:
@@ -317,7 +389,7 @@ class PlotMarqueeMixin:
 
         return "\n".join(lines)
 
-    def copy_marquee_stats_to_clipboard(self, stats_text=None):
+    def copy_marquee_stats_to_clipboard(self, stats_text: str | None = None) -> bool:
         if stats_text is None:
             stats_text = self._marquee_stats_text()
         if stats_text is None:
@@ -330,7 +402,15 @@ class PlotMarqueeMixin:
         clipboard.setText(stats_text)
         return True
 
-    def _resize_marquee_rect(self, rect, handle, point, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
+    def _resize_marquee_rect(
+            self,
+            rect: QtCore.QRectF,
+            handle: _MarqueeHandle,
+            point: QtCore.QPointF,
+            modifiers: QtCore.Qt.KeyboardModifier = (
+                QtCore.Qt.KeyboardModifier.NoModifier
+                ),
+            ) -> None:
         symmetric = bool(modifiers & QtCore.Qt.KeyboardModifier.AltModifier)
         asymmetric = bool(modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier) and not symmetric
         original = QtCore.QRectF(rect)
@@ -349,14 +429,14 @@ class PlotMarqueeMixin:
         dy = point.y() - anchor.y()
 
         if ("w" in handle or "e" in handle) and (symmetric or asymmetric):
-            offset = -dx if symmetric else dx if asymmetric else None
+            offset = -dx if symmetric else dx
             if "w" in handle:
                 rect.setRight(original.right() + offset)
             else:
                 rect.setLeft(original.left() + offset)
 
         if ("n" in handle or "s" in handle) and (symmetric or asymmetric):
-            offset = -dy if symmetric else dy if asymmetric else None
+            offset = -dy if symmetric else dy
             if "s" in handle:
                 rect.setBottom(original.bottom() + offset)
             else:
@@ -365,7 +445,12 @@ class PlotMarqueeMixin:
         if asymmetric:
             self._snap_translated_marquee_rect(rect, original, handle)
 
-    def _snap_translated_marquee_rect(self, rect, original, handle):
+    def _snap_translated_marquee_rect(
+            self,
+            rect: QtCore.QRectF,
+            original: QtCore.QRectF,
+            handle: _MarqueeHandle,
+            ) -> None:
         snapped = self._snap_marquee_rect(QtCore.QRectF(rect).normalized())
         if snapped is None:
             return
@@ -391,16 +476,17 @@ class PlotMarqueeMixin:
 
         rect.setRect(adjusted.left(), adjusted.top(), adjusted.width(), adjusted.height())
 
-    def set_marquee_rect(self, rect):
+    def set_marquee_rect(self, rect: QtCore.QRectF) -> None:
         """
         Snap, store, and draw the marquee rectangle.
 
         """
-        rect = self._snap_marquee_rect(rect.normalized())
-        if rect is None or rect.width() <= 0 or rect.height() <= 0:
+        snapped = self._snap_marquee_rect(rect.normalized())
+        if snapped is None or snapped.width() <= 0 or snapped.height() <= 0:
             self.clear_marquee()
             return
 
+        rect = snapped
         self.marquee = QtCore.QRectF(rect)
         self.marquee_highlight.setRect(rect)
         self.marquee_outline.setRect(rect)
@@ -408,16 +494,16 @@ class PlotMarqueeMixin:
         self.marquee_outline.show()
         self._update_marquee_handles()
 
-    def clear_marquee(self):
+    def clear_marquee(self) -> None:
         self.marquee = None
         self.marquee_highlight.hide()
         self.marquee_outline.hide()
         self.marquee_handles.hide()
 
-    def _snap_marquee_rect(self, rect):
+    def _snap_marquee_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF | None:
         return rect
 
-    def marquee_drag_mode_at(self, scene_pos):
+    def marquee_drag_mode_at(self, scene_pos: QtCore.QPointF) -> _MarqueeHandle | None:
         """
         Return the resize handle under a scene position, if there is one.
 
@@ -437,7 +523,13 @@ class PlotMarqueeMixin:
 
         return None
 
-    def marquee_cursor_shape_at(self, scene_pos, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
+    def marquee_cursor_shape_at(
+            self,
+            scene_pos: QtCore.QPointF,
+            modifiers: QtCore.Qt.KeyboardModifier = (
+                QtCore.Qt.KeyboardModifier.NoModifier
+                ),
+            ) -> QtCore.Qt.CursorShape | None:
         mode = self.current_marquee_drag_mode()
         if mode == "new":
             return QtCore.Qt.CursorShape.CrossCursor
@@ -452,7 +544,10 @@ class PlotMarqueeMixin:
 
         return None
 
-    def _marquee_cursor_shape_for_handle(self, handle):
+    def _marquee_cursor_shape_for_handle(
+            self,
+            handle: _MarqueeDragMode,
+            ) -> QtCore.Qt.CursorShape:
         if handle in ("e", "w"):
             return QtCore.Qt.CursorShape.SizeHorCursor
         if handle in ("n", "s"):
@@ -464,7 +559,7 @@ class PlotMarqueeMixin:
 
         return QtCore.Qt.CursorShape.CrossCursor
 
-    def _update_marquee_handles(self):
+    def _update_marquee_handles(self) -> None:
         points = list(self._marquee_handle_points().values())
         self.marquee_handles.setData(
             [point.x() for point in points],
@@ -472,10 +567,15 @@ class PlotMarqueeMixin:
             )
         self.marquee_handles.show()
 
-    def _marquee_handle_points(self):
+    def _marquee_handle_points(self) -> dict[_MarqueeHandle, QtCore.QPointF]:
+        if self.marquee is None:
+            return {}
         return self._marquee_handle_points_for_rect(self.marquee)
 
-    def _marquee_handle_points_for_rect(self, rect):
+    def _marquee_handle_points_for_rect(
+            self,
+            rect: QtCore.QRectF,
+            ) -> dict[_MarqueeHandle, QtCore.QPointF]:
         centre_x = rect.center().x()
         centre_y = rect.center().y()
         return {
