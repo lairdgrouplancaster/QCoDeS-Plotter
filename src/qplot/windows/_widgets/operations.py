@@ -1,3 +1,6 @@
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, Protocol, TypeAlias, cast, overload
+
 from PyQt6 import (
     QtCore,
     QtGui,
@@ -10,8 +13,24 @@ from qplot.tools.operation_registry import operation_specs_for
 
 from .dropbox import expandingComboBox
 
+OperationKind: TypeAlias = Literal["plot1d", "plot2d", "sweeper"]
+OperationFunc: TypeAlias = Callable[..., Any]
+OperationInputType: TypeAlias = type | Sequence[str] | None
 
-def operations_widget(window):
+
+class OperationsDock(Protocol):
+    event_filter: QtCore.QObject
+
+    def VBox_context(self, *args: Any) -> qtw.QVBoxLayout: ...
+
+    def HBox_context(self, *args: Any) -> qtw.QHBoxLayout: ...
+
+
+class OperationsWindow(Protocol):
+    oper_dock: OperationsDock
+
+
+def operations_widget(window: Any) -> "operations_options_base":
     """
     Entry point for getting the operation options.
     Uses the window tupe to find the correct class to return.
@@ -32,7 +51,7 @@ def operations_widget(window):
         the inputted window type.
 
     """
-    options_dict = {
+    options_dict: dict[str, type[operations_options_base]] = {
         "plot1d" : operations_options_1d,
         "plot2d" : operations_options_2d,
         "sweeper": operations_options_sweep
@@ -51,24 +70,26 @@ class operations_options_base(qtw.QWidget):
     
     """
     
-    def __init__(self, main):
+    operation_kind: OperationKind
+
+    def __init__(self, main: OperationsWindow):
         super().__init__()
-        self.parent = main
+        self._window = main
         
         # Make filter to propagate context menu to widgets.
-        self.filter = self.parent.oper_dock.event_filter
-        self.layout = self.parent.oper_dock.VBox_context(self.filter, self)
+        self.filter = self._window.oper_dock.event_filter
+        self.main_layout = self._window.oper_dock.VBox_context(self.filter, self)
 
-        self.layout.addWidget(qtw.QLabel("Data Operations"))
+        self.main_layout.addWidget(qtw.QLabel("Data Operations"))
 
         # Controls order to perform and user inputs
         self.list_order = draggableListWidget()
         self.list_order.setDragDropMode(qtw.QAbstractItemView.DragDropMode.InternalMove)
         self.list_order.setToolTip("Drag Items to Control Operation Order")
-        self.layout.addWidget(self.list_order)
+        self.main_layout.addWidget(self.list_order)
 
         # Buttons
-        but_l = self.parent.oper_dock.HBox_context(self.filter)
+        but_l = self._window.oper_dock.HBox_context(self.filter)
         self.apply_but = qtw.QPushButton("Apply/Refresh")
         self.apply_but.setToolTip("Apply selected operations and refresh the plot")
         but_l.addWidget(self.apply_but)
@@ -77,16 +98,22 @@ class operations_options_base(qtw.QWidget):
         clear_but.clicked.connect(self.hide_all)
         but_l.addWidget(clear_but)
         
-        self.layout.addLayout(but_l)
+        self.main_layout.addLayout(but_l)
 
         # Allows user to toggle options
         self.list_options = qtw.QListWidget()
-        self.layout.addWidget(self.list_options)
+        self.main_layout.addWidget(self.list_options)
         
         self.add_all_options()
         
         
-    def add_option(self, name, func, input_type, default=""):
+    def add_option(
+        self,
+        name: str,
+        func: OperationFunc,
+        input_type: OperationInputType,
+        default: object = "",
+        ) -> None:
         """
         Adds an option to the list_options with a tickbox.
         Creates a row stored within the option, this holds the function and
@@ -108,7 +135,7 @@ class operations_options_base(qtw.QWidget):
             or a list/tuple of the options - Makes a dropbox with options
 
         """
-        row = rowItem(name, None, bool) # Option with tick box
+        row = optionToggleRowItem(name, None, bool) # Option with tick box
         self.list_options.addItem(row)
         self.list_options.setItemWidget(row, row.row_widget)
     
@@ -119,7 +146,7 @@ class operations_options_base(qtw.QWidget):
                     )
         
             
-    def add_or_remove_operation(self, add : int, item : "rowItem"):
+    def add_or_remove_operation(self, add : int, item : "rowItem") -> None:
         """
         Based on add value, adds or removes the item from the active operations
         and clears previous input on removal.
@@ -150,7 +177,7 @@ class operations_options_base(qtw.QWidget):
             item.reset()
     
     
-    def add_all_options(self):
+    def add_all_options(self) -> None:
         """
         Fetches data from dict, self.operation_options, defined in children 
         classes.
@@ -161,20 +188,20 @@ class operations_options_base(qtw.QWidget):
             self.add_option(
                 spec.name,
                 spec.func,
-                spec.input_type,
+                cast(OperationInputType, spec.input_type),
                 spec.default,
                 )
         self.list_options.adjustSize()
             
     
     @QtCore.pyqtSlot()
-    def hide_all(self):
+    def hide_all(self) -> None:
         for i in range(self.list_options.count()):
-            item = self.list_options.item(i)
+            item = cast(optionToggleRowItem, self.list_options.item(i))
             item.input.setChecked(False)
             
     
-    def get_data(self):
+    def get_data(self) -> list[OperationFunc]:
         """
         Returns the function of the items in the active operation listWidget
         (self.list_order) from top to bottom. Also adds the user input to the
@@ -186,21 +213,22 @@ class operations_options_base(qtw.QWidget):
             List of functions to be performed on the data during refresh.
 
         """
-        operations = []
+        operations: list[OperationFunc] = []
         for i in range(self.list_order.count()):
-            item = self.list_order.item(i)
+            item = cast(rowItem, self.list_order.item(i))
             if item.isHidden():
                 continue
             
             output = item.output()
             if output == "": # Data not entered
-                if hasattr(item.input, "placeholderText"):
-                    output = item.input.placeholderText()
+                input_widget = item.input
+                if hasattr(input_widget, "placeholderText"):
+                    output = cast(Any, input_widget).placeholderText()
                     if output == "": # still blank
                         continue
                     
-                    if isinstance(item.type, type):
-                        output = item.type(output)
+                    if isinstance(item.input_type, type):
+                        output = item.input_type(output)
                 else:
                     continue
             
@@ -214,7 +242,7 @@ class operations_options_base(qtw.QWidget):
         return operations
  
     
-def func_with_input(func, value):
+def func_with_input(func: OperationFunc, value: object) -> OperationFunc:
     return lambda data: func(value, data)
  
 
@@ -224,8 +252,11 @@ class draggableListWidget(qtw.QListWidget):
     below itself, the item contents gets deleted. This class impliments a work 
     around to prevent that bug.
     """
-    def dragMoveEvent(self, event):
-        target = self.row(self.itemAt(event.pos()))
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent | None) -> None:
+        if event is None:
+            return
+
+        target = self.row(self.itemAt(cast(Any, event).pos()))
         current = self.currentRow()
         # Block drop below itself when it's the last item
         if target == current + 1 or (current == self.count() - 1 and target == -1):
@@ -233,9 +264,16 @@ class draggableListWidget(qtw.QListWidget):
         else:
             super().dragMoveEvent(event)
              
-    def addItem(self, item, *args, **kargs):
-        super().addItem(item, *args, **kargs)
-        item.setToolTip(self.toolTip())
+    @overload
+    def addItem(self, item: qtw.QListWidgetItem | None) -> None: ...
+
+    @overload
+    def addItem(self, item: str | None) -> None: ...
+
+    def addItem(self, item: qtw.QListWidgetItem | str | None) -> None:
+        super().addItem(item)
+        if isinstance(item, qtw.QListWidgetItem):
+            item.setToolTip(self.toolTip())
    
 class rowItem(qtw.QListWidgetItem):
     """
@@ -249,16 +287,26 @@ class rowItem(qtw.QListWidgetItem):
         output : callabel - returns current value of input
     """
     
-    def __init__(self, label, func, input_type, default=""):
+    def __init__(
+        self,
+        label: str,
+        func: OperationFunc | None,
+        input_type: OperationInputType,
+        default: object = "",
+        ):
         super().__init__()
         
+        self.func: OperationFunc
         if callable(func):
             self.func = func
         elif func is not None:
             raise AssertionError("Func is not callable")
             
         self._label = qtw.QLabel(label)
-        self.type = input_type
+        self.input_type = input_type
+        self.input: qtw.QCheckBox | qtw.QLineEdit | expandingComboBox | None
+        self.reset: Callable[[], None]
+        self.output: Callable[[], object]
         
         self.row_widget = qtw.QWidget()
         row_layout = qtw.QHBoxLayout()
@@ -268,22 +316,25 @@ class rowItem(qtw.QListWidgetItem):
         row_layout.setContentsMargins(5, 5, 5, 5)
         
         if input_type is bool: # on/off tickbox
-            self.input = qtw.QCheckBox()
-            self.input.setToolTip(f"Enable or disable {label}")
-            self.reset = lambda: self.input.setChecked(False)
-            self.output = lambda: bool(self.input.isChecked())
+            checkbox = qtw.QCheckBox()
+            self.input = checkbox
+            checkbox.setToolTip(f"Enable or disable {label}")
+            self.reset = lambda: checkbox.setChecked(False)
+            self.output = lambda: bool(checkbox.isChecked())
         
         elif input_type in [int, float, str]: # Textbox input
-            self.input = qtw.QLineEdit()
-            self.reset = lambda: self.input.setText("")
-            self.output = lambda: (input_type(self.input.text()) 
-                                   if self.input.text() else "")
+            line_edit = qtw.QLineEdit()
+            self.input = line_edit
+            self.reset = lambda: line_edit.setText("")
+            scalar_type = cast(type, input_type)
+            self.output = lambda: (scalar_type(line_edit.text()) 
+                                   if line_edit.text() else "")
             # Restrict user input to reduce errors
             if input_type != str:
                 validator = QtGui.QDoubleValidator()
                 validator.setNotation(QtGui.QDoubleValidator.Notation.ScientificNotation)
                 validator.setLocale(QtCore.QLocale("C"))  # Avoids locale issues like commas
-                self.input.setValidator(validator)
+                line_edit.setValidator(validator)
         
         elif input_type is None: # No input needed
             self.input = None
@@ -291,10 +342,11 @@ class rowItem(qtw.QListWidgetItem):
             self.output = lambda: None
             
         elif isinstance(input_type, (list, tuple)): # Select from options
-            self.input = expandingComboBox()
-            self.input.addItems(input_type)
-            self.reset = lambda: self.input.setCurrentIndex(-1)
-            self.output = lambda: self.input.currentText()
+            combo_box = expandingComboBox()
+            self.input = combo_box
+            combo_box.addItems(list(input_type))
+            self.reset = lambda: combo_box.setCurrentIndex(-1)
+            self.output = lambda: combo_box.currentText()
             
         else:
             raise TypeError(
@@ -314,13 +366,18 @@ class rowItem(qtw.QListWidgetItem):
         
 
     @property 
-    def label(self):
+    def label(self) -> str:
         return self._label.text()
 
 
 
+class optionToggleRowItem(rowItem):
+    operation_row: rowItem
+    input: qtw.QCheckBox
+
+
 class operations_options_common(operations_options_base):
-    operation_kind = None
+    operation_kind: OperationKind
 
 
 class operations_options_1d(operations_options_common):
