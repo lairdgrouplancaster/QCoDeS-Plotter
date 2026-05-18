@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import Any
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
@@ -98,7 +98,7 @@ class sweeper(plotWidget):
         self.picker.slider.blockSignals(True) # Prevent use while loading
         
         # Push all widgets to top
-        cast(Any, self.axes_dock.layout).addStretch()
+        self.axes_dock.content_layout.addStretch()
         
         
     def initFrame(self):

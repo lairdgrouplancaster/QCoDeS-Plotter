@@ -779,7 +779,7 @@ class plotWidget(
         self.axes_dock.addWidget(sep)
         
         if self.__class__.__name__ == "plot2d":
-            self.axes_dock.layout.addStretch()
+            self.axes_dock.content_layout.addStretch()
         
     
     def initOperations(self):
