@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
-from PyQt6.QtGui import QKeySequence
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling.qcodes_cache import set_parameter_complete
@@ -14,6 +13,12 @@ from qplot.tools import (
 )
 
 from . import _plot_axis_scaling
+from ._commands import (
+    command_spec,
+    command_with_status,
+    create_action,
+    toolbar_toggle_command_spec,
+)
 from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
@@ -33,7 +38,6 @@ from ._preferences import (
     PreferencesDialog,
     create_preferences_action,
 )
-from ._shortcuts import standard_key_sequences
 from ._subplots import custom_viewbox
 from ._widgets import (
     QDock_context,
@@ -154,13 +158,6 @@ class plotWidget(
     previewTraceDropRequested = QtCore.pyqtSignal(object, str, str)
     
     _label_width = 95 #About the size of 3 s.f. scientific
-    _toggle_shortcuts = {
-        "Refresh Timer": "Ctrl+Alt+R",
-        "Co-ordinates": "Ctrl+Alt+C",
-        "Line control": "Ctrl+Alt+A",
-        "Operations": "Ctrl+Alt+O",
-    }
-    
     def __init__(self, 
                  guid : str, 
                  param : "qcodes.dataset.ParamSpec",
@@ -461,12 +458,10 @@ class plotWidget(
             self.plot.ctrlMenu.setTitle("Options")
             self.plot.ctrlMenu.menuAction().setText("Options")
 
-        self.exportPlotAction = QtGui.QAction("&Export Plot...", self)
-        self.exportPlotAction.setObjectName("exportPlotAction")
+        self.exportPlotAction = create_action("plot.export", self)
         self.register_shortcut(
             self.exportPlotAction,
-            "Ctrl+E",
-            "Open the plot export dialog",
+            command_spec("plot.export"),
             )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
@@ -475,24 +470,29 @@ class plotWidget(
         self.savePlotPdfAction.setStatusTip("Save the visible plot area as a PDF")
         self.savePlotPdfAction.triggered.connect(self.save_plot_pdf)
 
-        self.copyPlotImageAction = QtGui.QAction("&Copy Plot Image", self)
-        self.copyPlotImageAction.setObjectName("copyPlotImageAction")
+        self.copyPlotImageAction = create_action("plot.copy_image", self)
         self.register_shortcut(
             self.copyPlotImageAction,
-            standard_key_sequences(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
-            "Copy the plot image to the clipboard",
+            command_spec("plot.copy_image"),
             )
         self.copyPlotImageAction.triggered.connect(self.copy_plot_image)
 
-        contextAction = QtGui.QAction("Show Context Menu", self)
-        self.register_shortcut(contextAction, "Shift+F10", "Show plot context menu")
+        contextAction = create_action(
+            "context.show",
+            self,
+            status_tip="Show plot context menu",
+            )
+        self.register_shortcut(
+            contextAction,
+            command_with_status("context.show", "Show plot context menu"),
+            )
         contextAction.triggered.connect(self.open_context_menu)
         
         actions = self.vbMenu.actions()
         for action in actions:
             if action.text() == "View All":
-                action.setText("Autoscale")
-                self.register_shortcut(action, "Ctrl+0", "Autoscale plot")
+                self.register_shortcut(action, command_spec("plot.autoscale"))
+                action.setText(command_spec("plot.autoscale").text)
                 break
         
         x_action = actions[1]
@@ -505,8 +505,12 @@ class plotWidget(
         self.vbMenu.insertSeparator(x_action)
         
         # Create visibility
-        toggleAction = QtGui.QAction("View Operations", self, checkable=True)
-        self.register_shortcut(toggleAction, "Ctrl+Shift+O", "Toggle operations panel")
+        toggleAction = create_action(
+            "plot.toggle_operations",
+            self,
+            checkable=True,
+            )
+        self.register_shortcut(toggleAction, command_spec("plot.toggle_operations"))
         toggleAction.triggered.connect(self.oper_dock.setVisible)
         self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
         self.vbMenu.insertAction(x_action, toggleAction)
@@ -827,28 +831,23 @@ class plotWidget(
             edit_menu = menu.addMenu("&Edit")
             edit_menu.addAction(copy_plot_image_action)
 
-        close_all_plots_action = QtGui.QAction("Close All &Plot Windows", self)
-        close_all_plots_action.setShortcut("Ctrl+Shift+W")
-        close_all_plots_action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        close_all_plots_action.setStatusTip("Close all open plot windows")
+        close_all_plots_action = create_action(
+            "plots.close_all",
+            self,
+            status_tip="Close all open plot windows",
+            )
         close_all_plots_action.triggered.connect(self.request_close_all_plots)
         file_menu.addAction(close_all_plots_action)
 
-        closeAction = QtGui.QAction("&Close Window", self)
-        closeAction.setShortcuts(
-            standard_key_sequences(QKeySequence.StandardKey.Close, ["Ctrl+W"])
+        closeAction = create_action(
+            "window.close",
+            self,
+            status_tip="Close this plot window",
             )
-        closeAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        closeAction.setStatusTip("Close this plot window")
         closeAction.triggered.connect(self.close)
         file_menu.addAction(closeAction)
 
-        quitAction = QtGui.QAction("&Quit qPlot", self)
-        quitAction.setShortcuts(
-            standard_key_sequences(QKeySequence.StandardKey.Quit, ["Ctrl+Q"])
-            )
-        quitAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        quitAction.setStatusTip("Quit qPlot")
+        quitAction = create_action("app.quit", self)
         quitAction.triggered.connect(self.request_application_quit)
         file_menu.addAction(quitAction)
 
@@ -868,8 +867,7 @@ class plotWidget(
         
         main_menu = menu.addMenu("&View")
         
-        refreshAction = QtGui.QAction("&Refresh", self)
-        refreshAction.setShortcut("R")
+        refreshAction = create_action("window.refresh", self)
         refreshAction.triggered.connect(lambda: self.refreshWindow(force=True))
         if hasattr(self, "get_mergables"): # Force refresh 1d line options
             refreshAction.triggered.connect(lambda: self.get_mergables.emit())
@@ -1083,12 +1081,11 @@ class plotWidget(
         for widget in widgets:
             action = widget.toggleViewAction()
             if isinstance(action, QtGui.QAction):
-                shortcut = self._toggle_shortcuts.get(widget.windowTitle())
-                if shortcut:
+                command = toolbar_toggle_command_spec(widget.windowTitle())
+                if command is not None:
                     self.register_shortcut(
                         action,
-                        shortcut,
-                        f"Toggle {widget.windowTitle()}"
+                        command,
                         )
                 menu.addAction(action)
     

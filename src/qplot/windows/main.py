@@ -3,12 +3,10 @@ from time import perf_counter
 
 from PyQt6 import (
     QtCore,
-    QtGui,
 )
 from PyQt6 import (
     QtWidgets as qtw,
 )
-from PyQt6.QtGui import QKeySequence
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot import config
@@ -23,6 +21,7 @@ from qplot.datahandling.database import (
 )
 from qplot.diagnostics import log_user_error
 
+from ._commands import create_action
 from ._database_actions import DatabaseActionsMixin
 from ._dataset_handle import DatasetHandle
 from ._help import add_help_menu
@@ -32,7 +31,6 @@ from ._preferences import (
     create_preferences_action,
 )
 from ._run_controls import RunControlsMixin
-from ._shortcuts import standard_key_sequences
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -186,51 +184,44 @@ class MainWindow(
         fileMenu = menu.addMenu("&File") # Not sure why these all have &, but they do
         
         # Load database file
-        loadAction = QtGui.QAction("&Load Database...", self)
-        loadAction.setShortcut("Ctrl+L")
-        loadAction.setStatusTip("Load a QCoDeS database")
+        loadAction = create_action("database.load", self)
         loadAction.triggered.connect(self.getfile)
         fileMenu.addAction(loadAction)
         
         self.recentDatabaseMenu = fileMenu.addMenu("Load &Recent Database")
         self.refresh_recent_database_menu()
 
-        open_folder_action = QtGui.QAction("Open Database &Folder", self)
-        open_folder_action.setShortcut("Ctrl+Shift+D")
-        open_folder_action.setStatusTip("Open the folder containing the current database")
+        open_folder_action = create_action(
+            "database.open_folder",
+            self,
+            )
         open_folder_action.triggered.connect(self.open_database_location)
         fileMenu.addAction(open_folder_action)
         
         # Force update check on database
-        refreshAction = QtGui.QAction("&Refresh", self)
-        refreshAction.setShortcut("R")
+        refreshAction = create_action("window.refresh", self)
         refreshAction.triggered.connect(self.refreshMain)
         fileMenu.addAction(refreshAction)
 
         fileMenu.addSeparator()
 
-        self.closeAllPlotsAction = QtGui.QAction("Close All &Plot Windows", self)
-        self.closeAllPlotsAction.setShortcut("Ctrl+Shift+W")
-        self.closeAllPlotsAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        self.closeAllPlotsAction.setStatusTip("Close all open plot windows")
+        self.closeAllPlotsAction = create_action(
+            "plots.close_all",
+            self,
+            status_tip="Close all open plot windows",
+            )
         self.closeAllPlotsAction.triggered.connect(self.closeAll)
         fileMenu.addAction(self.closeAllPlotsAction)
 
-        closeAction = QtGui.QAction("&Close Window", self)
-        closeAction.setShortcuts(
-            standard_key_sequences(QKeySequence.StandardKey.Close, ["Ctrl+W"])
+        closeAction = create_action(
+            "window.close",
+            self,
+            status_tip="Close the main qPlot window",
             )
-        closeAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        closeAction.setStatusTip("Close the main qPlot window")
         closeAction.triggered.connect(self.close)
         fileMenu.addAction(closeAction)
 
-        quitAction = QtGui.QAction("&Quit qPlot", self)
-        quitAction.setShortcuts(
-            standard_key_sequences(QKeySequence.StandardKey.Quit, ["Ctrl+Q"])
-            )
-        quitAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        quitAction.setStatusTip("Quit qPlot")
+        quitAction = create_action("app.quit", self)
         quitAction.triggered.connect(self.close)
         fileMenu.addAction(quitAction)
 

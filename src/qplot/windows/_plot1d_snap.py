@@ -6,9 +6,8 @@ import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
-from PyQt6.QtGui import QKeySequence
 
-from ._shortcuts import platform_key_sequences
+from ._commands import command_spec, command_with_status, create_action
 
 if TYPE_CHECKING:
     class _Plot1DSnapBase(qtw.QMainWindow):
@@ -44,14 +43,8 @@ else:
         pass
 
 
-SNAP_TO_TRACE_SHORTCUTS = platform_key_sequences(
-    mac=["S"],
-    windows=["S"],
-    other=["S"],
-    )
-SNAP_TO_TRACE_SHORTCUT_LABEL = SNAP_TO_TRACE_SHORTCUTS[0].toString(
-    QKeySequence.SequenceFormat.NativeText
-    )
+SNAP_TO_TRACE_COMMAND = command_spec("plot.snap_to_trace")
+SNAP_TO_TRACE_SHORTCUT_LABEL = SNAP_TO_TRACE_COMMAND.shortcut_display_text()
 
 
 @dataclass(frozen=True)
@@ -151,18 +144,22 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self.trace_label.setMinimumWidth(0)
         self.toolbarCo_ord.addWidget(self.trace_label)
 
-        self.snap_to_trace_action = QtGui.QAction(
-            f"Snap to Trace ({SNAP_TO_TRACE_SHORTCUT_LABEL})",
+        self.snap_to_trace_action = create_action(
+            SNAP_TO_TRACE_COMMAND,
             self,
+            text=f"Snap to Trace ({SNAP_TO_TRACE_SHORTCUT_LABEL})",
+            status_tip="Toggle snap-to-trace cursor readout",
+            checkable=True,
             )
-        self.snap_to_trace_action.setCheckable(True)
         self.snap_to_trace_action.setToolTip(
             "Lock the coordinate readout to the nearest plotted data point"
             )
         self.register_shortcut(
             self.snap_to_trace_action,
-            SNAP_TO_TRACE_SHORTCUTS,
-            "Toggle snap-to-trace cursor readout"
+            command_with_status(
+                "plot.snap_to_trace",
+                "Toggle snap-to-trace cursor readout",
+                )
             )
         self.snap_to_trace_action.toggled.connect(self._snap_to_trace_toggled)
 

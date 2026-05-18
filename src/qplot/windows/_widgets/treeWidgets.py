@@ -16,6 +16,11 @@ from qplot.datahandling import (
     get_runs_via_sql,
 )
 
+from .._commands import (
+    configure_action,
+    create_action,
+    plot_measurement_command_spec,
+)
 from ._run_formatting import (  # noqa: F401
     complete_cell_sort_value,
     format_complete_cell,
@@ -117,9 +122,14 @@ class RunList(qtw.QTreeWidget):
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.prepareMenu)
 
-        context_action = QtGui.QAction("Show Context Menu", self)
-        context_action.setShortcut("Shift+F10")
-        context_action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        context_action = create_action(
+            "context.show",
+            self,
+            status_tip="Show run-list context menu",
+            )
+        context_action.setShortcutContext(
+            QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
+            )
         context_action.triggered.connect(self.openKeyboardMenu)
         self.addAction(context_action)
         
@@ -464,8 +474,12 @@ class RunList(qtw.QTreeWidget):
         
         menu = qtw.QMenu(self)
 
-        open_all = QtGui.QAction("&Plot all", menu)
-        self._set_action_shortcut(open_all, "Ctrl+Shift+Return")
+        open_all = create_action(
+            "run.plot_selected_all",
+            menu,
+            text="&Plot all",
+            )
+        self._set_action_shortcut(open_all, "run.plot_selected_all")
         open_all.triggered.connect(lambda _,: main.open_selected_run_all())
         menu.addAction(open_all)
 
@@ -477,7 +491,10 @@ class RunList(qtw.QTreeWidget):
             
             open_win = QtGui.QAction(f"  - {param.name}", menu)
             if itr < 9:
-                self._set_action_shortcut(open_win, f"Ctrl+{itr + 1}")
+                self._set_action_shortcut(
+                    open_win,
+                    plot_measurement_command_spec(itr),
+                    )
             
             # Due to the for loop, the lambda function sets param as an optional 
             # default. Otherwise, param is set by the last iteration of the for loop.
@@ -520,12 +537,12 @@ class RunList(qtw.QTreeWidget):
         return None
 
 
-    def _set_action_shortcut(self, action, shortcut):
+    def _set_action_shortcut(self, action, command):
         """
         Sets a context-menu action shortcut.
 
         """
-        action.setShortcut(shortcut)
+        configure_action(action, command)
         action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         if hasattr(action, "setShortcutVisibleInContextMenu"):
             action.setShortcutVisibleInContextMenu(True)

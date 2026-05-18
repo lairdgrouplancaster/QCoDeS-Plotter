@@ -5,6 +5,8 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import default_log_file
 
+from ._commands import create_action, shortcut_help_html
+
 _OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
 
 
@@ -30,48 +32,7 @@ status bar at the bottom of the window before assuming a load has failed.</p>
 """
 
 
-KEYBOARD_SHORTCUTS_HTML = """
-<h2>Keyboard Shortcuts</h2>
-<h3>General</h3>
-<table cellspacing="4" cellpadding="3">
-  <tr><td><b>F1</b></td><td>Show quick start help</td></tr>
-  <tr><td><b>Ctrl+L</b></td><td>Load a database</td></tr>
-  <tr><td><b>R</b></td><td>Refresh the current window</td></tr>
-  <tr><td><b>Ctrl+W / Cmd+W</b></td><td>Close the current qPlot window</td></tr>
-  <tr><td><b>Ctrl+Q / Cmd+Q</b></td><td>Quit qPlot</td></tr>
-  <tr><td><b>Ctrl+M / Alt+Space, N</b></td><td>Minimize the current window</td></tr>
-  <tr><td><b>Alt+Space, X / Alt+Space, R</b></td><td>Maximize or restore on Windows</td></tr>
-  <tr><td><b>Ctrl+Cmd+F / F11</b></td><td>Enter or leave full screen</td></tr>
-  <tr><td><b>Shift+F10</b></td><td>Open the focused widget's context menu</td></tr>
-  <tr><td><b>Ctrl+Shift+D</b></td><td>Open the current database folder</td></tr>
-  <tr><td><b>Ctrl+Shift+M</b></td><td>Bring the main window to front, or behind plot windows</td></tr>
-  <tr><td><b>Ctrl+Return</b></td><td>Plot the requested run and measurement</td></tr>
-  <tr><td><b>Ctrl+Shift+Return</b></td><td>Plot all measurements in the selected run</td></tr>
-  <tr><td><b>Ctrl+1 to Ctrl+9</b></td><td>Plot measurements 1 to 9 in the selected run</td></tr>
-  <tr><td><b>Ctrl+Shift+W</b></td><td>Close all plot windows</td></tr>
-</table>
-
-<h3>Plot Windows</h3>
-<table cellspacing="4" cellpadding="3">
-  <tr><td><b>Ctrl+0</b></td><td>Autoscale the plot view</td></tr>
-  <tr><td><b>Ctrl+C / Cmd+C</b></td><td>Copy the plot image using the selected copy format or resolution</td></tr>
-  <tr><td><b>Ctrl+E</b></td><td>Export the plot</td></tr>
-  <tr><td><b>Ctrl+Shift+O</b></td><td>Show or hide the operations panel</td></tr>
-  <tr><td><b>Ctrl+Alt+R</b></td><td>Show or hide the refresh toolbar</td></tr>
-  <tr><td><b>Ctrl+Alt+C</b></td><td>Show or hide the coordinate toolbar</td></tr>
-  <tr><td><b>Ctrl+Alt+A</b></td><td>Show or hide the axis control panel</td></tr>
-  <tr><td><b>Ctrl+Alt+O</b></td><td>Show or hide the operations dock</td></tr>
-  <tr><td><b>S</b></td><td>Snap the 1D coordinate readout to the nearest trace point</td></tr>
-</table>
-
-<h3>Heatmaps</h3>
-<table cellspacing="4" cellpadding="3">
-  <tr><td><b>C</b></td><td>Autoscale the colour range</td></tr>
-  <tr><td><b>H</b></td><td>Open a horizontal cut</td></tr>
-  <tr><td><b>V</b></td><td>Open a vertical cut</td></tr>
-  <tr><td><b>Arrow keys</b></td><td>Move the selected cut cursor by one pixel</td></tr>
-</table>
-"""
+KEYBOARD_SHORTCUTS_HTML = shortcut_help_html()
 
 
 def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
@@ -86,11 +47,7 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     if help_menu is None:
         raise RuntimeError("Help menu could not be created.")
 
-    quick_start_action = QtGui.QAction("&Quick Start", window)
-    quick_start_action.setObjectName("quickStartHelpAction")
-    quick_start_action.setShortcut("F1")
-    quick_start_action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-    quick_start_action.setStatusTip("Show the basic qPlot workflow")
+    quick_start_action = create_action("help.quick_start", window)
     quick_start_action.triggered.connect(lambda: show_quick_start(window))
     help_menu.addAction(quick_start_action)
 

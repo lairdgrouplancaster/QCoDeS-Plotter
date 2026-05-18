@@ -1,10 +1,12 @@
 from typing import TYPE_CHECKING, Any
 
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 from PyQt6.QtGui import QKeySequence
 
 from qplot.diagnostics import log_user_error
+
+from ._commands import CommandSpec, configure_action
 
 if TYPE_CHECKING:
     class _PlotWindowFeedbackBase(qtw.QMainWindow):
@@ -85,36 +87,24 @@ class PlotWindowFeedbackMixin(_PlotWindowFeedbackBase):
     def register_shortcut(
             self,
             action: QtGui.QAction,
-            shortcut: _Shortcut,
+            shortcut: _Shortcut | CommandSpec,
             status_tip: str | None = None,
             ) -> None:
         """
         Registers a QAction shortcut on the plot window.
 
         """
-        if isinstance(shortcut, (list, tuple)):
-            action.setShortcuts(list(shortcut))
-            if shortcut:
-                shortcut_text = shortcut[0].toString(
-                    QKeySequence.SequenceFormat.NativeText
-                    )
-            else:
-                shortcut_text = ""
-        else:
-            action.setShortcut(shortcut)
-            if isinstance(shortcut, QKeySequence):
-                shortcut_text = shortcut.toString(
-                    QKeySequence.SequenceFormat.NativeText
-                    )
-            else:
-                shortcut_text = QKeySequence(shortcut).toString(
-                    QKeySequence.SequenceFormat.NativeText
-                    )
-        action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        if hasattr(action, "setShortcutVisibleInContextMenu"):
-            action.setShortcutVisibleInContextMenu(True)
-        if status_tip:
-            action.setStatusTip(status_tip)
-            action.setToolTip(f"{status_tip} ({shortcut_text})")
-        if action not in self.actions():
-            self.addAction(action)
+        if isinstance(shortcut, CommandSpec):
+            configure_action(action, shortcut, add_to=self)
+            return
+
+        configure_action(
+            action,
+            CommandSpec(
+                "",
+                action.text(),
+                status_tip or "",
+                shortcut,
+                ),
+            add_to=self,
+            )

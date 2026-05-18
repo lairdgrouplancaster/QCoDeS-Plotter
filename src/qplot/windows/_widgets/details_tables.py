@@ -3,13 +3,10 @@ from typing import Any, cast
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from .._shortcuts import standard_key_sequences
+from .._commands import command_spec
 
-COPY_SELECTION_SHORTCUTS = standard_key_sequences(
-    QtGui.QKeySequence.StandardKey.Copy,
-    ["Ctrl+C"],
-    )
-COPY_CELL_SHORTCUTS = [QtGui.QKeySequence("Ctrl+Shift+C")]
+COPY_SELECTION_SHORTCUTS = command_spec("copy.selection").resolved_shortcuts()
+COPY_CELL_SHORTCUTS = command_spec("copy.cell").resolved_shortcuts()
 
 
 def copy_action(label, shortcuts, slot, parent):
