@@ -1,4 +1,7 @@
+from typing import Any
+
 import numpy as np
+import numpy.typing as npt
 from PyQt6 import (
     QtCore,
 )
@@ -26,10 +29,11 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
     get_mergables = QtCore.pyqtSignal()
     remove_dataset = QtCore.pyqtSignal([str])
     
-    def __init__(self, 
-                 *args,
-                 **kargs
-                 ):
+    def __init__(
+            self,
+            *args: Any,
+            **kargs: Any,
+            ) -> None:
         self.mergable = None
         self.line = None
         self.right_vb = None
@@ -40,7 +44,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         super().__init__(*args, **kargs)
         
         
-    def initFrame(self):
+    def initFrame(self) -> None:
         """
         Sets up the initial plot and starting data.
 
@@ -54,7 +58,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         self.show_status("Line plot ready; loading data...", 5000)
 
 
-    def _snap_marquee_rect(self, rect):
+    def _snap_marquee_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:
         """
         Snap marquee X edges to the spaces between plotted data points.
 
@@ -76,7 +80,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
             )
 
 
-    def _marquee_x_boundaries(self):
+    def _marquee_x_boundaries(self) -> npt.NDArray[np.float64] | None:
         """
         Return X coordinates halfway between visible 1d sample points.
 
@@ -109,7 +113,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         return np.concatenate(([first], mids, [last]))
 
 
-    def _marquee_stats_text(self):
+    def _marquee_stats_text(self) -> str | None:
         values = self._marquee_line_values()
         if values is None:
             return None
@@ -117,7 +121,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         return self._format_marquee_stats_text(f"{values.size} points", values)
 
 
-    def _marquee_line_values(self):
+    def _marquee_line_values(self) -> npt.NDArray[np.float64] | None:
         if self.marquee is None:
             return None
 
@@ -159,7 +163,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         return y_data[mask]
 
 
-    def refreshPlot(self, finished : bool = True, worker=None):
+    def refreshPlot(self, finished: bool = True, worker: object | None = None) -> None:
         """
         Updates plot based on data produced by the thread worker. Data is 
         assigned in plotWidget.refreshPlot, then all plot items are produced
@@ -202,7 +206,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         self.worker.running = False
 
 
-    def _has_plottable_line_data(self):
+    def _has_plottable_line_data(self) -> bool:
         x_data = np.asarray(self.axis_data.get("x", []), dtype=float)
         y_data = np.asarray(self.axis_data.get("y", []), dtype=float)
         count = min(x_data.size, y_data.size)

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         lineScroll: qtw.QScrollArea
         lines: dict[str, Any]
         make_ds: Any
-        mergable: list[Any]
+        mergable: Any
         option_boxes: list[Any]
         plot: Any
         remove_dataset: Any

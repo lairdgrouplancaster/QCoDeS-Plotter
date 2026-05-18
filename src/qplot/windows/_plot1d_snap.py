@@ -15,7 +15,7 @@ if TYPE_CHECKING:
         toolbarCo_ord: qtw.QToolBar
         snap_to_trace_action: QtGui.QAction | None
         trace_label: qtw.QLabel | None
-        lines: dict[object, object]
+        lines: dict[str, Any]
         pos_labels: dict[str, qtw.QLabel]
         plot: Any
         right_vb: Any
@@ -33,11 +33,12 @@ if TYPE_CHECKING:
         def register_shortcut(
                 self,
                 action: QtGui.QAction,
-                sequences: list[QKeySequence],
-                description: str,
+                shortcut: object,
+                status_tip: str | None = None,
                 ) -> None: ...
 
-        def formatNum(self, value: float) -> str: ...
+        @staticmethod
+        def formatNum(num: float, sf: int = 3) -> str: ...
 else:
     class _Plot1DSnapBase:
         pass
