@@ -4,7 +4,6 @@ import numpy as np
 from PyQt6 import QtCore
 
 from qplot.datahandling import load_param_data_from_db
-from qplot.datahandling.readonly import qcodes_read_only_connection
 from qplot.datahandling.qcodes_cache import (
     cache_data,
     cache_database_path,
@@ -14,6 +13,7 @@ from qplot.datahandling.qcodes_cache import (
     cache_table_name,
     cache_write_status,
 )
+from qplot.datahandling.readonly import qcodes_read_only_connection
 from qplot.diagnostics import log_exception
 
 from . import data2matrix
