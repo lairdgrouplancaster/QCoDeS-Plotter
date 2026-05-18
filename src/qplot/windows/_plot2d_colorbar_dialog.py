@@ -43,11 +43,11 @@ class _CenteredIconDelegate(qtw.QStyledItemDelegate):
         icon_rect = QtCore.QRect(QtCore.QPoint(0, 0), icon_size)
         icon_rect.moveCenter(opt.rect.center())
 
-        mode = QtGui.QIcon.Normal
-        if not opt.state & qtw.QStyle.StateFlag.State_Enabled:
-            mode = QtGui.QIcon.Disabled
+        mode = QtGui.QIcon.Mode.Normal
+        if not (opt.state & qtw.QStyle.StateFlag.State_Enabled):
+            mode = QtGui.QIcon.Mode.Disabled
         elif opt.state & qtw.QStyle.StateFlag.State_Selected:
-            mode = QtGui.QIcon.Selected
+            mode = QtGui.QIcon.Mode.Selected
 
         icon.paint(painter, icon_rect, QtCore.Qt.AlignmentFlag.AlignCenter, mode)
 

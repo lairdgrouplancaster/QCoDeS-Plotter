@@ -45,4 +45,6 @@ python scripts/capture_demo_screenshots.py
 
 The script creates a small temporary QCoDeS database under the system temp
 directory by default, starts qPlot offscreen, and writes the screenshots into
-`docs/assets`. Set `QPLOT_DEMO_WORKDIR` to choose a different working folder.
+`docs/assets`. Set `QPLOT_DEMO_WORKDIR` to choose a different working folder,
+or `QPLOT_DEMO_ASSET_DIR` to write screenshots somewhere other than
+`docs/assets`.

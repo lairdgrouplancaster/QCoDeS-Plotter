@@ -10,7 +10,8 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ASSET_DIR = REPO_ROOT / "docs" / "assets"
+DEFAULT_ASSET_DIR = REPO_ROOT / "docs" / "assets"
+ASSET_DIR = Path(os.environ.get("QPLOT_DEMO_ASSET_DIR", str(DEFAULT_ASSET_DIR)))
 DEFAULT_WORK_DIR = Path(tempfile.gettempdir()) / "qplot-demo"
 WORK_DIR = Path(os.environ.get("QPLOT_DEMO_WORKDIR", str(DEFAULT_WORK_DIR)))
 DB_PATH = WORK_DIR / "qplot-demo.db"
@@ -191,7 +192,11 @@ def main():
     run_ids = build_demo_database()
     paths = capture_screenshots(*run_ids)
     for path in paths:
-        print(path.relative_to(REPO_ROOT))
+        try:
+            display_path = path.relative_to(REPO_ROOT)
+        except ValueError:
+            display_path = path
+        print(display_path)
 
 
 if __name__ == "__main__":
