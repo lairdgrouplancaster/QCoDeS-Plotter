@@ -1,9 +1,11 @@
+from typing import Any, cast
+
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import default_log_file
 
-_OPEN_HELP_DIALOGS = []
+_OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
 
 
 QUICK_START_HTML = """
@@ -72,12 +74,17 @@ KEYBOARD_SHORTCUTS_HTML = """
 """
 
 
-def add_help_menu(window):
+def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     """
     Adds qPlot's shared Help menu to a main or plot window.
 
     """
-    help_menu = window.menuBar().addMenu("&Help")
+    menu_bar = window.menuBar()
+    if menu_bar is None:
+        raise RuntimeError("Help menu requires a menu bar.")
+    help_menu = menu_bar.addMenu("&Help")
+    if help_menu is None:
+        raise RuntimeError("Help menu could not be created.")
 
     quick_start_action = QtGui.QAction("&Quick Start", window)
     quick_start_action.setObjectName("quickStartHelpAction")
@@ -104,7 +111,7 @@ def add_help_menu(window):
     return help_menu
 
 
-def show_quick_start(parent=None):
+def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     """
     Opens the quick-start help dialog.
 
@@ -117,7 +124,7 @@ def show_quick_start(parent=None):
         )
 
 
-def show_keyboard_shortcuts(parent=None):
+def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     """
     Opens the keyboard-shortcuts help dialog.
 
@@ -130,19 +137,26 @@ def show_keyboard_shortcuts(parent=None):
         )
 
 
-def copy_diagnostic_log_path(parent=None):
+def copy_diagnostic_log_path(parent: Any | None = None) -> str:
     """
     Copies qPlot's diagnostic log path to the clipboard.
 
     """
     path = str(default_log_file())
-    qtw.QApplication.clipboard().setText(path)
+    clipboard = qtw.QApplication.clipboard()
+    if clipboard is not None:
+        clipboard.setText(path)
     if parent is not None and hasattr(parent, "show_status"):
         parent.show_status(f"Copied diagnostic log path: {path}", 5000)
     return path
 
 
-def _show_help_dialog(parent, title, html, object_name):
+def _show_help_dialog(
+        parent: qtw.QWidget | None,
+        title: str,
+        html: str,
+        object_name: str,
+        ) -> qtw.QDialog:
     dialog = qtw.QDialog(parent)
     dialog.setObjectName(object_name)
     dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -168,18 +182,25 @@ def _show_help_dialog(parent, title, html, object_name):
     return dialog
 
 
-def _remember_help_dialog(parent, dialog):
+def _remember_help_dialog(
+        parent: qtw.QWidget | None,
+        dialog: qtw.QDialog,
+        ) -> None:
+    dialogs: list[qtw.QDialog] | None
     if parent is None:
         dialogs = _OPEN_HELP_DIALOGS
     else:
-        dialogs = getattr(parent, "_help_dialogs", None)
+        owner = cast(Any, parent)
+        dialogs = getattr(owner, "_help_dialogs", None)
         if dialogs is None:
             dialogs = []
-            parent._help_dialogs = dialogs
+            owner._help_dialogs = dialogs
 
+    if dialogs is None:
+        return
     dialogs.append(dialog)
 
-    def forget_dialog(*_args):
+    def forget_dialog(*_args: object) -> None:
         if dialog in dialogs:
             dialogs.remove(dialog)
 

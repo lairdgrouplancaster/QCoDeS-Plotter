@@ -130,7 +130,8 @@ def add_config_checkbox_action(window, menu, text, key, status_tip):
     Adds a checkable config-backed action to a menu.
 
     """
-    action = QtGui.QAction(text, window, checkable=True)
+    action = QtGui.QAction(text, window)
+    action.setCheckable(True)
     action.setStatusTip(status_tip)
 
     def sync_checked():
@@ -205,7 +206,7 @@ def main_window_for(window):
     if app is None:
         return window if window.__class__.__name__ == "MainWindow" else None
 
-    for top_level in app.topLevelWidgets():
+    for top_level in qtw.QApplication.topLevelWidgets():
         if top_level.__class__.__name__ == "MainWindow":
             return top_level
 
@@ -245,7 +246,7 @@ def send_main_window_behind_graphs(main_window, active_window):
         return
 
     graph_windows = [
-        window for window in app.topLevelWidgets()
+        window for window in qtw.QApplication.topLevelWidgets()
         if window is not main_window
         and window.isVisible()
         and hasattr(window, "_guid")
