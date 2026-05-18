@@ -196,7 +196,10 @@ them.
 main-window preferences dialog and emits a signal when applied settings need to
 be synced into the open UI.
 
-Theme files live in `src/qplot/configuration/themes`.
+Theme files live in `src/qplot/configuration/themes`. The shared stylesheet
+builder and plot-item helpers live in `themes/_base.py`; light, dark, and PyQt
+themes should provide palettes or small overrides instead of duplicating full
+QSS blocks.
 
 The user-facing key reference and contributor checklist for config changes live
 in `docs/configuration.md`.

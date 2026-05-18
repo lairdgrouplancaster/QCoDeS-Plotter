@@ -1,8 +1,10 @@
 import os
 from time import perf_counter
+from typing import cast
 
 from PyQt6 import (
     QtCore,
+    QtGui,
 )
 from PyQt6 import (
     QtWidgets as qtw,
@@ -92,7 +94,7 @@ class DatabasePathLineEdit(qtw.QLineEdit):
         self.databaseDropped.emit(os.path.abspath(path))
 
 
-class MainWindow(
+class MainWindow(  # type: ignore[misc]
     DatabaseActionsMixin,
     PlotActionsMixin,
     RunControlsMixin,
@@ -162,7 +164,8 @@ class MainWindow(
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         
         # Get user's window dimensions to control new window position
-        self.screenrect = qtw.QApplication.primaryScreen().availableGeometry()
+        primary_screen = cast(QtGui.QScreen, qtw.QApplication.primaryScreen())
+        self.screenrect = primary_screen.availableGeometry()
         self.x = self.screenrect.left() 
         self.y = self.screenrect.top()
         
@@ -179,16 +182,16 @@ class MainWindow(
         Produces the menu bar and all menu's contained at the top of the window
 
         """
-        menu = self.menuBar()
+        menu = cast(qtw.QMenuBar, self.menuBar())
         # First dropdown menu
-        fileMenu = menu.addMenu("&File") # Not sure why these all have &, but they do
+        fileMenu = cast(qtw.QMenu, menu.addMenu("&File")) # Not sure why these all have &, but they do
         
         # Load database file
         loadAction = create_action("database.load", self)
         loadAction.triggered.connect(self.getfile)
         fileMenu.addAction(loadAction)
         
-        self.recentDatabaseMenu = fileMenu.addMenu("Load &Recent Database")
+        self.recentDatabaseMenu = cast(qtw.QMenu, fileMenu.addMenu("Load &Recent Database"))
         self.refresh_recent_database_menu()
 
         open_folder_action = create_action(
@@ -228,7 +231,7 @@ class MainWindow(
         add_standard_window_controls(self)
         
         # Second dropdown menu
-        prefMenu = menu.addMenu("&Options")
+        prefMenu = cast(qtw.QMenu, menu.addMenu("&Options"))
 
         prefMenu.addAction(
             create_preferences_action(self, self.show_preferences_dialog)
@@ -243,6 +246,7 @@ class MainWindow(
         
         """
         self.targetLayout = qtw.QHBoxLayout()
+        style = cast(qtw.QStyle, self.style())
         self.targetLayout.setContentsMargins(8, 2, 8, 2)
         self.targetLayout.setSpacing(6)
 
@@ -263,7 +267,7 @@ class MainWindow(
         self.copyDatabasePathButton = qtw.QToolButton()
         self.copyDatabasePathButton.setObjectName("databaseIconButton")
         self.copyDatabasePathButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_FileDialogDetailedView)
+            style.standardIcon(qtw.QStyle.StandardPixmap.SP_FileDialogDetailedView)
             )
         self.copyDatabasePathButton.setToolTip("Copy the full database path")
         self.copyDatabasePathButton.setAccessibleName("Copy database path")
@@ -274,7 +278,7 @@ class MainWindow(
         self.databaseInfoButton = qtw.QToolButton()
         self.databaseInfoButton.setObjectName("databaseIconButton")
         self.databaseInfoButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_MessageBoxInformation)
+            style.standardIcon(qtw.QStyle.StandardPixmap.SP_MessageBoxInformation)
             )
         self.databaseInfoButton.setToolTip("Show database information")
         self.databaseInfoButton.setAccessibleName("Show database information")
@@ -285,7 +289,7 @@ class MainWindow(
         self.loadDatabaseButton = qtw.QToolButton()
         self.loadDatabaseButton.setObjectName("databaseIconButton")
         self.loadDatabaseButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton)
+            style.standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton)
             )
         self.loadDatabaseButton.setToolTip("Load a QCoDeS .db database (Ctrl+L)")
         self.loadDatabaseButton.setAccessibleName("Load database")
@@ -296,7 +300,7 @@ class MainWindow(
         self.openDatabaseFolderButton = qtw.QToolButton()
         self.openDatabaseFolderButton.setObjectName("databaseIconButton")
         self.openDatabaseFolderButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DirOpenIcon)
+            style.standardIcon(qtw.QStyle.StandardPixmap.SP_DirOpenIcon)
             )
         self.openDatabaseFolderButton.setToolTip(
             "Open the folder containing the current database (Ctrl+Shift+D)"
@@ -336,7 +340,7 @@ class MainWindow(
         self.databaseLoadCancelButton = qtw.QToolButton()
         self.databaseLoadCancelButton.setObjectName("databaseIconButton")
         self.databaseLoadCancelButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogCancelButton)
+            style.standardIcon(qtw.QStyle.StandardPixmap.SP_DialogCancelButton)
             )
         self.databaseLoadCancelButton.setText("Cancel")
         self.databaseLoadCancelButton.setToolButtonStyle(
@@ -581,10 +585,11 @@ class MainWindow(
         Shows a short message in the main window status bar.
 
         """
-        self.statusBar().showMessage(message, timeout)
+        status_bar = cast(qtw.QStatusBar, self.statusBar())
+        status_bar.showMessage(message, timeout)
 
 
-    def show_error(self, title : str, message : str, details : str = None):
+    def show_error(self, title : str, message : str, details : str | None = None):
         """
         Shows an error both in the status bar and in a message box.
 
