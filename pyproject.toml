@@ -97,6 +97,8 @@ files = [
     "src/qplot/windows/_plot1d_snap.py",
     "src/qplot/windows/_plot1d_traces.py",
     "src/qplot/windows/_plot2d_sweeps.py",
+    "src/qplot/windows/_plot_axis_scaling.py",
+    "src/qplot/windows/_plot_export.py",
     "src/qplot/windows/_plot_feedback.py",
     "src/qplot/windows/_plot_marquee.py",
     "src/qplot/windows/_plot_refresh.py",

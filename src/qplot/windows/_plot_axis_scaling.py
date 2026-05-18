@@ -1,12 +1,36 @@
 from math import isclose, isfinite, log10
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
+_AxisName = Literal["x", "y"]
+_AXIS_MENU_ITEMS: tuple[tuple[_AxisName, str], ...] = (
+    ("x", "X axis"),
+    ("y", "Y axis"),
+)
+_AXIS_SIDES: tuple[tuple[_AxisName, str], ...] = (
+    ("x", "bottom"),
+    ("y", "left"),
+)
 
-def _axis_scale_power_text(scale):
+if TYPE_CHECKING:
+    class _PlotAxisScalingBase(qtw.QMainWindow):
+        _axis_scale_controls: dict[_AxisName, Any]
+        _axis_scale_dialogs: dict[_AxisName, qtw.QDialog]
+        plot: Any
+        vb: Any
+        vbMenu: Any
+
+        def _context_menu_action(self, text: str) -> Any | None: ...
+else:
+    class _PlotAxisScalingBase:
+        pass
+
+
+def _axis_scale_power_text(scale: float) -> str:
     """
     Return a compact HTML power-of-ten label for an axis display scale.
 
@@ -46,7 +70,7 @@ class _PowerScaledAxisItem(pg.AxisItem):
         return f"<span style='{style}'>{text}</span>"
 
 
-class PlotAxisScalingMixin:
+class PlotAxisScalingMixin(_PlotAxisScalingBase):
     """
     Axis scaling dialogs and controls shared by plot windows.
 
@@ -54,7 +78,7 @@ class PlotAxisScalingMixin:
     opened by double-clicking the plot axes.
     """
 
-    def _init_axis_scale_dialogs(self):
+    def _init_axis_scale_dialogs(self) -> None:
         """
         Move pyqtgraph's X/Y axis scaling controls into double-click dialogs.
 
@@ -62,7 +86,7 @@ class PlotAxisScalingMixin:
         self._axis_scale_controls = {}
         self._axis_scale_dialogs = {}
 
-        for _axis, menu_text in (("x", "X axis"), ("y", "Y axis")):
+        for _axis, menu_text in _AXIS_MENU_ITEMS:
             action = self._context_menu_action(menu_text)
             if action is None or action.menu() is None:
                 continue
@@ -71,7 +95,7 @@ class PlotAxisScalingMixin:
 
         self._install_axis_scale_double_click_handlers()
 
-    def _menu_control_widget(self, menu):
+    def _menu_control_widget(self, menu: qtw.QMenu) -> qtw.QWidget | None:
         """
         Returns the embedded control widget from a QWidgetAction menu.
 
@@ -81,19 +105,23 @@ class PlotAxisScalingMixin:
                 return action.defaultWidget()
         return None
 
-    def _install_axis_scale_double_click_handlers(self):
+    def _install_axis_scale_double_click_handlers(self) -> None:
         """
         Open the relevant axis scale dialog when an axis is double-clicked.
 
         """
-        for axis, side in (("x", "bottom"), ("y", "left")):
+        for axis, side in _AXIS_SIDES:
             axis_item = self.plot.getAxis(side)
             if axis_item is None:
                 continue
 
             previous_handler = getattr(axis_item, "mouseDoubleClickEvent", None)
 
-            def mouse_double_click(event, axis=axis, previous_handler=previous_handler):
+            def mouse_double_click(
+                    event: Any,
+                    axis: _AxisName = axis,
+                    previous_handler: Any = previous_handler,
+                    ) -> None:
                 if event.button() == QtCore.Qt.MouseButton.LeftButton:
                     self.open_axis_scale_dialog(axis)
                     event.accept()
@@ -104,22 +132,22 @@ class PlotAxisScalingMixin:
 
             axis_item.mouseDoubleClickEvent = mouse_double_click
 
-    def _axis_scale_dialog_title(self, axis):
+    def _axis_scale_dialog_title(self, axis: _AxisName) -> str:
         return f"{axis.upper()} axis scaling"
 
-    def _axis_scale_axis_number(self, axis):
+    def _axis_scale_axis_number(self, axis: _AxisName) -> int:
         return 0 if axis == "x" else 1
 
-    def _axis_scale_axis_constant(self, axis):
+    def _axis_scale_axis_constant(self, axis: _AxisName) -> int:
         return pg.ViewBox.XAxis if axis == "x" else pg.ViewBox.YAxis
 
-    def _new_axis_scale_controls(self, axis):
+    def _new_axis_scale_controls(self, axis: _AxisName) -> qtw.QWidget:
         """
         Build a fresh copy of pyqtgraph's axis scaling controls for a dialog.
 
         """
         widget = qtw.QWidget()
-        ui = axisCtrlTemplate_generic.Ui_Form()
+        ui: Any = axisCtrlTemplate_generic.Ui_Form()
         ui.setupUi(widget)
         self._axis_scale_controls[axis] = ui
 
@@ -156,7 +184,7 @@ class PlotAxisScalingMixin:
 
         return widget
 
-    def _sync_axis_scale_controls(self, axis):
+    def _sync_axis_scale_controls(self, axis: _AxisName) -> None:
         """
         Update a dialog's controls from the current view state.
 
@@ -213,7 +241,7 @@ class PlotAxisScalingMixin:
                     ):
                 widget.blockSignals(False)
 
-    def _sync_axis_scale_link_combo(self, axis):
+    def _sync_axis_scale_link_combo(self, axis: _AxisName) -> None:
         """
         Mirror pyqtgraph's available linked views into the dialog link combo.
 
@@ -230,16 +258,16 @@ class PlotAxisScalingMixin:
         index = ui.linkCombo.findText(current)
         ui.linkCombo.setCurrentIndex(max(index, 0))
 
-    def _axis_scale_mouse_toggled(self, axis, checked):
+    def _axis_scale_mouse_toggled(self, axis: _AxisName, checked: bool) -> None:
         if axis == "x":
             self.vb.setMouseEnabled(x=checked)
         else:
             self.vb.setMouseEnabled(y=checked)
 
-    def _axis_scale_manual_clicked(self, axis):
+    def _axis_scale_manual_clicked(self, axis: _AxisName) -> None:
         self.vb.enableAutoRange(self._axis_scale_axis_constant(axis), False)
 
-    def _axis_scale_range_text_changed(self, axis):
+    def _axis_scale_range_text_changed(self, axis: _AxisName) -> None:
         ui = self._axis_scale_controls[axis]
         axis_number = self._axis_scale_axis_number(axis)
         values = list(self.vb.viewRange()[axis_number])
@@ -255,45 +283,45 @@ class PlotAxisScalingMixin:
         else:
             self.vb.setYRange(*values, padding=0)
 
-    def _axis_scale_auto_clicked(self, axis):
+    def _axis_scale_auto_clicked(self, axis: _AxisName) -> None:
         ui = self._axis_scale_controls[axis]
         self.vb.enableAutoRange(
             self._axis_scale_axis_constant(axis),
             ui.autoPercentSpin.value() * 0.01,
             )
 
-    def _axis_scale_auto_spin_changed(self, axis, value):
+    def _axis_scale_auto_spin_changed(self, axis: _AxisName, value: float) -> None:
         ui = self._axis_scale_controls[axis]
         ui.autoRadio.setChecked(True)
         self.vb.enableAutoRange(self._axis_scale_axis_constant(axis), value * 0.01)
 
-    def _axis_scale_link_changed(self, axis):
+    def _axis_scale_link_changed(self, axis: _AxisName) -> None:
         ui = self._axis_scale_controls[axis]
         if axis == "x":
             self.vb.setXLink(str(ui.linkCombo.currentText()))
         else:
             self.vb.setYLink(str(ui.linkCombo.currentText()))
 
-    def _axis_scale_auto_pan_toggled(self, axis, checked):
+    def _axis_scale_auto_pan_toggled(self, axis: _AxisName, checked: bool) -> None:
         if axis == "x":
             self.vb.setAutoPan(x=checked)
         else:
             self.vb.setAutoPan(y=checked)
 
-    def _axis_scale_visible_only_toggled(self, axis, checked):
+    def _axis_scale_visible_only_toggled(self, axis: _AxisName, checked: bool) -> None:
         if axis == "x":
             self.vb.setAutoVisible(x=checked)
         else:
             self.vb.setAutoVisible(y=checked)
 
-    def _axis_scale_invert_toggled(self, axis, checked):
+    def _axis_scale_invert_toggled(self, axis: _AxisName, checked: bool) -> None:
         if axis == "x":
             self.vb.invertX(checked)
         else:
             self.vb.invertY(checked)
 
     @QtCore.pyqtSlot(str)
-    def open_axis_scale_dialog(self, axis):
+    def open_axis_scale_dialog(self, axis: str) -> None:
         """
         Opens the scaling dialog for the requested axis.
 
@@ -304,20 +332,24 @@ class PlotAxisScalingMixin:
         if hasattr(self.vbMenu, "updateState"):
             self.vbMenu.updateState()
 
-        dialog = self._axis_scale_dialogs.get(axis)
+        if axis not in ("x", "y"):
+            return
+        axis_name: _AxisName = "x" if axis == "x" else "y"
+
+        dialog = self._axis_scale_dialogs.get(axis_name)
         if dialog is None:
             dialog = qtw.QDialog(self)
-            dialog.setWindowTitle(self._axis_scale_dialog_title(axis))
+            dialog.setWindowTitle(self._axis_scale_dialog_title(axis_name))
             layout = qtw.QVBoxLayout(dialog)
-            layout.addWidget(self._new_axis_scale_controls(axis))
+            layout.addWidget(self._new_axis_scale_controls(axis_name))
 
             buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
             buttons.rejected.connect(dialog.close)
             layout.addWidget(buttons)
 
-            self._axis_scale_dialogs[axis] = dialog
+            self._axis_scale_dialogs[axis_name] = dialog
 
-        self._sync_axis_scale_controls(axis)
+        self._sync_axis_scale_controls(axis_name)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()

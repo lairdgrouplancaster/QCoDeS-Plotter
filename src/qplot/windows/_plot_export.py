@@ -1,4 +1,5 @@
 from os import path
+from typing import TYPE_CHECKING, Any, Literal
 
 from PyQt6 import QtCore, QtGui, QtSvg
 from PyQt6 import QtWidgets as qtw
@@ -17,16 +18,35 @@ from ._preferences import (
 _MAX_EXPORTED_IMAGE_SIZE = 20000
 _HIGH_DPI_COPY_RESOLUTION = 300
 _INCHES_PER_METER = 39.37007874015748
+_DpiAxis = Literal["x", "y"]
+
+if TYPE_CHECKING:
+    class _PlotExportBase(qtw.QMainWindow):
+        ds: Any
+        param: Any
+        plot: Any
+        widget: Any
+
+        def show_error(
+                self,
+                title: str,
+                message: str,
+                details: str | None = None,
+                ) -> None: ...
+        def show_status(self, message: str, timeout: int = 5000) -> None: ...
+else:
+    class _PlotExportBase:
+        pass
 
 
-class PlotExportMixin:
+class PlotExportMixin(_PlotExportBase):
     """
     Plot-window export, PDF, and clipboard-image helpers.
 
     """
 
     @QtCore.pyqtSlot()
-    def open_export_dialog(self):
+    def open_export_dialog(self) -> None:
         """
         Opens pyqtgraph's export dialog for this plot.
 
@@ -37,7 +57,7 @@ class PlotExportMixin:
 
 
     @QtCore.pyqtSlot()
-    def save_plot_pdf(self):
+    def save_plot_pdf(self) -> bool:
         """
         Prompts for a filename and saves the visible plot area as a PDF.
 
@@ -55,7 +75,7 @@ class PlotExportMixin:
         return self.save_plot_pdf_to_file(filename)
 
 
-    def save_plot_pdf_to_file(self, filename):
+    def save_plot_pdf_to_file(self, filename: str) -> bool:
         """
         Saves the visible plot area as a PDF at ``filename``.
 
@@ -88,7 +108,7 @@ class PlotExportMixin:
         return True
 
 
-    def _write_plot_pdf(self, filename):
+    def _write_plot_pdf(self, filename: str) -> bool:
         """
         Saves the already-laid-out plot widget as a single-page PDF.
 
@@ -136,7 +156,7 @@ class PlotExportMixin:
         return True
 
 
-    def _default_plot_pdf_filename(self):
+    def _default_plot_pdf_filename(self) -> str:
         """
         Returns a suggested PDF export filename for the current plot.
 
@@ -156,7 +176,7 @@ class PlotExportMixin:
 
 
     @staticmethod
-    def _safe_plot_export_filename(filename):
+    def _safe_plot_export_filename(filename: str) -> str:
         """
         Replaces path-hostile characters in a suggested plot export filename.
 
@@ -165,7 +185,7 @@ class PlotExportMixin:
 
 
     @QtCore.pyqtSlot()
-    def copy_plot_image(self):
+    def copy_plot_image(self) -> bool:
         """
         Copies the rendered plot widget to the clipboard as an image.
 
@@ -182,7 +202,7 @@ class PlotExportMixin:
         return self.copy_plot_image_at_screen_resolution()
 
 
-    def copy_plot_image_at_screen_resolution(self):
+    def copy_plot_image_at_screen_resolution(self) -> bool:
         """
         Copies the rendered plot widget at the current screen resolution.
 
@@ -202,7 +222,7 @@ class PlotExportMixin:
         return True
 
 
-    def _copy_plot_image_resolution(self):
+    def _copy_plot_image_resolution(self) -> str:
         """
         Returns the configured resolution mode for plot-image clipboard copies.
 
@@ -224,7 +244,7 @@ class PlotExportMixin:
         return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
 
 
-    def _plot_image_pixmap(self):
+    def _plot_image_pixmap(self) -> QtGui.QPixmap:
         """
         Captures the plot widget without the surrounding QMainWindow chrome.
 
@@ -232,7 +252,7 @@ class PlotExportMixin:
         return self.widget.grab()
 
 
-    def copy_plot_image_as_svg(self):
+    def copy_plot_image_as_svg(self) -> bool:
         """
         Copies the current plot area to the clipboard as SVG.
 
@@ -264,7 +284,7 @@ class PlotExportMixin:
         return True
 
 
-    def _plot_svg_bytes(self):
+    def _plot_svg_bytes(self) -> bytes:
         """
         Renders the current plot area as SVG bytes.
 
@@ -304,10 +324,10 @@ class PlotExportMixin:
             painter.end()
             buffer.close()
 
-        return bytes(data)
+        return bytes(data.data())
 
 
-    def _plot_svg_source_rect(self, widget):
+    def _plot_svg_source_rect(self, widget: Any) -> QtCore.QRectF:
         """
         Returns the scene rectangle currently visible in the plot widget.
 
@@ -325,7 +345,7 @@ class PlotExportMixin:
         return QtCore.QRectF(widget.scene().sceneRect())
 
 
-    def copy_plot_image_at_dpi(self, dpi):
+    def copy_plot_image_at_dpi(self, dpi: float) -> bool:
         """
         Renders the plot image at a target DPI and copies it to the clipboard.
 
@@ -359,7 +379,7 @@ class PlotExportMixin:
         return True
 
 
-    def copy_plot_image_at_size(self, width, height):
+    def copy_plot_image_at_size(self, width: int, height: int) -> bool:
         """
         Renders the plot image at a chosen pixel size and copies it to the clipboard.
 
@@ -400,7 +420,7 @@ class PlotExportMixin:
         return True
 
 
-    def _plot_image_at_size(self, size):
+    def _plot_image_at_size(self, size: QtCore.QSize) -> QtGui.QImage:
         """
         Renders the current plot area into a QImage of the requested size.
 
@@ -412,7 +432,7 @@ class PlotExportMixin:
         return self._export_plot_image(exporter, size)
 
 
-    def _plot_image_exporter(self):
+    def _plot_image_exporter(self) -> ImageExporter | None:
         """
         Returns an image exporter for the visible plot area.
 
@@ -423,7 +443,7 @@ class PlotExportMixin:
         return ImageExporter(item)
 
 
-    def _plot_image_export_item(self):
+    def _plot_image_export_item(self) -> Any | None:
         """
         Returns the graphics object used for high-resolution image exports.
 
@@ -437,7 +457,7 @@ class PlotExportMixin:
         return self.__dict__.get("plot")
 
 
-    def _export_plot_image(self, exporter, size):
+    def _export_plot_image(self, exporter: ImageExporter, size: QtCore.QSize) -> QtGui.QImage:
         """
         Renders an exporter into a QImage of the requested size.
 
@@ -454,7 +474,7 @@ class PlotExportMixin:
         return exporter.export(toBytes=True)
 
 
-    def _plot_image_size_for_dpi(self, dpi):
+    def _plot_image_size_for_dpi(self, dpi: float) -> QtCore.QSize:
         """
         Returns the output pixel size needed to copy the plot at ``dpi``.
 
@@ -475,7 +495,7 @@ class PlotExportMixin:
             )
 
 
-    def _plot_image_source_dpi(self, axis):
+    def _plot_image_source_dpi(self, axis: _DpiAxis) -> float:
         """
         Returns the logical screen DPI used to convert screen pixels to inches.
 
@@ -501,7 +521,7 @@ class PlotExportMixin:
         return 96.0
 
 
-    def _set_image_dpi(self, image, dpi):
+    def _set_image_dpi(self, image: QtGui.QImage, dpi: float) -> None:
         """
         Stores DPI metadata on a rendered QImage.
 
