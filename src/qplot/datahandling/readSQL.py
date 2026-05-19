@@ -299,7 +299,6 @@ def _add_run_detail_fields(
         include_read_setpoint_count=True,
         storage_bytes_by_table=None,
         ):
-    run_description = _json_dict(metadata.get("run_description"))
     measure_parameters = metadata.get("measure_parameters") or []
     sweep_parameters = metadata.get("sweep_parameters") or []
 

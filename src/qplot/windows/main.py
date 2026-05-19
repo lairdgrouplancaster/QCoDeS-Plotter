@@ -14,6 +14,8 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from qplot import config
 from qplot.datahandling.database import (
     DatabaseDetailWorker as DatabaseDetailWorker,
+)
+from qplot.datahandling.database import (
     DatabaseLoadWorker as DatabaseLoadWorker,
 )
 from qplot.datahandling.database import (
