@@ -7,6 +7,7 @@ import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
     PREVIEW_BACKGROUND_COLOR,
@@ -52,12 +53,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 return 1768129626.1
 
             def get_parameter_data(self, name):
-                return {
-                    "dmm_v1": {
-                        "dac_ch1": np.array([-1.0, -0.5, 0.0, 0.5, 1.0]),
-                        "dmm_v1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
-                        }
-                    }
+                raise AssertionError("Details pane should not load parameter data")
 
         widget = treeWidgets.moreInfo()
         widget.setInfo(
@@ -122,9 +118,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(widget.parameters.item(0, 0).text(), "Set parameters")
         self.assertTrue(widget.parameters.item(0, 0).font().bold())
         self.assertEqual(widget.parameters.item(1, 0).text(), "dac_ch1")
-        self.assertEqual(widget.parameters.item(1, 3).text(), "-1")
-        self.assertEqual(widget.parameters.item(1, 4).text(), "1")
-        self.assertEqual(widget.parameters.item(1, 5).text(), "5")
+        self.assertEqual(widget.parameters.item(1, 3).text(), "25")
+        self.assertEqual(widget.parameters.item(1, 4).text(), "25")
+        self.assertEqual(widget.parameters.item(1, 5).text(), "")
         self.assertEqual(widget.parameters.item(1, 6).text(), "")
         self.assertEqual(widget.parameters.item(1, 7).text(), "dac")
         self.assertFalse(widget.parameters.item(1, 0).font().bold())
@@ -448,6 +444,43 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertNotIn("run-guid", preview.cache)
         self.assertNotIn("run-guid", preview.errors)
         self.assertIn("run-guid", preview.queue)
+
+    def test_preview_tab_does_not_queue_every_run_on_database_load(self):
+        preview = PreviewTab(preview_size=100)
+        preview._start_next = lambda: None
+
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1", "run_timestamp": 100.0},
+            2: {"guid": "guid-2", "run_timestamp": 101.0},
+            })
+
+        self.assertEqual(preview.queue, {})
+
+    def test_preview_sampling_is_limited_without_result_count(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        preview_module.MAX_PREVIEW_ROWS = 3
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?)",
+                [(float(index), float(index * 10)) for index in range(10)]
+                )
+
+            x, signal = preview_module._select_arrays(
+                cursor,
+                "results",
+                ["x", "signal"],
+                {},
+                )
+
+            self.assertLessEqual(x.size, 3)
+            self.assertEqual(x.tolist(), [0.0, 4.0, 8.0])
+            self.assertEqual(signal.tolist(), [0.0, 40.0, 80.0])
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
 
     def test_double_clicking_preview_requests_matching_parameter_plot(self):
         preview = PreviewTab(preview_size=100)

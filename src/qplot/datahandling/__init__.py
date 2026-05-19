@@ -5,11 +5,13 @@ from .LoadFromDB import (
 from .readSQL import (
     find_new_runs,
     get_run_status,
+    get_runs_basic_via_sql,
     get_runs_via_sql,
     has_finished,
 )
 
 __all__ = [
+    "get_runs_basic_via_sql",
     "get_runs_via_sql",
     "find_new_runs",
     "get_run_status",

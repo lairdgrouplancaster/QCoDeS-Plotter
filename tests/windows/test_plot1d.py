@@ -237,6 +237,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             preview_item = dialog.table.item(0, 1)
             measurement_item = dialog.table.item(0, 2)
+            visible_item = dialog.table.item(0, 3)
 
             self.assertEqual(
                 dialog.table.editTriggers(),
@@ -246,12 +247,72 @@ class SnapToTraceTestCase(unittest.TestCase):
                 dialog.table.horizontalHeader().sectionResizeMode(2),
                 qtw.QHeaderView.ResizeMode.Stretch,
                 )
-            self.assertEqual(dialog.table.rowHeight(0), 44)
+            self.assertEqual(dialog.table.columnCount(), 5)
+            self.assertFalse(hasattr(dialog, "order"))
+            self.assertEqual(dialog.table.rowHeight(0), 32)
             self.assertEqual(preview_item.text(), "")
             self.assertFalse(preview_item.icon().isNull())
             self.assertTrue(preview_item.flags() & QtCore.Qt.ItemFlag.ItemIsDragEnabled)
+            self.assertEqual(
+                visible_item.checkState(),
+                QtCore.Qt.CheckState.Checked,
+                )
             self.assertFalse(measurement_item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
             self.assertFalse(dialog.line_color.itemIcon(0).isNull())
+        finally:
+            if dialog is not None:
+                dialog.deleteLater()
+            host.deleteLater()
+
+    def test_trace_appearance_plot_order_follows_table_position(self):
+        class Host(Plot1DTraceMixin, qtw.QMainWindow):
+            pass
+
+        class Line:
+            def __init__(self):
+                self.z_value = None
+
+            def setZValue(self, value):
+                self.z_value = value
+
+        host = Host()
+        dialog = None
+        try:
+            host.label = "ID:1 current"
+            host.param = type("Param", (), {"name": "current"})()
+            host.lines = {
+                "trace a": Line(),
+                "trace b": Line(),
+                "trace c": Line(),
+                }
+            host._trace_styles = {
+                label: host._TraceStyle(order=-1)
+                for label in host.lines
+                }
+
+            dialog = _TraceAppearanceDialog(host)
+            dialog.refresh_rows()
+
+            self.assertEqual(
+                [host._trace_styles[label].order for label in host.lines],
+                [2, 1, 0],
+                )
+            self.assertEqual([line.z_value for line in host.lines.values()], [2, 1, 0])
+
+            dialog.table.clearSelection()
+            dialog.table.selectRow(1)
+            dialog._move_selected_rows(-1)
+
+            self.assertEqual(list(host.lines), ["trace b", "trace a", "trace c"])
+            self.assertEqual(
+                [host._trace_styles[label].order for label in host.lines],
+                [2, 1, 0],
+                )
+            self.assertEqual(
+                [line.z_value for line in host.lines.values()],
+                [2, 1, 0],
+                )
+            self.assertEqual(dialog._selected_labels(), ["trace b"])
         finally:
             if dialog is not None:
                 dialog.deleteLater()
@@ -566,4 +627,3 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertEqual(rect.right(), 4.0)
         self.assertEqual(rect.top(), 7.25)
         self.assertEqual(rect.bottom(), 9.75)
-

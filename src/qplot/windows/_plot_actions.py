@@ -155,8 +155,11 @@ class PlotActionsMixin:
         else:
             snap = None
 
+        run_metadata = self._run_metadata_for_guid(guid)
+        point_count = self._run_point_count(run_metadata)
+
         paramspec = self.ds.get_parameters()
-        structure = {"Data points": self.ds.number_of_results}
+        structure = {"Data points": point_count}
         for param in paramspec:
             if len(param.depends_on) > 0:
                 structure[param.name] = {
@@ -175,10 +178,36 @@ class PlotActionsMixin:
             "Snapshot": snap,
         }
         self.infoBox.setInfo(info, self.ds)
-        self.show_status(
-            f"Selected run {self.ds.run_id} with {self.ds.number_of_results:,} points.",
-            5000,
-        )
+        if point_count is None:
+            self.show_status(f"Selected run {self.ds.run_id}.", 5000)
+        else:
+            self.show_status(
+                f"Selected run {self.ds.run_id} with {int(point_count):,} points.",
+                5000,
+            )
+
+
+    def _run_metadata_for_guid(self, guid):
+        run_list = getattr(self, "RunList", None)
+        if run_list is None or not hasattr(run_list, "_item_for_guid"):
+            return {}
+
+        item = run_list._item_for_guid(guid)
+        if item is None:
+            return {}
+        return dict(getattr(item, "run_metadata", {}) or {})
+
+
+    def _run_point_count(self, metadata):
+        for key in ("result_count", "setpoint_count", "expected_results"):
+            value = metadata.get(key)
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return None
 
 
     @QtCore.pyqtSlot()

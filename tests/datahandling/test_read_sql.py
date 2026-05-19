@@ -8,6 +8,72 @@ from qplot.datahandling import readSQL
 
 
 class RunSizeTestCase(unittest.TestCase):
+    def test_fetch_basic_run_rows_does_not_scan_result_tables(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE experiments (
+                    exp_id INTEGER,
+                    name TEXT,
+                    sample_name TEXT
+                )
+                """
+                )
+            cursor.execute(
+                """
+                CREATE TABLE runs (
+                    run_id INTEGER,
+                    exp_id INTEGER,
+                    name TEXT,
+                    run_timestamp REAL,
+                    completed_timestamp REAL,
+                    is_completed INTEGER,
+                    guid TEXT,
+                    result_table_name TEXT,
+                    parameters TEXT,
+                    run_description TEXT
+                )
+                """
+                )
+            run_description = json.dumps({
+                "interdependencies_": {
+                    "dependencies": {
+                        "signal": ["x"],
+                        "current": ["x"],
+                        }
+                    },
+                "shapes": {
+                    "signal": [10],
+                    "current": [10],
+                    },
+                })
+            cursor.execute(
+                """
+                INSERT INTO runs VALUES (
+                    1, 1, 'run', 100.0, 110.0, 1, 'guid',
+                    'missing_results', 'x,signal,current', ?
+                )
+                """,
+                (run_description, )
+                )
+
+            runs = readSQL._fetch_run_rows(
+                cursor,
+                empty_as_none=False,
+                include_details=False,
+                )
+
+            self.assertEqual(runs[1]["measure_parameters"], ["signal", "current"])
+            self.assertEqual(runs[1]["sweep_parameters"], ["x"])
+            self.assertEqual(runs[1]["setpoint_count"], 10)
+            self.assertEqual(runs[1]["expected_results"], 20)
+            self.assertNotIn("result_count", runs[1])
+            self.assertNotIn("storage_bytes", runs[1])
+        finally:
+            conn.close()
+
     def test_fetch_run_rows_includes_keyboard_interrupt_metadata(self):
         conn = sqlite3.connect(":memory:")
         try:
@@ -223,5 +289,4 @@ class RunSizeTestCase(unittest.TestCase):
             finally:
                 cursor.close()
                 conn.close()
-
 

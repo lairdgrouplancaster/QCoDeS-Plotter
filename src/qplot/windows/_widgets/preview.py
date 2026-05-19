@@ -131,9 +131,6 @@ class PreviewTab(qtw.QWidget):
             }
 
         self._show_message("Select a run")
-        for guid in self.run_metadata:
-            self._enqueue(guid, priority=0)
-        self._start_next()
 
 
     def add_runs(self, runs):
@@ -756,22 +753,60 @@ def _select_arrays(cursor, table_name, columns, metadata):
     except (TypeError, ValueError):
         count = 0
 
-    step = max(1, count // MAX_PREVIEW_ROWS) if count else 1
     selected_columns = ", ".join(_sqlite_identifier(column) for column in columns)
     table = _sqlite_identifier(table_name)
-    if step > 1:
+    rowid_span = _rowid_span(cursor, table_name)
+    if rowid_span is None:
         cursor.execute(
-            f"SELECT {selected_columns} FROM {table} WHERE rowid % ? = 0 ORDER BY rowid",
-            (step, )
+            f"SELECT {selected_columns} FROM {table} LIMIT ?",
+            (MAX_PREVIEW_ROWS, )
             )
     else:
-        cursor.execute(f"SELECT {selected_columns} FROM {table} ORDER BY rowid")
+        first_rowid, last_rowid = rowid_span
+        span = max(0, last_rowid - first_rowid + 1)
+        if count and count <= MAX_PREVIEW_ROWS:
+            cursor.execute(f"SELECT {selected_columns} FROM {table} ORDER BY rowid")
+        else:
+            step_source = count if count else span
+            step = max(1, (step_source + MAX_PREVIEW_ROWS - 1) // MAX_PREVIEW_ROWS)
+            cursor.execute(
+                f"""
+                WITH RECURSIVE sample(rowid) AS (
+                    VALUES(?)
+                    UNION ALL
+                    SELECT rowid + ? FROM sample WHERE rowid + ? <= ?
+                )
+                SELECT {selected_columns}
+                FROM {table}
+                WHERE rowid IN (SELECT rowid FROM sample)
+                ORDER BY rowid
+                LIMIT ?
+                """,
+                (first_rowid, step, step, last_rowid, MAX_PREVIEW_ROWS),
+                )
 
     rows = cursor.fetchall()
     if not rows:
         return [np.array([], dtype=float) for _ in columns]
 
     return _rows_to_float_arrays(rows, len(columns))
+
+
+def _rowid_span(cursor, table_name):
+    table = _sqlite_identifier(table_name)
+    try:
+        cursor.execute(f"SELECT MIN(rowid), MAX(rowid) FROM {table}")
+        first_rowid, last_rowid = cursor.fetchone()
+    except Exception:
+        return None
+
+    if first_rowid is None or last_rowid is None:
+        return None
+
+    try:
+        return int(first_rowid), int(last_rowid)
+    except (TypeError, ValueError):
+        return None
 
 
 def _rows_to_float_arrays(rows, column_count):

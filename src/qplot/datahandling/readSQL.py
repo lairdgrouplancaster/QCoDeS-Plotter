@@ -7,7 +7,7 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from qplot.datahandling.readonly import qcodes_read_only_connection
 
 
-def get_runs_via_sql():
+def get_runs_via_sql(database_path=None, include_details=True):
     """
     Read from the currently initialised QCoDeS database and fetches all data to
     be displayed in Main Window runList
@@ -20,12 +20,29 @@ def get_runs_via_sql():
             run_id : {column_name: column_data}
 
     """
-    conn = qcodes_read_only_connection(get_DB_location())
+    conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
         cursor = conn.cursor()
-        return _fetch_run_rows(cursor, empty_as_none=False)
+        return _fetch_run_rows(
+            cursor,
+            empty_as_none=False,
+            include_details=include_details,
+            )
     finally:
         conn.close()
+
+
+def get_runs_basic_via_sql(database_path=None):
+    """
+    Read the run list without scanning result tables.
+
+    This is the fast path for opening large databases. It includes enough
+    metadata to populate the run table and measurement placeholders, while
+    leaving expensive counts, setpoint-shape inference, and storage estimates
+    to later targeted loads.
+
+    """
+    return get_runs_via_sql(database_path=database_path, include_details=False)
 
 
 def find_new_runs(last_time):
@@ -55,7 +72,13 @@ def find_new_runs(last_time):
         conn.close()
 
 
-def _fetch_run_rows(cursor, where="", params=(), empty_as_none=True):
+def _fetch_run_rows(
+        cursor,
+        where="",
+        params=(),
+        empty_as_none=True,
+        include_details=True,
+        ):
     optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
     optional_select = "".join(
         f", runs.{_sqlite_identifier(column)} AS {_sqlite_identifier(column)}"
@@ -92,13 +115,15 @@ def _fetch_run_rows(cursor, where="", params=(), empty_as_none=True):
     for row in values:
         metadata = dict(zip(column_names[1:], row[1:], strict=False))
         metadata["database_modified_timestamp"] = database_modified_timestamp
-        _add_run_summary_fields(cursor, metadata)
+        _add_run_basic_fields(metadata)
+        if include_details:
+            _add_run_detail_fields(cursor, metadata)
         outDict[row[0]] = metadata
 
     return outDict
 
 
-def _add_run_summary_fields(cursor, metadata):
+def _add_run_basic_fields(metadata):
     run_description = _json_dict(metadata.get("run_description"))
     measure_parameters, sweep_parameters = _parameter_roles(
         run_description,
@@ -107,13 +132,27 @@ def _add_run_summary_fields(cursor, metadata):
 
     metadata["measure_parameters"] = measure_parameters
     metadata["sweep_parameters"] = sweep_parameters
-    metadata["result_count"] = _result_count(cursor, metadata.get("result_table_name"))
     metadata["point_shape"] = _point_shape(run_description, measure_parameters)
     metadata["setpoint_shape"] = metadata["point_shape"]
     expected_results = _expected_results_from_shapes(
         run_description,
         measure_parameters,
         )
+    metadata["expected_results"] = (
+        expected_results
+        if expected_results is not None
+        else _shape_size(metadata["point_shape"])
+        )
+    metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
+
+
+def _add_run_detail_fields(cursor, metadata):
+    run_description = _json_dict(metadata.get("run_description"))
+    measure_parameters = metadata.get("measure_parameters") or []
+    sweep_parameters = metadata.get("sweep_parameters") or []
+
+    metadata["result_count"] = _result_count(cursor, metadata.get("result_table_name"))
+    expected_results = metadata.get("expected_results")
     if not metadata["point_shape"]:
         metadata["setpoint_shape"] = _setpoint_shape_from_result_table(
             cursor,

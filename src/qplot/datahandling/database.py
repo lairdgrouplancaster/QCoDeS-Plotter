@@ -19,7 +19,7 @@ from qplot.datahandling.readonly import (
     set_qcodes_database_location,
     sqlite_read_only_connection,
 )
-from qplot.datahandling.readSQL import get_runs_via_sql
+from qplot.datahandling.readSQL import get_runs_basic_via_sql
 from qplot.diagnostics import log_exception
 
 DATABASE_ACCESS_TIMEOUT_SECONDS = 3
@@ -452,8 +452,8 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             if self._is_cancelled():
                 return
 
-            self._emit_status("Loading run list...")
-            runs = get_runs_via_sql() or {}
+            self._emit_status("Loading basic run list...")
+            runs = get_runs_basic_via_sql(self.database_path) or {}
             if self._is_cancelled():
                 return
         except InterruptedError:

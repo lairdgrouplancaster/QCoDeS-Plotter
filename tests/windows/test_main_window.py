@@ -1504,7 +1504,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
     def test_database_load_worker_opens_database_read_only_and_returns_runs(self):
         old_access_error = database_module.database_access_error
         old_set_location = database_module.set_qcodes_database_location
-        old_get_runs = database_module.get_runs_via_sql
+        old_get_runs = database_module.get_runs_basic_via_sql
         calls = []
 
         def access_error(database_path):
@@ -1514,13 +1514,13 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         def set_location(database_path):
             calls.append(("set_location", database_path))
 
-        def get_runs():
-            calls.append(("runs", None))
+        def get_runs(database_path):
+            calls.append(("basic_runs", database_path))
             return {1: {"guid": "guid-1", "run_timestamp": 123.0}}
 
         database_module.database_access_error = access_error
         database_module.set_qcodes_database_location = set_location
-        database_module.get_runs_via_sql = get_runs
+        database_module.get_runs_basic_via_sql = get_runs
         try:
             worker = main_window.DatabaseLoadWorker(7, "example.db")
             statuses = []
@@ -1532,17 +1532,17 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         finally:
             database_module.database_access_error = old_access_error
             database_module.set_qcodes_database_location = old_set_location
-            database_module.get_runs_via_sql = old_get_runs
+            database_module.get_runs_basic_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", "example.db"),
             ("set_location", "example.db"),
-            ("runs", None),
+            ("basic_runs", "example.db"),
             ])
         self.assertEqual(statuses, [
             (7, "Checking database access..."),
             (7, "Opening database read-only..."),
-            (7, "Loading run list..."),
+            (7, "Loading basic run list..."),
             ])
         self.assertEqual(finished, [
             (7, "example.db", {1: {"guid": "guid-1", "run_timestamp": 123.0}}, None)
@@ -1649,7 +1649,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_placeholder = database_module.database_is_likely_cloud_placeholder
         old_prefetch = database_module.prefetch_database_file_with_timeout
         old_set_location = database_module.set_qcodes_database_location
-        old_get_runs = database_module.get_runs_via_sql
+        old_get_runs = database_module.get_runs_basic_via_sql
         calls = []
 
         access_results = iter(["timed out", None])
@@ -1676,7 +1676,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         database_module.set_qcodes_database_location = lambda path: calls.append(
             ("set_location", path)
             )
-        database_module.get_runs_via_sql = lambda: {}
+        database_module.get_runs_basic_via_sql = lambda _path: {}
         try:
             with tempfile.NamedTemporaryFile(suffix=".db") as database:
                 worker = main_window.DatabaseLoadWorker(9, database.name, 12)
@@ -1693,7 +1693,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             database_module.database_is_likely_cloud_placeholder = old_placeholder
             database_module.prefetch_database_file_with_timeout = old_prefetch
             database_module.set_qcodes_database_location = old_set_location
-            database_module.get_runs_via_sql = old_get_runs
+            database_module.get_runs_basic_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", expected_path),

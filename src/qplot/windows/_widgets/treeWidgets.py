@@ -862,9 +862,6 @@ class moreInfo(qtw.QTabWidget):
 
     def _time_per_point(self, seconds, info, dataset):
         points = info.get("Data Structure", {}).get("Data points")
-        if not self._has_value(points):
-            points = self._dataset_attr(dataset, "number_of_results")
-
         try:
             points = float(points)
         except (TypeError, ValueError):
@@ -877,29 +874,7 @@ class moreInfo(qtw.QTabWidget):
 
 
     def _setpoint_summaries(self, dataset, setpoint_names, params):
-        if dataset is None or not setpoint_names:
-            return {}
-
-        summaries = {}
-        measured_params = [
-            param for param in params
-            if getattr(param, "depends_on_", ())
-            ]
-
-        for param in measured_params:
-            try:
-                parameter_data = dataset.get_parameter_data(param.name).get(param.name, {})
-            except Exception:
-                continue
-
-            for name in setpoint_names:
-                if name not in parameter_data or name in summaries:
-                    continue
-                summary = self._setpoint_summary(parameter_data[name])
-                if summary:
-                    summaries[name] = summary
-
-        return summaries
+        return {}
 
 
     def _setpoint_summary(self, values):

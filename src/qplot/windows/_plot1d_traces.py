@@ -5,6 +5,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from ._dragdrop import make_run_preview_mime
 from ._subplots import subplot1d
 from ._widgets import picker_1d
 
@@ -486,51 +487,287 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             set_z(z)
 
 
+class _TracePreviewDelegate(qtw.QStyledItemDelegate):
+    """
+    Paint trace preview icons centered in their table cell.
+
+    """
+
+    def paint(self, painter, option, index):
+        icon = index.data(QtCore.Qt.ItemDataRole.DecorationRole)
+        if not isinstance(icon, QtGui.QIcon) or icon.isNull():
+            super().paint(painter, option, index)
+            return
+
+        opt = qtw.QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        opt.icon = QtGui.QIcon()
+
+        widget = opt.widget
+        style = widget.style() if widget else qtw.QApplication.style()
+        if style is None:
+            super().paint(painter, option, index)
+            return
+        style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+
+        icon_size = icon.actualSize(opt.rect.size())
+        icon_rect = QtCore.QRect(QtCore.QPoint(), icon_size)
+        icon_rect.moveCenter(opt.rect.center())
+        icon.paint(painter, icon_rect, QtCore.Qt.AlignmentFlag.AlignCenter)
+
+
+class _TraceTableWidget(qtw.QTableWidget):
+    """
+    Trace table with run-preview drag payloads.
+
+    """
+
+    def __init__(self, dialog: "_TraceAppearanceDialog"):
+        super().__init__(0, 5, dialog)
+        self.dialog = dialog
+
+    def startDrag(self, supported_actions):
+        index = self.currentIndex()
+        if not index.isValid():
+            return
+
+        label = self.dialog._label_for_row(index.row())
+        mime_data = self.dialog._trace_mime_data(label)
+        if mime_data is None:
+            super().startDrag(supported_actions)
+            return
+
+        style = self.dialog.owner._trace_styles.get(label)
+        drag = QtGui.QDrag(self)
+        drag.setMimeData(mime_data)
+        if style is not None:
+            pixmap = self.dialog._trace_pixmap(style, QtCore.QSize(72, 26))
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(QtCore.QPoint(pixmap.width() // 2, pixmap.height() // 2))
+        drag.exec(QtCore.Qt.DropAction.CopyAction)
+
+
 class _TraceAppearanceDialog(qtw.QDialog):
+    _COL_ID = 0
+    _COL_PREVIEW = 1
+    _COL_MEASUREMENT = 2
+    _COL_VISIBLE = 3
+    _COL_AXIS = 4
+
     def __init__(self, owner: Plot1DTraceMixin):
         super().__init__(owner)
         self.owner = owner
         self.setWindowTitle("Trace Appearance")
-        self.resize(980, 460)
+        self.resize(840, 360)
+        self.setMinimumSize(760, 300)
         self._building = False
-        main = qtw.QHBoxLayout(self)
-        self.table = qtw.QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["ID", "Preview", "Measurement", "Axis", "Order"])
+
+        main = qtw.QVBoxLayout(self)
+        main.setContentsMargins(10, 10, 10, 10)
+        main.setSpacing(8)
+
+        body = qtw.QHBoxLayout()
+        body.setSpacing(10)
+        main.addLayout(body, 1)
+
+        trace_group = qtw.QGroupBox("Traces", self)
+        trace_layout = qtw.QVBoxLayout(trace_group)
+        trace_layout.setContentsMargins(8, 8, 8, 8)
+        trace_layout.setSpacing(6)
+
+        self.table = _TraceTableWidget(self)
+        self.table.setHorizontalHeaderLabels(
+            ["ID", "Preview", "Measurement", "Show", "Axis"]
+            )
         self.table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
+        self.table.setIconSize(QtCore.QSize(64, 22))
+        self.table.setDragEnabled(True)
+        self.table.setDragDropMode(qtw.QAbstractItemView.DragDropMode.DragOnly)
+        self.table.setDefaultDropAction(QtCore.Qt.DropAction.CopyAction)
+        self.table.setItemDelegateForColumn(
+            self._COL_PREVIEW,
+            _TracePreviewDelegate(self.table),
+            )
         horizontal_header = self.table.horizontalHeader()
         if horizontal_header is not None:
-            horizontal_header.setSectionResizeMode(2, qtw.QHeaderView.ResizeMode.Stretch)
+            horizontal_header.setFixedHeight(24)
+            horizontal_header.setSectionResizeMode(
+                self._COL_ID,
+                qtw.QHeaderView.ResizeMode.ResizeToContents,
+                )
+            horizontal_header.setSectionResizeMode(
+                self._COL_PREVIEW,
+                qtw.QHeaderView.ResizeMode.ResizeToContents,
+                )
+            horizontal_header.setSectionResizeMode(
+                self._COL_MEASUREMENT,
+                qtw.QHeaderView.ResizeMode.Stretch,
+                )
+            for column in (self._COL_VISIBLE, self._COL_AXIS):
+                horizontal_header.setSectionResizeMode(
+                    column,
+                    qtw.QHeaderView.ResizeMode.ResizeToContents,
+                    )
         vertical_header = self.table.verticalHeader()
         if vertical_header is not None:
             vertical_header.setVisible(False)
+            vertical_header.setDefaultSectionSize(32)
+            vertical_header.setMinimumSectionSize(26)
         self.table.itemSelectionChanged.connect(self._sync_controls_from_selection)
-        main.addWidget(self.table, 5)
-        panel = qtw.QWidget()
-        form = qtw.QFormLayout(panel)
+
+        self.table.itemChanged.connect(self._table_item_changed)
+
+        table_tools = qtw.QHBoxLayout()
+        table_tools.setContentsMargins(0, 0, 0, 0)
+        table_tools.setSpacing(4)
+        table_tools.addStretch()
+        self.move_up_button = qtw.QToolButton(trace_group)
+        self.move_down_button = qtw.QToolButton(trace_group)
+        for button, pixmap, tooltip in (
+                (
+                    self.move_up_button,
+                    qtw.QStyle.StandardPixmap.SP_ArrowUp,
+                    "Move selected traces up",
+                    ),
+                (
+                    self.move_down_button,
+                    qtw.QStyle.StandardPixmap.SP_ArrowDown,
+                    "Move selected traces down",
+                    ),
+                ):
+            button.setAutoRaise(True)
+            button.setToolTip(tooltip)
+            button.setAccessibleName(tooltip)
+            style = self.style()
+            if style is not None:
+                button.setIcon(style.standardIcon(pixmap))
+            table_tools.addWidget(button)
+        self.move_up_button.clicked.connect(lambda: self._move_selected_rows(-1))
+        self.move_down_button.clicked.connect(lambda: self._move_selected_rows(1))
+
+        trace_layout.addLayout(table_tools)
+        trace_layout.addWidget(self.table)
+        body.addWidget(trace_group, 5)
+
+        panel = qtw.QWidget(self)
+        panel_layout = qtw.QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(8)
+
+        self.selection_summary = qtw.QLabel("No trace selected", panel)
+        self.selection_summary.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.NoTextInteraction
+            )
+        panel_layout.addWidget(self.selection_summary)
+
         colors = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#000000"]
+
         self.line_enable = qtw.QCheckBox("Line")
         self.line_color = qtw.QComboBox(); self._add_color_items(self.line_color, colors)
-        self.line_width = qtw.QDoubleSpinBox(); self.line_width.setRange(0.5, 15); self.line_width.setValue(2)
+        self.line_width = qtw.QDoubleSpinBox(); self.line_width.setRange(0.5, 15); self.line_width.setValue(2); self.line_width.setDecimals(1); self.line_width.setSingleStep(0.5)
         self.line_style = qtw.QComboBox(); self.line_style.addItems(["Solid", "Dash", "Dot", "Dash Dot"])
         self.dots_enable = qtw.QCheckBox("Dots")
         self.dots_color = qtw.QComboBox(); self._add_color_items(self.dots_color, colors)
-        self.dots_size = qtw.QDoubleSpinBox(); self.dots_size.setRange(1, 20)
+        self.dots_size = qtw.QDoubleSpinBox(); self.dots_size.setRange(1, 20); self.dots_size.setDecimals(1); self.dots_size.setSingleStep(1)
         self.marker_enable = qtw.QCheckBox("Markers")
         self.marker_color = qtw.QComboBox(); self._add_color_items(self.marker_color, colors)
         self.marker_symbol = qtw.QComboBox(); self.marker_symbol.addItems(["o", "s", "t", "d", "+", "x"])
-        self.marker_size = qtw.QDoubleSpinBox(); self.marker_size.setRange(1, 30); self.marker_size.setValue(10)
+        self.marker_size = qtw.QDoubleSpinBox(); self.marker_size.setRange(1, 30); self.marker_size.setValue(10); self.marker_size.setDecimals(1); self.marker_size.setSingleStep(1)
         self.x_axis = qtw.QComboBox(); self.x_axis.addItems(["Bottom"])
         self.y_axis = qtw.QComboBox(); self.y_axis.addItems(["Left", "Right"])
         self.visible = qtw.QCheckBox("Visible")
         self.visible.setChecked(True)
-        self.order = qtw.QSpinBox(); self.order.setRange(-999, 999)
-        form.addRow(self.line_enable); form.addRow("Line color", self.line_color); form.addRow("Line thickness", self.line_width); form.addRow("Line style", self.line_style)
-        form.addRow(self.dots_enable); form.addRow("Dots color", self.dots_color); form.addRow("Dots size", self.dots_size)
-        form.addRow(self.marker_enable); form.addRow("Marker color", self.marker_color); form.addRow("Marker symbol", self.marker_symbol); form.addRow("Marker size", self.marker_size)
-        form.addRow("Horizontal axis", self.x_axis); form.addRow("Vertical axis", self.y_axis); form.addRow(self.visible); form.addRow("Plot order", self.order)
-        main.addWidget(panel, 4)
+
+        for combo in (
+            self.line_color,
+            self.dots_color,
+            self.marker_color,
+            self.line_style,
+            self.marker_symbol,
+            self.x_axis,
+            self.y_axis,
+            ):
+            combo.setMinimumContentsLength(4)
+        for combo in (self.line_color, self.dots_color, self.marker_color):
+            combo.setIconSize(QtCore.QSize(34, 14))
+            combo.setFixedWidth(94)
+        for spin in (self.line_width, self.dots_size, self.marker_size):
+            spin.setFixedWidth(64)
+        self.line_style.setFixedWidth(94)
+        self.marker_symbol.setFixedWidth(62)
+        self.x_axis.setFixedWidth(92)
+        self.y_axis.setFixedWidth(82)
+
+        display_group = qtw.QGroupBox("Display", panel)
+        display_layout = qtw.QGridLayout(display_group)
+        display_layout.setContentsMargins(8, 10, 8, 8)
+        display_layout.setHorizontalSpacing(6)
+        display_layout.setVerticalSpacing(4)
+        self._add_display_row(
+            display_layout,
+            0,
+            self.line_enable,
+            self.line_color,
+            [("Width", self.line_width), ("Style", self.line_style)],
+            )
+        self._add_display_row(
+            display_layout,
+            1,
+            self.dots_enable,
+            self.dots_color,
+            [("Size", self.dots_size)],
+            )
+        self._add_display_row(
+            display_layout,
+            2,
+            self.marker_enable,
+            self.marker_color,
+            [("Symbol", self.marker_symbol), ("Size", self.marker_size)],
+            )
+        display_layout.setColumnStretch(7, 1)
+        panel_layout.addWidget(display_group)
+
+        trace_settings = qtw.QGroupBox("Axes", panel)
+        trace_grid = qtw.QGridLayout(trace_settings)
+        trace_grid.setContentsMargins(8, 10, 8, 8)
+        trace_grid.setHorizontalSpacing(8)
+        trace_grid.setVerticalSpacing(4)
+        trace_grid.addWidget(self.visible, 0, 0)
+        trace_grid.addWidget(qtw.QLabel("Horizontal"), 0, 1)
+        trace_grid.addWidget(self.x_axis, 0, 2)
+        trace_grid.addWidget(qtw.QLabel("Vertical"), 1, 1)
+        trace_grid.addWidget(self.y_axis, 1, 2)
+        trace_grid.setColumnStretch(3, 1)
+        panel_layout.addWidget(trace_settings)
+        panel_layout.addStretch()
+
+        body.addWidget(panel, 4)
+
+        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.close)
+        main.addWidget(buttons)
+
+        self._line_controls = [self.line_color, self.line_width, self.line_style]
+        self._dots_controls = [self.dots_color, self.dots_size]
+        self._marker_controls = [self.marker_color, self.marker_symbol, self.marker_size]
+        self._selection_controls = [
+            self.line_enable,
+            self.dots_enable,
+            self.marker_enable,
+            self.x_axis,
+            self.y_axis,
+            self.visible,
+            *self._line_controls,
+            *self._dots_controls,
+            *self._marker_controls,
+            ]
         for _widget, signal in [
             (self.line_enable, self.line_enable.toggled), (self.line_color, self.line_color.currentTextChanged),
             (self.line_width, self.line_width.valueChanged), (self.line_style, self.line_style.currentTextChanged),
@@ -538,9 +775,27 @@ class _TraceAppearanceDialog(qtw.QDialog):
             (self.dots_size, self.dots_size.valueChanged), (self.marker_enable, self.marker_enable.toggled),
             (self.marker_color, self.marker_color.currentTextChanged), (self.marker_symbol, self.marker_symbol.currentTextChanged),
             (self.marker_size, self.marker_size.valueChanged), (self.x_axis, self.x_axis.currentTextChanged),
-            (self.y_axis, self.y_axis.currentTextChanged), (self.visible, self.visible.toggled), (self.order, self.order.valueChanged),
+            (self.y_axis, self.y_axis.currentTextChanged), (self.visible, self.visible.toggled),
         ]:
             signal.connect(self._apply_selection)
+        self._update_control_enabled_states(False)
+
+    def _add_display_row(
+            self,
+            layout: qtw.QGridLayout,
+            row: int,
+            toggle: qtw.QCheckBox,
+            color_combo: qtw.QComboBox,
+            controls: list[tuple[str, qtw.QWidget]],
+            ) -> None:
+        layout.addWidget(toggle, row, 0)
+        layout.addWidget(qtw.QLabel("Color"), row, 1)
+        layout.addWidget(color_combo, row, 2)
+        column = 3
+        for label, widget in controls:
+            layout.addWidget(qtw.QLabel(label), row, column)
+            layout.addWidget(widget, row, column + 1)
+            column += 2
 
     def _add_color_items(self, combo: qtw.QComboBox, colors: list[str]) -> None:
         for color in colors:
@@ -556,46 +811,232 @@ class _TraceAppearanceDialog(qtw.QDialog):
         painter.end()
         return QtGui.QIcon(pixmap)
 
-    def _trace_icon(self, style: Plot1DTraceMixin._TraceStyle) -> QtGui.QIcon:
-        pixmap = QtGui.QPixmap(42, 20)
+    def _trace_pixmap(
+            self,
+            style: Plot1DTraceMixin._TraceStyle,
+            size: QtCore.QSize | None = None,
+            ) -> QtGui.QPixmap:
+        if size is None:
+            size = QtCore.QSize(64, 22)
+        pixmap = QtGui.QPixmap(size)
         pixmap.fill(QtCore.Qt.GlobalColor.transparent)
         painter = QtGui.QPainter(pixmap)
-        pen = QtGui.QPen(QtGui.QColor(style.line_color))
-        pen.setWidthF(style.line_width)
-        painter.setPen(pen)
-        painter.drawLine(4, 10, 38, 10)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setOpacity(1.0 if style.visible else 0.35)
+
+        points = [
+            QtCore.QPointF(5, size.height() - 7),
+            QtCore.QPointF(size.width() * 0.38, 7),
+            QtCore.QPointF(size.width() * 0.68, size.height() - 8),
+            QtCore.QPointF(size.width() - 5, 8),
+            ]
+        if style.line_enabled:
+            pen = QtGui.QPen(QtGui.QColor(style.line_color))
+            pen.setWidthF(max(1.0, min(style.line_width, 4.0)))
+            pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+            pen_style_map = {
+                "Solid": QtCore.Qt.PenStyle.SolidLine,
+                "Dash": QtCore.Qt.PenStyle.DashLine,
+                "Dot": QtCore.Qt.PenStyle.DotLine,
+                "Dash Dot": QtCore.Qt.PenStyle.DashDotLine,
+            }
+            pen.setStyle(pen_style_map.get(style.line_style, QtCore.Qt.PenStyle.SolidLine))
+            painter.setPen(pen)
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            painter.drawPolyline(QtGui.QPolygonF(points))
+
+        if style.dots_enabled:
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.setBrush(QtGui.QColor(style.dots_color))
+            radius = max(2.0, min(style.dots_size / 2.0, 4.5))
+            for point in points:
+                painter.drawEllipse(point, radius, radius)
+
+        if style.markers_enabled:
+            pen = QtGui.QPen(QtGui.QColor(style.markers_color))
+            pen.setWidthF(1.5)
+            painter.setPen(pen)
+            painter.setBrush(QtGui.QColor(style.markers_color))
+            radius = max(3.0, min(style.markers_size / 2.0, 5.0))
+            for point in points[::2]:
+                self._draw_marker_symbol(painter, point, radius, style.markers_symbol)
+
+        if not (style.line_enabled or style.dots_enabled or style.markers_enabled):
+            pen = QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.Mid))
+            pen.setWidthF(1.0)
+            pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawLine(6, size.height() // 2, size.width() - 6, size.height() // 2)
+
         painter.end()
-        return QtGui.QIcon(pixmap)
+        return pixmap
+
+    def _draw_marker_symbol(
+            self,
+            painter: QtGui.QPainter,
+            point: QtCore.QPointF,
+            radius: float,
+            symbol: str,
+            ) -> None:
+        if symbol == "s":
+            rect = QtCore.QRectF(
+                point.x() - radius,
+                point.y() - radius,
+                radius * 2,
+                radius * 2,
+                )
+            painter.drawRect(rect)
+        elif symbol == "t":
+            polygon = QtGui.QPolygonF([
+                QtCore.QPointF(point.x(), point.y() - radius),
+                QtCore.QPointF(point.x() - radius, point.y() + radius),
+                QtCore.QPointF(point.x() + radius, point.y() + radius),
+                ])
+            painter.drawPolygon(polygon)
+        elif symbol == "d":
+            polygon = QtGui.QPolygonF([
+                QtCore.QPointF(point.x(), point.y() - radius),
+                QtCore.QPointF(point.x() - radius, point.y()),
+                QtCore.QPointF(point.x(), point.y() + radius),
+                QtCore.QPointF(point.x() + radius, point.y()),
+                ])
+            painter.drawPolygon(polygon)
+        elif symbol == "+":
+            painter.drawLine(
+                QtCore.QPointF(point.x() - radius, point.y()),
+                QtCore.QPointF(point.x() + radius, point.y()),
+                )
+            painter.drawLine(
+                QtCore.QPointF(point.x(), point.y() - radius),
+                QtCore.QPointF(point.x(), point.y() + radius),
+                )
+        elif symbol == "x":
+            painter.drawLine(
+                QtCore.QPointF(point.x() - radius, point.y() - radius),
+                QtCore.QPointF(point.x() + radius, point.y() + radius),
+                )
+            painter.drawLine(
+                QtCore.QPointF(point.x() - radius, point.y() + radius),
+                QtCore.QPointF(point.x() + radius, point.y() - radius),
+                )
+        else:
+            painter.drawEllipse(point, radius, radius)
+
+    def _trace_icon(self, style: Plot1DTraceMixin._TraceStyle) -> QtGui.QIcon:
+        return QtGui.QIcon(self._trace_pixmap(style))
 
     def refresh_rows(self):
         selected = set(self._selected_labels())
+        self._sync_plot_order_from_rows()
+        self.table.blockSignals(True)
         self.table.setRowCount(0)
-        for row, (label, line) in enumerate(self.owner.lines.items()):
-            self.table.insertRow(row)
-            trace_id = label.split()[0].replace("ID:", "") if label.startswith("ID:") else str(row + 1)
-            preview = "✕"
-            measurement = self.owner._trace_measurement_name(label, line)
-            style = self.owner._trace_styles.setdefault(label, self.owner._TraceStyle(order=row))
-            axis_text = style.y_axis
-            for col, value in enumerate([trace_id, preview, measurement, axis_text, str(style.order)]):
-                item = qtw.QTableWidgetItem(value)
-                item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(row, col, item)
-            self.table.setRowHeight(row, 44)
-            preview_item = self.table.item(row, 1)
-            if preview_item is not None:
-                preview_item.setText("")
+        try:
+            for row, (label, line) in enumerate(self.owner.lines.items()):
+                self.table.insertRow(row)
+                trace_id = label.split()[0].replace("ID:", "") if label.startswith("ID:") else str(row + 1)
+                measurement = self.owner._trace_measurement_name(label, line)
+                style = self.owner._trace_styles.setdefault(label, self.owner._TraceStyle(order=row))
+                axis_text = style.y_axis
+
+                values = {
+                    self._COL_ID: trace_id,
+                    self._COL_MEASUREMENT: measurement,
+                    self._COL_AXIS: axis_text,
+                    }
+                for col, value in values.items():
+                    item = qtw.QTableWidgetItem(value)
+                    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                    item.setToolTip(value)
+                    self.table.setItem(row, col, item)
+
+                preview_item = qtw.QTableWidgetItem()
                 preview_item.setIcon(self._trace_icon(style))
                 preview_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                preview_item.setFlags(preview_item.flags() | QtCore.Qt.ItemFlag.ItemIsDragEnabled)
-            label_item = self.table.item(row, 0)
-            if label_item is not None:
-                label_item.setData(QtCore.Qt.ItemDataRole.UserRole, label)
-            if label in selected:
-                self.table.selectRow(row)
-        self.table.resizeColumnsToContents()
+                preview_item.setFlags(
+                    (preview_item.flags() | QtCore.Qt.ItemFlag.ItemIsDragEnabled)
+                    & ~QtCore.Qt.ItemFlag.ItemIsEditable
+                    )
+                preview_item.setToolTip("Drag trace preview")
+                self.table.setItem(row, self._COL_PREVIEW, preview_item)
+
+                visible_item = qtw.QTableWidgetItem()
+                visible_item.setFlags(
+                    (visible_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                    & ~QtCore.Qt.ItemFlag.ItemIsEditable
+                    )
+                visible_item.setCheckState(
+                    QtCore.Qt.CheckState.Checked
+                    if style.visible
+                    else QtCore.Qt.CheckState.Unchecked
+                    )
+                visible_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                visible_item.setToolTip("Trace visibility")
+                self.table.setItem(row, self._COL_VISIBLE, visible_item)
+
+                label_item = self.table.item(row, self._COL_ID)
+                if label_item is not None:
+                    label_item.setData(QtCore.Qt.ItemDataRole.UserRole, label)
+                    label_item.setToolTip(label)
+                self.table.setRowHeight(row, 32)
+                if label in selected:
+                    self.table.selectRow(row)
+        finally:
+            self.table.blockSignals(False)
+
         if self.table.rowCount() and not selected:
             self.table.selectRow(0)
+        else:
+            self._sync_controls_from_selection()
+
+    def _sync_plot_order_from_rows(self) -> None:
+        row_count = len(self.owner.lines)
+        for row, (label, line) in enumerate(self.owner.lines.items()):
+            style = self.owner._trace_styles.setdefault(
+                label,
+                self.owner._TraceStyle(order=row_count - row - 1),
+                )
+            style.order = row_count - row - 1
+            set_z = getattr(line, "setZValue", None)
+            if callable(set_z):
+                set_z(style.order)
+
+    def _move_selected_rows(self, direction: int) -> None:
+        selected = set(self._selected_labels())
+        if not selected:
+            return
+
+        labels = list(self.owner.lines)
+        original = list(labels)
+        if direction < 0:
+            for index, label in enumerate(labels):
+                if index and label in selected and labels[index - 1] not in selected:
+                    labels[index - 1], labels[index] = labels[index], labels[index - 1]
+        elif direction > 0:
+            for index in range(len(labels) - 1, -1, -1):
+                label = labels[index]
+                if (
+                        index < len(labels) - 1
+                        and label in selected
+                        and labels[index + 1] not in selected
+                        ):
+                    labels[index + 1], labels[index] = labels[index], labels[index + 1]
+
+        if labels == original:
+            self._update_move_button_states()
+            return
+
+        old_lines = self.owner.lines
+        reordered = [(label, old_lines[label]) for label in labels]
+        old_lines.clear()
+        old_lines.update(reordered)
+        self._sync_plot_order_from_rows()
+        self.refresh_rows()
+
+    def _selected_rows(self) -> list[int]:
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return []
+        return sorted({idx.row() for idx in selection_model.selectedRows()})
 
     def _selected_labels(self) -> list[str]:
         labels: list[str] = []
@@ -603,32 +1044,107 @@ class _TraceAppearanceDialog(qtw.QDialog):
         if selection_model is None:
             return labels
         for idx in selection_model.selectedRows():
-            item = self.table.item(idx.row(), 0)
+            item = self.table.item(idx.row(), self._COL_ID)
             if item is not None:
                 labels.append(item.data(QtCore.Qt.ItemDataRole.UserRole))
         return labels
 
+    def _label_for_row(self, row: int) -> str:
+        item = self.table.item(row, self._COL_ID)
+        if item is None:
+            return ""
+        return str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "")
+
+    def _trace_mime_data(self, label: str) -> QtCore.QMimeData | None:
+        line = self.owner.lines.get(label)
+        source = self.owner if label == self.owner.label else getattr(line, "from_win", None)
+        if source is None:
+            return None
+
+        guid = getattr(source, "_guid", "")
+        param = getattr(source, "param", None)
+        parameter = getattr(param, "name", "")
+        if not guid or not parameter:
+            return None
+        return make_run_preview_mime(
+            guid,
+            parameter,
+            getattr(param, "depends_on_", ()),
+            )
+
+    def _table_item_changed(self, item: qtw.QTableWidgetItem) -> None:
+        if self._building or item.column() != self._COL_VISIBLE:
+            return
+
+        label = self._label_for_row(item.row())
+        if not label:
+            return
+
+        style = self.owner._trace_styles.setdefault(label, self.owner._TraceStyle())
+        style.visible = item.checkState() == QtCore.Qt.CheckState.Checked
+        line = self.owner.lines.get(label)
+        if line is not None:
+            self.owner._apply_trace_style(label, line)
+
+        preview_item = self.table.item(item.row(), self._COL_PREVIEW)
+        if preview_item is not None:
+            preview_item.setIcon(self._trace_icon(style))
+        if label in self._selected_labels():
+            self._sync_controls_from_selection()
+
     def _sync_controls_from_selection(self):
+        if self._building:
+            return
         labels = self._selected_labels()
         if not labels:
+            self.selection_summary.setText("No trace selected")
+            self._update_control_enabled_states(False)
             return
         style = self.owner._trace_styles[labels[0]]
         self._building = True
-        self.line_enable.setChecked(style.line_enabled); self.line_color.setCurrentText(style.line_color); self.line_width.setValue(style.line_width); self.line_style.setCurrentText(style.line_style)
-        self.dots_enable.setChecked(style.dots_enabled); self.dots_color.setCurrentText(style.dots_color); self.dots_size.setValue(style.dots_size)
-        self.marker_enable.setChecked(style.markers_enabled); self.marker_color.setCurrentText(style.markers_color); self.marker_symbol.setCurrentText(style.markers_symbol); self.marker_size.setValue(style.markers_size)
-        self.x_axis.setCurrentText(style.x_axis); self.y_axis.setCurrentText(style.y_axis); self.visible.setChecked(style.visible); self.order.setValue(style.order)
-        self._building = False
+        try:
+            self.line_enable.setChecked(style.line_enabled); self.line_color.setCurrentText(style.line_color); self.line_width.setValue(style.line_width); self.line_style.setCurrentText(style.line_style)
+            self.dots_enable.setChecked(style.dots_enabled); self.dots_color.setCurrentText(style.dots_color); self.dots_size.setValue(style.dots_size)
+            self.marker_enable.setChecked(style.markers_enabled); self.marker_color.setCurrentText(style.markers_color); self.marker_symbol.setCurrentText(style.markers_symbol); self.marker_size.setValue(style.markers_size)
+            self.x_axis.setCurrentText(style.x_axis); self.y_axis.setCurrentText(style.y_axis); self.visible.setChecked(style.visible)
+        finally:
+            self._building = False
+
+        if len(labels) == 1:
+            measurement = self.owner._trace_measurement_name(labels[0], self.owner.lines[labels[0]])
+            self.selection_summary.setText(f"Editing {measurement}")
+        else:
+            self.selection_summary.setText(f"Editing {len(labels)} traces")
+        self._update_control_enabled_states(True)
+
+    def _update_control_enabled_states(self, has_selection: bool) -> None:
+        for widget in self._selection_controls:
+            widget.setEnabled(has_selection)
+        for widget in self._line_controls:
+            widget.setEnabled(has_selection and self.line_enable.isChecked())
+        for widget in self._dots_controls:
+            widget.setEnabled(has_selection and self.dots_enable.isChecked())
+        for widget in self._marker_controls:
+            widget.setEnabled(has_selection and self.marker_enable.isChecked())
+        self._update_move_button_states()
+
+    def _update_move_button_states(self) -> None:
+        rows = self._selected_rows()
+        self.move_up_button.setEnabled(bool(rows) and rows[0] > 0)
+        self.move_down_button.setEnabled(
+            bool(rows) and rows[-1] < self.table.rowCount() - 1
+            )
 
     def _apply_selection(self, *_args):
         if self._building:
             return
+        self._update_control_enabled_states(bool(self._selected_labels()))
         for label in self._selected_labels():
             style = self.owner._trace_styles.setdefault(label, self.owner._TraceStyle())
             style.line_enabled = self.line_enable.isChecked(); style.line_color = self.line_color.currentText(); style.line_width = self.line_width.value(); style.line_style = self.line_style.currentText()
             style.dots_enabled = self.dots_enable.isChecked(); style.dots_color = self.dots_color.currentText(); style.dots_size = self.dots_size.value()
             style.markers_enabled = self.marker_enable.isChecked(); style.markers_color = self.marker_color.currentText(); style.markers_symbol = self.marker_symbol.currentText(); style.markers_size = self.marker_size.value()
-            style.x_axis = self.x_axis.currentText(); style.y_axis = self.y_axis.currentText(); style.visible = self.visible.isChecked(); style.order = self.order.value()
+            style.x_axis = self.x_axis.currentText(); style.y_axis = self.y_axis.currentText(); style.visible = self.visible.isChecked()
             line = self.owner.lines.get(label)
             if line is not None:
                 self.owner._apply_trace_style(label, line)
