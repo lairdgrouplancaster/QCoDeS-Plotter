@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -65,25 +65,22 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     _trace_styles: dict[str, _TraceStyle]
     _trace_appearance_dialog: "_TraceAppearanceDialog | None"
 
+    def _ensure_trace_styles(self) -> dict[str, _TraceStyle]:
+        styles = self.__dict__.get("_trace_styles")
+        if not isinstance(styles, dict):
+            styles = {}
+            self.__dict__["_trace_styles"] = styles
+        return cast(dict[str, Plot1DTraceMixin._TraceStyle], styles)
+
     def _register_main_line(self) -> None:
         """
         Keeps the main pyqtgraph line in the trace registry.
 
         """
-        trace_styles = self.__dict__.setdefault("_trace_styles", {})
-        trace_styles.setdefault(self.label, self._TraceStyle())
         line = self.__dict__.get("line")
-        if line is None:
-            return
-        if "lines" in self.__dict__:
+        if "lines" in self.__dict__ and line is not None:
             self.lines[self.label] = line
-        self._apply_trace_style(self.label, line)
-
-    def _set_main_line_color(self, color: QtGui.QColor) -> None:
-        trace_styles = self.__dict__.setdefault("_trace_styles", {})
-        style = trace_styles.setdefault(self.label, self._TraceStyle())
-        style.line_color = color.name()
-        self._apply_trace_style(self.label, self.__dict__.get("line"))
+        self._ensure_trace_styles().setdefault(self.label, self._TraceStyle())
 
     def initMenu(self) -> None:
         super().initMenu()
@@ -101,6 +98,13 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         trace_action = QtGui.QAction("Trace Appearance…", self)
         trace_action.triggered.connect(self.open_trace_appearance_dialog)
         view_menu.addAction(trace_action)
+
+    def _set_main_line_color(self, color: Any) -> None:
+        style = self._ensure_trace_styles().setdefault(self.label, self._TraceStyle())
+        style.line_color = color.name() if hasattr(color, "name") else str(color)
+        line = self.__dict__.get("line")
+        if line is not None:
+            self._apply_trace_style(self.label, line)
 
 
     def initAxes(self) -> None:
@@ -342,8 +346,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # Set display
         subplot.set_color(selected_box.color_box.color())
         subplot.set_side(selected_box.axis_side.currentText().lower())
-        trace_styles = self.__dict__.setdefault("_trace_styles", {})
-        style = trace_styles.setdefault(label, self._TraceStyle(order=len(trace_styles)))
+        styles = self._ensure_trace_styles()
+        style = styles.setdefault(label, self._TraceStyle(order=len(styles)))
         style.line_color = selected_box.color_box.color().name()
         style.y_axis = "Right" if selected_box.axis_side.currentText().lower() == "right" else "Left"
         self._apply_trace_style(label, subplot)
@@ -384,7 +388,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # Remove line from viewbox
         line = self.lines[label]
         self.lines.pop(label)
-        self.__dict__.get("_trace_styles", {}).pop(label, None)
+        self._trace_styles.pop(label, None)
         # Fetch correct viewbox to remove from
         vb = self.plot if side.lower() == "left" else self.right_vb
         vb.removeItem(line)
@@ -444,10 +448,10 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         return getattr(param, "name", str(label))
 
     def _apply_trace_style(self, label: str, line: Any) -> None:
+        styles = self._ensure_trace_styles()
+        style = styles.setdefault(label, self._TraceStyle(order=len(styles)))
         if line is None:
             return
-        trace_styles = self.__dict__.setdefault("_trace_styles", {})
-        style = trace_styles.setdefault(label, self._TraceStyle(order=len(trace_styles)))
         pen_style_map = {
             "Solid": QtCore.Qt.PenStyle.SolidLine,
             "Dash": QtCore.Qt.PenStyle.DashLine,
@@ -462,19 +466,14 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             )
         else:
             pen = None
-        symbol_color = style.markers_color if style.markers_enabled else style.dots_color
-        method_calls = [
-            ("setPen", pen),
-            ("setSymbolPen", pg.mkPen(symbol_color)),
-            ("setSymbolBrush", pg.mkBrush(symbol_color)),
-            ("setSymbolSize", style.markers_size if style.markers_enabled else style.dots_size),
-            ("setSymbol", style.markers_symbol if style.markers_enabled else ("o" if style.dots_enabled else None)),
-            ("setVisible", style.visible),
-        ]
-        for method_name, value in method_calls:
-            method = getattr(line, method_name, None)
-            if callable(method):
-                method(value)
+        line.setPen(pen)
+        line.setSymbolPen(pg.mkPen(style.markers_color if style.markers_enabled else style.dots_color))
+        line.setSymbolBrush(
+            pg.mkBrush(style.markers_color if style.markers_enabled else style.dots_color)
+        )
+        line.setSymbolSize(style.markers_size if style.markers_enabled else style.dots_size)
+        line.setSymbol(style.markers_symbol if style.markers_enabled else ("o" if style.dots_enabled else None))
+        line.setVisible(style.visible)
 
         target_side = "right" if style.y_axis == "Right" else "left"
         current_side = getattr(line, "side", "left")
@@ -488,8 +487,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
 
 class _TraceAppearanceDialog(qtw.QDialog):
-    _COLOR_CHOICES = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#000000"]
-
     def __init__(self, owner: Plot1DTraceMixin):
         super().__init__(owner)
         self.owner = owner
@@ -497,49 +494,31 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.resize(980, 460)
         self._building = False
         main = qtw.QHBoxLayout(self)
-        main.setContentsMargins(14, 14, 14, 14)
-        main.setSpacing(16)
         self.table = qtw.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["ID", "Preview", "Measurement", "Axis", "Order"])
-        self.table.setAlternatingRowColors(True)
-        self.table.setDragEnabled(True)
-        self.table.setDragDropMode(qtw.QAbstractItemView.DragDropMode.DragOnly)
         self.table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setMinimumWidth(520)
-        self.table.setShowGrid(False)
         self.table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
+        horizontal_header = self.table.horizontalHeader()
+        if horizontal_header is not None:
+            horizontal_header.setSectionResizeMode(2, qtw.QHeaderView.ResizeMode.Stretch)
         vertical_header = self.table.verticalHeader()
         if vertical_header is not None:
             vertical_header.setVisible(False)
-            vertical_header.setDefaultSectionSize(44)
-        header = self.table.horizontalHeader()
-        if header is not None:
-            header.setStretchLastSection(False)
-            header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.Fixed)
-            header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Fixed)
-            header.setSectionResizeMode(2, qtw.QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(3, qtw.QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(4, qtw.QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setColumnWidth(0, 54)
-        self.table.setColumnWidth(1, 98)
         self.table.itemSelectionChanged.connect(self._sync_controls_from_selection)
         main.addWidget(self.table, 5)
         panel = qtw.QWidget()
-        panel.setMinimumWidth(360)
         form = qtw.QFormLayout(panel)
-        form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(9)
+        colors = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#000000"]
         self.line_enable = qtw.QCheckBox("Line")
-        self.line_color = self._new_color_combo()
+        self.line_color = qtw.QComboBox(); self._add_color_items(self.line_color, colors)
         self.line_width = qtw.QDoubleSpinBox(); self.line_width.setRange(0.5, 15); self.line_width.setValue(2)
         self.line_style = qtw.QComboBox(); self.line_style.addItems(["Solid", "Dash", "Dot", "Dash Dot"])
         self.dots_enable = qtw.QCheckBox("Dots")
-        self.dots_color = self._new_color_combo()
+        self.dots_color = qtw.QComboBox(); self._add_color_items(self.dots_color, colors)
         self.dots_size = qtw.QDoubleSpinBox(); self.dots_size.setRange(1, 20)
         self.marker_enable = qtw.QCheckBox("Markers")
-        self.marker_color = self._new_color_combo()
+        self.marker_color = qtw.QComboBox(); self._add_color_items(self.marker_color, colors)
         self.marker_symbol = qtw.QComboBox(); self.marker_symbol.addItems(["o", "s", "t", "d", "+", "x"])
         self.marker_size = qtw.QDoubleSpinBox(); self.marker_size.setRange(1, 30); self.marker_size.setValue(10)
         self.x_axis = qtw.QComboBox(); self.x_axis.addItems(["Bottom"])
@@ -563,26 +542,33 @@ class _TraceAppearanceDialog(qtw.QDialog):
         ]:
             signal.connect(self._apply_selection)
 
-    def _new_color_combo(self) -> qtw.QComboBox:
-        combo = qtw.QComboBox()
-        for color in self._COLOR_CHOICES:
-            combo.addItem(QtGui.QIcon(self._color_swatch(color)), color)
-        return combo
+    def _add_color_items(self, combo: qtw.QComboBox, colors: list[str]) -> None:
+        for color in colors:
+            combo.addItem(self._color_icon(color), color)
 
-    def _color_swatch(self, color: str) -> QtGui.QPixmap:
-        pixmap = QtGui.QPixmap(18, 18)
+    def _color_icon(self, color: str) -> QtGui.QIcon:
+        pixmap = QtGui.QPixmap(28, 14)
         pixmap.fill(QtCore.Qt.GlobalColor.transparent)
         painter = QtGui.QPainter(pixmap)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        painter.setPen(QtGui.QPen(QtGui.QColor(95, 95, 95), 1))
-        painter.setBrush(QtGui.QColor(color))
-        painter.drawRoundedRect(QtCore.QRectF(2, 2, 14, 14), 2, 2)
+        painter.setPen(QtGui.QPen(QtGui.QColor("#444444")))
+        painter.setBrush(QtGui.QBrush(QtGui.QColor(color)))
+        painter.drawRoundedRect(1, 1, 26, 12, 2, 2)
         painter.end()
-        return pixmap
+        return QtGui.QIcon(pixmap)
+
+    def _trace_icon(self, style: Plot1DTraceMixin._TraceStyle) -> QtGui.QIcon:
+        pixmap = QtGui.QPixmap(42, 20)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pixmap)
+        pen = QtGui.QPen(QtGui.QColor(style.line_color))
+        pen.setWidthF(style.line_width)
+        painter.setPen(pen)
+        painter.drawLine(4, 10, 38, 10)
+        painter.end()
+        return QtGui.QIcon(pixmap)
 
     def refresh_rows(self):
         selected = set(self._selected_labels())
-        self._building = True
         self.table.setRowCount(0)
         for row, (label, line) in enumerate(self.owner.lines.items()):
             self.table.insertRow(row)
@@ -593,105 +579,23 @@ class _TraceAppearanceDialog(qtw.QDialog):
             axis_text = style.y_axis
             for col, value in enumerate([trace_id, preview, measurement, axis_text, str(style.order)]):
                 item = qtw.QTableWidgetItem(value)
-                item.setFlags(
-                    QtCore.Qt.ItemFlag.ItemIsSelectable
-                    | QtCore.Qt.ItemFlag.ItemIsEnabled
-                    )
-                if col in (0, 3, 4):
-                    item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, col, item)
+            self.table.setRowHeight(row, 44)
             preview_item = self.table.item(row, 1)
-            if preview_item is None:
-                continue
-            preview_item.setText("")
-            preview_item.setIcon(QtGui.QIcon(self._trace_preview_pixmap(style)))
-            preview_item.setSizeHint(QtCore.QSize(92, 34))
-            preview_item.setFlags(preview_item.flags() | QtCore.Qt.ItemFlag.ItemIsDragEnabled)
+            if preview_item is not None:
+                preview_item.setText("")
+                preview_item.setIcon(self._trace_icon(style))
+                preview_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                preview_item.setFlags(preview_item.flags() | QtCore.Qt.ItemFlag.ItemIsDragEnabled)
             label_item = self.table.item(row, 0)
             if label_item is not None:
                 label_item.setData(QtCore.Qt.ItemDataRole.UserRole, label)
-            self.table.setRowHeight(row, 44)
             if label in selected:
-                selection_model = self.table.selectionModel()
-                table_model = self.table.model()
-                if selection_model is not None and table_model is not None:
-                    selection_model.select(
-                        table_model.index(row, 0),
-                        QtCore.QItemSelectionModel.SelectionFlag.Select
-                        | QtCore.QItemSelectionModel.SelectionFlag.Rows,
-                        )
-        self._building = False
-        if self.table.rowCount() and not self._selected_labels():
+                self.table.selectRow(row)
+        self.table.resizeColumnsToContents()
+        if self.table.rowCount() and not selected:
             self.table.selectRow(0)
-
-    def _trace_preview_pixmap(self, style: Plot1DTraceMixin._TraceStyle) -> QtGui.QPixmap:
-        pixmap = QtGui.QPixmap(88, 30)
-        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
-        painter = QtGui.QPainter(pixmap)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        points = [
-            QtCore.QPointF(6, 21),
-            QtCore.QPointF(24, 9),
-            QtCore.QPointF(42, 15),
-            QtCore.QPointF(62, 7),
-            QtCore.QPointF(82, 18),
-        ]
-        if style.line_enabled:
-            pen = QtGui.QPen(QtGui.QColor(style.line_color), max(1.0, style.line_width))
-            style_map = {
-                "Dash": QtCore.Qt.PenStyle.DashLine,
-                "Dot": QtCore.Qt.PenStyle.DotLine,
-                "Dash Dot": QtCore.Qt.PenStyle.DashDotLine,
-            }
-            pen.setStyle(style_map.get(style.line_style, QtCore.Qt.PenStyle.SolidLine))
-            painter.setPen(pen)
-            for start, end in zip(points[:-1], points[1:], strict=True):
-                painter.drawLine(start, end)
-        if style.dots_enabled or style.markers_enabled:
-            color = QtGui.QColor(style.markers_color if style.markers_enabled else style.dots_color)
-            size = min(max(style.markers_size if style.markers_enabled else style.dots_size, 4.0), 11.0)
-            painter.setPen(QtGui.QPen(color, 1.4))
-            painter.setBrush(QtGui.QBrush(color))
-            symbol = style.markers_symbol if style.markers_enabled else "o"
-            for point in points:
-                self._draw_preview_marker(painter, point, size, symbol)
-        painter.end()
-        return pixmap
-
-    def _draw_preview_marker(
-            self,
-            painter: QtGui.QPainter,
-            center: QtCore.QPointF,
-            size: float,
-            symbol: str,
-            ) -> None:
-        half = size / 2
-        rect = QtCore.QRectF(center.x() - half, center.y() - half, size, size)
-        if symbol == "s":
-            painter.drawRect(rect)
-        elif symbol == "t":
-            painter.drawPolygon(QtGui.QPolygonF([
-                QtCore.QPointF(center.x(), center.y() - half),
-                QtCore.QPointF(center.x() - half, center.y() + half),
-                QtCore.QPointF(center.x() + half, center.y() + half),
-            ]))
-        elif symbol == "d":
-            painter.drawPolygon(QtGui.QPolygonF([
-                QtCore.QPointF(center.x(), center.y() - half),
-                QtCore.QPointF(center.x() - half, center.y()),
-                QtCore.QPointF(center.x(), center.y() + half),
-                QtCore.QPointF(center.x() + half, center.y()),
-            ]))
-        elif symbol in {"+", "x"}:
-            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-            if symbol == "+":
-                painter.drawLine(QtCore.QPointF(center.x() - half, center.y()), QtCore.QPointF(center.x() + half, center.y()))
-                painter.drawLine(QtCore.QPointF(center.x(), center.y() - half), QtCore.QPointF(center.x(), center.y() + half))
-            else:
-                painter.drawLine(QtCore.QPointF(center.x() - half, center.y() - half), QtCore.QPointF(center.x() + half, center.y() + half))
-                painter.drawLine(QtCore.QPointF(center.x() - half, center.y() + half), QtCore.QPointF(center.x() + half, center.y() - half))
-        else:
-            painter.drawEllipse(rect)
 
     def _selected_labels(self) -> list[str]:
         labels: list[str] = []
@@ -700,11 +604,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
             return labels
         for idx in selection_model.selectedRows():
             item = self.table.item(idx.row(), 0)
-            if item is None:
-                continue
-            label = item.data(QtCore.Qt.ItemDataRole.UserRole)
-            if isinstance(label, str):
-                labels.append(label)
+            if item is not None:
+                labels.append(item.data(QtCore.Qt.ItemDataRole.UserRole))
         return labels
 
     def _sync_controls_from_selection(self):
