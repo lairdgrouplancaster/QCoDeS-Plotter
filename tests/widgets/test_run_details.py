@@ -273,6 +273,37 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(heatmap.width(), 20)
         self.assertEqual(heatmap.height(), 20)
 
+    def test_heatmap_preview_downsamples_grid_by_averaging(self):
+        grid = np.array([
+            [0.0, 0.0],
+            [100.0, 100.0],
+            [0.0, 0.0],
+            [100.0, 100.0],
+            ])
+
+        display_grid = preview_module._prepare_heatmap_display_grid(grid, size=2)
+
+        np.testing.assert_allclose(display_grid, np.full((2, 2), 50.0))
+
+    def test_heatmap_preview_fills_small_rendering_gaps_only(self):
+        mostly_complete = np.arange(16, dtype=float).reshape(4, 4)
+        mostly_complete[1, 1] = np.nan
+        sparse = np.full((4, 4), np.nan)
+        sparse[0, 0] = 1.0
+        sparse[0, 1] = 2.0
+
+        filled = preview_module._prepare_heatmap_display_grid(
+            mostly_complete,
+            size=4,
+            )
+        sparse_display = preview_module._prepare_heatmap_display_grid(
+            sparse,
+            size=4,
+            )
+
+        self.assertTrue(np.isfinite(filled).all())
+        self.assertTrue(np.isnan(sparse_display[1:, :]).all())
+
     def test_generate_2d_preview_matches_full_plot_axis_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = os.path.join(temp_dir, "preview.db")

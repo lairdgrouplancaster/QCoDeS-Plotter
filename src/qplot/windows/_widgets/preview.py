@@ -18,6 +18,7 @@ MAX_PREVIEW_GRID_CELLS = 250000
 PREVIEW_SAMPLES_PER_CELL = 4
 PREVIEW_ROWID_CHUNK = 900
 PREVIEW_GRID_SAMPLE_MIN_COVERAGE = 0.9
+PREVIEW_FILL_EMPTY_MIN_COVERAGE = 0.75
 PREVIEW_REMAINING_PRIORITY = 0
 PREVIEW_VISIBLE_PRIORITY = 50
 PREVIEW_SELECTED_PRIORITY = 100
@@ -811,6 +812,7 @@ def render_heatmap_grid_preview(grid, size=PREVIEW_SIZE):
     if grid.size == 0 or np.all(np.isnan(grid)):
         return image
 
+    grid = _prepare_heatmap_display_grid(grid, size)
     rgb = _viridis_rgb(grid)
     rgb = np.flipud(rgb)
     rgb_bytes = rgb.tobytes()
@@ -1045,6 +1047,63 @@ def _fill_empty_heatmap_bins(grid):
                 )
 
     return filled
+
+
+def _prepare_heatmap_display_grid(grid, size):
+    grid = np.asarray(grid, dtype=float)
+    if grid.size == 0:
+        return grid
+
+    if _finite_fraction(grid) >= PREVIEW_FILL_EMPTY_MIN_COVERAGE:
+        grid = _fill_empty_heatmap_bins(grid)
+
+    rows, columns = grid.shape
+    target_rows = min(max(1, int(size)), rows)
+    target_columns = min(max(1, int(size)), columns)
+
+    if rows > target_rows:
+        grid = _downsample_heatmap_axis(grid, target_rows, axis=0)
+    if columns > target_columns:
+        grid = _downsample_heatmap_axis(grid, target_columns, axis=1)
+
+    return grid
+
+
+def _downsample_heatmap_axis(grid, target_count, axis):
+    grid = np.asarray(grid, dtype=float)
+    axis_length = grid.shape[axis]
+    target_count = max(1, min(int(target_count), axis_length))
+    if target_count == axis_length:
+        return grid
+
+    parts = np.array_split(np.arange(axis_length), target_count)
+    if axis == 0:
+        out = np.full((target_count, grid.shape[1]), np.nan, dtype=float)
+        for index, part in enumerate(parts):
+            out[index, :] = _nanmean_no_warning(grid[part, :], axis=0)
+    else:
+        out = np.full((grid.shape[0], target_count), np.nan, dtype=float)
+        for index, part in enumerate(parts):
+            out[:, index] = _nanmean_no_warning(grid[:, part], axis=1)
+
+    return out
+
+
+def _nanmean_no_warning(values, axis):
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(values)
+    count = np.sum(finite, axis=axis)
+    total = np.nansum(values, axis=axis)
+    out = np.full(total.shape, np.nan, dtype=float)
+    np.divide(total, count, out=out, where=count > 0)
+    return out
+
+
+def _finite_fraction(values):
+    values = np.asarray(values)
+    if values.size == 0:
+        return 0.0
+    return float(np.count_nonzero(np.isfinite(values))) / float(values.size)
 
 
 def _preview_bin_shape(grid_shape, size, max_cells):
