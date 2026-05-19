@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         make_ds: Any
         mergable: Any
         option_boxes: list[Any]
+        param: Any
         plot: Any
         remove_dataset: Any
         right_vb: Any
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
         vb: Any
 
         def initAxes(self) -> None: ...
+
+        def initMenu(self) -> None: ...
 
         def closeEvent(self, event: object) -> None: ...
 else:
@@ -59,6 +62,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
     """Trace controls and secondary-axis handling for 1D plot windows."""
 
+    _trace_styles: dict[str, _TraceStyle]
+    _trace_appearance_dialog: "_TraceAppearanceDialog | None"
+
     def _register_main_line(self) -> None:
         """
         Keeps the main pyqtgraph line in the trace registry.
@@ -82,7 +88,10 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def initMenu(self) -> None:
         super().initMenu()
         view_menu = None
-        for action in self.menuBar().actions():
+        menu_bar = self.menuBar()
+        if menu_bar is None:
+            return
+        for action in menu_bar.actions():
             if action.text().replace("&", "") == "View":
                 view_menu = action.menu()
                 break
@@ -500,15 +509,18 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(44)
+        vertical_header = self.table.verticalHeader()
+        if vertical_header is not None:
+            vertical_header.setVisible(False)
+            vertical_header.setDefaultSectionSize(44)
         header = self.table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(2, qtw.QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, qtw.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, qtw.QHeaderView.ResizeMode.ResizeToContents)
+        if header is not None:
+            header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(2, qtw.QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(3, qtw.QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(4, qtw.QHeaderView.ResizeMode.ResizeToContents)
         self.table.setColumnWidth(0, 54)
         self.table.setColumnWidth(1, 98)
         self.table.itemSelectionChanged.connect(self._sync_controls_from_selection)
@@ -589,18 +601,25 @@ class _TraceAppearanceDialog(qtw.QDialog):
                     item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, col, item)
             preview_item = self.table.item(row, 1)
+            if preview_item is None:
+                continue
             preview_item.setText("")
             preview_item.setIcon(QtGui.QIcon(self._trace_preview_pixmap(style)))
             preview_item.setSizeHint(QtCore.QSize(92, 34))
             preview_item.setFlags(preview_item.flags() | QtCore.Qt.ItemFlag.ItemIsDragEnabled)
-            self.table.item(row, 0).setData(QtCore.Qt.ItemDataRole.UserRole, label)
+            label_item = self.table.item(row, 0)
+            if label_item is not None:
+                label_item.setData(QtCore.Qt.ItemDataRole.UserRole, label)
             self.table.setRowHeight(row, 44)
             if label in selected:
-                self.table.selectionModel().select(
-                    self.table.model().index(row, 0),
-                    QtCore.QItemSelectionModel.SelectionFlag.Select
-                    | QtCore.QItemSelectionModel.SelectionFlag.Rows,
-                    )
+                selection_model = self.table.selectionModel()
+                table_model = self.table.model()
+                if selection_model is not None and table_model is not None:
+                    selection_model.select(
+                        table_model.index(row, 0),
+                        QtCore.QItemSelectionModel.SelectionFlag.Select
+                        | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+                        )
         self._building = False
         if self.table.rowCount() and not self._selected_labels():
             self.table.selectRow(0)
@@ -675,10 +694,17 @@ class _TraceAppearanceDialog(qtw.QDialog):
             painter.drawEllipse(rect)
 
     def _selected_labels(self) -> list[str]:
-        labels = []
-        for idx in self.table.selectionModel().selectedRows():
+        labels: list[str] = []
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return labels
+        for idx in selection_model.selectedRows():
             item = self.table.item(idx.row(), 0)
-            labels.append(item.data(QtCore.Qt.ItemDataRole.UserRole))
+            if item is None:
+                continue
+            label = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if isinstance(label, str):
+                labels.append(label)
         return labels
 
     def _sync_controls_from_selection(self):

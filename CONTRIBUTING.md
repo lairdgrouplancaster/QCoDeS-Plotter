@@ -62,11 +62,19 @@ macOS/Linux:
 ./.venv-mac/bin/python -m pytest
 ```
 
-Some local checkouts keep `.venv` next to the repository rather than inside it.
-In that layout, use:
+Some local checkouts keep the virtual environment next to the repository rather
+than inside it. In that layout, use:
+
+Windows:
 
 ```console
 ..\.venv\Scripts\python.exe -m pytest
+```
+
+macOS/Linux:
+
+```console
+../.venv-mac/bin/python -m pytest
 ```
 
 ## Checks
