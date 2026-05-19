@@ -51,6 +51,7 @@ def iter_run_detail_batches_via_sql(
         batch_size=1,
         infer_missing_shapes=True,
         include_storage_bytes=True,
+        include_storage_estimate=False,
         include_read_setpoint_count=True,
         ):
     """
@@ -79,9 +80,50 @@ def iter_run_detail_batches_via_sql(
                 include_details=True,
                 infer_missing_shapes=infer_missing_shapes,
                 include_storage_bytes=include_storage_bytes,
+                include_storage_estimate=include_storage_estimate,
                 include_read_setpoint_count=include_read_setpoint_count,
                 )
             yield rows or {}
+    finally:
+        conn.close()
+
+
+def iter_run_shape_batches_via_sql(database_path, run_ids, batch_size=1):
+    """
+    Yield setpoint-shape metadata for runs that need result-table inference.
+
+    This can require COUNT(DISTINCT ...) scans on result columns, so it runs
+    after cheap row counts are visible.
+
+    """
+    run_ids = [run_id for run_id in run_ids if run_id is not None]
+    if not run_ids:
+        return
+
+    batch_size = max(1, int(batch_size or 1))
+    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    try:
+        cursor = conn.cursor()
+        for offset in range(0, len(run_ids), batch_size):
+            batch = run_ids[offset:offset + batch_size]
+            placeholders = ", ".join("?" for _ in batch)
+            rows = _fetch_run_rows(
+                cursor,
+                f"WHERE runs.run_id IN ({placeholders})",
+                tuple(batch),
+                empty_as_none=False,
+                include_details=True,
+                infer_missing_shapes=True,
+                include_storage_bytes=False,
+                include_read_setpoint_count=False,
+                )
+            rows = {
+                run_id: metadata
+                for run_id, metadata in (rows or {}).items()
+                if metadata.get("setpoint_shape") or metadata.get("point_shape")
+                }
+            if rows:
+                yield rows
     finally:
         conn.close()
 
@@ -169,6 +211,7 @@ def _fetch_run_rows(
         include_details=True,
         infer_missing_shapes=True,
         include_storage_bytes=True,
+        include_storage_estimate=False,
         include_read_setpoint_count=True,
         storage_bytes_by_table=None,
         ):
@@ -215,6 +258,7 @@ def _fetch_run_rows(
                 metadata,
                 infer_missing_shapes=infer_missing_shapes,
                 include_storage_bytes=include_storage_bytes,
+                include_storage_estimate=include_storage_estimate,
                 include_read_setpoint_count=include_read_setpoint_count,
                 storage_bytes_by_table=storage_bytes_by_table,
                 )
@@ -251,6 +295,7 @@ def _add_run_detail_fields(
         metadata,
         infer_missing_shapes=True,
         include_storage_bytes=True,
+        include_storage_estimate=False,
         include_read_setpoint_count=True,
         storage_bytes_by_table=None,
         ):
@@ -261,15 +306,14 @@ def _add_run_detail_fields(
     metadata["result_count"] = _result_count(cursor, metadata.get("result_table_name"))
     expected_results = metadata.get("expected_results")
     if infer_missing_shapes and not metadata["point_shape"]:
-        metadata["setpoint_shape"] = _setpoint_shape_from_result_table(
+        setpoint_shape = _setpoint_shape_from_result_table(
             cursor,
             metadata.get("result_table_name"),
             sweep_parameters,
             )
-        metadata["point_shape"] = _point_shape_from_result_table(
-            cursor,
-            metadata.get("result_table_name"),
-            sweep_parameters,
+        metadata["setpoint_shape"] = setpoint_shape
+        metadata["point_shape"] = _point_shape_from_setpoint_shape(
+            setpoint_shape,
             measure_parameters,
             metadata["result_count"],
             )
@@ -294,7 +338,17 @@ def _add_run_detail_fields(
         if storage_bytes_by_table is not None:
             metadata["storage_bytes"] = storage_bytes_by_table.get(table_name)
         else:
-            metadata["storage_bytes"] = _table_storage_bytes(cursor, table_name)
+            metadata["storage_bytes"] = _table_storage_bytes(
+                cursor,
+                table_name,
+                result_count=metadata.get("result_count"),
+                )
+    elif include_storage_estimate:
+        metadata["storage_bytes"] = _estimated_table_storage_bytes(
+            cursor,
+            metadata.get("result_table_name"),
+            result_count=metadata.get("result_count"),
+            )
 
 
 def _json_dict(value):
@@ -444,6 +498,10 @@ def _point_shape_from_result_table(
     result_count=None,
 ):
     shape = _setpoint_shape_from_result_table(cursor, table_name, sweep_parameters)
+    return _point_shape_from_setpoint_shape(shape, measure_parameters, result_count)
+
+
+def _point_shape_from_setpoint_shape(shape, measure_parameters=None, result_count=None):
     if not shape:
         return None
 
@@ -543,7 +601,7 @@ def _sqlite_identifier(name):
     return f'"{str(name).replace(chr(34), chr(34) * 2)}"'
 
 
-def _table_storage_bytes(cursor, table_name):
+def _table_storage_bytes(cursor, table_name, result_count=None):
     if not table_name:
         return None
 
@@ -551,9 +609,19 @@ def _table_storage_bytes(cursor, table_name):
         cursor.execute("SELECT SUM(pgsize) FROM dbstat WHERE name = ?", (table_name, ))
         value = cursor.fetchone()[0]
     except Exception:
-        return _estimated_table_storage_bytes(cursor, table_name)
+        return _estimated_table_storage_bytes(
+            cursor,
+            table_name,
+            result_count=result_count,
+            )
 
-    return int(value) if value is not None else None
+    if value is None:
+        return _estimated_table_storage_bytes(
+            cursor,
+            table_name,
+            result_count=result_count,
+            )
+    return int(value)
 
 
 def _run_storage_tables(cursor, run_ids):
@@ -584,12 +652,21 @@ def _run_storage_tables(cursor, run_ids):
 
 
 def _table_storage_bytes_by_name(cursor, table_names):
-    table_names = {name for name in table_names if name}
+    table_names = sorted({name for name in table_names if name})
     if not table_names:
         return {}
 
+    placeholders = ", ".join("?" for _ in table_names)
     try:
-        cursor.execute("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name")
+        cursor.execute(
+            f"""
+            SELECT name, SUM(pgsize)
+            FROM dbstat
+            WHERE name IN ({placeholders})
+            GROUP BY name
+            """,
+            tuple(table_names),
+            )
     except Exception:
         return {}
 
@@ -605,7 +682,10 @@ def _table_storage_bytes_by_name(cursor, table_names):
     return sizes
 
 
-def _estimated_table_storage_bytes(cursor, table_name):
+def _estimated_table_storage_bytes(cursor, table_name, result_count=None):
+    if not table_name:
+        return None
+
     quoted_table_name = _sqlite_identifier(table_name)
     try:
         cursor.execute(f"PRAGMA table_info({quoted_table_name})")
@@ -616,33 +696,29 @@ def _estimated_table_storage_bytes(cursor, table_name):
     if not columns:
         return None
 
-    numeric_bytes_per_row = 0
-    variable_columns = []
-    for column in columns:
-        column_name = column[1]
-        column_type = str(column[2] or "").upper()
-        if any(type_name in column_type for type_name in ("INT", "REAL", "FLOA", "DOUB", "NUM")):
-            numeric_bytes_per_row += 8
-        else:
-            variable_columns.append(column_name)
-
-    variable_terms = [
-        f"COALESCE(length(CAST({_sqlite_identifier(column)} AS BLOB)), 0)"
-        for column in variable_columns
-        ]
-    variable_expression = " + ".join(variable_terms) if variable_terms else "0"
-
     try:
-        cursor.execute(f"""
-          SELECT
-              COUNT(*) * ? + COALESCE(SUM({variable_expression}), 0)
-          FROM {quoted_table_name}
-        """, (numeric_bytes_per_row + len(columns) + 2, ))
-        value = cursor.fetchone()[0]
-    except Exception:
+        row_count = int(result_count)
+    except (TypeError, ValueError):
+        row_count = None
+
+    if row_count is None:
+        row_count = _result_count(cursor, table_name)
+
+    if row_count is None:
         return None
 
-    return int(value) if value is not None else None
+    return max(0, row_count) * _estimated_table_row_bytes(columns)
+
+
+def _estimated_table_row_bytes(columns):
+    row_bytes = len(columns) + 2
+    for column in columns:
+        column_type = str(column[2] or "").upper()
+        if any(type_name in column_type for type_name in ("INT", "REAL", "FLOA", "DOUB", "NUM")):
+            row_bytes += 8
+        else:
+            row_bytes += 32
+    return row_bytes
 
 
 def get_run_status(guid):

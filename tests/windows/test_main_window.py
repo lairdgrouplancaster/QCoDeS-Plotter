@@ -879,6 +879,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.scrolled = False
             self.watching = ["old"]
             self.maxTime = 9
+            self.selected_ids = [8]
+            self.visible_ids = [9, 7, 6]
 
         def clearSelection(self):
             self.selection_cleared = True
@@ -894,6 +896,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         def topLevelItemCount(self):
             return len(self.runs)
+
+        def selected_run_ids(self):
+            return list(self.selected_ids)
+
+        def visible_run_ids(self):
+            return list(self.visible_ids)
 
     class Preview:
         def __init__(self):
@@ -953,6 +961,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             main_window.MainWindow._empty_database_refresh_status
             )
         _main_refresh_interval = main_window.MainWindow._main_refresh_interval
+        _database_detail_priority_run_ids = (
+            main_window.MainWindow._database_detail_priority_run_ids
+            )
 
         def __init__(self):
             self._database_load_generation = 2
@@ -1041,6 +1052,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         self.assertEqual(harness.RunList.updated_runs, [runs])
         self.assertEqual(harness.infoBox.preview.added_runs, [(runs, False)])
         self.assertEqual(harness.refreshed_runs, [runs])
+
+    def test_database_detail_priority_uses_explicit_selected_and_visible_runs(self):
+        harness = self.Harness()
+        priority = harness._database_detail_priority_run_ids(run_ids=[7, 8])
+
+        self.assertEqual(priority, [7, 8, 9, 6])
 
     def test_cancel_database_load_cancels_worker_and_restores_previous_view(self):
         previous_runs = {5: {"guid": "guid-5", "run_timestamp": 123.0}}
@@ -1749,6 +1766,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
     def test_database_detail_worker_emits_incremental_batches(self):
         old_iter_details = database_module.iter_run_detail_batches_via_sql
+        old_iter_shapes = database_module.iter_run_shape_batches_via_sql
         old_iter_storage = database_module.iter_run_storage_batches_via_sql
         calls = []
 
@@ -1758,6 +1776,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 batch_size=1,
                 infer_missing_shapes=True,
                 include_storage_bytes=True,
+                include_storage_estimate=False,
                 include_read_setpoint_count=True,
                 ):
             calls.append((
@@ -1766,17 +1785,24 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 batch_size,
                 infer_missing_shapes,
                 include_storage_bytes,
+                include_storage_estimate,
                 include_read_setpoint_count,
                 ))
-            yield {2: {"guid": "guid-2", "result_count": 20}}
+            yield {2: {"guid": "guid-2", "result_count": 20, "storage_bytes": 1000}}
             yield {1: {"guid": "guid-1", "result_count": 10}}
+
+        def iter_shapes(database_path, run_ids, batch_size=1):
+            calls.append(("shapes", database_path, run_ids, batch_size))
+            if 1 in run_ids:
+                yield {1: {"guid": "guid-1", "setpoint_shape": [10], "setpoint_count": 10}}
 
         def iter_storage(database_path, run_ids, batch_size=25):
             calls.append(("storage", database_path, run_ids, batch_size))
-            return
-            yield
+            if 1 in run_ids:
+                yield {1: {"guid": "guid-1", "storage_bytes": 2000}}
 
         database_module.iter_run_detail_batches_via_sql = iter_details
+        database_module.iter_run_shape_batches_via_sql = iter_shapes
         database_module.iter_run_storage_batches_via_sql = iter_storage
         try:
             worker = main_window.DatabaseDetailWorker(
@@ -1791,25 +1817,35 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker.signals.status.connect(lambda *args: statuses.append(args))
             worker.signals.batch_ready.connect(lambda *args: batches.append(args))
             worker.signals.finished.connect(lambda *args: finished.append(args))
+            worker.prioritize_run_ids([1])
 
             worker.run()
         finally:
             database_module.iter_run_detail_batches_via_sql = old_iter_details
+            database_module.iter_run_shape_batches_via_sql = old_iter_shapes
             database_module.iter_run_storage_batches_via_sql = old_iter_storage
 
         self.assertEqual(calls, [
-            ("details.db", [2, 1], 1, False, False, False),
-            ("storage", "details.db", [2, 1], 25),
+            ("details.db", [2, 1], 1, False, False, True, False),
+            ("shapes", "details.db", [1], 1),
+            ("shapes", "details.db", [2], 1),
+            ("storage", "details.db", [1, 2], 25),
             ])
         self.assertEqual(batches, [
-            (11, "details.db", {2: {"guid": "guid-2", "result_count": 20}}),
+            (11, "details.db", {2: {"guid": "guid-2", "result_count": 20, "storage_bytes": 1000}}),
             (11, "details.db", {1: {"guid": "guid-1", "result_count": 10}}),
+            (11, "details.db", {1: {"guid": "guid-1", "setpoint_shape": [10], "setpoint_count": 10}}),
+            (11, "details.db", {1: {"guid": "guid-1", "storage_bytes": 2000}}),
             ])
         self.assertEqual(statuses, [
             (11, "Loading run details... 0/2"),
             (11, "Loading run details... 1/2"),
             (11, "Loading run details... 2/2"),
-            (11, "Loading run sizes..."),
+            (11, "Loading setpoint shapes... 0/2"),
+            (11, "Loading setpoint shapes... 1/2"),
+            (11, "Loading setpoint shapes... 2/2"),
+            (11, "Loading exact run sizes... 0/2"),
+            (11, "Loading exact run sizes... 2/2"),
             ])
         self.assertEqual(finished, [(11, "details.db", None)])
 

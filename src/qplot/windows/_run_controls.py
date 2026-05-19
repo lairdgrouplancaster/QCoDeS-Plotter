@@ -151,6 +151,9 @@ class RunControlsMixin:
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
         self.RunList.previewExportRequested.connect(self.export_run_preview_csv)
+        self.RunList.verticalScrollBar().valueChanged.connect(
+            lambda _: self._prioritize_database_detail_runs()
+            )
 
         self.infoBox = moreInfo(preview_size=self.preview_size)
         self.infoBox.preview.plotRequested.connect(self.open_preview_plot)

@@ -154,6 +154,81 @@ class RunSizeTestCase(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_background_detail_rows_can_include_cheap_storage_estimate(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE experiments (
+                    exp_id INTEGER,
+                    name TEXT,
+                    sample_name TEXT
+                )
+                """
+                )
+            cursor.execute(
+                """
+                CREATE TABLE runs (
+                    run_id INTEGER,
+                    exp_id INTEGER,
+                    name TEXT,
+                    run_timestamp REAL,
+                    completed_timestamp REAL,
+                    is_completed INTEGER,
+                    guid TEXT,
+                    result_table_name TEXT,
+                    parameters TEXT,
+                    run_description TEXT
+                )
+                """
+                )
+            cursor.execute("CREATE TABLE results_1 (x REAL, y REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results_1 VALUES (?, ?, ?)",
+                [
+                    (0.0, 0.0, 1.0),
+                    (0.0, 1.0, 2.0),
+                    (1.0, 0.0, 3.0),
+                    (1.0, 1.0, 4.0),
+                    ]
+                )
+            run_description = json.dumps({
+                "interdependencies_": {
+                    "dependencies": {
+                        "signal": ["x", "y"],
+                        }
+                    },
+                })
+            cursor.execute(
+                """
+                INSERT INTO runs VALUES (
+                    1, 1, 'run', 100.0, 110.0, 1, 'guid',
+                    'results_1', 'x,y,signal', ?
+                )
+                """,
+                (run_description, )
+                )
+
+            statements = []
+            conn.set_trace_callback(statements.append)
+            runs = readSQL._fetch_run_rows(
+                cursor,
+                empty_as_none=False,
+                infer_missing_shapes=False,
+                include_storage_bytes=False,
+                include_storage_estimate=True,
+                include_read_setpoint_count=False,
+                )
+            conn.set_trace_callback(None)
+
+            self.assertEqual(runs[1]["result_count"], 4)
+            self.assertEqual(runs[1]["storage_bytes"], 116)
+            self.assertFalse(any("DBSTAT" in statement.upper() for statement in statements))
+            self.assertFalse(any("SUM(" in statement.upper() for statement in statements))
+        finally:
+            conn.close()
+
     def test_fetch_run_rows_includes_keyboard_interrupt_metadata(self):
         conn = sqlite3.connect(":memory:")
         try:

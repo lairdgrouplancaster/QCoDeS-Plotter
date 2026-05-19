@@ -820,6 +820,7 @@ class DatabaseActionsMixin:
 
         worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=10)
         self._database_detail_worker = worker
+        worker.prioritize_run_ids(self._database_detail_priority_run_ids())
         worker.signals.status.connect(self.database_detail_status)
         worker.signals.batch_ready.connect(self.database_detail_batch_ready)
         worker.signals.finished.connect(self.database_detail_finished)
@@ -829,6 +830,7 @@ class DatabaseActionsMixin:
             self.databaseLoadThreadPool,
             )
         thread_pool.start(worker)
+        QtCore.QTimer.singleShot(0, self._prioritize_database_detail_runs)
 
 
     def _database_detail_run_order(self, runs):
@@ -839,6 +841,55 @@ class DatabaseActionsMixin:
                 return 0
 
         return sorted((runs or {}).keys(), key=sort_key, reverse=True)
+
+
+    def _prioritize_database_detail_runs(self, run_ids=None):
+        if not getattr(self, "_database_detail_active", False):
+            return
+
+        worker = getattr(self, "_database_detail_worker", None)
+        if worker is None or not hasattr(worker, "prioritize_run_ids"):
+            return
+
+        worker.prioritize_run_ids(
+            self._database_detail_priority_run_ids(run_ids=run_ids)
+            )
+
+
+    def _database_detail_priority_run_ids(self, run_ids=None):
+        priority_ids = []
+        seen = set()
+
+        def add(candidate):
+            if candidate is None:
+                return
+            try:
+                key = int(candidate)
+            except (TypeError, ValueError):
+                key = candidate
+            if key in seen:
+                return
+            priority_ids.append(candidate)
+            seen.add(key)
+
+        if isinstance(run_ids, (list, tuple, set)):
+            for run_id in run_ids:
+                add(run_id)
+        else:
+            add(run_ids)
+
+        run_list = getattr(self, "RunList", None)
+        selected_run_ids = getattr(run_list, "selected_run_ids", None)
+        if callable(selected_run_ids):
+            for run_id in selected_run_ids():
+                add(run_id)
+
+        visible_run_ids = getattr(run_list, "visible_run_ids", None)
+        if callable(visible_run_ids):
+            for run_id in visible_run_ids():
+                add(run_id)
+
+        return priority_ids
 
 
     @QtCore.pyqtSlot(int, str)

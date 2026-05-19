@@ -149,6 +149,9 @@ class PlotActionsMixin:
             return
 
         self.selected_run_id = self.ds.run_id
+        prioritize_details = getattr(self, "_prioritize_database_detail_runs", None)
+        if callable(prioritize_details):
+            prioritize_details([self.selected_run_id])
         self.run_idBox.blockSignals(True)
         self.run_idBox.setText(str(self.ds.run_id))
         self.run_idBox.blockSignals(False)

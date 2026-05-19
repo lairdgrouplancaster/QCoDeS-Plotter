@@ -442,6 +442,58 @@ class RunList(qtw.QTreeWidget):
         return runs
 
 
+    def visible_run_ids(self, limit=50):
+        viewport_rect = self.viewport().rect()
+        run_ids = []
+        for index in range(self.topLevelItemCount()):
+            item = self.topLevelItem(index)
+            if item is None:
+                continue
+
+            rect = self.visualItemRect(item)
+            if not rect.isValid():
+                continue
+            if rect.bottom() < viewport_rect.top():
+                continue
+            if rect.top() > viewport_rect.bottom():
+                if run_ids:
+                    break
+                continue
+
+            run_id = self._item_run_id(item)
+            if run_id is None:
+                continue
+            run_ids.append(run_id)
+            if len(run_ids) >= limit:
+                break
+        return run_ids
+
+
+    def selected_run_ids(self):
+        run_ids = []
+        for item in self.selectedItems():
+            if isinstance(item, SortableTreeWidgetItem):
+                run_id = self._item_run_id(item)
+                if run_id is not None:
+                    run_ids.append(run_id)
+        return run_ids
+
+
+    def run_id_for_guid(self, guid):
+        item = self._item_for_guid(guid)
+        if item is None:
+            return None
+        return self._item_run_id(item)
+
+
+    def _item_run_id(self, item):
+        try:
+            return int(item.text(0))
+        except (TypeError, ValueError):
+            text = item.text(0)
+            return text if text else None
+
+
     def checkWatching(self):
         """
         Check unfinished runs within table and sets finish time if completed.
