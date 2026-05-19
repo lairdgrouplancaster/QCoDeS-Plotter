@@ -2,8 +2,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pyqtgraph as pg
-from PyQt6 import QtCore
-from PyQt6 import QtGui
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._subplots import subplot1d
@@ -505,7 +504,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         form.addRow(self.marker_enable); form.addRow("Marker color", self.marker_color); form.addRow("Marker symbol", self.marker_symbol); form.addRow("Marker size", self.marker_size)
         form.addRow("Horizontal axis", self.x_axis); form.addRow("Vertical axis", self.y_axis); form.addRow(self.visible); form.addRow("Plot order", self.order)
         main.addWidget(panel, 4)
-        for widget, signal in [
+        for _widget, signal in [
             (self.line_enable, self.line_enable.toggled), (self.line_color, self.line_color.currentTextChanged),
             (self.line_width, self.line_width.valueChanged), (self.line_style, self.line_style.currentTextChanged),
             (self.dots_enable, self.dots_enable.toggled), (self.dots_color, self.dots_color.currentTextChanged),
