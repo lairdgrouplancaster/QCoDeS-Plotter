@@ -19,7 +19,10 @@ from qplot.datahandling.readonly import (
     set_qcodes_database_location,
     sqlite_read_only_connection,
 )
-from qplot.datahandling.readSQL import get_runs_basic_via_sql
+from qplot.datahandling.readSQL import (
+    get_runs_basic_via_sql,
+    iter_run_detail_batches_via_sql,
+)
 from qplot.diagnostics import log_exception
 
 DATABASE_ACCESS_TIMEOUT_SECONDS = 3
@@ -384,6 +387,16 @@ class DatabaseLoadSignals(QtCore.QObject):
     finished = QtCore.pyqtSignal(int, str, object, object)
 
 
+class DatabaseDetailSignals(QtCore.QObject):
+    """
+    Signals emitted by progressive run-detail loading.
+
+    """
+    status = QtCore.pyqtSignal(int, str)
+    batch_ready = QtCore.pyqtSignal(int, str, object)
+    finished = QtCore.pyqtSignal(int, str, object)
+
+
 class DatabaseLoadWorker(QtCore.QRunnable):
     """
     Loads database metadata away from the GUI thread.
@@ -498,6 +511,101 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             status_callback=self._emit_status,
             cancelled_callback=self._is_cancelled,
             )
+
+
+class DatabaseDetailWorker(QtCore.QRunnable):
+    """
+    Loads expensive per-run metadata after the basic run table is visible.
+
+    """
+
+    def __init__(self, generation, database_path, run_ids, batch_size=1):
+        super().__init__()
+        self.signals = DatabaseDetailSignals()
+        self.generation = generation
+        self.database_path = database_path
+        self.run_ids = list(run_ids or [])
+        self.batch_size = max(1, int(batch_size or 1))
+        self._cancelled = threading.Event()
+
+
+    def cancel(self):
+        self._cancelled.set()
+
+
+    def run(self):
+        total = len(self.run_ids)
+        completed = 0
+        try:
+            if total == 0 or self._is_cancelled():
+                self._emit_finished(None)
+                return
+
+            self._emit_status(f"Loading run details... 0/{total}")
+            for details in iter_run_detail_batches_via_sql(
+                    self.database_path,
+                    self.run_ids,
+                    batch_size=self.batch_size,
+                    ):
+                if self._is_cancelled():
+                    return
+
+                completed += len(details)
+                if details:
+                    self._emit_batch_ready(details)
+                self._emit_status(
+                    f"Loading run details... {min(completed, total)}/{total}"
+                    )
+
+                if self._is_cancelled():
+                    return
+        except Exception as err:
+            log_exception("Database detail worker failed", err, __name__)
+            self._emit_finished(err)
+            return
+
+        self._emit_finished(None)
+
+
+    def _is_cancelled(self):
+        return self._cancelled.is_set()
+
+
+    def _emit_status(self, message):
+        try:
+            self.signals.status.emit(self.generation, message)
+        except RuntimeError as err:
+            if not self._qt_signal_was_deleted(err):
+                raise
+
+
+    def _emit_batch_ready(self, details):
+        try:
+            self.signals.batch_ready.emit(
+                self.generation,
+                self.database_path,
+                details,
+                )
+        except RuntimeError as err:
+            if not self._qt_signal_was_deleted(err):
+                raise
+
+
+    def _emit_finished(self, error):
+        try:
+            self.signals.finished.emit(
+                self.generation,
+                self.database_path,
+                error,
+                )
+        except RuntimeError as err:
+            if not self._qt_signal_was_deleted(err):
+                raise
+
+
+    def _qt_signal_was_deleted(self, err):
+        message = str(err)
+        return "wrapped C/C++ object" in message and "has been deleted" in message
 
 
 def database_info_report(database_path):

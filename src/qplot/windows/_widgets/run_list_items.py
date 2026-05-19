@@ -1,7 +1,7 @@
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from ._run_formatting import run_tooltip_text
+from ._run_formatting import one_dimensional_duplicate_point_count, run_tooltip_text
 from .preview import DraggablePreviewImageLabel
 
 MEASUREMENT_PREVIEW_SIZE = 22
@@ -238,6 +238,10 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
                 continue
 
             _, right = sections
+            if right is None:
+                right = one_dimensional_duplicate_point_count(
+                    getattr(item, "run_metadata", {})
+                    )
             if right is None:
                 continue
 

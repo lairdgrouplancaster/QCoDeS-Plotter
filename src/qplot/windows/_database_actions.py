@@ -10,6 +10,7 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from qplot.datahandling import find_new_runs
 from qplot.datahandling.database import (
     DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
+    DatabaseDetailWorker,
     DatabaseLoadWorker,
     database_info_rows,
 )
@@ -199,6 +200,9 @@ class DatabaseActionsMixin:
         worker = getattr(self, "_database_load_worker", None)
         if worker is not None:
             worker.cancel()
+        cancel_detail_load = getattr(self, "_cancel_database_detail_load", None)
+        if callable(cancel_detail_load):
+            cancel_detail_load()
 
         self._database_load_generation = getattr(self, "_database_load_generation", 0) + 1
         self._database_load_active = False
@@ -536,6 +540,8 @@ class DatabaseActionsMixin:
             self.show_status("Wait for the current database load to finish.", 5000)
             return False
 
+        self._cancel_database_detail_load()
+
         previous_file = self.fileTextbox.text()
         previous_runs = self._current_run_metadata()
         monitorTimer = self.spinBox.value()
@@ -786,6 +792,110 @@ class DatabaseActionsMixin:
             elapsed,
             logger_name=__name__,
         )
+        self._start_database_detail_load(abspath, runs)
+
+
+    def _cancel_database_detail_load(self):
+        worker = getattr(self, "_database_detail_worker", None)
+        if worker is not None:
+            worker.cancel()
+
+        self._database_detail_generation = (
+            getattr(self, "_database_detail_generation", 0) + 1
+            )
+        self._database_detail_active = False
+        self._database_detail_worker = None
+
+
+    def _start_database_detail_load(self, abspath, runs):
+        run_ids = self._database_detail_run_order(runs)
+        if not run_ids:
+            return
+
+        self._database_detail_generation = (
+            getattr(self, "_database_detail_generation", 0) + 1
+            )
+        generation = self._database_detail_generation
+        self._database_detail_active = True
+
+        worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=1)
+        self._database_detail_worker = worker
+        worker.signals.status.connect(self.database_detail_status)
+        worker.signals.batch_ready.connect(self.database_detail_batch_ready)
+        worker.signals.finished.connect(self.database_detail_finished)
+        thread_pool = getattr(
+            self,
+            "databaseDetailThreadPool",
+            self.databaseLoadThreadPool,
+            )
+        thread_pool.start(worker)
+
+
+    def _database_detail_run_order(self, runs):
+        def sort_key(run_id):
+            try:
+                return int(run_id)
+            except (TypeError, ValueError):
+                return 0
+
+        return sorted((runs or {}).keys(), key=sort_key, reverse=True)
+
+
+    @QtCore.pyqtSlot(int, str)
+    def database_detail_status(self, generation, message):
+        if generation != getattr(self, "_database_detail_generation", 0):
+            return
+        if not getattr(self, "_database_detail_active", False):
+            return
+
+        self.show_status(message, 0)
+
+
+    @QtCore.pyqtSlot(int, str, object)
+    def database_detail_batch_ready(self, generation, abspath, runs):
+        if generation != getattr(self, "_database_detail_generation", 0):
+            return
+        if not getattr(self, "_database_detail_active", False):
+            return
+        if abspath != self.fileTextbox.text():
+            return
+
+        updated_runs = self.RunList.updateRuns(runs)
+        if not updated_runs:
+            return
+
+        self.infoBox.preview.add_runs(updated_runs)
+        self._refresh_selected_run_details(updated_runs)
+
+
+    @QtCore.pyqtSlot(int, str, object)
+    def database_detail_finished(self, generation, abspath, error):
+        if generation != getattr(self, "_database_detail_generation", 0):
+            return
+
+        self._database_detail_active = False
+        self._database_detail_worker = None
+
+        if abspath != self.fileTextbox.text():
+            return
+
+        if error is not None:
+            log_exception("Database detail load failed", error, __name__)
+            self.show_status(f"Run detail loading failed: {error}", 5000)
+            return
+
+        self.show_status("Run details loaded.", 5000)
+
+
+    def _refresh_selected_run_details(self, runs):
+        guid = getattr(getattr(self, "ds", None), "guid", None)
+        if not guid:
+            return
+
+        for metadata in runs.values():
+            if metadata.get("guid") == guid:
+                self.updateSelected(guid)
+                return
 
 
     def select_default_run(self):

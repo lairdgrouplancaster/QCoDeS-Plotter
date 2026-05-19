@@ -216,9 +216,15 @@ def format_point_count(metadata):
     shape = metadata.get("setpoint_shape") or metadata.get("point_shape")
     if shape:
         try:
-            shape_parts = " × ".join(f"{int(size):,}" for size in shape)
+            shape_values = [int(size) for size in shape]
+            shape_parts = " × ".join(f"{size:,}" for size in shape_values)
         except (TypeError, ValueError):
+            shape_values = []
             shape_parts = ""
+
+        duplicate_count = one_dimensional_duplicate_point_count(metadata, shape_values)
+        if duplicate_count is not None:
+            return duplicate_count
 
         if expected:
             return f"{int(expected):,} = {shape_parts}"
@@ -236,6 +242,30 @@ def format_point_count(metadata):
             pass
 
     return "unknown"
+
+
+def one_dimensional_duplicate_point_count(metadata, shape_values=None):
+    expected = metadata.get("setpoint_count", metadata.get("expected_results"))
+    shape = metadata.get("setpoint_shape") or metadata.get("point_shape")
+    if shape_values is None:
+        if not shape:
+            return None
+        try:
+            shape_values = [int(size) for size in shape]
+        except (TypeError, ValueError):
+            return None
+
+    if len(shape_values) != 1:
+        return None
+
+    try:
+        expected_count = int(expected)
+    except (TypeError, ValueError):
+        return None
+
+    if expected_count != shape_values[0]:
+        return None
+    return f"{expected_count:,}"
 
 
 def measured_parameter_count(metadata):

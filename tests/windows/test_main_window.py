@@ -999,6 +999,49 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             [("Waiting for OneDrive sync...", 0)],
             )
 
+    def test_database_detail_batch_updates_rows_and_previews(self):
+        class RunList:
+            def __init__(self):
+                self.updated_runs = []
+
+            def updateRuns(self, runs):
+                self.updated_runs.append(runs)
+                return runs
+
+        class Preview:
+            def __init__(self):
+                self.added_runs = []
+
+            def add_runs(self, runs):
+                self.added_runs.append(runs)
+
+        class InfoBox:
+            def __init__(self):
+                self.preview = Preview()
+
+        class Harness:
+            database_detail_batch_ready = main_window.MainWindow.database_detail_batch_ready
+
+            def __init__(self):
+                self._database_detail_generation = 4
+                self._database_detail_active = True
+                self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
+                self.RunList = RunList()
+                self.infoBox = InfoBox()
+                self.refreshed_runs = []
+
+            def _refresh_selected_run_details(self, runs):
+                self.refreshed_runs.append(runs)
+
+        harness = Harness()
+        runs = {1: {"guid": "guid-1", "result_count": 10}}
+
+        harness.database_detail_batch_ready(4, "loaded.db", runs)
+
+        self.assertEqual(harness.RunList.updated_runs, [runs])
+        self.assertEqual(harness.infoBox.preview.added_runs, [runs])
+        self.assertEqual(harness.refreshed_runs, [runs])
+
     def test_cancel_database_load_cancels_worker_and_restores_previous_view(self):
         previous_runs = {5: {"guid": "guid-5", "run_timestamp": 123.0}}
         worker = self.Worker()
@@ -1703,6 +1746,46 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             ])
         self.assertIn((9, "Waiting for OneDrive sync... 100% available"), statuses)
         self.assertEqual(finished, [(9, expected_path, {}, None)])
+
+    def test_database_detail_worker_emits_incremental_batches(self):
+        old_iter_details = database_module.iter_run_detail_batches_via_sql
+        calls = []
+
+        def iter_details(database_path, run_ids, batch_size=1):
+            calls.append((database_path, run_ids, batch_size))
+            yield {2: {"guid": "guid-2", "result_count": 20}}
+            yield {1: {"guid": "guid-1", "result_count": 10}}
+
+        database_module.iter_run_detail_batches_via_sql = iter_details
+        try:
+            worker = main_window.DatabaseDetailWorker(
+                11,
+                "details.db",
+                [2, 1],
+                batch_size=1,
+                )
+            statuses = []
+            batches = []
+            finished = []
+            worker.signals.status.connect(lambda *args: statuses.append(args))
+            worker.signals.batch_ready.connect(lambda *args: batches.append(args))
+            worker.signals.finished.connect(lambda *args: finished.append(args))
+
+            worker.run()
+        finally:
+            database_module.iter_run_detail_batches_via_sql = old_iter_details
+
+        self.assertEqual(calls, [("details.db", [2, 1], 1)])
+        self.assertEqual(batches, [
+            (11, "details.db", {2: {"guid": "guid-2", "result_count": 20}}),
+            (11, "details.db", {1: {"guid": "guid-1", "result_count": 10}}),
+            ])
+        self.assertEqual(statuses, [
+            (11, "Loading run details... 0/2"),
+            (11, "Loading run details... 1/2"),
+            (11, "Loading run details... 2/2"),
+            ])
+        self.assertEqual(finished, [(11, "details.db", None)])
 
 
 class DatabaseLoadRequestTestCase(unittest.TestCase):

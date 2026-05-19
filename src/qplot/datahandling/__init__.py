@@ -8,6 +8,7 @@ from .readSQL import (
     get_runs_basic_via_sql,
     get_runs_via_sql,
     has_finished,
+    iter_run_detail_batches_via_sql,
 )
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "find_new_runs",
     "get_run_status",
     "has_finished",
+    "iter_run_detail_batches_via_sql",
     "load_param_data_from_db_prep",
     "load_param_data_from_db",
     ]

@@ -48,6 +48,26 @@ class RunListTooltipTestCase(unittest.TestCase):
             "1,000 = 10 × 100"
             )
 
+    def test_format_point_count_suppresses_duplicate_one_dimensional_shape(self):
+        self.assertEqual(
+            treeWidgets.format_point_count({
+                "setpoint_shape": [10],
+                "setpoint_count": 10,
+                "point_shape": [10],
+                "expected_results": 10,
+                }),
+            "10"
+            )
+
+    def test_format_point_count_keeps_non_duplicate_one_dimensional_shape(self):
+        self.assertEqual(
+            treeWidgets.format_point_count({
+                "point_shape": [10],
+                "expected_results": 20,
+                }),
+            "20 = 10"
+            )
+
     def test_format_point_count_uses_setpoint_shape_without_measurement_factor(self):
         self.assertEqual(
             treeWidgets.format_point_count({
@@ -277,6 +297,43 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
+    def test_setpoints_delegate_reserves_space_for_one_dimensional_count(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "trace-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "setpoint_count": 1000,
+                    "setpoint_shape": [1000],
+                    "result_count": 1000,
+                    },
+                })
+            delegate = run_list.itemDelegateForColumn(
+                run_list.cols.index("Setpoints")
+                )
+            item = run_list.topLevelItem(0)
+            setpoints_col = run_list.cols.index("Setpoints")
+            metrics = QtGui.QFontMetrics(run_list.font())
+
+            self.assertEqual(item.text(setpoints_col), "1,000")
+            self.assertEqual(
+                delegate._max_right_width(
+                    run_list.indexFromItem(item, setpoints_col),
+                    metrics,
+                    ),
+                metrics.horizontalAdvance("1,000")
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+
     def test_resize_columns_prioritises_setpoints_space(self):
         old_isfile = treeWidgets.isfile
         treeWidgets.isfile = lambda _: False
@@ -426,7 +483,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                     ),
                 1
                 )
-            self.assertEqual(items["unfinished-guid"].text(2), r"10 = 10")
+            self.assertEqual(items["unfinished-guid"].text(2), "10")
             self.assertEqual(items["unfinished-guid"].text(4), "10.0%")
             self.assertRegex(items["unfinished-guid"].text(5), r"^[\d,]+\.\d s$")
             self.assertEqual(items["unfinished-guid"].text(6), "100 KB")
@@ -472,6 +529,50 @@ class RunListTooltipTestCase(unittest.TestCase):
                 [run_list.topLevelItem(row).guid for row in range(run_list.topLevelItemCount())],
                 ["finished-guid", "unfinished-guid"]
                 )
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_update_runs_merges_background_detail_metadata(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "guid": "run-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    },
+                })
+
+            item = run_list.topLevelItem(0)
+            updated = run_list.updateRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "run-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "result_count": 10,
+                    "setpoint_count": 10,
+                    "setpoint_shape": [10],
+                    "storage_bytes": 2048,
+                    },
+                })
+
+            self.assertEqual(run_list.topLevelItemCount(), 1)
+            self.assertIs(run_list.topLevelItem(0), item)
+            self.assertEqual(updated[1]["result_count"], 10)
+            self.assertEqual(item.text(run_list.cols.index("Setpoints")), "10")
+            self.assertEqual(item.text(run_list.cols.index("Complete")), "✓")
+            self.assertEqual(item.text(run_list.cols.index("Duration")), "10.0 s")
+            self.assertEqual(item.text(run_list.cols.index("Size")), "2.0 KB")
+            self.assertEqual(run_list.watching, [])
         finally:
             treeWidgets.isfile = old_isfile
 

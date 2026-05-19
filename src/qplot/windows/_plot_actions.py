@@ -135,11 +135,14 @@ class PlotActionsMixin:
         """
         self.show_status("Loading selected run...", 0)
         try:
-            handle = self.dataset_holder.get(guid)
-            if handle is None:
-                self.ds = load_by_guid_read_only(guid)
+            if self.ds is not None and getattr(self.ds, "guid", None) == guid:
+                pass
             else:
-                self.ds = handle.dataset
+                handle = self.dataset_holder.get(guid)
+                if handle is None:
+                    self.ds = load_by_guid_read_only(guid)
+                else:
+                    self.ds = handle.dataset
         except Exception as err:
             log_exception("Selected run load failed", err, __name__)
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))

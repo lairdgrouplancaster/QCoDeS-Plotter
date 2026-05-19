@@ -45,6 +45,37 @@ def get_runs_basic_via_sql(database_path=None):
     return get_runs_via_sql(database_path=database_path, include_details=False)
 
 
+def iter_run_detail_batches_via_sql(database_path, run_ids, batch_size=1):
+    """
+    Yield detailed run metadata in small batches.
+
+    This keeps the initial load responsive while allowing the GUI to fill in
+    expensive counts, setpoint shapes, and storage sizes progressively.
+
+    """
+    run_ids = [run_id for run_id in run_ids if run_id is not None]
+    if not run_ids:
+        return
+
+    batch_size = max(1, int(batch_size or 1))
+    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    try:
+        cursor = conn.cursor()
+        for offset in range(0, len(run_ids), batch_size):
+            batch = run_ids[offset:offset + batch_size]
+            placeholders = ", ".join("?" for _ in batch)
+            rows = _fetch_run_rows(
+                cursor,
+                f"WHERE runs.run_id IN ({placeholders})",
+                tuple(batch),
+                empty_as_none=False,
+                include_details=True,
+                )
+            yield rows or {}
+    finally:
+        conn.close()
+
+
 def find_new_runs(last_time):
     """
     Fetches all runs produced after the last_time. Otherwise functions the same

@@ -241,6 +241,99 @@ class RunList(qtw.QTreeWidget):
         self._resize_columns()
 
 
+    def updateRuns(self, runs):
+        """
+        Merge updated metadata into existing rows.
+
+        Background detail loading uses this to fill expensive columns without
+        rebuilding the table or disturbing the user's selection.
+
+        """
+        if not runs:
+            return {}
+
+        updated = {}
+        self.setSortingEnabled(False)
+        for run_id, metadata in runs.items():
+            guid = metadata.get("guid")
+            item = self._item_for_guid(guid)
+            if item is None:
+                continue
+
+            item.run_metadata.update(metadata)
+            self._refresh_run_item(item)
+            self._sync_watching_item(item)
+            updated[run_id] = dict(item.run_metadata)
+
+        self.setSortingEnabled(True)
+        self._resize_columns()
+        return updated
+
+
+    def _refresh_run_item(self, item):
+        metadata = item.run_metadata
+        measurement_count = measured_parameter_count(metadata)
+
+        measurements_col = self.cols.index("Measurements")
+        item.setData(
+            measurements_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            measurement_count,
+            )
+        item.setSizeHint(
+            measurements_col,
+            QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6),
+            )
+        cell = self.preview_cells.get(item.guid)
+        if cell is None or cell.placeholder_count != measurement_count:
+            self._set_measurement_preview_cell(item, measurement_count)
+
+        setpoints_col = self.cols.index("Setpoints")
+        item.setText(setpoints_col, format_point_count(metadata))
+        item.setData(
+            setpoints_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            metadata.get("setpoint_count")
+            or metadata.get("expected_results")
+            or metadata.get("result_count"),
+            )
+
+        complete_col = self.cols.index("Complete")
+        item.setText(complete_col, format_complete_cell(metadata))
+        item.setData(
+            complete_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            complete_cell_sort_value(metadata),
+            )
+
+        duration_col = self.cols.index("Duration")
+        item.setText(duration_col, format_time_taken_seconds(metadata))
+        item.setData(
+            duration_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            time_taken_seconds(metadata),
+            )
+
+        size_col = self.cols.index("Size")
+        item.setText(size_col, format_storage_size(metadata.get("storage_bytes")))
+        item.setData(
+            size_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            metadata.get("storage_bytes"),
+            )
+
+        item.update_tooltip()
+
+
+    def _sync_watching_item(self, item):
+        watching = item in self.watching
+        complete = run_is_complete(item.run_metadata)
+        if complete and watching:
+            self.watching.remove(item)
+        elif not complete and not watching:
+            self.watching.append(item)
+
+
     def clear(self):
         self.preview_cells = {}
         super().clear()
