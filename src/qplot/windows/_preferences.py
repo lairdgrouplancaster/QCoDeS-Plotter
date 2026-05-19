@@ -9,6 +9,7 @@ from PyQt6 import (
     QtWidgets as qtw,
 )
 
+from ._commands import create_action
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -429,10 +430,7 @@ def create_preferences_action(window, triggered):
     Creates the shared Preferences action used by main and plot windows.
 
     """
-    action = QtGui.QAction("&Preferences...", window)
+    action = create_action("preferences.open", window)
     action.setMenuRole(QtGui.QAction.MenuRole.PreferencesRole)
-    action.setShortcut("Ctrl+,")
-    action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-    action.setStatusTip("Open qPlot preferences")
     action.triggered.connect(triggered)
     return action

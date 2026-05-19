@@ -48,6 +48,11 @@ multiple windows, start in `main.py`; put database-specific behavior in
 `_database_actions.py`, plot-opening/export behavior in `_plot_actions.py`, and
 run-selection or refresh-control behavior in `_run_controls.py`.
 
+`src/qplot/windows/_commands.py` is the shared command and shortcut registry.
+Use it when adding menu actions, context-menu actions, keyboard shortcuts, or
+shortcut-help rows so labels, status tips, tooltips, and in-app shortcut help
+stay in sync.
+
 ## Plot Windows
 
 `src/qplot/windows/_plotWin.py` is the shared base for plot windows. It owns
@@ -191,7 +196,10 @@ them.
 main-window preferences dialog and emits a signal when applied settings need to
 be synced into the open UI.
 
-Theme files live in `src/qplot/configuration/themes`.
+Theme files live in `src/qplot/configuration/themes`. The shared stylesheet
+builder and plot-item helpers live in `themes/_base.py`; light, dark, and PyQt
+themes should provide palettes or small overrides instead of duplicating full
+QSS blocks.
 
 The user-facing key reference and contributor checklist for config changes live
 in `docs/configuration.md`.

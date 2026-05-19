@@ -1,6 +1,7 @@
 # QCoDeS-Plotter
 
 [![release](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?label=release)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases/latest)
+[![beta](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?include_prereleases&label=beta&color=orange)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases)
 
 QCoDeS-Plotter, or qPlot, is a PyQt-based data viewer for QCoDeS databases. It
 is designed for inspecting completed and running experiments, with live refresh,
@@ -24,7 +25,7 @@ py -3 --version
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0b2
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0
 ```
 
 macOS:
@@ -34,7 +35,7 @@ python3 --version
 python3 -m venv .venv-mac
 source .venv-mac/bin/activate
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0b2
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0
 ```
 
 If the version check reports Python 3.10 or older, install Python 3.11 or newer

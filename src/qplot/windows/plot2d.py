@@ -7,6 +7,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from . import _colorbar
+from ._commands import command_spec, create_action
 from ._plot2d_colorbar import Plot2DColorbarMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plotWin import plotWidget
@@ -84,8 +85,8 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
     def initContextMenu(self) -> None:
         super().initContextMenu()
 
-        autoColor = QtGui.QAction("Autoscale Color", self)
-        self.register_shortcut(autoColor, "C", "Autoscale color range")
+        autoColor = create_action("heatmap.autoscale_color", self)
+        self.register_shortcut(autoColor, command_spec("heatmap.autoscale_color"))
         autoColor.triggered.connect(self.scaleColorbar)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
 
@@ -94,13 +95,13 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         sep = self.vbMenu.insertSeparator(actions[3])
         
         ### Sweep control
-        h_sweep = QtGui.QAction("Horizontal Cut", self)
-        self.register_shortcut(h_sweep, "H", "Plot horizontal cut")
+        h_sweep = create_action("heatmap.horizontal_cut", self)
+        self.register_shortcut(h_sweep, command_spec("heatmap.horizontal_cut"))
         h_sweep.triggered.connect(lambda _: self.openSweep("h"))
         self.vbMenu.insertAction(sep, h_sweep)
         
-        v_sweep = QtGui.QAction("Vertical Cut", self)
-        self.register_shortcut(v_sweep, "V", "Plot vertical cut")
+        v_sweep = create_action("heatmap.vertical_cut", self)
+        self.register_shortcut(v_sweep, command_spec("heatmap.vertical_cut"))
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         

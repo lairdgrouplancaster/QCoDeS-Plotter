@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qplot"
-version = "1.4.0b2"
+version = "1.4.0"
 description = "PyQt-based viewer for completed and running QCoDeS database experiments"
 readme = "README.md"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"},{name="Edward Laird", email="e.a.laird@lancaster.ac.uk"}]
@@ -96,6 +96,7 @@ files = [
     "src/qplot/configuration/config.py",
     "src/qplot/configuration/scripts.py",
     "src/qplot/configuration/themes/__init__.py",
+    "src/qplot/configuration/themes/_base.py",
     "src/qplot/configuration/themes/blank.py",
     "src/qplot/configuration/themes/dark.py",
     "src/qplot/configuration/themes/light.py",
@@ -112,6 +113,7 @@ files = [
     "src/qplot/tools/worker.py",
     "src/qplot/windows/__init__.py",
     "src/qplot/windows/_commands.py",
+    "src/qplot/windows/main.py",
     "src/qplot/windows/_colorbar.py",
     "src/qplot/windows/_dataset_handle.py",
     "src/qplot/windows/_dragdrop.py",
