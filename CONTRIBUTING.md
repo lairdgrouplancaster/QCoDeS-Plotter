@@ -36,7 +36,7 @@ py -3.11 -m venv .venv
 macOS/Linux:
 
 ```console
-python3.11 -m venv .venv-mac
+python3 -m venv .venv-mac
 source .venv-mac/bin/activate
 ```
 
