@@ -505,14 +505,36 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             "guid-1": preview_module.PREVIEW_REMAINING_PRIORITY,
             "guid-2": preview_module.PREVIEW_REMAINING_PRIORITY,
             })
-        self.assertEqual(generation_changes, [
-            ("guid-1", True),
-            ("guid-2", True),
-            ])
+        self.assertEqual(generation_changes, [])
 
-        preview._worker_finished(preview.generation, "guid-1", [], None)
+    def test_preview_tab_marks_only_active_worker_as_generating(self):
+        preview = PreviewTab(preview_size=100)
+        preview._schedule_start_next = lambda: None
+        generation_changes = []
+        started_workers = []
+        preview.previewGenerationChanged.connect(
+            lambda *args: generation_changes.append(args)
+            )
 
-        self.assertIn(("guid-1", False), generation_changes)
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1", "run_timestamp": 100.0},
+            2: {"guid": "guid-2", "run_timestamp": 101.0},
+            })
+
+        preview._start_next()
+
+        self.assertEqual(generation_changes, [("guid-2", True)])
+        self.assertEqual(started_workers[0].guid, "guid-2")
+
+        preview._start_next = lambda: None
+        preview._worker_finished(preview.generation, "guid-2", [], None)
+
+        self.assertIn(("guid-2", False), generation_changes)
 
     def test_preview_tab_prioritizes_selected_then_visible_then_remaining_runs(self):
         preview = PreviewTab(preview_size=100)
