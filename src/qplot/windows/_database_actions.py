@@ -818,7 +818,7 @@ class DatabaseActionsMixin:
         generation = self._database_detail_generation
         self._database_detail_active = True
 
-        worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=1)
+        worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=10)
         self._database_detail_worker = worker
         worker.signals.status.connect(self.database_detail_status)
         worker.signals.batch_ready.connect(self.database_detail_batch_ready)
@@ -864,7 +864,7 @@ class DatabaseActionsMixin:
         if not updated_runs:
             return
 
-        self.infoBox.preview.add_runs(updated_runs)
+        self.infoBox.preview.add_runs(updated_runs, queue_previews=False)
         self._refresh_selected_run_details(updated_runs)
 
 

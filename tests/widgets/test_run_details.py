@@ -256,6 +256,23 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(empty_future_column, QtGui.QColor(230, 230, 230))
         self.assertEqual(empty_future_row, QtGui.QColor(230, 230, 230))
 
+    def test_heatmap_preview_does_not_allocate_oversized_grid_shape(self):
+        old_max_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_GRID_CELLS = 1
+        try:
+            heatmap = render_heatmap_preview(
+                np.array([0, 1, 0, 1], dtype=float),
+                np.array([0, 0, 1, 1], dtype=float),
+                np.array([0, 255, 0, 0], dtype=float),
+                size=20,
+                grid_shape=(1000, 1000),
+                )
+        finally:
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_cells
+
+        self.assertEqual(heatmap.width(), 20)
+        self.assertEqual(heatmap.height(), 20)
+
     def test_generate_2d_preview_matches_full_plot_axis_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = os.path.join(temp_dir, "preview.db")
@@ -444,6 +461,32 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertNotIn("run-guid", preview.cache)
         self.assertNotIn("run-guid", preview.errors)
         self.assertIn("run-guid", preview.queue)
+
+    def test_preview_tab_can_update_metadata_without_queueing_preview(self):
+        preview = PreviewTab(preview_size=100)
+        preview.database_path = "previews.db"
+        preview._start_next = lambda: None
+
+        old_metadata = {
+            "guid": "run-guid",
+            "run_id": 7,
+            "result_table_name": "results",
+            "result_count": 1,
+            }
+        preview.run_metadata = {"run-guid": old_metadata}
+        preview.metadata_signatures = {
+            "run-guid": preview._metadata_signature(old_metadata)
+            }
+
+        preview.add_runs({
+            7: {
+                **old_metadata,
+                "result_count": 100,
+                },
+            }, queue_previews=False)
+
+        self.assertEqual(preview.queue, {})
+        self.assertEqual(preview.run_metadata["run-guid"]["result_count"], 100)
 
     def test_preview_tab_does_not_queue_every_run_on_database_load(self):
         preview = PreviewTab(preview_size=100)

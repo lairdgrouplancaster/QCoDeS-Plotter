@@ -45,7 +45,14 @@ def get_runs_basic_via_sql(database_path=None):
     return get_runs_via_sql(database_path=database_path, include_details=False)
 
 
-def iter_run_detail_batches_via_sql(database_path, run_ids, batch_size=1):
+def iter_run_detail_batches_via_sql(
+        database_path,
+        run_ids,
+        batch_size=1,
+        infer_missing_shapes=True,
+        include_storage_bytes=True,
+        include_read_setpoint_count=True,
+        ):
     """
     Yield detailed run metadata in small batches.
 
@@ -70,8 +77,59 @@ def iter_run_detail_batches_via_sql(database_path, run_ids, batch_size=1):
                 tuple(batch),
                 empty_as_none=False,
                 include_details=True,
+                infer_missing_shapes=infer_missing_shapes,
+                include_storage_bytes=include_storage_bytes,
+                include_read_setpoint_count=include_read_setpoint_count,
                 )
             yield rows or {}
+    finally:
+        conn.close()
+
+
+def iter_run_storage_batches_via_sql(database_path, run_ids, batch_size=25):
+    """
+    Yield per-run storage sizes after the cheap detail pass has completed.
+
+    Storage lookup can require a dbstat scan over the database. Keeping this as
+    a separate pass prevents size calculation from blocking result counts and
+    completion metadata on very large databases.
+
+    """
+    run_ids = [run_id for run_id in run_ids if run_id is not None]
+    if not run_ids:
+        return
+
+    batch_size = max(1, int(batch_size or 1))
+    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    try:
+        cursor = conn.cursor()
+        run_tables = _run_storage_tables(cursor, run_ids)
+        table_names = {
+            metadata.get("result_table_name")
+            for metadata in run_tables.values()
+            if metadata.get("result_table_name")
+            }
+        sizes = _table_storage_bytes_by_name(cursor, table_names)
+        if not sizes:
+            return
+
+        for offset in range(0, len(run_ids), batch_size):
+            rows = {}
+            for run_id in run_ids[offset:offset + batch_size]:
+                metadata = run_tables.get(run_id)
+                if not metadata:
+                    continue
+
+                storage_bytes = sizes.get(metadata.get("result_table_name"))
+                if storage_bytes is None:
+                    continue
+
+                rows[run_id] = {
+                    "guid": metadata.get("guid"),
+                    "storage_bytes": storage_bytes,
+                    }
+            if rows:
+                yield rows
     finally:
         conn.close()
 
@@ -109,6 +167,10 @@ def _fetch_run_rows(
         params=(),
         empty_as_none=True,
         include_details=True,
+        infer_missing_shapes=True,
+        include_storage_bytes=True,
+        include_read_setpoint_count=True,
+        storage_bytes_by_table=None,
         ):
     optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
     optional_select = "".join(
@@ -148,7 +210,14 @@ def _fetch_run_rows(
         metadata["database_modified_timestamp"] = database_modified_timestamp
         _add_run_basic_fields(metadata)
         if include_details:
-            _add_run_detail_fields(cursor, metadata)
+            _add_run_detail_fields(
+                cursor,
+                metadata,
+                infer_missing_shapes=infer_missing_shapes,
+                include_storage_bytes=include_storage_bytes,
+                include_read_setpoint_count=include_read_setpoint_count,
+                storage_bytes_by_table=storage_bytes_by_table,
+                )
         outDict[row[0]] = metadata
 
     return outDict
@@ -177,14 +246,21 @@ def _add_run_basic_fields(metadata):
     metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
 
 
-def _add_run_detail_fields(cursor, metadata):
+def _add_run_detail_fields(
+        cursor,
+        metadata,
+        infer_missing_shapes=True,
+        include_storage_bytes=True,
+        include_read_setpoint_count=True,
+        storage_bytes_by_table=None,
+        ):
     run_description = _json_dict(metadata.get("run_description"))
     measure_parameters = metadata.get("measure_parameters") or []
     sweep_parameters = metadata.get("sweep_parameters") or []
 
     metadata["result_count"] = _result_count(cursor, metadata.get("result_table_name"))
     expected_results = metadata.get("expected_results")
-    if not metadata["point_shape"]:
+    if infer_missing_shapes and not metadata["point_shape"]:
         metadata["setpoint_shape"] = _setpoint_shape_from_result_table(
             cursor,
             metadata.get("result_table_name"),
@@ -204,13 +280,21 @@ def _add_run_detail_fields(cursor, metadata):
         else _shape_size(metadata["point_shape"])
         )
     metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
-    if _is_keyboard_interrupt(metadata.get("measurement_exception")):
+    if (
+            include_read_setpoint_count
+            and _is_keyboard_interrupt(metadata.get("measurement_exception"))
+            ):
         metadata["read_setpoint_count"] = _read_setpoint_count(
             cursor,
             metadata.get("result_table_name"),
             sweep_parameters,
             )
-    metadata["storage_bytes"] = _table_storage_bytes(cursor, metadata.get("result_table_name"))
+    if include_storage_bytes:
+        table_name = metadata.get("result_table_name")
+        if storage_bytes_by_table is not None:
+            metadata["storage_bytes"] = storage_bytes_by_table.get(table_name)
+        else:
+            metadata["storage_bytes"] = _table_storage_bytes(cursor, table_name)
 
 
 def _json_dict(value):
@@ -470,6 +554,55 @@ def _table_storage_bytes(cursor, table_name):
         return _estimated_table_storage_bytes(cursor, table_name)
 
     return int(value) if value is not None else None
+
+
+def _run_storage_tables(cursor, run_ids):
+    if not run_ids:
+        return {}
+
+    rows = {}
+    chunk_size = 500
+    for offset in range(0, len(run_ids), chunk_size):
+        batch = run_ids[offset:offset + chunk_size]
+        placeholders = ", ".join("?" for _ in batch)
+        try:
+            cursor.execute(f"""
+              SELECT run_id, guid, result_table_name
+              FROM runs
+              WHERE run_id IN ({placeholders})
+            """, tuple(batch))
+        except Exception:
+            continue
+
+        for run_id, guid, table_name in cursor.fetchall():
+            rows[run_id] = {
+                "guid": guid,
+                "result_table_name": table_name,
+                }
+
+    return rows
+
+
+def _table_storage_bytes_by_name(cursor, table_names):
+    table_names = {name for name in table_names if name}
+    if not table_names:
+        return {}
+
+    try:
+        cursor.execute("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name")
+    except Exception:
+        return {}
+
+    sizes = {}
+    for name, value in cursor.fetchall():
+        if name not in table_names or value is None:
+            continue
+        try:
+            sizes[name] = int(value)
+        except (TypeError, ValueError):
+            pass
+
+    return sizes
 
 
 def _estimated_table_storage_bytes(cursor, table_name):

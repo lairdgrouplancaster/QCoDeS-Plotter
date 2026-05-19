@@ -22,6 +22,7 @@ from qplot.datahandling.readonly import (
 from qplot.datahandling.readSQL import (
     get_runs_basic_via_sql,
     iter_run_detail_batches_via_sql,
+    iter_run_storage_batches_via_sql,
 )
 from qplot.diagnostics import log_exception
 
@@ -546,6 +547,9 @@ class DatabaseDetailWorker(QtCore.QRunnable):
                     self.database_path,
                     self.run_ids,
                     batch_size=self.batch_size,
+                    infer_missing_shapes=False,
+                    include_storage_bytes=False,
+                    include_read_setpoint_count=False,
                     ):
                 if self._is_cancelled():
                     return
@@ -559,6 +563,18 @@ class DatabaseDetailWorker(QtCore.QRunnable):
 
                 if self._is_cancelled():
                     return
+
+            self._emit_status("Loading run sizes...")
+            for storage in iter_run_storage_batches_via_sql(
+                    self.database_path,
+                    self.run_ids,
+                    batch_size=max(25, self.batch_size),
+                    ):
+                if self._is_cancelled():
+                    return
+
+                if storage:
+                    self._emit_batch_ready(storage)
         except Exception as err:
             log_exception("Database detail worker failed", err, __name__)
             self._emit_finished(err)

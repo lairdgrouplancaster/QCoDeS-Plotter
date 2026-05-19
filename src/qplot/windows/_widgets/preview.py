@@ -6,7 +6,6 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.diagnostics import log_exception
-from qplot.tools.general import data2matrix
 
 from .._dragdrop import make_run_preview_mime
 
@@ -14,7 +13,8 @@ PREVIEW_SIZE = 200
 PREVIEW_BACKGROUND_COLOR = "#f4f7fb"
 PREVIEW_HEIGHT_PADDING = 48
 COLLAPSE_MINIMUM_RATIO = 0.25
-MAX_PREVIEW_ROWS = 250000
+MAX_PREVIEW_ROWS = 50000
+MAX_PREVIEW_GRID_CELLS = 250000
 PREVIEW_SELECTED_PROPERTY = "previewSelected"
 VIRIDIS_STOPS = np.asarray([
     (68, 1, 84),
@@ -107,12 +107,9 @@ class PreviewTab(qtw.QWidget):
             for guid, metadata in self.run_metadata.items()
             }
 
-        for guid in self.run_metadata:
-            priority = 100 if guid == self.current_guid else 0
-            self._enqueue(guid, priority=priority, allow_active=True)
-
         if self.current_guid:
             self._show_message("Generating preview...")
+            self._enqueue(self.current_guid, priority=100, allow_active=True)
         self._start_next()
 
 
@@ -133,7 +130,7 @@ class PreviewTab(qtw.QWidget):
         self._show_message("Select a run")
 
 
-    def add_runs(self, runs):
+    def add_runs(self, runs, queue_previews=True):
         if not self.database_path:
             return
 
@@ -148,7 +145,8 @@ class PreviewTab(qtw.QWidget):
                 self.cache.pop(guid, None)
                 self.errors.pop(guid, None)
 
-            self._enqueue(guid, priority=0, allow_active=changed)
+            if queue_previews:
+                self._enqueue(guid, priority=0, allow_active=changed)
         self._start_next()
 
 
@@ -621,9 +619,26 @@ def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE, grid_shape=None):
     if not np.any(valid):
         return image
 
-    grid = _fixed_heatmap_grid(x[valid], y[valid], z[valid], grid_shape)
+    x = x[valid]
+    y = y[valid]
+    z = z[valid]
+
+    grid = _fixed_heatmap_grid(
+        x,
+        y,
+        z,
+        grid_shape,
+        max_cells=MAX_PREVIEW_GRID_CELLS,
+        )
     if grid is None:
-        grid = data2matrix(y[valid], x[valid], z[valid]).to_numpy(float)
+        grid = _unique_axis_heatmap_grid(
+            x,
+            y,
+            z,
+            max_cells=MAX_PREVIEW_GRID_CELLS,
+            )
+    if grid is None:
+        grid = _binned_heatmap_grid(x, y, z, size=size)
     if grid.size == 0 or np.all(np.isnan(grid)):
         return image
 
@@ -646,12 +661,15 @@ def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE, grid_shape=None):
         ).convertToFormat(QtGui.QImage.Format.Format_RGB32)
 
 
-def _fixed_heatmap_grid(x, y, z, grid_shape):
+def _fixed_heatmap_grid(x, y, z, grid_shape, max_cells=None):
     shape = _normalise_grid_shape(grid_shape)
     if shape is None:
         return None
 
     rows, columns = shape
+    if max_cells is not None and rows * columns > max_cells:
+        return None
+
     grid = np.full((rows, columns), np.nan, dtype=float)
     x_index = _axis_value_indices(x, columns)
     y_index = _axis_value_indices(y, rows)
@@ -674,6 +692,64 @@ def _fixed_heatmap_grid(x, y, z, grid_shape):
     point_count = min(flat_grid.size, z.size)
     flat_grid[:point_count] = z[:point_count]
     return grid
+
+
+def _unique_axis_heatmap_grid(x, y, z, max_cells):
+    unique_x = np.unique(x[np.isfinite(x)])
+    unique_y = np.unique(y[np.isfinite(y)])
+    if unique_x.size == 0 or unique_y.size == 0:
+        return None
+
+    if unique_x.size * unique_y.size > max_cells:
+        return None
+
+    x_index = {
+        float(value): index
+        for index, value in enumerate(unique_x)
+        }
+    y_index = {
+        float(value): index
+        for index, value in enumerate(unique_y)
+        }
+    grid = np.full((unique_y.size, unique_x.size), np.nan, dtype=float)
+
+    for x_value, y_value, z_value in zip(x, y, z, strict=False):
+        row = y_index.get(float(y_value))
+        column = x_index.get(float(x_value))
+        if row is None or column is None:
+            continue
+        grid[row, column] = z_value
+
+    return grid
+
+
+def _binned_heatmap_grid(x, y, z, size=PREVIEW_SIZE):
+    columns = max(1, int(size))
+    rows = max(1, int(size))
+    grid_sum = np.zeros((rows, columns), dtype=float)
+    grid_count = np.zeros((rows, columns), dtype=float)
+
+    x_bins = _scaled_axis_indices(x, columns)
+    y_bins = _scaled_axis_indices(y, rows)
+    for row, column, value in zip(y_bins, x_bins, z, strict=False):
+        grid_sum[row, column] += value
+        grid_count[row, column] += 1
+
+    grid = np.full((rows, columns), np.nan, dtype=float)
+    populated = grid_count > 0
+    grid[populated] = grid_sum[populated] / grid_count[populated]
+    return grid
+
+
+def _scaled_axis_indices(values, size):
+    data_range = _finite_range(values)
+    low, high = data_range
+    if high == low:
+        return np.zeros(values.shape, dtype=int)
+
+    scaled = (values - low) / (high - low)
+    indices = np.floor(scaled * size).astype(int)
+    return np.clip(indices, 0, size - 1)
 
 
 def _axis_value_indices(values, size):

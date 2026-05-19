@@ -1012,8 +1012,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             def __init__(self):
                 self.added_runs = []
 
-            def add_runs(self, runs):
-                self.added_runs.append(runs)
+            def add_runs(self, runs, queue_previews=True):
+                self.added_runs.append((runs, queue_previews))
 
         class InfoBox:
             def __init__(self):
@@ -1039,7 +1039,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         harness.database_detail_batch_ready(4, "loaded.db", runs)
 
         self.assertEqual(harness.RunList.updated_runs, [runs])
-        self.assertEqual(harness.infoBox.preview.added_runs, [runs])
+        self.assertEqual(harness.infoBox.preview.added_runs, [(runs, False)])
         self.assertEqual(harness.refreshed_runs, [runs])
 
     def test_cancel_database_load_cancels_worker_and_restores_previous_view(self):
@@ -1749,14 +1749,35 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
     def test_database_detail_worker_emits_incremental_batches(self):
         old_iter_details = database_module.iter_run_detail_batches_via_sql
+        old_iter_storage = database_module.iter_run_storage_batches_via_sql
         calls = []
 
-        def iter_details(database_path, run_ids, batch_size=1):
-            calls.append((database_path, run_ids, batch_size))
+        def iter_details(
+                database_path,
+                run_ids,
+                batch_size=1,
+                infer_missing_shapes=True,
+                include_storage_bytes=True,
+                include_read_setpoint_count=True,
+                ):
+            calls.append((
+                database_path,
+                run_ids,
+                batch_size,
+                infer_missing_shapes,
+                include_storage_bytes,
+                include_read_setpoint_count,
+                ))
             yield {2: {"guid": "guid-2", "result_count": 20}}
             yield {1: {"guid": "guid-1", "result_count": 10}}
 
+        def iter_storage(database_path, run_ids, batch_size=25):
+            calls.append(("storage", database_path, run_ids, batch_size))
+            return
+            yield
+
         database_module.iter_run_detail_batches_via_sql = iter_details
+        database_module.iter_run_storage_batches_via_sql = iter_storage
         try:
             worker = main_window.DatabaseDetailWorker(
                 11,
@@ -1774,8 +1795,12 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker.run()
         finally:
             database_module.iter_run_detail_batches_via_sql = old_iter_details
+            database_module.iter_run_storage_batches_via_sql = old_iter_storage
 
-        self.assertEqual(calls, [("details.db", [2, 1], 1)])
+        self.assertEqual(calls, [
+            ("details.db", [2, 1], 1, False, False, False),
+            ("storage", "details.db", [2, 1], 25),
+            ])
         self.assertEqual(batches, [
             (11, "details.db", {2: {"guid": "guid-2", "result_count": 20}}),
             (11, "details.db", {1: {"guid": "guid-1", "result_count": 10}}),
@@ -1784,6 +1809,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             (11, "Loading run details... 0/2"),
             (11, "Loading run details... 1/2"),
             (11, "Loading run details... 2/2"),
+            (11, "Loading run sizes..."),
             ])
         self.assertEqual(finished, [(11, "details.db", None)])
 
