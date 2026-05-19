@@ -7,7 +7,7 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _plotWin as plotwin_module
 from qplot.windows._plot1d_snap import _nearest_trace_sample
-from qplot.windows._plot1d_traces import Plot1DTraceMixin
+from qplot.windows._plot1d_traces import Plot1DTraceMixin, _TraceAppearanceDialog
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots import custom_viewbox
 from qplot.windows._widgets import QDock_context, picker_1d
@@ -171,6 +171,91 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertEqual(y_value, 10.0)
         self.assertIs(viewbox, plot_item.vb)
         self.assertEqual(point_number, 1)
+
+    def test_register_main_line_defers_until_line_exists(self):
+        window = plot1d.__new__(plot1d)
+        window.label = "main"
+        window.line = None
+        window.lines = {}
+
+        window._register_main_line()
+
+        self.assertEqual(window.lines, {})
+        self.assertIn("main", window._trace_styles)
+
+    def test_main_line_color_change_before_line_exists_is_stored(self):
+        window = plot1d.__new__(plot1d)
+        window.label = "main"
+        window.line = None
+
+        window._set_main_line_color(QtGui.QColor("#ff0000"))
+
+        self.assertEqual(window._trace_styles["main"].line_color, "#ff0000")
+
+    def test_trace_appearance_action_is_added_to_view_menu(self):
+        class BaseWindow(qtw.QMainWindow):
+            def initMenu(self):
+                self.menuBar().addMenu("&View")
+
+        class Host(Plot1DTraceMixin, BaseWindow):
+            pass
+
+        host = Host()
+        try:
+            host.initMenu()
+
+            view_menu = next(
+                action.menu()
+                for action in host.menuBar().actions()
+                if action.text().replace("&", "") == "View"
+                )
+            action_texts = [action.text() for action in view_menu.actions()]
+
+            self.assertIn("Trace Appearance…", action_texts)
+        finally:
+            host.deleteLater()
+
+    def test_trace_appearance_table_uses_readonly_preview_rows(self):
+        class Param:
+            name = "current"
+
+        class Host(Plot1DTraceMixin, qtw.QMainWindow):
+            pass
+
+        host = Host()
+        dialog = None
+        try:
+            host.label = "ID:1 current"
+            host.param = Param()
+            host.lines = {host.label: object()}
+            host._trace_styles = {
+                host.label: host._TraceStyle(line_color="#d62728", dots_enabled=True)
+                }
+
+            dialog = _TraceAppearanceDialog(host)
+            dialog.refresh_rows()
+
+            preview_item = dialog.table.item(0, 1)
+            measurement_item = dialog.table.item(0, 2)
+
+            self.assertEqual(
+                dialog.table.editTriggers(),
+                qtw.QAbstractItemView.EditTrigger.NoEditTriggers,
+                )
+            self.assertEqual(
+                dialog.table.horizontalHeader().sectionResizeMode(2),
+                qtw.QHeaderView.ResizeMode.Stretch,
+                )
+            self.assertEqual(dialog.table.rowHeight(0), 44)
+            self.assertEqual(preview_item.text(), "")
+            self.assertFalse(preview_item.icon().isNull())
+            self.assertTrue(preview_item.flags() & QtCore.Qt.ItemFlag.ItemIsDragEnabled)
+            self.assertFalse(measurement_item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.assertFalse(dialog.line_color.itemIcon(0).isNull())
+        finally:
+            if dialog is not None:
+                dialog.deleteLater()
+            host.deleteLater()
 
     def test_register_main_line_replaces_initial_empty_trace(self):
         line = object()
