@@ -73,16 +73,61 @@ class RunList(qtw.QTreeWidget):
     
     cols = ['ID', 'Measurements', 'Setpoints', 'Started', 'Complete', 'Duration', 'Size']
     column_widths = {
+        "ID": 40,
+        "Measurements": 104,
+        "Complete": 86,
+        "Duration": 96,
+        "Size": 72,
+        }
+    elastic_column_widths = {
+        "Setpoints": 180,
+        "Started": 150,
+        }
+    readable_column_widths = {
+        "ID": 37,
+        "Measurements": 96,
+        "Setpoints": 100,
+        "Started": 128,
+        "Complete": 78,
+        "Duration": 84,
+        "Size": 58,
+        }
+    minimum_column_widths = {
         "ID": 34,
         "Measurements": 84,
+        "Setpoints": 80,
+        "Started": 84,
         "Complete": 72,
         "Duration": 68,
         "Size": 50,
         }
-    elastic_column_widths = {
-        "Setpoints": 80,
-        "Started": 84,
-        }
+    compact_growth_order = (
+        "Measurements",
+        "Started",
+        "Duration",
+        "Size",
+        "Complete",
+        "Setpoints",
+        "ID",
+        )
+    preferred_growth_order = (
+        "Setpoints",
+        "Started",
+        "Duration",
+        "Size",
+        "Measurements",
+        "Complete",
+        "ID",
+        )
+    compact_shrink_order = (
+        "Setpoints",
+        "Started",
+        "Measurements",
+        "Duration",
+        "Complete",
+        "Size",
+        "ID",
+        )
 
     selected = QtCore.pyqtSignal([str])
     plot = QtCore.pyqtSignal([str])
@@ -355,6 +400,13 @@ class RunList(qtw.QTreeWidget):
             cell.show_previews(previews)
 
 
+    @QtCore.pyqtSlot(str, bool)
+    def set_run_preview_generating(self, guid, generating):
+        cell = self.preview_cells.get(guid)
+        if cell is not None:
+            cell.set_generating(generating)
+
+
     @QtCore.pyqtSlot(str, str)
     def _preview_plot_requested(self, guid, parameter):
         item = self._item_for_guid(guid)
@@ -388,23 +440,68 @@ class RunList(qtw.QTreeWidget):
             for col in range(len(self.cols)):
                 header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
 
-        fixed_width = sum(self.column_widths.values())
-        elastic_min_width = sum(self.elastic_column_widths.values())
+        preferred_fixed_width = sum(self.column_widths.values())
+        preferred_elastic_width = sum(self.elastic_column_widths.values())
         viewport = self.viewport()
         available_width = viewport.width() if viewport is not None else 0
+        preferred_widths = {
+            **self.elastic_column_widths,
+            **self.column_widths,
+            }
+        preferred_width = preferred_fixed_width + preferred_elastic_width
         if available_width <= 0:
-            available_width = fixed_width + elastic_min_width
+            available_width = preferred_width
 
-        extra_width = max(0, available_width - fixed_width - elastic_min_width)
-        elastic_widths = dict(self.elastic_column_widths)
-        setpoints_extra = (extra_width * 2) // 3
-        elastic_widths["Setpoints"] += setpoints_extra
-        elastic_widths["Started"] += extra_width - setpoints_extra
+        if available_width < preferred_width:
+            readable_width = sum(self.readable_column_widths.values())
+            if available_width < readable_width:
+                widths = self._grow_column_widths(
+                    self.minimum_column_widths,
+                    self.readable_column_widths,
+                    available_width,
+                    self.compact_growth_order,
+                    )
+            else:
+                widths = self._grow_column_widths(
+                    self.readable_column_widths,
+                    preferred_widths,
+                    available_width,
+                    self.preferred_growth_order,
+                    )
+        else:
+            extra_width = max(0, available_width - preferred_width)
+            widths = dict(preferred_widths)
+            setpoints_extra = (extra_width * 2) // 3
+            widths["Setpoints"] += setpoints_extra
+            widths["Started"] += extra_width - setpoints_extra
 
         for col, name in enumerate(self.cols):
-            width = self.column_widths.get(name, elastic_widths.get(name))
+            width = widths.get(name)
             if width is not None:
                 self.setColumnWidth(col, width)
+
+
+    def _grow_column_widths(self, base_widths, target_widths, available_width, order):
+        widths = dict(base_widths)
+        deficit = sum(widths.values()) - available_width
+        if deficit > 0:
+            for name in self.compact_shrink_order:
+                shrink_by = min(max(0, widths.get(name, 0) - 32), deficit)
+                widths[name] = widths.get(name, 0) - shrink_by
+                deficit -= shrink_by
+                if deficit <= 0:
+                    break
+            return widths
+
+        extra_width = max(0, available_width - sum(widths.values()))
+        for name in order:
+            target = target_widths.get(name, widths.get(name, 0))
+            grow_by = min(max(0, target - widths.get(name, 0)), extra_width)
+            widths[name] = widths.get(name, 0) + grow_by
+            extra_width -= grow_by
+            if extra_width <= 0:
+                break
+        return widths
 
 
     def resizeEvent(self, event):

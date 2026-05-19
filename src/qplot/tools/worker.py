@@ -1,3 +1,4 @@
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -12,14 +13,30 @@ from qplot.datahandling.qcodes_cache import (
     cache_rundescriber,
     cache_table_name,
     cache_write_status,
+    set_parameter_complete,
 )
-from qplot.datahandling.readonly import qcodes_read_only_connection
+from qplot.datahandling.readonly import (
+    qcodes_read_only_connection,
+    sqlite_read_only_connection,
+)
 from qplot.diagnostics import log_exception
 
 from . import data2matrix
 
 if TYPE_CHECKING:
     import qcodes
+
+MAX_FULL_HEATMAP_POINTS = 2_000_000
+MAX_SQL_HEATMAP_SOURCE_ROWS = 250_000
+MAX_SQL_HEATMAP_GRID_SIDE = 800
+MAX_SQL_HEATMAP_GRID_CELLS = 250_000
+SQL_HEATMAP_SAMPLES_PER_CELL = 4
+SQL_HEATMAP_ROWID_CHUNK = 900
+
+
+def _sqlite_identifier(name):
+    return '"' + str(name).replace('"', '""') + '"'
+
 
 class loader(QtCore.QRunnable):
     """
@@ -34,7 +51,10 @@ class loader(QtCore.QRunnable):
                  param_dict : dict,
                  axes : dict,
                  read_data : bool = True,
-                 operations: list | None = None
+                 operations: list | None = None,
+                 force_sql_heatmap: bool = False,
+                 heatmap_axis_ranges: dict | None = None,
+                 heatmap_full_axis_ranges: dict | None = None,
                  ):
         """
         Sets up worker with required data for run()
@@ -73,83 +93,94 @@ class loader(QtCore.QRunnable):
         self.axes_dict = axes
         self.read_data = read_data
         self.operations = [] if operations is None else operations
+        self.force_sql_heatmap = force_sql_heatmap
+        self.heatmap_axis_ranges = heatmap_axis_ranges
+        self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
+        self.sampled_heatmap_source = False
         
     
     def run(self):
         try:
             cache = self.cache
-            
-            if self.read_data:
-                conn = qcodes_read_only_connection(cache_database_path(cache))
-                (
-                    self.updated_read_status,
-                    self.updated_write_status,
-                    self.cache_data
-                ) = load_param_data_from_db (
-                    conn,
-                    self.table_name,
-                    cache_rundescriber(cache),
-                    self.param.name,
-                    cache_write_status(cache),
-                    cache_read_status(cache),
-                    cache_data(cache)
-                )
-                conn.close()
-                
-                data = self.cache_data[self.param.name]
-                
-            else:
-                data = cache_parameter_data(cache, self.param.name)
-                
-            depvarData = data[self.param.name]
-            
-            # for shaped 2d plots
-            if len(depvarData.shape) == 2:
-                (
-                    axis_data,
-                    axis_param,
-                    dataGrid
-                ) = self.for_shaped_2d(
-                    data,
-                    depvarData
-                    )
-            
-            else:
-                #Remove nan values
-                valid_rows = ~np.isnan(depvarData)
 
-                # for 1d plots
-                if len(self.param.depends_on_) == 1:
-                    (
-                        axis_data,
-                        axis_param
-                    ) = self.for_1d(
-                        data,
-                        valid_rows
+            if self.read_data and self._should_use_sql_heatmap():
+                set_parameter_complete(self.param, False)
+                self._load_large_heatmap_from_sql()
+
+            else:
+                if self.read_data:
+                    conn = qcodes_read_only_connection(cache_database_path(cache))
+                    try:
+                        (
+                            self.updated_read_status,
+                            self.updated_write_status,
+                            self.cache_data
+                        ) = load_param_data_from_db(
+                            conn,
+                            self.table_name,
+                            cache_rundescriber(cache),
+                            self.param.name,
+                            cache_write_status(cache),
+                            cache_read_status(cache),
+                            cache_data(cache)
                         )
-                # for >2d plots/unshaped 2d
+                    finally:
+                        conn.close()
+
+                    data = self.cache_data[self.param.name]
+
                 else:
+                    data = cache_parameter_data(cache, self.param.name)
+
+                depvarData = data[self.param.name]
+
+                # for shaped 2d plots
+                if len(depvarData.shape) == 2:
                     (
                         axis_data,
                         axis_param,
                         dataGrid
-                    ) = self.for_unshaped_2d(
+                    ) = self.for_shaped_2d(
                         data,
-                        valid_rows,
                         depvarData
                         )
+
+                else:
+                    #Remove nan values
+                    valid_rows = ~np.isnan(depvarData)
+
+                    # for 1d plots
+                    if len(self.param.depends_on_) == 1:
+                        (
+                            axis_data,
+                            axis_param
+                        ) = self.for_1d(
+                            data,
+                            valid_rows
+                            )
+                    # for >2d plots/unshaped 2d
+                    else:
+                        (
+                            axis_data,
+                            axis_param,
+                            dataGrid
+                        ) = self.for_unshaped_2d(
+                            data,
+                            valid_rows,
+                            depvarData
+                            )
+
+                # Allow main to fetch data
+                self.axis_data = axis_data
+                self.axis_param = axis_param
+                if len(self.param.depends_on_) != 1:
+                    self.dataGrid = dataGrid
 
         except Exception as err: # Raise error in main thread
             log_exception("Plot worker failed", err, __name__)
             self.emitter.errorOccurred.emit(err)
             self.emitter.finished.emit(False) # False: Failed
             return
-
-        # Allow main to fetch data
-        self.axis_data = axis_data
-        self.axis_param = axis_param
-        if len(self.param.depends_on_) != 1:
-            self.dataGrid = dataGrid
 
         # Run additional operations
         results = self.do_operations()
@@ -165,9 +196,497 @@ class loader(QtCore.QRunnable):
 
         # Callback
         self.emitter.finished.emit(True)
-            
-   
-            
+
+
+    def _should_use_sql_heatmap(self):
+        if len(getattr(self.param, "depends_on_", ())) <= 1:
+            return False
+
+        if self.force_sql_heatmap:
+            return True
+
+        point_count = self._large_heatmap_point_count()
+        if point_count is None:
+            return False
+
+        return point_count > MAX_FULL_HEATMAP_POINTS
+
+
+    def _large_heatmap_point_count(self):
+        shape = self._parameter_shape()
+        shape_size = self._shape_size(shape)
+        if shape_size is not None:
+            self.total_point_count_estimate = shape_size
+            return shape_size
+
+        conn = sqlite_read_only_connection(cache_database_path(self.cache))
+        try:
+            rowid_min, rowid_max = self._rowid_span(conn)
+        finally:
+            conn.close()
+
+        if rowid_min is None or rowid_max is None:
+            return None
+
+        point_count = rowid_max - rowid_min + 1
+        self.total_point_count_estimate = point_count
+        return point_count
+
+
+    def _parameter_shape(self):
+        shapes = getattr(cache_rundescriber(self.cache), "shapes", None)
+        if not isinstance(shapes, dict):
+            return None
+
+        return shapes.get(self.param.name)
+
+
+    def _shape_size(self, shape):
+        if shape is None:
+            return None
+
+        try:
+            dimensions = [int(dimension) for dimension in shape]
+        except (TypeError, ValueError):
+            return None
+
+        if not dimensions or any(dimension <= 0 for dimension in dimensions):
+            return None
+
+        return math.prod(dimensions)
+
+
+    def _load_large_heatmap_from_sql(self):
+        conn = sqlite_read_only_connection(cache_database_path(self.cache))
+        try:
+            rowid_min, rowid_max = self._rowid_span(conn)
+            x_data, y_data, z_data = self._read_heatmap_arrays(
+                conn,
+                rowid_min,
+                rowid_max,
+                )
+        finally:
+            conn.close()
+
+        x_axis, y_axis, data_grid = self._heatmap_grid_from_arrays(
+            x_data,
+            y_data,
+            z_data,
+            )
+        self.axis_data = {
+            "x": x_axis,
+            "y": y_axis,
+            }
+        self.axis_param = {
+            "x": self.param_dict[self.axes_dict["x"]],
+            "y": self.param_dict[self.axes_dict["y"]],
+            }
+        self.dataGrid = data_grid
+        self.loaded_from_sql_sample = True
+        self.loaded_point_count = int(z_data.size)
+
+        # The direct SQL path deliberately does not populate QCoDeS' full
+        # in-memory cache. Keep future refreshes on the database path.
+        self.read_data = False
+        set_parameter_complete(self.param, False)
+
+
+    def _rowid_span(self, conn):
+        table = _sqlite_identifier(self.table_name)
+        row = conn.execute(f"SELECT MIN(rowid), MAX(rowid) FROM {table}").fetchone()
+        if row is None or row[0] is None or row[1] is None:
+            return None, None
+
+        return int(row[0]), int(row[1])
+
+
+    def _read_heatmap_arrays(self, conn, rowid_min, rowid_max):
+        if rowid_min is None or rowid_max is None:
+            return (
+                np.array([], dtype=float),
+                np.array([], dtype=float),
+                np.array([], dtype=float),
+                )
+
+        table = _sqlite_identifier(self.table_name)
+        x_column = _sqlite_identifier(self.axes_dict["x"])
+        y_column = _sqlite_identifier(self.axes_dict["y"])
+        z_column = _sqlite_identifier(self.param.name)
+        row_count = rowid_max - rowid_min + 1
+        columns = f"{x_column}, {y_column}, {z_column}"
+
+        where_sql, parameters = self._heatmap_where_clause()
+        if where_sql:
+            sample_sql, sample_parameters = self._range_sample_clause(row_count)
+            self.sampled_heatmap_source = bool(sample_sql)
+            cursor = conn.execute(
+                (
+                    f"SELECT {columns} FROM {table} "
+                    f"WHERE {where_sql}{sample_sql} "
+                    "ORDER BY rowid LIMIT ?"
+                    ),
+                (*parameters, *sample_parameters, MAX_SQL_HEATMAP_SOURCE_ROWS),
+                )
+            arrays = self._arrays_from_cursor(cursor)
+            if arrays[2].size > 0 or not sample_sql:
+                return arrays
+
+            cursor = conn.execute(
+                (
+                    f"SELECT {columns} FROM {table} "
+                    f"WHERE {where_sql} "
+                    "ORDER BY rowid LIMIT ?"
+                    ),
+                (*parameters, MAX_SQL_HEATMAP_SOURCE_ROWS),
+                )
+            return self._arrays_from_cursor(cursor)
+
+        if row_count <= MAX_SQL_HEATMAP_SOURCE_ROWS:
+            self.sampled_heatmap_source = False
+            cursor = conn.execute(
+                (
+                    f"SELECT {columns} FROM {table} "
+                    "WHERE rowid BETWEEN ? AND ? ORDER BY rowid"
+                    ),
+                (rowid_min, rowid_max),
+                )
+            return self._arrays_from_cursor(cursor)
+
+        self.sampled_heatmap_source = True
+        rowids = self._sample_rowids(rowid_min, rowid_max)
+        x_values = []
+        y_values = []
+        z_values = []
+
+        for start in range(0, len(rowids), SQL_HEATMAP_ROWID_CHUNK):
+            chunk = [int(value) for value in rowids[start:start + SQL_HEATMAP_ROWID_CHUNK]]
+            placeholders = ", ".join("?" for _ in chunk)
+            cursor = conn.execute(
+                (
+                    f"SELECT {columns} FROM {table} "
+                    f"WHERE rowid IN ({placeholders}) ORDER BY rowid"
+                    ),
+                chunk,
+                )
+            for x_value, y_value, z_value in cursor:
+                x_values.append(x_value)
+                y_values.append(y_value)
+                z_values.append(z_value)
+
+        return self._arrays_from_values(x_values, y_values, z_values)
+
+
+    def _heatmap_where_clause(self):
+        ranges = self.heatmap_axis_ranges or {}
+        clauses = []
+        parameters = []
+
+        for axis in ("x", "y"):
+            axis_range = ranges.get(axis)
+            if axis_range is None:
+                continue
+
+            try:
+                low, high = sorted(float(value) for value in axis_range)
+            except (TypeError, ValueError):
+                continue
+
+            if not (np.isfinite(low) and np.isfinite(high)) or low == high:
+                continue
+
+            column = _sqlite_identifier(self.axes_dict[axis])
+            clauses.append(f"{column} BETWEEN ? AND ?")
+            parameters.extend((low, high))
+
+        return " AND ".join(clauses), parameters
+
+
+    def _range_sample_clause(self, row_count):
+        stride = self._range_sample_stride(row_count)
+        if stride <= 1:
+            return "", ()
+
+        return " AND ((rowid - ?) % ?) = 0", (1, stride)
+
+
+    def _range_sample_stride(self, row_count):
+        ranges = self.heatmap_axis_ranges or {}
+        full_ranges = self.heatmap_full_axis_ranges or {}
+        fraction = 1.0
+
+        for axis in ("x", "y"):
+            axis_range = ranges.get(axis)
+            full_axis_range = full_ranges.get(axis)
+            if axis_range is None or full_axis_range is None:
+                continue
+
+            try:
+                low, high = sorted(float(value) for value in axis_range)
+                full_low, full_high = sorted(float(value) for value in full_axis_range)
+            except (TypeError, ValueError):
+                continue
+
+            full_width = full_high - full_low
+            if (
+                    not np.isfinite(full_width)
+                    or full_width <= 0
+                    or not np.isfinite(low)
+                    or not np.isfinite(high)
+                    ):
+                continue
+
+            fraction *= min(max((high - low) / full_width, 0.0), 1.0)
+
+        estimated_rows = max(1, int(row_count * fraction))
+        return max(1, math.ceil(estimated_rows / MAX_SQL_HEATMAP_SOURCE_ROWS))
+
+
+    def _sample_rowids(self, rowid_min, rowid_max):
+        span = rowid_max - rowid_min + 1
+        count = min(MAX_SQL_HEATMAP_SOURCE_ROWS, span)
+        if count <= 0:
+            return np.array([], dtype=np.int64)
+
+        starts = (np.arange(count, dtype=np.int64) * span) // count
+        ends = ((np.arange(1, count + 1, dtype=np.int64) * span) // count) - 1
+        widths = np.maximum(ends - starts + 1, 1)
+        jitter = (
+            np.arange(count, dtype=np.int64) * 1103515245 + 12345
+            ) % widths
+        rowids = rowid_min + starts + jitter
+        rowids[0] = rowid_min
+        rowids[-1] = rowid_max
+        return np.unique(rowids)
+
+
+    def _arrays_from_cursor(self, cursor):
+        x_values = []
+        y_values = []
+        z_values = []
+
+        for x_value, y_value, z_value in cursor:
+            x_values.append(x_value)
+            y_values.append(y_value)
+            z_values.append(z_value)
+
+        return self._arrays_from_values(x_values, y_values, z_values)
+
+
+    def _arrays_from_values(self, x_values, y_values, z_values):
+        x_data = np.asarray(x_values, dtype=float)
+        y_data = np.asarray(y_values, dtype=float)
+        z_data = np.asarray(z_values, dtype=float)
+        finite = np.isfinite(x_data) & np.isfinite(y_data) & np.isfinite(z_data)
+
+        return x_data[finite], y_data[finite], z_data[finite]
+
+
+    def _heatmap_grid_from_arrays(self, x_data, y_data, z_data):
+        if z_data.size == 0:
+            return (
+                np.array([], dtype=float),
+                np.array([], dtype=float),
+                np.empty((0, 0), dtype=float),
+                )
+
+        unique_x = np.unique(x_data)
+        unique_y = np.unique(y_data)
+        exact_cells = unique_x.size * unique_y.size
+        if (
+                not getattr(self, "sampled_heatmap_source", False)
+                and exact_cells <= MAX_SQL_HEATMAP_GRID_CELLS
+                ):
+            return self._unique_heatmap_grid(
+                x_data,
+                y_data,
+                z_data,
+                unique_x,
+                unique_y,
+                )
+
+        max_cells = MAX_SQL_HEATMAP_GRID_CELLS
+        if getattr(self, "sampled_heatmap_source", False):
+            max_cells = min(
+                max_cells,
+                max(1, int(z_data.size) // SQL_HEATMAP_SAMPLES_PER_CELL),
+                )
+
+        return self._binned_heatmap_grid(
+            x_data,
+            y_data,
+            z_data,
+            unique_x,
+            unique_y,
+            max_cells=max_cells,
+            fill_empty=getattr(self, "sampled_heatmap_source", False),
+            )
+
+
+    def _unique_heatmap_grid(self, x_data, y_data, z_data, unique_x, unique_y):
+        x_index = np.searchsorted(unique_x, x_data)
+        y_index = np.searchsorted(unique_y, y_data)
+        grid_sum = np.zeros((unique_y.size, unique_x.size), dtype=float)
+        grid_count = np.zeros((unique_y.size, unique_x.size), dtype=np.int32)
+        np.add.at(grid_sum, (y_index, x_index), z_data)
+        np.add.at(grid_count, (y_index, x_index), 1)
+
+        data_grid = np.full(grid_sum.shape, np.nan, dtype=np.float32)
+        np.divide(
+            grid_sum,
+            grid_count,
+            out=data_grid,
+            where=grid_count > 0,
+            casting="unsafe",
+            )
+
+        return unique_x, unique_y, data_grid
+
+
+    def _binned_heatmap_grid(
+            self,
+            x_data,
+            y_data,
+            z_data,
+            unique_x,
+            unique_y,
+            max_cells=None,
+            fill_empty=False,
+            ):
+        x_bins, y_bins = self._bounded_grid_shape(
+            unique_x.size,
+            unique_y.size,
+            max_cells=max_cells,
+            )
+        x_centres, x_index = self._scaled_axis_indices(
+            x_data,
+            x_bins,
+            self._grid_axis_bounds("x"),
+            )
+        y_centres, y_index = self._scaled_axis_indices(
+            y_data,
+            y_bins,
+            self._grid_axis_bounds("y"),
+            )
+
+        grid_sum = np.zeros((y_centres.size, x_centres.size), dtype=float)
+        grid_count = np.zeros((y_centres.size, x_centres.size), dtype=np.int32)
+        np.add.at(grid_sum, (y_index, x_index), z_data)
+        np.add.at(grid_count, (y_index, x_index), 1)
+
+        data_grid = np.full(grid_sum.shape, np.nan, dtype=np.float32)
+        np.divide(
+            grid_sum,
+            grid_count,
+            out=data_grid,
+            where=grid_count > 0,
+            casting="unsafe",
+            )
+
+        if fill_empty:
+            data_grid = self._fill_empty_heatmap_bins(data_grid)
+
+        return x_centres, y_centres, data_grid
+
+
+    @staticmethod
+    def _fill_empty_heatmap_bins(data_grid):
+        if data_grid.size == 0 or np.all(np.isfinite(data_grid)):
+            return data_grid
+        if not np.any(np.isfinite(data_grid)):
+            return data_grid
+
+        filled = np.array(data_grid, dtype=np.float32, copy=True)
+        row_positions = np.arange(filled.shape[0], dtype=float)
+        column_positions = np.arange(filled.shape[1], dtype=float)
+
+        for column in range(filled.shape[1]):
+            values = filled[:, column]
+            finite = np.isfinite(values)
+            if np.any(finite) and not np.all(finite):
+                values[~finite] = np.interp(
+                    row_positions[~finite],
+                    row_positions[finite],
+                    values[finite],
+                    )
+
+        for row in range(filled.shape[0]):
+            values = filled[row, :]
+            finite = np.isfinite(values)
+            if np.any(finite) and not np.all(finite):
+                values[~finite] = np.interp(
+                    column_positions[~finite],
+                    column_positions[finite],
+                    values[finite],
+                    )
+
+        return filled
+
+
+    def _grid_axis_bounds(self, axis):
+        ranges = self.heatmap_axis_ranges or {}
+        axis_range = ranges.get(axis)
+        if axis_range is None:
+            return None
+
+        try:
+            low, high = sorted(float(value) for value in axis_range)
+        except (TypeError, ValueError):
+            return None
+
+        if not (np.isfinite(low) and np.isfinite(high)) or low == high:
+            return None
+
+        return low, high
+
+
+    def _bounded_grid_shape(self, x_count, y_count, max_cells=None):
+        max_cells = int(max_cells or MAX_SQL_HEATMAP_GRID_CELLS)
+        x_bins = max(1, min(int(x_count), MAX_SQL_HEATMAP_GRID_SIDE))
+        y_bins = max(1, min(int(y_count), MAX_SQL_HEATMAP_GRID_SIDE))
+
+        if x_bins * y_bins <= max_cells:
+            return x_bins, y_bins
+
+        scale = math.sqrt(max_cells / (x_bins * y_bins))
+        x_bins = max(1, int(x_bins * scale))
+        y_bins = max(1, int(y_bins * scale))
+
+        while x_bins * y_bins > max_cells:
+            if x_bins >= y_bins and x_bins > 1:
+                x_bins -= 1
+            elif y_bins > 1:
+                y_bins -= 1
+            else:
+                break
+
+        return x_bins, y_bins
+
+
+    def _scaled_axis_indices(self, values, bin_count, bounds=None):
+        if bounds is None:
+            lower = float(np.nanmin(values))
+            upper = float(np.nanmax(values))
+        else:
+            lower, upper = bounds
+
+        if not np.isfinite(lower) or not np.isfinite(upper):
+            return np.array([], dtype=float), np.array([], dtype=np.int64)
+
+        if lower == upper or bin_count <= 1:
+            return (
+                np.array([lower], dtype=float),
+                np.zeros(values.size, dtype=np.int64),
+                )
+
+        scaled = (values - lower) / (upper - lower)
+        indices = np.floor(scaled * bin_count).astype(np.int64)
+        indices = np.clip(indices, 0, bin_count - 1)
+        step = (upper - lower) / bin_count
+        centres = lower + (np.arange(bin_count, dtype=float) + 0.5) * step
+
+        return centres, indices
+
+
     def for_1d(self, data, valid_rows):
         axis_data = {}
         axis_param = {}

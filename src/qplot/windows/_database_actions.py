@@ -288,6 +288,9 @@ class DatabaseActionsMixin:
             updatedRuns = self.RunList.checkWatching()
             if updatedRuns:
                 self.infoBox.preview.add_runs(updatedRuns)
+                prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+                if callable(prioritize_previews):
+                    prioritize_previews()
         except Exception as err:
             log_exception("Main-window refresh failed", err, __name__)
             self.show_error("Refresh Failed", "Could not refresh the run list.", str(err))
@@ -310,6 +313,9 @@ class DatabaseActionsMixin:
         )
         self.RunList.addRuns(newRuns)
         self.infoBox.preview.add_runs(newRuns)
+        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+        if callable(prioritize_previews):
+            prioritize_previews()
         self._sync_empty_state()
         count = len(newRuns)
         noun = "run" if count == 1 else "runs"
@@ -769,6 +775,9 @@ class DatabaseActionsMixin:
         self.RunList.addRuns(runs)
         self.infoBox.preview.set_database_runs(abspath, runs)
         self.select_default_run()
+        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+        if callable(prioritize_previews):
+            prioritize_previews()
         self._sync_empty_state()
 
         if monitorTimer > 0:
@@ -916,6 +925,9 @@ class DatabaseActionsMixin:
             return
 
         self.infoBox.preview.add_runs(updated_runs, queue_previews=False)
+        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+        if callable(prioritize_previews):
+            prioritize_previews()
         self._refresh_selected_run_details(updated_runs)
 
 

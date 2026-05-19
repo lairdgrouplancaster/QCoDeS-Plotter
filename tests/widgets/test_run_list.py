@@ -334,7 +334,7 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
-    def test_resize_columns_prioritises_setpoints_space(self):
+    def test_resize_columns_keeps_narrow_width_inside_viewport(self):
         old_isfile = treeWidgets.isfile
         treeWidgets.isfile = lambda _: False
 
@@ -350,8 +350,40 @@ class RunListTooltipTestCase(unittest.TestCase):
                 for col, name in enumerate(run_list.cols)
                 }
 
+            self.assertLessEqual(sum(widths.values()), run_list.viewport().width())
+            self.assertGreaterEqual(
+                widths["Started"],
+                treeWidgets.RunList.readable_column_widths["Started"],
+                )
+            self.assertGreaterEqual(
+                widths["Measurements"],
+                treeWidgets.RunList.readable_column_widths["Measurements"],
+                )
+            run_list.hide()
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_resize_columns_uses_roomy_main_window_widths(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.resize(780, 300)
+            run_list.show()
+            qtw.QApplication.processEvents()
+            run_list._resize_columns()
+
+            widths = {
+                name: run_list.columnWidth(col)
+                for col, name in enumerate(run_list.cols)
+                }
+
+            for name, width in treeWidgets.RunList.column_widths.items():
+                self.assertGreaterEqual(widths[name], width)
+            for name, width in treeWidgets.RunList.elastic_column_widths.items():
+                self.assertGreaterEqual(widths[name], width)
             self.assertGreater(widths["Setpoints"], widths["Started"])
-            self.assertLess(widths["Measurements"], 96)
             run_list.hide()
         finally:
             treeWidgets.isfile = old_isfile
@@ -708,5 +740,48 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual(export_requested, [("run-guid", "signal")])
             self.assertIs(run_list.currentItem(), item)
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_run_table_placeholders_use_subtle_tints_while_generating(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "result_table_name": "results_1",
+                    "guid": "run-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["a", "b", "c"],
+                    "result_count": 2,
+                    "expected_results": 2,
+                    "storage_bytes": 2048,
+                    },
+                })
+
+            item = run_list.topLevelItem(0)
+            cell = run_list.itemWidget(item, 1)
+
+            run_list.set_run_preview_generating("run-guid", True)
+            placeholders = cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+            styles = [placeholder.styleSheet() for placeholder in placeholders]
+
+            self.assertEqual(len(placeholders), 3)
+            self.assertTrue(all("background-color" in style for style in styles))
+            self.assertGreater(len(set(styles)), 1)
+
+            run_list.set_run_preview_generating("run-guid", False)
+
+            self.assertTrue(
+                all(
+                    placeholder.styleSheet() == ""
+                    for placeholder in cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+                    )
+                )
         finally:
             treeWidgets.isfile = old_isfile

@@ -43,6 +43,8 @@ from ._window_controls import (
     close_all_warning_enabled,
 )
 
+MAIN_WINDOW_READABLE_WIDTH = 780
+
 
 class DatabasePathLineEdit(qtw.QLineEdit):
     """
@@ -163,8 +165,12 @@ class MainWindow(  # type: ignore[misc]
         w.setLayout(self.l)
         self.setCentralWidget(w)
        
-        # Fetch window size from config.json
-        self.resize(*self.config.get("GUI.main_frame_size"))
+        # Fetch window size from config.json, but keep the run list readable.
+        configured_width, configured_height = self.config.get("GUI.main_frame_size")
+        self.resize(
+            max(configured_width, MAIN_WINDOW_READABLE_WIDTH),
+            configured_height,
+            )
         self.setWindowTitle("qPlot")
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
@@ -493,6 +499,9 @@ class MainWindow(  # type: ignore[misc]
         self._save_preview_size(preview_size)
         if hasattr(self, "infoBox"):
             self.infoBox.set_preview_size(preview_size)
+            prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+            if callable(prioritize_previews):
+                prioritize_previews()
             if hasattr(self, "runInfoSplitter"):
                 self.runInfoSplitter.setSizes([380, self._details_pane_height()])
         self.show_status(f"Preview size set to {preview_size} px.", 3000)

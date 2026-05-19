@@ -488,16 +488,69 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(preview.queue, {})
         self.assertEqual(preview.run_metadata["run-guid"]["result_count"], 100)
 
-    def test_preview_tab_does_not_queue_every_run_on_database_load(self):
+    def test_preview_tab_queues_every_run_on_database_load(self):
         preview = PreviewTab(preview_size=100)
         preview._start_next = lambda: None
+        generation_changes = []
+        preview.previewGenerationChanged.connect(
+            lambda *args: generation_changes.append(args)
+            )
 
         preview.set_database_runs("previews.db", {
             1: {"guid": "guid-1", "run_timestamp": 100.0},
             2: {"guid": "guid-2", "run_timestamp": 101.0},
             })
 
-        self.assertEqual(preview.queue, {})
+        self.assertEqual(preview.queue, {
+            "guid-1": preview_module.PREVIEW_REMAINING_PRIORITY,
+            "guid-2": preview_module.PREVIEW_REMAINING_PRIORITY,
+            })
+        self.assertEqual(generation_changes, [
+            ("guid-1", True),
+            ("guid-2", True),
+            ])
+
+        preview._worker_finished(preview.generation, "guid-1", [], None)
+
+        self.assertIn(("guid-1", False), generation_changes)
+
+    def test_preview_tab_prioritizes_selected_then_visible_then_remaining_runs(self):
+        preview = PreviewTab(preview_size=100)
+        preview._start_next = lambda: None
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1", "run_timestamp": 100.0},
+            2: {"guid": "guid-2", "run_timestamp": 101.0},
+            3: {"guid": "guid-3", "run_timestamp": 102.0},
+            })
+
+        preview.prioritize_runs(
+            selected_run_ids=[2],
+            visible_run_ids=[1, 2],
+            )
+
+        self.assertEqual(
+            preview.queue["guid-2"],
+            preview_module.PREVIEW_SELECTED_PRIORITY,
+            )
+        self.assertEqual(
+            preview.queue["guid-1"],
+            preview_module.PREVIEW_VISIBLE_PRIORITY,
+            )
+        self.assertEqual(
+            preview.queue["guid-3"],
+            preview_module.PREVIEW_REMAINING_PRIORITY,
+            )
+
+        preview.prioritize_runs(visible_run_ids=[3])
+
+        self.assertEqual(
+            preview.queue["guid-1"],
+            preview_module.PREVIEW_REMAINING_PRIORITY,
+            )
+        self.assertEqual(
+            preview.queue["guid-3"],
+            preview_module.PREVIEW_VISIBLE_PRIORITY,
+            )
 
     def test_preview_sampling_is_limited_without_result_count(self):
         old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
@@ -524,6 +577,93 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         finally:
             conn.close()
             preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+
+    def test_2d_preview_reads_complete_modest_known_grid(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_ROWS = 3
+        preview_module.MAX_PREVIEW_GRID_CELLS = 4
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, y REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?, ?)",
+                [
+                    (0.0, 0.0, 1.0),
+                    (1.0, 0.0, 2.0),
+                    (0.0, 1.0, 3.0),
+                    (1.0, 1.0, 4.0),
+                    ],
+                )
+
+            x, y, signal = preview_module._select_arrays(
+                cursor,
+                "results",
+                ["x", "y", "signal"],
+                {"result_count": 4},
+                max_rows=preview_module._preview_2d_row_limit((2, 2)),
+                sampling="stratified",
+                )
+
+            self.assertEqual(x.size, 4)
+            self.assertEqual(y.size, 4)
+            self.assertEqual(signal.size, 4)
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
+
+    def test_large_known_grid_preview_samples_dense_grid(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_ROWS = 16
+        preview_module.MAX_PREVIEW_GRID_CELLS = 4
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, y REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?, ?)",
+                [
+                    (float(column), float(row), float(row * 10 + column))
+                    for row in range(4)
+                    for column in range(10)
+                    ],
+                )
+
+            grid = preview_module._sample_large_known_grid_preview(
+                cursor,
+                "results",
+                {"result_count": 40},
+                "signal",
+                (4, 10),
+                size=4,
+                )
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
+
+        self.assertEqual(grid.shape, (4, 4))
+        self.assertTrue(np.isfinite(grid).all())
+
+    def test_sampled_2d_preview_bins_to_avoid_sparse_grid_artifacts(self):
+        old_samples_per_cell = preview_module.PREVIEW_SAMPLES_PER_CELL
+        preview_module.PREVIEW_SAMPLES_PER_CELL = 4
+        try:
+            grid = preview_module._binned_heatmap_grid(
+                np.arange(20, dtype=float),
+                np.zeros(20, dtype=float),
+                np.arange(20, dtype=float),
+                size=20,
+                grid_shape=(20, 20),
+                )
+        finally:
+            preview_module.PREVIEW_SAMPLES_PER_CELL = old_samples_per_cell
+
+        self.assertLessEqual(grid.size, 5)
+        self.assertTrue(np.isfinite(grid).all())
 
     def test_double_clicking_preview_requests_matching_parameter_plot(self):
         preview = PreviewTab(preview_size=100)
