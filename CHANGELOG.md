@@ -9,6 +9,18 @@ installation commands and release validation, see `docs/distribution.md`.
 
 No changes yet.
 
+## 1.4.0 - 2026-05-19
+
+### Highlights
+
+- Autoplot works more reliably.
+- Copy function has been added from plot windows.
+- Main GUI reports run status properly.
+
+### Changed
+
+- Promote the 1.4.0 beta line to the stable 1.4.0 release.
+
 ## 1.4.0b3 - 2026-05-18
 
 ### Highlights

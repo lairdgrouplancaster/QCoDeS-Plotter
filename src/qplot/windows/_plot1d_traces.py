@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         make_ds: Any
         mergable: Any
         option_boxes: list[Any]
+        param: Any
         plot: Any
         remove_dataset: Any
         right_vb: Any
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
         vb: Any
 
         def initAxes(self) -> None: ...
+
+        def initMenu(self) -> None: ...
 
         def closeEvent(self, event: object) -> None: ...
 else:
@@ -59,6 +62,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         order: int = 0
 
     """Trace controls and secondary-axis handling for 1D plot windows."""
+
+    _trace_styles: dict[str, _TraceStyle]
+    _trace_appearance_dialog: "_TraceAppearanceDialog | None"
 
     def _register_main_line(self) -> None:
         """
@@ -126,7 +132,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         main_line.axis_side.setDisabled(True)
         main_line.color_box.setColor(self.config.theme.colors[0])
         main_line.color_box.selectedColor.connect(
-            lambda col: self.line.setPen(col)
+            self._set_main_line_color
             )
         self.box_layout.addWidget(main_line)
         main_line.adjustSize()
