@@ -264,9 +264,13 @@ def snapshot_parameters(snapshot):
         return {}
 
     out = {}
-    station = snapshot.get("station", snapshot)
     parameter_dicts = []
 
+    params = snapshot.get("parameters")
+    if isinstance(params, dict):
+        parameter_dicts.append(params)
+
+    station = snapshot.get("station")
     if isinstance(station, dict):
         params = station.get("parameters")
         if isinstance(params, dict):

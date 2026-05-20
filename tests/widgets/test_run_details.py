@@ -194,6 +194,111 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             qtw.QHeaderView.ResizeMode.Stretch
             )
 
+    def test_run_details_populates_set_parameter_sweep_summary_from_result_table(self):
+        class Param:
+            def __init__(self, name, label, unit, axes=()):
+                self.name = name
+                self.label = label
+                self.unit = unit
+                self.depends_on_ = axes
+
+        class Dataset:
+            table_name = "results-1-1"
+            running = False
+
+            def get_parameters(self):
+                return [
+                    Param("dac_ch1", "Gate ch1", "V"),
+                    Param("dac_ch2", "Gate ch2", "V"),
+                    Param("dmm_v1", "Gate v1", "V", ("dac_ch1", "dac_ch2")),
+                    ]
+
+            def get_parameter_data(self, name):
+                raise AssertionError("Details pane should not load parameter data")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "details.db")
+            conn = sqlite3.connect(database_path)
+            cursor = None
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                  CREATE TABLE "results-1-1" (
+                      dac_ch1 REAL,
+                      dac_ch2 REAL,
+                      dmm_v1 REAL
+                  )
+                """)
+                cursor.executemany(
+                    'INSERT INTO "results-1-1" VALUES (?, ?, ?)',
+                    [
+                        (-1.0, -2.0, 1.0),
+                        (-1.0, -0.5, 2.0),
+                        (-1.0, 1.0, 3.0),
+                        (0.0, -2.0, 4.0),
+                        (0.0, -0.5, 5.0),
+                        (0.0, 1.0, 6.0),
+                        (1.0, -2.0, 7.0),
+                        (1.0, -0.5, 8.0),
+                        (1.0, 1.0, 9.0),
+                        ]
+                    )
+                conn.commit()
+            finally:
+                if cursor is not None:
+                    cursor.close()
+                conn.close()
+
+            widget = treeWidgets.moreInfo()
+            widget.setInfo(
+                {
+                    "Data Structure": {
+                        "Data points": 9,
+                        "dac_ch1": {"unit": "V", "label": "Gate ch1"},
+                        "dac_ch2": {"unit": "V", "label": "Gate ch2"},
+                        "dmm_v1": {
+                            "unit": "V",
+                            "label": "Gate v1",
+                            "axes": ["dac_ch1", "dac_ch2"],
+                            },
+                        },
+                    "Snapshot": {
+                        "station": {},
+                        "parameters": {
+                            "dac_ch1": {
+                                "full_name": "dac_ch1",
+                                "post_delay": 0.02,
+                                "instrument_name": "dac",
+                                },
+                            "dac_ch2": {
+                                "full_name": "dac_ch2",
+                                "post_delay": 0.03,
+                                "instrument_name": "dac",
+                                },
+                            },
+                        },
+                    },
+                Dataset(),
+                run_metadata={"result_table_name": "results-1-1"},
+                database_path=database_path,
+                )
+
+        self.assertEqual(widget.parameters.item(1, 0).text(), "dac_ch1")
+        self.assertEqual(widget.parameters.item(1, 3).text(), "-1")
+        self.assertEqual(widget.parameters.item(1, 4).text(), "1")
+        self.assertEqual(widget.parameters.item(1, 5).text(), "3")
+        self.assertEqual(widget.parameters.item(1, 6).text(), "0.02")
+        self.assertEqual(widget.parameters.item(1, 7).text(), "dac")
+        self.assertEqual(widget.parameters.item(2, 0).text(), "dac_ch2")
+        self.assertEqual(widget.parameters.item(2, 3).text(), "-2")
+        self.assertEqual(widget.parameters.item(2, 4).text(), "1")
+        self.assertEqual(widget.parameters.item(2, 5).text(), "3")
+        self.assertEqual(widget.parameters.item(2, 6).text(), "0.03")
+        self.assertEqual(widget.parameters.item(2, 7).text(), "dac")
+        self.assertEqual(widget.parameters.item(4, 0).text(), "dmm_v1")
+        self.assertEqual(widget.parameters.item(4, 3).text(), "")
+        self.assertEqual(widget.parameters.item(4, 5).text(), "")
+
     def test_preview_renderers_make_square_images(self):
         sparkline = render_sparkline_preview(
             np.array([0, 1, 2, 3], dtype=float),

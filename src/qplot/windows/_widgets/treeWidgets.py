@@ -15,6 +15,7 @@ from qplot.datahandling import (
     get_run_status,
     get_runs_via_sql,
 )
+from qplot.datahandling.readonly import sqlite_read_only_connection
 
 from .._commands import (
     configure_action,
@@ -937,11 +938,11 @@ class moreInfo(qtw.QTabWidget):
         table.horizontalHeader().setStretchLastSection(True)
 
 
-    def setInfo(self, info, dataset=None):
+    def setInfo(self, info, dataset=None, run_metadata=None, database_path=None):
         self.clear()
 
         self._set_overview(info, dataset)
-        self._set_parameters(info, dataset)
+        self._set_parameters(info, dataset, run_metadata, database_path)
         self.preview.set_current_run(dataset)
         self.metadata.setInfo(info.get("MetaData", {}))
         self.raw.setInfo(info)
@@ -995,22 +996,31 @@ class moreInfo(qtw.QTabWidget):
         self._fill_key_value_table(self.overview, rows)
 
 
-    def _set_parameters(self, info, dataset):
+    def _set_parameters(self, info, dataset, run_metadata=None, database_path=None):
         params = list(dataset.get_parameters()) if dataset is not None else []
         snapshot_params = snapshot_parameters(info.get("Snapshot"))
-        all_axes = {
-            axis
-            for param in params
-            for axis in getattr(param, "depends_on_", ())
-            }
-        setpoint_summaries = self._setpoint_summaries(dataset, all_axes, params)
+        all_axes = []
+        seen_axes = set()
+        for param in params:
+            for axis in getattr(param, "depends_on_", ()):
+                if axis in seen_axes:
+                    continue
+                all_axes.append(axis)
+                seen_axes.add(axis)
+
+        setpoint_summaries = self._setpoint_summaries(
+            dataset,
+            all_axes,
+            run_metadata=run_metadata,
+            database_path=database_path,
+            )
         setpoint_rows = []
         measured_rows = []
 
         for param in params:
             name = getattr(param, "name", "")
             snap = snapshot_params.get(name, {})
-            is_setpoint = name in all_axes and not getattr(param, "depends_on_", ())
+            is_setpoint = name in seen_axes and not getattr(param, "depends_on_", ())
             values = self._parameter_row_values(param, snap, is_setpoint, setpoint_summaries)
 
             if is_setpoint:
@@ -1128,8 +1138,111 @@ class moreInfo(qtw.QTabWidget):
         return f"{seconds / points:.3g}"
 
 
-    def _setpoint_summaries(self, dataset, setpoint_names, params):
-        return {}
+    def _setpoint_summaries(
+            self,
+            dataset,
+            setpoint_names,
+            run_metadata=None,
+            database_path=None,
+            ):
+        run_metadata = run_metadata or {}
+        table_name = (
+            run_metadata.get("result_table_name")
+            or self._dataset_attr(dataset, "table_name")
+            )
+        summaries = self._setpoint_summaries_from_sql(
+            database_path,
+            table_name,
+            setpoint_names,
+            )
+        self._add_setpoint_shape_steps(summaries, setpoint_names, run_metadata)
+        return summaries
+
+
+    def _setpoint_summaries_from_sql(self, database_path, table_name, setpoint_names):
+        if not database_path or not table_name or not setpoint_names:
+            return {}
+
+        conn = None
+        cursor = None
+        try:
+            conn = sqlite_read_only_connection(database_path, timeout=2)
+            cursor = conn.cursor()
+            columns = self._result_table_columns(cursor, table_name)
+            summaries = {}
+            for name in setpoint_names:
+                if name not in columns:
+                    continue
+                summary = self._setpoint_summary_from_sql(cursor, table_name, name)
+                if summary:
+                    summaries[name] = summary
+            return summaries
+        except Exception:
+            return {}
+        finally:
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
+
+
+    def _result_table_columns(self, cursor, table_name):
+        cursor.execute(f"PRAGMA table_info({_sqlite_identifier(table_name)})")
+        return {row[1] for row in cursor.fetchall()}
+
+
+    def _setpoint_summary_from_sql(self, cursor, table_name, parameter):
+        table = _sqlite_identifier(table_name)
+        column = _sqlite_identifier(parameter)
+        try:
+            cursor.execute(f"""
+              WITH distinct_values(value, first_rowid) AS (
+                  SELECT {column}, MIN(rowid)
+                  FROM {table}
+                  WHERE {column} IS NOT NULL
+                  GROUP BY {column}
+              )
+              SELECT
+                  (
+                      SELECT value
+                      FROM distinct_values
+                      ORDER BY first_rowid ASC
+                      LIMIT 1
+                  ),
+                  (
+                      SELECT value
+                      FROM distinct_values
+                      ORDER BY first_rowid DESC
+                      LIMIT 1
+                  ),
+                  (SELECT COUNT(*) FROM distinct_values)
+            """)
+            first_value, last_value, count = cursor.fetchone()
+            count = int(count or 0)
+            if count <= 0:
+                return {}
+        except Exception:
+            return {}
+
+        if first_value is None or last_value is None:
+            return {}
+
+        return {
+            "from": first_value,
+            "to": last_value,
+            "steps": count,
+            }
+
+
+    def _add_setpoint_shape_steps(self, summaries, setpoint_names, run_metadata):
+        shape = run_metadata.get("setpoint_shape") or run_metadata.get("point_shape")
+        if not shape:
+            return
+
+        for name, steps in zip(setpoint_names, shape, strict=False):
+            if not self._has_value(steps):
+                continue
+            summaries.setdefault(name, {}).setdefault("steps", steps)
 
 
     def _setpoint_summary(self, values):
@@ -1220,3 +1333,7 @@ class moreInfo(qtw.QTabWidget):
 
     def _has_value(self, value):
         return value is not None and value != ""
+
+
+def _sqlite_identifier(name):
+    return f'"{str(name).replace(chr(34), chr(34) * 2)}"'

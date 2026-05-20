@@ -186,7 +186,12 @@ class PlotActionsMixin:
             "MetaData": self.ds.metadata,
             "Snapshot": snap,
         }
-        self.infoBox.setInfo(info, self.ds)
+        self.infoBox.setInfo(
+            info,
+            self.ds,
+            run_metadata=run_metadata,
+            database_path=self.fileTextbox.text(),
+            )
         if point_count is None:
             self.show_status(f"Selected run {self.ds.run_id}.", 5000)
         else:
