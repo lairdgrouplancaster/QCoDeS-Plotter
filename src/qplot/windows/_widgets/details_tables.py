@@ -65,7 +65,7 @@ class WrappedValueDelegate(qtw.QStyledItemDelegate):
 
         metrics = QtGui.QFontMetrics(opt.font)
         text_rect = metrics.boundingRect(
-            QtCore.QRect(0, 0, width, 100000),
+            QtCore.QRect(0, 0, width, 100_000),
             self.WRAP_FLAGS,
             opt.text
             )

@@ -617,12 +617,12 @@ class plotWidget(
 
         form = qtw.QFormLayout(dialog)
         width_spin = qtw.QSpinBox(dialog)
-        width_spin.setRange(1, 20000)
+        width_spin.setRange(1, 20_000)
         width_spin.setSuffix(" px")
         width_spin.setValue(max(1, current_size.width()))
 
         height_spin = qtw.QSpinBox(dialog)
-        height_spin.setRange(1, 20000)
+        height_spin.setRange(1, 20_000)
         height_spin.setSuffix(" px")
         height_spin.setValue(max(1, current_size.height()))
 

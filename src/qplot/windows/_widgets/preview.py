@@ -13,8 +13,8 @@ PREVIEW_SIZE = 200
 PREVIEW_BACKGROUND_COLOR = "#f4f7fb"
 PREVIEW_HEIGHT_PADDING = 48
 COLLAPSE_MINIMUM_RATIO = 0.25
-MAX_PREVIEW_ROWS = 50000
-MAX_PREVIEW_GRID_CELLS = 250000
+MAX_PREVIEW_ROWS = 50_000
+MAX_PREVIEW_GRID_CELLS = 250_000
 PREVIEW_SAMPLES_PER_CELL = 4
 PREVIEW_ROWID_CHUNK = 900
 PREVIEW_GRID_SAMPLE_MIN_COVERAGE = 0.9
@@ -1312,7 +1312,7 @@ def _sample_rowids(first_rowid, last_rowid, max_rows):
     ends = ((np.arange(1, count + 1, dtype=np.int64) * span) // count) - 1
     widths = np.maximum(ends - starts + 1, 1)
     jitter = (
-        np.arange(count, dtype=np.int64) * 1103515245 + 12345
+        np.arange(count, dtype=np.int64) * 1_103_515_245 + 12_345
         ) % widths
     rowids = first_rowid + starts + jitter
     rowids[0] = first_rowid

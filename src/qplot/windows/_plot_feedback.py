@@ -73,7 +73,7 @@ class PlotWindowFeedbackMixin(_PlotWindowFeedbackBase):
 
         """
         log_user_error(title, message, details, __name__)
-        self.show_status(message, 10000)
+        self.show_status(message, 10_000)
 
         if not self.visible:
             return

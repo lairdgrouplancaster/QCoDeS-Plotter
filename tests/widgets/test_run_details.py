@@ -37,8 +37,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             sample_name = "no sample"
             running = False
             guid = "abc-123"
-            run_timestamp_raw = 1768129603
-            completed_timestamp_raw = 1768129626.1
+            run_timestamp_raw = 1_768_129_603
+            completed_timestamp_raw = 1_768_129_626.1
 
             def get_parameters(self):
                 return [
@@ -47,10 +47,10 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     ]
 
             def run_timestamp(self):
-                return 1768129603
+                return 1_768_129_603
 
             def completed_timestamp(self):
-                return 1768129626.1
+                return 1_768_129_626.1
 
             def get_parameter_data(self, name):
                 raise AssertionError("Details pane should not load parameter data")

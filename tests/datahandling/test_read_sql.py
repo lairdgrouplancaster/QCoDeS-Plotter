@@ -439,7 +439,7 @@ class RunSizeTestCase(unittest.TestCase):
 
                 self.assertEqual(
                     readSQL._estimated_table_storage_bytes(cursor, "results-1-4"),
-                    112000
+                    112_000
                     )
             finally:
                 cursor.close()
