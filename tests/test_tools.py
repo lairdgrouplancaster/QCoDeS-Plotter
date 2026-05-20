@@ -1,7 +1,10 @@
+import sqlite3
+import tempfile
 import unittest
 
 import numpy as np
 
+import qplot.tools.worker as worker_module
 from qplot.configuration.scripts import try_as_num
 from qplot.tools.general import data2matrix
 from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
@@ -79,6 +82,173 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(axis_data["x"], np.array([0.0]))
         np.testing.assert_array_equal(axis_data["y"], np.array([0.0, 1.0]))
         np.testing.assert_array_equal(data_grid, np.array([[42.0], [43.0]]))
+
+    def test_large_heatmap_sql_loader_uses_bounded_sample_and_grid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = f"{tmpdir}/heatmap.db"
+            self._create_heatmap_table(database_path)
+            worker = self._sql_heatmap_worker(database_path)
+
+            old_database_path = worker_module.cache_database_path
+            old_set_complete = worker_module.set_parameter_complete
+            old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
+            old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
+            old_grid_side = worker_module.MAX_SQL_HEATMAP_GRID_SIDE
+            try:
+                worker_module.cache_database_path = lambda _cache: database_path
+                worker_module.set_parameter_complete = (
+                    lambda param, complete=False: setattr(param, "_complete", complete)
+                    )
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 60
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 16
+                worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 4
+
+                loader._load_large_heatmap_from_sql(worker)
+            finally:
+                worker_module.cache_database_path = old_database_path
+                worker_module.set_parameter_complete = old_set_complete
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
+                worker_module.MAX_SQL_HEATMAP_GRID_SIDE = old_grid_side
+
+            self.assertTrue(worker.loaded_from_sql_sample)
+            self.assertFalse(worker.read_data)
+            self.assertLessEqual(worker.loaded_point_count, 60)
+            self.assertLessEqual(worker.dataGrid.size, 16)
+            self.assertGreater(np.isfinite(worker.dataGrid).sum(), 0)
+
+    def test_large_heatmap_sql_loader_can_reload_visible_axis_range(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = f"{tmpdir}/heatmap.db"
+            self._create_heatmap_table(database_path)
+            worker = self._sql_heatmap_worker(database_path)
+            worker.heatmap_axis_ranges = {
+                "x": (10.0, 20.0),
+                "y": (5.0, 10.0),
+                }
+            worker.heatmap_full_axis_ranges = {
+                "x": (0.0, 39.0),
+                "y": (0.0, 29.0),
+                }
+
+            old_database_path = worker_module.cache_database_path
+            old_set_complete = worker_module.set_parameter_complete
+            old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
+            old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
+            try:
+                worker_module.cache_database_path = lambda _cache: database_path
+                worker_module.set_parameter_complete = (
+                    lambda param, complete=False: setattr(param, "_complete", complete)
+                    )
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 1_000
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 1_000
+
+                loader._load_large_heatmap_from_sql(worker)
+            finally:
+                worker_module.cache_database_path = old_database_path
+                worker_module.set_parameter_complete = old_set_complete
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
+
+            self.assertGreater(worker.loaded_point_count, 0)
+            self.assertGreaterEqual(worker.axis_data["x"].min(), 10.0)
+            self.assertLessEqual(worker.axis_data["x"].max(), 20.0)
+            self.assertGreaterEqual(worker.axis_data["y"].min(), 5.0)
+            self.assertLessEqual(worker.axis_data["y"].max(), 10.0)
+
+    def test_sampled_large_heatmap_sql_loader_bins_instead_of_sparse_exact_grid(self):
+        worker = self._sql_heatmap_worker("")
+        worker.sampled_heatmap_source = True
+        x = np.tile(np.arange(10, dtype=float), 2)
+        y = np.repeat(np.arange(2, dtype=float), 10)
+        z = np.arange(20, dtype=float)
+
+        old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
+        old_samples_per_cell = worker_module.SQL_HEATMAP_SAMPLES_PER_CELL
+        try:
+            worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 100
+            worker_module.SQL_HEATMAP_SAMPLES_PER_CELL = 4
+
+            _axis_x, _axis_y, data_grid = loader._heatmap_grid_from_arrays(
+                worker,
+                x,
+                y,
+                z,
+                )
+        finally:
+            worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
+            worker_module.SQL_HEATMAP_SAMPLES_PER_CELL = old_samples_per_cell
+
+        self.assertLessEqual(data_grid.size, 5)
+
+    def test_sampled_large_heatmap_sql_loader_fills_empty_overview_bins(self):
+        worker = self._sql_heatmap_worker("")
+        worker.sampled_heatmap_source = True
+        x = np.arange(100, dtype=float)
+        y = np.mod(np.arange(100, dtype=float) * 17, 100)
+        z = np.arange(100, dtype=float)
+
+        old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
+        old_grid_side = worker_module.MAX_SQL_HEATMAP_GRID_SIDE
+        old_samples_per_cell = worker_module.SQL_HEATMAP_SAMPLES_PER_CELL
+        try:
+            worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 100
+            worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 20
+            worker_module.SQL_HEATMAP_SAMPLES_PER_CELL = 1
+
+            _axis_x, _axis_y, data_grid = loader._heatmap_grid_from_arrays(
+                worker,
+                x,
+                y,
+                z,
+                )
+        finally:
+            worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
+            worker_module.MAX_SQL_HEATMAP_GRID_SIDE = old_grid_side
+            worker_module.SQL_HEATMAP_SAMPLES_PER_CELL = old_samples_per_cell
+
+        self.assertEqual(data_grid.shape, (10, 10))
+        self.assertTrue(np.isfinite(data_grid).all())
+
+    def _create_heatmap_table(self, database_path):
+        conn = sqlite3.connect(database_path)
+        try:
+            conn.execute("CREATE TABLE results (x REAL, y REAL, signal REAL)")
+            conn.executemany(
+                "INSERT INTO results (x, y, signal) VALUES (?, ?, ?)",
+                [
+                    (float(x), float(y), float(x + y * 100))
+                    for y in range(30)
+                    for x in range(40)
+                    ],
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _sql_heatmap_worker(self, database_path):
+        del database_path
+
+        class Param:
+            def __init__(self, name):
+                self.name = name
+                self.depends_on_ = ("y", "x") if name == "signal" else ()
+                self._complete = False
+
+        worker = loader.__new__(loader)
+        worker.cache = object()
+        worker.table_name = "results"
+        worker.param = Param("signal")
+        worker.param_dict = {
+            "x": Param("x"),
+            "y": Param("y"),
+            "signal": worker.param,
+            }
+        worker.axes_dict = {"x": "x", "y": "y"}
+        worker.read_data = True
+        worker.heatmap_axis_ranges = None
+        worker.heatmap_full_axis_ranges = None
+        return worker
 
     def test_plot_operations_return_updated_arrays(self):
         data = {
@@ -158,5 +328,3 @@ class ToolFunctionTestCase(unittest.TestCase):
             self.assertTrue(str(window).startswith("example.db | Run ID: 12"))
         finally:
             plotwin_module.get_DB_location = old_get_db_location
-
-

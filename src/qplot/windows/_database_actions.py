@@ -10,6 +10,7 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from qplot.datahandling import find_new_runs
 from qplot.datahandling.database import (
     DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
+    DatabaseDetailWorker,
     DatabaseLoadWorker,
     database_info_rows,
 )
@@ -199,6 +200,9 @@ class DatabaseActionsMixin:
         worker = getattr(self, "_database_load_worker", None)
         if worker is not None:
             worker.cancel()
+        cancel_detail_load = getattr(self, "_cancel_database_detail_load", None)
+        if callable(cancel_detail_load):
+            cancel_detail_load()
 
         self._database_load_generation = getattr(self, "_database_load_generation", 0) + 1
         self._database_load_active = False
@@ -284,6 +288,9 @@ class DatabaseActionsMixin:
             updatedRuns = self.RunList.checkWatching()
             if updatedRuns:
                 self.infoBox.preview.add_runs(updatedRuns)
+                prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+                if callable(prioritize_previews):
+                    prioritize_previews()
         except Exception as err:
             log_exception("Main-window refresh failed", err, __name__)
             self.show_error("Refresh Failed", "Could not refresh the run list.", str(err))
@@ -306,6 +313,9 @@ class DatabaseActionsMixin:
         )
         self.RunList.addRuns(newRuns)
         self.infoBox.preview.add_runs(newRuns)
+        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+        if callable(prioritize_previews):
+            prioritize_previews()
         self._sync_empty_state()
         count = len(newRuns)
         noun = "run" if count == 1 else "runs"
@@ -536,6 +546,8 @@ class DatabaseActionsMixin:
             self.show_status("Wait for the current database load to finish.", 5000)
             return False
 
+        self._cancel_database_detail_load()
+
         previous_file = self.fileTextbox.text()
         previous_runs = self._current_run_metadata()
         monitorTimer = self.spinBox.value()
@@ -763,6 +775,9 @@ class DatabaseActionsMixin:
         self.RunList.addRuns(runs)
         self.infoBox.preview.set_database_runs(abspath, runs)
         self.select_default_run()
+        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+        if callable(prioritize_previews):
+            prioritize_previews()
         self._sync_empty_state()
 
         if monitorTimer > 0:
@@ -786,6 +801,164 @@ class DatabaseActionsMixin:
             elapsed,
             logger_name=__name__,
         )
+        self._start_database_detail_load(abspath, runs)
+
+
+    def _cancel_database_detail_load(self):
+        worker = getattr(self, "_database_detail_worker", None)
+        if worker is not None:
+            worker.cancel()
+
+        self._database_detail_generation = (
+            getattr(self, "_database_detail_generation", 0) + 1
+            )
+        self._database_detail_active = False
+        self._database_detail_worker = None
+
+
+    def _start_database_detail_load(self, abspath, runs):
+        run_ids = self._database_detail_run_order(runs)
+        if not run_ids:
+            return
+
+        self._database_detail_generation = (
+            getattr(self, "_database_detail_generation", 0) + 1
+            )
+        generation = self._database_detail_generation
+        self._database_detail_active = True
+
+        worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=10)
+        self._database_detail_worker = worker
+        worker.prioritize_run_ids(self._database_detail_priority_run_ids())
+        worker.signals.status.connect(self.database_detail_status)
+        worker.signals.batch_ready.connect(self.database_detail_batch_ready)
+        worker.signals.finished.connect(self.database_detail_finished)
+        thread_pool = getattr(
+            self,
+            "databaseDetailThreadPool",
+            self.databaseLoadThreadPool,
+            )
+        thread_pool.start(worker)
+        QtCore.QTimer.singleShot(0, self._prioritize_database_detail_runs)
+
+
+    def _database_detail_run_order(self, runs):
+        def sort_key(run_id):
+            try:
+                return int(run_id)
+            except (TypeError, ValueError):
+                return 0
+
+        return sorted((runs or {}).keys(), key=sort_key, reverse=True)
+
+
+    def _prioritize_database_detail_runs(self, run_ids=None):
+        if not getattr(self, "_database_detail_active", False):
+            return
+
+        worker = getattr(self, "_database_detail_worker", None)
+        if worker is None or not hasattr(worker, "prioritize_run_ids"):
+            return
+
+        worker.prioritize_run_ids(
+            self._database_detail_priority_run_ids(run_ids=run_ids)
+            )
+
+
+    def _database_detail_priority_run_ids(self, run_ids=None):
+        priority_ids = []
+        seen = set()
+
+        def add(candidate):
+            if candidate is None:
+                return
+            try:
+                key = int(candidate)
+            except (TypeError, ValueError):
+                key = candidate
+            if key in seen:
+                return
+            priority_ids.append(candidate)
+            seen.add(key)
+
+        if isinstance(run_ids, (list, tuple, set)):
+            for run_id in run_ids:
+                add(run_id)
+        else:
+            add(run_ids)
+
+        run_list = getattr(self, "RunList", None)
+        selected_run_ids = getattr(run_list, "selected_run_ids", None)
+        if callable(selected_run_ids):
+            for run_id in selected_run_ids():
+                add(run_id)
+
+        visible_run_ids = getattr(run_list, "visible_run_ids", None)
+        if callable(visible_run_ids):
+            for run_id in visible_run_ids():
+                add(run_id)
+
+        return priority_ids
+
+
+    @QtCore.pyqtSlot(int, str)
+    def database_detail_status(self, generation, message):
+        if generation != getattr(self, "_database_detail_generation", 0):
+            return
+        if not getattr(self, "_database_detail_active", False):
+            return
+
+        self.show_status(message, 0)
+
+
+    @QtCore.pyqtSlot(int, str, object)
+    def database_detail_batch_ready(self, generation, abspath, runs):
+        if generation != getattr(self, "_database_detail_generation", 0):
+            return
+        if not getattr(self, "_database_detail_active", False):
+            return
+        if abspath != self.fileTextbox.text():
+            return
+
+        updated_runs = self.RunList.updateRuns(runs)
+        if not updated_runs:
+            return
+
+        self.infoBox.preview.add_runs(updated_runs, queue_previews=False)
+        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+        if callable(prioritize_previews):
+            prioritize_previews()
+        self._refresh_selected_run_details(updated_runs)
+
+
+    @QtCore.pyqtSlot(int, str, object)
+    def database_detail_finished(self, generation, abspath, error):
+        if generation != getattr(self, "_database_detail_generation", 0):
+            return
+
+        self._database_detail_active = False
+        self._database_detail_worker = None
+
+        if abspath != self.fileTextbox.text():
+            return
+
+        if error is not None:
+            log_exception("Database detail load failed", error, __name__)
+            self.show_status(f"Run detail loading failed: {error}", 5000)
+            return
+
+        self.show_status("Run details loaded.", 5000)
+
+
+    def _refresh_selected_run_details(self, runs):
+        guid = getattr(getattr(self, "ds", None), "guid", None)
+        if not guid:
+            return
+
+        for metadata in runs.values():
+            if metadata.get("guid") == guid:
+                self.updateSelected(guid)
+                return
 
 
     def select_default_run(self):

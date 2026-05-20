@@ -8,6 +8,227 @@ from qplot.datahandling import readSQL
 
 
 class RunSizeTestCase(unittest.TestCase):
+    def test_fetch_basic_run_rows_does_not_scan_result_tables(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE experiments (
+                    exp_id INTEGER,
+                    name TEXT,
+                    sample_name TEXT
+                )
+                """
+                )
+            cursor.execute(
+                """
+                CREATE TABLE runs (
+                    run_id INTEGER,
+                    exp_id INTEGER,
+                    name TEXT,
+                    run_timestamp REAL,
+                    completed_timestamp REAL,
+                    is_completed INTEGER,
+                    guid TEXT,
+                    result_table_name TEXT,
+                    parameters TEXT,
+                    run_description TEXT
+                )
+                """
+                )
+            run_description = json.dumps({
+                "interdependencies_": {
+                    "dependencies": {
+                        "signal": ["x"],
+                        "current": ["x"],
+                        }
+                    },
+                "shapes": {
+                    "signal": [10],
+                    "current": [10],
+                    },
+                })
+            cursor.execute(
+                """
+                INSERT INTO runs VALUES (
+                    1, 1, 'run', 100.0, 110.0, 1, 'guid',
+                    'missing_results', 'x,signal,current', ?
+                )
+                """,
+                (run_description, )
+                )
+
+            runs = readSQL._fetch_run_rows(
+                cursor,
+                empty_as_none=False,
+                include_details=False,
+                )
+
+            self.assertEqual(runs[1]["measure_parameters"], ["signal", "current"])
+            self.assertEqual(runs[1]["sweep_parameters"], ["x"])
+            self.assertEqual(runs[1]["setpoint_count"], 10)
+            self.assertEqual(runs[1]["expected_results"], 20)
+            self.assertNotIn("result_count", runs[1])
+            self.assertNotIn("storage_bytes", runs[1])
+        finally:
+            conn.close()
+
+    def test_background_detail_rows_skip_distinct_shape_and_storage_scans(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE experiments (
+                    exp_id INTEGER,
+                    name TEXT,
+                    sample_name TEXT
+                )
+                """
+                )
+            cursor.execute(
+                """
+                CREATE TABLE runs (
+                    run_id INTEGER,
+                    exp_id INTEGER,
+                    name TEXT,
+                    run_timestamp REAL,
+                    completed_timestamp REAL,
+                    is_completed INTEGER,
+                    guid TEXT,
+                    result_table_name TEXT,
+                    parameters TEXT,
+                    run_description TEXT,
+                    measurement_exception TEXT
+                )
+                """
+                )
+            cursor.execute("CREATE TABLE results_1 (x REAL, y REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results_1 VALUES (?, ?, ?)",
+                [
+                    (0.0, 0.0, 1.0),
+                    (0.0, 1.0, 2.0),
+                    (1.0, 0.0, 3.0),
+                    (1.0, 1.0, 4.0),
+                    ]
+                )
+            run_description = json.dumps({
+                "interdependencies_": {
+                    "dependencies": {
+                        "signal": ["x", "y"],
+                        }
+                    },
+                })
+            cursor.execute(
+                """
+                INSERT INTO runs VALUES (
+                    1, 1, 'run', 100.0, 110.0, 1, 'guid',
+                    'results_1', 'x,y,signal', ?, ?
+                )
+                """,
+                (
+                    run_description,
+                    "Traceback (most recent call last):\nKeyboardInterrupt\n",
+                    )
+                )
+
+            statements = []
+            conn.set_trace_callback(statements.append)
+            runs = readSQL._fetch_run_rows(
+                cursor,
+                empty_as_none=False,
+                infer_missing_shapes=False,
+                include_storage_bytes=False,
+                include_read_setpoint_count=False,
+                )
+            conn.set_trace_callback(None)
+
+            self.assertEqual(runs[1]["result_count"], 4)
+            self.assertIsNone(runs[1]["setpoint_count"])
+            self.assertNotIn("storage_bytes", runs[1])
+            self.assertNotIn("read_setpoint_count", runs[1])
+            self.assertFalse(any("DISTINCT" in statement.upper() for statement in statements))
+            self.assertFalse(any("DBSTAT" in statement.upper() for statement in statements))
+        finally:
+            conn.close()
+
+    def test_background_detail_rows_can_include_cheap_storage_estimate(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE experiments (
+                    exp_id INTEGER,
+                    name TEXT,
+                    sample_name TEXT
+                )
+                """
+                )
+            cursor.execute(
+                """
+                CREATE TABLE runs (
+                    run_id INTEGER,
+                    exp_id INTEGER,
+                    name TEXT,
+                    run_timestamp REAL,
+                    completed_timestamp REAL,
+                    is_completed INTEGER,
+                    guid TEXT,
+                    result_table_name TEXT,
+                    parameters TEXT,
+                    run_description TEXT
+                )
+                """
+                )
+            cursor.execute("CREATE TABLE results_1 (x REAL, y REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results_1 VALUES (?, ?, ?)",
+                [
+                    (0.0, 0.0, 1.0),
+                    (0.0, 1.0, 2.0),
+                    (1.0, 0.0, 3.0),
+                    (1.0, 1.0, 4.0),
+                    ]
+                )
+            run_description = json.dumps({
+                "interdependencies_": {
+                    "dependencies": {
+                        "signal": ["x", "y"],
+                        }
+                    },
+                })
+            cursor.execute(
+                """
+                INSERT INTO runs VALUES (
+                    1, 1, 'run', 100.0, 110.0, 1, 'guid',
+                    'results_1', 'x,y,signal', ?
+                )
+                """,
+                (run_description, )
+                )
+
+            statements = []
+            conn.set_trace_callback(statements.append)
+            runs = readSQL._fetch_run_rows(
+                cursor,
+                empty_as_none=False,
+                infer_missing_shapes=False,
+                include_storage_bytes=False,
+                include_storage_estimate=True,
+                include_read_setpoint_count=False,
+                )
+            conn.set_trace_callback(None)
+
+            self.assertEqual(runs[1]["result_count"], 4)
+            self.assertEqual(runs[1]["storage_bytes"], 116)
+            self.assertFalse(any("DBSTAT" in statement.upper() for statement in statements))
+            self.assertFalse(any("SUM(" in statement.upper() for statement in statements))
+        finally:
+            conn.close()
+
     def test_fetch_run_rows_includes_keyboard_interrupt_metadata(self):
         conn = sqlite3.connect(":memory:")
         try:
@@ -223,5 +444,3 @@ class RunSizeTestCase(unittest.TestCase):
             finally:
                 cursor.close()
                 conn.close()
-
-

@@ -62,7 +62,15 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
     """
 
-    def load_data(self, wait_on_thread: bool = False) -> None:
+    def load_data(
+            self,
+            wait_on_thread: bool = False,
+            *,
+            force_sql_heatmap: bool = False,
+            heatmap_axis_ranges: dict[str, tuple[float, float]] | None = None,
+            heatmap_full_axis_ranges: dict[str, tuple[float, float]] | None = None,
+            status_message: str | None = None,
+            ) -> None:
         """
         Produces a worker for loading/refreshing the dataset.
         Then adds the worker to the threadPool queue to work.
@@ -78,7 +86,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         """
         complete = load_param_data_from_db_prep(self.ds.cache, self.param)
-        if complete:
+        if status_message is not None:
+            message = status_message
+        elif complete:
             message = f"Processing cached data for {self.param.name}..."
         else:
             message = f"Loading data for {self.param.name}..."
@@ -90,8 +100,11 @@ class PlotRefreshMixin(_PlotRefreshBase):
             self.param,
             self.param_dict,
             self.axis_options,
-            read_data=not complete,
+            read_data=force_sql_heatmap or not complete,
             operations=self.oper_widget.get_data(),
+            force_sql_heatmap=force_sql_heatmap,
+            heatmap_axis_ranges=heatmap_axis_ranges,
+            heatmap_full_axis_ranges=heatmap_full_axis_ranges,
             )
         worker.started_at = perf_counter()
 
@@ -240,11 +253,24 @@ class PlotRefreshMixin(_PlotRefreshBase):
             self._set_param_axis_labels()
             elapsed = perf_counter() - worker.started_at
 
-            self.show_status(
-                f"Loaded {self.ds.number_of_results:,} points for {self.param.name} "
-                f"in {elapsed:.2f} seconds",
-                5000,
-                )
+            if getattr(worker, "loaded_from_sql_sample", False):
+                loaded_points = getattr(worker, "loaded_point_count", None)
+                point_text = (
+                    f"{loaded_points:,} sampled points"
+                    if loaded_points is not None
+                    else "sampled points"
+                    )
+                self.show_status(
+                    f"Loaded {point_text} for {self.param.name} "
+                    f"in {elapsed:.2f} seconds",
+                    5000,
+                    )
+            else:
+                self.show_status(
+                    f"Loaded {self.ds.number_of_results:,} points for {self.param.name} "
+                    f"in {elapsed:.2f} seconds",
+                    5000,
+                    )
             self.hide_plot_state()
             return True
 

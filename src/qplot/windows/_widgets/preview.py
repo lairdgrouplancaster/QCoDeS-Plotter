@@ -6,7 +6,6 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.diagnostics import log_exception
-from qplot.tools.general import data2matrix
 
 from .._dragdrop import make_run_preview_mime
 
@@ -14,7 +13,15 @@ PREVIEW_SIZE = 200
 PREVIEW_BACKGROUND_COLOR = "#f4f7fb"
 PREVIEW_HEIGHT_PADDING = 48
 COLLAPSE_MINIMUM_RATIO = 0.25
-MAX_PREVIEW_ROWS = 250000
+MAX_PREVIEW_ROWS = 50000
+MAX_PREVIEW_GRID_CELLS = 250000
+PREVIEW_SAMPLES_PER_CELL = 4
+PREVIEW_ROWID_CHUNK = 900
+PREVIEW_GRID_SAMPLE_MIN_COVERAGE = 0.9
+PREVIEW_FILL_EMPTY_MIN_COVERAGE = 0.75
+PREVIEW_REMAINING_PRIORITY = 0
+PREVIEW_VISIBLE_PRIORITY = 50
+PREVIEW_SELECTED_PRIORITY = 100
 PREVIEW_SELECTED_PROPERTY = "previewSelected"
 VIRIDIS_STOPS = np.asarray([
     (68, 1, 84),
@@ -33,12 +40,13 @@ VIRIDIS_STOPS = np.asarray([
 
 class PreviewTab(qtw.QWidget):
     """
-    Displays background-generated preview images for the selected run.
+    Displays background-generated preview images for database runs.
 
     """
     plotRequested = QtCore.pyqtSignal(str)
     exportRequested = QtCore.pyqtSignal(str)
     previewsReady = QtCore.pyqtSignal(str, object)
+    previewGenerationChanged = QtCore.pyqtSignal(str, bool)
 
     def __init__(self, *args, preview_size=PREVIEW_SIZE):
         super().__init__(*args)
@@ -54,6 +62,7 @@ class PreviewTab(qtw.QWidget):
         self.queue = {}
         self.active = set()
         self.metadata_signatures = {}
+        self._start_scheduled = False
 
         self.thread_pool = QtCore.QThreadPool(self)
         self.thread_pool.setMaxThreadCount(1)
@@ -107,13 +116,15 @@ class PreviewTab(qtw.QWidget):
             for guid, metadata in self.run_metadata.items()
             }
 
-        for guid in self.run_metadata:
-            priority = 100 if guid == self.current_guid else 0
-            self._enqueue(guid, priority=priority, allow_active=True)
-
+        self._enqueue_all(priority=PREVIEW_REMAINING_PRIORITY)
         if self.current_guid:
             self._show_message("Generating preview...")
-        self._start_next()
+            self._enqueue(
+                self.current_guid,
+                priority=PREVIEW_SELECTED_PRIORITY,
+                allow_active=True,
+                )
+        self._schedule_start_next()
 
 
     def set_database_runs(self, database_path, runs):
@@ -131,12 +142,11 @@ class PreviewTab(qtw.QWidget):
             }
 
         self._show_message("Select a run")
-        for guid in self.run_metadata:
-            self._enqueue(guid, priority=0)
-        self._start_next()
+        self._enqueue_all(priority=PREVIEW_REMAINING_PRIORITY)
+        self._schedule_start_next()
 
 
-    def add_runs(self, runs):
+    def add_runs(self, runs, queue_previews=True):
         if not self.database_path:
             return
 
@@ -151,7 +161,12 @@ class PreviewTab(qtw.QWidget):
                 self.cache.pop(guid, None)
                 self.errors.pop(guid, None)
 
-            self._enqueue(guid, priority=0, allow_active=changed)
+            if queue_previews:
+                self._enqueue(
+                    guid,
+                    priority=PREVIEW_REMAINING_PRIORITY,
+                    allow_active=changed,
+                    )
         self._start_next()
 
 
@@ -175,7 +190,7 @@ class PreviewTab(qtw.QWidget):
             return
 
         self._show_message("Generating preview...")
-        self._enqueue(guid, priority=100)
+        self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
         self._start_next()
 
 
@@ -214,24 +229,124 @@ class PreviewTab(qtw.QWidget):
             )
 
 
+    def prioritize_runs(self, selected_run_ids=None, visible_run_ids=None):
+        if not self.database_path:
+            return
+
+        selected_guids = set(self._guids_for_run_ids(selected_run_ids))
+        visible_guids = set(self._guids_for_run_ids(visible_run_ids))
+        if self.current_guid:
+            selected_guids.add(self.current_guid)
+            visible_guids.discard(self.current_guid)
+
+        self._enqueue_all(priority=PREVIEW_REMAINING_PRIORITY)
+        for guid in list(self.queue):
+            self.queue[guid] = PREVIEW_REMAINING_PRIORITY
+
+        for guid in visible_guids:
+            self._enqueue(guid, priority=PREVIEW_VISIBLE_PRIORITY)
+        for guid in selected_guids:
+            self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
+
+        self._start_next()
+
+
+    def _guids_for_run_ids(self, run_ids):
+        if run_ids is None:
+            return []
+        if isinstance(run_ids, (str, bytes)) or not hasattr(run_ids, "__iter__"):
+            run_ids = [run_ids]
+
+        lookup = self._run_id_lookup()
+        guids = []
+        seen = set()
+        for run_id in run_ids:
+            for key in self._run_id_keys(run_id):
+                guid = lookup.get(key)
+                if guid is None or guid in seen:
+                    continue
+                guids.append(guid)
+                seen.add(guid)
+                break
+        return guids
+
+
+    def _run_id_lookup(self):
+        lookup: dict[int | str, str] = {}
+        for guid, metadata in self.run_metadata.items():
+            for key in self._run_id_keys(metadata.get("run_id")):
+                lookup.setdefault(key, guid)
+        return lookup
+
+
+    def _run_id_keys(self, run_id):
+        if run_id is None:
+            return []
+
+        keys = []
+
+        def add(value):
+            if value not in keys:
+                keys.append(value)
+
+        add(run_id)
+        try:
+            int_run_id = int(run_id)
+        except (TypeError, ValueError):
+            add(str(run_id))
+        else:
+            add(int_run_id)
+            add(str(int_run_id))
+        return keys
+
+
+    def _enqueue_all(self, priority=PREVIEW_REMAINING_PRIORITY):
+        for guid in self.run_metadata:
+            self._enqueue(guid, priority=priority)
+
+
     def _enqueue(self, guid, priority=0, allow_active=False):
         if guid in self.cache:
+            return
+        if guid in self.errors:
             return
         if guid in self.active and not allow_active:
             return
         if guid not in self.run_metadata:
             return
+        if not self.database_path:
+            return
 
         self.queue[guid] = max(priority, self.queue.get(guid, priority))
+
+
+    def _schedule_start_next(self):
+        if self._start_scheduled:
+            return
+
+        self._start_scheduled = True
+        QtCore.QTimer.singleShot(0, self._scheduled_start_next)
+
+
+    def _scheduled_start_next(self):
+        self._start_scheduled = False
+        self._start_next()
 
 
     def _start_next(self):
         if self.active or not self.queue:
             return
 
-        guid = max(self.queue, key=lambda item: (self.queue[item], self.run_metadata[item].get("run_id", 0)))
+        guid = max(
+            self.queue,
+            key=lambda item: (
+                self.queue[item],
+                self.run_metadata[item].get("run_id", 0),
+                ),
+        )
         self.queue.pop(guid, None)
         self.active.add(guid)
+        self.previewGenerationChanged.emit(guid, True)
 
         worker = PreviewWorker(
             self.generation,
@@ -246,7 +361,10 @@ class PreviewTab(qtw.QWidget):
 
     @QtCore.pyqtSlot(int, str, object, object)
     def _worker_finished(self, generation, guid, previews, error):
+        was_active = guid in self.active
         self.active.discard(guid)
+        if was_active:
+            self.previewGenerationChanged.emit(guid, False)
 
         if generation != self.generation:
             self._start_next()
@@ -538,13 +656,38 @@ def _preview_1d(cursor, table_name, metadata, parameter, axis, size):
 
 
 def _preview_2d(cursor, table_name, metadata, parameter, axes, size):
-    x, y, z = _select_arrays(cursor, table_name, [axes[1], axes[0], parameter], metadata)
+    grid_shape = _preview_grid_shape(metadata, parameter)
+    grid = _sample_large_known_grid_preview(
+        cursor,
+        table_name,
+        metadata,
+        parameter,
+        grid_shape,
+        size,
+        )
+    if grid is not None:
+        image = render_heatmap_grid_preview(grid, size=size)
+        return {
+            "parameter": parameter,
+            "axes": list(axes),
+            "title": _preview_title(parameter, axes),
+            "image": image,
+            }
+
+    x, y, z = _select_arrays(
+        cursor,
+        table_name,
+        [axes[1], axes[0], parameter],
+        metadata,
+        max_rows=_preview_2d_row_limit(grid_shape),
+        sampling="stratified",
+        )
     image = render_heatmap_preview(
         x,
         y,
         z,
         size=size,
-        grid_shape=_preview_grid_shape(metadata, parameter),
+        grid_shape=grid_shape,
         )
     return {
         "parameter": parameter,
@@ -565,6 +708,19 @@ def _preview_title(parameter, axes):
     else:
         axis_text = f"{', '.join(axes[:-1])}, and {axes[-1]}"
     return f"{parameter} vs {axis_text}"
+
+
+def _preview_2d_row_limit(grid_shape):
+    shape = _normalise_grid_shape(grid_shape)
+    if shape is None:
+        return MAX_PREVIEW_ROWS
+
+    rows, columns = shape
+    grid_cells = rows * columns
+    if grid_cells <= MAX_PREVIEW_GRID_CELLS:
+        return max(MAX_PREVIEW_ROWS, grid_cells)
+
+    return MAX_PREVIEW_ROWS
 
 
 def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
@@ -624,12 +780,39 @@ def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE, grid_shape=None):
     if not np.any(valid):
         return image
 
-    grid = _fixed_heatmap_grid(x[valid], y[valid], z[valid], grid_shape)
+    x = x[valid]
+    y = y[valid]
+    z = z[valid]
+
+    grid = _fixed_heatmap_grid(
+        x,
+        y,
+        z,
+        grid_shape,
+        max_cells=MAX_PREVIEW_GRID_CELLS,
+        )
     if grid is None:
-        grid = data2matrix(y[valid], x[valid], z[valid]).to_numpy(float)
+        grid = _unique_axis_heatmap_grid(
+            x,
+            y,
+            z,
+            max_cells=MAX_PREVIEW_GRID_CELLS,
+            )
+    if grid is None:
+        grid = _binned_heatmap_grid(x, y, z, size=size, grid_shape=grid_shape)
+
+    return render_heatmap_grid_preview(grid, size=size)
+
+
+def render_heatmap_grid_preview(grid, size=PREVIEW_SIZE):
+    image = QtGui.QImage(size, size, QtGui.QImage.Format.Format_RGB32)
+    image.fill(QtGui.QColor(PREVIEW_BACKGROUND_COLOR))
+
+    grid = np.asarray(grid, dtype=float)
     if grid.size == 0 or np.all(np.isnan(grid)):
         return image
 
+    grid = _prepare_heatmap_display_grid(grid, size)
     rgb = _viridis_rgb(grid)
     rgb = np.flipud(rgb)
     rgb_bytes = rgb.tobytes()
@@ -649,12 +832,116 @@ def render_heatmap_preview(x, y, z, size=PREVIEW_SIZE, grid_shape=None):
         ).convertToFormat(QtGui.QImage.Format.Format_RGB32)
 
 
-def _fixed_heatmap_grid(x, y, z, grid_shape):
+def _sample_large_known_grid_preview(
+        cursor,
+        table_name,
+        metadata,
+        parameter,
+        grid_shape,
+        size,
+        ):
     shape = _normalise_grid_shape(grid_shape)
     if shape is None:
         return None
 
     rows, columns = shape
+    grid_cells = rows * columns
+    if grid_cells <= MAX_PREVIEW_GRID_CELLS:
+        return None
+
+    rowid_span = _rowid_span(cursor, table_name)
+    if rowid_span is None:
+        return None
+
+    first_rowid, last_rowid = rowid_span
+    span = max(0, last_rowid - first_rowid + 1)
+    count = _metadata_result_count(metadata)
+    if count <= 0:
+        count = grid_cells
+
+    available = min(count, grid_cells, span)
+    if available <= 0:
+        return None
+
+    target_rows, target_columns = _preview_bin_shape(
+        shape,
+        size,
+        max_cells=min(MAX_PREVIEW_ROWS, max(1, int(size) * int(size))),
+        )
+    row_indices = _sample_axis_positions(rows, target_rows)
+    column_indices = _sample_axis_positions(columns, target_columns)
+    offsets = (
+        row_indices[:, None] * np.int64(columns)
+        + column_indices[None, :]
+        )
+    valid = offsets < available
+    if not np.any(valid):
+        return None
+
+    grid = np.full((target_rows, target_columns), np.nan, dtype=float)
+    flat_positions = np.flatnonzero(valid.ravel())
+    sample_rowids = first_rowid + offsets.ravel()[flat_positions]
+    rowid_positions = {
+        int(rowid): int(position)
+        for rowid, position in zip(sample_rowids, flat_positions, strict=False)
+    }
+
+    found = 0
+    flat_grid = grid.ravel()
+    table = _sqlite_identifier(table_name)
+    column = _sqlite_identifier(parameter)
+    for start in range(0, len(sample_rowids), PREVIEW_ROWID_CHUNK):
+        chunk = [
+            int(value)
+            for value in sample_rowids[start:start + PREVIEW_ROWID_CHUNK]
+            ]
+        placeholders = ", ".join("?" for _ in chunk)
+        cursor.execute(
+            f"SELECT rowid, {column} FROM {table} WHERE rowid IN ({placeholders})",
+            chunk,
+            )
+        for rowid, value in cursor.fetchall():
+            position = rowid_positions.get(int(rowid))
+            if position is None:
+                continue
+            try:
+                flat_grid[position] = float(value)
+            except (TypeError, ValueError):
+                flat_grid[position] = np.nan
+            found += 1
+
+    expected = int(sample_rowids.size)
+    if found == 0:
+        return None
+    if found < expected * PREVIEW_GRID_SAMPLE_MIN_COVERAGE:
+        return None
+
+    return grid
+
+
+def _sample_axis_positions(length, target_count):
+    length = max(1, int(length))
+    target_count = max(1, min(int(target_count), length))
+    if target_count == length:
+        return np.arange(length, dtype=np.int64)
+
+    starts = (np.arange(target_count, dtype=np.int64) * length) // target_count
+    ends = (
+        (np.arange(1, target_count + 1, dtype=np.int64) * length)
+        // target_count
+        ) - 1
+    return (starts + ends) // 2
+
+
+def _fixed_heatmap_grid(x, y, z, grid_shape, max_cells=None):
+    shape = _normalise_grid_shape(grid_shape)
+    if shape is None:
+        return None
+
+    rows, columns = shape
+    if max_cells is not None and rows * columns > max_cells:
+        return None
+
     grid = np.full((rows, columns), np.nan, dtype=float)
     x_index = _axis_value_indices(x, columns)
     y_index = _axis_value_indices(y, rows)
@@ -677,6 +964,185 @@ def _fixed_heatmap_grid(x, y, z, grid_shape):
     point_count = min(flat_grid.size, z.size)
     flat_grid[:point_count] = z[:point_count]
     return grid
+
+
+def _unique_axis_heatmap_grid(x, y, z, max_cells):
+    unique_x = np.unique(x[np.isfinite(x)])
+    unique_y = np.unique(y[np.isfinite(y)])
+    if unique_x.size == 0 or unique_y.size == 0:
+        return None
+
+    if unique_x.size * unique_y.size > max_cells:
+        return None
+
+    x_index = {
+        float(value): index
+        for index, value in enumerate(unique_x)
+        }
+    y_index = {
+        float(value): index
+        for index, value in enumerate(unique_y)
+        }
+    grid = np.full((unique_y.size, unique_x.size), np.nan, dtype=float)
+
+    for x_value, y_value, z_value in zip(x, y, z, strict=False):
+        row = y_index.get(float(y_value))
+        column = x_index.get(float(x_value))
+        if row is None or column is None:
+            continue
+        grid[row, column] = z_value
+
+    return grid
+
+
+def _binned_heatmap_grid(x, y, z, size=PREVIEW_SIZE, grid_shape=None):
+    rows, columns = _preview_bin_shape(
+        grid_shape,
+        size,
+        max_cells=max(1, z.size // PREVIEW_SAMPLES_PER_CELL),
+        )
+    grid_sum = np.zeros((rows, columns), dtype=float)
+    grid_count = np.zeros((rows, columns), dtype=float)
+
+    x_bins = _scaled_axis_indices(x, columns)
+    y_bins = _scaled_axis_indices(y, rows)
+    for row, column, value in zip(y_bins, x_bins, z, strict=False):
+        grid_sum[row, column] += value
+        grid_count[row, column] += 1
+
+    grid = np.full((rows, columns), np.nan, dtype=float)
+    populated = grid_count > 0
+    grid[populated] = grid_sum[populated] / grid_count[populated]
+    return _fill_empty_heatmap_bins(grid)
+
+
+def _fill_empty_heatmap_bins(grid):
+    if grid.size == 0 or np.all(np.isfinite(grid)):
+        return grid
+    if not np.any(np.isfinite(grid)):
+        return grid
+
+    filled = np.array(grid, dtype=float, copy=True)
+    row_positions = np.arange(filled.shape[0], dtype=float)
+    column_positions = np.arange(filled.shape[1], dtype=float)
+
+    for column in range(filled.shape[1]):
+        values = filled[:, column]
+        finite = np.isfinite(values)
+        if np.any(finite) and not np.all(finite):
+            values[~finite] = np.interp(
+                row_positions[~finite],
+                row_positions[finite],
+                values[finite],
+                )
+
+    for row in range(filled.shape[0]):
+        values = filled[row, :]
+        finite = np.isfinite(values)
+        if np.any(finite) and not np.all(finite):
+            values[~finite] = np.interp(
+                column_positions[~finite],
+                column_positions[finite],
+                values[finite],
+                )
+
+    return filled
+
+
+def _prepare_heatmap_display_grid(grid, size):
+    grid = np.asarray(grid, dtype=float)
+    if grid.size == 0:
+        return grid
+
+    if _finite_fraction(grid) >= PREVIEW_FILL_EMPTY_MIN_COVERAGE:
+        grid = _fill_empty_heatmap_bins(grid)
+
+    rows, columns = grid.shape
+    target_rows = min(max(1, int(size)), rows)
+    target_columns = min(max(1, int(size)), columns)
+
+    if rows > target_rows:
+        grid = _downsample_heatmap_axis(grid, target_rows, axis=0)
+    if columns > target_columns:
+        grid = _downsample_heatmap_axis(grid, target_columns, axis=1)
+
+    return grid
+
+
+def _downsample_heatmap_axis(grid, target_count, axis):
+    grid = np.asarray(grid, dtype=float)
+    axis_length = grid.shape[axis]
+    target_count = max(1, min(int(target_count), axis_length))
+    if target_count == axis_length:
+        return grid
+
+    parts = np.array_split(np.arange(axis_length), target_count)
+    if axis == 0:
+        out = np.full((target_count, grid.shape[1]), np.nan, dtype=float)
+        for index, part in enumerate(parts):
+            out[index, :] = _nanmean_no_warning(grid[part, :], axis=0)
+    else:
+        out = np.full((grid.shape[0], target_count), np.nan, dtype=float)
+        for index, part in enumerate(parts):
+            out[:, index] = _nanmean_no_warning(grid[:, part], axis=1)
+
+    return out
+
+
+def _nanmean_no_warning(values, axis):
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(values)
+    count = np.sum(finite, axis=axis)
+    total = np.nansum(values, axis=axis)
+    out = np.full(total.shape, np.nan, dtype=float)
+    np.divide(total, count, out=out, where=count > 0)
+    return out
+
+
+def _finite_fraction(values):
+    values = np.asarray(values)
+    if values.size == 0:
+        return 0.0
+    return float(np.count_nonzero(np.isfinite(values))) / float(values.size)
+
+
+def _preview_bin_shape(grid_shape, size, max_cells):
+    size = max(1, int(size))
+    max_cells = max(1, min(int(max_cells), size * size))
+    shape = _normalise_grid_shape(grid_shape)
+    if shape is None:
+        rows = size
+        columns = size
+    else:
+        rows, columns = shape
+
+    rows = max(1, min(int(rows), size))
+    columns = max(1, min(int(columns), size))
+    if rows * columns > max_cells:
+        scale = np.sqrt(max_cells / (rows * columns))
+        rows = max(1, int(rows * scale))
+        columns = max(1, int(columns * scale))
+
+    while rows * columns > max_cells:
+        if rows >= columns and rows > 1:
+            rows -= 1
+        elif columns > 1:
+            columns -= 1
+        else:
+            break
+
+    return rows, columns
+
+
+def _scaled_axis_indices(values, size):
+    data_range = _finite_range(values)
+    low, high = data_range
+    if high == low:
+        return np.zeros(values.shape, dtype=int)
+
+    scaled = (values - low) / (high - low)
+    indices = np.floor(scaled * size).astype(int)
+    return np.clip(indices, 0, size - 1)
 
 
 def _axis_value_indices(values, size):
@@ -749,29 +1215,134 @@ def _preview_grid_shape(metadata, parameter):
     return None
 
 
-def _select_arrays(cursor, table_name, columns, metadata):
-    count = metadata.get("result_count")
-    try:
-        count = int(count)
-    except (TypeError, ValueError):
-        count = 0
+def _select_arrays(
+        cursor,
+        table_name,
+        columns,
+        metadata,
+        max_rows=None,
+        sampling="stride",
+        ):
+    max_rows = int(max_rows or MAX_PREVIEW_ROWS)
+    count = _metadata_result_count(metadata)
 
-    step = max(1, count // MAX_PREVIEW_ROWS) if count else 1
     selected_columns = ", ".join(_sqlite_identifier(column) for column in columns)
     table = _sqlite_identifier(table_name)
-    if step > 1:
+    rowid_span = _rowid_span(cursor, table_name)
+    if rowid_span is None:
         cursor.execute(
-            f"SELECT {selected_columns} FROM {table} WHERE rowid % ? = 0 ORDER BY rowid",
-            (step, )
+            f"SELECT {selected_columns} FROM {table} LIMIT ?",
+            (max_rows, )
             )
     else:
-        cursor.execute(f"SELECT {selected_columns} FROM {table} ORDER BY rowid")
+        first_rowid, last_rowid = rowid_span
+        span = max(0, last_rowid - first_rowid + 1)
+        if count and count <= max_rows:
+            cursor.execute(f"SELECT {selected_columns} FROM {table} ORDER BY rowid")
+        elif span and span <= max_rows:
+            cursor.execute(f"SELECT {selected_columns} FROM {table} ORDER BY rowid")
+        elif sampling == "stratified":
+            rows = _select_stratified_rows(
+                cursor,
+                table,
+                selected_columns,
+                first_rowid,
+                last_rowid,
+                max_rows,
+                )
+            return _rows_to_float_arrays(rows, len(columns))
+        else:
+            step_source = count if count else span
+            step = max(1, (step_source + max_rows - 1) // max_rows)
+            cursor.execute(
+                f"""
+                WITH RECURSIVE sample(rowid) AS (
+                    VALUES(?)
+                    UNION ALL
+                    SELECT rowid + ? FROM sample WHERE rowid + ? <= ?
+                )
+                SELECT {selected_columns}
+                FROM {table}
+                WHERE rowid IN (SELECT rowid FROM sample)
+                ORDER BY rowid
+                LIMIT ?
+                """,
+                (first_rowid, step, step, last_rowid, max_rows),
+                )
 
     rows = cursor.fetchall()
     if not rows:
         return [np.array([], dtype=float) for _ in columns]
 
     return _rows_to_float_arrays(rows, len(columns))
+
+
+def _select_stratified_rows(
+        cursor,
+        table,
+        selected_columns,
+        first_rowid,
+        last_rowid,
+        max_rows,
+        ):
+    rowids = _sample_rowids(first_rowid, last_rowid, max_rows)
+    rows = []
+    for start in range(0, len(rowids), PREVIEW_ROWID_CHUNK):
+        chunk = [int(value) for value in rowids[start:start + PREVIEW_ROWID_CHUNK]]
+        placeholders = ", ".join("?" for _ in chunk)
+        cursor.execute(
+            (
+                f"SELECT {selected_columns} FROM {table} "
+                f"WHERE rowid IN ({placeholders}) ORDER BY rowid"
+                ),
+            chunk,
+            )
+        rows.extend(cursor.fetchall())
+
+    return rows
+
+
+def _sample_rowids(first_rowid, last_rowid, max_rows):
+    span = max(0, last_rowid - first_rowid + 1)
+    count = min(max_rows, span)
+    if count <= 0:
+        return np.array([], dtype=np.int64)
+
+    starts = (np.arange(count, dtype=np.int64) * span) // count
+    ends = ((np.arange(1, count + 1, dtype=np.int64) * span) // count) - 1
+    widths = np.maximum(ends - starts + 1, 1)
+    jitter = (
+        np.arange(count, dtype=np.int64) * 1103515245 + 12345
+        ) % widths
+    rowids = first_rowid + starts + jitter
+    rowids[0] = first_rowid
+    rowids[-1] = last_rowid
+    return np.unique(rowids)
+
+
+def _rowid_span(cursor, table_name):
+    table = _sqlite_identifier(table_name)
+    try:
+        cursor.execute(f"SELECT MIN(rowid), MAX(rowid) FROM {table}")
+        first_rowid, last_rowid = cursor.fetchone()
+    except Exception:
+        return None
+
+    if first_rowid is None or last_rowid is None:
+        return None
+
+    try:
+        return int(first_rowid), int(last_rowid)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_result_count(metadata):
+    count = metadata.get("result_count")
+    try:
+        return int(count)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _rows_to_float_arrays(rows, column_count):

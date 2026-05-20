@@ -1,11 +1,27 @@
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from ._run_formatting import run_tooltip_text
+from ._run_formatting import one_dimensional_duplicate_point_count, run_tooltip_text
 from .preview import DraggablePreviewImageLabel
 
 MEASUREMENT_PREVIEW_SIZE = 22
 MEASUREMENT_PREVIEW_SPACING = 3
+MEASUREMENT_PREVIEW_GENERATING_COLORS = (
+    "#e9f4ff",
+    "#edf7f1",
+    "#fff4e3",
+    "#f4efff",
+    "#eef7f8",
+    "#f8eff4",
+    )
+MEASUREMENT_PREVIEW_GENERATING_BORDERS = (
+    "#bdd8f2",
+    "#c5dfcc",
+    "#ead3aa",
+    "#d4c8ee",
+    "#bfdadd",
+    "#e0c3d1",
+    )
 
 
 class RunPreviewCell(qtw.QWidget):
@@ -17,6 +33,7 @@ class RunPreviewCell(qtw.QWidget):
         self.guid = guid
         self.placeholder_count = max(0, int(count or 0))
         self.icon_size = int(icon_size)
+        self._generating = False
 
         self.content_layout = qtw.QHBoxLayout()
         self.content_layout.setContentsMargins(2, 0, 2, 0)
@@ -30,15 +47,20 @@ class RunPreviewCell(qtw.QWidget):
         self.show_placeholders()
 
 
-    def show_placeholders(self, count=None):
+    def show_placeholders(self, count=None, generating=None):
         self._clear_layout()
+        if generating is not None:
+            self._generating = bool(generating)
         placeholder_count = self.placeholder_count if count is None else max(0, int(count))
-        for _ in range(placeholder_count):
-            self.content_layout.addWidget(self._placeholder_label())
+        for index in range(placeholder_count):
+            self.content_layout.addWidget(
+                self._placeholder_label(index, generating=self._generating)
+                )
         self.content_layout.addStretch()
 
 
     def show_previews(self, previews):
+        self._generating = False
         self._clear_layout()
 
         preview_count = 0
@@ -69,19 +91,51 @@ class RunPreviewCell(qtw.QWidget):
             self.content_layout.addWidget(label)
             preview_count += 1
 
-        for _ in range(max(0, self.placeholder_count - preview_count)):
-            self.content_layout.addWidget(self._placeholder_label())
+        for index in range(max(0, self.placeholder_count - preview_count)):
+            self.content_layout.addWidget(self._placeholder_label(index))
         self.content_layout.addStretch()
 
 
-    def _placeholder_label(self):
+    def set_generating(self, generating):
+        generating = bool(generating)
+        if generating:
+            if self._generating:
+                return
+            self.show_placeholders(generating=True)
+            return
+
+        self._generating = False
+        for label in self.findChildren(qtw.QLabel, "measurementPreviewPlaceholder"):
+            label.setStyleSheet("")
+            label.setToolTip("")
+
+
+    def _placeholder_label(self, index=0, generating=False):
         label = qtw.QLabel()
         label.setObjectName("measurementPreviewPlaceholder")
         label.setFixedSize(self.icon_size, self.icon_size)
         label.setFrameShape(qtw.QFrame.Shape.Box)
         label.setFrameShadow(qtw.QFrame.Shadow.Plain)
         label.setLineWidth(1)
+        if generating:
+            color, border = self._generating_placeholder_colors(index)
+            label.setStyleSheet(
+                "QLabel#measurementPreviewPlaceholder {"
+                f"background-color: {color};"
+                f"border: 1px solid {border};"
+                "}"
+                )
+            label.setToolTip("Generating preview")
         return label
+
+
+    def _generating_placeholder_colors(self, index):
+        seed = sum(ord(char) for char in str(self.guid or ""))
+        palette_index = (seed + int(index or 0)) % len(MEASUREMENT_PREVIEW_GENERATING_COLORS)
+        return (
+            MEASUREMENT_PREVIEW_GENERATING_COLORS[palette_index],
+            MEASUREMENT_PREVIEW_GENERATING_BORDERS[palette_index],
+            )
 
 
     def _emit_plot_requested(self, parameter):
@@ -238,6 +292,10 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
                 continue
 
             _, right = sections
+            if right is None:
+                right = one_dimensional_duplicate_point_count(
+                    getattr(item, "run_metadata", {})
+                    )
             if right is None:
                 continue
 

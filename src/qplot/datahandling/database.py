@@ -19,7 +19,12 @@ from qplot.datahandling.readonly import (
     set_qcodes_database_location,
     sqlite_read_only_connection,
 )
-from qplot.datahandling.readSQL import get_runs_via_sql
+from qplot.datahandling.readSQL import (
+    get_runs_basic_via_sql,
+    iter_run_detail_batches_via_sql,
+    iter_run_shape_batches_via_sql,
+    iter_run_storage_batches_via_sql,
+)
 from qplot.diagnostics import log_exception
 
 DATABASE_ACCESS_TIMEOUT_SECONDS = 3
@@ -384,6 +389,16 @@ class DatabaseLoadSignals(QtCore.QObject):
     finished = QtCore.pyqtSignal(int, str, object, object)
 
 
+class DatabaseDetailSignals(QtCore.QObject):
+    """
+    Signals emitted by progressive run-detail loading.
+
+    """
+    status = QtCore.pyqtSignal(int, str)
+    batch_ready = QtCore.pyqtSignal(int, str, object)
+    finished = QtCore.pyqtSignal(int, str, object)
+
+
 class DatabaseLoadWorker(QtCore.QRunnable):
     """
     Loads database metadata away from the GUI thread.
@@ -452,8 +467,8 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             if self._is_cancelled():
                 return
 
-            self._emit_status("Loading run list...")
-            runs = get_runs_via_sql() or {}
+            self._emit_status("Loading basic run list...")
+            runs = get_runs_basic_via_sql(self.database_path) or {}
             if self._is_cancelled():
                 return
         except InterruptedError:
@@ -498,6 +513,227 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             status_callback=self._emit_status,
             cancelled_callback=self._is_cancelled,
             )
+
+
+class DatabaseDetailWorker(QtCore.QRunnable):
+    """
+    Loads expensive per-run metadata after the basic run table is visible.
+
+    """
+
+    def __init__(self, generation, database_path, run_ids, batch_size=1):
+        super().__init__()
+        self.signals = DatabaseDetailSignals()
+        self.generation = generation
+        self.database_path = database_path
+        self.run_ids = list(run_ids or [])
+        self._default_run_order = {
+            run_id: index
+            for index, run_id in enumerate(self.run_ids)
+            }
+        self.batch_size = max(1, int(batch_size or 1))
+        self._cancelled = threading.Event()
+        self._priority_lock = threading.Lock()
+        self._priority_epoch = 0
+        self._priority_scores = {}
+
+
+    def cancel(self):
+        self._cancelled.set()
+
+
+    def prioritize_run_ids(self, run_ids):
+        normalised = []
+        seen = set()
+        for run_id in run_ids or []:
+            run_id = self._normalise_run_id(run_id)
+            if run_id is None or run_id in seen:
+                continue
+            normalised.append(run_id)
+            seen.add(run_id)
+
+        if not normalised:
+            return
+
+        with self._priority_lock:
+            self._priority_epoch += 1
+            base_score = -self._priority_epoch * (len(self.run_ids) + 1)
+            for offset, run_id in enumerate(normalised):
+                self._priority_scores[run_id] = base_score + offset
+
+
+    def run(self):
+        total = len(self.run_ids)
+        completed = 0
+        try:
+            if total == 0 or self._is_cancelled():
+                self._emit_finished(None)
+                return
+
+            self._emit_status(f"Loading run details... 0/{total}")
+            for details in iter_run_detail_batches_via_sql(
+                    self.database_path,
+                    self.run_ids,
+                    batch_size=self.batch_size,
+                    infer_missing_shapes=False,
+                    include_storage_bytes=False,
+                    include_storage_estimate=True,
+                    include_read_setpoint_count=False,
+                    ):
+                if self._is_cancelled():
+                    return
+
+                completed += len(details)
+                if details:
+                    self._emit_batch_ready(details)
+                self._emit_status(
+                    f"Loading run details... {min(completed, total)}/{total}"
+                    )
+
+                if self._is_cancelled():
+                    return
+
+            shape_done = set()
+            self._emit_status(f"Loading setpoint shapes... 0/{total}")
+            while len(shape_done) < total:
+                if self._is_cancelled():
+                    return
+
+                batch = self._next_priority_batch(shape_done, batch_size=1)
+                if not batch:
+                    break
+
+                for shapes in iter_run_shape_batches_via_sql(
+                        self.database_path,
+                        batch,
+                        batch_size=1,
+                        ):
+                    if self._is_cancelled():
+                        return
+
+                    if shapes:
+                        self._emit_batch_ready(shapes)
+
+                shape_done.update(batch)
+                self._emit_status(
+                    f"Loading setpoint shapes... {len(shape_done)}/{total}"
+                    )
+
+            storage_done = set()
+            storage_batch_size = max(25, self.batch_size)
+            self._emit_status(f"Loading exact run sizes... 0/{total}")
+            while len(storage_done) < total:
+                if self._is_cancelled():
+                    return
+
+                batch = self._next_priority_batch(
+                    storage_done,
+                    batch_size=storage_batch_size,
+                    )
+                if not batch:
+                    break
+
+                for storage in iter_run_storage_batches_via_sql(
+                        self.database_path,
+                        batch,
+                        batch_size=storage_batch_size,
+                        ):
+                    if self._is_cancelled():
+                        return
+
+                    if storage:
+                        self._emit_batch_ready(storage)
+
+                storage_done.update(batch)
+                self._emit_status(
+                    f"Loading exact run sizes... {len(storage_done)}/{total}"
+                    )
+        except Exception as err:
+            log_exception("Database detail worker failed", err, __name__)
+            self._emit_finished(err)
+            return
+
+        self._emit_finished(None)
+
+
+    def _is_cancelled(self):
+        return self._cancelled.is_set()
+
+
+    def _normalise_run_id(self, run_id):
+        if run_id in self._default_run_order:
+            return run_id
+
+        try:
+            int_run_id = int(run_id)
+        except (TypeError, ValueError):
+            return None
+
+        if int_run_id in self._default_run_order:
+            return int_run_id
+        text_run_id = str(int_run_id)
+        if text_run_id in self._default_run_order:
+            return text_run_id
+        return None
+
+
+    def _next_priority_batch(self, done, batch_size):
+        with self._priority_lock:
+            priority_scores = dict(self._priority_scores)
+
+        candidates = [
+            run_id
+            for run_id in self.run_ids
+            if run_id not in done
+            ]
+        if not candidates:
+            return []
+
+        def sort_key(run_id):
+            return (
+                priority_scores.get(run_id, 0),
+                self._default_run_order.get(run_id, 0),
+                )
+
+        candidates.sort(key=sort_key)
+        return candidates[:max(1, int(batch_size or 1))]
+
+
+    def _emit_status(self, message):
+        try:
+            self.signals.status.emit(self.generation, message)
+        except RuntimeError as err:
+            if not self._qt_signal_was_deleted(err):
+                raise
+
+
+    def _emit_batch_ready(self, details):
+        try:
+            self.signals.batch_ready.emit(
+                self.generation,
+                self.database_path,
+                details,
+                )
+        except RuntimeError as err:
+            if not self._qt_signal_was_deleted(err):
+                raise
+
+
+    def _emit_finished(self, error):
+        try:
+            self.signals.finished.emit(
+                self.generation,
+                self.database_path,
+                error,
+                )
+        except RuntimeError as err:
+            if not self._qt_signal_was_deleted(err):
+                raise
+
+
+    def _qt_signal_was_deleted(self, err):
+        message = str(err)
+        return "wrapped C/C++ object" in message and "has been deleted" in message
 
 
 def database_info_report(database_path):

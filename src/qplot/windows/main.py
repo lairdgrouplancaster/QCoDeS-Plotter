@@ -13,6 +13,9 @@ from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot import config
 from qplot.datahandling.database import (
+    DatabaseDetailWorker as DatabaseDetailWorker,
+)
+from qplot.datahandling.database import (
     DatabaseLoadWorker as DatabaseLoadWorker,
 )
 from qplot.datahandling.database import (
@@ -41,6 +44,8 @@ from ._window_controls import (
     ask_confirmation_with_dont_ask_again,
     close_all_warning_enabled,
 )
+
+MAIN_WINDOW_READABLE_WIDTH = 780
 
 
 class DatabasePathLineEdit(qtw.QLineEdit):
@@ -125,10 +130,15 @@ class MainWindow(  # type: ignore[misc]
         self.threadPool.setMaxThreadCount(self.config.get("runtime_settings.max_threads"))
         self.databaseLoadThreadPool = QtCore.QThreadPool(self)
         self.databaseLoadThreadPool.setMaxThreadCount(1)
+        self.databaseDetailThreadPool = QtCore.QThreadPool(self)
+        self.databaseDetailThreadPool.setMaxThreadCount(1)
         self._database_load_generation = 0
         self._database_load_active = False
         self._database_load_state = None
         self._database_load_worker = None
+        self._database_detail_generation = 0
+        self._database_detail_active = False
+        self._database_detail_worker = None
         self.x = 0
         self.y = 0
         self.localLastFile = None
@@ -157,8 +167,12 @@ class MainWindow(  # type: ignore[misc]
         w.setLayout(self.l)
         self.setCentralWidget(w)
        
-        # Fetch window size from config.json
-        self.resize(*self.config.get("GUI.main_frame_size"))
+        # Fetch window size from config.json, but keep the run list readable.
+        configured_width, configured_height = self.config.get("GUI.main_frame_size")
+        self.resize(
+            max(configured_width, MAIN_WINDOW_READABLE_WIDTH),
+            configured_height,
+            )
         self.setWindowTitle("qPlot")
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
@@ -384,10 +398,18 @@ class MainWindow(  # type: ignore[misc]
         worker = getattr(self, "_database_load_worker", None)
         if worker is not None:
             worker.cancel()
+        detail_worker = getattr(self, "_database_detail_worker", None)
+        if detail_worker is not None:
+            detail_worker.cancel()
         self._database_load_generation += 1
         self._database_load_active = False
         self._database_load_state = None
         self._database_load_worker = None
+        self._database_detail_generation = (
+            getattr(self, "_database_detail_generation", 0) + 1
+            )
+        self._database_detail_active = False
+        self._database_detail_worker = None
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
     
@@ -479,6 +501,9 @@ class MainWindow(  # type: ignore[misc]
         self._save_preview_size(preview_size)
         if hasattr(self, "infoBox"):
             self.infoBox.set_preview_size(preview_size)
+            prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+            if callable(prioritize_previews):
+                prioritize_previews()
             if hasattr(self, "runInfoSplitter"):
                 self.runInfoSplitter.setSizes([380, self._details_pane_height()])
         self.show_status(f"Preview size set to {preview_size} px.", 3000)

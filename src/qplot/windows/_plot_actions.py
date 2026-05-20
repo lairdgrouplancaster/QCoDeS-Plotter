@@ -135,17 +135,26 @@ class PlotActionsMixin:
         """
         self.show_status("Loading selected run...", 0)
         try:
-            handle = self.dataset_holder.get(guid)
-            if handle is None:
-                self.ds = load_by_guid_read_only(guid)
+            if self.ds is not None and getattr(self.ds, "guid", None) == guid:
+                pass
             else:
-                self.ds = handle.dataset
+                handle = self.dataset_holder.get(guid)
+                if handle is None:
+                    self.ds = load_by_guid_read_only(guid)
+                else:
+                    self.ds = handle.dataset
         except Exception as err:
             log_exception("Selected run load failed", err, __name__)
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
             return
 
         self.selected_run_id = self.ds.run_id
+        prioritize_details = getattr(self, "_prioritize_database_detail_runs", None)
+        if callable(prioritize_details):
+            prioritize_details([self.selected_run_id])
+        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+        if callable(prioritize_previews):
+            prioritize_previews([self.selected_run_id])
         self.run_idBox.blockSignals(True)
         self.run_idBox.setText(str(self.ds.run_id))
         self.run_idBox.blockSignals(False)
@@ -155,8 +164,11 @@ class PlotActionsMixin:
         else:
             snap = None
 
+        run_metadata = self._run_metadata_for_guid(guid)
+        point_count = self._run_point_count(run_metadata)
+
         paramspec = self.ds.get_parameters()
-        structure = {"Data points": self.ds.number_of_results}
+        structure = {"Data points": point_count}
         for param in paramspec:
             if len(param.depends_on) > 0:
                 structure[param.name] = {
@@ -175,10 +187,36 @@ class PlotActionsMixin:
             "Snapshot": snap,
         }
         self.infoBox.setInfo(info, self.ds)
-        self.show_status(
-            f"Selected run {self.ds.run_id} with {self.ds.number_of_results:,} points.",
-            5000,
-        )
+        if point_count is None:
+            self.show_status(f"Selected run {self.ds.run_id}.", 5000)
+        else:
+            self.show_status(
+                f"Selected run {self.ds.run_id} with {int(point_count):,} points.",
+                5000,
+            )
+
+
+    def _run_metadata_for_guid(self, guid):
+        run_list = getattr(self, "RunList", None)
+        if run_list is None or not hasattr(run_list, "_item_for_guid"):
+            return {}
+
+        item = run_list._item_for_guid(guid)
+        if item is None:
+            return {}
+        return dict(getattr(item, "run_metadata", {}) or {})
+
+
+    def _run_point_count(self, metadata):
+        for key in ("result_count", "setpoint_count", "expected_results"):
+            value = metadata.get(key)
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return None
 
 
     @QtCore.pyqtSlot()

@@ -151,16 +151,23 @@ class RunControlsMixin:
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
         self.RunList.previewExportRequested.connect(self.export_run_preview_csv)
+        self.RunList.verticalScrollBar().valueChanged.connect(
+            lambda _: self._run_table_view_changed()
+            )
 
         self.infoBox = moreInfo(preview_size=self.preview_size)
         self.infoBox.preview.plotRequested.connect(self.open_preview_plot)
         self.infoBox.preview.exportRequested.connect(self.export_preview_csv)
         self.infoBox.preview.previewsReady.connect(self.RunList.set_run_previews)
+        self.infoBox.preview.previewGenerationChanged.connect(
+            self.RunList.set_run_preview_generating
+            )
         if self.fileTextbox.text() and self.RunList.topLevelItemCount():
             self.infoBox.preview.set_database_runs(
                 self.fileTextbox.text(),
                 self.RunList.all_run_metadata(),
                 )
+            self._prioritize_preview_runs()
 
         self._init_empty_state()
         self.runInfoSplitter = qtw.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -470,6 +477,64 @@ class RunControlsMixin:
         item = matches[0]
         self.RunList.setCurrentItem(item)
         self.RunList.scrollToItem(item, qtw.QAbstractItemView.ScrollHint.PositionAtCenter)
+
+
+    def _run_table_view_changed(self):
+        prioritize_details = getattr(self, "_prioritize_database_detail_runs", None)
+        if callable(prioritize_details):
+            prioritize_details()
+        self._prioritize_preview_runs()
+
+
+    def _prioritize_preview_runs(self, run_ids=None):
+        preview = getattr(getattr(self, "infoBox", None), "preview", None)
+        prioritize = getattr(preview, "prioritize_runs", None)
+        if not callable(prioritize):
+            return
+
+        selected_run_ids, visible_run_ids = self._preview_priority_run_ids(run_ids)
+        prioritize(
+            selected_run_ids=selected_run_ids,
+            visible_run_ids=visible_run_ids,
+            )
+
+
+    def _preview_priority_run_ids(self, run_ids=None):
+        selected_run_ids = []
+        visible_run_ids = []
+        seen_selected = set()
+        seen_visible = set()
+
+        def add(target, seen, candidate):
+            if candidate is None:
+                return
+            try:
+                key = int(candidate)
+            except (TypeError, ValueError):
+                key = candidate
+            if key in seen:
+                return
+            target.append(candidate)
+            seen.add(key)
+
+        if isinstance(run_ids, (list, tuple, set)):
+            for run_id in run_ids:
+                add(selected_run_ids, seen_selected, run_id)
+        else:
+            add(selected_run_ids, seen_selected, run_ids)
+
+        run_list = getattr(self, "RunList", None)
+        selected = getattr(run_list, "selected_run_ids", None)
+        if callable(selected):
+            for run_id in selected():
+                add(selected_run_ids, seen_selected, run_id)
+
+        visible = getattr(run_list, "visible_run_ids", None)
+        if callable(visible):
+            for run_id in visible():
+                add(visible_run_ids, seen_visible, run_id)
+
+        return selected_run_ids, visible_run_ids
 
     def _sync_refresh_interval(self):
         interval = self.config.get("user_preference.default_refresh_rate")

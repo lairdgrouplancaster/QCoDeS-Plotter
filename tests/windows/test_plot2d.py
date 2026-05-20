@@ -61,6 +61,37 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         self.assertTrue(window._has_plottable_heatmap_data())
 
+    def test_visible_heatmap_axis_ranges_detects_zoomed_view(self):
+        class ViewBox:
+            def viewRange(self):
+                return [[2.0, 6.0], [3.0, 7.0]]
+
+        window = plot2d.__new__(plot2d)
+        window.vb = ViewBox()
+        window._heatmap_full_axis_ranges = {
+            "x": (0.0, 10.0),
+            "y": (0.0, 20.0),
+            }
+
+        ranges = window._visible_heatmap_axis_ranges()
+
+        self.assertEqual(ranges["x"], (2.0, 6.0))
+        self.assertEqual(ranges["y"], (3.0, 7.0))
+
+    def test_visible_heatmap_axis_ranges_ignores_full_view(self):
+        class ViewBox:
+            def viewRange(self):
+                return [[0.0, 10.0], [0.0, 20.0]]
+
+        window = plot2d.__new__(plot2d)
+        window.vb = ViewBox()
+        window._heatmap_full_axis_ranges = {
+            "x": (0.0, 10.0),
+            "y": (0.0, 20.0),
+            }
+
+        self.assertIsNone(window._visible_heatmap_axis_ranges())
+
 
 class HeatmapHoverOutlineTestCase(unittest.TestCase):
     class SignalCatcher:
@@ -946,4 +977,3 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertEqual(window.bar.axis.style["tickTextWidth"], 60)
         self.assertIsNone(window.bar.axis.picture)
         self.assertTrue(window.bar.axis.updated)
-

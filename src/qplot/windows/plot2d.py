@@ -13,6 +13,8 @@ from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plotWin import plotWidget
 
 _COLORBAR_COLORMAPS = _colorbar._COLORBAR_COLORMAPS
+_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS = 450
+_HEATMAP_VIEW_RELOAD_MIN_FRACTION = 0.95
 
 
 class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
@@ -48,6 +50,16 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         Sets up the initial plot and starting data.
 
         """
+        self._large_heatmap_sql_mode = False
+        self._heatmap_full_axis_ranges: dict[str, tuple[float, float]] | None = None
+        self._heatmap_last_view_ranges: dict[str, tuple[float, float]] | None = None
+        self._heatmap_view_reload_timer = QtCore.QTimer(self)
+        self._heatmap_view_reload_timer.setSingleShot(True)
+        self._heatmap_view_reload_timer.timeout.connect(
+            self._reload_visible_heatmap_data
+            )
+        self.vb.main_moved.connect(self._schedule_visible_heatmap_reload)
+
         self.image = pg.ImageItem(axisOrder='row-major')
         self.image.setZValue(0) # Like *Send to back*
         # self.image.setPxMode(True)
@@ -156,6 +168,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             return
 
         try:
+            self._update_large_heatmap_state(plot_worker)
             if not self._has_plottable_heatmap_data():
                 self.show_status(
                     f"Waiting for plottable data for {self.param.name}...",
@@ -226,6 +239,155 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         finally:
             # Allow new workers after empty live loads or display errors.
             plot_worker.running = False
+
+
+    def _update_large_heatmap_state(self, worker: Any) -> None:
+        if not getattr(worker, "loaded_from_sql_sample", False):
+            return
+
+        self._large_heatmap_sql_mode = True
+        worker_ranges = getattr(worker, "heatmap_axis_ranges", None)
+        if worker_ranges is None or self._heatmap_full_axis_ranges is None:
+            self._heatmap_full_axis_ranges = self._axis_ranges_from_data()
+
+        if worker_ranges is not None:
+            self._heatmap_last_view_ranges = self._normalise_axis_ranges(worker_ranges)
+
+
+    def _axis_ranges_from_data(self) -> dict[str, tuple[float, float]] | None:
+        ranges = {}
+        for axis in ("x", "y"):
+            values = np.asarray(self.axis_data.get(axis, []), dtype=float)
+            finite = values[np.isfinite(values)]
+            if finite.size == 0:
+                return None
+
+            low = float(np.nanmin(finite))
+            high = float(np.nanmax(finite))
+            if low == high:
+                return None
+
+            ranges[axis] = (low, high)
+
+        return ranges
+
+
+    def _schedule_visible_heatmap_reload(self, *_args: Any) -> None:
+        if not self._large_heatmap_sql_mode:
+            return
+
+        if not self._has_plottable_heatmap_data():
+            return
+
+        self._heatmap_view_reload_timer.start(_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS)
+
+
+    def _reload_visible_heatmap_data(self) -> None:
+        if not self._large_heatmap_sql_mode:
+            return
+
+        if getattr(getattr(self, "worker", None), "running", False):
+            self._heatmap_view_reload_timer.start(_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS)
+            return
+
+        ranges = self._visible_heatmap_axis_ranges()
+        if ranges is None or self._axis_ranges_match(ranges, self._heatmap_last_view_ranges):
+            return
+
+        self._heatmap_last_view_ranges = ranges
+        self.load_data(
+            force_sql_heatmap=True,
+            heatmap_axis_ranges=ranges,
+            heatmap_full_axis_ranges=self._heatmap_full_axis_ranges,
+            status_message=f"Loading visible data for {self.param.name}...",
+            )
+
+
+    def _visible_heatmap_axis_ranges(self) -> dict[str, tuple[float, float]] | None:
+        full_ranges = self._heatmap_full_axis_ranges
+        if full_ranges is None:
+            return None
+
+        try:
+            view_x, view_y = self.vb.viewRange()
+        except Exception:
+            return None
+
+        ranges = self._normalise_axis_ranges({
+            "x": tuple(view_x),
+            "y": tuple(view_y),
+            })
+        if ranges is None:
+            return None
+
+        clamped = {}
+        is_zoomed = False
+        for axis in ("x", "y"):
+            full_low, full_high = full_ranges[axis]
+            low, high = ranges[axis]
+            full_width = full_high - full_low
+            if full_width <= 0:
+                return None
+
+            low = max(full_low, min(full_high, low))
+            high = max(full_low, min(full_high, high))
+            if high <= low:
+                return None
+
+            if (high - low) < full_width * _HEATMAP_VIEW_RELOAD_MIN_FRACTION:
+                is_zoomed = True
+
+            clamped[axis] = (low, high)
+
+        return clamped if is_zoomed else None
+
+
+    def _normalise_axis_ranges(
+            self,
+            ranges: dict[str, tuple[float, float]] | None,
+            ) -> dict[str, tuple[float, float]] | None:
+        if ranges is None:
+            return None
+
+        normalised = {}
+        for axis in ("x", "y"):
+            axis_range = ranges.get(axis)
+            if axis_range is None:
+                return None
+
+            try:
+                low, high = sorted(float(value) for value in axis_range)
+            except (TypeError, ValueError):
+                return None
+
+            if not (np.isfinite(low) and np.isfinite(high)) or low == high:
+                return None
+
+            normalised[axis] = (low, high)
+
+        return normalised
+
+
+    def _axis_ranges_match(
+            self,
+            left: dict[str, tuple[float, float]],
+            right: dict[str, tuple[float, float]] | None,
+            ) -> bool:
+        if right is None:
+            return False
+
+        for axis in ("x", "y"):
+            left_low, left_high = left[axis]
+            right_low, right_high = right[axis]
+            width = max(abs(left_high - left_low), abs(right_high - right_low), 1.0)
+            tolerance = width * 0.01
+            if (
+                    abs(left_low - right_low) > tolerance
+                    or abs(left_high - right_high) > tolerance
+                    ):
+                return False
+
+        return True
 
 
     def _has_plottable_heatmap_data(self) -> bool:

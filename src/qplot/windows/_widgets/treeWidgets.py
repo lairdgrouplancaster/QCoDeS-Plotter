@@ -73,16 +73,61 @@ class RunList(qtw.QTreeWidget):
     
     cols = ['ID', 'Measurements', 'Setpoints', 'Started', 'Complete', 'Duration', 'Size']
     column_widths = {
+        "ID": 40,
+        "Measurements": 104,
+        "Complete": 86,
+        "Duration": 96,
+        "Size": 72,
+        }
+    elastic_column_widths = {
+        "Setpoints": 180,
+        "Started": 150,
+        }
+    readable_column_widths = {
+        "ID": 37,
+        "Measurements": 96,
+        "Setpoints": 100,
+        "Started": 128,
+        "Complete": 78,
+        "Duration": 84,
+        "Size": 58,
+        }
+    minimum_column_widths = {
         "ID": 34,
         "Measurements": 84,
+        "Setpoints": 80,
+        "Started": 84,
         "Complete": 72,
         "Duration": 68,
         "Size": 50,
         }
-    elastic_column_widths = {
-        "Setpoints": 80,
-        "Started": 84,
-        }
+    compact_growth_order = (
+        "Measurements",
+        "Started",
+        "Duration",
+        "Size",
+        "Complete",
+        "Setpoints",
+        "ID",
+        )
+    preferred_growth_order = (
+        "Setpoints",
+        "Started",
+        "Duration",
+        "Size",
+        "Measurements",
+        "Complete",
+        "ID",
+        )
+    compact_shrink_order = (
+        "Setpoints",
+        "Started",
+        "Measurements",
+        "Duration",
+        "Complete",
+        "Size",
+        "ID",
+        )
 
     selected = QtCore.pyqtSignal([str])
     plot = QtCore.pyqtSignal([str])
@@ -241,6 +286,99 @@ class RunList(qtw.QTreeWidget):
         self._resize_columns()
 
 
+    def updateRuns(self, runs):
+        """
+        Merge updated metadata into existing rows.
+
+        Background detail loading uses this to fill expensive columns without
+        rebuilding the table or disturbing the user's selection.
+
+        """
+        if not runs:
+            return {}
+
+        updated = {}
+        self.setSortingEnabled(False)
+        for run_id, metadata in runs.items():
+            guid = metadata.get("guid")
+            item = self._item_for_guid(guid)
+            if item is None:
+                continue
+
+            item.run_metadata.update(metadata)
+            self._refresh_run_item(item)
+            self._sync_watching_item(item)
+            updated[run_id] = dict(item.run_metadata)
+
+        self.setSortingEnabled(True)
+        self._resize_columns()
+        return updated
+
+
+    def _refresh_run_item(self, item):
+        metadata = item.run_metadata
+        measurement_count = measured_parameter_count(metadata)
+
+        measurements_col = self.cols.index("Measurements")
+        item.setData(
+            measurements_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            measurement_count,
+            )
+        item.setSizeHint(
+            measurements_col,
+            QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6),
+            )
+        cell = self.preview_cells.get(item.guid)
+        if cell is None or cell.placeholder_count != measurement_count:
+            self._set_measurement_preview_cell(item, measurement_count)
+
+        setpoints_col = self.cols.index("Setpoints")
+        item.setText(setpoints_col, format_point_count(metadata))
+        item.setData(
+            setpoints_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            metadata.get("setpoint_count")
+            or metadata.get("expected_results")
+            or metadata.get("result_count"),
+            )
+
+        complete_col = self.cols.index("Complete")
+        item.setText(complete_col, format_complete_cell(metadata))
+        item.setData(
+            complete_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            complete_cell_sort_value(metadata),
+            )
+
+        duration_col = self.cols.index("Duration")
+        item.setText(duration_col, format_time_taken_seconds(metadata))
+        item.setData(
+            duration_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            time_taken_seconds(metadata),
+            )
+
+        size_col = self.cols.index("Size")
+        item.setText(size_col, format_storage_size(metadata.get("storage_bytes")))
+        item.setData(
+            size_col,
+            QtCore.Qt.ItemDataRole.UserRole,
+            metadata.get("storage_bytes"),
+            )
+
+        item.update_tooltip()
+
+
+    def _sync_watching_item(self, item):
+        watching = item in self.watching
+        complete = run_is_complete(item.run_metadata)
+        if complete and watching:
+            self.watching.remove(item)
+        elif not complete and not watching:
+            self.watching.append(item)
+
+
     def clear(self):
         self.preview_cells = {}
         super().clear()
@@ -260,6 +398,13 @@ class RunList(qtw.QTreeWidget):
         cell = self.preview_cells.get(guid)
         if cell is not None:
             cell.show_previews(previews)
+
+
+    @QtCore.pyqtSlot(str, bool)
+    def set_run_preview_generating(self, guid, generating):
+        cell = self.preview_cells.get(guid)
+        if cell is not None:
+            cell.set_generating(generating)
 
 
     @QtCore.pyqtSlot(str, str)
@@ -295,23 +440,68 @@ class RunList(qtw.QTreeWidget):
             for col in range(len(self.cols)):
                 header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
 
-        fixed_width = sum(self.column_widths.values())
-        elastic_min_width = sum(self.elastic_column_widths.values())
+        preferred_fixed_width = sum(self.column_widths.values())
+        preferred_elastic_width = sum(self.elastic_column_widths.values())
         viewport = self.viewport()
         available_width = viewport.width() if viewport is not None else 0
+        preferred_widths = {
+            **self.elastic_column_widths,
+            **self.column_widths,
+            }
+        preferred_width = preferred_fixed_width + preferred_elastic_width
         if available_width <= 0:
-            available_width = fixed_width + elastic_min_width
+            available_width = preferred_width
 
-        extra_width = max(0, available_width - fixed_width - elastic_min_width)
-        elastic_widths = dict(self.elastic_column_widths)
-        setpoints_extra = (extra_width * 2) // 3
-        elastic_widths["Setpoints"] += setpoints_extra
-        elastic_widths["Started"] += extra_width - setpoints_extra
+        if available_width < preferred_width:
+            readable_width = sum(self.readable_column_widths.values())
+            if available_width < readable_width:
+                widths = self._grow_column_widths(
+                    self.minimum_column_widths,
+                    self.readable_column_widths,
+                    available_width,
+                    self.compact_growth_order,
+                    )
+            else:
+                widths = self._grow_column_widths(
+                    self.readable_column_widths,
+                    preferred_widths,
+                    available_width,
+                    self.preferred_growth_order,
+                    )
+        else:
+            extra_width = max(0, available_width - preferred_width)
+            widths = dict(preferred_widths)
+            setpoints_extra = (extra_width * 2) // 3
+            widths["Setpoints"] += setpoints_extra
+            widths["Started"] += extra_width - setpoints_extra
 
         for col, name in enumerate(self.cols):
-            width = self.column_widths.get(name, elastic_widths.get(name))
+            width = widths.get(name)
             if width is not None:
                 self.setColumnWidth(col, width)
+
+
+    def _grow_column_widths(self, base_widths, target_widths, available_width, order):
+        widths = dict(base_widths)
+        deficit = sum(widths.values()) - available_width
+        if deficit > 0:
+            for name in self.compact_shrink_order:
+                shrink_by = min(max(0, widths.get(name, 0) - 32), deficit)
+                widths[name] = widths.get(name, 0) - shrink_by
+                deficit -= shrink_by
+                if deficit <= 0:
+                    break
+            return widths
+
+        extra_width = max(0, available_width - sum(widths.values()))
+        for name in order:
+            target = target_widths.get(name, widths.get(name, 0))
+            grow_by = min(max(0, target - widths.get(name, 0)), extra_width)
+            widths[name] = widths.get(name, 0) + grow_by
+            extra_width -= grow_by
+            if extra_width <= 0:
+                break
+        return widths
 
 
     def resizeEvent(self, event):
@@ -347,6 +537,62 @@ class RunList(qtw.QTreeWidget):
 
             runs[run_id] = dict(getattr(item, "run_metadata", {}))
         return runs
+
+
+    def visible_run_ids(self, limit=50):
+        run_ids: list[int | str] = []
+        viewport = self.viewport()
+        if viewport is None:
+            return run_ids
+
+        viewport_rect = viewport.rect()
+        for index in range(self.topLevelItemCount()):
+            item = self.topLevelItem(index)
+            if item is None:
+                continue
+
+            rect = self.visualItemRect(item)
+            if not rect.isValid():
+                continue
+            if rect.bottom() < viewport_rect.top():
+                continue
+            if rect.top() > viewport_rect.bottom():
+                if run_ids:
+                    break
+                continue
+
+            run_id = self._item_run_id(item)
+            if run_id is None:
+                continue
+            run_ids.append(run_id)
+            if len(run_ids) >= limit:
+                break
+        return run_ids
+
+
+    def selected_run_ids(self):
+        run_ids = []
+        for item in self.selectedItems():
+            if isinstance(item, SortableTreeWidgetItem):
+                run_id = self._item_run_id(item)
+                if run_id is not None:
+                    run_ids.append(run_id)
+        return run_ids
+
+
+    def run_id_for_guid(self, guid):
+        item = self._item_for_guid(guid)
+        if item is None:
+            return None
+        return self._item_run_id(item)
+
+
+    def _item_run_id(self, item):
+        try:
+            return int(item.text(0))
+        except (TypeError, ValueError):
+            text = item.text(0)
+            return text if text else None
 
 
     def checkWatching(self):
@@ -862,9 +1108,6 @@ class moreInfo(qtw.QTabWidget):
 
     def _time_per_point(self, seconds, info, dataset):
         points = info.get("Data Structure", {}).get("Data points")
-        if not self._has_value(points):
-            points = self._dataset_attr(dataset, "number_of_results")
-
         try:
             points = float(points)
         except (TypeError, ValueError):
@@ -877,29 +1120,7 @@ class moreInfo(qtw.QTabWidget):
 
 
     def _setpoint_summaries(self, dataset, setpoint_names, params):
-        if dataset is None or not setpoint_names:
-            return {}
-
-        summaries = {}
-        measured_params = [
-            param for param in params
-            if getattr(param, "depends_on_", ())
-            ]
-
-        for param in measured_params:
-            try:
-                parameter_data = dataset.get_parameter_data(param.name).get(param.name, {})
-            except Exception:
-                continue
-
-            for name in setpoint_names:
-                if name not in parameter_data or name in summaries:
-                    continue
-                summary = self._setpoint_summary(parameter_data[name])
-                if summary:
-                    summaries[name] = summary
-
-        return summaries
+        return {}
 
 
     def _setpoint_summary(self, values):

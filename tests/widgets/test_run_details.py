@@ -7,6 +7,7 @@ import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
     PREVIEW_BACKGROUND_COLOR,
@@ -52,12 +53,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 return 1768129626.1
 
             def get_parameter_data(self, name):
-                return {
-                    "dmm_v1": {
-                        "dac_ch1": np.array([-1.0, -0.5, 0.0, 0.5, 1.0]),
-                        "dmm_v1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
-                        }
-                    }
+                raise AssertionError("Details pane should not load parameter data")
 
         widget = treeWidgets.moreInfo()
         widget.setInfo(
@@ -122,9 +118,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(widget.parameters.item(0, 0).text(), "Set parameters")
         self.assertTrue(widget.parameters.item(0, 0).font().bold())
         self.assertEqual(widget.parameters.item(1, 0).text(), "dac_ch1")
-        self.assertEqual(widget.parameters.item(1, 3).text(), "-1")
-        self.assertEqual(widget.parameters.item(1, 4).text(), "1")
-        self.assertEqual(widget.parameters.item(1, 5).text(), "5")
+        self.assertEqual(widget.parameters.item(1, 3).text(), "25")
+        self.assertEqual(widget.parameters.item(1, 4).text(), "25")
+        self.assertEqual(widget.parameters.item(1, 5).text(), "")
         self.assertEqual(widget.parameters.item(1, 6).text(), "")
         self.assertEqual(widget.parameters.item(1, 7).text(), "dac")
         self.assertFalse(widget.parameters.item(1, 0).font().bold())
@@ -259,6 +255,54 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertNotEqual(measured, QtGui.QColor(230, 230, 230))
         self.assertEqual(empty_future_column, QtGui.QColor(230, 230, 230))
         self.assertEqual(empty_future_row, QtGui.QColor(230, 230, 230))
+
+    def test_heatmap_preview_does_not_allocate_oversized_grid_shape(self):
+        old_max_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_GRID_CELLS = 1
+        try:
+            heatmap = render_heatmap_preview(
+                np.array([0, 1, 0, 1], dtype=float),
+                np.array([0, 0, 1, 1], dtype=float),
+                np.array([0, 255, 0, 0], dtype=float),
+                size=20,
+                grid_shape=(1000, 1000),
+                )
+        finally:
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_cells
+
+        self.assertEqual(heatmap.width(), 20)
+        self.assertEqual(heatmap.height(), 20)
+
+    def test_heatmap_preview_downsamples_grid_by_averaging(self):
+        grid = np.array([
+            [0.0, 0.0],
+            [100.0, 100.0],
+            [0.0, 0.0],
+            [100.0, 100.0],
+            ])
+
+        display_grid = preview_module._prepare_heatmap_display_grid(grid, size=2)
+
+        np.testing.assert_allclose(display_grid, np.full((2, 2), 50.0))
+
+    def test_heatmap_preview_fills_small_rendering_gaps_only(self):
+        mostly_complete = np.arange(16, dtype=float).reshape(4, 4)
+        mostly_complete[1, 1] = np.nan
+        sparse = np.full((4, 4), np.nan)
+        sparse[0, 0] = 1.0
+        sparse[0, 1] = 2.0
+
+        filled = preview_module._prepare_heatmap_display_grid(
+            mostly_complete,
+            size=4,
+            )
+        sparse_display = preview_module._prepare_heatmap_display_grid(
+            sparse,
+            size=4,
+            )
+
+        self.assertTrue(np.isfinite(filled).all())
+        self.assertTrue(np.isnan(sparse_display[1:, :]).all())
 
     def test_generate_2d_preview_matches_full_plot_axis_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -448,6 +492,231 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertNotIn("run-guid", preview.cache)
         self.assertNotIn("run-guid", preview.errors)
         self.assertIn("run-guid", preview.queue)
+
+    def test_preview_tab_can_update_metadata_without_queueing_preview(self):
+        preview = PreviewTab(preview_size=100)
+        preview.database_path = "previews.db"
+        preview._start_next = lambda: None
+
+        old_metadata = {
+            "guid": "run-guid",
+            "run_id": 7,
+            "result_table_name": "results",
+            "result_count": 1,
+            }
+        preview.run_metadata = {"run-guid": old_metadata}
+        preview.metadata_signatures = {
+            "run-guid": preview._metadata_signature(old_metadata)
+            }
+
+        preview.add_runs({
+            7: {
+                **old_metadata,
+                "result_count": 100,
+                },
+            }, queue_previews=False)
+
+        self.assertEqual(preview.queue, {})
+        self.assertEqual(preview.run_metadata["run-guid"]["result_count"], 100)
+
+    def test_preview_tab_queues_every_run_on_database_load(self):
+        preview = PreviewTab(preview_size=100)
+        preview._start_next = lambda: None
+        generation_changes = []
+        preview.previewGenerationChanged.connect(
+            lambda *args: generation_changes.append(args)
+            )
+
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1", "run_timestamp": 100.0},
+            2: {"guid": "guid-2", "run_timestamp": 101.0},
+            })
+
+        self.assertEqual(preview.queue, {
+            "guid-1": preview_module.PREVIEW_REMAINING_PRIORITY,
+            "guid-2": preview_module.PREVIEW_REMAINING_PRIORITY,
+            })
+        self.assertEqual(generation_changes, [])
+
+    def test_preview_tab_marks_only_active_worker_as_generating(self):
+        preview = PreviewTab(preview_size=100)
+        preview._schedule_start_next = lambda: None
+        generation_changes = []
+        started_workers = []
+        preview.previewGenerationChanged.connect(
+            lambda *args: generation_changes.append(args)
+            )
+
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1", "run_timestamp": 100.0},
+            2: {"guid": "guid-2", "run_timestamp": 101.0},
+            })
+
+        preview._start_next()
+
+        self.assertEqual(generation_changes, [("guid-2", True)])
+        self.assertEqual(started_workers[0].guid, "guid-2")
+
+        preview._start_next = lambda: None
+        preview._worker_finished(preview.generation, "guid-2", [], None)
+
+        self.assertIn(("guid-2", False), generation_changes)
+
+    def test_preview_tab_prioritizes_selected_then_visible_then_remaining_runs(self):
+        preview = PreviewTab(preview_size=100)
+        preview._start_next = lambda: None
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1", "run_timestamp": 100.0},
+            2: {"guid": "guid-2", "run_timestamp": 101.0},
+            3: {"guid": "guid-3", "run_timestamp": 102.0},
+            })
+
+        preview.prioritize_runs(
+            selected_run_ids=[2],
+            visible_run_ids=[1, 2],
+            )
+
+        self.assertEqual(
+            preview.queue["guid-2"],
+            preview_module.PREVIEW_SELECTED_PRIORITY,
+            )
+        self.assertEqual(
+            preview.queue["guid-1"],
+            preview_module.PREVIEW_VISIBLE_PRIORITY,
+            )
+        self.assertEqual(
+            preview.queue["guid-3"],
+            preview_module.PREVIEW_REMAINING_PRIORITY,
+            )
+
+        preview.prioritize_runs(visible_run_ids=[3])
+
+        self.assertEqual(
+            preview.queue["guid-1"],
+            preview_module.PREVIEW_REMAINING_PRIORITY,
+            )
+        self.assertEqual(
+            preview.queue["guid-3"],
+            preview_module.PREVIEW_VISIBLE_PRIORITY,
+            )
+
+    def test_preview_sampling_is_limited_without_result_count(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        preview_module.MAX_PREVIEW_ROWS = 3
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?)",
+                [(float(index), float(index * 10)) for index in range(10)]
+                )
+
+            x, signal = preview_module._select_arrays(
+                cursor,
+                "results",
+                ["x", "signal"],
+                {},
+                )
+
+            self.assertLessEqual(x.size, 3)
+            self.assertEqual(x.tolist(), [0.0, 4.0, 8.0])
+            self.assertEqual(signal.tolist(), [0.0, 40.0, 80.0])
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+
+    def test_2d_preview_reads_complete_modest_known_grid(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_ROWS = 3
+        preview_module.MAX_PREVIEW_GRID_CELLS = 4
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, y REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?, ?)",
+                [
+                    (0.0, 0.0, 1.0),
+                    (1.0, 0.0, 2.0),
+                    (0.0, 1.0, 3.0),
+                    (1.0, 1.0, 4.0),
+                    ],
+                )
+
+            x, y, signal = preview_module._select_arrays(
+                cursor,
+                "results",
+                ["x", "y", "signal"],
+                {"result_count": 4},
+                max_rows=preview_module._preview_2d_row_limit((2, 2)),
+                sampling="stratified",
+                )
+
+            self.assertEqual(x.size, 4)
+            self.assertEqual(y.size, 4)
+            self.assertEqual(signal.size, 4)
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
+
+    def test_large_known_grid_preview_samples_dense_grid(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_ROWS = 16
+        preview_module.MAX_PREVIEW_GRID_CELLS = 4
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, y REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?, ?)",
+                [
+                    (float(column), float(row), float(row * 10 + column))
+                    for row in range(4)
+                    for column in range(10)
+                    ],
+                )
+
+            grid = preview_module._sample_large_known_grid_preview(
+                cursor,
+                "results",
+                {"result_count": 40},
+                "signal",
+                (4, 10),
+                size=4,
+                )
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
+
+        self.assertEqual(grid.shape, (4, 4))
+        self.assertTrue(np.isfinite(grid).all())
+
+    def test_sampled_2d_preview_bins_to_avoid_sparse_grid_artifacts(self):
+        old_samples_per_cell = preview_module.PREVIEW_SAMPLES_PER_CELL
+        preview_module.PREVIEW_SAMPLES_PER_CELL = 4
+        try:
+            grid = preview_module._binned_heatmap_grid(
+                np.arange(20, dtype=float),
+                np.zeros(20, dtype=float),
+                np.arange(20, dtype=float),
+                size=20,
+                grid_shape=(20, 20),
+                )
+        finally:
+            preview_module.PREVIEW_SAMPLES_PER_CELL = old_samples_per_cell
+
+        self.assertLessEqual(grid.size, 5)
+        self.assertTrue(np.isfinite(grid).all())
 
     def test_double_clicking_preview_requests_matching_parameter_plot(self):
         preview = PreviewTab(preview_size=100)
