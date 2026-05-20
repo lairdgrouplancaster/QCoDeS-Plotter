@@ -540,8 +540,12 @@ class RunList(qtw.QTreeWidget):
 
 
     def visible_run_ids(self, limit=50):
-        viewport_rect = self.viewport().rect()
-        run_ids = []
+        run_ids: list[int | str] = []
+        viewport = self.viewport()
+        if viewport is None:
+            return run_ids
+
+        viewport_rect = viewport.rect()
         for index in range(self.topLevelItemCount()):
             item = self.topLevelItem(index)
             if item is None:

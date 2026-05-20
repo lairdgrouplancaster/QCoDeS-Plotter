@@ -272,7 +272,7 @@ class PreviewTab(qtw.QWidget):
 
 
     def _run_id_lookup(self):
-        lookup = {}
+        lookup: dict[int | str, str] = {}
         for guid, metadata in self.run_metadata.items():
             for key in self._run_id_keys(metadata.get("run_id")):
                 lookup.setdefault(key, guid)

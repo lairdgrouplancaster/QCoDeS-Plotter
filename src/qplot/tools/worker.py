@@ -378,8 +378,8 @@ class loader(QtCore.QRunnable):
 
     def _heatmap_where_clause(self):
         ranges = self.heatmap_axis_ranges or {}
-        clauses = []
-        parameters = []
+        clauses: list[str] = []
+        parameters: list[float] = []
 
         for axis in ("x", "y"):
             axis_range = ranges.get(axis)
