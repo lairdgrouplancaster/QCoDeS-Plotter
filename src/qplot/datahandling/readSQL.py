@@ -169,6 +169,7 @@ def iter_run_storage_batches_via_sql(database_path, run_ids, batch_size=25):
                 rows[run_id] = {
                     "guid": metadata.get("guid"),
                     "storage_bytes": storage_bytes,
+                    "storage_bytes_estimated": False,
                     }
             if rows:
                 yield rows
@@ -336,18 +337,21 @@ def _add_run_detail_fields(
         table_name = metadata.get("result_table_name")
         if storage_bytes_by_table is not None:
             metadata["storage_bytes"] = storage_bytes_by_table.get(table_name)
+            metadata["storage_bytes_estimated"] = False
         else:
             metadata["storage_bytes"] = _table_storage_bytes(
                 cursor,
                 table_name,
                 result_count=metadata.get("result_count"),
                 )
+            metadata["storage_bytes_estimated"] = False
     elif include_storage_estimate:
         metadata["storage_bytes"] = _estimated_table_storage_bytes(
             cursor,
             metadata.get("result_table_name"),
             result_count=metadata.get("result_count"),
             )
+        metadata["storage_bytes_estimated"] = True
 
 
 def _json_dict(value):
@@ -755,6 +759,7 @@ def get_run_status(guid):
             "is_completed": value[1],
             "result_count": _result_count(cursor, value[2]),
             "storage_bytes": _table_storage_bytes(cursor, value[2]),
+            "storage_bytes_estimated": False,
             "database_modified_timestamp": _database_modified_timestamp(cursor),
             }
         for index, column in enumerate(optional_columns, start=5):

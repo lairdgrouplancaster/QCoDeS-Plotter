@@ -16,6 +16,9 @@ from qplot.datahandling.database import (
     DatabaseDetailWorker as DatabaseDetailWorker,
 )
 from qplot.datahandling.database import (
+    DatabaseExpensiveDetailWorker as DatabaseExpensiveDetailWorker,
+)
+from qplot.datahandling.database import (
     DatabaseLoadWorker as DatabaseLoadWorker,
 )
 from qplot.datahandling.database import (
@@ -132,6 +135,8 @@ class MainWindow(  # type: ignore[misc]
         self.databaseLoadThreadPool.setMaxThreadCount(1)
         self.databaseDetailThreadPool = QtCore.QThreadPool(self)
         self.databaseDetailThreadPool.setMaxThreadCount(1)
+        self.databaseExpensiveDetailThreadPool = QtCore.QThreadPool(self)
+        self.databaseExpensiveDetailThreadPool.setMaxThreadCount(1)
         self._database_load_generation = 0
         self._database_load_active = False
         self._database_load_state = None
@@ -139,6 +144,9 @@ class MainWindow(  # type: ignore[misc]
         self._database_detail_generation = 0
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_expensive_detail_generation = 0
+        self._database_expensive_detail_active = False
+        self._database_expensive_detail_worker = None
         self.x = 0
         self.y = 0
         self.localLastFile = None
@@ -401,6 +409,13 @@ class MainWindow(  # type: ignore[misc]
         detail_worker = getattr(self, "_database_detail_worker", None)
         if detail_worker is not None:
             detail_worker.cancel()
+        expensive_detail_worker = getattr(
+            self,
+            "_database_expensive_detail_worker",
+            None,
+            )
+        if expensive_detail_worker is not None:
+            expensive_detail_worker.cancel()
         self._database_load_generation += 1
         self._database_load_active = False
         self._database_load_state = None
@@ -410,6 +425,11 @@ class MainWindow(  # type: ignore[misc]
             )
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_expensive_detail_generation = (
+            getattr(self, "_database_expensive_detail_generation", 0) + 1
+            )
+        self._database_expensive_detail_active = False
+        self._database_expensive_detail_worker = None
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
     

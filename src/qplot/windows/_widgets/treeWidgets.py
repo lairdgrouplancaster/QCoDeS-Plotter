@@ -305,7 +305,16 @@ class RunList(qtw.QTreeWidget):
             if item is None:
                 continue
 
-            item.run_metadata.update(metadata)
+            merged_metadata = dict(metadata)
+            if (
+                    item.run_metadata.get("storage_bytes") is not None
+                    and item.run_metadata.get("storage_bytes_estimated") is False
+                    and merged_metadata.get("storage_bytes_estimated") is True
+                    ):
+                merged_metadata.pop("storage_bytes", None)
+                merged_metadata.pop("storage_bytes_estimated", None)
+
+            item.run_metadata.update(merged_metadata)
             self._refresh_run_item(item)
             self._sync_watching_item(item)
             updated[run_id] = dict(item.run_metadata)

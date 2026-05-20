@@ -515,13 +515,13 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             )
 
 
-class DatabaseDetailWorker(QtCore.QRunnable):
+class _PrioritizedRunWorker(QtCore.QRunnable):
     """
-    Loads expensive per-run metadata after the basic run table is visible.
+    Base for background workers that need selected/visible run prioritisation.
 
     """
 
-    def __init__(self, generation, database_path, run_ids, batch_size=1):
+    def __init__(self, generation, database_path, run_ids):
         super().__init__()
         self.signals = DatabaseDetailSignals()
         self.generation = generation
@@ -531,7 +531,6 @@ class DatabaseDetailWorker(QtCore.QRunnable):
             run_id: index
             for index, run_id in enumerate(self.run_ids)
             }
-        self.batch_size = max(1, int(batch_size or 1))
         self._cancelled = threading.Event()
         self._priority_lock = threading.Lock()
         self._priority_epoch = 0
@@ -560,100 +559,6 @@ class DatabaseDetailWorker(QtCore.QRunnable):
             base_score = -self._priority_epoch * (len(self.run_ids) + 1)
             for offset, run_id in enumerate(normalised):
                 self._priority_scores[run_id] = base_score + offset
-
-
-    def run(self):
-        total = len(self.run_ids)
-        completed = 0
-        try:
-            if total == 0 or self._is_cancelled():
-                self._emit_finished(None)
-                return
-
-            self._emit_status(f"Loading run details... 0/{total}")
-            for details in iter_run_detail_batches_via_sql(
-                    self.database_path,
-                    self.run_ids,
-                    batch_size=self.batch_size,
-                    infer_missing_shapes=False,
-                    include_storage_bytes=False,
-                    include_storage_estimate=True,
-                    include_read_setpoint_count=False,
-                    ):
-                if self._is_cancelled():
-                    return
-
-                completed += len(details)
-                if details:
-                    self._emit_batch_ready(details)
-                self._emit_status(
-                    f"Loading run details... {min(completed, total)}/{total}"
-                    )
-
-                if self._is_cancelled():
-                    return
-
-            shape_done = set()
-            self._emit_status(f"Loading setpoint shapes... 0/{total}")
-            while len(shape_done) < total:
-                if self._is_cancelled():
-                    return
-
-                batch = self._next_priority_batch(shape_done, batch_size=1)
-                if not batch:
-                    break
-
-                for shapes in iter_run_shape_batches_via_sql(
-                        self.database_path,
-                        batch,
-                        batch_size=1,
-                        ):
-                    if self._is_cancelled():
-                        return
-
-                    if shapes:
-                        self._emit_batch_ready(shapes)
-
-                shape_done.update(batch)
-                self._emit_status(
-                    f"Loading setpoint shapes... {len(shape_done)}/{total}"
-                    )
-
-            storage_done = set()
-            storage_batch_size = max(25, self.batch_size)
-            self._emit_status(f"Loading exact run sizes... 0/{total}")
-            while len(storage_done) < total:
-                if self._is_cancelled():
-                    return
-
-                batch = self._next_priority_batch(
-                    storage_done,
-                    batch_size=storage_batch_size,
-                    )
-                if not batch:
-                    break
-
-                for storage in iter_run_storage_batches_via_sql(
-                        self.database_path,
-                        batch,
-                        batch_size=storage_batch_size,
-                        ):
-                    if self._is_cancelled():
-                        return
-
-                    if storage:
-                        self._emit_batch_ready(storage)
-
-                storage_done.update(batch)
-                self._emit_status(
-                    f"Loading exact run sizes... {len(storage_done)}/{total}"
-                    )
-        except Exception as err:
-            log_exception("Database detail worker failed", err, __name__)
-            self._emit_finished(err)
-            return
-
-        self._emit_finished(None)
 
 
     def _is_cancelled(self):
@@ -734,6 +639,136 @@ class DatabaseDetailWorker(QtCore.QRunnable):
     def _qt_signal_was_deleted(self, err):
         message = str(err)
         return "wrapped C/C++ object" in message and "has been deleted" in message
+
+
+class DatabaseDetailWorker(_PrioritizedRunWorker):
+    """
+    Loads cheap per-run metadata after the basic run table is visible.
+
+    """
+
+    def __init__(self, generation, database_path, run_ids, batch_size=1):
+        super().__init__(generation, database_path, run_ids)
+        self.batch_size = max(1, int(batch_size or 1))
+
+
+    def run(self):
+        total = len(self.run_ids)
+        completed = 0
+        try:
+            if total == 0 or self._is_cancelled():
+                self._emit_finished(None)
+                return
+
+            self._emit_status(f"Loading run details... 0/{total}")
+            for details in iter_run_detail_batches_via_sql(
+                    self.database_path,
+                    self.run_ids,
+                    batch_size=self.batch_size,
+                    infer_missing_shapes=False,
+                    include_storage_bytes=False,
+                    include_storage_estimate=True,
+                    include_read_setpoint_count=False,
+                    ):
+                if self._is_cancelled():
+                    return
+
+                completed += len(details)
+                if details:
+                    self._emit_batch_ready(details)
+                self._emit_status(
+                    f"Loading run details... {min(completed, total)}/{total}"
+                    )
+
+                if self._is_cancelled():
+                    return
+        except Exception as err:
+            log_exception("Database detail worker failed", err, __name__)
+            self._emit_finished(err)
+            return
+
+        self._emit_finished(None)
+
+
+class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
+    """
+    Loads expensive shape and storage metadata in priority order.
+
+    """
+
+    def __init__(self, generation, database_path, run_ids, batch_size=10):
+        super().__init__(generation, database_path, run_ids)
+        self.batch_size = max(1, int(batch_size or 1))
+
+
+    def run(self):
+        total = len(self.run_ids)
+        try:
+            if total == 0 or self._is_cancelled():
+                self._emit_finished(None)
+                return
+
+            shape_done = set()
+            self._emit_status(f"Loading setpoint shapes... 0/{total}")
+            while len(shape_done) < total:
+                if self._is_cancelled():
+                    return
+
+                batch = self._next_priority_batch(shape_done, batch_size=1)
+                if not batch:
+                    break
+
+                for shapes in iter_run_shape_batches_via_sql(
+                        self.database_path,
+                        batch,
+                        batch_size=1,
+                        ):
+                    if self._is_cancelled():
+                        return
+
+                    if shapes:
+                        self._emit_batch_ready(shapes)
+
+                shape_done.update(batch)
+                self._emit_status(
+                    f"Loading setpoint shapes... {len(shape_done)}/{total}"
+                    )
+
+            storage_done = set()
+            storage_batch_size = max(25, self.batch_size)
+            self._emit_status(f"Loading exact run sizes... 0/{total}")
+            while len(storage_done) < total:
+                if self._is_cancelled():
+                    return
+
+                batch = self._next_priority_batch(
+                    storage_done,
+                    batch_size=storage_batch_size,
+                    )
+                if not batch:
+                    break
+
+                for storage in iter_run_storage_batches_via_sql(
+                        self.database_path,
+                        batch,
+                        batch_size=storage_batch_size,
+                        ):
+                    if self._is_cancelled():
+                        return
+
+                    if storage:
+                        self._emit_batch_ready(storage)
+
+                storage_done.update(batch)
+                self._emit_status(
+                    f"Loading exact run sizes... {len(storage_done)}/{total}"
+                    )
+        except Exception as err:
+            log_exception("Expensive database detail worker failed", err, __name__)
+            self._emit_finished(err)
+            return
+
+        self._emit_finished(None)
 
 
 def database_info_report(database_path):

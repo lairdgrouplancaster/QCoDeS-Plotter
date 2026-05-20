@@ -11,6 +11,7 @@ from qplot.datahandling import find_new_runs
 from qplot.datahandling.database import (
     DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
     DatabaseDetailWorker,
+    DatabaseExpensiveDetailWorker,
     DatabaseLoadWorker,
     database_info_rows,
 )
@@ -808,12 +809,20 @@ class DatabaseActionsMixin:
         worker = getattr(self, "_database_detail_worker", None)
         if worker is not None:
             worker.cancel()
+        expensive_worker = getattr(self, "_database_expensive_detail_worker", None)
+        if expensive_worker is not None:
+            expensive_worker.cancel()
 
         self._database_detail_generation = (
             getattr(self, "_database_detail_generation", 0) + 1
             )
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_expensive_detail_generation = (
+            getattr(self, "_database_expensive_detail_generation", 0) + 1
+            )
+        self._database_expensive_detail_active = False
+        self._database_expensive_detail_worker = None
 
 
     def _start_database_detail_load(self, abspath, runs):
@@ -826,10 +835,16 @@ class DatabaseActionsMixin:
             )
         generation = self._database_detail_generation
         self._database_detail_active = True
+        self._database_expensive_detail_generation = (
+            getattr(self, "_database_expensive_detail_generation", 0) + 1
+            )
+        expensive_generation = self._database_expensive_detail_generation
+        self._database_expensive_detail_active = True
 
         worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=10)
         self._database_detail_worker = worker
-        worker.prioritize_run_ids(self._database_detail_priority_run_ids())
+        priority_run_ids = self._database_detail_priority_run_ids()
+        worker.prioritize_run_ids(priority_run_ids)
         worker.signals.status.connect(self.database_detail_status)
         worker.signals.batch_ready.connect(self.database_detail_batch_ready)
         worker.signals.finished.connect(self.database_detail_finished)
@@ -839,6 +854,28 @@ class DatabaseActionsMixin:
             self.databaseLoadThreadPool,
             )
         thread_pool.start(worker)
+
+        expensive_worker = DatabaseExpensiveDetailWorker(
+            expensive_generation,
+            abspath,
+            run_ids,
+            batch_size=10,
+            )
+        self._database_expensive_detail_worker = expensive_worker
+        expensive_worker.prioritize_run_ids(priority_run_ids)
+        expensive_worker.signals.status.connect(self.database_expensive_detail_status)
+        expensive_worker.signals.batch_ready.connect(
+            self.database_expensive_detail_batch_ready
+            )
+        expensive_worker.signals.finished.connect(
+            self.database_expensive_detail_finished
+            )
+        expensive_thread_pool = getattr(
+            self,
+            "databaseExpensiveDetailThreadPool",
+            thread_pool,
+            )
+        expensive_thread_pool.start(expensive_worker)
         QtCore.QTimer.singleShot(0, self._prioritize_database_detail_runs)
 
 
@@ -853,16 +890,28 @@ class DatabaseActionsMixin:
 
 
     def _prioritize_database_detail_runs(self, run_ids=None):
-        if not getattr(self, "_database_detail_active", False):
+        if not (
+                getattr(self, "_database_detail_active", False)
+                or getattr(self, "_database_expensive_detail_active", False)
+                ):
             return
 
-        worker = getattr(self, "_database_detail_worker", None)
-        if worker is None or not hasattr(worker, "prioritize_run_ids"):
-            return
+        priority_run_ids = self._database_detail_priority_run_ids(run_ids=run_ids)
+        for active_attr, worker_attr in (
+                ("_database_detail_active", "_database_detail_worker"),
+                (
+                    "_database_expensive_detail_active",
+                    "_database_expensive_detail_worker",
+                    ),
+                ):
+            if not getattr(self, active_attr, False):
+                continue
 
-        worker.prioritize_run_ids(
-            self._database_detail_priority_run_ids(run_ids=run_ids)
-            )
+            worker = getattr(self, worker_attr, None)
+            if worker is None or not hasattr(worker, "prioritize_run_ids"):
+                continue
+
+            worker.prioritize_run_ids(priority_run_ids)
 
 
     def _database_detail_priority_run_ids(self, run_ids=None):
@@ -920,6 +969,32 @@ class DatabaseActionsMixin:
         if abspath != self.fileTextbox.text():
             return
 
+        self._apply_database_detail_batch(runs)
+
+
+    @QtCore.pyqtSlot(int, str)
+    def database_expensive_detail_status(self, generation, message):
+        if generation != getattr(self, "_database_expensive_detail_generation", 0):
+            return
+        if not getattr(self, "_database_expensive_detail_active", False):
+            return
+
+        self.show_status(message, 0)
+
+
+    @QtCore.pyqtSlot(int, str, object)
+    def database_expensive_detail_batch_ready(self, generation, abspath, runs):
+        if generation != getattr(self, "_database_expensive_detail_generation", 0):
+            return
+        if not getattr(self, "_database_expensive_detail_active", False):
+            return
+        if abspath != self.fileTextbox.text():
+            return
+
+        self._apply_database_detail_batch(runs)
+
+
+    def _apply_database_detail_batch(self, runs):
         updated_runs = self.RunList.updateRuns(runs)
         if not updated_runs:
             return
@@ -947,7 +1022,28 @@ class DatabaseActionsMixin:
             self.show_status(f"Run detail loading failed: {error}", 5000)
             return
 
-        self.show_status("Run details loaded.", 5000)
+        if not getattr(self, "_database_expensive_detail_active", False):
+            self.show_status("Run details loaded.", 5000)
+
+
+    @QtCore.pyqtSlot(int, str, object)
+    def database_expensive_detail_finished(self, generation, abspath, error):
+        if generation != getattr(self, "_database_expensive_detail_generation", 0):
+            return
+
+        self._database_expensive_detail_active = False
+        self._database_expensive_detail_worker = None
+
+        if abspath != self.fileTextbox.text():
+            return
+
+        if error is not None:
+            log_exception("Expensive database detail load failed", error, __name__)
+            self.show_status(f"Setpoint and size loading failed: {error}", 5000)
+            return
+
+        if not getattr(self, "_database_detail_active", False):
+            self.show_status("Run details loaded.", 5000)
 
 
     def _refresh_selected_run_details(self, runs):

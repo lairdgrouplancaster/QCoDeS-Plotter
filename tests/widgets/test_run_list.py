@@ -608,6 +608,46 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
+    def test_update_runs_does_not_replace_exact_size_with_later_estimate(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "run-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    },
+                })
+
+            run_list.updateRuns({
+                1: {
+                    "guid": "run-guid",
+                    "storage_bytes": 4096,
+                    "storage_bytes_estimated": False,
+                    },
+                })
+            updated = run_list.updateRuns({
+                1: {
+                    "guid": "run-guid",
+                    "result_count": 10,
+                    "storage_bytes": 1024,
+                    "storage_bytes_estimated": True,
+                    },
+                })
+
+            item = run_list.topLevelItem(0)
+            self.assertEqual(updated[1]["storage_bytes"], 4096)
+            self.assertFalse(updated[1]["storage_bytes_estimated"])
+            self.assertEqual(item.text(run_list.cols.index("Size")), "4.0 KB")
+        finally:
+            treeWidgets.isfile = old_isfile
+
     def test_check_watching_reports_finished_interrupted_run(self):
         old_isfile = treeWidgets.isfile
         old_get_run_status = treeWidgets.get_run_status
