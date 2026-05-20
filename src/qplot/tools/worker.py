@@ -53,6 +53,7 @@ class loader(QtCore.QRunnable):
                  read_data : bool = True,
                  operations: list | None = None,
                  force_sql_heatmap: bool = False,
+                 max_full_heatmap_points: int = MAX_FULL_HEATMAP_POINTS,
                  heatmap_axis_ranges: dict | None = None,
                  heatmap_full_axis_ranges: dict | None = None,
                  ):
@@ -94,6 +95,7 @@ class loader(QtCore.QRunnable):
         self.read_data = read_data
         self.operations = [] if operations is None else operations
         self.force_sql_heatmap = force_sql_heatmap
+        self.max_full_heatmap_points = max(1, int(max_full_heatmap_points))
         self.heatmap_axis_ranges = heatmap_axis_ranges
         self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
         self.sampled_heatmap_source = False
@@ -209,7 +211,12 @@ class loader(QtCore.QRunnable):
         if point_count is None:
             return False
 
-        return point_count > MAX_FULL_HEATMAP_POINTS
+        limit = max(1, int(getattr(
+            self,
+            "max_full_heatmap_points",
+            MAX_FULL_HEATMAP_POINTS,
+            )))
+        return point_count > limit
 
 
     def _large_heatmap_point_count(self):

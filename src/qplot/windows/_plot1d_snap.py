@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 
         @staticmethod
         def formatNum(num: float, sf: int = 3) -> str: ...
+
+        def _set_cursor_index_label(self, text: str) -> None: ...
 else:
     class _Plot1DSnapBase:
         pass
@@ -223,15 +225,18 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         if not self.plot.sceneBoundingRect().contains(pos):
             self._hide_snap_marker()
             self._clear_snap_report()
+            self._set_cursor_index_label("")
             return
 
         nearest = self._nearest_trace_point(pos)
         if nearest is None:
             self._hide_snap_marker()
             self._clear_snap_report()
+            self._set_cursor_index_label("")
             return
 
         label, x_value, y_value, viewbox, point_number = nearest
+        self._set_cursor_index_label(f"[{point_number - 1}]")
         self.pos_labels["x"].setText(f"x = {self.formatNum(x_value)};")
         self.pos_labels["y"].setText(f"y = {self.formatNum(y_value)}")
         self._show_snap_report(label, point_number)

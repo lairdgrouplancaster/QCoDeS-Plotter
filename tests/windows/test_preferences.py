@@ -32,6 +32,7 @@ class FakeConfig:
             CONFIRM_CLOSE_ALL_KEY: True,
             CONFIRM_QUIT_KEY: True,
             "runtime_settings.max_threads": 4,
+            "runtime_settings.max_full_heatmap_points": 2_000_000,
             "runtime_settings.del_grace_period": 10.0,
             "runtime_settings.cloud_sync_timeout": 120.0,
             }
@@ -71,6 +72,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             CONFIRM_CLOSE_ALL_KEY: False,
             CONFIRM_QUIT_KEY: False,
             "runtime_settings.max_threads": 8,
+            "runtime_settings.max_full_heatmap_points": 3_000_000,
             "runtime_settings.del_grace_period": 15.5,
             "runtime_settings.cloud_sync_timeout": 240.0,
             })
@@ -95,6 +97,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertFalse(dialog.confirmCloseAllCheck.isChecked())
             self.assertFalse(dialog.confirmQuitCheck.isChecked())
             self.assertEqual(dialog.maxThreadsSpin.value(), 8)
+            self.assertEqual(dialog.maxFullHeatmapPointsSpin.value(), 3_000_000)
             self.assertEqual(dialog.delGracePeriodSpin.value(), 15.5)
             self.assertEqual(dialog.cloudSyncTimeoutSpin.value(), 240.0)
         finally:
@@ -122,6 +125,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             dialog.confirmCloseAllCheck.setChecked(False)
             dialog.confirmQuitCheck.setChecked(False)
             dialog.maxThreadsSpin.setValue(9)
+            dialog.maxFullHeatmapPointsSpin.setValue(3_000_000)
             dialog.delGracePeriodSpin.setValue(20.0)
             dialog.cloudSyncTimeoutSpin.setValue(300.0)
 
@@ -140,6 +144,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
                 (CONFIRM_CLOSE_ALL_KEY, False),
                 (CONFIRM_QUIT_KEY, False),
                 ("runtime_settings.max_threads", 9),
+                ("runtime_settings.max_full_heatmap_points", 3_000_000),
                 ("runtime_settings.del_grace_period", 20.0),
                 ("runtime_settings.cloud_sync_timeout", 300.0),
                 ])
@@ -171,6 +176,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             CONFIRM_CLOSE_ALL_KEY: False,
             CONFIRM_QUIT_KEY: False,
             "runtime_settings.max_threads": 9,
+            "runtime_settings.max_full_heatmap_points": 3_000_000,
             "runtime_settings.del_grace_period": 20.0,
             "runtime_settings.cloud_sync_timeout": 300.0,
             })
@@ -196,6 +202,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertTrue(dialog.confirmCloseAllCheck.isChecked())
             self.assertTrue(dialog.confirmQuitCheck.isChecked())
             self.assertEqual(dialog.maxThreadsSpin.value(), 4)
+            self.assertEqual(dialog.maxFullHeatmapPointsSpin.value(), 2_000_000)
             self.assertEqual(dialog.delGracePeriodSpin.value(), 10.0)
             self.assertEqual(dialog.cloudSyncTimeoutSpin.value(), 120.0)
             self.assertEqual(applied, [True])
@@ -255,6 +262,7 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
             dialog.confirmCloseAllCheck.setChecked(False)
             dialog.confirmQuitCheck.setChecked(False)
             dialog.maxThreadsSpin.setValue(8)
+            dialog.maxFullHeatmapPointsSpin.setValue(3_000_000)
             dialog.delGracePeriodSpin.setValue(15.5)
             dialog.cloudSyncTimeoutSpin.setValue(240.0)
 
@@ -276,6 +284,10 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
             self.assertFalse(reloaded.get(CONFIRM_CLOSE_ALL_KEY))
             self.assertFalse(reloaded.get(CONFIRM_QUIT_KEY))
             self.assertEqual(reloaded.get("runtime_settings.max_threads"), 8)
+            self.assertEqual(
+                reloaded.get("runtime_settings.max_full_heatmap_points"),
+                3_000_000,
+                )
             self.assertEqual(
                 reloaded.get("runtime_settings.del_grace_period"),
                 15.5,

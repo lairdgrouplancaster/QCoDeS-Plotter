@@ -82,6 +82,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         del stored_config["user_preference"]["auto_plot"]
         del stored_config["user_preference"]["mouse_mode"]
         del stored_config["user_preference"]["copy_plot_image_resolution"]
+        del stored_config["runtime_settings"]["max_full_heatmap_points"]
         with open(config.default_file, "w") as fp:
             json.dump(stored_config, fp)
 
@@ -93,6 +94,10 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(
             reloaded.get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
             COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+            )
+        self.assertEqual(
+            reloaded.get("runtime_settings.max_full_heatmap_points"),
+            2_000_000,
             )
 
     def test_config_repr_returns_readable_json(self):
@@ -342,6 +347,24 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg = config()
 
         self.assertEqual(cfg.get("runtime_settings.cloud_sync_timeout"), 120)
+
+    def test_max_full_heatmap_points_default_is_two_million(self):
+        cfg = config()
+
+        self.assertEqual(
+            cfg.get("runtime_settings.max_full_heatmap_points"),
+            2_000_000,
+            )
+
+    def test_max_full_heatmap_points_is_persistent(self):
+        cfg = config()
+
+        cfg.update("runtime_settings.max_full_heatmap_points", 3_000_000)
+
+        self.assertEqual(
+            config().get("runtime_settings.max_full_heatmap_points"),
+            3_000_000,
+            )
 
     def test_default_refresh_rate_allows_zero_to_disable_auto_refresh(self):
         cfg = config()

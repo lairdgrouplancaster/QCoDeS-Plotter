@@ -47,6 +47,7 @@ PREFERENCE_KEYS = (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
     "runtime_settings.max_threads",
+    "runtime_settings.max_full_heatmap_points",
     "runtime_settings.del_grace_period",
     "runtime_settings.cloud_sync_timeout",
     )
@@ -253,6 +254,28 @@ class PreferencesDialog(qtw.QDialog):
         self.maxThreadsSpin.setRange(1, 999)
         self._add_row(form, "&Maximum worker threads:", self.maxThreadsSpin)
 
+        self.maxFullHeatmapPointsSpin = qtw.QSpinBox(tab)
+        self.maxFullHeatmapPointsSpin.setObjectName(
+            "maxFullHeatmapPointsPreferenceSpin"
+            )
+        self.maxFullHeatmapPointsSpin.setAccessibleName(
+            "Maximum full-resolution heatmap points"
+            )
+        self.maxFullHeatmapPointsSpin.setRange(1, 2_000_000_000)
+        self.maxFullHeatmapPointsSpin.setSingleStep(100_000)
+        self.maxFullHeatmapPointsSpin.setSuffix(" points")
+        if hasattr(self.maxFullHeatmapPointsSpin, "setGroupSeparatorShown"):
+            self.maxFullHeatmapPointsSpin.setGroupSeparatorShown(True)
+        self.maxFullHeatmapPointsSpin.setToolTip(
+            "Use full-resolution heatmap loading up to this many points; "
+            "larger heatmaps use SQL sampling."
+            )
+        self._add_row(
+            form,
+            "Full-resolution &heatmap limit:",
+            self.maxFullHeatmapPointsSpin,
+            )
+
         self.delGracePeriodSpin = qtw.QDoubleSpinBox(tab)
         self.delGracePeriodSpin.setObjectName("deleteGracePreferenceSpin")
         self.delGracePeriodSpin.setAccessibleName("Dataset release grace period")
@@ -322,6 +345,9 @@ class PreferencesDialog(qtw.QDialog):
         self.maxThreadsSpin.setValue(
             int(values["runtime_settings.max_threads"])
             )
+        self.maxFullHeatmapPointsSpin.setValue(
+            int(values["runtime_settings.max_full_heatmap_points"])
+            )
         self.delGracePeriodSpin.setValue(
             float(values["runtime_settings.del_grace_period"])
             )
@@ -346,6 +372,9 @@ class PreferencesDialog(qtw.QDialog):
             CONFIRM_CLOSE_ALL_KEY: self.confirmCloseAllCheck.isChecked(),
             CONFIRM_QUIT_KEY: self.confirmQuitCheck.isChecked(),
             "runtime_settings.max_threads": int(self.maxThreadsSpin.value()),
+            "runtime_settings.max_full_heatmap_points": int(
+                self.maxFullHeatmapPointsSpin.value()
+                ),
             "runtime_settings.del_grace_period": self.delGracePeriodSpin.value(),
             "runtime_settings.cloud_sync_timeout": self.cloudSyncTimeoutSpin.value(),
             }

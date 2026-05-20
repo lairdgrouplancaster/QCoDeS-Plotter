@@ -1,4 +1,4 @@
-from math import log10
+from math import isfinite, log10
 from os import path
 from typing import TYPE_CHECKING
 
@@ -429,6 +429,11 @@ class plotWidget(
         
         labelWidth = self._label_width #About the size of 3 s.f. scientific
         self.pos_labels = {}
+
+        posLabelIndex = qtw.QLabel("")
+        posLabelIndex.setMinimumWidth(45)
+        self.toolbarCo_ord.addWidget(posLabelIndex)
+        self.pos_labels["index"] = posLabelIndex
         
         posLabelx = qtw.QLabel("x= ")
         posLabelx.setMinimumWidth(labelWidth)
@@ -909,6 +914,58 @@ class plotWidget(
             return f"{num:.{sf}e}"
         else:
             return f"{num:.{sf - log}f}"
+
+
+    def _set_cursor_index_label(self, text: str) -> None:
+        """
+        Update the cursor index label when the toolbar includes one.
+
+        """
+        label = self.pos_labels.get("index")
+        if label is not None:
+            label.setText(text)
+
+
+    def _cursor_1d_x_data(self):
+        """
+        Return the X data used to derive the 1d cursor array index.
+
+        """
+        line = self.__dict__.get("line")
+        if line is not None and hasattr(line, "getData"):
+            data = line.getData()
+            if data is not None and data[0] is not None:
+                return data[0]
+
+        return self.__dict__.get("axis_data", {}).get("x")
+
+
+    def _nearest_1d_array_index(self, x_value: float) -> int | None:
+        """
+        Return the zero-based data index nearest to a cursor X coordinate.
+
+        """
+        x_data = self._cursor_1d_x_data()
+        if x_data is None:
+            return None
+
+        nearest_index = None
+        nearest_distance = None
+        for index, value in enumerate(x_data):
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                continue
+
+            if not isfinite(numeric_value):
+                continue
+
+            distance = abs(numeric_value - x_value)
+            if nearest_distance is None or distance < nearest_distance:
+                nearest_index = index
+                nearest_distance = distance
+
+        return nearest_index
         
         
     def update_theme(self, config):
@@ -1148,6 +1205,7 @@ class plotWidget(
         """
         # Ignore if not in plot widget
         if not self.plot.sceneBoundingRect().contains(pos):
+            self._set_cursor_index_label("")
             if hasattr(self, "hide_hover_pixel_outline"):
                 self.hide_hover_pixel_outline()
             return
@@ -1156,6 +1214,7 @@ class plotWidget(
         mousePoint = self.plot.vb.mapSceneToView(pos)
         
         # Format text into a easy to read format
+        index_txt = ""
         x_txt = f"x = {self.formatNum(mousePoint.x())};"
         y_txt = f"y = {self.formatNum(mousePoint.y())}"
         
@@ -1180,6 +1239,7 @@ class plotWidget(
                     j = min(self.dataGrid.shape[0] - 1, int(j * self.dataGrid.shape[0]))
                     x = rect.x() + (i + 0.5) * rect.width() / self.dataGrid.shape[1]
                     y = rect.y() + (j + 0.5) * rect.height() / self.dataGrid.shape[0]
+                    index_txt = f"[{i},{j}]"
                     x_txt = f"x = {self.formatNum(x)};"
                     y_txt = f"y = {self.formatNum(y)};"
                     self.pos_labels["z"].setText(f"z = {self.formatNum(self.dataGrid[j, i])}")
@@ -1194,8 +1254,13 @@ class plotWidget(
                         self.hide_hover_pixel_outline()
                     else:
                         self.z_index = None
+        else:
+            index = self._nearest_1d_array_index(mousePoint.x())
+            if index is not None:
+                index_txt = f"[{index}]"
 
         # Update text
+        self._set_cursor_index_label(index_txt)
         self.pos_labels["x"].setText(x_txt)
         self.pos_labels["y"].setText(y_txt)
         

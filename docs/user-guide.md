@@ -157,7 +157,7 @@ Common plot controls:
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog.
 * Right-drag on the plot, or scroll over an axis, to fast scale an axis.
-* The bottom toolbar shows cursor coordinates.
+* The bottom toolbar shows cursor coordinates and array indices.
 * The left panel controls assigned axes and plot-specific options.
 * The right `Operations` panel applies data operations during refresh, after
   data is loaded from the database.

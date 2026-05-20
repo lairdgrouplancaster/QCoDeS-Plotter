@@ -210,6 +210,18 @@ class ToolFunctionTestCase(unittest.TestCase):
         self.assertEqual(data_grid.shape, (10, 10))
         self.assertTrue(np.isfinite(data_grid).all())
 
+    def test_large_heatmap_sql_mode_uses_configured_full_resolution_limit(self):
+        worker = self._sql_heatmap_worker("")
+        worker.force_sql_heatmap = False
+        worker.max_full_heatmap_points = 10
+        worker._large_heatmap_point_count = lambda: 10
+
+        self.assertFalse(loader._should_use_sql_heatmap(worker))
+
+        worker._large_heatmap_point_count = lambda: 11
+
+        self.assertTrue(loader._should_use_sql_heatmap(worker))
+
     def _create_heatmap_table(self, database_path):
         conn = sqlite3.connect(database_path)
         try:
@@ -246,6 +258,8 @@ class ToolFunctionTestCase(unittest.TestCase):
             }
         worker.axes_dict = {"x": "x", "y": "y"}
         worker.read_data = True
+        worker.force_sql_heatmap = False
+        worker.max_full_heatmap_points = worker_module.MAX_FULL_HEATMAP_POINTS
         worker.heatmap_axis_ranges = None
         worker.heatmap_full_axis_ranges = None
         return worker

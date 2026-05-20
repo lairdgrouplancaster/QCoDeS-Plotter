@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         _live: bool
         axis_data: dict[str, Any]
         axis_param: dict[str, Any]
+        config: Any
         dataGrid: Any
         ds: Any
         end_wait: Any
@@ -103,6 +104,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
             read_data=force_sql_heatmap or not complete,
             operations=self.oper_widget.get_data(),
             force_sql_heatmap=force_sql_heatmap,
+            max_full_heatmap_points=self.config.get(
+                "runtime_settings.max_full_heatmap_points"
+                ),
             heatmap_axis_ranges=heatmap_axis_ranges,
             heatmap_full_axis_ranges=heatmap_full_axis_ranges,
             )

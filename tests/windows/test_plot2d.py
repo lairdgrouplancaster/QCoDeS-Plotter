@@ -471,6 +471,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window.rect = QtCore.QRectF(0.0, 0.0, 1.0, 1.0)
         window.dataGrid = np.array([[1.0, 2.0], [3.0, 4.0]])
         window.pos_labels = {
+            "index": qtw.QLabel(),
             "x": qtw.QLabel(),
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
@@ -484,9 +485,45 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         plotWidget.mouseMoved(window, scene_pos)
 
         self.assertEqual(shown_indices, [(1, 1)])
+        self.assertEqual(window.pos_labels["index"].text(), "[1,1]")
         self.assertEqual(window.pos_labels["x"].text(), "x = 0.75;")
         self.assertEqual(window.pos_labels["y"].text(), "y = 0.75;")
         self.assertEqual(window.pos_labels["z"].text(), "z = 4.0")
+
+    def test_mouse_moved_shows_heatmap_indices_before_coordinates(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+
+        class Plot:
+            vb = plot_item.vb
+
+            def sceneBoundingRect(self):
+                return QtCore.QRectF(-1e9, -1e9, 2e9, 2e9)
+
+        window = plot2d.__new__(plot2d)
+        window.plot = Plot()
+        window.rect = QtCore.QRectF(0.0, 0.0, 4.0, 3.0)
+        window.dataGrid = np.arange(12.0).reshape(3, 4)
+        window.pos_labels = {
+            "index": qtw.QLabel(),
+            "x": qtw.QLabel(),
+            "y": qtw.QLabel(),
+            "z": qtw.QLabel(),
+            }
+        window.formatNum = lambda value: str(value)
+        window.show_hover_pixel_outline = lambda _i, _j: None
+        window.hide_hover_pixel_outline = lambda: None
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.2, 1.4))
+
+        try:
+            plotWidget.mouseMoved(window, scene_pos)
+
+            self.assertEqual(window.pos_labels["index"].text(), "[2,1]")
+            self.assertEqual(window.pos_labels["x"].text(), "x = 2.5;")
+            self.assertEqual(window.pos_labels["y"].text(), "y = 1.5;")
+            self.assertEqual(window.pos_labels["z"].text(), "z = 6.0")
+        finally:
+            widget.deleteLater()
 
     def test_dragged_sweep_line_snaps_to_heatmap_pixel_centre(self):
         window = plot2d.__new__(plot2d)

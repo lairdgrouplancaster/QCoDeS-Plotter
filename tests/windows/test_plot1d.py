@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pyqtgraph as pg
@@ -7,7 +8,11 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _plotWin as plotwin_module
 from qplot.windows._plot1d_snap import _nearest_trace_sample
-from qplot.windows._plot1d_traces import Plot1DTraceMixin, _TraceAppearanceDialog
+from qplot.windows._plot1d_traces import (
+    TRACE_COLOR_PALETTE,
+    Plot1DTraceMixin,
+    _TraceAppearanceDialog,
+)
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots import custom_viewbox
 from qplot.windows._widgets import QDock_context, picker_1d
@@ -172,6 +177,76 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertIs(viewbox, plot_item.vb)
         self.assertEqual(point_number, 1)
 
+    def test_mouse_moved_shows_nearest_1d_array_index(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        line = plot_item.plot(x=[0.0, 2.0, 5.0], y=[0.0, 4.0, 25.0])
+
+        class Plot:
+            vb = plot_item.vb
+
+            def sceneBoundingRect(self):
+                return QtCore.QRectF(-1e9, -1e9, 2e9, 2e9)
+
+        window = plot1d.__new__(plot1d)
+        window.plot = Plot()
+        window.line = line
+        window.pos_labels = {
+            "index": qtw.QLabel(),
+            "x": qtw.QLabel(),
+            "y": qtw.QLabel(),
+            }
+        window.formatNum = lambda value: str(value)
+
+        try:
+            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.2, 9.0))
+
+            plotWidget.mouseMoved(window, scene_pos)
+
+            self.assertEqual(window.pos_labels["index"].text(), "[1]")
+        finally:
+            widget.deleteLater()
+
+    def test_snap_mouse_moved_shows_zero_based_array_index(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        line = plot_item.plot(x=[0.0, 2.0, 5.0], y=[0.0, 4.0, 25.0])
+
+        class Plot:
+            vb = plot_item.vb
+
+            def sceneBoundingRect(self):
+                return QtCore.QRectF(-1e9, -1e9, 2e9, 2e9)
+
+        action = QtGui.QAction()
+        action.setCheckable(True)
+        action.setChecked(True)
+        window = plot1d.__new__(plot1d)
+        window.plot = Plot()
+        window.right_vb = None
+        window.lines = {"main": line}
+        window.snap_to_trace_action = action
+        window.pos_labels = {
+            "index": qtw.QLabel(),
+            "x": qtw.QLabel(),
+            "y": qtw.QLabel(),
+            }
+        window.formatNum = lambda value: str(value)
+        window._show_snap_report = lambda *_args: None
+        window._show_snap_marker = lambda *_args: None
+
+        try:
+            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(4.8, 24.0))
+
+            plot1d.mouseMoved(window, scene_pos)
+
+            self.assertEqual(window.pos_labels["index"].text(), "[2]")
+            self.assertEqual(window.pos_labels["x"].text(), "x = 5.0;")
+            self.assertEqual(window.pos_labels["y"].text(), "y = 25.0")
+        finally:
+            action.deleteLater()
+            widget.deleteLater()
+
     def test_register_main_line_defers_until_line_exists(self):
         window = plot1d.__new__(plot1d)
         window.label = "main"
@@ -182,6 +257,51 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertEqual(window.lines, {})
         self.assertIn("main", window._trace_styles)
+
+    def test_register_main_line_applies_initial_trace_palette_style(self):
+        class Theme:
+            colors = [QtGui.QColor("#008000")]
+
+        class Config:
+            theme = Theme()
+
+        class Line:
+            def __init__(self):
+                self.pen = None
+                self.visible = None
+
+            def setPen(self, pen):
+                self.pen = pen
+
+            def setSymbolPen(self, _pen):
+                pass
+
+            def setSymbolBrush(self, _brush):
+                pass
+
+            def setSymbolSize(self, _size):
+                pass
+
+            def setSymbol(self, _symbol):
+                pass
+
+            def setVisible(self, visible):
+                self.visible = visible
+
+        line = Line()
+        window = plot1d.__new__(plot1d)
+        window.config = Config()
+        window.label = "main"
+        window.line = line
+        window.lines = {}
+
+        window._register_main_line()
+
+        style = window._trace_styles["main"]
+        self.assertEqual(style.line_color, TRACE_COLOR_PALETTE[0])
+        self.assertEqual(line.pen.color().name(), TRACE_COLOR_PALETTE[0])
+        self.assertEqual(line.pen.widthF(), style.line_width)
+        self.assertTrue(line.visible)
 
     def test_main_line_color_change_before_line_exists_is_stored(self):
         window = plot1d.__new__(plot1d)
@@ -237,7 +357,6 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             preview_item = dialog.table.item(0, 1)
             measurement_item = dialog.table.item(0, 2)
-            visible_item = dialog.table.item(0, 3)
 
             self.assertEqual(
                 dialog.table.editTriggers(),
@@ -247,18 +366,100 @@ class SnapToTraceTestCase(unittest.TestCase):
                 dialog.table.horizontalHeader().sectionResizeMode(2),
                 qtw.QHeaderView.ResizeMode.Stretch,
                 )
-            self.assertEqual(dialog.table.columnCount(), 5)
+            self.assertEqual(dialog.table.columnCount(), 3)
+            self.assertEqual(
+                dialog.table.horizontalScrollBarPolicy(),
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+                )
             self.assertFalse(hasattr(dialog, "order"))
-            self.assertEqual(dialog.table.rowHeight(0), 32)
+            self.assertEqual(dialog.table.rowHeight(0), 28)
             self.assertEqual(preview_item.text(), "")
             self.assertFalse(preview_item.icon().isNull())
             self.assertTrue(preview_item.flags() & QtCore.Qt.ItemFlag.ItemIsDragEnabled)
-            self.assertEqual(
-                visible_item.checkState(),
-                QtCore.Qt.CheckState.Checked,
-                )
             self.assertFalse(measurement_item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
             self.assertFalse(dialog.line_color.itemIcon(0).isNull())
+        finally:
+            if dialog is not None:
+                dialog.deleteLater()
+            host.deleteLater()
+
+    def test_trace_appearance_uses_tab10_color_palette_with_custom_choice(self):
+        class Host(Plot1DTraceMixin, qtw.QMainWindow):
+            pass
+
+        host = Host()
+        dialog = None
+        try:
+            host.label = "ID:1 current"
+            host.param = type("Param", (), {"name": "current"})()
+            host.lines = {host.label: object()}
+            host._trace_styles = {host.label: host._initial_trace_style()}
+
+            dialog = _TraceAppearanceDialog(host)
+
+            colors = [
+                dialog.line_color.itemData(index, QtCore.Qt.ItemDataRole.UserRole)
+                for index in range(len(TRACE_COLOR_PALETTE))
+                ]
+            self.assertEqual(colors, list(TRACE_COLOR_PALETTE))
+            self.assertEqual(
+                dialog.line_color.itemData(
+                    len(TRACE_COLOR_PALETTE),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    ),
+                dialog._CUSTOM_COLOR_DATA,
+                )
+            self.assertEqual(dialog.line_color.itemText(len(TRACE_COLOR_PALETTE)), "Custom")
+        finally:
+            if dialog is not None:
+                dialog.deleteLater()
+            host.deleteLater()
+
+    def test_trace_appearance_custom_color_updates_selected_trace(self):
+        class Host(Plot1DTraceMixin, qtw.QMainWindow):
+            pass
+
+        class Line:
+            def setPen(self, pen):
+                self.pen = pen
+
+            def setSymbolPen(self, _pen):
+                pass
+
+            def setSymbolBrush(self, _brush):
+                pass
+
+            def setSymbolSize(self, _size):
+                pass
+
+            def setSymbol(self, _symbol):
+                pass
+
+            def setVisible(self, _visible):
+                pass
+
+        host = Host()
+        dialog = None
+        try:
+            host.label = "ID:1 current"
+            host.param = type("Param", (), {"name": "current"})()
+            host.lines = {host.label: Line()}
+            host._trace_styles = {host.label: host._initial_trace_style()}
+
+            dialog = _TraceAppearanceDialog(host)
+            dialog.refresh_rows()
+
+            custom_index = dialog.line_color.findData(dialog._CUSTOM_COLOR_DATA)
+            with patch.object(
+                    qtw.QColorDialog,
+                    "getColor",
+                    return_value=QtGui.QColor("#123456"),
+                    ):
+                dialog.line_color.setCurrentIndex(custom_index)
+
+            self.assertEqual(host._trace_styles[host.label].line_color, "#123456")
+            self.assertEqual(dialog.line_color.currentData(), "#123456")
+            self.assertEqual(host.lines[host.label].pen.color().name(), "#123456")
         finally:
             if dialog is not None:
                 dialog.deleteLater()

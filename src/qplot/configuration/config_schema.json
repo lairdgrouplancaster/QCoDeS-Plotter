@@ -177,6 +177,12 @@
                     "minimum": 1,
                     "default": 4
                 },
+                "max_full_heatmap_points": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000000000,
+                    "default": 2000000
+                },
                 "del_grace_period": {
                     "type": "number",
                     "minimum": 0,
@@ -190,7 +196,7 @@
                     "default": 120
                 }
              },
-             "required": ["max_threads", "del_grace_period", "cloud_sync_timeout"],
+             "required": ["max_threads", "max_full_heatmap_points", "del_grace_period", "cloud_sync_timeout"],
              "additionalProperties": false 
         }
     },
