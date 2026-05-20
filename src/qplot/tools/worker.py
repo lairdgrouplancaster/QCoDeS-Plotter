@@ -451,7 +451,7 @@ class loader(QtCore.QRunnable):
         ends = ((np.arange(1, count + 1, dtype=np.int64) * span) // count) - 1
         widths = np.maximum(ends - starts + 1, 1)
         jitter = (
-            np.arange(count, dtype=np.int64) * 1103515245 + 12345
+            np.arange(count, dtype=np.int64) * 1_103_515_245 + 12_345
             ) % widths
         rowids = rowid_min + starts + jitter
         rowids[0] = rowid_min

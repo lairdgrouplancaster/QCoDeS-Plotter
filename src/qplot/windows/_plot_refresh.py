@@ -277,7 +277,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
             # This should no longer be possible so making error soft error.
-            self.show_status(f"Refresh skipped: {err}", 10000)
+            self.show_status(f"Refresh skipped: {err}", 10_000)
             self.show_plot_state("Refresh skipped", str(err), kind="error")
             return None
 
@@ -289,7 +289,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
     def err_raiser(self, err: Exception) -> None:
         message = f"{type(err).__name__}: {err}"
         log_exception("Plot worker error", err, __name__)
-        self.show_status(f"Worker error: {message}", 10000)
+        self.show_status(f"Worker error: {message}", 10_000)
         self.show_plot_state("Plot load failed", message, kind="error")
 
         if message == self._last_error_text:

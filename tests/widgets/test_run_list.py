@@ -72,9 +72,9 @@ class RunListTooltipTestCase(unittest.TestCase):
         self.assertEqual(
             treeWidgets.format_point_count({
                 "setpoint_shape": [108, 861],
-                "setpoint_count": 92988,
+                "setpoint_count": 92_988,
                 "point_shape": [108, 861, 2],
-                "expected_results": 185976,
+                "expected_results": 185_976,
                 }),
             "92,988 = 108 × 861"
             )
@@ -104,7 +104,7 @@ class RunListTooltipTestCase(unittest.TestCase):
 
     def test_interrupted_completed_run_reports_setpoint_progress(self):
         metadata = {
-            "completed_timestamp": 12345.6,
+            "completed_timestamp": 12_345.6,
             "is_completed": True,
             "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
             "result_count": 800,
@@ -126,7 +126,7 @@ class RunListTooltipTestCase(unittest.TestCase):
     def test_non_keyboard_measurement_exception_still_uses_completed_tick(self):
         self.assertEqual(
             treeWidgets.format_complete_cell({
-                "completed_timestamp": 12345.6,
+                "completed_timestamp": 12_345.6,
                 "is_completed": True,
                 "measurement_exception": "Traceback...\nValueError: bad value\n",
                 "result_count": 40,
@@ -139,7 +139,7 @@ class RunListTooltipTestCase(unittest.TestCase):
         self.assertEqual(
             treeWidgets.format_time_taken_seconds({
                 "run_timestamp": 100.0,
-                "completed_timestamp": 12345.6,
+                "completed_timestamp": 12_345.6,
                 "is_completed": True,
                 }),
             "12,245.6 s"
@@ -264,9 +264,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "guid": "medium-guid",
                     "sweep_parameters": ["x", "y"],
                     "measure_parameters": ["signal"],
-                    "setpoint_count": 10000,
+                    "setpoint_count": 10_000,
                     "setpoint_shape": [100, 100],
-                    "result_count": 10000,
+                    "result_count": 10_000,
                     },
                 3: {
                     "run_timestamp": 100.0,
@@ -275,9 +275,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "guid": "large-guid",
                     "sweep_parameters": ["x", "y"],
                     "measure_parameters": ["signal"],
-                    "setpoint_count": 1000000,
+                    "setpoint_count": 1_000_000,
                     "setpoint_shape": [1000, 1000],
-                    "result_count": 1000000,
+                    "result_count": 1_000_000,
                     },
                 })
             delegate = run_list.itemDelegateForColumn(
@@ -394,7 +394,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "run_timestamp": 100.0,
                 "completed_timestamp": None,
                 "is_completed": None,
-                "result_count": 185976,
+                "result_count": 185_976,
                 "expected_results": None,
                 }),
             "unknown"
@@ -404,9 +404,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "run_timestamp": 100.0,
                 "completed_timestamp": None,
                 "is_completed": None,
-                "result_count": 185976,
+                "result_count": 185_976,
                 "expected_results": None,
-                "database_modified_timestamp": 12345.6,
+                "database_modified_timestamp": 12_345.6,
                 }),
             "12,245.6 s"
             )
@@ -429,7 +429,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "is_completed": False,
                 "result_count": 25,
                 "expected_results": 100,
-                "database_modified_timestamp": 12345.6,
+                "database_modified_timestamp": 12_345.6,
                 }),
             "12,245.6 s"
             )
@@ -455,7 +455,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "result_count": 1,
                     "expected_results": 10,
                     "point_shape": [10],
-                    "storage_bytes": 102400,
+                    "storage_bytes": 102_400,
                     },
                 2: {
                     "run_timestamp": 100.0,

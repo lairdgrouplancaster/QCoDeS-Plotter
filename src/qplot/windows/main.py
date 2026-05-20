@@ -620,7 +620,7 @@ class MainWindow(  # type: ignore[misc]
 
         """
         log_user_error(title, message, details, __name__)
-        self.show_status(message, 10000)
+        self.show_status(message, 10_000)
 
         box = qtw.QMessageBox(qtw.QMessageBox.Icon.Warning, title, message, parent=self)
         if details:
