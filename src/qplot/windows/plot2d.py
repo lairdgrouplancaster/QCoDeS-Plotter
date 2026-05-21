@@ -286,9 +286,11 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             ) -> qtw.QToolButton:
         button = qtw.QToolButton(parent)
         button.setObjectName("heatmapDownsampleWarningButton")
-        button.setIcon(
-            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_MessageBoxWarning)
-            )
+        style = self.style()
+        if style is not None:
+            button.setIcon(
+                style.standardIcon(qtw.QStyle.StandardPixmap.SP_MessageBoxWarning)
+                )
         button.setIconSize(QtCore.QSize(18, 18))
         button.setAutoRaise(False)
         button.setFixedSize(28, 28)
@@ -363,6 +365,8 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             worker: Any,
             ) -> dict[str, Any] | None:
         data_grid = getattr(worker, "dataGrid", self.__dict__.get("dataGrid", None))
+        if data_grid is None:
+            return None
         try:
             grid_rows, grid_columns = data_grid.shape
         except (AttributeError, ValueError):
@@ -457,6 +461,8 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 shape = None
         if shape is None:
             shape = self._source_heatmap_grid_shape_from_metadata()
+        if shape is None:
+            return None, None
 
         try:
             source_rows, source_columns = shape
@@ -531,6 +537,8 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 getattr(worker, "total_point_count_estimate", None),
                 dataset_count,
                 ):
+            if value is None:
+                continue
             try:
                 count = int(value)
             except (TypeError, ValueError):
@@ -548,9 +556,12 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             pass
 
         try:
+            configured_limit = self.config.get("runtime_settings.max_full_heatmap_points")
+            if configured_limit is None:
+                return 1
             return max(
                 1,
-                int(self.config.get("runtime_settings.max_full_heatmap_points")),
+                int(configured_limit),
                 )
         except (AttributeError, KeyError, TypeError, ValueError):
             return 1
@@ -585,21 +596,25 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         if isinstance(info, dict):
             grid_columns = self._format_heatmap_count(info.get("grid_columns"))
             grid_rows = self._format_heatmap_count(info.get("grid_rows"))
-            source_columns = self._format_heatmap_count(
+            info_source_columns = self._format_heatmap_count(
                 info.get("source_grid_columns")
                 )
-            source_rows = self._format_heatmap_count(info.get("source_grid_rows"))
+            info_source_rows = self._format_heatmap_count(
+                info.get("source_grid_rows")
+                )
             if info.get("source_sampled") or info.get("grid_binned"):
                 return (
                     "Resolution: downsampled "
                     f"{grid_columns} x {grid_rows} of "
-                    f"{source_columns} x {source_rows}"
+                    f"{info_source_columns} x {info_source_rows}"
                     )
             return f"Resolution: full {grid_columns} x {grid_rows}"
 
         data_grid = self.__dict__.get("dataGrid")
+        if data_grid is None:
+            return "Resolution: pending"
         try:
-            grid_rows, grid_columns = data_grid.shape
+            plotted_grid_rows, plotted_grid_columns = data_grid.shape
         except (AttributeError, ValueError):
             return "Resolution: pending"
 
@@ -607,22 +622,25 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         if source_shape is None:
             return (
                 "Resolution: plotted "
-                f"{self._format_heatmap_count(grid_columns)} x "
-                f"{self._format_heatmap_count(grid_rows)}; source unknown"
+                f"{self._format_heatmap_count(plotted_grid_columns)} x "
+                f"{self._format_heatmap_count(plotted_grid_rows)}; source unknown"
                 )
 
         source_rows, source_columns = source_shape
-        if int(source_rows) == int(grid_rows) and int(source_columns) == int(grid_columns):
+        if (
+                int(source_rows) == int(plotted_grid_rows)
+                and int(source_columns) == int(plotted_grid_columns)
+                ):
             return (
                 "Resolution: full "
-                f"{self._format_heatmap_count(grid_columns)} x "
-                f"{self._format_heatmap_count(grid_rows)}"
+                f"{self._format_heatmap_count(plotted_grid_columns)} x "
+                f"{self._format_heatmap_count(plotted_grid_rows)}"
                 )
 
         return (
             "Resolution: plotted "
-            f"{self._format_heatmap_count(grid_columns)} x "
-            f"{self._format_heatmap_count(grid_rows)} of "
+            f"{self._format_heatmap_count(plotted_grid_columns)} x "
+            f"{self._format_heatmap_count(plotted_grid_rows)} of "
             f"{self._format_heatmap_count(source_columns)} x "
             f"{self._format_heatmap_count(source_rows)}"
             )

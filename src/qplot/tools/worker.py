@@ -1,5 +1,5 @@
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from PyQt6 import QtCore
@@ -100,9 +100,9 @@ class loader(QtCore.QRunnable):
         self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
         self.sampled_heatmap_source = False
         self.loaded_from_sql_sample = False
-        self.loaded_point_count = None
-        self.heatmap_downsample_info = None
-        self.heatmap_source_grid_shape = None
+        self.loaded_point_count: int | None = None
+        self.heatmap_downsample_info: dict[str, Any] | None = None
+        self.heatmap_source_grid_shape: tuple[int, int] | None = None
         
     
     def run(self):
@@ -684,14 +684,11 @@ class loader(QtCore.QRunnable):
         source_grid_rows = grid_info.get("source_grid_rows")
         grid_columns = grid_info.get("grid_columns")
         grid_rows = grid_info.get("grid_rows")
-        if all(
-                value is not None
-                for value in (
-                    source_grid_columns,
-                    source_grid_rows,
-                    grid_columns,
-                    grid_rows,
-                    )
+        if (
+                source_grid_columns is not None
+                and source_grid_rows is not None
+                and grid_columns is not None
+                and grid_rows is not None
                 ):
             grid_reduced = grid_reduced or (
                 int(grid_columns) < int(source_grid_columns)
