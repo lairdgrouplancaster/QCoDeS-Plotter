@@ -6,6 +6,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows._dataset_handle import DatasetHandle
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plotWin import plotWidget
@@ -73,6 +74,127 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.load_calls, ["load"])
         self.assertEqual(window.last_ds_len, 10)
         self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_load_data_uses_sampled_sql_before_completed_cache_prep(self):
+        class Signal:
+            def __init__(self):
+                self.slots = []
+
+            def connect(self, slot):
+                self.slots.append(slot)
+
+        class Emitter:
+            def __init__(self):
+                self.finished = Signal()
+                self.errorOccurred = Signal()
+                self.printer = Signal()
+
+        class Worker:
+            def __init__(
+                    self,
+                    cache,
+                    param,
+                    param_dict,
+                    axes,
+                    *,
+                    read_data,
+                    operations,
+                    force_sql_heatmap,
+                    max_full_heatmap_points,
+                    heatmap_axis_ranges,
+                    heatmap_full_axis_ranges,
+                    ):
+                self.cache = cache
+                self.param = param
+                self.param_dict = param_dict
+                self.axes = axes
+                self.read_data = read_data
+                self.operations = operations
+                self.force_sql_heatmap = force_sql_heatmap
+                self.max_full_heatmap_points = max_full_heatmap_points
+                self.heatmap_axis_ranges = heatmap_axis_ranges
+                self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
+                self.emitter = Emitter()
+                self.checked_large_heatmap = False
+
+            def _should_use_sql_heatmap(self):
+                self.checked_large_heatmap = True
+                return True
+
+        class Cache:
+            live = False
+
+        class Dataset:
+            cache = Cache()
+
+        class Param:
+            name = "signal"
+
+        class Config:
+            def get(self, key):
+                self.key = key
+                return 2_000_000
+
+        class Operations:
+            def get_data(self):
+                return ["operation"]
+
+        class Combo:
+            def __init__(self, text):
+                self.text = text
+
+            def currentText(self):
+                return self.text
+
+        class ThreadPool:
+            def __init__(self):
+                self.started = []
+
+            def start(self, worker):
+                self.started.append(worker)
+
+        window = plotWidget.__new__(plotWidget)
+        window._guid = "guid"
+        window._dataset_holder = {"guid": DatasetHandle(Dataset())}
+        window.param = Param()
+        window.param_dict = {"x": object(), "y": object(), "signal": object()}
+        window.axis_dropdown = {"x": Combo("x"), "y": Combo("y")}
+        window.config = Config()
+        window.oper_widget = Operations()
+        window.threadPool = ThreadPool()
+        window.show_statuses = []
+        window.plot_states = []
+        window.show_status = lambda *args: window.show_statuses.append(args)
+        window.show_plot_state = lambda *args, **kwargs: window.plot_states.append(
+            (args, kwargs)
+            )
+        window.refreshPlot = lambda *_args, **_kwargs: None
+        window.err_raiser = lambda *_args, **_kwargs: None
+        window.worker_printer = lambda *_args, **_kwargs: None
+
+        old_loader = plot_refresh_module.loader
+        old_prep = plot_refresh_module.load_param_data_from_db_prep
+        try:
+            plot_refresh_module.loader = Worker
+            plot_refresh_module.load_param_data_from_db_prep = (
+                lambda *_args: (_ for _ in ()).throw(
+                    AssertionError("completed cache prep should be skipped")
+                    )
+                )
+
+            plotWidget.load_data(window)
+        finally:
+            plot_refresh_module.loader = old_loader
+            plot_refresh_module.load_param_data_from_db_prep = old_prep
+
+        self.assertEqual(len(window.threadPool.started), 1)
+        worker = window.threadPool.started[0]
+        self.assertTrue(worker.checked_large_heatmap)
+        self.assertTrue(worker.read_data)
+        self.assertFalse(worker.force_sql_heatmap)
+        self.assertEqual(worker.operations, ["operation"])
+        self.assertEqual(window.worker, worker)
+        self.assertIn("Loading data for signal", window.show_statuses[-1][0])
 
 
 class PlotStateOverlayTestCase(unittest.TestCase):

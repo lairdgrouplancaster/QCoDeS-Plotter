@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore
-from pyqtgraph.graphicsItems.ButtonItem import ButtonItem
 
 from ._colorbar import (
     _CET_COLORBAR_SUBTYPES,
@@ -18,7 +17,6 @@ from ._colorbar import (
     _colorbar_colormap_group,
     _colorbar_subtype_config_key,
     _config_value,
-    _letter_button_pixmap,
     _matplotlib_colorbar_colormap_subtype,
     _string_list,
 )
@@ -35,95 +33,6 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     """
     if TYPE_CHECKING:
         plot: Any
-
-    def _init_color_autoscale_button(self):
-        """
-        Add a lower-left color autoscale button beside pyqtgraph's axis autoscale.
-
-        """
-        if "color_auto_button" in self.__dict__:
-            return
-
-        self.color_auto_button = ButtonItem(
-            pixmap=_letter_button_pixmap("C"),
-            width=14,
-            parentItem=self.plot,
-            )
-        self.color_auto_button.setToolTip("Autoscale color range")
-        self.color_auto_button.clicked.connect(lambda _button: self.scaleColorbar())
-        self.color_auto_button.hide()
-
-        self._patch_color_autoscale_button_events()
-        self._position_color_autoscale_button()
-        self._update_color_autoscale_button()
-
-    def _patch_color_autoscale_button_events(self):
-        """
-        Keep the color autoscale button in step with pyqtgraph's plot buttons.
-
-        """
-        if getattr(self.plot, "_qplot_color_auto_button_patched", False):
-            return
-
-        original_update_buttons = self.plot.updateButtons
-        original_resize_event = self.plot.resizeEvent
-
-        def update_buttons():
-            original_update_buttons()
-            self._update_color_autoscale_button()
-
-        def resize_event(event):
-            original_resize_event(event)
-            self._position_color_autoscale_button()
-
-        self.plot.updateButtons = update_buttons
-        self.plot.resizeEvent = resize_event
-        self.plot._qplot_color_auto_button_patched = True
-
-    def _position_color_autoscale_button(self):
-        """
-        Position the C button just to the right of pyqtgraph's A button.
-
-        """
-        button = getattr(self, "color_auto_button", None)
-        auto_button = getattr(self.plot, "autoBtn", None)
-        if button is None or auto_button is None:
-            return
-
-        try:
-            auto_rect = self.plot.mapRectFromItem(
-                auto_button,
-                auto_button.boundingRect(),
-                )
-            button_rect = self.plot.mapRectFromItem(button, button.boundingRect())
-            x = auto_button.pos().x() + auto_rect.width() + 2
-            y = self.plot.size().height() - button_rect.height()
-            button.setPos(x, y)
-        except RuntimeError:
-            return
-
-    def _update_color_autoscale_button(self):
-        """
-        Show the color autoscale button while plot controls are visible.
-
-        """
-        button = getattr(self, "color_auto_button", None)
-        if button is None:
-            return
-
-        try:
-            self._position_color_autoscale_button()
-            if (
-                    self.plot._exportOpts is False
-                    and self.plot.mouseHovering
-                    and not self.plot.buttonsHidden
-                    and self._data_colorbar_levels() is not None
-                    ):
-                button.show()
-            else:
-                button.hide()
-        except RuntimeError:
-            return
 
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):

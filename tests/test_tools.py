@@ -116,6 +116,21 @@ class ToolFunctionTestCase(unittest.TestCase):
             self.assertLessEqual(worker.loaded_point_count, 60)
             self.assertLessEqual(worker.dataGrid.size, 16)
             self.assertGreater(np.isfinite(worker.dataGrid).sum(), 0)
+            self.assertIsNotNone(worker.heatmap_downsample_info)
+            self.assertTrue(worker.heatmap_downsample_info["source_sampled"])
+            self.assertTrue(worker.heatmap_downsample_info["grid_binned"])
+            self.assertEqual(worker.heatmap_downsample_info["source_row_count"], 1200)
+            self.assertEqual(worker.heatmap_downsample_info["source_sample_limit"], 60)
+            self.assertEqual(worker.heatmap_downsample_info["source_grid_columns"], 40)
+            self.assertEqual(worker.heatmap_downsample_info["source_grid_rows"], 30)
+            self.assertEqual(
+                worker.heatmap_downsample_info["source_grid_cell_count"],
+                1200,
+                )
+            self.assertEqual(
+                worker.heatmap_downsample_info["grid_cell_count"],
+                worker.dataGrid.size,
+                )
 
     def test_large_heatmap_sql_loader_can_reload_visible_axis_range(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -222,6 +237,43 @@ class ToolFunctionTestCase(unittest.TestCase):
 
         self.assertTrue(loader._should_use_sql_heatmap(worker))
 
+    def test_large_heatmap_sql_mode_uses_selected_parameter_count_not_run_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = f"{tmpdir}/heatmap.db"
+            conn = sqlite3.connect(database_path)
+            try:
+                conn.execute(
+                    "CREATE TABLE results (x REAL, y REAL, signal REAL, other REAL)"
+                    )
+                signal_rows = [
+                    (float(index), 0.0, float(index), None)
+                    for index in range(80)
+                    ]
+                other_rows = [
+                    (float(index), 1.0, None, float(index))
+                    for index in range(80)
+                    ]
+                conn.executemany(
+                    "INSERT INTO results (x, y, signal, other) VALUES (?, ?, ?, ?)",
+                    signal_rows + other_rows,
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            worker = self._sql_heatmap_worker(database_path)
+            worker.cache.rundescriber.shapes = None
+            worker.max_full_heatmap_points = 100
+
+            old_database_path = worker_module.cache_database_path
+            try:
+                worker_module.cache_database_path = lambda _cache: database_path
+
+                self.assertEqual(loader._large_heatmap_point_count(worker), 80)
+                self.assertFalse(loader._should_use_sql_heatmap(worker))
+            finally:
+                worker_module.cache_database_path = old_database_path
+
     def _create_heatmap_table(self, database_path):
         conn = sqlite3.connect(database_path)
         try:
@@ -247,8 +299,14 @@ class ToolFunctionTestCase(unittest.TestCase):
                 self.depends_on_ = ("y", "x") if name == "signal" else ()
                 self._complete = False
 
+        class Rundescriber:
+            shapes = {"signal": (30, 40)}
+
+        class Cache:
+            rundescriber = Rundescriber()
+
         worker = loader.__new__(loader)
-        worker.cache = object()
+        worker.cache = Cache()
         worker.table_name = "results"
         worker.param = Param("signal")
         worker.param_dict = {

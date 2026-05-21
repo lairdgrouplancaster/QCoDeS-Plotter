@@ -7,6 +7,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling import load_param_data_from_db_prep
 from qplot.datahandling.qcodes_cache import (
     cache_has_no_written_data,
+    cache_is_live,
     update_cache_parameter_data,
 )
 from qplot.diagnostics import log_exception
@@ -86,22 +87,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
             worker has finished its task. The default is False.
 
         """
-        complete = load_param_data_from_db_prep(self.ds.cache, self.param)
-        if status_message is not None:
-            message = status_message
-        elif complete:
-            message = f"Processing cached data for {self.param.name}..."
-        else:
-            message = f"Loading data for {self.param.name}..."
-        self.show_status(message, 0)
-        self.show_plot_state(message, kind="loading")
-
         worker: Any = loader(
             self.ds.cache,
             self.param,
             self.param_dict,
             self.axis_options,
-            read_data=force_sql_heatmap or not complete,
+            read_data=True,
             operations=self.oper_widget.get_data(),
             force_sql_heatmap=force_sql_heatmap,
             max_full_heatmap_points=self.config.get(
@@ -110,6 +101,25 @@ class PlotRefreshMixin(_PlotRefreshBase):
             heatmap_axis_ranges=heatmap_axis_ranges,
             heatmap_full_axis_ranges=heatmap_full_axis_ranges,
             )
+
+        use_sql_heatmap = force_sql_heatmap
+        if not use_sql_heatmap and not cache_is_live(self.ds.cache):
+            use_sql_heatmap = worker._should_use_sql_heatmap()
+
+        if use_sql_heatmap:
+            complete = False
+        else:
+            complete = load_param_data_from_db_prep(self.ds.cache, self.param)
+            worker.read_data = not complete
+
+        if status_message is not None:
+            message = status_message
+        elif complete:
+            message = f"Processing cached data for {self.param.name}..."
+        else:
+            message = f"Loading data for {self.param.name}..."
+        self.show_status(message, 0)
+        self.show_plot_state(message, kind="loading")
         worker.started_at = perf_counter()
 
         # Callback

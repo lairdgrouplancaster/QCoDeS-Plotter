@@ -833,30 +833,222 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertFalse(event.accepted)
         self.assertEqual(line.previous_drag_calls, [event])
 
-    def test_color_autoscale_button_sits_next_to_axis_autoscale_button(self):
-        window = plot2d.__new__(plot2d)
-        window.plot = pg.PlotItem()
-        window.dataGrid = np.array([[0.0, 1.0], [2.0, 3.0]])
-        calls = []
-        window.scaleColorbar = lambda: calls.append(True)
+    def test_color_autoscale_uses_shortcut_action_without_overlay_button(self):
+        class Host(plot2d):
+            def __init__(self):
+                qtw.QMainWindow.__init__(self)
+                self.scale_calls = []
 
-        window._init_color_autoscale_button()
-        window.plot.mouseHovering = True
-        window._update_color_autoscale_button()
+            def _init_colorbar_scale_controls(self):
+                pass
 
-        self.assertTrue(window.color_auto_button.isVisible())
-        self.assertGreater(
-            window.color_auto_button.pos().x(),
-            window.plot.autoBtn.pos().x(),
-            )
-        self.assertEqual(
-            window.color_auto_button.toolTip(),
-            "Autoscale color range",
-            )
+            def scaleColorbar(self, _checked=False):
+                self.scale_calls.append(True)
 
-        window.color_auto_button.clicked.emit(window.color_auto_button)
+        widget = pg.GraphicsLayoutWidget()
+        host = Host()
+        host.widget = widget
+        host.plot = widget.addPlot()
+        host.vb = host.plot.vb
+        host.oper_dock = qtw.QDockWidget()
 
-        self.assertEqual(calls, [True])
+        try:
+            host.initContextMenu()
+            auto_color = next(
+                action for action in host.vbMenu.actions()
+                if action.text().replace("&", "") == "Autoscale Color"
+                )
+
+            self.assertEqual(auto_color.shortcut().toString(), "C")
+            self.assertIn(auto_color, host.actions())
+            self.assertFalse(hasattr(host, "color_auto_button"))
+
+            auto_color.trigger()
+
+            self.assertEqual(host.scale_calls, [True])
+        finally:
+            host.deleteLater()
+            widget.deleteLater()
+
+    def test_downsample_warning_button_opens_details_dialog(self):
+        class Worker:
+            heatmap_downsample_info = {
+                "source_row_count": 1_200_000,
+                "estimated_range_rows": 300_000,
+                "loaded_point_count": 60_000,
+                "source_sampled": True,
+                "source_sample_limit": 250_000,
+                "source_sample_stride": 2,
+                "source_sample_strategy": "visible-range stride",
+                "axis_ranges": {
+                    "x": (10.0, 20.0),
+                    "y": (5.0, 10.0),
+                    },
+                "unique_x_count": 2_000,
+                "unique_y_count": 1_000,
+                "exact_cell_count": 2_000_000,
+                "source_grid_columns": 2_000,
+                "source_grid_rows": 1_000,
+                "source_grid_cell_count": 2_000_000,
+                "grid_columns": 500,
+                "grid_rows": 400,
+                "grid_cell_count": 200_000,
+                "grid_binned": True,
+                "grid_cell_limit": 250_000,
+                "full_resolution_point_limit": 1_000_000,
+                "empty_bins_filled": True,
+                }
+
+        host = plot2d.__new__(plot2d)
+        qtw.QMainWindow.__init__(host)
+        host.toolbarCo_ord = qtw.QToolBar(host)
+        host.widget = qtw.QWidget(host)
+        host.widget.resize(300, 200)
+        host._heatmap_downsample_info = None
+
+        try:
+            host._init_heatmap_downsample_warning_button()
+
+            self.assertTrue(host.heatmap_downsample_button.isHidden())
+            self.assertEqual(host.heatmap_downsample_button.parent(), host.widget)
+            self.assertEqual(host.heatmap_downsample_button.text(), "")
+            self.assertEqual(
+                host.heatmap_downsample_button.toolButtonStyle(),
+                QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly,
+                )
+            self.assertEqual(
+                host.heatmap_downsample_button.size(),
+                QtCore.QSize(28, 28),
+                )
+            self.assertFalse(hasattr(host, "heatmap_downsample_button_action"))
+            self.assertFalse(hasattr(host, "heatmap_downsample_side_button"))
+            self.assertEqual(host.heatmap_resolution_label.text(), "Resolution: pending")
+            widgets = [
+                host.toolbarCo_ord.widgetForAction(action)
+                for action in host.toolbarCo_ord.actions()
+                ]
+            self.assertEqual(widgets, [host.heatmap_resolution_label])
+
+            host._update_heatmap_downsample_state(Worker())
+
+            self.assertFalse(host.heatmap_downsample_button.isHidden())
+            self.assertEqual(
+                host.heatmap_downsample_button.pos(),
+                QtCore.QPoint(264, 164),
+                )
+            self.assertEqual(
+                host.heatmap_resolution_label.text(),
+                "Resolution: downsampled 500 x 400 of 2,000 x 1,000",
+                )
+
+            opened = []
+            host.show_heatmap_downsample_dialog = lambda: opened.append(True)
+            host.heatmap_downsample_button.clicked.emit(False)
+
+            self.assertEqual(opened, [True])
+
+            text = host._heatmap_downsample_dialog_text()
+            self.assertIn("downsampled data", text)
+            self.assertIn("X: 10 to 20", text)
+            self.assertIn("2,000 x 1,000 = 2,000,000 cells", text)
+            self.assertIn("full-resolution heatmap limit is 1,000,000", text)
+            self.assertIn("500 x 400 = 200,000 cells", text)
+            self.assertIn("Loaded 60,000 finite source rows", text)
+            self.assertIn("about every 2nd matching row", text)
+            self.assertIn("500 x 400 display grid", text)
+            self.assertIn("Empty sampled display bins were filled", text)
+
+            host._update_heatmap_downsample_state(object())
+
+            self.assertTrue(host.heatmap_downsample_button.isHidden())
+        finally:
+            host.deleteLater()
+
+    def test_grid_reduced_heatmap_shows_warning_from_worker_metadata(self):
+        class Worker:
+            heatmap_downsample_info = {
+                "source_row_count": 2_804_301,
+                "estimated_range_rows": 2_804_301,
+                "loaded_point_count": 250_000,
+                "source_sampled": True,
+                "source_sample_limit": 250_000,
+                "source_sample_stride": None,
+                "source_sample_strategy": "uniform rowid sample",
+                "axis_ranges": None,
+                "unique_x_count": 3_501,
+                "unique_y_count": 801,
+                "exact_cell_count": 2_804_301,
+                "source_grid_columns": 3_501,
+                "source_grid_rows": 801,
+                "source_grid_cell_count": 2_804_301,
+                "grid_columns": 176,
+                "grid_rows": 176,
+                "grid_cell_count": 30_976,
+                "grid_binned": True,
+                "grid_cell_limit": 31_000,
+                "full_resolution_point_limit": 1_000_000,
+                "empty_bins_filled": True,
+                }
+
+        host = plot2d.__new__(plot2d)
+        qtw.QMainWindow.__init__(host)
+        host.toolbarCo_ord = qtw.QToolBar(host)
+        host.widget = qtw.QWidget(host)
+        host._heatmap_worker_downsample_info = None
+        host._heatmap_downsample_info = None
+
+        try:
+            host._init_heatmap_downsample_warning_button()
+            host._update_heatmap_downsample_state(Worker())
+
+            self.assertFalse(host.heatmap_downsample_button.isHidden())
+            self.assertTrue(host._heatmap_downsample_info["grid_binned"])
+            self.assertEqual(
+                host.heatmap_resolution_label.text(),
+                "Resolution: downsampled 176 x 176 of 3,501 x 801",
+                )
+
+            text = host._heatmap_downsample_dialog_text()
+            self.assertIn("3,501 x 801 = 2,804,301 cells", text)
+            self.assertIn("full-resolution heatmap limit is 1,000,000", text)
+            self.assertIn("176 x 176 = 30,976 cells", text)
+            self.assertIn("uniformly sampled", text)
+        finally:
+            host.deleteLater()
+
+    def test_grid_reduced_heatmap_shows_warning_without_worker_info(self):
+        class Worker:
+            heatmap_downsample_info = None
+            heatmap_source_grid_shape = (801, 3501)
+            dataGrid = np.zeros((176, 176))
+            max_full_heatmap_points = 1_000_000
+            total_point_count_estimate = 2_804_301
+            loaded_point_count = 250_000
+            sampled_heatmap_source = True
+            heatmap_axis_ranges = None
+
+        host = plot2d.__new__(plot2d)
+        qtw.QMainWindow.__init__(host)
+        host.toolbarCo_ord = qtw.QToolBar(host)
+        host.widget = qtw.QWidget(host)
+        host._heatmap_worker_downsample_info = None
+        host._heatmap_downsample_info = None
+
+        try:
+            host._init_heatmap_downsample_warning_button()
+            host._update_heatmap_downsample_state(Worker())
+
+            self.assertFalse(host.heatmap_downsample_button.isHidden())
+            self.assertEqual(
+                host.heatmap_resolution_label.text(),
+                "Resolution: downsampled 176 x 176 of 3,501 x 801",
+                )
+            text = host._heatmap_downsample_dialog_text()
+            self.assertIn("3,501 x 801 = 2,804,301 cells", text)
+            self.assertIn("full-resolution heatmap limit is 1,000,000", text)
+            self.assertIn("176 x 176 = 30,976 cells", text)
+        finally:
+            host.deleteLater()
 
     def test_colorbar_colormap_updates_bar_and_preference(self):
         class Config:

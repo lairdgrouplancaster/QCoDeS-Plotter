@@ -99,6 +99,10 @@ class loader(QtCore.QRunnable):
         self.heatmap_axis_ranges = heatmap_axis_ranges
         self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
         self.sampled_heatmap_source = False
+        self.loaded_from_sql_sample = False
+        self.loaded_point_count = None
+        self.heatmap_downsample_info = None
+        self.heatmap_source_grid_shape = None
         
     
     def run(self):
@@ -207,8 +211,8 @@ class loader(QtCore.QRunnable):
         if self.force_sql_heatmap:
             return True
 
-        point_count = self._large_heatmap_point_count()
-        if point_count is None:
+        setpoint_count = self._large_heatmap_point_count()
+        if setpoint_count is None:
             return False
 
         limit = max(1, int(getattr(
@@ -216,28 +220,27 @@ class loader(QtCore.QRunnable):
             "max_full_heatmap_points",
             MAX_FULL_HEATMAP_POINTS,
             )))
-        return point_count > limit
+        return setpoint_count > limit
 
 
     def _large_heatmap_point_count(self):
-        shape = self._parameter_shape()
-        shape_size = self._shape_size(shape)
-        if shape_size is not None:
-            self.total_point_count_estimate = shape_size
-            return shape_size
+        source_grid_shape = self._heatmap_source_grid_shape_from_metadata()
+        if source_grid_shape is not None:
+            source_grid_rows, source_grid_columns = source_grid_shape
+            setpoint_count = int(source_grid_rows * source_grid_columns)
+            self.heatmap_source_grid_shape = source_grid_shape
+            self.total_point_count_estimate = setpoint_count
+            return setpoint_count
 
         conn = sqlite_read_only_connection(cache_database_path(self.cache))
         try:
-            rowid_min, rowid_max = self._rowid_span(conn)
+            setpoint_count = self._selected_parameter_row_count(conn)
         finally:
             conn.close()
 
-        if rowid_min is None or rowid_max is None:
-            return None
-
-        point_count = rowid_max - rowid_min + 1
-        self.total_point_count_estimate = point_count
-        return point_count
+        if setpoint_count is not None:
+            self.total_point_count_estimate = setpoint_count
+        return setpoint_count
 
 
     def _parameter_shape(self):
@@ -267,6 +270,9 @@ class loader(QtCore.QRunnable):
         conn = sqlite_read_only_connection(cache_database_path(self.cache))
         try:
             rowid_min, rowid_max = self._rowid_span(conn)
+            self.heatmap_source_grid_shape = (
+                self._heatmap_source_grid_shape_from_metadata()
+                )
             x_data, y_data, z_data = self._read_heatmap_arrays(
                 conn,
                 rowid_min,
@@ -291,6 +297,7 @@ class loader(QtCore.QRunnable):
         self.dataGrid = data_grid
         self.loaded_from_sql_sample = True
         self.loaded_point_count = int(z_data.size)
+        self.heatmap_downsample_info = self._heatmap_downsample_info()
 
         # The direct SQL path deliberately does not populate QCoDeS' full
         # in-memory cache. Keep future refreshes on the database path.
@@ -309,6 +316,17 @@ class loader(QtCore.QRunnable):
 
     def _read_heatmap_arrays(self, conn, rowid_min, rowid_max):
         if rowid_min is None or rowid_max is None:
+            self._heatmap_source_info = {
+                "row_count": 0,
+                "estimated_range_rows": None,
+                "sampled": False,
+                "sample_limit": MAX_SQL_HEATMAP_SOURCE_ROWS,
+                "sample_stride": 1,
+                "strategy": "empty",
+                "axis_ranges": self._normalised_heatmap_axis_ranges(
+                    self.heatmap_axis_ranges
+                    ),
+                }
             return (
                 np.array([], dtype=float),
                 np.array([], dtype=float),
@@ -319,13 +337,39 @@ class loader(QtCore.QRunnable):
         x_column = _sqlite_identifier(self.axes_dict["x"])
         y_column = _sqlite_identifier(self.axes_dict["y"])
         z_column = _sqlite_identifier(self.param.name)
-        row_count = rowid_max - rowid_min + 1
+        selected_where_sql = f"{z_column} IS NOT NULL"
+        selected_count = self._selected_parameter_row_count(conn)
+        row_count = selected_count
+        if row_count is None:
+            row_count = rowid_max - rowid_min + 1
         columns = f"{x_column}, {y_column}, {z_column}"
+        axis_ranges = self._normalised_heatmap_axis_ranges(self.heatmap_axis_ranges)
+        self.total_point_count_estimate = row_count
+        self._heatmap_source_info = {
+            "row_count": int(row_count),
+            "estimated_range_rows": int(row_count),
+            "sampled": False,
+            "sample_limit": MAX_SQL_HEATMAP_SOURCE_ROWS,
+            "sample_stride": 1,
+            "strategy": "all",
+            "axis_ranges": axis_ranges,
+            }
 
-        where_sql, parameters = self._heatmap_where_clause()
-        if where_sql:
+        axis_where_sql, parameters = self._heatmap_where_clause()
+        if axis_where_sql:
+            where_sql = f"{selected_where_sql} AND {axis_where_sql}"
             sample_sql, sample_parameters = self._range_sample_clause(row_count)
             self.sampled_heatmap_source = bool(sample_sql)
+            self._heatmap_source_info.update({
+                "estimated_range_rows": getattr(
+                    self,
+                    "_heatmap_estimated_range_rows",
+                    None,
+                    ),
+                "sampled": bool(sample_sql),
+                "sample_stride": getattr(self, "_heatmap_source_sample_stride", 1),
+                "strategy": "visible-range stride" if sample_sql else "visible range",
+                })
             cursor = conn.execute(
                 (
                     f"SELECT {columns} FROM {table} "
@@ -346,6 +390,12 @@ class loader(QtCore.QRunnable):
                     ),
                 (*parameters, MAX_SQL_HEATMAP_SOURCE_ROWS),
                 )
+            self.sampled_heatmap_source = False
+            self._heatmap_source_info.update({
+                "sampled": False,
+                "sample_stride": 1,
+                "strategy": "visible range fallback",
+                })
             return self._arrays_from_cursor(cursor)
 
         if row_count <= MAX_SQL_HEATMAP_SOURCE_ROWS:
@@ -353,34 +403,55 @@ class loader(QtCore.QRunnable):
             cursor = conn.execute(
                 (
                     f"SELECT {columns} FROM {table} "
-                    "WHERE rowid BETWEEN ? AND ? ORDER BY rowid"
+                    f"WHERE {selected_where_sql} ORDER BY rowid"
                     ),
-                (rowid_min, rowid_max),
                 )
             return self._arrays_from_cursor(cursor)
 
         self.sampled_heatmap_source = True
-        rowids = self._sample_rowids(rowid_min, rowid_max)
-        x_values = []
-        y_values = []
-        z_values = []
+        stride = max(1, math.ceil(row_count / MAX_SQL_HEATMAP_SOURCE_ROWS))
+        self._heatmap_source_sample_stride = stride
+        self._heatmap_source_info.update({
+            "sampled": True,
+            "sample_stride": stride,
+            "strategy": "uniform selected-row stride",
+            })
+        cursor = conn.execute(
+            (
+                f"SELECT {columns} FROM {table} "
+                f"WHERE {selected_where_sql} AND ((rowid - ?) % ?) = 0 "
+                "ORDER BY rowid LIMIT ?"
+                ),
+            (1, stride, MAX_SQL_HEATMAP_SOURCE_ROWS),
+            )
+        arrays = self._arrays_from_cursor(cursor)
+        if arrays[2].size > 0:
+            return arrays
 
-        for start in range(0, len(rowids), SQL_HEATMAP_ROWID_CHUNK):
-            chunk = [int(value) for value in rowids[start:start + SQL_HEATMAP_ROWID_CHUNK]]
-            placeholders = ", ".join("?" for _ in chunk)
-            cursor = conn.execute(
-                (
-                    f"SELECT {columns} FROM {table} "
-                    f"WHERE rowid IN ({placeholders}) ORDER BY rowid"
-                    ),
-                chunk,
-                )
-            for x_value, y_value, z_value in cursor:
-                x_values.append(x_value)
-                y_values.append(y_value)
-                z_values.append(z_value)
+        cursor = conn.execute(
+            (
+                f"SELECT {columns} FROM {table} "
+                f"WHERE {selected_where_sql} ORDER BY rowid LIMIT ?"
+                ),
+            (MAX_SQL_HEATMAP_SOURCE_ROWS,),
+            )
+        self._heatmap_source_info.update({
+            "sample_stride": 1,
+            "strategy": "selected-row fallback",
+            })
+        return self._arrays_from_cursor(cursor)
 
-        return self._arrays_from_values(x_values, y_values, z_values)
+
+    def _selected_parameter_row_count(self, conn):
+        table = _sqlite_identifier(self.table_name)
+        z_column = _sqlite_identifier(self.param.name)
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {z_column} IS NOT NULL"
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+
+        return int(row[0])
 
 
     def _heatmap_where_clause(self):
@@ -410,6 +481,7 @@ class loader(QtCore.QRunnable):
 
     def _range_sample_clause(self, row_count):
         stride = self._range_sample_stride(row_count)
+        self._heatmap_source_sample_stride = stride
         if stride <= 1:
             return "", ()
 
@@ -445,7 +517,31 @@ class loader(QtCore.QRunnable):
             fraction *= min(max((high - low) / full_width, 0.0), 1.0)
 
         estimated_rows = max(1, int(row_count * fraction))
+        self._heatmap_estimated_range_rows = estimated_rows
         return max(1, math.ceil(estimated_rows / MAX_SQL_HEATMAP_SOURCE_ROWS))
+
+
+    def _normalised_heatmap_axis_ranges(self, ranges):
+        if not ranges:
+            return None
+
+        normalised = {}
+        for axis in ("x", "y"):
+            axis_range = ranges.get(axis)
+            if axis_range is None:
+                return None
+
+            try:
+                low, high = sorted(float(value) for value in axis_range)
+            except (TypeError, ValueError):
+                return None
+
+            if not (np.isfinite(low) and np.isfinite(high)) or low == high:
+                return None
+
+            normalised[axis] = (low, high)
+
+        return normalised
 
 
     def _sample_rowids(self, rowid_min, rowid_max):
@@ -490,6 +586,17 @@ class loader(QtCore.QRunnable):
 
     def _heatmap_grid_from_arrays(self, x_data, y_data, z_data):
         if z_data.size == 0:
+            self._heatmap_grid_info = {
+                "unique_x_count": 0,
+                "unique_y_count": 0,
+                "exact_cell_count": 0,
+                "grid_columns": 0,
+                "grid_rows": 0,
+                "grid_cell_count": 0,
+                "grid_binned": False,
+                "grid_cell_limit": MAX_SQL_HEATMAP_GRID_CELLS,
+                "empty_bins_filled": False,
+                }
             return (
                 np.array([], dtype=float),
                 np.array([], dtype=float),
@@ -499,34 +606,162 @@ class loader(QtCore.QRunnable):
         unique_x = np.unique(x_data)
         unique_y = np.unique(y_data)
         exact_cells = unique_x.size * unique_y.size
+        source_grid_shape = getattr(self, "heatmap_source_grid_shape", None)
+        if source_grid_shape is None:
+            source_grid_rows = int(unique_y.size)
+            source_grid_columns = int(unique_x.size)
+        else:
+            source_grid_rows, source_grid_columns = source_grid_shape
+        source_grid_cell_count = int(source_grid_rows * source_grid_columns)
         if (
                 not getattr(self, "sampled_heatmap_source", False)
                 and exact_cells <= MAX_SQL_HEATMAP_GRID_CELLS
                 ):
-            return self._unique_heatmap_grid(
+            x_axis, y_axis, data_grid = self._unique_heatmap_grid(
                 x_data,
                 y_data,
                 z_data,
                 unique_x,
                 unique_y,
                 )
+            self._heatmap_grid_info = {
+                "unique_x_count": int(unique_x.size),
+                "unique_y_count": int(unique_y.size),
+                "exact_cell_count": int(exact_cells),
+                "source_grid_columns": int(source_grid_columns),
+                "source_grid_rows": int(source_grid_rows),
+                "source_grid_cell_count": int(source_grid_cell_count),
+                "grid_columns": int(unique_x.size),
+                "grid_rows": int(unique_y.size),
+                "grid_cell_count": int(exact_cells),
+                "grid_binned": False,
+                "grid_cell_limit": MAX_SQL_HEATMAP_GRID_CELLS,
+                "empty_bins_filled": False,
+                }
+            return x_axis, y_axis, data_grid
 
         max_cells = MAX_SQL_HEATMAP_GRID_CELLS
+        fill_empty = False
         if getattr(self, "sampled_heatmap_source", False):
             max_cells = min(
                 max_cells,
                 max(1, int(z_data.size) // SQL_HEATMAP_SAMPLES_PER_CELL),
                 )
+            fill_empty = True
 
-        return self._binned_heatmap_grid(
+        x_axis, y_axis, data_grid = self._binned_heatmap_grid(
             x_data,
             y_data,
             z_data,
             unique_x,
             unique_y,
             max_cells=max_cells,
-            fill_empty=getattr(self, "sampled_heatmap_source", False),
+            fill_empty=fill_empty,
             )
+        self._heatmap_grid_info = {
+            "unique_x_count": int(unique_x.size),
+            "unique_y_count": int(unique_y.size),
+            "exact_cell_count": int(exact_cells),
+            "source_grid_columns": int(source_grid_columns),
+            "source_grid_rows": int(source_grid_rows),
+            "source_grid_cell_count": int(source_grid_cell_count),
+            "grid_columns": int(x_axis.size),
+            "grid_rows": int(y_axis.size),
+            "grid_cell_count": int(data_grid.size),
+            "grid_binned": True,
+            "grid_cell_limit": int(max_cells),
+            "empty_bins_filled": fill_empty,
+            }
+        return x_axis, y_axis, data_grid
+
+
+    def _heatmap_downsample_info(self):
+        source_info = getattr(self, "_heatmap_source_info", None) or {}
+        grid_info = getattr(self, "_heatmap_grid_info", None) or {}
+        source_sampled = bool(source_info.get("sampled", False))
+        grid_reduced = bool(grid_info.get("grid_binned", False))
+        source_grid_columns = grid_info.get("source_grid_columns")
+        source_grid_rows = grid_info.get("source_grid_rows")
+        grid_columns = grid_info.get("grid_columns")
+        grid_rows = grid_info.get("grid_rows")
+        if all(
+                value is not None
+                for value in (
+                    source_grid_columns,
+                    source_grid_rows,
+                    grid_columns,
+                    grid_rows,
+                    )
+                ):
+            grid_reduced = grid_reduced or (
+                int(grid_columns) < int(source_grid_columns)
+                or int(grid_rows) < int(source_grid_rows)
+                )
+        if not source_sampled and not grid_reduced:
+            return None
+
+        return {
+            "source_row_count": source_info.get("row_count"),
+            "estimated_range_rows": source_info.get("estimated_range_rows"),
+            "loaded_point_count": getattr(self, "loaded_point_count", None),
+            "source_sampled": source_sampled,
+            "source_sample_limit": source_info.get("sample_limit"),
+            "source_sample_stride": source_info.get("sample_stride"),
+            "source_sample_strategy": source_info.get("strategy"),
+            "axis_ranges": source_info.get("axis_ranges"),
+            "unique_x_count": grid_info.get("unique_x_count"),
+            "unique_y_count": grid_info.get("unique_y_count"),
+            "exact_cell_count": grid_info.get("exact_cell_count"),
+            "source_grid_columns": source_grid_columns,
+            "source_grid_rows": source_grid_rows,
+            "source_grid_cell_count": grid_info.get("source_grid_cell_count"),
+            "grid_columns": grid_info.get("grid_columns"),
+            "grid_rows": grid_info.get("grid_rows"),
+            "grid_cell_count": grid_info.get("grid_cell_count"),
+            "grid_binned": grid_reduced,
+            "grid_cell_limit": grid_info.get("grid_cell_limit"),
+            "full_resolution_point_limit": getattr(
+                self,
+                "max_full_heatmap_points",
+                MAX_FULL_HEATMAP_POINTS,
+                ),
+            "empty_bins_filled": bool(grid_info.get("empty_bins_filled", False)),
+            }
+
+
+    def _heatmap_source_grid_shape_from_metadata(self):
+        try:
+            shape = self._parameter_shape()
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+        if shape is None:
+            return None
+
+        try:
+            dimensions = [int(dimension) for dimension in shape]
+        except (TypeError, ValueError):
+            return None
+
+        depends_on = list(getattr(self.param, "depends_on_", ()))
+        if len(dimensions) != len(depends_on):
+            return None
+
+        try:
+            x_dimension = depends_on.index(self.axes_dict["x"])
+            y_dimension = depends_on.index(self.axes_dict["y"])
+        except (KeyError, ValueError):
+            return None
+
+        if (
+                x_dimension >= len(dimensions)
+                or y_dimension >= len(dimensions)
+                or dimensions[x_dimension] <= 0
+                or dimensions[y_dimension] <= 0
+                ):
+            return None
+
+        return dimensions[y_dimension], dimensions[x_dimension]
 
 
     def _unique_heatmap_grid(self, x_data, y_data, z_data, unique_x, unique_y):
