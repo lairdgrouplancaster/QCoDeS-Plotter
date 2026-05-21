@@ -76,6 +76,22 @@ class ThemeStylesheetTestCase(unittest.TestCase):
             ]
         self.assertEqual(parse_warnings, [])
 
+    def test_theme_font_sizes_leave_valid_point_sizes(self):
+        app = qtw.QApplication.instance() or qtw.QApplication([])
+
+        for theme in (light, dark):
+            window = qtw.QMainWindow()
+            table = qtw.QTableWidget(1, 1, window)
+            window.setCentralWidget(table)
+            window.setStyleSheet(theme.main)
+            app.processEvents()
+
+            try:
+                self.assertGreater(window.font().pointSize(), 0)
+                self.assertGreater(table.font().pointSize(), 0)
+            finally:
+                window.deleteLater()
+
     def test_light_and_dark_share_theme_surface(self):
         for theme in (light, dark):
             self.assertIsInstance(theme.main, str)

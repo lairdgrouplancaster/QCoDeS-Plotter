@@ -90,6 +90,8 @@ class PlotStateOverlayTestCase(unittest.TestCase):
             self.assertTrue(overlay.frame.isVisible())
             self.assertEqual(overlay.title_label.text(), "Loading data")
             self.assertEqual(overlay.detail_label.text(), "signal")
+            self.assertGreater(overlay.title_label.font().pointSize(), 0)
+            self.assertGreater(overlay.detail_label.font().pointSize(), 0)
             self.assertGreaterEqual(first_geometry.left(), 0)
             self.assertGreaterEqual(first_geometry.top(), 0)
 

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -592,8 +593,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
         super().__init__(owner)
         self.owner = owner
         self.setWindowTitle("Trace Appearance")
-        self.resize(820, 360)
-        self.setMinimumSize(740, 300)
+        self.resize(780, 360)
+        self.setMinimumSize(700, 300)
         self._building = False
         self.setStyleSheet(
             self.styleSheet()
@@ -786,21 +787,26 @@ class _TraceAppearanceDialog(qtw.QDialog):
         for combo in (self.line_color, self.dots_color, self.marker_color):
             combo.setIconSize(QtCore.QSize(42, 16))
             combo.setFixedWidth(72)
-            if combo.view() is not None:
-                combo.view().setMinimumWidth(72)
+            combo_view = combo.view()
+            if combo_view is not None:
+                combo_view.setMinimumWidth(72)
         for spin in (self.line_width, self.dots_size, self.marker_size):
             spin.setObjectName("traceAppearanceSpin")
             spin.setFixedWidth(76)
+        style_symbol_width = 86
         self.line_style.setIconSize(QtCore.QSize(58, 16))
-        self.line_style.setFixedWidth(96)
-        if self.line_style.view() is not None:
-            self.line_style.view().setMinimumWidth(96)
+        self.line_style.setFixedWidth(style_symbol_width)
+        line_style_view = self.line_style.view()
+        if line_style_view is not None:
+            line_style_view.setMinimumWidth(style_symbol_width)
         self.marker_symbol.setIconSize(QtCore.QSize(28, 18))
-        self.marker_symbol.setFixedWidth(68)
-        if self.marker_symbol.view() is not None:
-            self.marker_symbol.view().setMinimumWidth(68)
-        self.x_axis.setFixedWidth(108)
-        self.y_axis.setFixedWidth(98)
+        self.marker_symbol.setFixedWidth(style_symbol_width)
+        marker_symbol_view = self.marker_symbol.view()
+        if marker_symbol_view is not None:
+            marker_symbol_view.setMinimumWidth(style_symbol_width)
+        axis_combo_width = 108
+        self.x_axis.setFixedWidth(axis_combo_width)
+        self.y_axis.setFixedWidth(axis_combo_width)
 
         display_group = qtw.QGroupBox("Display", panel)
         display_layout = qtw.QGridLayout(display_group)
@@ -812,7 +818,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             0,
             self.line_enable,
             self.line_color,
-            [("Width", self.line_width), ("Style", self.line_style)],
+            [("Width", self.line_width), ("", self.line_style)],
             )
         self._add_display_row(
             display_layout,
@@ -826,22 +832,23 @@ class _TraceAppearanceDialog(qtw.QDialog):
             2,
             self.marker_enable,
             self.marker_color,
-            [("Size", self.marker_size), ("Symbol", self.marker_symbol)],
+            [("Size", self.marker_size), ("", self.marker_symbol)],
             )
-        display_layout.setColumnStretch(6, 1)
+        display_layout.setColumnStretch(5, 1)
         panel_layout.addWidget(display_group)
+
+        panel_layout.addWidget(self.visible)
 
         trace_settings = qtw.QGroupBox("Axes", panel)
         trace_grid = qtw.QGridLayout(trace_settings)
         trace_grid.setContentsMargins(8, 10, 8, 8)
         trace_grid.setHorizontalSpacing(8)
         trace_grid.setVerticalSpacing(4)
-        trace_grid.addWidget(self.visible, 0, 0)
-        trace_grid.addWidget(qtw.QLabel("Horizontal"), 0, 1)
-        trace_grid.addWidget(self.x_axis, 0, 2)
-        trace_grid.addWidget(qtw.QLabel("Vertical"), 1, 1)
-        trace_grid.addWidget(self.y_axis, 1, 2)
-        trace_grid.setColumnStretch(3, 1)
+        trace_grid.addWidget(qtw.QLabel("Horizontal"), 0, 0)
+        trace_grid.addWidget(self.x_axis, 0, 1)
+        trace_grid.addWidget(qtw.QLabel("Vertical"), 1, 0)
+        trace_grid.addWidget(self.y_axis, 1, 1)
+        trace_grid.setColumnStretch(2, 1)
         panel_layout.addWidget(trace_settings)
         panel_layout.addStretch()
 
@@ -889,11 +896,15 @@ class _TraceAppearanceDialog(qtw.QDialog):
         layout.addWidget(color_combo, row, 1)
         column = 2
         for label, widget in controls:
-            layout.addWidget(qtw.QLabel(label), row, column)
-            layout.addWidget(widget, row, column + 1)
-            column += 2
+            if label:
+                layout.addWidget(qtw.QLabel(label), row, column)
+                layout.addWidget(widget, row, column + 1)
+                column += 2
+            else:
+                layout.addWidget(widget, row, column)
+                column += 1
 
-    def _add_color_items(self, combo: qtw.QComboBox, colors: list[str]) -> None:
+    def _add_color_items(self, combo: qtw.QComboBox, colors: Sequence[str]) -> None:
         for color in colors:
             combo.addItem(self._color_icon(color), "", color)
         combo.addItem("Custom", self._CUSTOM_COLOR_DATA)

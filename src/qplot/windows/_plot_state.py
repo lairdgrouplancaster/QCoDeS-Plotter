@@ -110,11 +110,11 @@ class PlotStateOverlay(QtCore.QObject):
             "}"
             "QLabel#plotStateOverlayTitle {"
             "background: transparent;"
-            "font-size: 13px;"
+            "font-size: 10pt;"
             "}"
             "QLabel#plotStateOverlayDetail {"
             "background: transparent;"
-            "font-size: 11px;"
+            "font-size: 8pt;"
             "}"
             )
 

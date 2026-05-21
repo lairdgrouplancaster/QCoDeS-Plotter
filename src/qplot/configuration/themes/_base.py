@@ -53,7 +53,7 @@ _STYLESHEET_TEMPLATE = Template(
         background-color: $window_bg;
     }
     QMainWindow, QDialog, QWidget {
-        font-size: 13px;
+        font-size: 10pt;
     }
     QLabel {
         color: $text;
@@ -366,7 +366,7 @@ _STYLESHEET_TEMPLATE = Template(
         outline: 0;
         selection-background-color: $selection_bg;
         selection-color: $selection_text;
-        font-size: 13px;
+        font-size: 10pt;
     }
     QTreeView::item,
     QListView::item,
@@ -411,7 +411,7 @@ _STYLESHEET_TEMPLATE = Template(
     }
     QTableWidget#detailsTable QHeaderView::section {
         padding: 1px 6px;
-        font-size: 12px;
+        font-size: 9pt;
     }
     QListWidget {
         background-color: $table_bg;
