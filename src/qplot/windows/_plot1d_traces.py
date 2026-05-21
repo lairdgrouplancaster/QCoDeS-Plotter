@@ -784,12 +784,13 @@ class _TraceAppearanceDialog(qtw.QDialog):
 
         for combo in (self.x_axis, self.y_axis):
             combo.setMinimumContentsLength(4)
+        color_combo_width = 86
         for combo in (self.line_color, self.dots_color, self.marker_color):
             combo.setIconSize(QtCore.QSize(42, 16))
-            combo.setFixedWidth(72)
+            combo.setFixedWidth(color_combo_width)
             combo_view = combo.view()
             if combo_view is not None:
-                combo_view.setMinimumWidth(72)
+                combo_view.setMinimumWidth(color_combo_width)
         for spin in (self.line_width, self.dots_size, self.marker_size):
             spin.setObjectName("traceAppearanceSpin")
             spin.setFixedWidth(76)
