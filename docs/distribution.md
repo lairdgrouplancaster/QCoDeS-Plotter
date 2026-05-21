@@ -10,7 +10,8 @@ At runtime, `qplot.__version__` reads the installed package metadata through
 
 ## Current Install Path
 
-Recommended user install:
+Recommended user install. This intentionally targets the latest full release,
+not the current prerelease:
 
 ```console
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0
@@ -23,6 +24,17 @@ python -m pip install -e ".[dev]"
 ```
 
 Both commands expose the `qplot` and `qplot-cfg` entry points.
+
+## Current Prerelease
+
+The current prerelease is `1.5.0-a1`. The package metadata uses the PEP 440
+normal form `1.5.0a1`; the GitHub release tag should be `v1.5.0-a1`.
+
+Prerelease test install:
+
+```console
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0-a1
+```
 
 ## Package Validation
 
@@ -46,7 +58,9 @@ or attach them to GitHub releases.
 
 Before creating a tagged release:
 
-1. Update the version in `pyproject.toml`.
+1. Update the version in `pyproject.toml`. For prereleases, use the PEP 440
+   package form, such as `1.5.0a1`, even if the Git tag includes a separator,
+   such as `v1.5.0-a1`.
 2. Move relevant entries from `CHANGELOG.md`'s Unreleased section into the new
    release section.
 3. Run `python -m ruff check .`.

@@ -9,6 +9,27 @@ installation commands and release validation, see `docs/distribution.md`.
 
 No changes yet.
 
+## 1.5.0-a1 - 2026-05-21
+
+### Highlights
+
+- Large heatmaps now make downsampling visible in the plot window.
+- The default README install path remains on the latest full release, 1.4.0.
+
+### Added
+
+- Add a heatmap resolution indicator showing the plotted grid size and source
+  grid size when they differ.
+- Add a single icon-only warning button at the bottom right of downsampled
+  heatmaps. Clicking it opens a dialog explaining what downsampling was applied.
+
+### Changed
+
+- Use the selected heatmap setpoint grid, rather than the total run point count,
+  when deciding whether a heatmap exceeds the full-resolution limit.
+- Remove the onscreen heatmap color-rescale button while keeping the keyboard
+  shortcut for color autoscaling.
+
 ## 1.4.0 - 2026-05-19
 
 ### Highlights

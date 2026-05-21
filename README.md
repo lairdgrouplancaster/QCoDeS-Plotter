@@ -17,6 +17,8 @@ automatically when qPlot is installed.
 ## Install
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
+The commands below install the latest full release, `1.4.0`. Prereleases are
+listed on the GitHub releases page but are not used for the default install.
 
 Windows:
 
