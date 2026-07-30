@@ -827,7 +827,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.selection_cleared = False
                 self.scrolled = False
                 self.watching = ["run"]
-                self.maxTime = 123
+                self.maxRunId = 123
 
             def blockSignals(self, blocked):
                 self.signals_blocked = blocked
@@ -908,7 +908,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertTrue(harness.RunList.selection_cleared)
         self.assertTrue(harness.RunList.cleared)
         self.assertEqual(harness.RunList.watching, [])
-        self.assertEqual(harness.RunList.maxTime, 0)
+        self.assertEqual(harness.RunList.maxRunId, 0)
         self.assertTrue(harness.infoBox.cleared)
         self.assertEqual(harness.infoBox.preview.database_runs, ("", {}))
         self.assertTrue(harness.emptyStateFrame.visible)
@@ -1009,7 +1009,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.selection_cleared = False
             self.scrolled = False
             self.watching = ["old"]
-            self.maxTime = 9
+            self.maxRunId = 9
             self.selected_ids = [8]
             self.visible_ids = [9, 7, 6]
 
@@ -1021,6 +1021,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         def addRuns(self, runs):
             self.runs = runs
+            self.maxRunId = max(runs, default=0)
 
         def scrollToTop(self):
             self.scrolled = True
@@ -1235,7 +1236,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             ("old.db", previous_runs),
             )
         self.assertEqual(harness.RunList.watching, [])
-        self.assertEqual(harness.RunList.maxTime, 0)
+        self.assertEqual(harness.RunList.maxRunId, 5)
         self.assertEqual(harness.monitor.started, [1500])
         self.assertFalse(harness.databaseLoadFrame.visible)
         self.assertEqual(harness.databaseLoadLabel.text, "")
@@ -1292,7 +1293,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
     class RunList:
         def __init__(self):
-            self.maxTime = 0
+            self.maxRunId = 0
             self.checked_watching = False
 
         def checkWatching(self):
@@ -1327,7 +1328,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
 
     def test_refresh_empty_database_reports_waiting_state(self):
         old_find_new_runs = database_actions.find_new_runs
-        database_actions.find_new_runs = lambda last_time: {}
+        database_actions.find_new_runs = lambda last_run_id: {}
 
         try:
             harness = self.Harness()
@@ -1349,7 +1350,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
 class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
     class RunList:
         def __init__(self, updated_runs):
-            self.maxTime = 12.0
+            self.maxRunId = 3
             self.updated_runs = updated_runs
 
         def checkWatching(self):
@@ -1397,7 +1398,7 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
                 },
             }
         old_find_new_runs = database_actions.find_new_runs
-        database_actions.find_new_runs = lambda _last_time: {}
+        database_actions.find_new_runs = lambda _last_run_id: {}
 
         try:
             harness = self.Harness(updated_runs)
@@ -1415,7 +1416,7 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
 class RefreshMainAutoPlotTestCase(unittest.TestCase):
     class RunList:
         def __init__(self):
-            self.maxTime = 10.0
+            self.maxRunId = 10
             self.checked_watching = False
             self.added_runs = None
 
@@ -1471,14 +1472,15 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
 
     def test_refresh_auto_plots_new_runs_when_enabled(self):
         new_runs = {
-            1: {"guid": "guid-1", "run_timestamp": 11.0},
-            2: {"guid": "guid-2", "run_timestamp": 12.5},
+            11: {"guid": "guid-11", "run_timestamp": None},
+            12: {"guid": "guid-12", "run_timestamp": 12.5},
+            13: {"guid": "guid-13", "run_timestamp": 12.5},
             }
-        seen_last_times = []
+        seen_last_run_ids = []
         old_find_new_runs = database_actions.find_new_runs
 
-        def find_new_runs(last_time):
-            seen_last_times.append(last_time)
+        def find_new_runs(last_run_id):
+            seen_last_run_ids.append(last_run_id)
             return new_runs
 
         database_actions.find_new_runs = find_new_runs
@@ -1488,13 +1490,14 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         finally:
             database_actions.find_new_runs = old_find_new_runs
 
-        self.assertEqual(seen_last_times, [10.0])
+        self.assertEqual(seen_last_run_ids, [10])
         self.assertTrue(harness.RunList.checked_watching)
-        self.assertEqual(harness.RunList.maxTime, 12.5)
-        self.assertIs(harness.RunList.added_runs, new_runs)
-        self.assertIs(harness.infoBox.preview.added_runs, new_runs)
+        self.assertEqual(harness.RunList.maxRunId, 13)
+        expected_runs = {12: new_runs[12], 13: new_runs[13]}
+        self.assertEqual(harness.RunList.added_runs, expected_runs)
+        self.assertEqual(harness.infoBox.preview.added_runs, expected_runs)
         self.assertEqual(harness.sync_count, 1)
-        self.assertEqual(harness.plotted_guids, ["guid-1", "guid-2"])
+        self.assertEqual(harness.plotted_guids, ["guid-12", "guid-13"])
         self.assertEqual(
             harness.status_messages,
             [
@@ -1505,8 +1508,8 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
 
     def test_refresh_does_not_auto_plot_new_runs_when_disabled(self):
         old_find_new_runs = database_actions.find_new_runs
-        database_actions.find_new_runs = lambda _last_time: {
-            1: {"guid": "guid-1", "run_timestamp": 11.0},
+        database_actions.find_new_runs = lambda _last_run_id: {
+            11: {"guid": "guid-11", "run_timestamp": 11.0},
             }
         try:
             harness = self.Harness(auto_plot_checked=False)
