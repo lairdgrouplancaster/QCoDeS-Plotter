@@ -147,57 +147,32 @@ def fill_heatmap(
         data_dict : dict,
         max_depth : int = 10
         ):
-    def set_value_row_major(major, minor, data):
-        new_val = data[major - 1, minor]
-        if np.isnan(new_val):
-            return
-        data[major, minor] = new_val
-        
-    def set_value_col_major(major, minor, data):
-        new_val = data[minor, major - 1]
-        if np.isnan(new_val):
-            return
-        data[minor, major] = new_val
-        
     data = data_dict["z"].copy()
     if which == "below":
-        fetch_row = lambda major: data[major]
-        set_item = set_value_row_major
+        lines = (data[:, column] for column in range(data.shape[1]))
     elif which == "right":
-        fetch_row = lambda major: data[:, major]
-        set_item = set_value_col_major
+        lines = (data[row, :] for row in range(data.shape[0]))
     else:
         raise KeyError(f'Invalid value for which: {which}, must be "below" or "right".')
-        
-    shape = data.shape
-    length = shape[0] if which == "below" else shape[1]
-        
-    
-    truth_arr = np.array([np.isnan(fetch_row(0))])
-    initial_size = max_depth if length >= max_depth else length
-    
-    for itr in range(initial_size):
-        truth_arr = np.append(
-            truth_arr, 
-            [np.isnan(fetch_row(itr))],
-            axis = 0
-            )
-    
-    for major_itr in range(1, length - 1):
-        truth_arr = truth_arr[1:] # remove first item
-        
-        try:
-            truth_arr = np.append(
-                truth_arr, 
-                [np.isnan(fetch_row(major_itr + max_depth))],
-                axis = 0
-                )
-        except IndexError: # Ignore error for last few data points
-            pass
-        
-        for minor_itr, minor_val in enumerate(truth_arr[0]):
-            if minor_val and not truth_arr[:, minor_itr].all():
-                set_item(major_itr, minor_itr, data)
+
+    if max_depth <= 0:
+        return {"z": data}
+
+    for line in lines:
+        position = 0
+        while position < len(line):
+            if not np.isnan(line[position]):
+                position += 1
+                continue
+
+            gap_start = position
+            while position < len(line) and np.isnan(line[position]):
+                position += 1
+
+            gap_length = position - gap_start
+            bounded = gap_start > 0 and position < len(line)
+            if bounded and gap_length <= max_depth:
+                line[gap_start:position] = line[gap_start - 1]
         
     return {"z" : data}
         
