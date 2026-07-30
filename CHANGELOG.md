@@ -11,6 +11,14 @@ No changes yet.
 
 ## 1.5.0-b1 - 2026-07-31
 
+
+### Highlights
+
+- Bugs identified by GPT-5.6 Sol have all been fixed.
+- As a result, thumbnails and previews now work properly.
+- Handling large datasets remains slow and I have not benchmarked this against Ben Wordsworth's original version.
+- I have also not tested this version thoroughly, which is why it's still a beta.
+
 ### Added
 
 - Add a shared heatmap geometry model for uniform, nonuniform, descending, and
