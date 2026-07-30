@@ -52,6 +52,8 @@ if TYPE_CHECKING:
 
         def initMenu(self) -> None: ...
 
+        def update_theme(self, config: Any) -> None: ...
+
         def closeEvent(self, event: object) -> None: ...
 else:
     class _Plot1DTraceBase:
@@ -80,6 +82,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     """Trace controls and secondary-axis handling for 1D plot windows."""
 
     _trace_styles: dict[str, _TraceStyle]
+    _trace_controls: dict[str, Any]
     _trace_appearance_dialog: "_TraceAppearanceDialog | None"
 
     def _ensure_trace_styles(self) -> dict[str, _TraceStyle]:
@@ -88,6 +91,13 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             styles = {}
             self.__dict__["_trace_styles"] = styles
         return cast(dict[str, Plot1DTraceMixin._TraceStyle], styles)
+
+    def _ensure_trace_controls(self) -> dict[str, Any]:
+        controls = self.__dict__.get("_trace_controls")
+        if not isinstance(controls, dict):
+            controls = {}
+            self.__dict__["_trace_controls"] = controls
+        return cast(dict[str, Any], controls)
 
     def _initial_trace_style(self, order: int = 0) -> _TraceStyle:
         style = self._TraceStyle(order=order)
@@ -126,14 +136,41 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         view_menu.addAction(trace_action)
 
     def _set_main_line_color(self, color: Any) -> None:
+        self._set_trace_line_color(self.label, color)
+
+    def _set_trace_line_color(self, label: str, color: Any) -> None:
         style = self._ensure_trace_styles().setdefault(
-            self.label,
+            label,
             self._initial_trace_style(),
             )
         style.line_color = color.name() if hasattr(color, "name") else str(color)
-        line = self.__dict__.get("line")
-        if line is not None:
-            self._apply_trace_style(self.label, line)
+        self._apply_trace_style(label, self.__dict__.get("lines", {}).get(label))
+
+    def _set_trace_y_axis(self, label: str, side: str) -> None:
+        style = self._ensure_trace_styles().setdefault(
+            label,
+            self._initial_trace_style(),
+            )
+        style.y_axis = "Right" if side.lower() == "right" else "Left"
+        self._apply_trace_style(label, self.__dict__.get("lines", {}).get(label))
+
+    def _sync_trace_control(self, label: str) -> None:
+        control = self._ensure_trace_controls().get(label)
+        style = self._ensure_trace_styles().get(label)
+        if control is None or style is None:
+            return
+
+        color_box = getattr(control, "color_box", None)
+        if color_box is not None:
+            color_box.setColor(QtGui.QColor(style.line_color))
+
+        axis_side = getattr(control, "axis_side", None)
+        if axis_side is not None and axis_side.currentText() != style.y_axis:
+            previous_blocked = axis_side.blockSignals(True)
+            try:
+                axis_side.setCurrentText(style.y_axis)
+            finally:
+                axis_side.blockSignals(previous_blocked)
 
 
     def initAxes(self) -> None:
@@ -150,6 +187,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self.lines = {}
         self._register_main_line()
         self.option_boxes = []
+        self._trace_controls = {}
         self.box_count = 1
         self._trace_appearance_dialog = None
         
@@ -174,10 +212,10 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         main_line.option_box.setDisabled(True)
         main_line.del_box.setDisabled(True)
         main_line.axis_side.setDisabled(True)
-        main_line.color_box.setColor(self.config.theme.colors[0])
         main_line.color_box.selectedColor.connect(
             self._set_main_line_color
             )
+        self._trace_controls[self.label] = main_line
         self.box_layout.addWidget(main_line)
         main_line.adjustSize()
         self._apply_trace_style(self.label, self.line)
@@ -360,11 +398,17 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             if label == box.option_box.currentText():
                 
                 box.color_box.selectedColor.connect(
-                    subplot.set_color
+                    lambda color, trace_label=label: self._set_trace_line_color(
+                        trace_label,
+                        color,
+                        )
                     )
                 
                 box.axis_side.currentTextChanged.connect(
-                    subplot.set_side
+                    lambda side, trace_label=label: self._set_trace_y_axis(
+                        trace_label,
+                        side,
+                        )
                     )
                 selected_box = box
                 break
@@ -372,13 +416,11 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # debug line
         assert selected_box is not None
         
-        # Set display
-        subplot.set_color(selected_box.color_box.color())
-        subplot.set_side(selected_box.axis_side.currentText().lower())
         styles = self._ensure_trace_styles()
         style = styles.setdefault(label, self._initial_trace_style(order=len(styles)))
         style.line_color = selected_box.color_box.color().name()
         style.y_axis = "Right" if selected_box.axis_side.currentText().lower() == "right" else "Left"
+        self._ensure_trace_controls()[label] = selected_box
         self._apply_trace_style(label, subplot)
         
     
@@ -418,6 +460,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         line = self.lines[label]
         self.lines.pop(label)
         self._trace_styles.pop(label, None)
+        self._ensure_trace_controls().pop(label, None)
         # Fetch correct viewbox to remove from
         vb = self.plot if side.lower() == "left" else self.right_vb
         vb.removeItem(line)
@@ -469,6 +512,15 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self._trace_appearance_dialog.raise_()
         self._trace_appearance_dialog.activateWindow()
 
+    def update_theme(self, config: Any) -> None:
+        super().update_theme(config)
+        for label, line in self.__dict__.get("lines", {}).items():
+            self._apply_trace_style(label, line)
+
+        dialog = self.__dict__.get("_trace_appearance_dialog")
+        if dialog is not None:
+            dialog.refresh_theme()
+
     def _trace_measurement_name(self, label: str, line: Any) -> str:
         if label == self.label:
             return self.param.name
@@ -479,6 +531,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def _apply_trace_style(self, label: str, line: Any) -> None:
         styles = self._ensure_trace_styles()
         style = styles.setdefault(label, self._initial_trace_style(order=len(styles)))
+        self._sync_trace_control(label)
         if line is None:
             return
         pen_style_map = {
@@ -917,6 +970,16 @@ class _TraceAppearanceDialog(qtw.QDialog):
     def _add_marker_symbol_items(self, combo: qtw.QComboBox) -> None:
         for symbol in self._MARKER_SYMBOLS:
             combo.addItem(self._marker_symbol_icon(symbol), "", symbol)
+
+    def refresh_theme(self) -> None:
+        for index, (name, _pen_style) in enumerate(self._LINE_STYLES):
+            self.line_style.setItemIcon(index, self._line_style_icon(name))
+        for index, symbol in enumerate(self._MARKER_SYMBOLS):
+            self.marker_symbol.setItemIcon(
+                index,
+                self._marker_symbol_icon(symbol),
+                )
+        self.refresh_rows()
 
     def _color_icon(self, color: str) -> QtGui.QIcon:
         pixmap = QtGui.QPixmap(38, 16)
