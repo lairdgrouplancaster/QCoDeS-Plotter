@@ -5,8 +5,10 @@ from pathlib import Path
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
+from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling import database as database_module
+from qplot.datahandling.readonly import set_qcodes_database_location
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
 from qplot.windows._dataset_handle import DatasetHandle
@@ -931,6 +933,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
     class Harness:
         cancel_database_load = main_window.MainWindow.cancel_database_load
+        database_load_finished = main_window.MainWindow.database_load_finished
         database_load_status = main_window.MainWindow.database_load_status
         _hide_database_load_panel = main_window.MainWindow._hide_database_load_panel
         _restore_database_load_previous_state = (
@@ -992,9 +995,24 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.emptyStateHelpButton = DatabaseLoadUiTestCase.Button()
             self.spinBox = DatabaseLoadUiTestCase.SpinBox()
             self.status_messages = []
+            self.error_messages = []
+            self.remembered_databases = []
+            self.detail_loads = []
 
         def show_status(self, message, timeout=5000):
             self.status_messages.append((message, timeout))
+
+        def show_error(self, title, message, details=None):
+            self.error_messages.append((title, message, details))
+
+        def select_default_run(self):
+            pass
+
+        def remember_loaded_database(self, database_path):
+            self.remembered_databases.append(database_path)
+
+        def _start_database_detail_load(self, database_path, runs):
+            self.detail_loads.append((database_path, runs))
 
     def test_database_load_status_shows_inline_progress(self):
         harness = self.Harness()
@@ -1566,7 +1584,6 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
 class DatabaseLoadWorkerTestCase(unittest.TestCase):
     def test_database_load_worker_opens_database_read_only_and_returns_runs(self):
         old_access_error = database_module.database_access_error
-        old_set_location = database_module.set_qcodes_database_location
         old_get_runs = database_module.get_runs_basic_via_sql
         calls = []
 
@@ -1574,15 +1591,11 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             calls.append(("access", database_path))
             return None
 
-        def set_location(database_path):
-            calls.append(("set_location", database_path))
-
         def get_runs(database_path):
             calls.append(("basic_runs", database_path))
             return {1: {"guid": "guid-1", "run_timestamp": 123.0}}
 
         database_module.database_access_error = access_error
-        database_module.set_qcodes_database_location = set_location
         database_module.get_runs_basic_via_sql = get_runs
         try:
             worker = main_window.DatabaseLoadWorker(7, "example.db")
@@ -1594,12 +1607,10 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker.run()
         finally:
             database_module.database_access_error = old_access_error
-            database_module.set_qcodes_database_location = old_set_location
             database_module.get_runs_basic_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", "example.db"),
-            ("set_location", "example.db"),
             ("basic_runs", "example.db"),
             ])
         self.assertEqual(statuses, [
@@ -1613,12 +1624,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
     def test_database_load_worker_reports_access_error(self):
         old_access_error = database_module.database_access_error
-        old_set_location = database_module.set_qcodes_database_location
 
         database_module.database_access_error = lambda _path: "locked database"
-        database_module.set_qcodes_database_location = lambda _path: self.fail(
-            "Database location should not be set after an access error"
-            )
         try:
             worker = main_window.DatabaseLoadWorker(3, "locked.db")
             finished = []
@@ -1627,12 +1634,110 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker.run()
         finally:
             database_module.database_access_error = old_access_error
-            database_module.set_qcodes_database_location = old_set_location
 
         self.assertEqual(len(finished), 1)
         self.assertEqual(finished[0][:3], (3, "locked.db", {}))
         self.assertIsInstance(finished[0][3], RuntimeError)
         self.assertIn("locked database", str(finished[0][3]))
+
+    def test_failed_database_load_preserves_active_database(self):
+        active_database = get_DB_location()
+        old_access_error = database_module.database_access_error
+        old_get_runs = database_module.get_runs_basic_via_sql
+
+        set_qcodes_database_location("active.db")
+        database_module.database_access_error = lambda _path: None
+
+        def fail_to_get_runs(_database_path):
+            raise RuntimeError("broken run table")
+
+        database_module.get_runs_basic_via_sql = fail_to_get_runs
+        try:
+            worker = main_window.DatabaseLoadWorker(10, "failed.db")
+            worker.run()
+
+            self.assertEqual(get_DB_location(), "active.db")
+        finally:
+            database_module.database_access_error = old_access_error
+            database_module.get_runs_basic_via_sql = old_get_runs
+            set_qcodes_database_location(active_database)
+
+    def test_cancelled_database_load_preserves_active_database(self):
+        active_database = get_DB_location()
+        old_access_error = database_module.database_access_error
+        old_get_runs = database_module.get_runs_basic_via_sql
+
+        set_qcodes_database_location("active.db")
+        database_module.database_access_error = lambda _path: None
+        try:
+            worker = main_window.DatabaseLoadWorker(11, "cancelled.db")
+
+            def cancel_while_getting_runs(_database_path):
+                worker.cancel()
+                return {}
+
+            database_module.get_runs_basic_via_sql = cancel_while_getting_runs
+            worker.run()
+
+            self.assertEqual(get_DB_location(), "active.db")
+        finally:
+            database_module.database_access_error = old_access_error
+            database_module.get_runs_basic_via_sql = old_get_runs
+            set_qcodes_database_location(active_database)
+
+    def test_stale_database_load_preserves_active_database(self):
+        active_database = get_DB_location()
+        old_access_error = database_module.database_access_error
+        old_get_runs = database_module.get_runs_basic_via_sql
+
+        set_qcodes_database_location("active.db")
+        database_module.database_access_error = lambda _path: None
+        database_module.get_runs_basic_via_sql = lambda _path: {}
+        try:
+            harness = DatabaseLoadUiTestCase.Harness()
+            harness._database_load_generation = 13
+            worker = main_window.DatabaseLoadWorker(12, "stale.db")
+            worker.signals.finished.connect(
+                lambda *args: harness.database_load_finished(*args)
+                )
+
+            worker.run()
+
+            self.assertEqual(get_DB_location(), "active.db")
+        finally:
+            database_module.database_access_error = old_access_error
+            database_module.get_runs_basic_via_sql = old_get_runs
+            set_qcodes_database_location(active_database)
+
+    def test_current_successful_database_load_commits_database(self):
+        active_database = get_DB_location()
+        old_access_error = database_module.database_access_error
+        old_get_runs = database_module.get_runs_basic_via_sql
+        runs = {1: {"guid": "guid-1", "run_timestamp": 123.0}}
+
+        set_qcodes_database_location("active.db")
+        database_module.database_access_error = lambda _path: None
+        database_module.get_runs_basic_via_sql = lambda _path: runs
+        try:
+            harness = DatabaseLoadUiTestCase.Harness()
+            harness._database_load_generation = 14
+            harness._database_load_active = True
+            harness._database_load_state = {"monitorTimer": 0}
+            harness.fileTextbox.setText("committed.db")
+            worker = main_window.DatabaseLoadWorker(14, "committed.db")
+            worker.signals.finished.connect(
+                lambda *args: harness.database_load_finished(*args)
+                )
+
+            worker.run()
+
+            self.assertEqual(get_DB_location(), "committed.db")
+            self.assertEqual(harness.remembered_databases, ["committed.db"])
+            self.assertEqual(harness.detail_loads, [("committed.db", runs)])
+        finally:
+            database_module.database_access_error = old_access_error
+            database_module.get_runs_basic_via_sql = old_get_runs
+            set_qcodes_database_location(active_database)
 
     def test_database_load_worker_does_not_start_when_cancelled(self):
         old_placeholder = database_module.database_is_likely_cloud_placeholder
@@ -1711,7 +1816,6 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_label = database_module.database_cloud_storage_label
         old_placeholder = database_module.database_is_likely_cloud_placeholder
         old_prefetch = database_module.prefetch_database_file_with_timeout
-        old_set_location = database_module.set_qcodes_database_location
         old_get_runs = database_module.get_runs_basic_via_sql
         calls = []
 
@@ -1736,9 +1840,6 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         database_module.database_cloud_storage_label = lambda _path: "OneDrive"
         database_module.database_is_likely_cloud_placeholder = lambda _path: False
         database_module.prefetch_database_file_with_timeout = prefetch
-        database_module.set_qcodes_database_location = lambda path: calls.append(
-            ("set_location", path)
-            )
         database_module.get_runs_basic_via_sql = lambda _path: {}
         try:
             with tempfile.NamedTemporaryFile(suffix=".db") as database:
@@ -1755,14 +1856,12 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             database_module.database_cloud_storage_label = old_label
             database_module.database_is_likely_cloud_placeholder = old_placeholder
             database_module.prefetch_database_file_with_timeout = old_prefetch
-            database_module.set_qcodes_database_location = old_set_location
             database_module.get_runs_basic_via_sql = old_get_runs
 
         self.assertEqual(calls, [
             ("access", expected_path),
             ("prefetch", expected_path, 12),
             ("access", expected_path),
-            ("set_location", expected_path),
             ])
         self.assertIn((9, "Waiting for OneDrive sync... 100% available"), statuses)
         self.assertEqual(finished, [(9, expected_path, {}, None)])

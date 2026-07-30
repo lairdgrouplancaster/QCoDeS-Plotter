@@ -15,6 +15,7 @@ from qplot.datahandling.database import (
     DatabaseLoadWorker,
     database_info_rows,
 )
+from qplot.datahandling.readonly import set_qcodes_database_location
 from qplot.diagnostics import log_event, log_exception
 
 from ._widgets.details_tables import (
@@ -769,6 +770,7 @@ class DatabaseActionsMixin:
                 self.monitor.start(int(monitorTimer * 1000))
             return
 
+        set_qcodes_database_location(abspath)
         runs = runs or {}
         self.RunList.clear()
         self.RunList.watching = []
