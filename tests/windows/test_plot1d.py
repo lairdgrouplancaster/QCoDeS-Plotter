@@ -312,6 +312,113 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertEqual(window._trace_styles["main"].line_color, "#ff0000")
 
+    def test_main_trace_control_uses_authoritative_initial_style(self):
+        class Theme:
+            colors = [QtGui.QColor("#008000")]
+
+        class Config:
+            theme = Theme()
+
+        class BaseWindow(qtw.QMainWindow):
+            def initAxes(self):
+                pass
+
+        class Host(Plot1DTraceMixin, BaseWindow):
+            pass
+
+        host = Host()
+        try:
+            host.config = Config()
+            host.label = "main"
+            host.line = pg.PlotDataItem()
+            host.axes_dock = QDock_context("Line control", host)
+            host.addDockWidget(
+                QtCore.Qt.DockWidgetArea.LeftDockWidgetArea,
+                host.axes_dock,
+                )
+
+            host.initAxes()
+
+            main_picker = host.box_layout.itemAt(0).widget()
+            stored_color = host._trace_styles[host.label].line_color
+            self.assertEqual(stored_color, TRACE_COLOR_PALETTE[0])
+            self.assertEqual(main_picker.color_box.color().name(), stored_color)
+            self.assertEqual(host.line.opts["pen"].color().name(), stored_color)
+        finally:
+            host.deleteLater()
+
+    def test_theme_change_reapplies_authoritative_trace_style_and_control(self):
+        class Theme:
+            colors = [QtGui.QColor("#ff0000")]
+
+        class Config:
+            theme = Theme()
+
+        class BaseWindow(qtw.QMainWindow):
+            def initAxes(self):
+                pass
+
+            def update_theme(self, config):
+                self.config = config
+                for line in self.lines.values():
+                    line.setPen(pg.mkPen(config.theme.colors[0]))
+
+        class Host(Plot1DTraceMixin, BaseWindow):
+            pass
+
+        host = Host()
+        try:
+            host.config = Config()
+            host.label = "main"
+            host.line = pg.PlotDataItem()
+            host.axes_dock = QDock_context("Line control", host)
+            host.addDockWidget(
+                QtCore.Qt.DockWidgetArea.LeftDockWidgetArea,
+                host.axes_dock,
+                )
+            host.initAxes()
+            style = host._trace_styles[host.label]
+            style.line_color = "#123456"
+            style.line_width = 3.5
+            style.line_style = "Dash"
+            host._apply_trace_style(host.label, host.line)
+
+            secondary_label = "secondary"
+            secondary_line = pg.PlotDataItem()
+            secondary_picker = picker_1d(host, host.config, [secondary_label])
+            secondary_style = host._TraceStyle(
+                line_color="#654321",
+                line_width=4.5,
+                line_style="Dot",
+                )
+            host.lines[secondary_label] = secondary_line
+            host._trace_styles[secondary_label] = secondary_style
+            host._trace_controls[secondary_label] = secondary_picker
+            host._apply_trace_style(secondary_label, secondary_line)
+
+            host.update_theme(Config())
+
+            main_picker = host.box_layout.itemAt(0).widget()
+            pen = host.line.opts["pen"]
+            self.assertEqual(style.line_color, "#123456")
+            self.assertEqual(main_picker.color_box.color().name(), style.line_color)
+            self.assertEqual(pen.color().name(), style.line_color)
+            self.assertEqual(pen.widthF(), style.line_width)
+            self.assertEqual(pen.style(), QtCore.Qt.PenStyle.DashLine)
+            secondary_pen = secondary_line.opts["pen"]
+            self.assertEqual(
+                secondary_picker.color_box.color().name(),
+                secondary_style.line_color,
+                )
+            self.assertEqual(
+                secondary_pen.color().name(),
+                secondary_style.line_color,
+                )
+            self.assertEqual(secondary_pen.widthF(), secondary_style.line_width)
+            self.assertEqual(secondary_pen.style(), QtCore.Qt.PenStyle.DotLine)
+        finally:
+            host.deleteLater()
+
     def test_trace_appearance_action_is_added_to_view_menu(self):
         class BaseWindow(qtw.QMainWindow):
             def initMenu(self):
@@ -460,6 +567,49 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertEqual(host._trace_styles[host.label].line_color, "#123456")
             self.assertEqual(dialog.line_color.currentData(), "#123456")
             self.assertEqual(host.lines[host.label].pen.color().name(), "#123456")
+        finally:
+            if dialog is not None:
+                dialog.deleteLater()
+            host.deleteLater()
+
+    def test_trace_appearance_updates_legacy_trace_control(self):
+        class Theme:
+            colors = [QtGui.QColor("#008000")]
+
+        class Config:
+            theme = Theme()
+
+        class BaseWindow(qtw.QMainWindow):
+            def initAxes(self):
+                pass
+
+        class Host(Plot1DTraceMixin, BaseWindow):
+            pass
+
+        host = Host()
+        dialog = None
+        try:
+            host.config = Config()
+            host.label = "ID:1 current"
+            host.param = type("Param", (), {"name": "current"})()
+            host.line = pg.PlotDataItem()
+            host.axes_dock = QDock_context("Line control", host)
+            host.addDockWidget(
+                QtCore.Qt.DockWidgetArea.LeftDockWidgetArea,
+                host.axes_dock,
+                )
+            host.initAxes()
+            main_picker = host.box_layout.itemAt(0).widget()
+
+            dialog = _TraceAppearanceDialog(host)
+            dialog.refresh_rows()
+            dialog._set_combo_value(dialog.line_color, "#d62728")
+            dialog._apply_selection()
+
+            style = host._trace_styles[host.label]
+            self.assertEqual(style.line_color, "#d62728")
+            self.assertEqual(main_picker.color_box.color().name(), style.line_color)
+            self.assertEqual(host.line.opts["pen"].color().name(), style.line_color)
         finally:
             if dialog is not None:
                 dialog.deleteLater()
@@ -622,6 +772,15 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertTrue(host.plot.getAxis("right").style["showValues"])
             self.assertEqual(host.option_boxes[0], selected_box)
             self.assertEqual(len(host.option_boxes), 2)
+
+            selected_box.color_box.selectedColor.emit(QtGui.QColor("#123456"))
+            selected_box.axis_side.setCurrentText("Left")
+
+            style = host._trace_styles[source.label]
+            self.assertEqual(style.line_color, "#123456")
+            self.assertEqual(style.y_axis, "Left")
+            self.assertEqual(secondary.opts["pen"].color().name(), style.line_color)
+            self.assertEqual(secondary.side, "left")
 
             host.remove_line(source.label)
 
