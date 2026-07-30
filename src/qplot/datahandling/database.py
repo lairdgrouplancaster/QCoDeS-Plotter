@@ -15,10 +15,7 @@ from time import perf_counter
 
 from PyQt6 import QtCore
 
-from qplot.datahandling.readonly import (
-    set_qcodes_database_location,
-    sqlite_read_only_connection,
-)
+from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.datahandling.readSQL import (
     get_runs_basic_via_sql,
     iter_run_detail_batches_via_sql,
@@ -463,10 +460,6 @@ class DatabaseLoadWorker(QtCore.QRunnable):
                 raise RuntimeError(access_error)
 
             self._emit_status("Opening database read-only...")
-            set_qcodes_database_location(self.database_path)
-            if self._is_cancelled():
-                return
-
             self._emit_status("Loading basic run list...")
             runs = get_runs_basic_via_sql(self.database_path) or {}
             if self._is_cancelled():
