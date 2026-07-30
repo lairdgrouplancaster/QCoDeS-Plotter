@@ -218,17 +218,31 @@ class operations_options_base(qtw.QWidget):
             item = cast(rowItem, self.list_order.item(i))
             if item.isHidden():
                 continue
-            
-            output = item.output()
+
+            input_widget = item.input
+            if (
+                    isinstance(input_widget, qtw.QLineEdit)
+                    and input_widget.text()
+                    and not input_widget.hasAcceptableInput()
+                    ):
+                continue
+
+            try:
+                output = item.output()
+            except (TypeError, ValueError, OverflowError):
+                continue
+
             if output == "": # Data not entered
-                input_widget = item.input
                 if hasattr(input_widget, "placeholderText"):
                     output = cast(Any, input_widget).placeholderText()
                     if output == "": # still blank
                         continue
                     
                     if isinstance(item.input_type, type):
-                        output = item.input_type(output)
+                        try:
+                            output = item.input_type(output)
+                        except (TypeError, ValueError, OverflowError):
+                            continue
                 else:
                     continue
             
@@ -330,7 +344,9 @@ class rowItem(qtw.QListWidgetItem):
             self.output = lambda: (scalar_type(line_edit.text()) 
                                    if line_edit.text() else "")
             # Restrict user input to reduce errors
-            if input_type != str:
+            if input_type is int:
+                line_edit.setValidator(QtGui.QIntValidator())
+            elif input_type is float:
                 validator = QtGui.QDoubleValidator()
                 validator.setNotation(QtGui.QDoubleValidator.Notation.ScientificNotation)
                 validator.setLocale(QtCore.QLocale("C"))  # Avoids locale issues like commas

@@ -8,7 +8,12 @@ import qplot.tools.worker as worker_module
 from qplot.configuration.scripts import try_as_num
 from qplot.tools.general import data2matrix
 from qplot.tools.heatmap_geometry import HeatmapGeometry
-from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
+from qplot.tools.plot_tools import (
+    differentiate,
+    fill_heatmap,
+    pass_filter,
+    subtract_mean,
+)
 from qplot.tools.worker import loader
 from qplot.windows import _plotWin as plotwin_module
 from qplot.windows._dataset_handle import DatasetHandle
@@ -503,6 +508,52 @@ class ToolFunctionTestCase(unittest.TestCase):
 
         np.testing.assert_array_equal(filtered["y"], np.array([2.0, 4.0, 5.0]))
         np.testing.assert_allclose(differentiated["y"], np.array([2.0, 2.0, 2.0]))
+
+    def test_fill_below_handles_bounded_leading_trailing_and_over_limit_gaps(self):
+        data_grid = np.array([
+            [1.0, np.nan, 1.0, 1.0],
+            [np.nan, np.nan, 2.0, np.nan],
+            [np.nan, 3.0, 3.0, np.nan],
+            [4.0, 4.0, 4.0, np.nan],
+            [5.0, 5.0, 5.0, 5.0],
+            [6.0, 6.0, np.nan, 6.0],
+            [7.0, 7.0, np.nan, 7.0],
+        ])
+
+        result = fill_heatmap("below", {"z": data_grid}, max_depth=2)
+
+        np.testing.assert_array_equal(
+            result["z"],
+            np.array([
+                [1.0, np.nan, 1.0, 1.0],
+                [1.0, np.nan, 2.0, np.nan],
+                [1.0, 3.0, 3.0, np.nan],
+                [4.0, 4.0, 4.0, np.nan],
+                [5.0, 5.0, 5.0, 5.0],
+                [6.0, 6.0, np.nan, 6.0],
+                [7.0, 7.0, np.nan, 7.0],
+            ]),
+        )
+
+    def test_fill_right_handles_bounded_leading_trailing_and_over_limit_gaps(self):
+        data_grid = np.array([
+            [1.0, np.nan, np.nan, 4.0, 5.0, 6.0, 7.0],
+            [np.nan, np.nan, 3.0, 4.0, 5.0, 6.0, 7.0],
+            [1.0, 2.0, 3.0, 4.0, 5.0, np.nan, np.nan],
+            [1.0, np.nan, np.nan, np.nan, 5.0, 6.0, 7.0],
+        ])
+
+        result = fill_heatmap("right", {"z": data_grid}, max_depth=2)
+
+        np.testing.assert_array_equal(
+            result["z"],
+            np.array([
+                [1.0, 1.0, 1.0, 4.0, 5.0, 6.0, 7.0],
+                [np.nan, np.nan, 3.0, 4.0, 5.0, 6.0, 7.0],
+                [1.0, 2.0, 3.0, 4.0, 5.0, np.nan, np.nan],
+                [1.0, np.nan, np.nan, np.nan, 5.0, 6.0, 7.0],
+            ]),
+        )
 
     def test_worker_operations_continue_after_one_operation_fails(self):
         class Signal:
