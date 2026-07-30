@@ -35,6 +35,20 @@ rows to CSV files in the configured qPlot directory, usually `~/.qplot`.
 Use this only for local performance investigation. The generated CSV files are
 not part of the project source.
 
+## `benchmark_heatmap_aggregation.py`
+
+Creates a temporary 2,000,000-row heatmap database and reports the direct SQL
+spatial-aggregation load and spatial-mean preview generation times separately
+from database creation:
+
+```console
+python scripts/benchmark_heatmap_aggregation.py
+```
+
+The benchmark asserts that every source row contributes, the plotted grid stays
+within its configured cell bound, all plotted values are finite, and a bounded
+preview image is produced. The temporary database is removed automatically.
+
 ## `capture_demo_screenshots.py`
 
 Generates the PNG screenshots used by `docs/demo-data.md`:

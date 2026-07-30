@@ -12,6 +12,38 @@ from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
 
 class Plot2dLiveRefreshTestCase(unittest.TestCase):
+    def test_large_heatmap_range_controls_cover_axis_and_auto_actions(self):
+        class Signal:
+            def __init__(self):
+                self.callbacks = []
+
+            def connect(self, callback):
+                self.callbacks.append(callback)
+
+            def emit(self, *args):
+                for callback in self.callbacks:
+                    callback(*args)
+
+        window = plot2d.__new__(plot2d)
+        window.plot = type("Plot", (), {})()
+        window.plot.sigRangeChangedManually = Signal()
+        window.plot.autoBtn = type("AutoButton", (), {"clicked": Signal()})()
+        window.vb = type("ViewBox", (), {"autoRange_triggered": Signal()})()
+        scheduled = []
+        zoomed_all = []
+        window._schedule_visible_heatmap_reload = (
+            lambda *_args: scheduled.append(True)
+            )
+        window._zoom_large_heatmap_to_all = lambda: zoomed_all.append(True)
+
+        window._connect_heatmap_range_controls()
+        window.plot.sigRangeChangedManually.emit(object())
+        window.vb.autoRange_triggered.emit()
+        window.plot.autoBtn.clicked.emit(object())
+
+        self.assertEqual(scheduled, [True])
+        self.assertEqual(zoomed_all, [True, True])
+
     def test_empty_live_worker_data_releases_worker_without_rendering(self):
         class Signal:
             def __init__(self):
@@ -99,6 +131,167 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             }
 
         self.assertIsNone(window._visible_heatmap_axis_ranges())
+
+    def test_large_heatmap_state_keeps_source_and_outer_view_ranges(self):
+        class Worker:
+            loaded_from_sql_heatmap = True
+            heatmap_axis_ranges = None
+            heatmap_source_axis_ranges = {
+                "x": (0.0, 39.0),
+                "y": (0.0, 29.0),
+                }
+
+        window = plot2d.__new__(plot2d)
+        window.axis_data = {
+            "x": np.array([4.5, 14.5, 24.5, 34.5]),
+            "y": np.array([3.25, 10.75, 18.25, 25.75]),
+            }
+        window._heatmap_full_axis_ranges = None
+        window._heatmap_full_view_ranges = None
+        window._heatmap_last_view_ranges = None
+        window._update_heatmap_downsample_state = lambda _worker: None
+
+        window._update_large_heatmap_state(Worker())
+
+        self.assertEqual(
+            window._heatmap_full_axis_ranges,
+            {"x": (0.0, 39.0), "y": (0.0, 29.0)},
+            )
+        np.testing.assert_allclose(
+            window._heatmap_full_view_ranges["x"],
+            (-0.5, 39.5),
+            )
+        np.testing.assert_allclose(
+            window._heatmap_full_view_ranges["y"],
+            (-0.5, 29.5),
+            )
+
+    def test_zoom_to_all_reloads_full_large_heatmap(self):
+        class ViewBox:
+            def __init__(self):
+                self.ranges = []
+
+            def setRange(self, **kwargs):
+                self.ranges.append(kwargs)
+
+        class Timer:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        window = plot2d.__new__(plot2d)
+        window.vb = ViewBox()
+        window._heatmap_view_reload_timer = Timer()
+        window._large_heatmap_sql_mode = True
+        window._heatmap_full_axis_ranges = {
+            "x": (0.0, 39.0),
+            "y": (0.0, 29.0),
+            }
+        window._heatmap_full_view_ranges = {
+            "x": (-0.5, 39.5),
+            "y": (-0.5, 29.5),
+            }
+        window._heatmap_last_view_ranges = {
+            "x": (10.0, 20.0),
+            "y": (5.0, 10.0),
+            }
+        window.worker = type("Worker", (), {"running": False})()
+        window.param = type("Param", (), {"name": "signal"})()
+        loads = []
+        window.load_data = lambda **kwargs: loads.append(kwargs)
+
+        window._zoom_large_heatmap_to_all()
+
+        self.assertTrue(window._heatmap_view_reload_timer.stopped)
+        self.assertEqual(
+            window.vb.ranges,
+            [{
+                "xRange": (-0.5, 39.5),
+                "yRange": (-0.5, 29.5),
+                "padding": 0,
+                }],
+            )
+        self.assertIsNone(window._heatmap_last_view_ranges)
+        self.assertEqual(loads[0]["heatmap_axis_ranges"], None)
+        self.assertEqual(
+            loads[0]["heatmap_full_axis_ranges"],
+            window._heatmap_full_axis_ranges,
+            )
+
+    def test_zooming_out_of_visible_range_reloads_full_large_heatmap(self):
+        window = plot2d.__new__(plot2d)
+        window._large_heatmap_sql_mode = True
+        window._heatmap_full_axis_ranges = {
+            "x": (0.0, 39.0),
+            "y": (0.0, 29.0),
+            }
+        window._heatmap_last_view_ranges = {
+            "x": (10.0, 20.0),
+            "y": (5.0, 10.0),
+            }
+        window.worker = type("Worker", (), {"running": False})()
+        window.param = type("Param", (), {"name": "signal"})()
+        window._visible_heatmap_axis_ranges = lambda: None
+        loads = []
+        window.load_data = lambda **kwargs: loads.append(kwargs)
+
+        window._reload_visible_heatmap_data()
+
+        self.assertIsNone(window._heatmap_last_view_ranges)
+        self.assertEqual(len(loads), 1)
+        self.assertIsNone(loads[0]["heatmap_axis_ranges"])
+        self.assertEqual(
+            loads[0]["heatmap_full_axis_ranges"],
+            window._heatmap_full_axis_ranges,
+            )
+
+    def test_zoom_to_all_retries_full_reload_after_worker_finishes(self):
+        class ViewBox:
+            def setRange(self, **_kwargs):
+                pass
+
+        class Timer:
+            def __init__(self):
+                self.starts = []
+
+            def stop(self):
+                pass
+
+            def start(self, interval):
+                self.starts.append(interval)
+
+        window = plot2d.__new__(plot2d)
+        window.vb = ViewBox()
+        window._heatmap_view_reload_timer = Timer()
+        window._large_heatmap_sql_mode = True
+        window._heatmap_full_axis_ranges = {
+            "x": (0.0, 39.0),
+            "y": (0.0, 29.0),
+            }
+        window._heatmap_full_view_ranges = window._heatmap_full_axis_ranges
+        window._heatmap_last_view_ranges = {
+            "x": (10.0, 20.0),
+            "y": (5.0, 10.0),
+            }
+        window.worker = type("Worker", (), {"running": True})()
+        window.param = type("Param", (), {"name": "signal"})()
+        window._visible_heatmap_axis_ranges = lambda: None
+        loads = []
+        window.load_data = lambda **kwargs: loads.append(kwargs)
+
+        window._zoom_large_heatmap_to_all()
+
+        self.assertEqual(len(window._heatmap_view_reload_timer.starts), 1)
+        self.assertGreater(window._heatmap_view_reload_timer.starts[0], 0)
+        self.assertEqual(loads, [])
+
+        window.worker.running = False
+        window._reload_visible_heatmap_data()
+
+        self.assertEqual(len(loads), 1)
+        self.assertIsNone(loads[0]["heatmap_axis_ranges"])
 
 
 class HeatmapHoverOutlineTestCase(unittest.TestCase):
@@ -1460,6 +1653,56 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.assertIn("full-resolution heatmap limit is 1,000,000", text)
             self.assertIn("176 x 176 = 30,976 cells", text)
             self.assertIn("uniformly sampled", text)
+        finally:
+            host.deleteLater()
+
+    def test_spatially_aggregated_heatmap_explains_that_all_rows_contributed(self):
+        class Worker:
+            heatmap_downsample_info = {
+                "source_row_count": 2_000_000,
+                "estimated_range_rows": 2_000_000,
+                "loaded_point_count": 200_000,
+                "source_sampled": False,
+                "source_aggregated": True,
+                "aggregated_source_row_count": 2_000_000,
+                "source_sample_limit": None,
+                "source_sample_stride": None,
+                "source_sample_strategy": None,
+                "source_aggregation_strategy": "spatial mean",
+                "axis_ranges": None,
+                "unique_x_count": 2_000,
+                "unique_y_count": 1_000,
+                "exact_cell_count": 2_000_000,
+                "source_grid_columns": 2_000,
+                "source_grid_rows": 1_000,
+                "source_grid_cell_count": 2_000_000,
+                "grid_columns": 500,
+                "grid_rows": 400,
+                "grid_cell_count": 200_000,
+                "grid_binned": True,
+                "grid_cell_limit": 250_000,
+                "full_resolution_point_limit": 1_000_000,
+                "empty_bins_filled": False,
+                }
+
+        host = plot2d.__new__(plot2d)
+        qtw.QMainWindow.__init__(host)
+        host.toolbarCo_ord = qtw.QToolBar(host)
+        host.widget = qtw.QWidget(host)
+        host._heatmap_worker_downsample_info = None
+        host._heatmap_downsample_info = None
+
+        try:
+            host._init_heatmap_downsample_warning_button()
+            host._update_heatmap_downsample_state(Worker())
+
+            text = host._heatmap_downsample_dialog_text()
+            self.assertIn(
+                "All 2,000,000 matching source rows contributed",
+                text,
+                )
+            self.assertIn("200,000 spatial mean cells", text)
+            self.assertNotIn("sampled before plotting", text)
         finally:
             host.deleteLater()
 

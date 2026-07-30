@@ -32,7 +32,6 @@ MAX_SQL_HEATMAP_SOURCE_ROWS = 250_000
 MAX_SQL_HEATMAP_GRID_SIDE = 800
 MAX_SQL_HEATMAP_GRID_CELLS = 250_000
 SQL_HEATMAP_SAMPLES_PER_CELL = 4
-SQL_HEATMAP_ROWID_CHUNK = 900
 
 
 def _sqlite_identifier(name):
@@ -100,10 +99,14 @@ class loader(QtCore.QRunnable):
         self.heatmap_axis_ranges = heatmap_axis_ranges
         self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
         self.sampled_heatmap_source = False
-        self.loaded_from_sql_sample = False
+        self.aggregated_heatmap_source = False
+        self.loaded_from_sql_heatmap = False
         self.loaded_point_count: int | None = None
         self.heatmap_downsample_info: dict[str, Any] | None = None
         self.heatmap_source_grid_shape: tuple[int, int] | None = None
+        self.heatmap_source_axis_ranges: (
+            dict[str, tuple[float, float]] | None
+            ) = None
         
     
     def run(self):
@@ -325,7 +328,7 @@ class loader(QtCore.QRunnable):
             "y": self.param_dict[self.axes_dict["y"]],
             }
         self.dataGrid = data_grid
-        self.loaded_from_sql_sample = True
+        self.loaded_from_sql_heatmap = True
         self.loaded_point_count = int(z_data.size)
         self.heatmap_downsample_info = self._heatmap_downsample_info()
 
@@ -350,8 +353,9 @@ class loader(QtCore.QRunnable):
                 "row_count": 0,
                 "estimated_range_rows": None,
                 "sampled": False,
+                "aggregated": False,
                 "sample_limit": MAX_SQL_HEATMAP_SOURCE_ROWS,
-                "sample_stride": 1,
+                "sample_stride": None,
                 "strategy": "empty",
                 "axis_ranges": self._normalised_heatmap_axis_ranges(
                     self.heatmap_axis_ranges
@@ -379,8 +383,9 @@ class loader(QtCore.QRunnable):
             "row_count": int(row_count),
             "estimated_range_rows": int(row_count),
             "sampled": False,
+            "aggregated": False,
             "sample_limit": MAX_SQL_HEATMAP_SOURCE_ROWS,
-            "sample_stride": 1,
+            "sample_stride": None,
             "strategy": "all",
             "axis_ranges": axis_ranges,
             }
@@ -388,48 +393,43 @@ class loader(QtCore.QRunnable):
         axis_where_sql, parameters = self._heatmap_where_clause()
         if axis_where_sql:
             where_sql = f"{selected_where_sql} AND {axis_where_sql}"
-            sample_sql, sample_parameters = self._range_sample_clause(row_count)
-            self.sampled_heatmap_source = bool(sample_sql)
-            self._heatmap_source_info.update({
-                "estimated_range_rows": getattr(
-                    self,
-                    "_heatmap_estimated_range_rows",
-                    None,
-                    ),
-                "sampled": bool(sample_sql),
-                "sample_stride": getattr(self, "_heatmap_source_sample_stride", 1),
-                "strategy": "visible-range stride" if sample_sql else "visible range",
-                })
-            cursor = conn.execute(
-                (
-                    f"SELECT {columns} FROM {table} "
-                    f"WHERE {where_sql}{sample_sql} "
-                    "ORDER BY rowid LIMIT ?"
-                    ),
-                (*parameters, *sample_parameters, MAX_SQL_HEATMAP_SOURCE_ROWS),
+            spatial_where_sql = (
+                f"{where_sql} AND {x_column} IS NOT NULL "
+                f"AND {y_column} IS NOT NULL"
                 )
-            arrays = self._arrays_from_cursor(cursor)
-            if arrays[2].size > 0 or not sample_sql:
-                return arrays
+            range_summary = self._heatmap_spatial_summary(
+                conn,
+                spatial_where_sql,
+                parameters,
+                )
+            range_row_count = range_summary[0]
+            self._heatmap_estimated_range_rows = range_row_count
+            self._heatmap_source_info.update({
+                "estimated_range_rows": range_row_count,
+                "strategy": "visible range",
+                })
+            if range_row_count > MAX_SQL_HEATMAP_SOURCE_ROWS:
+                return self._spatially_aggregated_heatmap_arrays(
+                    conn,
+                    spatial_where_sql,
+                    parameters,
+                    range_summary,
+                    )
 
+            self.sampled_heatmap_source = False
+            self.aggregated_heatmap_source = False
             cursor = conn.execute(
                 (
                     f"SELECT {columns} FROM {table} "
-                    f"WHERE {where_sql} "
-                    "ORDER BY rowid LIMIT ?"
+                    f"WHERE {where_sql} ORDER BY rowid"
                     ),
-                (*parameters, MAX_SQL_HEATMAP_SOURCE_ROWS),
+                parameters,
                 )
-            self.sampled_heatmap_source = False
-            self._heatmap_source_info.update({
-                "sampled": False,
-                "sample_stride": 1,
-                "strategy": "visible range fallback",
-                })
             return self._arrays_from_cursor(cursor)
 
         if row_count <= MAX_SQL_HEATMAP_SOURCE_ROWS:
             self.sampled_heatmap_source = False
+            self.aggregated_heatmap_source = False
             cursor = conn.execute(
                 (
                     f"SELECT {columns} FROM {table} "
@@ -438,38 +438,175 @@ class loader(QtCore.QRunnable):
                 )
             return self._arrays_from_cursor(cursor)
 
-        self.sampled_heatmap_source = True
-        stride = max(1, math.ceil(row_count / MAX_SQL_HEATMAP_SOURCE_ROWS))
-        self._heatmap_source_sample_stride = stride
-        self._heatmap_source_info.update({
-            "sampled": True,
-            "sample_stride": stride,
-            "strategy": "uniform selected-row stride",
-            })
-        cursor = conn.execute(
-            (
-                f"SELECT {columns} FROM {table} "
-                f"WHERE {selected_where_sql} AND ((rowid - ?) % ?) = 0 "
-                "ORDER BY rowid LIMIT ?"
-                ),
-            (1, stride, MAX_SQL_HEATMAP_SOURCE_ROWS),
+        spatial_where_sql = (
+            f"{selected_where_sql} AND {x_column} IS NOT NULL "
+            f"AND {y_column} IS NOT NULL"
             )
-        arrays = self._arrays_from_cursor(cursor)
-        if arrays[2].size > 0:
-            return arrays
+        summary = self._heatmap_spatial_summary(conn, spatial_where_sql, ())
+        return self._spatially_aggregated_heatmap_arrays(
+            conn,
+            spatial_where_sql,
+            (),
+            summary,
+            )
 
+
+    def _heatmap_spatial_summary(self, conn, where_sql, parameters):
+        table = _sqlite_identifier(self.table_name)
+        x_column = _sqlite_identifier(self.axes_dict["x"])
+        y_column = _sqlite_identifier(self.axes_dict["y"])
+        row = conn.execute(
+            (
+                f"SELECT COUNT(*), MIN({x_column}), MAX({x_column}), "
+                f"COUNT(DISTINCT {x_column}), MIN({y_column}), "
+                f"MAX({y_column}), COUNT(DISTINCT {y_column}) "
+                f"FROM {table} WHERE {where_sql}"
+                ),
+            parameters,
+            ).fetchone()
+        if row is None or row[0] is None:
+            return (0, None, None, 0, None, None, 0)
+
+        return (
+            int(row[0]),
+            row[1],
+            row[2],
+            int(row[3] or 0),
+            row[4],
+            row[5],
+            int(row[6] or 0),
+            )
+
+
+    def _spatially_aggregated_heatmap_arrays(
+            self,
+            conn,
+            where_sql,
+            parameters,
+            summary,
+            ):
+        (
+            matching_rows,
+            x_min,
+            x_max,
+            x_count,
+            y_min,
+            y_max,
+            y_count,
+            ) = summary
+        if (
+                matching_rows <= 0
+                or x_min is None
+                or x_max is None
+                or y_min is None
+                or y_max is None
+                or x_count <= 0
+                or y_count <= 0
+                ):
+            self.sampled_heatmap_source = False
+            self.aggregated_heatmap_source = False
+            return self._arrays_from_values([], [], [])
+
+        x_bins, y_bins = self._bounded_grid_shape(x_count, y_count)
+        x_centres, x_lower_edge, x_scale = self._spatial_axis_bins(
+            float(x_min),
+            float(x_max),
+            x_count,
+            x_bins,
+            )
+        y_centres, y_lower_edge, y_scale = self._spatial_axis_bins(
+            float(y_min),
+            float(y_max),
+            y_count,
+            y_bins,
+            )
+        if x_centres.size == 0 or y_centres.size == 0:
+            self.sampled_heatmap_source = False
+            self.aggregated_heatmap_source = False
+            return self._arrays_from_values([], [], [])
+
+        table = _sqlite_identifier(self.table_name)
+        x_column = _sqlite_identifier(self.axes_dict["x"])
+        y_column = _sqlite_identifier(self.axes_dict["y"])
+        z_column = _sqlite_identifier(self.param.name)
+        x_bin_sql = f"MIN(CAST(({x_column} - ?) * ? AS INTEGER), ?)"
+        y_bin_sql = f"MIN(CAST(({y_column} - ?) * ? AS INTEGER), ?)"
         cursor = conn.execute(
             (
-                f"SELECT {columns} FROM {table} "
-                f"WHERE {selected_where_sql} ORDER BY rowid LIMIT ?"
+                "SELECT x_bin, y_bin, AVG(z_value), COUNT(*) FROM ("
+                f"SELECT {x_bin_sql} AS x_bin, {y_bin_sql} AS y_bin, "
+                f"{z_column} AS z_value FROM {table} WHERE {where_sql}"
+                ") GROUP BY x_bin, y_bin ORDER BY y_bin, x_bin"
                 ),
-            (MAX_SQL_HEATMAP_SOURCE_ROWS,),
+            (
+                x_lower_edge,
+                x_scale,
+                x_bins - 1,
+                y_lower_edge,
+                y_scale,
+                y_bins - 1,
+                *parameters,
+                ),
             )
+        x_indices = []
+        y_indices = []
+        z_values = []
+        aggregated_source_rows = 0
+        for x_index, y_index, z_value, bin_rows in cursor:
+            if z_value is None:
+                continue
+            x_indices.append(int(x_index))
+            y_indices.append(int(y_index))
+            z_values.append(z_value)
+            aggregated_source_rows += int(bin_rows)
+
+        x_index_data = np.asarray(x_indices, dtype=np.int64)
+        y_index_data = np.asarray(y_indices, dtype=np.int64)
+        z_data = np.asarray(z_values, dtype=float)
+        finite = np.isfinite(z_data)
+        x_index_data = x_index_data[finite]
+        y_index_data = y_index_data[finite]
+        z_data = z_data[finite]
+        self._spatial_heatmap_axes = (x_centres, y_centres)
+        self._spatial_heatmap_indices = (x_index_data, y_index_data)
+        self._spatial_heatmap_source_unique_counts = (x_count, y_count)
+        self._heatmap_aggregated_source_rows = aggregated_source_rows
+        full_axis_ranges = self._normalised_heatmap_axis_ranges(
+            self.heatmap_full_axis_ranges
+            )
+        if full_axis_ranges is not None:
+            self.heatmap_source_axis_ranges = full_axis_ranges
+        elif self.heatmap_axis_ranges is None:
+            self.heatmap_source_axis_ranges = {
+                "x": (float(x_min), float(x_max)),
+                "y": (float(y_min), float(y_max)),
+                }
+        self.sampled_heatmap_source = False
+        self.aggregated_heatmap_source = True
         self._heatmap_source_info.update({
-            "sample_stride": 1,
-            "strategy": "selected-row fallback",
+            "estimated_range_rows": matching_rows,
+            "sampled": False,
+            "aggregated": True,
+            "sample_limit": None,
+            "sample_stride": None,
+            "strategy": "spatial mean",
             })
-        return self._arrays_from_cursor(cursor)
+        return x_centres[x_index_data], y_centres[y_index_data], z_data
+
+
+    @staticmethod
+    def _spatial_axis_bins(lower, upper, source_count, bin_count):
+        if not np.isfinite(lower) or not np.isfinite(upper):
+            return np.array([], dtype=float), 0.0, 1.0
+        if source_count <= 1 or bin_count <= 1 or lower == upper:
+            return np.array([lower], dtype=float), lower, 1.0
+
+        source_step = (upper - lower) / (source_count - 1)
+        lower_edge = lower - source_step / 2
+        upper_edge = upper + source_step / 2
+        bin_width = (upper_edge - lower_edge) / bin_count
+        centres = lower_edge + (np.arange(bin_count, dtype=float) + 0.5) * bin_width
+        return centres, lower_edge, 1.0 / bin_width
 
 
     def _selected_parameter_row_count(self, conn):
@@ -509,48 +646,6 @@ class loader(QtCore.QRunnable):
         return " AND ".join(clauses), parameters
 
 
-    def _range_sample_clause(self, row_count):
-        stride = self._range_sample_stride(row_count)
-        self._heatmap_source_sample_stride = stride
-        if stride <= 1:
-            return "", ()
-
-        return " AND ((rowid - ?) % ?) = 0", (1, stride)
-
-
-    def _range_sample_stride(self, row_count):
-        ranges = self.heatmap_axis_ranges or {}
-        full_ranges = self.heatmap_full_axis_ranges or {}
-        fraction = 1.0
-
-        for axis in ("x", "y"):
-            axis_range = ranges.get(axis)
-            full_axis_range = full_ranges.get(axis)
-            if axis_range is None or full_axis_range is None:
-                continue
-
-            try:
-                low, high = sorted(float(value) for value in axis_range)
-                full_low, full_high = sorted(float(value) for value in full_axis_range)
-            except (TypeError, ValueError):
-                continue
-
-            full_width = full_high - full_low
-            if (
-                    not np.isfinite(full_width)
-                    or full_width <= 0
-                    or not np.isfinite(low)
-                    or not np.isfinite(high)
-                    ):
-                continue
-
-            fraction *= min(max((high - low) / full_width, 0.0), 1.0)
-
-        estimated_rows = max(1, int(row_count * fraction))
-        self._heatmap_estimated_range_rows = estimated_rows
-        return max(1, math.ceil(estimated_rows / MAX_SQL_HEATMAP_SOURCE_ROWS))
-
-
     def _normalised_heatmap_axis_ranges(self, ranges):
         if not ranges:
             return None
@@ -572,24 +667,6 @@ class loader(QtCore.QRunnable):
             normalised[axis] = (low, high)
 
         return normalised
-
-
-    def _sample_rowids(self, rowid_min, rowid_max):
-        span = rowid_max - rowid_min + 1
-        count = min(MAX_SQL_HEATMAP_SOURCE_ROWS, span)
-        if count <= 0:
-            return np.array([], dtype=np.int64)
-
-        starts = (np.arange(count, dtype=np.int64) * span) // count
-        ends = ((np.arange(1, count + 1, dtype=np.int64) * span) // count) - 1
-        widths = np.maximum(ends - starts + 1, 1)
-        jitter = (
-            np.arange(count, dtype=np.int64) * 1_103_515_245 + 12_345
-            ) % widths
-        rowids = rowid_min + starts + jitter
-        rowids[0] = rowid_min
-        rowids[-1] = rowid_max
-        return np.unique(rowids)
 
 
     def _arrays_from_cursor(self, cursor):
@@ -638,11 +715,25 @@ class loader(QtCore.QRunnable):
         exact_cells = unique_x.size * unique_y.size
         source_grid_shape = getattr(self, "heatmap_source_grid_shape", None)
         if source_grid_shape is None:
-            source_grid_rows = int(unique_y.size)
-            source_grid_columns = int(unique_x.size)
+            if getattr(self, "aggregated_heatmap_source", False):
+                source_x_count, source_y_count = (
+                    self._spatial_heatmap_source_unique_counts
+                    )
+                source_grid_rows = int(source_y_count)
+                source_grid_columns = int(source_x_count)
+            else:
+                source_grid_rows = int(unique_y.size)
+                source_grid_columns = int(unique_x.size)
         else:
             source_grid_rows, source_grid_columns = source_grid_shape
         source_grid_cell_count = int(source_grid_rows * source_grid_columns)
+        if getattr(self, "aggregated_heatmap_source", False):
+            return self._spatial_aggregation_grid(
+                z_data,
+                source_grid_rows,
+                source_grid_columns,
+                )
+
         if (
                 not getattr(self, "sampled_heatmap_source", False)
                 and exact_cells <= MAX_SQL_HEATMAP_GRID_CELLS
@@ -705,10 +796,50 @@ class loader(QtCore.QRunnable):
         return x_axis, y_axis, data_grid
 
 
+    def _spatial_aggregation_grid(
+            self,
+            z_data,
+            source_grid_rows,
+            source_grid_columns,
+            ):
+        x_axis, y_axis = self._spatial_heatmap_axes
+        x_indices, y_indices = self._spatial_heatmap_indices
+        data_grid = np.full(
+            (y_axis.size, x_axis.size),
+            np.nan,
+            dtype=np.float32,
+            )
+        data_grid[y_indices, x_indices] = z_data
+        empty_bins_filled = bool(np.any(~np.isfinite(data_grid)))
+        if empty_bins_filled:
+            data_grid = self._fill_empty_heatmap_bins(data_grid)
+
+        source_x_count, source_y_count = self._spatial_heatmap_source_unique_counts
+        source_grid_cell_count = int(source_grid_rows * source_grid_columns)
+        self._heatmap_grid_info = {
+            "unique_x_count": int(source_x_count),
+            "unique_y_count": int(source_y_count),
+            "exact_cell_count": int(source_x_count * source_y_count),
+            "source_grid_columns": int(source_grid_columns),
+            "source_grid_rows": int(source_grid_rows),
+            "source_grid_cell_count": source_grid_cell_count,
+            "grid_columns": int(x_axis.size),
+            "grid_rows": int(y_axis.size),
+            "grid_cell_count": int(data_grid.size),
+            "grid_binned": (
+                x_axis.size < source_x_count or y_axis.size < source_y_count
+                ),
+            "grid_cell_limit": MAX_SQL_HEATMAP_GRID_CELLS,
+            "empty_bins_filled": empty_bins_filled,
+            }
+        return x_axis, y_axis, data_grid
+
+
     def _heatmap_downsample_info(self):
         source_info = getattr(self, "_heatmap_source_info", None) or {}
         grid_info = getattr(self, "_heatmap_grid_info", None) or {}
         source_sampled = bool(source_info.get("sampled", False))
+        source_aggregated = bool(source_info.get("aggregated", False))
         grid_reduced = bool(grid_info.get("grid_binned", False))
         source_grid_columns = grid_info.get("source_grid_columns")
         source_grid_rows = grid_info.get("source_grid_rows")
@@ -724,7 +855,7 @@ class loader(QtCore.QRunnable):
                 int(grid_columns) < int(source_grid_columns)
                 or int(grid_rows) < int(source_grid_rows)
                 )
-        if not source_sampled and not grid_reduced:
+        if not source_sampled and not source_aggregated and not grid_reduced:
             return None
 
         return {
@@ -732,9 +863,20 @@ class loader(QtCore.QRunnable):
             "estimated_range_rows": source_info.get("estimated_range_rows"),
             "loaded_point_count": getattr(self, "loaded_point_count", None),
             "source_sampled": source_sampled,
+            "source_aggregated": source_aggregated,
+            "aggregated_source_row_count": getattr(
+                self,
+                "_heatmap_aggregated_source_rows",
+                None,
+                ),
             "source_sample_limit": source_info.get("sample_limit"),
             "source_sample_stride": source_info.get("sample_stride"),
-            "source_sample_strategy": source_info.get("strategy"),
+            "source_sample_strategy": (
+                source_info.get("strategy") if source_sampled else None
+                ),
+            "source_aggregation_strategy": (
+                source_info.get("strategy") if source_aggregated else None
+                ),
             "axis_ranges": source_info.get("axis_ranges"),
             "unique_x_count": grid_info.get("unique_x_count"),
             "unique_y_count": grid_info.get("unique_y_count"),

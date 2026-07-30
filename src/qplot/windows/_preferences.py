@@ -268,7 +268,7 @@ class PreferencesDialog(qtw.QDialog):
             self.maxFullHeatmapPointsSpin.setGroupSeparatorShown(True)
         self.maxFullHeatmapPointsSpin.setToolTip(
             "Use full-resolution heatmap loading up to this many points; "
-            "larger heatmaps use SQL sampling."
+            "larger heatmaps use SQL spatial aggregation."
             )
         self._add_row(
             form,

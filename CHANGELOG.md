@@ -7,7 +7,20 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
-No changes yet.
+### Changed
+
+- Large heatmaps now use bounded spatial mean aggregation in SQL instead of
+  periodic database-row sampling. Every matching source row contributes, so
+  the plotted heatmap no longer depends on row insertion order, while axis
+  centres retain the corrected source heatmap extent.
+- Large preview images and run-list thumbnails now originate from spatial bin
+  means instead of periodic row-ID samples, preventing scan-pattern aliasing.
+
+### Fixed
+
+- Zoom to All, the on-plot auto-range button, and manual zooming out now
+  restore and reload the complete source extent after a large heatmap has
+  loaded a zoomed visible range.
 
 ## 1.5.0-a1 - 2026-05-21
 

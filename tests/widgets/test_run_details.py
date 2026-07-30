@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PyQt6 import QtCore, QtGui
@@ -772,7 +773,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
             preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
 
-    def test_large_known_grid_preview_samples_dense_grid(self):
+    def test_large_known_grid_preview_uses_spatial_means_independent_of_row_order(self):
         old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
         old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
         preview_module.MAX_PREVIEW_ROWS = 16
@@ -780,31 +781,222 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         try:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE results (x REAL, y REAL, signal REAL)")
-            cursor.executemany(
-                "INSERT INTO results VALUES (?, ?, ?)",
-                [
-                    (float(column), float(row), float(row * 10 + column))
-                    for row in range(4)
-                    for column in range(10)
-                    ],
-                )
-
-            grid = preview_module._sample_large_known_grid_preview(
-                cursor,
-                "results",
-                {"result_count": 40},
-                "signal",
-                (4, 10),
-                size=4,
-                )
+            values = [
+                (float(row), float(column), float(column % 2))
+                for row in range(4)
+                for column in range(40)
+                ]
+            metadata = {
+                "result_count": len(values),
+                "setpoint_shape": [4, 40],
+                "measure_parameters": ["signal"],
+                "sweep_parameters": ["slow_y", "fast_x"],
+                }
+            grids = []
+            with patch.object(
+                    preview_module,
+                    "render_heatmap_grid_preview",
+                    side_effect=lambda grid, size: np.array(grid, copy=True),
+                    ):
+                for table_name, table_values in (
+                        ("forward_results", values),
+                        ("reverse_results", list(reversed(values))),
+                        ):
+                    cursor.execute(
+                        f"CREATE TABLE {table_name} "
+                        "(slow_y REAL, fast_x REAL, signal REAL)"
+                        )
+                    cursor.executemany(
+                        f"INSERT INTO {table_name} VALUES (?, ?, ?)",
+                        table_values,
+                        )
+                    preview = preview_module._preview_2d(
+                        cursor,
+                        table_name,
+                        metadata,
+                        "signal",
+                        ["slow_y", "fast_x"],
+                        size=4,
+                        )
+                    grids.append(preview["image"])
         finally:
             conn.close()
             preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
             preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
 
+        for grid in grids:
+            self.assertEqual(grid.shape, (4, 4))
+            np.testing.assert_allclose(grid, np.full((4, 4), 0.5))
+        np.testing.assert_array_equal(grids[0], grids[1])
+
+    def test_large_partial_preview_preserves_unmeasured_grid_area(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_ROWS = 16
+        preview_module.MAX_PREVIEW_GRID_CELLS = 4
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "CREATE TABLE results "
+                "(slow_y REAL, fast_x REAL, signal REAL)"
+                )
+            values = [
+                (0.0, float(column), float(column % 2))
+                for column in range(40)
+                ]
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?, ?)",
+                values,
+                )
+            metadata = {
+                "result_count": len(values),
+                "setpoint_shape": [4, 40],
+                "measure_parameters": ["signal"],
+                "sweep_parameters": ["slow_y", "fast_x"],
+                }
+            with patch.object(
+                    preview_module,
+                    "render_heatmap_grid_preview",
+                    side_effect=lambda grid, size: np.array(grid, copy=True),
+                    ):
+                preview = preview_module._preview_2d(
+                    cursor,
+                    "results",
+                    metadata,
+                    "signal",
+                    ["slow_y", "fast_x"],
+                    size=4,
+                    )
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
+
+        grid = preview["image"]
         self.assertEqual(grid.shape, (4, 4))
-        self.assertTrue(np.isfinite(grid).all())
+        np.testing.assert_allclose(grid[0], np.full(4, 0.5))
+        self.assertTrue(np.isnan(grid[1:]).all())
+
+    def test_large_preview_without_shape_uses_spatial_means(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_ROWS = 16
+        preview_module.MAX_PREVIEW_GRID_CELLS = 4
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            values = [
+                (float(row), float(column), float(column % 2))
+                for row in range(4)
+                for column in range(40)
+                ]
+            metadata = {
+                "result_count": len(values),
+                "measure_parameters": ["signal"],
+                "sweep_parameters": ["slow_y", "fast_x"],
+                }
+            grids = []
+            with patch.object(
+                    preview_module,
+                    "render_heatmap_grid_preview",
+                    side_effect=lambda grid, size: np.array(grid, copy=True),
+                    ):
+                for table_name, table_values in (
+                        ("forward_results", values),
+                        ("reverse_results", list(reversed(values))),
+                        ):
+                    cursor.execute(
+                        f"CREATE TABLE {table_name} "
+                        "(slow_y REAL, fast_x REAL, signal REAL)"
+                        )
+                    cursor.executemany(
+                        f"INSERT INTO {table_name} VALUES (?, ?, ?)",
+                        table_values,
+                        )
+                    preview = preview_module._preview_2d(
+                        cursor,
+                        table_name,
+                        metadata,
+                        "signal",
+                        ["slow_y", "fast_x"],
+                        size=4,
+                        )
+                    grids.append(preview["image"])
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
+
+        for grid in grids:
+            self.assertEqual(grid.shape, (4, 4))
+            np.testing.assert_allclose(grid, np.full((4, 4), 0.5))
+        np.testing.assert_array_equal(grids[0], grids[1])
+
+    def test_large_preview_falls_back_to_streaming_spatial_means(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
+        preview_module.MAX_PREVIEW_ROWS = 16
+        preview_module.MAX_PREVIEW_GRID_CELLS = 4
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            values = [
+                (float(row), float(column), float(column % 2))
+                for row in range(4)
+                for column in range(40)
+                ]
+            metadata = {
+                "result_count": len(values),
+                "setpoint_shape": [4, 40],
+                "measure_parameters": ["signal"],
+                "sweep_parameters": ["slow_y", "fast_x"],
+                }
+            grids = []
+            with (
+                    patch.object(
+                        preview_module,
+                        "_spatial_mean_preview_grid",
+                        side_effect=sqlite3.OperationalError("unsupported"),
+                        ),
+                    patch.object(preview_module, "log_exception") as logged,
+                    patch.object(
+                        preview_module,
+                        "render_heatmap_grid_preview",
+                        side_effect=lambda grid, size: np.array(grid, copy=True),
+                        ),
+                    ):
+                for table_name, table_values in (
+                        ("forward_results", values),
+                        ("reverse_results", list(reversed(values))),
+                        ):
+                    cursor.execute(
+                        f"CREATE TABLE {table_name} "
+                        "(slow_y REAL, fast_x REAL, signal REAL)"
+                        )
+                    cursor.executemany(
+                        f"INSERT INTO {table_name} VALUES (?, ?, ?)",
+                        table_values,
+                        )
+                    preview = preview_module._preview_2d(
+                        cursor,
+                        table_name,
+                        metadata,
+                        "signal",
+                        ["slow_y", "fast_x"],
+                        size=4,
+                        )
+                    grids.append(preview["image"])
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+            preview_module.MAX_PREVIEW_GRID_CELLS = old_max_grid_cells
+
+        self.assertEqual(logged.call_count, 2)
+        for grid in grids:
+            self.assertEqual(grid.shape, (4, 4))
+            np.testing.assert_allclose(grid, np.full((4, 4), 0.5))
+        np.testing.assert_array_equal(grids[0], grids[1])
 
     def test_sampled_2d_preview_bins_to_avoid_sparse_grid_artifacts(self):
         old_samples_per_cell = preview_module.PREVIEW_SAMPLES_PER_CELL
