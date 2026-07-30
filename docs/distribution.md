@@ -25,15 +25,15 @@ python -m pip install -e ".[dev]"
 
 Both commands expose the `qplot` and `qplot-cfg` entry points.
 
-## Current Prerelease
+## Current Beta
 
-The current prerelease is `1.5.0-a1`. The package metadata uses the PEP 440
-normal form `1.5.0a1`; the GitHub release tag should be `v1.5.0-a1`.
+The current beta is `1.5.0-b1`. The package metadata uses the PEP 440 normal
+form `1.5.0b1`; the GitHub release tag should be `v1.5.0-b1`.
 
-Prerelease test install:
+Beta test install:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0-a1
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0-b1
 ```
 
 ## Package Validation
@@ -59,8 +59,8 @@ or attach them to GitHub releases.
 Before creating a tagged release:
 
 1. Update the version in `pyproject.toml`. For prereleases, use the PEP 440
-   package form, such as `1.5.0a1`, even if the Git tag includes a separator,
-   such as `v1.5.0-a1`.
+   package form, such as `1.5.0b1`, even if the Git tag includes a separator,
+   such as `v1.5.0-b1`.
 2. Move relevant entries from `CHANGELOG.md`'s Unreleased section into the new
    release section.
 3. Run `python -m ruff check .`.
@@ -68,9 +68,11 @@ Before creating a tagged release:
 5. Run `python -m pytest`.
 6. Run `python -m build`.
 7. Run `python -m twine check dist/*`.
-8. Run the manual GUI check from `CONTRIBUTING.md`.
-9. Confirm README install and compatibility notes still match the release.
-10. Create a GitHub release from the tag and include user-facing changes.
+8. Create a fresh virtual environment, install only the built wheel, and check
+   `qplot-cfg -version` plus `python -c "import qplot; print(qplot.__version__)"`.
+9. Run the manual GUI check from `CONTRIBUTING.md`.
+10. Confirm README install and compatibility notes still match the release.
+11. Create a GitHub release from the tag and include user-facing changes.
 
 ## Future Options
 
