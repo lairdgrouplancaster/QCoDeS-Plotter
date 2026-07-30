@@ -22,6 +22,7 @@ from qplot.datahandling.readonly import (
 from qplot.diagnostics import log_exception
 
 from . import data2matrix
+from .heatmap_geometry import canonicalize_heatmap_data
 
 if TYPE_CHECKING:
     import qcodes
@@ -200,8 +201,37 @@ class loader(QtCore.QRunnable):
             if hasattr(self, "dataGrid"):
                 self.dataGrid = results[2]
 
+        try:
+            self._canonicalize_heatmap()
+        except Exception as err:
+            log_exception("Invalid heatmap geometry", err, __name__)
+            self.emitter.errorOccurred.emit(err)
+            self.emitter.finished.emit(False)
+            return
+
         # Callback
         self.emitter.finished.emit(True)
+
+
+    def _canonicalize_heatmap(self) -> None:
+        """Keep worker indices consistent with increasing heatmap axes."""
+
+        if not hasattr(self, "dataGrid"):
+            return
+        x_data = np.asarray(self.axis_data.get("x", []))
+        y_data = np.asarray(self.axis_data.get("y", []))
+        data_grid = np.asarray(self.dataGrid)
+        if x_data.size == 0 or y_data.size == 0 or data_grid.size == 0:
+            return
+
+        x_data, y_data, data_grid = canonicalize_heatmap_data(
+            x_data,
+            y_data,
+            data_grid,
+            )
+        self.axis_data["x"] = x_data
+        self.axis_data["y"] = y_data
+        self.dataGrid = data_grid
 
 
     def _should_use_sql_heatmap(self):

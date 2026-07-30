@@ -1208,6 +1208,9 @@ class plotWidget(
             self._set_cursor_index_label("")
             if hasattr(self, "hide_hover_pixel_outline"):
                 self.hide_hover_pixel_outline()
+            z_label = self.pos_labels.get("z")
+            if z_label is not None:
+                z_label.setText("z =")
             return
     
         # get x, y values.
@@ -1220,40 +1223,29 @@ class plotWidget(
         
         # For 2d plots.
         if self.pos_labels.get("z", 0):
-            
             y_txt += ";"
-            
-            rect = self.rect
-            
-            if hasattr(rect, "x"): # Check plot has initalised
-                
-                # Get index for that heatmap 'pixel' as a percentage of width/height
-                i = (mousePoint.x() - rect.x()) / rect.width()
-                j = (mousePoint.y() - rect.y()) / rect.height()
-                
-                # Check index is within heatmap.
-                if (i >= 0 and i <= 1) and (j >= 0 and j <= 1):
-                    # Convert to true index
-                    # Note that pyqtgraph indexes [column, row]
-                    i = min(self.dataGrid.shape[1] - 1, int(i * self.dataGrid.shape[1]))
-                    j = min(self.dataGrid.shape[0] - 1, int(j * self.dataGrid.shape[0]))
-                    x = rect.x() + (i + 0.5) * rect.width() / self.dataGrid.shape[1]
-                    y = rect.y() + (j + 0.5) * rect.height() / self.dataGrid.shape[0]
-                    index_txt = f"[{i},{j}]"
-                    x_txt = f"x = {self.formatNum(x)};"
-                    y_txt = f"y = {self.formatNum(y)};"
-                    self.pos_labels["z"].setText(f"z = {self.formatNum(self.dataGrid[j, i])}")
-                    
-                    # Save z location for subplot use
-                    if hasattr(self, "show_hover_pixel_outline"):
-                        self.show_hover_pixel_outline(i, j)
-                    else:
-                        self.z_index = [i, j]
+            sample_at = getattr(self, "heatmap_sample_at", None)
+            sample = (
+                sample_at(mousePoint.x(), mousePoint.y())
+                if callable(sample_at)
+                else None
+                )
+            if sample is not None:
+                i, j, x, y, z = sample
+                index_txt = f"[{i},{j}]"
+                x_txt = f"x = {self.formatNum(x)};"
+                y_txt = f"y = {self.formatNum(y)};"
+                self.pos_labels["z"].setText(f"z = {self.formatNum(z)}")
+                if hasattr(self, "show_hover_pixel_outline"):
+                    self.show_hover_pixel_outline(i, j)
                 else:
-                    if hasattr(self, "hide_hover_pixel_outline"):
-                        self.hide_hover_pixel_outline()
-                    else:
-                        self.z_index = None
+                    self.z_index = [i, j]
+            else:
+                self.pos_labels["z"].setText("z =")
+                if hasattr(self, "hide_hover_pixel_outline"):
+                    self.hide_hover_pixel_outline()
+                else:
+                    self.z_index = None
         else:
             index = self._nearest_1d_array_index(mousePoint.x())
             if index is not None:

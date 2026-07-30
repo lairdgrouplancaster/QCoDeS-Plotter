@@ -5,6 +5,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
+from qplot.tools.heatmap_geometry import HeatmapGeometry
 from qplot.windows._dataset_handle import DatasetHandle
 from qplot.windows._plotWin import plotWidget
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
@@ -35,6 +36,12 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         window = plot2d.__new__(plot2d)
         worker = Worker()
+        window.__dict__["axis_data"] = {
+            "x": np.array([0.0, 1.0]),
+            "y": np.array([0.0, 1.0]),
+            }
+        window.__dict__["dataGrid"] = np.zeros((2, 2))
+        window._update_heatmap_geometry()
         window.worker = worker
         window._guid = "guid"
         window._dataset_holder = {"guid": DatasetHandle(Dataset())}
@@ -49,6 +56,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         self.assertFalse(worker.running)
         self.assertEqual(window.end_wait.emitted, 1)
         self.assertIn("Waiting for plottable data", window.show_status_messages[-1][0])
+        self.assertIsNone(window._heatmap_geometry())
 
     def test_plottable_heatmap_data_requires_axes_and_finite_grid(self):
         window = plot2d.__new__(plot2d)
@@ -94,6 +102,16 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
 
 class HeatmapHoverOutlineTestCase(unittest.TestCase):
+    def configure_geometry(self, window, x_centres, y_centres, data_grid=None):
+        window.__dict__["axis_data"] = {
+            "x": np.asarray(x_centres, dtype=float),
+            "y": np.asarray(y_centres, dtype=float),
+            }
+        if data_grid is None:
+            data_grid = np.zeros((len(y_centres), len(x_centres)))
+        window.__dict__["dataGrid"] = np.asarray(data_grid, dtype=float)
+        window._update_heatmap_geometry()
+
     class SignalCatcher:
         def __init__(self):
             self.calls = []
@@ -307,8 +325,11 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
     def test_hover_outline_tracks_heatmap_cell_geometry(self):
         window = plot2d.__new__(plot2d)
         window.hover_pixel_outline = qtw.QGraphicsRectItem()
-        window.rect = QtCore.QRectF(10.0, 20.0, 8.0, 6.0)
-        window.dataGrid = np.zeros((3, 4))
+        self.configure_geometry(
+            window,
+            x_centres=[10.0, 12.0, 16.0, 20.0],
+            y_centres=[20.0, 23.0, 29.0],
+            )
         window.z_index = None
 
         window.show_hover_pixel_outline(2, 1)
@@ -316,14 +337,182 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         outline_rect = window.hover_pixel_outline.rect()
         self.assertTrue(window.hover_pixel_outline.isVisible())
         self.assertEqual(window.z_index, [2, 1])
-        self.assertEqual(outline_rect, QtCore.QRectF(14.0, 22.0, 2.0, 2.0))
+        self.assertEqual(outline_rect, QtCore.QRectF(14.0, 21.5, 4.0, 4.5))
+
+    def test_geometry_treats_setpoints_as_centres(self):
+        window = plot2d.__new__(plot2d)
+
+        self.configure_geometry(window, x_centres=[0.0, 1.0], y_centres=[0.0, 1.0])
+
+        self.assertEqual(window.rect, QtCore.QRectF(-0.5, -0.5, 2.0, 2.0))
+        self.assertIsInstance(window.heatmap_geometry, HeatmapGeometry)
+        self.assertEqual(window.heatmap_geometry.shape, (2, 2))
+
+    def test_singleton_geometry_has_positive_extent_at_zero_and_negative_values(self):
+        window = plot2d.__new__(plot2d)
+
+        self.configure_geometry(window, x_centres=[0.0], y_centres=[-5.0])
+
+        self.assertEqual(window.rect, QtCore.QRectF(-0.5, -5.5, 1.0, 1.0))
+        self.assertGreater(window.rect.width(), 0.0)
+        self.assertGreater(window.rect.height(), 0.0)
+
+    def test_nonuniform_marquee_snaps_to_recorded_cell_edges(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0, 4.0],
+            y_centres=[10.0, 13.0],
+            )
+
+        rect = window._snap_marquee_rect(QtCore.QRectF(0.6, 9.0, 4.0, 3.0))
+
+        self.assertEqual(rect, QtCore.QRectF(0.5, 8.5, 5.0, 6.0))
+
+    def test_descending_axes_are_reversed_with_the_data_grid(self):
+        window = plot2d.__new__(plot2d)
+        window.__dict__["axis_data"] = {
+            "x": np.array([4.0, 1.0, 0.0]),
+            "y": np.array([13.0, 10.0]),
+            }
+        window.__dict__["dataGrid"] = np.array([
+            [60.0, 50.0, 40.0],
+            [30.0, 20.0, 10.0],
+            ])
+
+        window._update_heatmap_geometry()
+
+        self.assertEqual(window.heatmap_geometry.x.centres, (0.0, 1.0, 4.0))
+        self.assertEqual(window.heatmap_geometry.y.centres, (10.0, 13.0))
+        np.testing.assert_array_equal(
+            window.dataGrid,
+            [[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]],
+            )
+
+    def test_shape_mismatch_invalidates_installed_geometry(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0],
+            y_centres=[10.0, 11.0],
+            )
+        window.__dict__["dataGrid"] = np.zeros((3, 2))
+
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            window._update_heatmap_geometry()
+
+        self.assertIsNone(window._heatmap_geometry())
+        self.assertNotIn("rect", window.__dict__)
+
+    def test_axis_swap_rebuilds_geometry_for_transposed_data(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0, 4.0],
+            y_centres=[10.0, 13.0],
+            data_grid=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            )
+        window.__dict__["axis_data"] = {
+            "x": np.array([10.0, 13.0]),
+            "y": np.array([0.0, 1.0, 4.0]),
+            }
+        window.__dict__["dataGrid"] = window.dataGrid.transpose()
+
+        window._update_heatmap_geometry()
+
+        self.assertEqual(window.heatmap_geometry.shape, (3, 2))
+        self.assertEqual(window.heatmap_sample_at(13.0, 1.0), (1, 1, 13.0, 1.0, 5.0))
+
+    def test_uniform_grid_uses_image_renderer_at_geometry_bounds(self):
+        window = plot2d.__new__(plot2d)
+        window.__dict__["image"] = pg.ImageItem(axisOrder="row-major")
+        window.__dict__["heatmap_mesh"] = pg.PColorMeshItem()
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0],
+            y_centres=[10.0, 13.0],
+            data_grid=[[1.0, 2.0], [3.0, 4.0]],
+            )
+
+        window._render_heatmap()
+
+        self.assertTrue(window.image.isVisible())
+        self.assertFalse(window.heatmap_mesh.isVisible())
+        self.assertEqual(
+            window.image.mapRectToParent(window.image.boundingRect()),
+            QtCore.QRectF(-0.5, 8.5, 2.0, 6.0),
+            )
+
+    def test_nonuniform_grid_uses_mesh_with_exact_cell_edges(self):
+        window = plot2d.__new__(plot2d)
+        window.__dict__["image"] = pg.ImageItem(axisOrder="row-major")
+        window.__dict__["heatmap_mesh"] = pg.PColorMeshItem()
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0, 4.0],
+            y_centres=[10.0, 13.0],
+            data_grid=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            )
+
+        window._render_heatmap()
+
+        self.assertFalse(window.image.isVisible())
+        self.assertTrue(window.heatmap_mesh.isVisible())
+        np.testing.assert_array_equal(
+            window.heatmap_mesh.x,
+            [[-0.5, 0.5, 2.5, 5.5]] * 3,
+            )
+        np.testing.assert_array_equal(
+            window.heatmap_mesh.y,
+            [[8.5] * 4, [11.5] * 4, [14.5] * 4],
+            )
+        np.testing.assert_array_equal(window.heatmap_mesh.z, window.dataGrid)
+
+    def test_colorbar_controls_both_heatmap_renderers(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        window = plot2d.__new__(plot2d)
+        window.__dict__["image"] = pg.ImageItem(axisOrder="row-major")
+        window.__dict__["heatmap_mesh"] = pg.PColorMeshItem()
+        plot_item.addItem(window.image)
+        plot_item.addItem(window.heatmap_mesh)
+        window.image.setImage(np.arange(4.0).reshape(2, 2))
+        x_vertices, y_vertices = np.meshgrid(range(3), range(3))
+        window.heatmap_mesh.setData(
+            x_vertices,
+            y_vertices,
+            np.arange(4.0).reshape(2, 2),
+            )
+
+        try:
+            bar = plot_item.addColorBar(
+                window._heatmap_colorbar_items(),
+                values=(0.0, 3.0),
+                colorMap=pg.colormap.get("viridis"),
+                )
+            bar.setLevels((1.0, 2.0))
+            new_colormap = pg.ColorMap(
+                [0.0, 1.0],
+                [[0, 0, 0, 255], [255, 255, 255, 255]],
+                )
+            bar.setColorMap(new_colormap)
+
+            self.assertEqual(tuple(window.image.getLevels()), (1.0, 2.0))
+            self.assertEqual(window.heatmap_mesh.getLevels(), (1.0, 2.0))
+            self.assertIs(window.image.getColorMap(), new_colormap)
+            self.assertIs(window.heatmap_mesh.getColorMap(), new_colormap)
+        finally:
+            widget.deleteLater()
 
     def test_hover_outline_hides_when_hover_index_is_invalid(self):
         window = plot2d.__new__(plot2d)
         window.hover_pixel_outline = qtw.QGraphicsRectItem()
         window.hover_pixel_outline.show()
-        window.rect = QtCore.QRectF(0.0, 0.0, 2.0, 2.0)
-        window.dataGrid = np.zeros((2, 2))
+        self.configure_geometry(
+            window,
+            x_centres=[0.5, 1.5],
+            y_centres=[0.5, 1.5],
+            )
         window.z_index = [3, 0]
 
         window._update_hover_pixel_outline_from_index()
@@ -332,17 +521,59 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_marquee_edges_snap_to_heatmap_pixel_boundaries(self):
         window = plot2d.__new__(plot2d)
-        window.rect = QtCore.QRectF(10.0, 20.0, 8.0, 6.0)
-        window.dataGrid = np.zeros((3, 4))
+        self.configure_geometry(
+            window,
+            x_centres=[11.0, 13.0, 15.0, 17.0],
+            y_centres=[21.0, 23.0, 25.0],
+            )
 
         rect = window._snap_marquee_rect(QtCore.QRectF(10.4, 21.1, 3.8, 4.8))
 
         self.assertEqual(rect, QtCore.QRectF(10.0, 20.0, 6.0, 6.0))
 
+    def test_nonuniform_marquee_selects_cells_from_geometry_edges(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0, 4.0],
+            y_centres=[10.0, 13.0],
+            data_grid=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            )
+        window.__dict__["marquee"] = QtCore.QRectF(0.6, 9.0, 1.0, 3.0)
+
+        selected = window._marquee_selected_data()
+
+        np.testing.assert_array_equal(selected, [[2.0], [5.0]])
+
+    def test_disjoint_marquee_is_cleared_after_geometry_refresh(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0],
+            y_centres=[0.0, 1.0],
+            )
+        window.__dict__["marquee"] = QtCore.QRectF(-0.5, -0.5, 2.0, 2.0)
+        self.configure_geometry(
+            window,
+            x_centres=[100.0, 101.0],
+            y_centres=[200.0, 201.0],
+            )
+        cleared = []
+        window.clear_marquee = lambda: cleared.append(True)
+        window.set_marquee_rect = lambda _rect: self.fail("marquee was resnapped")
+        window.__dict__["sweep_lines"] = {}
+
+        window._restore_heatmap_interactions()
+
+        self.assertEqual(cleared, [True])
+
     def test_shift_drag_corner_keeps_heatmap_pixel_marquee_size_after_snap(self):
         window = plot2d.__new__(plot2d)
-        window.rect = QtCore.QRectF(0.0, 0.0, 20.0, 20.0)
-        window.dataGrid = np.zeros((20, 20))
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(0.5, 20.0),
+            y_centres=np.arange(0.5, 20.0),
+            )
         rect = QtCore.QRectF(0.0, 0.0, 10.0, 10.0)
 
         window._resize_marquee_rect(
@@ -355,11 +586,38 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertEqual(rect, QtCore.QRectF(1.0, 1.0, 10.0, 10.0))
 
+    def test_shift_drag_preserves_cell_count_on_nonuniform_axis(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0, 4.0, 10.0],
+            y_centres=[0.0, 1.0],
+            )
+        rect = QtCore.QRectF(-0.5, -0.5, 3.0, 2.0)
+
+        window._resize_marquee_rect(
+            rect,
+            "e",
+            QtCore.QPointF(7.1, 0.5),
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
+            )
+        rect = window._snap_marquee_rect(rect.normalized())
+
+        self.assertEqual(rect, QtCore.QRectF(2.5, -0.5, 10.5, 2.0))
+        self.assertEqual(
+            window.heatmap_geometry.x.slice_for_interval(rect.left(), rect.right()),
+            slice(2, 4),
+            )
+
     def test_marquee_menu_includes_zoom_color_for_2d_plots(self):
         window = plot2d.__new__(plot2d)
         window.marquee = QtCore.QRectF(1.0, 1.0, 2.0, 2.0)
-        window.rect = QtCore.QRectF(0.0, 0.0, 4.0, 4.0)
-        window.dataGrid = np.arange(16.0).reshape(4, 4)
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(0.5, 4.0),
+            y_centres=np.arange(0.5, 4.0),
+            data_grid=np.arange(16.0).reshape(4, 4),
+            )
 
         menu = window._new_marquee_context_menu()
         action_texts = [action.text() for action in menu.actions()]
@@ -399,8 +657,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
     def test_zoom_color_uses_data_inside_marquee(self):
         window = plot2d.__new__(plot2d)
         window.marquee = QtCore.QRectF(1.0, 1.0, 2.0, 2.0)
-        window.rect = QtCore.QRectF(0.0, 0.0, 4.0, 4.0)
-        window.dataGrid = np.arange(16.0).reshape(4, 4)
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(0.5, 4.0),
+            y_centres=np.arange(0.5, 4.0),
+            data_grid=np.arange(16.0).reshape(4, 4),
+            )
         window.bar = self.Colorbar()
         window._colorbar_manual_levels = None
 
@@ -412,8 +674,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
     def test_stats_action_opens_dialog_and_clears_marquee(self):
         window = plot2d.__new__(plot2d)
         window.marquee = QtCore.QRectF(1.0, 1.0, 2.0, 2.0)
-        window.rect = QtCore.QRectF(0.0, 0.0, 4.0, 4.0)
-        window.dataGrid = np.arange(16.0).reshape(4, 4)
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(0.5, 4.0),
+            y_centres=np.arange(0.5, 4.0),
+            data_grid=np.arange(16.0).reshape(4, 4),
+            )
         opened = []
         window.clear_marquee = lambda: setattr(window, "marquee", None)
         window.show_marquee_stats_dialog = lambda stats_text=None: opened.append(stats_text) or True
@@ -467,9 +733,19 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         widget = pg.GraphicsLayoutWidget()
         plot_item = widget.addPlot()
         window = plot2d.__new__(plot2d)
-        window.plot = plot_item
-        window.rect = QtCore.QRectF(0.0, 0.0, 1.0, 1.0)
-        window.dataGrid = np.array([[1.0, 2.0], [3.0, 4.0]])
+        class Plot:
+            vb = plot_item.vb
+
+            def sceneBoundingRect(self):
+                return QtCore.QRectF(-1e9, -1e9, 2e9, 2e9)
+
+        window.plot = Plot()
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0],
+            y_centres=[0.0, 1.0],
+            data_grid=[[1.0, 2.0], [3.0, 4.0]],
+            )
         window.pos_labels = {
             "index": qtw.QLabel(),
             "x": qtw.QLabel(),
@@ -480,15 +756,167 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         shown_indices = []
         window.show_hover_pixel_outline = lambda i, j: shown_indices.append((i, j))
         window.hide_hover_pixel_outline = lambda: shown_indices.append(None)
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 1.0))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.5, 1.5))
 
         plotWidget.mouseMoved(window, scene_pos)
 
         self.assertEqual(shown_indices, [(1, 1)])
         self.assertEqual(window.pos_labels["index"].text(), "[1,1]")
-        self.assertEqual(window.pos_labels["x"].text(), "x = 0.75;")
-        self.assertEqual(window.pos_labels["y"].text(), "y = 0.75;")
+        self.assertEqual(window.pos_labels["x"].text(), "x = 1.0;")
+        self.assertEqual(window.pos_labels["y"].text(), "y = 1.0;")
         self.assertEqual(window.pos_labels["z"].text(), "z = 4.0")
+
+    def test_nonuniform_hover_reports_recorded_setpoint(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        window = plot2d.__new__(plot2d)
+        class Plot:
+            vb = plot_item.vb
+
+            def sceneBoundingRect(self):
+                return QtCore.QRectF(-1e9, -1e9, 2e9, 2e9)
+
+        window.plot = Plot()
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0, 4.0],
+            y_centres=[10.0, 13.0],
+            data_grid=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            )
+        window.pos_labels = {
+            "index": qtw.QLabel(),
+            "x": qtw.QLabel(),
+            "y": qtw.QLabel(),
+            "z": qtw.QLabel(),
+            }
+        window.formatNum = lambda value: str(value)
+        window.show_hover_pixel_outline = lambda _i, _j: None
+        window.hide_hover_pixel_outline = lambda: None
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.0, 12.0))
+
+        try:
+            plotWidget.mouseMoved(window, scene_pos)
+
+            self.assertEqual(window.pos_labels["index"].text(), "[1,1]")
+            self.assertEqual(window.pos_labels["x"].text(), "x = 1.0;")
+            self.assertEqual(window.pos_labels["y"].text(), "y = 13.0;")
+            self.assertEqual(window.pos_labels["z"].text(), "z = 5.0")
+        finally:
+            widget.deleteLater()
+
+    def test_hover_outside_geometry_clears_stale_index_and_value(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+
+        class Plot:
+            vb = plot_item.vb
+
+            def sceneBoundingRect(self):
+                return QtCore.QRectF(-1e9, -1e9, 2e9, 2e9)
+
+        window = plot2d.__new__(plot2d)
+        window.plot = Plot()
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0],
+            y_centres=[0.0, 1.0],
+            data_grid=[[1.0, 2.0], [3.0, 4.0]],
+            )
+        window.pos_labels = {
+            "index": qtw.QLabel(),
+            "x": qtw.QLabel(),
+            "y": qtw.QLabel(),
+            "z": qtw.QLabel(),
+            }
+        window.formatNum = lambda value: str(value)
+        hidden = []
+        window.show_hover_pixel_outline = lambda _i, _j: None
+        window.hide_hover_pixel_outline = lambda: hidden.append(True)
+
+        try:
+            inside = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 1.0))
+            outside = plot_item.vb.mapViewToScene(QtCore.QPointF(10.0, 10.0))
+            plotWidget.mouseMoved(window, inside)
+            plotWidget.mouseMoved(window, outside)
+
+            self.assertEqual(window.pos_labels["index"].text(), "")
+            self.assertEqual(window.pos_labels["z"].text(), "z =")
+            self.assertEqual(hidden, [True])
+        finally:
+            widget.deleteLater()
+
+    def test_geometry_replacement_clears_stale_hover_labels(self):
+        window = plot2d.__new__(plot2d)
+        window.__dict__["pos_labels"] = {
+            "index": qtw.QLabel("[1,1]"),
+            "z": qtw.QLabel("z = 4.0"),
+            }
+        window.__dict__["z_index"] = [1, 1]
+
+        self.configure_geometry(
+            window,
+            x_centres=[10.0, 11.0],
+            y_centres=[20.0, 21.0],
+            )
+
+        self.assertIsNone(window.z_index)
+        self.assertEqual(window.pos_labels["index"].text(), "")
+        self.assertEqual(window.pos_labels["z"].text(), "z =")
+
+    def test_nonuniform_sweep_uses_recorded_centres_and_edges(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0, 4.0],
+            y_centres=[10.0, 13.0],
+            )
+        window.sweep_moved = self.SignalCatcher()
+        line = self.SweepLine(sweep_id=5, angle=90, value=2.6)
+
+        window.moving_sweep(line)
+
+        self.assertEqual(line.sweep_index, 2)
+        self.assertEqual(line.value(), 4.0)
+        self.assertEqual(line.bounds, (0.0, 4.0))
+        self.assertEqual(window.sweep_moved.calls, [(5, 2)])
+
+    def test_geometry_refresh_remaps_sweep_from_its_physical_coordinate(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 1.0, 2.0],
+            y_centres=[10.0, 11.0],
+            )
+        line = self.SweepLine(sweep_id=5, angle=90, value=2.0)
+        line.sweep_index = 2
+        window.__dict__["sweep_lines"] = {5: line}
+        window.__dict__["sweep_moved"] = self.SignalCatcher()
+        self.configure_geometry(
+            window,
+            x_centres=[0.0, 2.0, 4.0],
+            y_centres=[10.0, 11.0],
+            )
+
+        window._snap_sweep_lines_to_pixel_centres()
+
+        self.assertEqual(line.sweep_index, 1)
+        self.assertEqual(line.value(), 2.0)
+        self.assertEqual(window.sweep_moved.calls, [(5, 1)])
+
+    def test_sweep_events_are_noops_without_geometry(self):
+        window = plot2d.__new__(plot2d)
+        window.__dict__["sweep_moved"] = self.SignalCatcher()
+        line = self.SweepLine(sweep_id=5, angle=90, value=2.0)
+        line.sweep_index = 1
+        window.__dict__["sweep_lines"] = {5: line}
+        window.__dict__["active_sweep_line_id"] = 5
+
+        window.moving_sweep(line)
+        window.move_sweep_with_arrow_key(QtCore.Qt.Key.Key_Right)
+
+        self.assertEqual(line.sweep_index, 1)
+        self.assertEqual(line.value(), 2.0)
+        self.assertEqual(window.sweep_moved.calls, [])
 
     def test_mouse_moved_shows_heatmap_indices_before_coordinates(self):
         widget = pg.GraphicsLayoutWidget()
@@ -502,8 +930,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         window = plot2d.__new__(plot2d)
         window.plot = Plot()
-        window.rect = QtCore.QRectF(0.0, 0.0, 4.0, 3.0)
-        window.dataGrid = np.arange(12.0).reshape(3, 4)
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(0.5, 4.0),
+            y_centres=np.arange(0.5, 3.0),
+            data_grid=np.arange(12.0).reshape(3, 4),
+            )
         window.pos_labels = {
             "index": qtw.QLabel(),
             "x": qtw.QLabel(),
@@ -527,8 +959,11 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_dragged_sweep_line_snaps_to_heatmap_pixel_centre(self):
         window = plot2d.__new__(plot2d)
-        window.rect = QtCore.QRectF(0.0, 10.0, 4.0, 6.0)
-        window.dataGrid = np.zeros((3, 4))
+        self.configure_geometry(
+            window,
+            x_centres=[0.5, 1.5, 2.5, 3.5],
+            y_centres=[11.0, 13.0, 15.0],
+            )
         window.sweep_moved = self.SignalCatcher()
         line = self.SweepLine(sweep_id=5, angle=90, value=2.7)
 
@@ -542,8 +977,11 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_shift_drag_moves_same_orientation_sweep_lines_together(self):
         window = plot2d.__new__(plot2d)
-        window.rect = QtCore.QRectF(0.0, 10.0, 5.0, 4.0)
-        window.dataGrid = np.zeros((4, 5))
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(0.5, 5.0),
+            y_centres=np.arange(10.5, 14.0),
+            )
         window.sweep_moved = self.SignalCatcher()
         window.sweep_group_drag_requested = lambda: True
         dragged_line = self.SweepLine(sweep_id=1, angle=90, value=2.7)
@@ -571,8 +1009,11 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_shift_drag_keeps_sweep_group_spacing_at_heatmap_edge(self):
         window = plot2d.__new__(plot2d)
-        window.rect = QtCore.QRectF(0.0, 10.0, 5.0, 4.0)
-        window.dataGrid = np.zeros((4, 5))
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(0.5, 5.0),
+            y_centres=np.arange(10.5, 14.0),
+            )
         window.sweep_moved = self.SignalCatcher()
         window.sweep_group_drag_requested = lambda: True
         dragged_line = self.SweepLine(sweep_id=1, angle=90, value=2.7)
@@ -705,8 +1146,11 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_arrow_key_moves_active_sweep_line_by_one_pixel(self):
         window = plot2d.__new__(plot2d)
-        window.rect = QtCore.QRectF(0.0, 10.0, 4.0, 6.0)
-        window.dataGrid = np.zeros((3, 4))
+        self.configure_geometry(
+            window,
+            x_centres=[0.5, 1.5, 2.5, 3.5],
+            y_centres=[11.0, 13.0, 15.0],
+            )
         window.sweep_moved = self.SignalCatcher()
         line = self.SweepLine(sweep_id=8, angle=90, value=1.5)
         line.sweep_index = 1
@@ -721,8 +1165,11 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_arrow_key_clamps_sweep_line_to_heatmap_edge(self):
         window = plot2d.__new__(plot2d)
-        window.rect = QtCore.QRectF(0.0, 10.0, 4.0, 6.0)
-        window.dataGrid = np.zeros((3, 4))
+        self.configure_geometry(
+            window,
+            x_centres=[0.5, 1.5, 2.5, 3.5],
+            y_centres=[11.0, 13.0, 15.0],
+            )
         window.sweep_moved = self.SignalCatcher()
         line = self.SweepLine(sweep_id=8, angle=90, value=3.5)
         line.sweep_index = 3

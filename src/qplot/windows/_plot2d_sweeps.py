@@ -9,6 +9,8 @@ from ._subplots.subplot2d import sweeper
 _SweepAxis = Literal["x", "y"]
 
 if TYPE_CHECKING:
+    from qplot.tools.heatmap_geometry import HeatmapGeometry
+
     class _Plot2DSweepBase(qtw.QMainWindow):
         _guid: str
         active_sweep_line_id: int | None
@@ -25,7 +27,15 @@ if TYPE_CHECKING:
 
         def change_axis(self, key: str) -> None: ...
 
-        def _heatmap_rect(self) -> QtCore.QRectF | None: ...
+        def clear_marquee(self) -> None: ...
+
+        def hide_hover_pixel_outline(self) -> None: ...
+
+        def _heatmap_geometry(self) -> HeatmapGeometry | None: ...
+
+        def _required_heatmap_geometry(self) -> HeatmapGeometry: ...
+
+        def _reset_heatmap_hover(self) -> None: ...
 else:
     class _Plot2DSweepBase:
         pass
@@ -117,6 +127,8 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
 
 
         """
+        if self._heatmap_geometry() is None:
+            return
         # Check if display is possible on current axes
         if sweep_param not in self.axis_options.values() or fixed_param not in self.axis_options.values():
             return
@@ -196,6 +208,9 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         
     @QtCore.pyqtSlot()
     def change_axis(self, key: str) -> None:
+        self._reset_heatmap_hover()
+        if self.__dict__.get("marquee") is not None:
+            self.clear_marquee()
         
         # Rotate lines in case of duplciates
         options = self.axis_options
@@ -246,16 +261,10 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
     
     
     def sweep_axis_count(self, axis: _SweepAxis) -> int:
-        if axis == "x":
-            return self.dataGrid.shape[1]
-        return self.dataGrid.shape[0]
-
-
-    def _required_heatmap_rect(self) -> QtCore.QRectF:
-        rect = self._heatmap_rect()
-        if rect is None:
-            raise RuntimeError("Heatmap geometry is not available.")
-        return rect
+        geometry = self._heatmap_geometry()
+        if geometry is None:
+            return 0
+        return geometry.x.count if axis == "x" else geometry.y.count
 
 
     def sweep_pixel_centre(self, axis: _SweepAxis, index: int) -> float:
@@ -263,13 +272,10 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         Return the plot coordinate at the centre of a heatmap pixel.
 
         """
-        count = self.sweep_axis_count(axis)
-        index = min(max(int(index), 0), count - 1)
-        rect = self._required_heatmap_rect()
-
-        if axis == "x":
-            return rect.x() + (index + 0.5) * rect.width() / count
-        return rect.y() + (index + 0.5) * rect.height() / count
+        geometry = self._required_heatmap_geometry()
+        axis_geometry = geometry.x if axis == "x" else geometry.y
+        index = min(max(int(index), 0), axis_geometry.count - 1)
+        return axis_geometry.centre(index)
 
 
     def sweep_index_at_value(self, axis: _SweepAxis, value: float) -> int | None:
@@ -277,20 +283,11 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         Return the heatmap pixel index containing a plot coordinate.
 
         """
-        count = self.sweep_axis_count(axis)
-        rect = self._required_heatmap_rect()
-        if axis == "x":
-            start = rect.x()
-            width = rect.width()
-        else:
-            start = rect.y()
-            width = rect.height()
-
-        if count <= 0 or width <= 0:
+        geometry = self._heatmap_geometry()
+        if geometry is None:
             return None
-
-        index = int((value - start) / width * count)
-        return min(max(index, 0), count - 1)
+        axis_geometry = geometry.x if axis == "x" else geometry.y
+        return axis_geometry.index_at(value, clamp=True)
 
 
     def line_sweep_axis(self, line: Any) -> _SweepAxis:
@@ -474,6 +471,8 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
     def set_sweep_line_index(self, line: Any, index: int, emit: bool = True) -> None:
         axis = self.line_sweep_axis(line)
         count = self.sweep_axis_count(axis)
+        if count <= 0:
+            return
         index = min(max(int(index), 0), count - 1)
 
         line.setBounds((
@@ -489,16 +488,23 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
 
 
     def _snap_sweep_lines_to_pixel_centres(self) -> None:
-        for line in self.sweep_lines.values():
+        if self._heatmap_geometry() is None:
+            return
+        for line in self.__dict__.get("sweep_lines", {}).values():
             axis = self.line_sweep_axis(line)
-            index = getattr(line, "sweep_index", None)
-            if index is None:
-                index = self.sweep_index_at_value(axis, line.value())
+            previous_index = getattr(line, "sweep_index", None)
+            index = self.sweep_index_at_value(axis, line.value())
             if index is not None:
-                self.set_sweep_line_index(line, index, emit=False)
+                self.set_sweep_line_index(
+                    line,
+                    index,
+                    emit=previous_index is not None and index != previous_index,
+                    )
 
 
     def move_sweep_with_arrow_key(self, key: QtCore.Qt.Key) -> None:
+        if self._heatmap_geometry() is None:
+            return
         moves: dict[QtCore.Qt.Key, tuple[_SweepAxis, int]] = {
             QtCore.Qt.Key.Key_Left: ("x", -1),
             QtCore.Qt.Key.Key_Right: ("x", 1),

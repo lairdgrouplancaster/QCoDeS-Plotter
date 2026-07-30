@@ -83,6 +83,26 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(axis_data["y"], np.array([0.0, 1.0]))
         np.testing.assert_array_equal(data_grid, np.array([[42.0], [43.0]]))
 
+    def test_worker_canonicalizes_descending_heatmap_axes_and_grid(self):
+        worker = loader.__new__(loader)
+        worker.axis_data = {
+            "x": np.array([4.0, 1.0, 0.0]),
+            "y": np.array([13.0, 10.0]),
+            }
+        worker.dataGrid = np.array([
+            [6.0, 5.0, 4.0],
+            [3.0, 2.0, 1.0],
+            ])
+
+        loader._canonicalize_heatmap(worker)
+
+        np.testing.assert_array_equal(worker.axis_data["x"], [0.0, 1.0, 4.0])
+        np.testing.assert_array_equal(worker.axis_data["y"], [10.0, 13.0])
+        np.testing.assert_array_equal(
+            worker.dataGrid,
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            )
+
     def test_large_heatmap_sql_loader_uses_bounded_sample_and_grid(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             database_path = f"{tmpdir}/heatmap.db"
