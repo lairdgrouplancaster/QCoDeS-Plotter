@@ -8,6 +8,61 @@ from qplot.datahandling import readSQL
 
 
 class RunSizeTestCase(unittest.TestCase):
+    def test_find_new_runs_uses_run_id_when_timestamps_are_missing_or_equal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "runs.db")
+            conn = sqlite3.connect(database_path)
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    CREATE TABLE experiments (
+                        exp_id INTEGER,
+                        name TEXT,
+                        sample_name TEXT
+                    )
+                    """
+                    )
+                cursor.execute(
+                    """
+                    CREATE TABLE runs (
+                        run_id INTEGER,
+                        exp_id INTEGER,
+                        name TEXT,
+                        run_timestamp REAL,
+                        completed_timestamp REAL,
+                        is_completed INTEGER,
+                        guid TEXT,
+                        result_table_name TEXT,
+                        parameters TEXT,
+                        run_description TEXT
+                    )
+                    """
+                    )
+                cursor.execute("INSERT INTO experiments VALUES (1, 'exp', 'sample')")
+                for run_id, run_timestamp in ((1, 100.0), (2, None), (3, 100.0)):
+                    table_name = f"results_{run_id}"
+                    cursor.execute(f"CREATE TABLE {table_name} (signal REAL)")
+                    cursor.execute(
+                        "INSERT INTO runs VALUES (?, 1, 'run', ?, NULL, 0, ?, ?, "
+                        "'signal', '{}')",
+                        (run_id, run_timestamp, f"guid-{run_id}", table_name),
+                        )
+                conn.commit()
+            finally:
+                conn.close()
+
+            old_connection = readSQL.qcodes_read_only_connection
+            readSQL.qcodes_read_only_connection = (
+                lambda _database_path: sqlite3.connect(database_path)
+                )
+            try:
+                runs = readSQL.find_new_runs(1)
+            finally:
+                readSQL.qcodes_read_only_connection = old_connection
+
+        self.assertEqual(set(runs), {2, 3})
+
     def test_fetch_basic_run_rows_does_not_scan_result_tables(self):
         conn = sqlite3.connect(":memory:")
         try:

@@ -177,16 +177,17 @@ def iter_run_storage_batches_via_sql(database_path, run_ids, batch_size=25):
         conn.close()
 
 
-def find_new_runs(last_time):
+def find_new_runs(last_run_id):
     """
-    Fetches all runs produced after the last_time. Otherwise functions the same
-    as get_runs_via_sql()
+    Fetch all runs created after the last seen run ID.
+
+    Run IDs provide a monotonic cursor even when a run has no timestamp or
+    multiple runs share the same timestamp.
 
     Parameters
     ----------
-    last_time : float
-        Only data after produced last_time will be returned.
-        last_time is in unix time.
+    last_run_id : int
+        Only runs with a greater run ID will be returned.
 
     Returns
     -------
@@ -199,7 +200,7 @@ def find_new_runs(last_time):
 
     try:
         cursor = conn.cursor()
-        return _fetch_run_rows(cursor, "WHERE runs.run_timestamp > ?", (last_time, ))
+        return _fetch_run_rows(cursor, "WHERE runs.run_id > ?", (last_run_id, ))
     finally:
         conn.close()
 

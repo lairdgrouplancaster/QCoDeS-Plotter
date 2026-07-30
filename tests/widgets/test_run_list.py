@@ -12,6 +12,30 @@ from qplot.windows._widgets.preview import (
 
 
 class RunListTooltipTestCase(unittest.TestCase):
+    def test_add_runs_advances_run_id_cursor_past_missing_timestamp(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                2: {"run_timestamp": None},
+                3: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "guid-3",
+                    "sweep_parameters": [],
+                    "measure_parameters": ["signal"],
+                    "result_count": 1,
+                    },
+                })
+
+            self.assertEqual(run_list.maxRunId, 3)
+            self.assertEqual(run_list.topLevelItemCount(), 1)
+        finally:
+            treeWidgets.isfile = old_isfile
+
     def test_run_tooltip_summarises_parameters(self):
         tooltip = treeWidgets.run_tooltip_text({
             "sweep_parameters": ["dac_ch1", "dac_ch2"],

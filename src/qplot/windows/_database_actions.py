@@ -1,7 +1,6 @@
 import os
 from time import perf_counter
 
-import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from PyQt6.QtGui import QDesktopServices
@@ -231,7 +230,7 @@ class DatabaseActionsMixin:
         self.RunList.clearSelection()
         self.RunList.clear()
         self.RunList.watching = []
-        self.RunList.maxTime = 0
+        self.RunList.maxRunId = 0
         self.RunList.blockSignals(False)
         self.RunList.scrollToTop()
 
@@ -286,7 +285,7 @@ class DatabaseActionsMixin:
         self.show_status("Checking for new runs...", 0)
 
         try:
-            newRuns = find_new_runs(self.RunList.maxTime)
+            newRuns = find_new_runs(self.RunList.maxRunId)
             updatedRuns = self.RunList.checkWatching()
             if updatedRuns:
                 self.infoBox.preview.add_runs(updatedRuns)
@@ -298,6 +297,16 @@ class DatabaseActionsMixin:
             self.show_error("Refresh Failed", "Could not refresh the run list.", str(err))
             return
 
+        if newRuns:
+            self.RunList.maxRunId = max(self.RunList.maxRunId, max(newRuns))
+            # Failed initialisations without a timestamp remain hidden, but
+            # still advance the cursor so later valid runs can be discovered.
+            newRuns = {
+                run_id: metadata
+                for run_id, metadata in newRuns.items()
+                if metadata.get("run_timestamp")
+                }
+
         if not newRuns:
             self._sync_empty_state()
             if self.RunList.topLevelItemCount() == 0:
@@ -306,13 +315,6 @@ class DatabaseActionsMixin:
                 self.show_status("No new runs found.", 3000)
             return
 
-        self.RunList.maxTime = max(
-            np.array(
-                [subDict["run_timestamp"] for subDict in newRuns.values()],
-                dtype=float,
-            ),
-            default=0,
-        )
         self.RunList.addRuns(newRuns)
         self.infoBox.preview.add_runs(newRuns)
         prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
@@ -598,7 +600,7 @@ class DatabaseActionsMixin:
         self.RunList.clearSelection()
         self.RunList.clear()
         self.RunList.watching = []
-        self.RunList.maxTime = 0
+        self.RunList.maxRunId = 0
         self.RunList.scrollToTop()
 
         self.infoBox.clear()
@@ -660,7 +662,7 @@ class DatabaseActionsMixin:
         self.RunList.clearSelection()
         self.RunList.clear()
         self.RunList.watching = []
-        self.RunList.maxTime = 0
+        self.RunList.maxRunId = 0
         if previous_runs:
             self.RunList.addRuns(previous_runs)
         self.RunList.scrollToTop()
@@ -774,7 +776,7 @@ class DatabaseActionsMixin:
         runs = runs or {}
         self.RunList.clear()
         self.RunList.watching = []
-        self.RunList.maxTime = 0
+        self.RunList.maxRunId = 0
         self.RunList.addRuns(runs)
         self.infoBox.preview.set_database_runs(abspath, runs)
         self.select_default_run()

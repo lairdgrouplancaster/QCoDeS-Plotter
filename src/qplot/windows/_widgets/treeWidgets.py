@@ -143,6 +143,7 @@ class RunList(qtw.QTreeWidget):
         
         self.watching: list[SortableTreeWidgetItem] = []
         self.preview_cells: dict[str, RunPreviewCell] = {}
+        self.maxRunId = 0
         
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
@@ -197,7 +198,7 @@ class RunList(qtw.QTreeWidget):
 
         self.setSortingEnabled(False) # Prevent constant restort on adding items
 
-        self.maxTime = max(np.array([subDict["run_timestamp"] for subDict in runs.values()], dtype=float), default=0)
+        self.maxRunId = max(self.maxRunId, max(runs, default=0))
         
         for run_id, metadata in runs.items():
             append_to_watching = False
