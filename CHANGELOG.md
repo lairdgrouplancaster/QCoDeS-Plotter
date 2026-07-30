@@ -7,6 +7,17 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+No changes yet.
+
+## 1.5.0-b1 - 2026-07-31
+
+### Added
+
+- Add a shared heatmap geometry model for uniform, nonuniform, descending, and
+  singleton setpoint axes, with exact cell bounds used consistently by
+  rendering, hovering, marquee selection, and sweep controls.
+- Add a benchmark helper for spatial heatmap aggregation.
+
 ### Changed
 
 - Large heatmaps now use bounded spatial mean aggregation in SQL instead of
@@ -15,12 +26,30 @@ installation commands and release validation, see `docs/distribution.md`.
   centres retain the corrected source heatmap extent.
 - Large preview images and run-list thumbnails now originate from spatial bin
   means instead of periodic row-ID samples, preventing scan-pattern aliasing.
+- Use run IDs instead of timestamps as the new-run refresh cursor, so runs with
+  equal or missing timestamps cannot hide later runs.
+- Require pyqtgraph 0.14 or newer for the heatmap rendering model.
+- Let mypy use the active Python version during developer validation.
 
 ### Fixed
 
 - Zoom to All, the on-plot auto-range button, and manual zooming out now
   restore and reload the complete source extent after a large heatmap has
   loaded a zoomed visible range.
+- Render nonuniform heatmaps against their exact cell edges, keep descending
+  axes aligned with their data, and give singleton axes a visible extent.
+- Keep heatmap hover values, marquee selection, axis swapping, and extracted
+  sweeps aligned with the recorded setpoints as geometry changes.
+- Preserve the active database when another database load fails, is cancelled,
+  or finishes after a newer load has started.
+- Roll back dataset ownership cleanly when plot construction fails, including
+  closing transient read-only connections without disturbing shared datasets.
+- Fill Below and Fill Right now handle bounded, leading, trailing, and
+  over-limit gaps consistently.
+- Reject invalid integer operation input without raising from the UI callback,
+  while preserving valid floating-point scientific notation.
+- Keep 1D trace colors, axes, and appearance settings synchronized across the
+  trace controls, appearance dialog, and theme changes.
 
 ## 1.5.0-a1 - 2026-05-21
 
