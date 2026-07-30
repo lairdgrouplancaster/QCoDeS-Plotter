@@ -51,41 +51,66 @@ class PlotActionsMixin:
             ds = guid_or_ds
             guid = ds.guid
 
-        self.add_ds_at(guid, ds=ds)
+        shared_handle = self.dataset_holder.get(guid)
+        loaded_for_construction = shared_handle is None and ds is None
+        if shared_handle is not None:
+            construction_ds = shared_handle.dataset
+        elif loaded_for_construction:
+            construction_ds = load_by_guid_read_only(guid)
+        else:
+            construction_ds = ds
 
-        win = widget(
-            guid,
-            *args,
-            self.config,
-            self.threadPool,
-            self.dataset_holder,
-            show=show,
-            **kargs,
-        )
+        assert construction_ds.guid == guid
+        construction_holder = {
+            held_guid: DatasetHandle(dataset=handle.dataset, users=handle.users)
+            for held_guid, handle in self.dataset_holder.items()
+        }
+        construction_holder[guid] = DatasetHandle(dataset=construction_ds)
+
+        try:
+            win = widget(
+                guid,
+                *args,
+                self.config,
+                self.threadPool,
+                construction_holder,
+                show=show,
+                **kargs,
+            )
+            window_type = win.__class__.__name__
+            if window_type not in {"plot1d", "plot2d", "sweeper"}:
+                raise TypeError(f"Unknown window of type: {window_type}")
+        except Exception:
+            if loaded_for_construction:
+                try:
+                    construction_ds.conn.close()
+                except Exception as err:
+                    log_exception("Unused plot dataset cleanup failed", err, __name__)
+            raise
+
+        win._dataset_holder = self.dataset_holder
+        self.add_ds_at(guid, ds=construction_ds)
 
         self.windows.append(win)
 
         win.closed.connect(self.onClose)
         win.make_ds.connect(self.add_ds_at)
         win.previewTraceDropRequested.connect(self.add_dropped_preview_to_plot)
-        if win.__class__.__name__ == "plot1d":
+        if window_type == "plot1d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
             win.remove_dataset.connect(self.remove_ds_at)
 
-        elif win.__class__.__name__ == "plot2d":
+        elif window_type == "plot2d":
             win.open_subplot.connect(self.openWin)
             win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
 
-        elif win.__class__.__name__ == "sweeper":
+        elif window_type == "sweeper":
             for item in self.windows:
                 if item.ds == win.ds and item.param == win.param and isinstance(item, plot2d):
                     win.sweep_moved.connect(item.update_sweep_line)
                     win.remove_sweep.connect(item.remove_sweep)
                     item.sweep_moved.connect(win.update_sweep_line)
                     break
-
-        else:
-            raise TypeError(f"Unknown window of type: {win.__class__.__name__}")
 
         if show:
             win.update_theme(self.config)

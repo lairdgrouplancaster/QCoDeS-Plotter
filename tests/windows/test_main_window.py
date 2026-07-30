@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
@@ -131,6 +132,134 @@ class DatasetHandleTestCase(unittest.TestCase):
 
         harness.remove_ds_at("guid")
         self.assertEqual(harness.dataset_holder, {})
+
+    def test_failed_plot_construction_preserves_existing_dataset_ownership(self):
+        class Connection:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Timer:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        class Dataset:
+            guid = "guid"
+
+            def __init__(self):
+                self.conn = Connection()
+
+        class Harness(PlotActionsMixin):
+            def __init__(self, handle):
+                self.config = object()
+                self.dataset_holder = {"guid": handle}
+                self.threadPool = object()
+                self.windows = []
+
+        def failing_widget(*args, **kwargs):
+            construction_handle = args[-1]["guid"]
+            construction_handle.cancel_delete_timer()
+            raise RuntimeError("plot construction failed")
+
+        timer = Timer()
+        dataset = Dataset()
+        handle = DatasetHandle(dataset, users=0, delete_timer=timer)
+        harness = Harness(handle)
+
+        with self.assertRaisesRegex(RuntimeError, "plot construction failed"):
+            harness.openWin(failing_widget, "guid", show=False)
+
+        self.assertEqual(harness.dataset_holder, {"guid": handle})
+        self.assertIs(harness.dataset_holder["guid"].dataset.conn, dataset.conn)
+        self.assertEqual(handle.users, 0)
+        self.assertIs(handle.delete_timer, timer)
+        self.assertFalse(timer.stopped)
+        self.assertFalse(dataset.conn.closed)
+        self.assertEqual(harness.windows, [])
+
+    def test_failed_plot_construction_does_not_publish_new_dataset(self):
+        class Connection:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Dataset:
+            guid = "guid"
+
+            def __init__(self):
+                self.conn = Connection()
+
+        class Harness(PlotActionsMixin):
+            def __init__(self):
+                self.config = object()
+                self.dataset_holder = {}
+                self.threadPool = object()
+                self.windows = []
+
+        constructor_connections = []
+
+        def failing_widget(*args, **kwargs):
+            construction_holder = args[-1]
+            constructor_connections.append(construction_holder["guid"].dataset.conn)
+            raise RuntimeError("plot construction failed")
+
+        dataset = Dataset()
+        harness = Harness()
+
+        with self.assertRaisesRegex(RuntimeError, "plot construction failed"):
+            harness.openWin(failing_widget, dataset, show=False)
+
+        self.assertEqual(constructor_connections, [dataset.conn])
+        self.assertFalse(dataset.conn.closed)
+        self.assertEqual(harness.dataset_holder, {})
+        self.assertEqual(harness.windows, [])
+
+    def test_failed_plot_construction_closes_transient_loaded_connection(self):
+        class Connection:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Dataset:
+            guid = "guid"
+
+            def __init__(self):
+                self.conn = Connection()
+
+        class Harness(PlotActionsMixin):
+            def __init__(self):
+                self.config = object()
+                self.dataset_holder = {}
+                self.threadPool = object()
+                self.windows = []
+
+        def failing_widget(*args, **kwargs):
+            raise RuntimeError("plot construction failed")
+
+        dataset = Dataset()
+        harness = Harness()
+
+        with (
+            patch(
+                "qplot.windows._plot_actions.load_by_guid_read_only",
+                return_value=dataset,
+            ),
+            self.assertRaisesRegex(RuntimeError, "plot construction failed"),
+        ):
+            harness.openWin(failing_widget, "guid", show=False)
+
+        self.assertTrue(dataset.conn.closed)
+        self.assertEqual(harness.dataset_holder, {})
+        self.assertEqual(harness.windows, [])
 
 
 class DatabaseOpenDirectoryTestCase(unittest.TestCase):
