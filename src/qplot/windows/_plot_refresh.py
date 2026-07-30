@@ -267,13 +267,20 @@ class PlotRefreshMixin(_PlotRefreshBase):
             self._set_param_axis_labels()
             elapsed = perf_counter() - worker.started_at
 
-            if getattr(worker, "loaded_from_sql_sample", False):
+            if getattr(worker, "loaded_from_sql_heatmap", False):
                 loaded_points = getattr(worker, "loaded_point_count", None)
-                point_text = (
-                    f"{loaded_points:,} sampled points"
-                    if loaded_points is not None
-                    else "sampled points"
-                    )
+                if getattr(worker, "aggregated_heatmap_source", False):
+                    point_text = (
+                        f"{loaded_points:,} aggregated cells"
+                        if loaded_points is not None
+                        else "aggregated cells"
+                        )
+                else:
+                    point_text = (
+                        f"{loaded_points:,} sampled points"
+                        if loaded_points is not None
+                        else "sampled points"
+                        )
                 self.show_status(
                     f"Loaded {point_text} for {self.param.name} "
                     f"in {elapsed:.2f} seconds",

@@ -17,7 +17,6 @@ MAX_PREVIEW_ROWS = 50_000
 MAX_PREVIEW_GRID_CELLS = 250_000
 PREVIEW_SAMPLES_PER_CELL = 4
 PREVIEW_ROWID_CHUNK = 900
-PREVIEW_GRID_SAMPLE_MIN_COVERAGE = 0.9
 PREVIEW_FILL_EMPTY_MIN_COVERAGE = 0.75
 PREVIEW_REMAINING_PRIORITY = 0
 PREVIEW_VISIBLE_PRIORITY = 50
@@ -657,13 +656,14 @@ def _preview_1d(cursor, table_name, metadata, parameter, axis, size):
 
 def _preview_2d(cursor, table_name, metadata, parameter, axes, size):
     grid_shape = _preview_grid_shape(metadata, parameter)
-    grid = _sample_large_known_grid_preview(
+    grid = _aggregate_large_heatmap_preview(
         cursor,
         table_name,
         metadata,
         parameter,
         grid_shape,
         size,
+        axes=axes,
         )
     if grid is not None:
         image = render_heatmap_grid_preview(grid, size=size)
@@ -672,6 +672,7 @@ def _preview_2d(cursor, table_name, metadata, parameter, axes, size):
             "axes": list(axes),
             "title": _preview_title(parameter, axes),
             "image": image,
+            "downsample_strategy": "spatial mean",
             }
 
     x, y, z = _select_arrays(
@@ -832,105 +833,366 @@ def render_heatmap_grid_preview(grid, size=PREVIEW_SIZE):
         ).convertToFormat(QtGui.QImage.Format.Format_RGB32)
 
 
-def _sample_large_known_grid_preview(
+def _aggregate_large_heatmap_preview(
         cursor,
         table_name,
         metadata,
         parameter,
         grid_shape,
         size,
+        *,
+        axes=None,
         ):
     shape = _normalise_grid_shape(grid_shape)
-    if shape is None:
+    if not _preview_requires_spatial_aggregation(
+            cursor,
+            table_name,
+            metadata,
+            shape,
+            ):
         return None
 
-    rows, columns = shape
-    grid_cells = rows * columns
-    if grid_cells <= MAX_PREVIEW_GRID_CELLS:
+    if axes is None:
+        axes = _dependencies_from_metadata(metadata).get(parameter, [])
+    if len(axes) < 2:
         return None
+
+    try:
+        return _spatial_mean_preview_grid(
+            cursor,
+            table_name,
+            parameter,
+            x_axis=axes[1],
+            y_axis=axes[0],
+            grid_shape=shape,
+            size=size,
+            )
+    except Exception as error:
+        log_exception(
+            "SQL preview aggregation failed; using streaming spatial means",
+            error,
+            __name__,
+            )
+        return _streaming_spatial_mean_preview_grid(
+            cursor,
+            table_name,
+            parameter,
+            x_axis=axes[1],
+            y_axis=axes[0],
+            grid_shape=shape,
+            size=size,
+            )
+
+
+def _preview_requires_spatial_aggregation(
+        cursor,
+        table_name,
+        metadata,
+        grid_shape,
+        ):
+    shape = _normalise_grid_shape(grid_shape)
+    if shape is not None and shape[0] * shape[1] > MAX_PREVIEW_GRID_CELLS:
+        return True
+
+    row_limit = _preview_2d_row_limit(shape)
+    if _metadata_result_count(metadata) > row_limit:
+        return True
 
     rowid_span = _rowid_span(cursor, table_name)
-    if rowid_span is None:
-        return None
+    if rowid_span is not None:
+        first_rowid, last_rowid = rowid_span
+        return last_rowid - first_rowid + 1 > row_limit
 
-    first_rowid, last_rowid = rowid_span
-    span = max(0, last_rowid - first_rowid + 1)
-    count = _metadata_result_count(metadata)
-    if count <= 0:
-        count = grid_cells
-
-    available = min(count, grid_cells, span)
-    if available <= 0:
-        return None
-
-    target_rows, target_columns = _preview_bin_shape(
-        shape,
-        size,
-        max_cells=min(MAX_PREVIEW_ROWS, max(1, int(size) * int(size))),
-        )
-    row_indices = _sample_axis_positions(rows, target_rows)
-    column_indices = _sample_axis_positions(columns, target_columns)
-    offsets = (
-        row_indices[:, None] * np.int64(columns)
-        + column_indices[None, :]
-        )
-    valid = offsets < available
-    if not np.any(valid):
-        return None
-
-    grid = np.full((target_rows, target_columns), np.nan, dtype=float)
-    flat_positions = np.flatnonzero(valid.ravel())
-    sample_rowids = first_rowid + offsets.ravel()[flat_positions]
-    rowid_positions = {
-        int(rowid): int(position)
-        for rowid, position in zip(sample_rowids, flat_positions, strict=False)
-    }
-
-    found = 0
-    flat_grid = grid.ravel()
     table = _sqlite_identifier(table_name)
-    column = _sqlite_identifier(parameter)
-    for start in range(0, len(sample_rowids), PREVIEW_ROWID_CHUNK):
-        chunk = [
-            int(value)
-            for value in sample_rowids[start:start + PREVIEW_ROWID_CHUNK]
-            ]
-        placeholders = ", ".join("?" for _ in chunk)
-        cursor.execute(
-            f"SELECT rowid, {column} FROM {table} WHERE rowid IN ({placeholders})",
-            chunk,
+    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+    row = cursor.fetchone()
+    return bool(row and row[0] and int(row[0]) > row_limit)
+
+
+def _spatial_mean_preview_grid(
+        cursor,
+        table_name,
+        parameter,
+        *,
+        x_axis,
+        y_axis,
+        grid_shape,
+        size,
+        ):
+    setup = _spatial_preview_aggregation_setup(
+        cursor,
+        table_name,
+        parameter,
+        x_axis=x_axis,
+        y_axis=y_axis,
+        grid_shape=grid_shape,
+        size=size,
+        )
+    if setup is None:
+        return None
+
+    (
+        table,
+        x_column,
+        y_column,
+        z_column,
+        where_sql,
+        full_shape,
+        aggregate_shape,
+        x_lower_edge,
+        x_scale,
+        y_lower_edge,
+        y_scale,
+        ) = setup
+    target_rows, target_columns = aggregate_shape
+    x_bin_sql = f"MIN(CAST(({x_column} - ?) * ? AS INTEGER), ?)"
+    y_bin_sql = f"MIN(CAST(({y_column} - ?) * ? AS INTEGER), ?)"
+    cursor.execute(
+        (
+            "SELECT x_bin, y_bin, AVG(z_value) FROM ("
+            f"SELECT {x_bin_sql} AS x_bin, {y_bin_sql} AS y_bin, "
+            f"{z_column} AS z_value FROM {table} WHERE {where_sql}"
+            ") GROUP BY x_bin, y_bin ORDER BY y_bin, x_bin"
+            ),
+        (
+            x_lower_edge,
+            x_scale,
+            target_columns - 1,
+            y_lower_edge,
+            y_scale,
+            target_rows - 1,
+            ),
+        )
+
+    grid = np.full(aggregate_shape, np.nan, dtype=float)
+    for x_index, y_index, mean_value in cursor:
+        if mean_value is None:
+            continue
+        try:
+            mean_value = float(mean_value)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(mean_value):
+            continue
+        grid[int(y_index), int(x_index)] = mean_value
+
+    if not np.any(np.isfinite(grid)):
+        return None
+
+    return _pad_spatial_preview_grid(grid, full_shape)
+
+
+def _streaming_spatial_mean_preview_grid(
+        cursor,
+        table_name,
+        parameter,
+        *,
+        x_axis,
+        y_axis,
+        grid_shape,
+        size,
+        ):
+    setup = _spatial_preview_aggregation_setup(
+        cursor,
+        table_name,
+        parameter,
+        x_axis=x_axis,
+        y_axis=y_axis,
+        grid_shape=grid_shape,
+        size=size,
+        )
+    if setup is None:
+        return None
+
+    (
+        table,
+        x_column,
+        y_column,
+        z_column,
+        where_sql,
+        full_shape,
+        aggregate_shape,
+        x_lower_edge,
+        x_scale,
+        y_lower_edge,
+        y_scale,
+        ) = setup
+    target_rows, target_columns = aggregate_shape
+    grid_sum = np.zeros(aggregate_shape, dtype=float)
+    grid_count = np.zeros(aggregate_shape, dtype=np.int64)
+    cursor.execute(
+        f"SELECT {x_column}, {y_column}, {z_column} FROM {table} "
+        f"WHERE {where_sql} ORDER BY {y_column}, {x_column}, {z_column}"
+        )
+    for x_value, y_value, z_value in cursor:
+        try:
+            x_value = float(x_value)
+            y_value = float(y_value)
+            z_value = float(z_value)
+        except (TypeError, ValueError):
+            continue
+        if not (
+                np.isfinite(x_value)
+                and np.isfinite(y_value)
+                and np.isfinite(z_value)
+                ):
+            continue
+
+        x_index = int((x_value - x_lower_edge) * x_scale)
+        y_index = int((y_value - y_lower_edge) * y_scale)
+        x_index = min(max(x_index, 0), target_columns - 1)
+        y_index = min(max(y_index, 0), target_rows - 1)
+        grid_sum[y_index, x_index] += z_value
+        grid_count[y_index, x_index] += 1
+
+    grid = np.full(aggregate_shape, np.nan, dtype=float)
+    populated = grid_count > 0
+    grid[populated] = grid_sum[populated] / grid_count[populated]
+    if not np.any(populated):
+        return None
+
+    return _pad_spatial_preview_grid(grid, full_shape)
+
+
+def _spatial_preview_aggregation_setup(
+        cursor,
+        table_name,
+        parameter,
+        *,
+        x_axis,
+        y_axis,
+        grid_shape,
+        size,
+        ):
+    table = _sqlite_identifier(table_name)
+    x_column = _sqlite_identifier(x_axis)
+    y_column = _sqlite_identifier(y_axis)
+    z_column = _sqlite_identifier(parameter)
+    where_sql = (
+        f"{x_column} IS NOT NULL AND {y_column} IS NOT NULL "
+        f"AND {z_column} IS NOT NULL"
+        )
+    cursor.execute(
+        f"SELECT COUNT(*), MIN({x_column}), MAX({x_column}), "
+        f"COUNT(DISTINCT {x_column}), MIN({y_column}), "
+        f"MAX({y_column}), COUNT(DISTINCT {y_column}) "
+        f"FROM {table} WHERE {where_sql}"
+        )
+    summary = cursor.fetchone()
+    if summary is None:
+        return None
+
+    (
+        source_rows,
+        x_min,
+        x_max,
+        x_count,
+        y_min,
+        y_max,
+        y_count,
+        ) = summary
+    if (
+            not source_rows
+            or x_min is None
+            or x_max is None
+            or y_min is None
+            or y_max is None
+            or not x_count
+            or not y_count
+            ):
+        return None
+
+    full_shape, aggregate_shape = _spatial_preview_grid_shapes(
+        grid_shape,
+        observed_rows=int(y_count),
+        observed_columns=int(x_count),
+        size=size,
+        )
+    target_rows, target_columns = aggregate_shape
+    x_lower_edge, x_scale = _spatial_preview_axis_bins(
+        float(x_min),
+        float(x_max),
+        int(x_count),
+        target_columns,
+        )
+    y_lower_edge, y_scale = _spatial_preview_axis_bins(
+        float(y_min),
+        float(y_max),
+        int(y_count),
+        target_rows,
+        )
+    return (
+        table,
+        x_column,
+        y_column,
+        z_column,
+        where_sql,
+        full_shape,
+        aggregate_shape,
+        x_lower_edge,
+        x_scale,
+        y_lower_edge,
+        y_scale,
+        )
+
+
+def _spatial_preview_grid_shapes(
+        grid_shape,
+        *,
+        observed_rows,
+        observed_columns,
+        size,
+        ):
+    max_cells = min(MAX_PREVIEW_ROWS, max(1, int(size) * int(size)))
+    observed_shape = (int(observed_rows), int(observed_columns))
+    shape = _normalise_grid_shape(grid_shape)
+    if shape is None:
+        target_shape = _preview_bin_shape(
+            observed_shape,
+            size,
+            max_cells=max_cells,
             )
-        for rowid, value in cursor.fetchall():
-            position = rowid_positions.get(int(rowid))
-            if position is None:
-                continue
-            try:
-                flat_grid[position] = float(value)
-            except (TypeError, ValueError):
-                flat_grid[position] = np.nan
-            found += 1
+        return target_shape, target_shape
 
-    expected = int(sample_rowids.size)
-    if found == 0:
-        return None
-    if found < expected * PREVIEW_GRID_SAMPLE_MIN_COVERAGE:
-        return None
-
-    return grid
+    full_shape = _preview_bin_shape(shape, size, max_cells=max_cells)
+    aggregate_shape = (
+        _covered_preview_bin_count(observed_rows, shape[0], full_shape[0]),
+        _covered_preview_bin_count(observed_columns, shape[1], full_shape[1]),
+        )
+    return full_shape, aggregate_shape
 
 
-def _sample_axis_positions(length, target_count):
-    length = max(1, int(length))
-    target_count = max(1, min(int(target_count), length))
-    if target_count == length:
-        return np.arange(length, dtype=np.int64)
+def _covered_preview_bin_count(observed_count, planned_count, target_count):
+    observed_count = max(1, int(observed_count))
+    planned_count = max(1, int(planned_count))
+    target_count = max(1, int(target_count))
+    covered = (
+        observed_count * target_count + planned_count - 1
+        ) // planned_count
+    return min(target_count, max(1, covered))
 
-    starts = (np.arange(target_count, dtype=np.int64) * length) // target_count
-    ends = (
-        (np.arange(1, target_count + 1, dtype=np.int64) * length)
-        // target_count
-        ) - 1
-    return (starts + ends) // 2
+
+def _pad_spatial_preview_grid(grid, full_shape):
+    if grid.shape == full_shape:
+        return grid
+
+    padded = np.full(full_shape, np.nan, dtype=float)
+    rows = min(grid.shape[0], full_shape[0])
+    columns = min(grid.shape[1], full_shape[1])
+    padded[:rows, :columns] = grid[:rows, :columns]
+    return padded
+
+
+def _spatial_preview_axis_bins(lower, upper, source_count, bin_count):
+    if not np.isfinite(lower) or not np.isfinite(upper):
+        raise ValueError("Preview axis bounds must be finite")
+    if source_count <= 1 or bin_count <= 1 or lower == upper:
+        return lower, 1.0
+
+    source_step = (upper - lower) / (source_count - 1)
+    lower_edge = lower - source_step / 2
+    bin_width = (upper - lower + source_step) / bin_count
+    return lower_edge, 1.0 / bin_width
 
 
 def _fixed_heatmap_grid(x, y, z, grid_shape, max_cells=None):

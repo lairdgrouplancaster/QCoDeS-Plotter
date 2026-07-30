@@ -7,6 +7,7 @@ import numpy as np
 import qplot.tools.worker as worker_module
 from qplot.configuration.scripts import try_as_num
 from qplot.tools.general import data2matrix
+from qplot.tools.heatmap_geometry import HeatmapGeometry
 from qplot.tools.plot_tools import differentiate, pass_filter, subtract_mean
 from qplot.tools.worker import loader
 from qplot.windows import _plotWin as plotwin_module
@@ -103,7 +104,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
             )
 
-    def test_large_heatmap_sql_loader_uses_bounded_sample_and_grid(self):
+    def test_large_heatmap_sql_loader_uses_bounded_spatial_aggregation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             database_path = f"{tmpdir}/heatmap.db"
             self._create_heatmap_table(database_path)
@@ -131,16 +132,26 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = old_grid_side
 
-            self.assertTrue(worker.loaded_from_sql_sample)
+            self.assertTrue(worker.loaded_from_sql_heatmap)
             self.assertFalse(worker.read_data)
-            self.assertLessEqual(worker.loaded_point_count, 60)
+            self.assertLessEqual(worker.loaded_point_count, 16)
             self.assertLessEqual(worker.dataGrid.size, 16)
             self.assertGreater(np.isfinite(worker.dataGrid).sum(), 0)
             self.assertIsNotNone(worker.heatmap_downsample_info)
-            self.assertTrue(worker.heatmap_downsample_info["source_sampled"])
+            self.assertFalse(worker.heatmap_downsample_info["source_sampled"])
+            self.assertTrue(worker.heatmap_downsample_info["source_aggregated"])
             self.assertTrue(worker.heatmap_downsample_info["grid_binned"])
             self.assertEqual(worker.heatmap_downsample_info["source_row_count"], 1200)
-            self.assertEqual(worker.heatmap_downsample_info["source_sample_limit"], 60)
+            self.assertIsNone(worker.heatmap_downsample_info["source_sample_limit"])
+            self.assertIsNone(worker.heatmap_downsample_info["source_sample_stride"])
+            self.assertEqual(
+                worker.heatmap_downsample_info["source_aggregation_strategy"],
+                "spatial mean",
+                )
+            self.assertEqual(
+                worker.heatmap_downsample_info["aggregated_source_row_count"],
+                1200,
+                )
             self.assertEqual(worker.heatmap_downsample_info["source_grid_columns"], 40)
             self.assertEqual(worker.heatmap_downsample_info["source_grid_rows"], 30)
             self.assertEqual(
@@ -151,6 +162,138 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker.heatmap_downsample_info["grid_cell_count"],
                 worker.dataGrid.size,
                 )
+
+    def test_large_heatmap_sql_output_is_independent_of_insertion_order(self):
+        rows = [
+            (float(x), float(y), float(x + y * 100))
+            for y in range(30)
+            for x in range(40)
+            ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results = []
+            old_database_path = worker_module.cache_database_path
+            old_set_complete = worker_module.set_parameter_complete
+            old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
+            old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
+            old_grid_side = worker_module.MAX_SQL_HEATMAP_GRID_SIDE
+            try:
+                worker_module.set_parameter_complete = (
+                    lambda param, complete=False: setattr(param, "_complete", complete)
+                    )
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 60
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 16
+                worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 4
+
+                for name, insertion_order in (
+                        ("forward", rows),
+                        ("reverse", list(reversed(rows))),
+                        ):
+                    database_path = f"{tmpdir}/{name}.db"
+                    self._create_heatmap_table_from_rows(
+                        database_path,
+                        insertion_order,
+                    )
+                    worker = self._sql_heatmap_worker(database_path)
+                    worker.cache.rundescriber.shapes = None
+                    worker_module.cache_database_path = (
+                        lambda _cache, path=database_path: path
+                        )
+
+                    loader._load_large_heatmap_from_sql(worker)
+                    loader._canonicalize_heatmap(worker)
+                    self.assertEqual(
+                        worker.heatmap_source_axis_ranges,
+                        {"x": (0.0, 39.0), "y": (0.0, 29.0)},
+                        )
+                    results.append((
+                        worker.axis_data["x"],
+                        worker.axis_data["y"],
+                        worker.dataGrid,
+                        worker.heatmap_downsample_info,
+                        ))
+            finally:
+                worker_module.cache_database_path = old_database_path
+                worker_module.set_parameter_complete = old_set_complete
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
+                worker_module.MAX_SQL_HEATMAP_GRID_SIDE = old_grid_side
+
+        forward_x, forward_y, forward_grid, forward_info = results[0]
+        reverse_x, reverse_y, reverse_grid, reverse_info = results[1]
+        np.testing.assert_array_equal(forward_x, reverse_x)
+        np.testing.assert_array_equal(forward_y, reverse_y)
+        np.testing.assert_array_equal(forward_grid, reverse_grid)
+        self.assertEqual(
+            forward_info["source_aggregation_strategy"],
+            "spatial mean",
+            )
+        self.assertEqual(
+            reverse_info["source_aggregation_strategy"],
+            "spatial mean",
+            )
+        self.assertEqual(forward_info["source_grid_columns"], 40)
+        self.assertEqual(forward_info["source_grid_rows"], 30)
+        np.testing.assert_array_equal(
+            forward_grid,
+            [[304.5, 314.5, 324.5, 334.5],
+             [1054.5, 1064.5, 1074.5, 1084.5],
+             [1804.5, 1814.5, 1824.5, 1834.5],
+             [2554.5, 2564.5, 2574.5, 2584.5]],
+            )
+
+        geometry = HeatmapGeometry.from_centres(forward_x, forward_y)
+        np.testing.assert_allclose(
+            [geometry.x.edges[0], geometry.x.edges[-1]],
+            [-0.5, 39.5],
+            )
+        np.testing.assert_allclose(
+            [geometry.y.edges[0], geometry.y.edges[-1]],
+            [-0.5, 29.5],
+            )
+
+    def test_small_heatmap_sql_loader_preserves_exact_grid(self):
+        rows = [
+            (float(x), float(y), float(x + y * 10))
+            for y in range(3)
+            for x in range(4)
+            ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = f"{tmpdir}/small.db"
+            self._create_heatmap_table_from_rows(database_path, list(reversed(rows)))
+            worker = self._sql_heatmap_worker(database_path)
+            worker.cache.rundescriber.shapes = {"signal": (3, 4)}
+
+            old_database_path = worker_module.cache_database_path
+            old_set_complete = worker_module.set_parameter_complete
+            old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
+            old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
+            try:
+                worker_module.cache_database_path = lambda _cache: database_path
+                worker_module.set_parameter_complete = (
+                    lambda param, complete=False: setattr(param, "_complete", complete)
+                    )
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 12
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 12
+
+                loader._load_large_heatmap_from_sql(worker)
+                loader._canonicalize_heatmap(worker)
+            finally:
+                worker_module.cache_database_path = old_database_path
+                worker_module.set_parameter_complete = old_set_complete
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
+
+        np.testing.assert_array_equal(worker.axis_data["x"], [0.0, 1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(worker.axis_data["y"], [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(
+            worker.dataGrid,
+            [[0.0, 1.0, 2.0, 3.0],
+             [10.0, 11.0, 12.0, 13.0],
+             [20.0, 21.0, 22.0, 23.0]],
+            )
+        self.assertFalse(worker.sampled_heatmap_source)
 
     def test_large_heatmap_sql_loader_can_reload_visible_axis_range(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -295,16 +438,22 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker_module.cache_database_path = old_database_path
 
     def _create_heatmap_table(self, database_path):
+        self._create_heatmap_table_from_rows(
+            database_path,
+            [
+                (float(x), float(y), float(x + y * 100))
+                for y in range(30)
+                for x in range(40)
+                ],
+            )
+
+    def _create_heatmap_table_from_rows(self, database_path, rows):
         conn = sqlite3.connect(database_path)
         try:
             conn.execute("CREATE TABLE results (x REAL, y REAL, signal REAL)")
             conn.executemany(
                 "INSERT INTO results (x, y, signal) VALUES (?, ?, ?)",
-                [
-                    (float(x), float(y), float(x + y * 100))
-                    for y in range(30)
-                    for x in range(40)
-                    ],
+                rows,
                 )
             conn.commit()
         finally:

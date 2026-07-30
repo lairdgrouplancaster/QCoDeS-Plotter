@@ -58,6 +58,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         """
         self._large_heatmap_sql_mode = False
         self._heatmap_full_axis_ranges: dict[str, tuple[float, float]] | None = None
+        self._heatmap_full_view_ranges: dict[str, tuple[float, float]] | None = None
         self._heatmap_last_view_ranges: dict[str, tuple[float, float]] | None = None
         self._heatmap_worker_downsample_info: dict[str, Any] | None = None
         self._heatmap_downsample_info: dict[str, Any] | None = None
@@ -66,7 +67,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         self._heatmap_view_reload_timer.timeout.connect(
             self._reload_visible_heatmap_data
             )
-        self.vb.main_moved.connect(self._schedule_visible_heatmap_reload)
+        self._connect_heatmap_range_controls()
 
         self.image = pg.ImageItem(axisOrder='row-major')
         self.image.setZValue(0) # Like *Send to back*
@@ -88,6 +89,16 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
         self.show_status("Heatmap ready; loading data...", 5000)
+
+
+    def _connect_heatmap_range_controls(self) -> None:
+        self.plot.sigRangeChangedManually.connect(
+            self._schedule_visible_heatmap_reload
+            )
+        self.vb.autoRange_triggered.connect(self._zoom_large_heatmap_to_all)
+        self.plot.autoBtn.clicked.connect(
+            lambda _button: self._zoom_large_heatmap_to_all()
+            )
       
 
     def initRefresh(self, refresh: Any) -> None:
@@ -238,13 +249,19 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
     def _update_large_heatmap_state(self, worker: Any) -> None:
         self._update_heatmap_downsample_state(worker)
-        if not getattr(worker, "loaded_from_sql_sample", False):
+        if not getattr(worker, "loaded_from_sql_heatmap", False):
             return
 
         self._large_heatmap_sql_mode = True
         worker_ranges = getattr(worker, "heatmap_axis_ranges", None)
         if worker_ranges is None or self._heatmap_full_axis_ranges is None:
-            self._heatmap_full_axis_ranges = self._axis_ranges_from_data()
+            source_ranges = self._normalise_axis_ranges(
+                getattr(worker, "heatmap_source_axis_ranges", None)
+                )
+            self._heatmap_full_axis_ranges = (
+                source_ranges or self._axis_ranges_from_data()
+                )
+            self._heatmap_full_view_ranges = self._axis_view_ranges_from_data()
 
         if worker_ranges is not None:
             self._heatmap_last_view_ranges = self._normalise_axis_ranges(worker_ranges)
@@ -346,7 +363,9 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             ) -> dict[str, Any] | None:
         info = getattr(worker, "heatmap_downsample_info", None)
         if isinstance(info, dict) and (
-                info.get("source_sampled") or info.get("grid_binned")
+                info.get("source_sampled")
+                or info.get("source_aggregated")
+                or info.get("grid_binned")
                 ):
             return dict(info)
 
@@ -394,8 +413,11 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             return None
 
         loaded_point_count = getattr(worker, "loaded_point_count", None)
+        source_aggregated = bool(
+            getattr(worker, "aggregated_heatmap_source", False)
+            )
         source_sampled = bool(getattr(worker, "sampled_heatmap_source", False))
-        if loaded_point_count is not None:
+        if loaded_point_count is not None and not source_aggregated:
             try:
                 source_sampled = source_sampled or int(loaded_point_count) < int(
                     source_cell_count
@@ -416,6 +438,12 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 ),
             "loaded_point_count": loaded_point_count,
             "source_sampled": source_sampled,
+            "source_aggregated": source_aggregated,
+            "aggregated_source_row_count": getattr(
+                worker,
+                "_heatmap_aggregated_source_rows",
+                None,
+                ),
             "source_sample_limit": (
                 loaded_point_count if source_sampled else None
                 ),
@@ -425,6 +453,9 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 None,
                 ),
             "source_sample_strategy": None,
+            "source_aggregation_strategy": (
+                "spatial mean" if source_aggregated else None
+                ),
             "axis_ranges": getattr(worker, "heatmap_axis_ranges", None),
             "unique_x_count": source_columns,
             "unique_y_count": source_rows,
@@ -595,7 +626,11 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             info_source_rows = self._format_heatmap_count(
                 info.get("source_grid_rows")
                 )
-            if info.get("source_sampled") or info.get("grid_binned"):
+            if (
+                    info.get("source_sampled")
+                    or info.get("source_aggregated")
+                    or info.get("grid_binned")
+                    ):
                 return (
                     "Resolution: downsampled "
                     f"{grid_columns} x {grid_rows} of "
@@ -662,7 +697,11 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         info = self._heatmap_downsample_info or {}
         lines = ["This heatmap is displayed from downsampled data."]
 
-        if not info.get("source_sampled") and not info.get("grid_binned"):
+        if (
+                not info.get("source_sampled")
+                and not info.get("source_aggregated")
+                and not info.get("grid_binned")
+                ):
             return "\n".join(lines)
 
         lines.append("")
@@ -708,7 +747,15 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         lines.append("Source rows:")
         loaded_count = info.get("loaded_point_count")
         source_count = info.get("source_row_count")
-        if loaded_count is not None and source_count is not None:
+        aggregated_count = info.get("aggregated_source_row_count")
+        if info.get("source_aggregated") and aggregated_count is not None:
+            lines.append(
+                "All "
+                f"{self._format_heatmap_count(aggregated_count)} matching "
+                "source rows contributed to "
+                f"{self._format_heatmap_count(loaded_count)} spatial mean cells."
+                )
+        elif loaded_count is not None and source_count is not None:
             lines.append(
                 "Loaded "
                 f"{self._format_heatmap_count(loaded_count)} finite "
@@ -746,7 +793,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                     "Database rows were uniformly sampled before plotting, capped at "
                     f"{sample_limit} rows."
                     )
-        else:
+        elif not info.get("source_aggregated"):
             lines.append("All matching source rows were read before display binning.")
 
         lines.extend(["", "Display grid:"])
@@ -762,9 +809,14 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 f"{unique_x} x {unique_y} cells."
                 )
             if info.get("empty_bins_filled"):
-                lines.append(
-                    "Empty sampled display bins were filled by interpolation."
-                    )
+                if info.get("source_sampled"):
+                    lines.append(
+                        "Empty sampled display bins were filled by interpolation."
+                        )
+                else:
+                    lines.append(
+                        "Empty display bins were filled by interpolation."
+                        )
         else:
             lines.append(
                 "The sampled source rows were displayed on an exact "
@@ -829,6 +881,62 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         return ranges
 
 
+    def _axis_view_ranges_from_data(
+            self,
+            ) -> dict[str, tuple[float, float]] | None:
+        try:
+            geometry = HeatmapGeometry.from_centres(
+                self.axis_data.get("x", []),
+                self.axis_data.get("y", []),
+                )
+        except (TypeError, ValueError):
+            return None
+
+        return {
+            "x": (float(geometry.x.edges[0]), float(geometry.x.edges[-1])),
+            "y": (float(geometry.y.edges[0]), float(geometry.y.edges[-1])),
+            }
+
+
+    def _zoom_large_heatmap_to_all(self) -> None:
+        if not self._large_heatmap_sql_mode:
+            return
+
+        full_axis_ranges = self._heatmap_full_axis_ranges
+        if full_axis_ranges is None:
+            return
+
+        self._heatmap_view_reload_timer.stop()
+        view_ranges = self._heatmap_full_view_ranges or full_axis_ranges
+        self.vb.setRange(
+            xRange=view_ranges["x"],
+            yRange=view_ranges["y"],
+            padding=0,
+            )
+
+        self._reload_full_heatmap_data()
+
+
+    def _reload_full_heatmap_data(self) -> bool:
+        full_axis_ranges = self._heatmap_full_axis_ranges
+        if full_axis_ranges is None or self._heatmap_last_view_ranges is None:
+            return False
+        if getattr(getattr(self, "worker", None), "running", False):
+            self._heatmap_view_reload_timer.start(
+                _HEATMAP_VIEW_RELOAD_DEBOUNCE_MS
+                )
+            return False
+
+        self._heatmap_last_view_ranges = None
+        self.load_data(
+            force_sql_heatmap=True,
+            heatmap_axis_ranges=None,
+            heatmap_full_axis_ranges=full_axis_ranges,
+            status_message=f"Loading full heatmap for {self.param.name}...",
+            )
+        return True
+
+
     def _schedule_visible_heatmap_reload(self, *_args: Any) -> None:
         if not self._large_heatmap_sql_mode:
             return
@@ -848,7 +956,10 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             return
 
         ranges = self._visible_heatmap_axis_ranges()
-        if ranges is None or self._axis_ranges_match(ranges, self._heatmap_last_view_ranges):
+        if ranges is None:
+            self._reload_full_heatmap_data()
+            return
+        if self._axis_ranges_match(ranges, self._heatmap_last_view_ranges):
             return
 
         self._heatmap_last_view_ranges = ranges
