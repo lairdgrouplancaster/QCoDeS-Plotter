@@ -6,6 +6,12 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.tools.heatmap_geometry import (
+    AxisGeometry,
+    HeatmapGeometry,
+    canonicalize_heatmap_data,
+)
+
 from . import _colorbar
 from ._commands import command_spec, create_action
 from ._plot2d_colorbar import Plot2DColorbarMixin
@@ -64,9 +70,12 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
         self.image = pg.ImageItem(axisOrder='row-major')
         self.image.setZValue(0) # Like *Send to back*
-        # self.image.setPxMode(True)
-        
+        self.heatmap_mesh = pg.PColorMeshItem()
+        self.heatmap_mesh.setZValue(0)
+        self.heatmap_mesh.hide()
+
         self.plot.addItem(self.image)
+        self.plot.addItem(self.heatmap_mesh)
         self.hover_pixel_outline = qtw.QGraphicsRectItem()
         self.hover_pixel_outline.setPen(
             pg.mkPen((255, 255, 255, 190), width=1.5, cosmetic=True)
@@ -172,6 +181,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         try:
             self._update_large_heatmap_state(plot_worker)
             if not self._has_plottable_heatmap_data():
+                self._invalidate_heatmap_geometry()
                 self.show_status(
                     f"Waiting for plottable data for {self.param.name}...",
                     5000,
@@ -183,39 +193,25 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                     )
                 return
 
-            autoLevels=self.relevel_refresh.isChecked()
-            # Produce Heatmap
-            self.image.setImage(
-                self.dataGrid,
-                autoLevels=autoLevels,
-                autoRange=True
-                )
+            try:
+                self._update_heatmap_geometry()
+            except (TypeError, ValueError) as error:
+                self._invalidate_heatmap_geometry()
+                self.show_status(f"Cannot display heatmap: {error}", 10_000)
+                self.show_plot_state(
+                    "Invalid heatmap geometry",
+                    str(error),
+                    kind="error",
+                    )
+                return
 
-            #set axis values
-            xmin = min(self.axis_data["x"])
-            ymin = min(self.axis_data["y"])
-            xrange = max(self.axis_data["x"]) - xmin
-            yrange = max(self.axis_data["y"]) - ymin
-
-            if xrange == 0:
-                xrange = xmin / 100
-            if yrange == 0:
-                yrange = ymin / 100
-
-            # Link x/y axis values with Heatmap data
-            heatmap_rect = QtCore.QRectF(
-                xmin,
-                ymin,
-                xrange,
-                yrange
-            )
-            self.__dict__["rect"] = heatmap_rect
-            self.image.setRect(heatmap_rect)
+            autoLevels = self.relevel_refresh.isChecked()
+            self._render_heatmap()
 
             # Produce color bar on first run
             if not hasattr(self, "bar"):
                 self.bar = self.plot.addColorBar(
-                    self.image,
+                    self._heatmap_colorbar_items(),
                     colorMap=self._colorbar_colormap(),
                     rounding=(
                         np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid)
@@ -234,10 +230,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             elif self._colorbar_manual_levels is not None:
                 self._set_colorbar_levels(*self._colorbar_manual_levels)
             
-            self._update_hover_pixel_outline_from_index()
-            if self.marquee is not None:
-                self.set_marquee_rect(self.marquee)
-            self._snap_sweep_lines_to_pixel_centres()
+            self._restore_heatmap_interactions()
         finally:
             # Allow new workers after empty live loads or display errors.
             plot_worker.running = False
@@ -967,6 +960,165 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             )
 
 
+    def _update_heatmap_geometry(self) -> HeatmapGeometry:
+        """Build and install geometry from the current setpoint centres."""
+
+        self.__dict__.pop("heatmap_geometry", None)
+        self.__dict__.pop("rect", None)
+        self._reset_heatmap_hover()
+        x_centres, y_centres, data_grid = canonicalize_heatmap_data(
+            self.axis_data["x"],
+            self.axis_data["y"],
+            self.dataGrid,
+            )
+        geometry = HeatmapGeometry.from_centres(x_centres, y_centres)
+
+        axis_data = dict(self.axis_data)
+        axis_data["x"] = x_centres
+        axis_data["y"] = y_centres
+        self.__dict__["axis_data"] = axis_data
+        self.__dict__["dataGrid"] = data_grid
+        self.__dict__["heatmap_geometry"] = geometry
+        self.__dict__["rect"] = QtCore.QRectF(*geometry.rect)
+        return geometry
+
+
+    def _heatmap_geometry(self) -> HeatmapGeometry | None:
+        geometry = self.__dict__.get("heatmap_geometry")
+        if isinstance(geometry, HeatmapGeometry):
+            return geometry
+        return None
+
+
+    def _required_heatmap_geometry(self) -> HeatmapGeometry:
+        geometry = self._heatmap_geometry()
+        if geometry is None:
+            raise RuntimeError("Heatmap geometry is not available.")
+        return geometry
+
+
+    def _render_heatmap(self) -> None:
+        """Render uniform grids as images and rectilinear grids as meshes."""
+
+        geometry = self._required_heatmap_geometry()
+        data_grid = np.asarray(self.dataGrid)
+        if geometry.is_uniform:
+            self.image.setImage(
+                data_grid,
+                autoLevels=False,
+                )
+            self.image.setRect(QtCore.QRectF(*geometry.rect))
+            self.heatmap_mesh.hide()
+            self.image.show()
+            return
+
+        mesh_data = np.asarray(data_grid, dtype=float).copy()
+        mesh_data[~np.isfinite(mesh_data)] = np.nan
+        x_vertices, y_vertices = np.meshgrid(
+            geometry.x.edges,
+            geometry.y.edges,
+            indexing="xy",
+            )
+        self.heatmap_mesh.setData(
+            x_vertices,
+            y_vertices,
+            mesh_data,
+            autoLevels=False,
+            )
+        self.image.hide()
+        self.heatmap_mesh.show()
+
+
+    def _heatmap_colorbar_items(self) -> list[Any]:
+        return [self.image, self.heatmap_mesh]
+
+
+    def _hide_heatmap_renderers(self) -> None:
+        for item_name in ("image", "heatmap_mesh"):
+            item = self.__dict__.get(item_name)
+            if item is not None:
+                item.hide()
+
+
+    def _reset_heatmap_hover(self) -> None:
+        self.hide_hover_pixel_outline()
+        labels = self.__dict__.get("pos_labels")
+        if not isinstance(labels, dict):
+            return
+        index_label = labels.get("index")
+        if index_label is not None:
+            index_label.setText("")
+        z_label = labels.get("z")
+        if z_label is not None:
+            z_label.setText("z =")
+
+
+    def _invalidate_heatmap_geometry(self) -> None:
+        self.__dict__.pop("heatmap_geometry", None)
+        self.__dict__.pop("rect", None)
+        self._hide_heatmap_renderers()
+        self._reset_heatmap_hover()
+        if self.__dict__.get("marquee") is not None:
+            self.clear_marquee()
+        self._set_sweep_lines_visible(False)
+
+
+    def _restore_heatmap_interactions(self) -> None:
+        self._set_sweep_lines_visible(True)
+        marquee = self.__dict__.get("marquee")
+        if isinstance(marquee, QtCore.QRectF):
+            if self._marquee_intersects_heatmap(marquee):
+                self.set_marquee_rect(marquee)
+            else:
+                self.clear_marquee()
+        self._snap_sweep_lines_to_pixel_centres()
+
+
+    def _set_sweep_lines_visible(self, visible: bool) -> None:
+        for line in self.__dict__.get("sweep_lines", {}).values():
+            set_visible = getattr(line, "setVisible", None)
+            if callable(set_visible):
+                set_visible(visible)
+
+
+    def _marquee_intersects_heatmap(self, rect: QtCore.QRectF) -> bool:
+        geometry = self._heatmap_geometry()
+        if geometry is None:
+            return False
+        normalised = rect.normalized()
+        left, bottom, right, top = geometry.bounds
+        return bool(
+            normalised.right() > left
+            and normalised.left() < right
+            and normalised.bottom() > bottom
+            and normalised.top() < top
+            )
+
+
+    def heatmap_sample_at(
+            self,
+            x_value: float,
+            y_value: float,
+            ) -> tuple[int, int, float, float, float] | None:
+        """Return index, recorded coordinates, and value under a point."""
+
+        geometry = self._heatmap_geometry()
+        if geometry is None:
+            return None
+        index = geometry.index_at(x_value, y_value)
+        if index is None:
+            return None
+
+        x_index, y_index = index
+        return (
+            x_index,
+            y_index,
+            geometry.x.centre(x_index),
+            geometry.y.centre(y_index),
+            float(self.dataGrid[y_index, x_index]),
+            )
+
+
     def show_hover_pixel_outline(self, i: int, j: int) -> None:
         """
         Move the hover outline to the heatmap pixel at the given data indices.
@@ -988,48 +1140,33 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
         """
         self.__dict__["z_index"] = None
-        if hasattr(self, "hover_pixel_outline"):
-            self.hover_pixel_outline.hide()
-
-
-    def _heatmap_rect(self) -> QtCore.QRectF | None:
-        rect = self.__dict__.get("rect")
-        if isinstance(rect, QtCore.QRectF):
-            return rect
-        return None
+        outline = self.__dict__.get("hover_pixel_outline")
+        if outline is not None:
+            outline.hide()
 
 
     def _update_hover_pixel_outline_from_index(self) -> None:
-        heatmap_rect = self._heatmap_rect()
+        geometry = self._heatmap_geometry()
         z_index = self.__dict__.get("z_index")
         if (
                 not hasattr(self, "hover_pixel_outline")
-                or heatmap_rect is None
-                or not hasattr(self, "dataGrid")
+                or geometry is None
                 or not isinstance(z_index, list)
+                or len(z_index) != 2
                 ):
             if hasattr(self, "hover_pixel_outline"):
                 self.hover_pixel_outline.hide()
             return
 
         i, j = z_index
-        rows, cols = self.dataGrid.shape
-        if rows <= 0 or cols <= 0 or i < 0 or j < 0 or i >= cols or j >= rows:
+        try:
+            cell_rect = geometry.cell_rect(i, j)
+        except (IndexError, TypeError):
+            self.__dict__["z_index"] = None
             self.hover_pixel_outline.hide()
             return
 
-        cell_width = heatmap_rect.width() / cols
-        cell_height = heatmap_rect.height() / rows
-        if cell_width <= 0 or cell_height <= 0:
-            self.hover_pixel_outline.hide()
-            return
-
-        self.hover_pixel_outline.setRect(QtCore.QRectF(
-            heatmap_rect.x() + i * cell_width,
-            heatmap_rect.y() + j * cell_height,
-            cell_width,
-            cell_height,
-        ))
+        self.hover_pixel_outline.setRect(QtCore.QRectF(*cell_rect))
         self.hover_pixel_outline.show()
 
 
@@ -1038,60 +1175,94 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         Snap marquee edges to heatmap pixel boundaries.
 
         """
-        heatmap_rect = self._heatmap_rect()
-        if heatmap_rect is None or not hasattr(self, "dataGrid"):
+        geometry = self._heatmap_geometry()
+        if geometry is None:
             return rect
 
-        rows, cols = self.dataGrid.shape
-        if (
-                rows <= 0
-                or cols <= 0
-                or heatmap_rect.width() <= 0
-                or heatmap_rect.height() <= 0
-                ):
+        try:
+            left, right = geometry.x.snap_interval(rect.left(), rect.right())
+            bottom, top = geometry.y.snap_interval(rect.top(), rect.bottom())
+        except ValueError:
             return rect
-
-        left, right = self._snap_marquee_axis_to_cells(
-            rect.left(),
-            rect.right(),
-            heatmap_rect.x(),
-            heatmap_rect.width(),
-            cols,
-            )
-        bottom, top = self._snap_marquee_axis_to_cells(
-            rect.top(),
-            rect.bottom(),
-            heatmap_rect.y(),
-            heatmap_rect.height(),
-            rows,
-            )
 
         return QtCore.QRectF(left, bottom, right - left, top - bottom)
 
 
-    def _snap_marquee_axis_to_cells(
+    def _snap_translated_marquee_rect(
             self,
-            low: float,
-            high: float,
-            origin: float,
-            span: float,
-            count: int,
-            ) -> tuple[float, float]:
-        cell_size = span / count
-        min_value = origin
-        max_value = origin + span
-        low = min(max(low, min_value), max_value)
-        high = min(max(high, min_value), max_value)
+            rect: QtCore.QRectF,
+            original: QtCore.QRectF,
+            handle: Any,
+            ) -> None:
+        """Preserve selected cell counts during Shift-drag translation."""
 
-        low_index = int(np.floor((low - origin) / cell_size))
-        high_index = int(np.ceil((high - origin) / cell_size))
-        low_index = min(max(low_index, 0), count - 1)
-        high_index = min(max(high_index, low_index + 1), count)
+        geometry = self._heatmap_geometry()
+        if geometry is None:
+            super()._snap_translated_marquee_rect(rect, original, handle)
+            return
 
-        return (
-            origin + low_index * cell_size,
-            origin + high_index * cell_size,
+        original = original.normalized()
+        snapped = self._snap_marquee_rect(QtCore.QRectF(rect).normalized())
+        adjusted = QtCore.QRectF(snapped)
+        try:
+            if "w" in handle or "e" in handle:
+                left, right = self._translated_marquee_axis_bounds(
+                    geometry.x,
+                    original.left(),
+                    original.right(),
+                    snapped.left(),
+                    snapped.right(),
+                    anchor_low="w" in handle,
+                    )
+                adjusted.setLeft(left)
+                adjusted.setRight(right)
+            if "n" in handle or "s" in handle:
+                bottom, top = self._translated_marquee_axis_bounds(
+                    geometry.y,
+                    original.top(),
+                    original.bottom(),
+                    snapped.top(),
+                    snapped.bottom(),
+                    anchor_low="s" in handle,
+                    )
+                adjusted.setTop(bottom)
+                adjusted.setBottom(top)
+        except ValueError:
+            super()._snap_translated_marquee_rect(rect, original, handle)
+            return
+
+        rect.setRect(
+            adjusted.left(),
+            adjusted.top(),
+            adjusted.width(),
+            adjusted.height(),
             )
+
+
+    @staticmethod
+    def _translated_marquee_axis_bounds(
+            axis: AxisGeometry,
+            original_low: float,
+            original_high: float,
+            snapped_low: float,
+            snapped_high: float,
+            *,
+            anchor_low: bool,
+            ) -> tuple[float, float]:
+        original_cells = axis.slice_for_interval(original_low, original_high)
+        target_cells = axis.slice_for_interval(snapped_low, snapped_high)
+        cell_count = original_cells.stop - original_cells.start
+
+        if anchor_low:
+            start = target_cells.start
+            stop = min(start + cell_count, axis.count)
+            start = max(0, stop - cell_count)
+        else:
+            stop = target_cells.stop
+            start = max(0, stop - cell_count)
+            stop = min(axis.count, start + cell_count)
+
+        return axis.edges[start], axis.edges[stop]
 
 
     def _add_marquee_color_context_action(self, menu: qtw.QMenu) -> QtGui.QAction:
@@ -1151,7 +1322,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
     def _marquee_selected_data(self) -> npt.NDArray[np.float64] | None:
         if (
                 self.__dict__.get("marquee") is None
-                or self._heatmap_rect() is None
+                or self._heatmap_geometry() is None
                 or "dataGrid" not in self.__dict__
                 ):
             return None
@@ -1169,63 +1340,15 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
 
     def _marquee_cell_slices(self) -> tuple[slice, slice] | None:
-        heatmap_rect = self._heatmap_rect()
-        if heatmap_rect is None or self.marquee is None:
-            return None
-
-        rows, cols = self.dataGrid.shape
-        if (
-                rows <= 0
-                or cols <= 0
-                or heatmap_rect.width() <= 0
-                or heatmap_rect.height() <= 0
-                ):
+        geometry = self._heatmap_geometry()
+        if geometry is None or self.marquee is None:
             return None
 
         rect = self._snap_marquee_rect(self.marquee.normalized())
-        if rect is None:
-            return None
-
-        col_slice = self._marquee_axis_slice(
-            rect.left(),
-            rect.right(),
-            heatmap_rect.x(),
-            heatmap_rect.width(),
-            cols,
-            )
-        row_slice = self._marquee_axis_slice(
-            rect.top(),
-            rect.bottom(),
-            heatmap_rect.y(),
-            heatmap_rect.height(),
-            rows,
-            )
-        if row_slice is None or col_slice is None:
+        try:
+            col_slice = geometry.x.slice_for_interval(rect.left(), rect.right())
+            row_slice = geometry.y.slice_for_interval(rect.top(), rect.bottom())
+        except ValueError:
             return None
 
         return row_slice, col_slice
-
-
-    def _marquee_axis_slice(
-            self,
-            low: float,
-            high: float,
-            origin: float,
-            span: float,
-            count: int,
-            ) -> slice | None:
-        if count <= 0 or span <= 0:
-            return None
-
-        cell_size = span / count
-        min_value = origin
-        max_value = origin + span
-        low = min(max(low, min_value), max_value)
-        high = min(max(high, min_value), max_value)
-
-        start = int(np.floor((low - origin) / cell_size))
-        stop = int(np.ceil((high - origin) / cell_size))
-        start = min(max(start, 0), count - 1)
-        stop = min(max(stop, start + 1), count)
-
-        return slice(start, stop)
