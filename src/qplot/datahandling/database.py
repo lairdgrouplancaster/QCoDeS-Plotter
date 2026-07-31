@@ -28,6 +28,7 @@ DATABASE_ACCESS_TIMEOUT_SECONDS = 3
 DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS = 120
 DATABASE_CLOUD_SYNC_CHUNK_BYTES = 4 * 1024 * 1024
 DATABASE_CLOUD_SYNC_STATUS_INTERVAL = 1.0
+DATABASE_CLOUD_SYNC_RETRY_INTERVAL = 0.25
 DATABASE_PREFETCH_STATUS_PREFIX = "QPLOT_PREFETCH_PROGRESS:"
 CLOUD_PLACEHOLDER_XATTR_MARKERS = (
     "com.apple.fileprovider",
@@ -217,36 +218,7 @@ def prefetch_database_file_with_timeout(
     if status_callback is not None:
         status_callback(f"Waiting for {provider} sync...")
 
-    script = (
-        "import os, sys, time\n"
-        f"prefix = {DATABASE_PREFETCH_STATUS_PREFIX!r}\n"
-        f"chunk_size = {DATABASE_CLOUD_SYNC_CHUNK_BYTES!r}\n"
-        f"status_interval = {DATABASE_CLOUD_SYNC_STATUS_INTERVAL!r}\n"
-        "path = sys.argv[1]\n"
-        "total = os.path.getsize(path)\n"
-        "read = 0\n"
-        "last = 0.0\n"
-        "def report(force=False):\n"
-        "    global last\n"
-        "    if total <= 0:\n"
-        "        percent = 100.0\n"
-        "    else:\n"
-        "        percent = min(100.0, (read / total) * 100.0)\n"
-        "    now = time.perf_counter()\n"
-        "    if force or now - last >= status_interval:\n"
-        "        print(prefix + f'{percent:.0f}', flush=True)\n"
-        "        last = now\n"
-        "report(True)\n"
-        "with open(path, 'rb') as handle:\n"
-        "    while True:\n"
-        "        chunk = handle.read(chunk_size)\n"
-        "        if not chunk:\n"
-        "            break\n"
-        "        read += len(chunk)\n"
-        "        report(False)\n"
-        "report(True)\n"
-        "print(read, flush=True)\n"
-    )
+    script = _database_prefetch_script()
 
     try:
         process = subprocess.Popen(
@@ -333,6 +305,65 @@ def prefetch_database_file_with_timeout(
         raise RuntimeError(details)
 
     return bytes_read
+
+
+def _database_prefetch_script():
+    """
+    Returns the isolated cloud-hydration script used by the load worker.
+
+    Cloud providers can report a transient OS-level TimeoutError while a
+    placeholder is being materialised. The subprocess keeps retrying those
+    reads; its parent remains responsible for the overall timeout and cancel.
+
+    """
+    return (
+        "import errno, os, sys, time\n"
+        f"prefix = {DATABASE_PREFETCH_STATUS_PREFIX!r}\n"
+        f"chunk_size = {DATABASE_CLOUD_SYNC_CHUNK_BYTES!r}\n"
+        f"status_interval = {DATABASE_CLOUD_SYNC_STATUS_INTERVAL!r}\n"
+        f"retry_interval = {DATABASE_CLOUD_SYNC_RETRY_INTERVAL!r}\n"
+        "transient_errors = {errno.ETIMEDOUT, errno.ECANCELED}\n"
+        "path = sys.argv[1]\n"
+        "total = os.path.getsize(path)\n"
+        "read = 0\n"
+        "last = 0.0\n"
+        "def report(force=False):\n"
+        "    global last\n"
+        "    if total <= 0:\n"
+        "        percent = 100.0\n"
+        "    else:\n"
+        "        percent = min(100.0, (read / total) * 100.0)\n"
+        "    now = time.perf_counter()\n"
+        "    if force or now - last >= status_interval:\n"
+        "        print(prefix + f'{percent:.0f}', flush=True)\n"
+        "        last = now\n"
+        "report(True)\n"
+        "while True:\n"
+        "    try:\n"
+        "        handle = open(path, 'rb')\n"
+        "        break\n"
+        "    except OSError as error:\n"
+        "        if error.errno not in transient_errors:\n"
+        "            raise\n"
+        "        report(True)\n"
+        "        time.sleep(retry_interval)\n"
+        "with handle:\n"
+        "    while True:\n"
+        "        try:\n"
+        "            chunk = handle.read(chunk_size)\n"
+        "        except OSError as error:\n"
+        "            if error.errno not in transient_errors:\n"
+        "                raise\n"
+        "            report(True)\n"
+        "            time.sleep(retry_interval)\n"
+        "            continue\n"
+        "        if not chunk:\n"
+        "            break\n"
+        "        read += len(chunk)\n"
+        "        report(False)\n"
+        "report(True)\n"
+        "print(read, flush=True)\n"
+    )
 
 
 def _read_prefetch_pipe(pipe, stream_name, output_queue):

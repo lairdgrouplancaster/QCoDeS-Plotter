@@ -1,4 +1,6 @@
+import errno
 import sqlite3
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -950,12 +952,18 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
     class Field:
         def __init__(self, text=""):
             self.value = text
+            self.signals_blocked = False
 
         def setText(self, text):
             self.value = text
 
         def text(self):
             return self.value
+
+        def blockSignals(self, blocked):
+            previous = self.signals_blocked
+            self.signals_blocked = blocked
+            return previous
 
     class Button:
         def __init__(self):
@@ -999,13 +1007,18 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
     class Timer:
         def __init__(self):
             self.started = []
+            self.stopped = False
 
         def start(self, interval):
             self.started.append(interval)
 
+        def stop(self):
+            self.stopped = True
+
     class RunList:
         def __init__(self):
             self.runs = {}
+            self.signals_blocked = False
             self.selection_cleared = False
             self.scrolled = False
             self.watching = ["old"]
@@ -1015,6 +1028,11 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         def clearSelection(self):
             self.selection_cleared = True
+
+        def blockSignals(self, blocked):
+            previous = self.signals_blocked
+            self.signals_blocked = blocked
+            return previous
 
         def clear(self):
             self.runs = {}
@@ -1029,6 +1047,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         def topLevelItemCount(self):
             return len(self.runs)
 
+        def all_run_metadata(self):
+            return self.runs
+
         def selected_run_ids(self):
             return list(self.selected_ids)
 
@@ -1041,6 +1062,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         def set_database_runs(self, database_path, runs):
             self.database_runs = (database_path, runs)
+
+        def has_database(self, database_path):
+            return (
+                self.database_runs is not None
+                and self.database_runs[0] == database_path
+                )
 
     class InfoBox:
         def __init__(self):
@@ -1061,13 +1088,30 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         def cancel(self):
             self.cancelled = True
 
-    class Harness:
+    class ThreadPool:
+        def __init__(self):
+            self.started = []
+
+        def start(self, worker):
+            self.started.append(worker)
+
+    class Config:
+        def get(self, key):
+            if key == "runtime_settings.cloud_sync_timeout":
+                return 30
+            raise KeyError(key)
+
+    class Harness(QtCore.QObject):
+        load_file = main_window.MainWindow.load_file
         cancel_database_load = main_window.MainWindow.cancel_database_load
         database_load_finished = main_window.MainWindow.database_load_finished
         database_load_status = main_window.MainWindow.database_load_status
+        _cancel_database_detail_load = (
+            main_window.MainWindow._cancel_database_detail_load
+            )
         _hide_database_load_panel = main_window.MainWindow._hide_database_load_panel
-        _restore_database_load_previous_state = (
-            main_window.MainWindow._restore_database_load_previous_state
+        _prepare_database_load_ui = (
+            main_window.MainWindow._prepare_database_load_ui
             )
         _set_database_load_controls_enabled = (
             main_window.MainWindow._set_database_load_controls_enabled
@@ -1099,10 +1143,17 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
 
         def __init__(self):
+            super().__init__()
             self._database_load_generation = 2
             self._database_load_active = False
             self._database_load_state = None
             self._database_load_worker = None
+            self._database_detail_generation = 4
+            self._database_detail_active = False
+            self._database_detail_worker = None
+            self._database_expensive_detail_generation = 6
+            self._database_expensive_detail_active = False
+            self._database_expensive_detail_worker = None
             self.fileTextbox = DatabaseLoadUiTestCase.Field()
             self.run_idBox = DatabaseLoadUiTestCase.Field()
             self.measurementBox = DatabaseLoadUiTestCase.Field()
@@ -1124,6 +1175,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.emptyStateRefreshButton = DatabaseLoadUiTestCase.Button()
             self.emptyStateHelpButton = DatabaseLoadUiTestCase.Button()
             self.spinBox = DatabaseLoadUiTestCase.SpinBox()
+            self.config = DatabaseLoadUiTestCase.Config()
+            self.databaseLoadThreadPool = DatabaseLoadUiTestCase.ThreadPool()
+            self.localLastFile = None
             self.status_messages = []
             self.error_messages = []
             self.remembered_databases = []
@@ -1136,13 +1190,166 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.error_messages.append((title, message, details))
 
         def select_default_run(self):
-            pass
+            self.database_at_default_selection = get_DB_location()
 
         def remember_loaded_database(self, database_path):
             self.remembered_databases.append(database_path)
 
         def _start_database_detail_load(self, database_path, runs):
             self.detail_loads.append((database_path, runs))
+
+    @staticmethod
+    def _database_view(harness):
+        return {
+            "path": harness.fileTextbox.text(),
+            "run_id": harness.run_idBox.text(),
+            "measurement": harness.measurementBox.text(),
+            "selected_run_id": harness.selected_run_id,
+            "dataset": harness.ds,
+            "runs": harness.RunList.runs,
+            "selected_ids": harness.RunList.selected_ids,
+            "selection_cleared": harness.RunList.selection_cleared,
+            "run_list_signals_blocked": harness.RunList.signals_blocked,
+            "run_id_signals_blocked": harness.run_idBox.signals_blocked,
+            "watching": harness.RunList.watching,
+            "max_run_id": harness.RunList.maxRunId,
+            "previews": harness.infoBox.preview.database_runs,
+            "info_cleared": harness.infoBox.cleared,
+            "monitor_stopped": harness.monitor.stopped,
+            "detail_worker": harness._database_detail_worker,
+            "detail_active": harness._database_detail_active,
+            "expensive_detail_worker": harness._database_expensive_detail_worker,
+            "expensive_detail_active": harness._database_expensive_detail_active,
+            }
+
+    def _active_database_harness(self):
+        old_runs = {5: {"guid": "guid-5", "run_timestamp": 123.0}}
+        harness = self.Harness()
+        harness.fileTextbox.setText("database-a.db")
+        harness.run_idBox.setText("5")
+        harness.measurementBox.setText("signal")
+        harness.selected_run_id = 5
+        harness.ds = object()
+        harness.RunList.runs = old_runs
+        harness.RunList.selected_ids = [5]
+        harness.infoBox.preview.set_database_runs("database-a.db", old_runs)
+        harness._database_detail_active = True
+        harness._database_detail_worker = self.Worker()
+        harness._database_expensive_detail_active = True
+        harness._database_expensive_detail_worker = self.Worker()
+        return harness
+
+    def test_current_view_remains_unchanged_while_another_database_is_pending(self):
+        active_database = get_DB_location()
+        set_qcodes_database_location("database-a.db")
+        try:
+            harness = self._active_database_harness()
+            previous_view = self._database_view(harness)
+
+            self.assertTrue(harness.load_file("database-b.db"))
+
+            self.assertEqual(self._database_view(harness), previous_view)
+            self.assertEqual(get_DB_location(), "database-a.db")
+            self.assertTrue(harness._database_load_active)
+            self.assertEqual(harness._database_load_state["abspath"], "database-b.db")
+            self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
+            self.assertTrue(harness.refreshDatabaseButton.enabled)
+            self.assertTrue(harness.databaseInfoButton.enabled)
+            self.assertTrue(harness.openDatabaseFolderButton.enabled)
+        finally:
+            set_qcodes_database_location(active_database)
+
+    def test_successful_load_commits_path_runs_and_previews_together(self):
+        active_database = get_DB_location()
+        new_runs = {9: {"guid": "guid-9", "run_timestamp": 456.0}}
+        set_qcodes_database_location("database-a.db")
+        try:
+            harness = self._active_database_harness()
+            harness.load_file("database-b.db")
+            generation = harness._database_load_generation
+
+            harness.database_load_finished(
+                generation,
+                "database-b.db",
+                new_runs,
+                None,
+                )
+
+            self.assertEqual(get_DB_location(), "database-b.db")
+            self.assertEqual(harness.fileTextbox.text(), "database-b.db")
+            self.assertEqual(harness.RunList.runs, new_runs)
+            self.assertEqual(
+                harness.infoBox.preview.database_runs,
+                ("database-b.db", new_runs),
+                )
+            self.assertEqual(harness.database_at_default_selection, "database-b.db")
+            self.assertFalse(harness.RunList.signals_blocked)
+            self.assertFalse(harness.run_idBox.signals_blocked)
+        finally:
+            set_qcodes_database_location(active_database)
+
+    def test_cancellation_preserves_existing_database_state(self):
+        active_database = get_DB_location()
+        set_qcodes_database_location("database-a.db")
+        try:
+            harness = self._active_database_harness()
+            previous_view = self._database_view(harness)
+            harness.load_file("database-b.db")
+
+            harness.cancel_database_load()
+
+            self.assertEqual(self._database_view(harness), previous_view)
+            self.assertEqual(get_DB_location(), "database-a.db")
+            self.assertFalse(harness._database_load_active)
+        finally:
+            set_qcodes_database_location(active_database)
+
+    def test_failure_preserves_existing_database_state(self):
+        active_database = get_DB_location()
+        set_qcodes_database_location("database-a.db")
+        try:
+            harness = self._active_database_harness()
+            previous_view = self._database_view(harness)
+            harness.load_file("database-b.db")
+            generation = harness._database_load_generation
+
+            harness.database_load_finished(
+                generation,
+                "database-b.db",
+                {},
+                RuntimeError("broken database"),
+                )
+
+            self.assertEqual(self._database_view(harness), previous_view)
+            self.assertEqual(get_DB_location(), "database-a.db")
+            self.assertFalse(harness._database_load_active)
+        finally:
+            set_qcodes_database_location(active_database)
+
+    def test_stale_callbacks_cannot_commit(self):
+        active_database = get_DB_location()
+        stale_runs = {12: {"guid": "guid-12"}}
+        set_qcodes_database_location("database-a.db")
+        try:
+            harness = self._active_database_harness()
+            previous_view = self._database_view(harness)
+            harness._database_load_generation = 20
+            harness._database_load_active = False
+            harness._database_load_state = None
+
+            harness.database_load_finished(
+                20,
+                "database-b.db",
+                stale_runs,
+                None,
+                )
+
+            self.assertEqual(self._database_view(harness), previous_view)
+            self.assertEqual(get_DB_location(), "database-a.db")
+            self.assertEqual(harness.remembered_databases, [])
+            self.assertEqual(harness.detail_loads, [])
+        finally:
+            set_qcodes_database_location(active_database)
 
     def test_database_load_status_shows_inline_progress(self):
         harness = self.Harness()
@@ -1210,16 +1417,17 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         self.assertEqual(priority, [7, 8, 9, 6])
 
-    def test_cancel_database_load_cancels_worker_and_restores_previous_view(self):
+    def test_cancel_database_load_cancels_worker_and_preserves_current_view(self):
         previous_runs = {5: {"guid": "guid-5", "run_timestamp": 123.0}}
         worker = self.Worker()
         harness = self.Harness()
+        harness.fileTextbox.setText("old.db")
+        harness.RunList.runs = previous_runs
+        harness.infoBox.preview.set_database_runs("old.db", previous_runs)
         harness._database_load_active = True
         harness._database_load_worker = worker
         harness._database_load_state = {
-            "monitorTimer": 1.5,
-            "previous_file": "old.db",
-            "previous_runs": previous_runs,
+            "abspath": "pending.db",
             }
 
         harness.cancel_database_load()
@@ -1235,9 +1443,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             harness.infoBox.preview.database_runs,
             ("old.db", previous_runs),
             )
-        self.assertEqual(harness.RunList.watching, [])
-        self.assertEqual(harness.RunList.maxRunId, 5)
-        self.assertEqual(harness.monitor.started, [1500])
+        self.assertEqual(harness.RunList.watching, ["old"])
+        self.assertEqual(harness.RunList.maxRunId, 9)
+        self.assertEqual(harness.monitor.started, [])
         self.assertFalse(harness.databaseLoadFrame.visible)
         self.assertEqual(harness.databaseLoadLabel.text, "")
         self.assertTrue(harness.loadDatabaseButton.enabled)
@@ -1593,6 +1801,51 @@ class AutoPlotToggleTestCase(unittest.TestCase):
 
 
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
+    def test_prefetch_subprocess_retries_transient_timeout_errors(self):
+        class Handle:
+            def __init__(self):
+                self.read_calls = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                pass
+
+            def read(self, _chunk_size):
+                self.read_calls += 1
+                if self.read_calls == 1:
+                    raise OSError(errno.ECANCELED, "Operation canceled")
+                if self.read_calls == 2:
+                    return b"database"
+                return b""
+
+        handle = Handle()
+        output = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "placeholder.db")
+            Path(database_path).write_bytes(b"database")
+            with (
+                    patch(
+                        "builtins.open",
+                        side_effect=[
+                            TimeoutError(errno.ETIMEDOUT, "Operation timed out"),
+                            handle,
+                            ],
+                        ) as open_file,
+                    patch(
+                        "builtins.print",
+                        side_effect=lambda value, **_kwargs: output.append(value),
+                        ),
+                    patch("time.sleep"),
+                    patch.object(sys, "argv", ["prefetch", database_path]),
+                    ):
+                exec(database_module._database_prefetch_script(), {})
+
+        self.assertEqual(open_file.call_count, 2)
+        self.assertEqual(handle.read_calls, 3)
+        self.assertEqual(output[-1], 8)
+
     def test_prefetch_database_file_reads_file_and_reports_cloud_sync_progress(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = str(Path(temp_dir) / "prefetch.db")
@@ -1854,8 +2107,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             harness = DatabaseLoadUiTestCase.Harness()
             harness._database_load_generation = 14
             harness._database_load_active = True
-            harness._database_load_state = {"monitorTimer": 0}
-            harness.fileTextbox.setText("committed.db")
+            harness._database_load_state = {"abspath": "committed.db"}
+            harness.fileTextbox.setText("active.db")
             worker = main_window.DatabaseLoadWorker(14, "committed.db")
             worker.signals.finished.connect(
                 lambda *args: harness.database_load_finished(*args)
