@@ -38,6 +38,7 @@ from ._run_formatting import (  # noqa: F401
     format_timestamp,
     measured_parameter_count,
     progress_percent_value,
+    run_failed,
     run_is_complete,
     run_tooltip_plain_text,
     run_tooltip_text,
@@ -72,11 +73,11 @@ class RunList(qtw.QTreeWidget):
     
     """
     
-    cols = ['ID', 'Measurements', 'Setpoints', 'Started', 'Complete', 'Duration', 'Size']
+    cols = ['ID', 'Measurements', 'Setpoints', 'Started', 'Status', 'Duration', 'Size']
     column_widths = {
         "ID": 40,
         "Measurements": 104,
-        "Complete": 86,
+        "Status": 86,
         "Duration": 96,
         "Size": 72,
         }
@@ -89,7 +90,7 @@ class RunList(qtw.QTreeWidget):
         "Measurements": 96,
         "Setpoints": 100,
         "Started": 128,
-        "Complete": 78,
+        "Status": 78,
         "Duration": 84,
         "Size": 58,
         }
@@ -98,7 +99,7 @@ class RunList(qtw.QTreeWidget):
         "Measurements": 84,
         "Setpoints": 80,
         "Started": 84,
-        "Complete": 72,
+        "Status": 72,
         "Duration": 68,
         "Size": 50,
         }
@@ -107,7 +108,7 @@ class RunList(qtw.QTreeWidget):
         "Started",
         "Duration",
         "Size",
-        "Complete",
+        "Status",
         "Setpoints",
         "ID",
         )
@@ -117,7 +118,7 @@ class RunList(qtw.QTreeWidget):
         "Duration",
         "Size",
         "Measurements",
-        "Complete",
+        "Status",
         "ID",
         )
     compact_shrink_order = (
@@ -125,7 +126,7 @@ class RunList(qtw.QTreeWidget):
         "Started",
         "Measurements",
         "Duration",
-        "Complete",
+        "Status",
         "Size",
         "ID",
         )
@@ -214,7 +215,7 @@ class RunList(qtw.QTreeWidget):
             arr.append("") #measured previews; count remains the hidden sort key
             arr.append(format_point_count(metadata)) #points
             arr.append(format_timestamp(metadata["run_timestamp"])) #started
-            arr.append(format_complete_cell(metadata)) #complete
+            arr.append(format_complete_cell(metadata)) #status
             arr.append(format_time_taken_seconds(metadata)) #duration
             arr.append(format_storage_size(metadata.get("storage_bytes"))) #size
 
@@ -231,7 +232,7 @@ class RunList(qtw.QTreeWidget):
                     QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
                     )
             item.setTextAlignment(
-                self.cols.index("Complete"),
+                self.cols.index("Status"),
                 QtCore.Qt.AlignmentFlag.AlignCenter
                 )
             item.setTextAlignment(
@@ -260,7 +261,7 @@ class RunList(qtw.QTreeWidget):
                 metadata.get("run_timestamp")
                 )
             item.setData(
-                self.cols.index("Complete"),
+                self.cols.index("Status"),
                 QtCore.Qt.ItemDataRole.UserRole,
                 complete_cell_sort_value(metadata)
                 )
@@ -354,7 +355,7 @@ class RunList(qtw.QTreeWidget):
             or metadata.get("result_count"),
             )
 
-        complete_col = self.cols.index("Complete")
+        complete_col = self.cols.index("Status")
         item.setText(complete_col, format_complete_cell(metadata))
         item.setData(
             complete_col,
@@ -630,7 +631,7 @@ class RunList(qtw.QTreeWidget):
                     points_col = self.cols.index("Setpoints")
                     run.setText(points_col, format_point_count(run.run_metadata))
                     run.setData(points_col, QtCore.Qt.ItemDataRole.UserRole, status["result_count"])
-                complete_col = self.cols.index("Complete")
+                complete_col = self.cols.index("Status")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
                 run.setData(
                     complete_col,
@@ -655,7 +656,7 @@ class RunList(qtw.QTreeWidget):
                 completion_metadata_changed = True
 
             if completion_metadata_changed:
-                complete_col = self.cols.index("Complete")
+                complete_col = self.cols.index("Status")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
                 run.setData(
                     complete_col,
@@ -674,7 +675,7 @@ class RunList(qtw.QTreeWidget):
             if finished:
                 run.run_metadata["completed_timestamp"] = finished
                 run.run_metadata["is_completed"] = status.get("is_completed", True)
-                complete_col = self.cols.index("Complete")
+                complete_col = self.cols.index("Status")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
                 run.setData(
                     complete_col,

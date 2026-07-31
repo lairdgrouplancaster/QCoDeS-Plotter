@@ -9,6 +9,16 @@ def run_tooltip_text(metadata):
     """
     sweep = format_parameter_list_html(metadata.get("sweep_parameters"))
     measure = format_parameter_list_html(metadata.get("measure_parameters"))
+    status = html.escape(format_run_status(metadata))
+    exception_row = ""
+    if run_failed(metadata):
+        summary = html.escape(measurement_exception_summary(metadata))
+        exception_row = (
+            "<tr>"
+            "<td style='padding:0 0.5em 0 0'>Exception</td>"
+            f"<td style='padding:0'>{summary}</td>"
+            "</tr>"
+            )
 
     return (
         "<table style='margin:0; border-spacing:0; border-collapse:collapse'>"
@@ -20,6 +30,11 @@ def run_tooltip_text(metadata):
         "<td style='padding:0 0.5em 0 0'>Measure</td>"
         f"<td nowrap='nowrap' style='padding:0; white-space:nowrap'>({measure})</td>"
         "</tr>"
+        "<tr>"
+        "<td style='padding:0 0.5em 0 0'>Status</td>"
+        f"<td style='padding:0'>{status}</td>"
+        "</tr>"
+        f"{exception_row}"
         "</table>"
         )
 
@@ -27,11 +42,15 @@ def run_tooltip_text(metadata):
 def run_tooltip_plain_text(metadata):
     sweep = format_parameter_list(metadata.get("sweep_parameters"))
     measure = format_parameter_list(metadata.get("measure_parameters"))
-
-    return "\n".join([
+    lines = [
         f"{'Sweep':<7}({sweep})",
         f"Measure ({measure})",
-        ])
+        f"Status  {format_run_status(metadata)}",
+        ]
+    if run_failed(metadata):
+        lines.append(f"Exception {measurement_exception_summary(metadata)}")
+
+    return "\n".join(lines)
 
 
 def format_parameter_list(parameters):
@@ -52,12 +71,34 @@ def run_is_complete(metadata):
 
 def run_was_interrupted(metadata):
     exception = metadata.get("measurement_exception")
-    return bool(exception and "KeyboardInterrupt" in str(exception))
+    return exception is not None and "KeyboardInterrupt" in str(exception).strip()
+
+
+def run_failed(metadata):
+    exception = metadata.get("measurement_exception")
+    return bool(
+        exception is not None
+        and str(exception).strip()
+        and not run_was_interrupted(metadata)
+        )
+
+
+def measurement_exception_summary(metadata, maximum_length=200):
+    exception = str(metadata.get("measurement_exception") or "")
+    summary = next(
+        (line.strip() for line in reversed(exception.splitlines()) if line.strip()),
+        "",
+        )
+    if len(summary) > maximum_length:
+        return f"{summary[:maximum_length - 1]}…"
+    return summary
 
 
 def format_run_status(metadata):
     if run_was_interrupted(metadata):
         return f"Interrupted ({format_interrupted_progress_percent(metadata)})"
+    if run_failed(metadata):
+        return f"Failed ({format_interrupted_progress_percent(metadata)})"
     if run_is_complete(metadata):
         return "Complete"
     return f"Incomplete ({format_progress_percent(metadata)})"
@@ -115,7 +156,7 @@ def format_interrupted_progress_percent(metadata):
 
 
 def complete_cell_sort_value(metadata):
-    if run_was_interrupted(metadata):
+    if run_was_interrupted(metadata) or run_failed(metadata):
         return interrupted_progress_percent_value(metadata)
     if run_is_complete(metadata):
         return 100
@@ -124,7 +165,10 @@ def complete_cell_sort_value(metadata):
 
 def format_complete_cell(metadata):
     if run_was_interrupted(metadata):
-        return format_interrupted_progress_percent(metadata)
+        return "Interrupted"
+
+    if run_failed(metadata):
+        return "Failed"
 
     if run_is_complete(metadata):
         return "✓"
