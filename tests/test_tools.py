@@ -15,8 +15,7 @@ from qplot.tools.plot_tools import (
     subtract_mean,
 )
 from qplot.tools.worker import loader
-from qplot.windows import _plotWin as plotwin_module
-from qplot.windows._dataset_handle import DatasetHandle
+from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plotWin import plotWidget
 
 
@@ -601,9 +600,6 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(result["z"], np.array([[-1.0, 1.0], [-1.0, 1.0]]))
 
     def test_plot_window_title_uses_database_basename(self):
-        old_get_db_location = plotwin_module.get_DB_location
-        plotwin_module.get_DB_location = lambda: "/tmp/qplot/example.db"
-
         class Dataset:
             run_id = 12
 
@@ -613,10 +609,8 @@ class ToolFunctionTestCase(unittest.TestCase):
 
         window = plotWidget.__new__(plotWidget)
         window._guid = "guid"
-        window._dataset_holder = {"guid": DatasetHandle(Dataset())}
+        window._dataset_key = DatasetKey("/tmp/qplot/example.db", "guid")
+        window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
         window.param = Param()
 
-        try:
-            self.assertTrue(str(window).startswith("example.db | Run ID: 12"))
-        finally:
-            plotwin_module.get_DB_location = old_get_db_location
+        self.assertTrue(str(window).startswith("example.db | Run ID: 12"))

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from qplot.tools.heatmap_geometry import HeatmapGeometry
 
     class _Plot2DSweepBase(qtw.QMainWindow):
-        _guid: str
+        _dataset_key: Any
         active_sweep_line_id: int | None
         axis_options: dict[str, str]
         close_sweeps_requested: Any
@@ -84,7 +84,7 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         # Emit to Main window to open new window
         self.open_subplot.emit(
                 sweeper,
-                self._guid,
+                self._dataset_key,
                 (
                 self.sweep_id,
                 sweep_var,

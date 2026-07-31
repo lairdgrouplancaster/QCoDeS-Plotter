@@ -31,7 +31,7 @@ from qplot.diagnostics import log_user_error
 
 from ._commands import create_action
 from ._database_actions import DatabaseActionsMixin
-from ._dataset_handle import DatasetHandle
+from ._dataset_handle import DatasetHandle, DatasetKey
 from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
 from ._preferences import (
@@ -126,8 +126,9 @@ class MainWindow(  # type: ignore[misc]
         self.config = config() # Connect to config.json in :/users/<user>/.qplot/
         self.windows = [] # prevent auto delete of windows
         self.ds = None
+        self._selected_dataset_key: DatasetKey | None = None
         self.preview_size = self._configured_preview_size()
-        self.dataset_holder: dict[str, DatasetHandle] = {}
+        self.dataset_holder: dict[DatasetKey, DatasetHandle] = {}
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
         self.threadPool.setMaxThreadCount(self.config.get("runtime_settings.max_threads"))

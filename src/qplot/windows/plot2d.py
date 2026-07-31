@@ -34,7 +34,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         refreshPlot
         
     """
-    open_subplot = QtCore.pyqtSignal([object, str, tuple])
+    open_subplot = QtCore.pyqtSignal([object, object, tuple])
     sweep_moved = QtCore.pyqtSignal([int, int])
     close_sweeps_requested = QtCore.pyqtSignal([object, object])
     

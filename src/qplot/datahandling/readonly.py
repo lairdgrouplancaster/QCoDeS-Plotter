@@ -35,8 +35,15 @@ def qcodes_read_only_connection(database_path):
         )
 
 
-def load_by_guid_read_only(guid):
+def load_by_guid_read_only(guid, database_path=None):
     """Load a QCoDeS dataset by GUID through a read-only connection."""
+    if database_path is not None:
+        conn = qcodes_read_only_connection(database_path)
+        try:
+            return load_by_guid(guid, conn=conn)
+        except Exception:
+            conn.close()
+            raise
     return load_by_guid(guid, read_only=True)
 
 

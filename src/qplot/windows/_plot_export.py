@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from PyQt6 import QtCore, QtGui, QtSvg
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import ImageExporter
-from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.diagnostics import log_exception
 
@@ -166,7 +165,7 @@ class PlotExportMixin(_PlotExportBase):
         filename = self._safe_plot_export_filename(f"run_{run_id}_{param_name}.pdf")
 
         try:
-            database_folder = path.dirname(get_DB_location())
+            database_folder = path.dirname(self._dataset_key.database_path)
         except Exception:
             database_folder = ""
 

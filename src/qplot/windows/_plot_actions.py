@@ -8,7 +8,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling.readonly import load_by_guid_read_only, load_by_id_read_only
 from qplot.diagnostics import log_exception
 
-from ._dataset_handle import DatasetHandle
+from ._dataset_handle import DatasetHandle, DatasetKey
 from .plot1d import plot1d
 from .plot2d import plot2d
 
@@ -29,14 +29,14 @@ class PlotActionsMixin:
 
         """
         self.windows.remove(win)
-        self.remove_ds_at(win._guid)
+        self.remove_ds_at(win._dataset_key)
         self.post_admin()
         self.show_status(f"Closed {win.label}", 3000)
         del win
 
 
-    @QtCore.pyqtSlot(object, str, tuple)
-    def openWin(self, widget, guid_or_ds, *args, show=True, **kargs):
+    @QtCore.pyqtSlot(object, object, tuple)
+    def openWin(self, widget, key_or_ds, *args, show=True, **kargs):
         """
         Handles opening Plot window, widget.
 
@@ -44,32 +44,32 @@ class PlotActionsMixin:
         if len(args) == 1 and isinstance(args[0], (tuple, list)):
             args = tuple(args[0])
 
-        if isinstance(guid_or_ds, str):
+        if isinstance(key_or_ds, DatasetKey):
             ds = None
-            guid = guid_or_ds
+            dataset_key = key_or_ds
         else:
-            ds = guid_or_ds
-            guid = ds.guid
+            ds = key_or_ds
+            dataset_key = self._current_dataset_key(ds.guid)
 
-        shared_handle = self.dataset_holder.get(guid)
+        shared_handle = self.dataset_holder.get(dataset_key)
         loaded_for_construction = shared_handle is None and ds is None
         if shared_handle is not None:
             construction_ds = shared_handle.dataset
         elif loaded_for_construction:
-            construction_ds = load_by_guid_read_only(guid)
+            construction_ds = self._load_dataset(dataset_key)
         else:
             construction_ds = ds
 
-        assert construction_ds.guid == guid
+        assert construction_ds.guid == dataset_key.guid
         construction_holder = {
-            held_guid: DatasetHandle(dataset=handle.dataset, users=handle.users)
-            for held_guid, handle in self.dataset_holder.items()
+            held_key: DatasetHandle(dataset=handle.dataset, users=handle.users)
+            for held_key, handle in self.dataset_holder.items()
         }
-        construction_holder[guid] = DatasetHandle(dataset=construction_ds)
+        construction_holder[dataset_key] = DatasetHandle(dataset=construction_ds)
 
         try:
             win = widget(
-                guid,
+                dataset_key,
                 *args,
                 self.config,
                 self.threadPool,
@@ -89,7 +89,7 @@ class PlotActionsMixin:
             raise
 
         win._dataset_holder = self.dataset_holder
-        self.add_ds_at(guid, ds=construction_ds)
+        self.add_ds_at(dataset_key, ds=construction_ds)
 
         self.windows.append(win)
 
@@ -159,15 +159,17 @@ class PlotActionsMixin:
 
         """
         self.show_status("Loading selected run...", 0)
+        dataset_key = self._current_dataset_key(guid)
         try:
-            if self.ds is not None and getattr(self.ds, "guid", None) == guid:
+            if self.ds is not None and getattr(self, "_selected_dataset_key", None) == dataset_key:
                 pass
             else:
-                handle = self.dataset_holder.get(guid)
+                handle = self.dataset_holder.get(dataset_key)
                 if handle is None:
-                    self.ds = load_by_guid_read_only(guid)
+                    self.ds = self._load_dataset(dataset_key)
                 else:
                     self.ds = handle.dataset
+                self._selected_dataset_key = dataset_key
         except Exception as err:
             log_exception("Selected run load failed", err, __name__)
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
@@ -264,6 +266,7 @@ class PlotActionsMixin:
             return
 
         self.ds = ds
+        self._selected_dataset_key = self._current_dataset_key(ds.guid)
         self.openPlot(params=params)
 
 
@@ -373,7 +376,7 @@ class PlotActionsMixin:
 
 
     @QtCore.pyqtSlot(str)
-    def openPlot(self, guid: str = None, params: list = None, show: bool = True):
+    def openPlot(self, guid: str | DatasetKey = None, params: list = None, show: bool = True):
         """
         Opens plot windows for the selected or requested run.
 
@@ -384,11 +387,18 @@ class PlotActionsMixin:
 
         self.show_status("Opening plots...", 0)
 
+        if isinstance(guid, DatasetKey):
+            dataset_key = guid
+            guid = dataset_key.guid
+        else:
+            target_guid = guid or getattr(self.ds, "guid", "")
+            dataset_key = self._current_dataset_key(target_guid)
+
         try:
-            if not self.ds or (guid and self.ds.guid != guid):
-                handle = self.dataset_holder.get(guid)
+            if not self.ds or getattr(self, "_selected_dataset_key", None) != dataset_key:
+                handle = self.dataset_holder.get(dataset_key)
                 if handle is None:
-                    ds = load_by_guid_read_only(guid)
+                    ds = self._load_dataset(dataset_key)
                 else:
                     ds = handle.dataset
             else:
@@ -413,7 +423,11 @@ class PlotActionsMixin:
 
                 if len(depends_on) == 1:
                     for win in self.windows:
-                        if win.ds == ds and win.param == param and isinstance(win, plot1d):
+                        if (
+                            win._dataset_key == dataset_key
+                            and win.param == param
+                            and isinstance(win, plot1d)
+                        ):
                             skipped += 1
                             skip = True
                             break
@@ -431,7 +445,11 @@ class PlotActionsMixin:
 
                 else:
                     for win in self.windows:
-                        if win.ds == ds and win.param == param and isinstance(win, plot2d):
+                        if (
+                            win._dataset_key == dataset_key
+                            and win.param == param
+                            and isinstance(win, plot2d)
+                        ):
                             skipped += 1
                             skip = True
                             break
@@ -511,13 +529,15 @@ class PlotActionsMixin:
             self.show_status("Select a run before opening a preview plot.", 5000)
             return
 
-        if not self.ds or self.ds.guid != guid:
+        dataset_key = self._current_dataset_key(guid)
+        if not self.ds or getattr(self, "_selected_dataset_key", None) != dataset_key:
             try:
-                handle = self.dataset_holder.get(guid)
+                handle = self.dataset_holder.get(dataset_key)
                 if handle is None:
-                    self.ds = load_by_guid_read_only(guid)
+                    self.ds = self._load_dataset(dataset_key)
                 else:
                     self.ds = handle.dataset
+                self._selected_dataset_key = dataset_key
             except Exception as err:
                 log_exception("Preview plot run load failed", err, __name__)
                 self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
@@ -526,16 +546,16 @@ class PlotActionsMixin:
         self.open_preview_plot(parameter_name)
 
 
-    @QtCore.pyqtSlot(object, str, str)
-    def add_dropped_preview_to_plot(self, target_win, guid, parameter_name):
+    @QtCore.pyqtSlot(object, object, str)
+    def add_dropped_preview_to_plot(self, target_win, source_identity, parameter_name):
         """
         Add a run-table preview trace to the plot it was dropped onto.
 
         """
-        self.add_trace_to_plot(target_win, guid, parameter_name)
+        self.add_trace_to_plot(target_win, source_identity, parameter_name)
 
 
-    def add_trace_to_plot(self, target_win, source_guid, parameter_name, param=None):
+    def add_trace_to_plot(self, target_win, source_identity, parameter_name, param=None):
         """
         Adds a plottable 1D parameter to an existing compatible 1D plot.
 
@@ -544,9 +564,14 @@ class PlotActionsMixin:
             self.show_status("Drop traces onto a compatible line plot.", 5000)
             return False
 
+        if isinstance(source_identity, DatasetKey):
+            source_key = source_identity
+        else:
+            source_key = self._current_dataset_key(source_identity)
+        source_guid = source_key.guid
         if param is None:
             try:
-                param = self._parameter_from_guid(source_guid, parameter_name)
+                param = self._parameter_from_key(source_key, parameter_name)
             except Exception as err:
                 log_exception("Trace source run load failed", err, __name__)
                 self.show_error(
@@ -571,13 +596,13 @@ class PlotActionsMixin:
             )
             return False
 
-        from_win = self._plot_window_for_param(source_guid, param)
+        from_win = self._plot_window_for_param(source_key, param)
         if from_win == target_win:
             self.show_status(f"Skipped {target_win.label}; source and target are the same.", 5000)
             return False
 
         if from_win is None:
-            from_win = self._open_hidden_trace_window(source_guid, param, target_win)
+            from_win = self._open_hidden_trace_window(source_key, param, target_win)
             if from_win is None:
                 return False
 
@@ -604,7 +629,11 @@ class PlotActionsMixin:
 
 
     def _parameter_from_guid(self, guid, parameter_name):
-        ds = self._dataset_for_guid(guid)
+        return self._parameter_from_key(self._current_dataset_key(guid), parameter_name)
+
+
+    def _parameter_from_key(self, dataset_key, parameter_name):
+        ds = self._dataset_for_key(dataset_key)
         return self._measurement_param_by_name(ds, parameter_name)
 
 
@@ -616,31 +645,35 @@ class PlotActionsMixin:
 
 
     def _dataset_for_guid(self, guid):
-        handle = self.dataset_holder.get(guid)
+        return self._dataset_for_key(self._current_dataset_key(guid))
+
+
+    def _dataset_for_key(self, dataset_key):
+        handle = self.dataset_holder.get(dataset_key)
         if handle is not None:
             return handle.dataset
-        return load_by_guid_read_only(guid)
+        return self._load_dataset(dataset_key)
 
 
-    def _plot_window_for_param(self, guid, param):
+    def _plot_window_for_param(self, dataset_key, param):
         for win in self.windows:
             try:
-                if win.ds.guid == guid and win.param.name == param.name:
+                if win._dataset_key == dataset_key and win.param.name == param.name:
                     return win
             except AttributeError:
                 continue
         return None
 
 
-    def _open_hidden_trace_window(self, source_guid, param, target_win):
+    def _open_hidden_trace_window(self, source_key, param, target_win):
         before = set(id(win) for win in self.windows)
-        self.openPlot(guid=source_guid, params=[param], show=False)
+        self.openPlot(guid=source_key, params=[param], show=False)
 
         for win in reversed(self.windows):
             if id(win) in before:
                 continue
             try:
-                if win.ds.guid == source_guid and win.param.name == param.name:
+                if win._dataset_key == source_key and win.param.name == param.name:
                     if win.ds.running and not target_win.monitor.isActive():
                         target_win.monitorIntervalChanged(target_win.spinBox.value())
                         target_win.toolbarRef.show()
@@ -741,29 +774,29 @@ class PlotActionsMixin:
         return "".join(char if char.isalnum() or char in "._-" else "_" for char in filename)
 
 
-    @QtCore.pyqtSlot(str)
-    def add_ds_at(self, guid: str, ds=None):
+    @QtCore.pyqtSlot(object)
+    def add_ds_at(self, dataset_key: DatasetKey, ds=None):
         """
         Tracks a dataset used by one or more plot windows.
 
         """
-        handle = self.dataset_holder.get(guid)
+        handle = self.dataset_holder.get(dataset_key)
         if handle is None:
-            ds = load_by_guid_read_only(guid) if ds is None else ds
-            assert ds.guid == guid
+            ds = self._load_dataset(dataset_key) if ds is None else ds
+            assert ds.guid == dataset_key.guid
 
-            self.dataset_holder[guid] = DatasetHandle(dataset=ds)
+            self.dataset_holder[dataset_key] = DatasetHandle(dataset=ds)
         else:
             handle.retain()
 
 
-    @QtCore.pyqtSlot(str)
-    def remove_ds_at(self, guid: str):
+    @QtCore.pyqtSlot(object)
+    def remove_ds_at(self, dataset_key: DatasetKey):
         """
         Decreases the user count for a cached plot dataset.
 
         """
-        handle = self.dataset_holder.get(guid)
+        handle = self.dataset_holder.get(dataset_key)
         if handle is None:
             self.show_status("Trying to remove dataset that does not exist.", 5000)
             return
@@ -774,14 +807,25 @@ class PlotActionsMixin:
             del_time = self.config.get("runtime_settings.del_grace_period")
 
             if del_time == 0:
-                self.dataset_holder.pop(guid)
+                self.dataset_holder.pop(dataset_key)
 
             elif handle.delete_timer is None:
                 del_timer = QtCore.QTimer()
                 del_timer.setSingleShot(True)
                 handle.delete_timer = del_timer
-                del_timer.timeout.connect(lambda guid=guid: self.dataset_holder.pop(guid, None))
+                del_timer.timeout.connect(
+                    lambda key=dataset_key: self.dataset_holder.pop(key, None)
+                )
                 del_timer.start(int(del_time * 1000))
+
+
+    def _current_dataset_key(self, guid: str) -> DatasetKey:
+        return DatasetKey(self.fileTextbox.text(), guid)
+
+
+    @staticmethod
+    def _load_dataset(dataset_key: DatasetKey):
+        return load_by_guid_read_only(dataset_key.guid, dataset_key.database_path)
 
 
     def post_admin(self):
