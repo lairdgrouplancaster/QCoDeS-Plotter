@@ -220,6 +220,7 @@ class DatabaseActionsMixin:
         self.measurementBox.setText("*")
         self.selected_run_id = None
         self.ds = None
+        self._selected_dataset_key = None
         self.localLastFile = None
 
         for holder in self.dataset_holder.values():
@@ -584,6 +585,7 @@ class DatabaseActionsMixin:
         self.measurementBox.setText("*")
         self.selected_run_id = None
         self.ds = None
+        self._selected_dataset_key = None
 
         self.RunList.clearSelection()
         self.RunList.clear()

@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
-from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling.qcodes_cache import set_parameter_complete
 from qplot.tools import (
@@ -19,6 +18,7 @@ from ._commands import (
     create_action,
     toolbar_toggle_command_spec,
 )
+from ._dataset_handle import DatasetKey
 from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
@@ -154,12 +154,12 @@ class plotWidget(
     
     closed = QtCore.pyqtSignal([object])
     end_wait = QtCore.pyqtSignal()
-    make_ds = QtCore.pyqtSignal([str])
-    previewTraceDropRequested = QtCore.pyqtSignal(object, str, str)
+    make_ds = QtCore.pyqtSignal([object])
+    previewTraceDropRequested = QtCore.pyqtSignal(object, object, str)
     
     _label_width = 95 #About the size of 3 s.f. scientific
     def __init__(self, 
-                 guid : str, 
+                 dataset_key: DatasetKey,
                  param : "qcodes.dataset.ParamSpec",
                  config : "qplot.configuration.config.config",
                  threadPool : "QtCore.QThreadPool",
@@ -173,16 +173,16 @@ class plotWidget(
 
         Parameters
         ----------
-        guid : str
-            The guid of dataset which contains the data to be plotted.
+        dataset_key : DatasetKey
+            The database-aware identity of the dataset to plot.
         param : qcodes.dataset.ParamSpec
             Which parameter within dataset to plot.
         config : qplot.configuration.config.config
             Holds configuration data, mainly theme and window size.
         threadPool : PyQt6.QtCore.QThreadPool
             A pool of threads for the refresh worker to be placed in.
-        dataset_holder : dict[str, DatasetHandle]
-            Shared map of dataset GUIDs to open-dataset ownership handles.
+        dataset_holder : dict[DatasetKey, DatasetHandle]
+            Shared map of dataset identities to open-dataset ownership handles.
         refrate : float, optional
             Default value for the refresh timer. The default is None, which 
             corresponds to a 5.0s refresh time.
@@ -195,7 +195,8 @@ class plotWidget(
         
         ### CORE VARIABLES
         self._dataset_holder = dataset_holder
-        self._guid = guid
+        self._dataset_key = dataset_key
+        self._guid = dataset_key.guid
         self.param = param
         if not hasattr(self.param, "_complete"): # Add completed load track
             set_parameter_complete(self.param, False)
@@ -330,9 +331,15 @@ class plotWidget(
         if event.type() == QtCore.QEvent.Type.Drop:
             event.setDropAction(QtCore.Qt.DropAction.CopyAction)
             event.accept()
+            source_identity = payload["guid"]
+            if payload.get("database_path"):
+                source_identity = DatasetKey(
+                    payload["database_path"],
+                    payload["guid"],
+                )
             self.previewTraceDropRequested.emit(
                 self,
-                payload["guid"],
+                source_identity,
                 payload["parameter"]
                 )
             return True
@@ -353,7 +360,7 @@ class plotWidget(
 
 
     def __str__(self):
-        filenameStr = path.basename(get_DB_location())
+        filenameStr = path.basename(self._dataset_key.database_path)
         fstr = (f"{filenameStr} | " 
                 f"Run ID: {self.ds.run_id} | "
                 f"{self.param.name} ({self.param.label})"
@@ -372,11 +379,11 @@ class plotWidget(
 
         """
         # Check dataset exists, produce new one if needed.
-        handle = self._dataset_holder.get(self._guid)
+        handle = self._dataset_holder.get(self._dataset_key)
         if handle is None:
             self.show_status(f"Dataset {self._guid} not found. Reloading...", 5000)
-            self.make_ds.emit(self._guid)
-            handle = self._dataset_holder[self._guid]
+            self.make_ds.emit(self._dataset_key)
+            handle = self._dataset_holder[self._dataset_key]
         
         # Check a deletion timer is not active and stop
         else:

@@ -386,7 +386,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self.add_option_box()
         
         # Create and track new line
-        self.make_ds.emit(win._guid)
+        self.make_ds.emit(win._dataset_key)
         subplot = subplot1d(self, win)
         self.lines[label] = subplot
         
@@ -428,7 +428,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def closeEvent(self, event: object) -> None:
         # Stopped lines as needed
         for line in list(self.lines.values())[1:]:
-            self.remove_dataset.emit(line.from_win._guid)
+            self.remove_dataset.emit(line.from_win._dataset_key)
             if not line.from_win.visible:
                 line.from_win.monitor.stop()
                 
@@ -472,7 +472,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             self.plot.getAxis('right').setStyle(showValues=False)
         
         # Remove track of window
-        self.remove_dataset.emit(line.from_win._guid)
+        self.remove_dataset.emit(line.from_win._dataset_key)
         # Stop refresh monitor for line if needed
         if not line.from_win.visible:
             line.from_win.monitor.stop()
@@ -1351,6 +1351,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             guid,
             parameter,
             getattr(param, "depends_on_", ()),
+            getattr(getattr(source, "_dataset_key", None), "database_path", None),
             )
 
     def _sync_controls_from_selection(self):

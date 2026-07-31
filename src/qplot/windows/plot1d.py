@@ -27,7 +27,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
     
     """
     get_mergables = QtCore.pyqtSignal()
-    remove_dataset = QtCore.pyqtSignal([str])
+    remove_dataset = QtCore.pyqtSignal([object])
     
     def __init__(
             self,

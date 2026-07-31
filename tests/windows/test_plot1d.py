@@ -7,6 +7,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _plotWin as plotwin_module
+from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._plot1d_snap import _nearest_trace_sample
 from qplot.windows._plot1d_traces import (
     TRACE_COLOR_PALETTE,
@@ -700,6 +701,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class SourceWindow:
             label = "ID:2 voltage"
             _guid = "source-guid"
+            _dataset_key = DatasetKey("database.db", "source-guid")
             visible = False
             ds = Dataset()
             worker = Worker()
@@ -721,8 +723,8 @@ class SnapToTraceTestCase(unittest.TestCase):
             end_wait = EndWait()
 
         class Host(Plot1DTraceMixin, qtw.QMainWindow):
-            make_ds = QtCore.pyqtSignal([str])
-            remove_dataset = QtCore.pyqtSignal([str])
+            make_ds = QtCore.pyqtSignal([object])
+            remove_dataset = QtCore.pyqtSignal([object])
             get_mergables = QtCore.pyqtSignal()
 
         host = Host()
@@ -764,7 +766,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.add_line(source.label)
             secondary = host.lines[source.label]
 
-            self.assertEqual(made_datasets, ["source-guid"])
+            self.assertEqual(made_datasets, [source._dataset_key])
             self.assertEqual(host.mergable, [])
             self.assertIsNotNone(host.right_vb)
             self.assertEqual(secondary.side, "right")
@@ -787,7 +789,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertNotIn(source.label, host.lines)
             self.assertNotIn(secondary, host.right_vb.addedItems)
             self.assertFalse(host.plot.getAxis("right").style["showValues"])
-            self.assertEqual(removed_datasets, ["source-guid"])
+            self.assertEqual(removed_datasets, [source._dataset_key])
             self.assertEqual(picker_updates, [True])
         finally:
             host.deleteLater()

@@ -6,7 +6,7 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.heatmap_geometry import HeatmapGeometry
-from qplot.windows._dataset_handle import DatasetHandle
+from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plotWin import plotWidget
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
@@ -76,7 +76,8 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         window._update_heatmap_geometry()
         window.worker = worker
         window._guid = "guid"
-        window._dataset_holder = {"guid": DatasetHandle(Dataset())}
+        window._dataset_key = DatasetKey("database.db", "guid")
+        window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
         window.param = Param()
         window.end_wait = Signal()
         window._set_param_axis_labels = lambda: None

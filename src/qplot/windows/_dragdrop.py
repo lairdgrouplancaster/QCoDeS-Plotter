@@ -5,12 +5,14 @@ from PyQt6 import QtCore
 RUN_PREVIEW_MIME = "application/x-qplot-run-preview"
 
 
-def make_run_preview_mime(guid, parameter, axes=None):
+def make_run_preview_mime(guid, parameter, axes=None, database_path=None):
     payload = {
         "guid": str(guid or ""),
         "parameter": str(parameter or ""),
         "axes": [str(axis) for axis in (axes or [])],
         }
+    if database_path:
+        payload["database_path"] = str(database_path)
     mime_data = QtCore.QMimeData()
     mime_data.setData(
         RUN_PREVIEW_MIME,
@@ -40,11 +42,15 @@ def run_preview_payload_from_mime(mime_data):
     elif not isinstance(axes, (list, tuple)):
         axes = []
 
-    return {
+    normalised = {
         "guid": guid,
         "parameter": parameter,
         "axes": [str(axis) for axis in axes],
         }
+    database_path = str(payload.get("database_path") or "")
+    if database_path:
+        normalised["database_path"] = database_path
+    return normalised
 
 
 def preview_drop_is_compatible(target_axes, payload):

@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from PyQt6 import QtCore, QtGui, QtSvg
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import ImageExporter
-from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.diagnostics import log_exception
 
@@ -15,6 +14,9 @@ from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
 )
 
+if TYPE_CHECKING:
+    from ._dataset_handle import DatasetKey
+
 _MAX_EXPORTED_IMAGE_SIZE = 20_000
 _HIGH_DPI_COPY_RESOLUTION = 300
 _INCHES_PER_METER = 39.370_078_740_157_48
@@ -22,6 +24,7 @@ _DpiAxis = Literal["x", "y"]
 
 if TYPE_CHECKING:
     class _PlotExportBase(qtw.QMainWindow):
+        _dataset_key: DatasetKey
         ds: Any
         param: Any
         plot: Any
@@ -166,7 +169,7 @@ class PlotExportMixin(_PlotExportBase):
         filename = self._safe_plot_export_filename(f"run_{run_id}_{param_name}.pdf")
 
         try:
-            database_folder = path.dirname(get_DB_location())
+            database_folder = path.dirname(self._dataset_key.database_path)
         except Exception:
             database_folder = ""
 

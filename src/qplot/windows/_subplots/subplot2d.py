@@ -3,6 +3,7 @@ from typing import Any
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._widgets import (
     expandingComboBox,
@@ -23,7 +24,7 @@ class sweeper(plotWidget):
     remove_sweep = QtCore.pyqtSignal([int])
     
     def __init__(self,
-                 guid : str, # Had to handle seperately to *args
+                 dataset_key: DatasetKey,  # Had to handle separately to *args
                  sweep_id : int,
                  sweep_indep : str,
                  fixed_indep : str, 
@@ -38,7 +39,7 @@ class sweeper(plotWidget):
         
         self.line: Any = None
         
-        super().__init__(guid, *args, **kargs)
+        super().__init__(dataset_key, *args, **kargs)
         
         
     def initAxes(self):

@@ -14,8 +14,9 @@ from qplot.datahandling import database as database_module
 from qplot.datahandling.readonly import set_qcodes_database_location
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
-from qplot.windows._dataset_handle import DatasetHandle
+from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plot_actions import PlotActionsMixin
+from qplot.windows._plotWin import plotWidget
 from qplot.windows._run_controls import AUTO_PLOT_KEY
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
@@ -121,18 +122,19 @@ class DatasetHandleTestCase(unittest.TestCase):
 
         harness = Harness()
         dataset = Dataset()
+        dataset_key = DatasetKey("database.db", "guid")
 
-        harness.add_ds_at("guid", dataset)
-        self.assertIs(harness.dataset_holder["guid"].dataset, dataset)
-        self.assertEqual(harness.dataset_holder["guid"].users, 1)
+        harness.add_ds_at(dataset_key, dataset)
+        self.assertIs(harness.dataset_holder[dataset_key].dataset, dataset)
+        self.assertEqual(harness.dataset_holder[dataset_key].users, 1)
 
-        harness.add_ds_at("guid", dataset)
-        self.assertEqual(harness.dataset_holder["guid"].users, 2)
+        harness.add_ds_at(dataset_key, dataset)
+        self.assertEqual(harness.dataset_holder[dataset_key].users, 2)
 
-        harness.remove_ds_at("guid")
-        self.assertEqual(harness.dataset_holder["guid"].users, 1)
+        harness.remove_ds_at(dataset_key)
+        self.assertEqual(harness.dataset_holder[dataset_key].users, 1)
 
-        harness.remove_ds_at("guid")
+        harness.remove_ds_at(dataset_key)
         self.assertEqual(harness.dataset_holder, {})
 
     def test_failed_plot_construction_preserves_existing_dataset_ownership(self):
@@ -157,32 +159,200 @@ class DatasetHandleTestCase(unittest.TestCase):
                 self.conn = Connection()
 
         class Harness(PlotActionsMixin):
-            def __init__(self, handle):
+            def __init__(self, dataset_key, handle):
                 self.config = object()
-                self.dataset_holder = {"guid": handle}
+                self.dataset_holder = {dataset_key: handle}
                 self.threadPool = object()
                 self.windows = []
 
         def failing_widget(*args, **kwargs):
-            construction_handle = args[-1]["guid"]
+            construction_handle = args[-1][dataset_key]
             construction_handle.cancel_delete_timer()
             raise RuntimeError("plot construction failed")
 
         timer = Timer()
         dataset = Dataset()
+        dataset_key = DatasetKey("database.db", "guid")
         handle = DatasetHandle(dataset, users=0, delete_timer=timer)
-        harness = Harness(handle)
+        harness = Harness(dataset_key, handle)
 
         with self.assertRaisesRegex(RuntimeError, "plot construction failed"):
-            harness.openWin(failing_widget, "guid", show=False)
+            harness.openWin(failing_widget, dataset_key, show=False)
 
-        self.assertEqual(harness.dataset_holder, {"guid": handle})
-        self.assertIs(harness.dataset_holder["guid"].dataset.conn, dataset.conn)
+        self.assertEqual(harness.dataset_holder, {dataset_key: handle})
+        self.assertIs(harness.dataset_holder[dataset_key].dataset.conn, dataset.conn)
         self.assertEqual(handle.users, 0)
         self.assertIs(handle.delete_timer, timer)
         self.assertFalse(timer.stopped)
         self.assertFalse(dataset.conn.closed)
         self.assertEqual(harness.windows, [])
+
+
+class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
+    class Field:
+        def __init__(self, value):
+            self.value = value
+
+        def text(self):
+            return self.value
+
+        def setText(self, value):
+            self.value = value
+
+        def blockSignals(self, _blocked):
+            return False
+
+    class Config:
+        def get(self, key):
+            if key == "runtime_settings.del_grace_period":
+                return 0
+            raise KeyError(key)
+
+    class Dataset:
+        guid = "shared-guid"
+
+        def __init__(self, database_name, run_id=1):
+            self.database_name = database_name
+            self.run_id = run_id
+            self.metadata = {}
+            self.snapshot = None
+
+        def get_parameters(self):
+            return []
+
+    class Param:
+        name = "signal"
+
+    def test_database_path_aliases_produce_the_same_key(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            database_path.touch()
+
+            direct = DatasetKey(str(database_path), "shared-guid")
+            aliased = DatasetKey(
+                str(database_path.parent / "." / database_path.name),
+                "shared-guid",
+            )
+
+        self.assertEqual(direct, aliased)
+
+    def test_same_guid_in_two_databases_creates_distinct_cache_entries(self):
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.dataset_holder = {}
+        harness.config = self.Config()
+        key_a = DatasetKey("database-a.db", "shared-guid")
+        key_b = DatasetKey("database-b.db", "shared-guid")
+        dataset_a = self.Dataset("A")
+        dataset_b = self.Dataset("B")
+
+        harness.add_ds_at(key_a, dataset_a)
+        harness.add_ds_at(key_b, dataset_b)
+
+        self.assertEqual(len(harness.dataset_holder), 2)
+        self.assertIs(harness.dataset_holder[key_a].dataset, dataset_a)
+        self.assertIs(harness.dataset_holder[key_b].dataset, dataset_b)
+
+    def test_current_database_selection_cannot_return_other_database_dataset(self):
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.fileTextbox = self.Field("database-b.db")
+        harness.run_idBox = self.Field("")
+        harness.infoBox = type("InfoBox", (), {"setInfo": lambda *args, **kwargs: None})()
+        harness.ds = None
+        harness.selected_run_id = None
+        harness.show_status = lambda *args, **kwargs: None
+        harness.show_error = lambda *args, **kwargs: self.fail("selection load failed")
+        key_a = DatasetKey("database-a.db", "shared-guid")
+        dataset_a = self.Dataset("A")
+        dataset_b = self.Dataset("B")
+        harness.dataset_holder = {key_a: DatasetHandle(dataset_a)}
+
+        with patch(
+            "qplot.windows._plot_actions.load_by_guid_read_only",
+            return_value=dataset_b,
+        ) as load_dataset:
+            harness.updateSelected("shared-guid")
+
+        self.assertIs(harness.ds, dataset_b)
+        load_dataset.assert_called_once_with(
+            "shared-guid",
+            DatasetKey("database-b.db", "x").database_path,
+        )
+
+    def test_same_guid_and_parameter_plots_in_different_databases_coexist(self):
+        class PlotWindow:
+            pass
+
+        class SpinBox:
+            def value(self):
+                return 1.0
+
+        key_a = DatasetKey("database-a.db", "shared-guid")
+        key_b = DatasetKey("database-b.db", "shared-guid")
+        param = self.Param()
+        param.depends_on = "x"
+        param.depends_on_ = ("x",)
+        dataset_b = self.Dataset("B")
+        window_a = PlotWindow()
+        window_a._dataset_key = key_a
+        window_a.param = param
+
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.fileTextbox = self.Field("database-b.db")
+        harness.dataset_holder = {key_b: DatasetHandle(dataset_b)}
+        harness.ds = None
+        harness._selected_dataset_key = None
+        harness.windows = [window_a]
+        harness.spinBox = SpinBox()
+        harness.status_messages = []
+        harness.show_status = lambda *args: harness.status_messages.append(args)
+        harness.show_error = lambda *args: self.fail("plot load failed")
+        harness.post_admin = lambda: None
+        opened = []
+        harness.openWin = lambda *args, **kwargs: opened.append((args, kwargs))
+
+        with patch("qplot.windows._plot_actions.plot1d", PlotWindow):
+            harness.openPlot("shared-guid", params=[param], show=False)
+
+        self.assertEqual(len(opened), 1)
+        self.assertIs(opened[0][0][1], dataset_b)
+
+    def test_closing_one_database_plot_keeps_other_database_handle(self):
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.config = self.Config()
+        harness.status_messages = []
+        harness.show_status = lambda message, timeout=5000: harness.status_messages.append(
+            (message, timeout)
+        )
+        key_a = DatasetKey("database-a.db", "shared-guid")
+        key_b = DatasetKey("database-b.db", "shared-guid")
+        handle_a = DatasetHandle(self.Dataset("A"))
+        handle_b = DatasetHandle(self.Dataset("B"))
+        harness.dataset_holder = {key_a: handle_a, key_b: handle_b}
+        window_a = type("Window", (), {"_dataset_key": key_a, "label": "A"})()
+        window_b = type("Window", (), {"_dataset_key": key_b, "label": "B"})()
+        harness.windows = [window_a, window_b]
+        harness.post_admin = lambda: None
+
+        harness.onClose(window_a)
+
+        self.assertNotIn(key_a, harness.dataset_holder)
+        self.assertIs(harness.dataset_holder[key_b], handle_b)
+        self.assertEqual(harness.windows, [window_b])
+
+    def test_database_a_plot_keeps_using_database_a_handle_after_switch(self):
+        key_a = DatasetKey("database-a.db", "shared-guid")
+        key_b = DatasetKey("database-b.db", "shared-guid")
+        dataset_a = self.Dataset("A")
+        dataset_b = self.Dataset("B")
+        window = plotWidget.__new__(plotWidget)
+        window._guid = key_a.guid
+        window._dataset_key = key_a
+        window._dataset_holder = {
+            key_a: DatasetHandle(dataset_a),
+            key_b: DatasetHandle(dataset_b),
+        }
+
+        self.assertIs(window.ds, dataset_a)
 
     def test_failed_plot_construction_does_not_publish_new_dataset(self):
         class Connection:
@@ -204,12 +374,14 @@ class DatasetHandleTestCase(unittest.TestCase):
                 self.dataset_holder = {}
                 self.threadPool = object()
                 self.windows = []
+                self.fileTextbox = DatabaseAwareDatasetCacheTestCase.Field("database.db")
 
         constructor_connections = []
 
         def failing_widget(*args, **kwargs):
             construction_holder = args[-1]
-            constructor_connections.append(construction_holder["guid"].dataset.conn)
+            key = DatasetKey("database.db", "guid")
+            constructor_connections.append(construction_holder[key].dataset.conn)
             raise RuntimeError("plot construction failed")
 
         dataset = Dataset()
@@ -249,6 +421,7 @@ class DatasetHandleTestCase(unittest.TestCase):
 
         dataset = Dataset()
         harness = Harness()
+        dataset_key = DatasetKey("database.db", "guid")
 
         with (
             patch(
@@ -257,7 +430,7 @@ class DatasetHandleTestCase(unittest.TestCase):
             ),
             self.assertRaisesRegex(RuntimeError, "plot construction failed"),
         ):
-            harness.openWin(failing_widget, "guid", show=False)
+            harness.openWin(failing_widget, dataset_key, show=False)
 
         self.assertTrue(dataset.conn.closed)
         self.assertEqual(harness.dataset_holder, {})

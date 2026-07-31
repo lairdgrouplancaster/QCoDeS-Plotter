@@ -3,6 +3,7 @@ import unittest
 from PyQt6 import QtCore
 
 from qplot.windows import main as main_window
+from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._dragdrop import (
     make_run_preview_mime,
     preview_drop_is_compatible,
@@ -62,6 +63,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         class Window:
             def __init__(self, guid, param, label):
                 self.ds = Dataset(guid)
+                self._dataset_key = DatasetKey("database.db", guid)
                 self.param = param
                 self.label = label
                 self.visible = True
@@ -98,7 +100,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
 
         added = harness.add_trace_to_plot(
             target,
-            "source-guid",
+            source._dataset_key,
             "signal",
             param=source_param
             )
@@ -107,5 +109,4 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         self.assertEqual(target.option_boxes[0].option_box.index, 0)
         self.assertTrue(source.closed)
         self.assertEqual(harness.status_messages, [])
-
 

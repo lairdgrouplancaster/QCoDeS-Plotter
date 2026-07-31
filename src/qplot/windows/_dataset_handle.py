@@ -1,6 +1,24 @@
+import os
 from dataclasses import dataclass
 
 from PyQt6 import QtCore
+
+
+def canonical_database_path(database_path: str | os.PathLike[str]) -> str:
+    """Return a stable, platform-normalised identity for a database file."""
+    return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(database_path))))
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetKey:
+    """Identifies a dataset within one particular database file."""
+
+    database_path: str
+    guid: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "database_path", canonical_database_path(self.database_path))
+        object.__setattr__(self, "guid", str(self.guid))
 
 
 @dataclass
