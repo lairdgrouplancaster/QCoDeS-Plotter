@@ -550,14 +550,7 @@ class DatabaseActionsMixin:
             self.show_status("Wait for the current database load to finish.", 5000)
             return False
 
-        self._cancel_database_detail_load()
-
-        previous_file = self.fileTextbox.text()
-        previous_runs = self._current_run_metadata()
-        monitorTimer = self.spinBox.value()
         load_message = f"Loading database {os.path.basename(abspath)}..."
-
-        self.monitor.stop()
 
         self._database_load_generation += 1
         generation = self._database_load_generation
@@ -565,13 +558,8 @@ class DatabaseActionsMixin:
         self._database_load_state = {
             "abspath": abspath,
             "load_started_at": load_started_at,
-            "monitorTimer": monitorTimer,
-            "previous_file": previous_file,
-            "previous_runs": previous_runs,
         }
 
-        self._prepare_database_load_ui(abspath)
-        self._set_database_load_controls_enabled(False)
         self._show_database_load_panel(load_message)
 
         try:
@@ -589,7 +577,7 @@ class DatabaseActionsMixin:
 
     def _prepare_database_load_ui(self, abspath):
         """
-        Clears the main-window state for a new database load.
+        Replaces the main-window state with a successfully loaded database.
 
         """
         self.run_idBox.setText("")
@@ -610,7 +598,6 @@ class DatabaseActionsMixin:
             self.localLastFile = self.fileTextbox.text()
 
         self.fileTextbox.setText(abspath)
-        self._sync_empty_state()
 
 
     def _set_database_load_controls_enabled(self, enabled):
@@ -627,50 +614,6 @@ class DatabaseActionsMixin:
             widget = getattr(self, attr, None)
             if widget is not None:
                 widget.setEnabled(enabled)
-
-
-    def _current_run_metadata(self):
-        """
-        Returns the currently displayed run metadata, if available.
-
-        """
-        all_run_metadata = getattr(self.RunList, "all_run_metadata", None)
-        if not callable(all_run_metadata):
-            return {}
-
-        try:
-            return all_run_metadata()
-        except Exception as err:
-            log_exception("Could not capture current run metadata", err, __name__)
-            return {}
-
-
-    def _restore_database_load_previous_state(self, state):
-        """
-        Restores the visible database state after a cancelled or failed load.
-
-        """
-        previous_file = state.get("previous_file", "")
-        previous_runs = state.get("previous_runs") or {}
-
-        self.fileTextbox.setText(previous_file)
-        self.run_idBox.setText("")
-        self.measurementBox.setText("*")
-        self.selected_run_id = None
-        self.ds = None
-
-        self.RunList.clearSelection()
-        self.RunList.clear()
-        self.RunList.watching = []
-        self.RunList.maxRunId = 0
-        if previous_runs:
-            self.RunList.addRuns(previous_runs)
-        self.RunList.scrollToTop()
-
-        self.infoBox.clear()
-        self.infoBox.scrollToTop()
-        self.infoBox.preview.set_database_runs(previous_file, previous_runs)
-        self._sync_empty_state()
 
 
     def _show_database_load_panel(self, message):
@@ -701,14 +644,13 @@ class DatabaseActionsMixin:
     @QtCore.pyqtSlot()
     def cancel_database_load(self):
         """
-        Cancels the active database load and restores the previous view.
+        Cancels the pending database load without changing the current view.
 
         """
         if not getattr(self, "_database_load_active", False):
             self._hide_database_load_panel()
             return
 
-        state = self._database_load_state or {}
         worker = getattr(self, "_database_load_worker", None)
         if worker is not None:
             worker.cancel()
@@ -718,11 +660,6 @@ class DatabaseActionsMixin:
         self._database_load_state = None
         self._database_load_worker = None
         self._set_database_load_controls_enabled(True)
-        self._restore_database_load_previous_state(state)
-
-        monitorTimer = state.get("monitorTimer", 0)
-        if monitorTimer > 0:
-            self.monitor.start(int(monitorTimer * 1000))
 
         self._hide_database_load_panel()
         self.show_status("Database load cancelled.", 3000)
@@ -748,45 +685,46 @@ class DatabaseActionsMixin:
         """
         if generation != self._database_load_generation:
             return
+        if not getattr(self, "_database_load_active", False):
+            return
 
         state = self._database_load_state or {}
+        if state.get("abspath") != abspath:
+            return
+
         self._database_load_active = False
         self._database_load_state = None
         self._database_load_worker = None
         self._set_database_load_controls_enabled(True)
         self._hide_database_load_panel()
-        self._sync_empty_state()
-
-        monitorTimer = state.get("monitorTimer", 0)
         load_started_at = state.get("load_started_at") or perf_counter()
 
         if error is not None:
-            self._restore_database_load_previous_state(state)
             log_exception("Database load failed", error, __name__)
             self.show_error(
                 "Database Load Failed",
                 f"Could not load database {abspath}.",
                 str(error),
             )
-            if monitorTimer > 0:
-                self.monitor.start(int(monitorTimer * 1000))
             return
 
+        self._cancel_database_detail_load()
         set_qcodes_database_location(abspath)
         runs = runs or {}
-        self.RunList.clear()
-        self.RunList.watching = []
-        self.RunList.maxRunId = 0
-        self.RunList.addRuns(runs)
-        self.infoBox.preview.set_database_runs(abspath, runs)
+        run_id_signals_blocked = self.run_idBox.blockSignals(True)
+        run_list_signals_blocked = self.RunList.blockSignals(True)
+        try:
+            self._prepare_database_load_ui(abspath)
+            self.RunList.addRuns(runs)
+            self.infoBox.preview.set_database_runs(abspath, runs)
+        finally:
+            self.RunList.blockSignals(run_list_signals_blocked)
+            self.run_idBox.blockSignals(run_id_signals_blocked)
         self.select_default_run()
         prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
         if callable(prioritize_previews):
             prioritize_previews()
         self._sync_empty_state()
-
-        if monitorTimer > 0:
-            self.monitor.start(int(monitorTimer * 1000))
 
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)
