@@ -76,7 +76,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.last_ds_len, 10)
         self.assertEqual(window.restart_intervals, [0.2])
 
-    def test_load_data_uses_sampled_sql_before_completed_cache_prep(self):
+    def test_load_data_uses_sampled_sql_and_wires_originating_worker(self):
         class Signal:
             def __init__(self):
                 self.slots = []
@@ -170,9 +170,18 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window.show_plot_state = lambda *args, **kwargs: window.plot_states.append(
             (args, kwargs)
             )
-        window.refreshPlot = lambda *_args, **_kwargs: None
-        window.err_raiser = lambda *_args, **_kwargs: None
-        window.worker_printer = lambda *_args, **_kwargs: None
+        window.refresh_calls = []
+        window.error_calls = []
+        window.printer_calls = []
+        window.refreshPlot = lambda finished, *, worker: window.refresh_calls.append(
+            (finished, worker)
+            )
+        window.err_raiser = lambda err, *, worker: window.error_calls.append(
+            (err, worker)
+            )
+        window.worker_printer = lambda message, *, worker: window.printer_calls.append(
+            (message, worker)
+            )
 
         old_loader = plot_refresh_module.loader
         old_prep = plot_refresh_module.load_param_data_from_db_prep
@@ -197,6 +206,135 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(worker.operations, ["operation"])
         self.assertEqual(window.worker, worker)
         self.assertIn("Loading data for signal", window.show_statuses[-1][0])
+
+        error = RuntimeError("failed")
+        worker.emitter.finished.slots[0](True)
+        worker.emitter.errorOccurred.slots[0](error)
+        worker.emitter.printer.slots[0]("working")
+
+        self.assertEqual(window.refresh_calls, [(True, worker)])
+        self.assertEqual(window.error_calls, [(error, worker)])
+        self.assertEqual(window.printer_calls, [("working", worker)])
+
+
+class PlotWorkerCallbackTestCase(unittest.TestCase):
+    class Signal:
+        def __init__(self):
+            self.emitted = 0
+
+        def emit(self):
+            self.emitted += 1
+
+    class Worker:
+        def __init__(self):
+            self.running = True
+
+    def _window(self):
+        window = plotWidget.__new__(plotWidget)
+        window.worker = self.Worker()
+        window.end_wait = self.Signal()
+        window.statuses = []
+        window.plot_states = []
+        window.errors = []
+        window.show_status = lambda *args: window.statuses.append(args)
+        window.show_plot_state = lambda *args, **kwargs: window.plot_states.append(
+            (args, kwargs)
+            )
+        window.show_error = lambda *args: window.errors.append(args)
+        window._last_error_text = None
+        return window
+
+    def test_stale_successful_worker_cannot_mutate_current_plot_state(self):
+        window = self._window()
+        stale_worker = self.Worker()
+        stale_worker.read_data = True
+        window.axis_data = {"x": ["current x"], "y": ["current y"]}
+        window.axis_param = {"x": "current x param", "y": "current y param"}
+        cache_updates = []
+        old_update_cache = plot_refresh_module.update_cache_parameter_data
+        plot_refresh_module.update_cache_parameter_data = (
+            lambda *args: cache_updates.append(args)
+            )
+        try:
+            result = plotWidget.refreshPlot(window, True, worker=stale_worker)
+        finally:
+            plot_refresh_module.update_cache_parameter_data = old_update_cache
+
+        self.assertFalse(result)
+        self.assertFalse(stale_worker.running)
+        self.assertEqual(
+            window.axis_data,
+            {"x": ["current x"], "y": ["current y"]},
+            )
+        self.assertEqual(
+            window.axis_param,
+            {"x": "current x param", "y": "current y param"},
+            )
+        self.assertEqual(cache_updates, [])
+        self.assertEqual(window.statuses, [])
+        self.assertEqual(window.plot_states, [])
+
+    def test_stale_failed_worker_cannot_show_error_overlay(self):
+        window = self._window()
+        stale_worker = self.Worker()
+
+        result = plotWidget.refreshPlot(window, False, worker=stale_worker)
+
+        self.assertFalse(result)
+        self.assertFalse(stale_worker.running)
+        self.assertEqual(window.plot_states, [])
+
+    def test_stale_error_signal_cannot_change_current_error_state(self):
+        window = self._window()
+        window._last_error_text = "current error"
+        stale_worker = self.Worker()
+
+        plotWidget.err_raiser(
+            window,
+            RuntimeError("stale error"),
+            worker=stale_worker,
+            )
+
+        self.assertEqual(window.statuses, [])
+        self.assertEqual(window.plot_states, [])
+        self.assertEqual(window.errors, [])
+        self.assertEqual(window._last_error_text, "current error")
+
+    def test_stale_printer_signal_cannot_overwrite_current_status(self):
+        window = self._window()
+
+        plotWidget.worker_printer(
+            window,
+            "stale status",
+            worker=self.Worker(),
+            )
+
+        self.assertEqual(window.statuses, [])
+
+    def test_stale_completion_cannot_release_current_worker_wait(self):
+        window = self._window()
+
+        plotWidget.refreshPlot(window, True, worker=self.Worker())
+
+        self.assertEqual(window.end_wait.emitted, 0)
+
+    def test_current_worker_failure_reports_error_and_releases_wait(self):
+        window = self._window()
+        error = RuntimeError("current error")
+
+        plotWidget.err_raiser(window, error, worker=window.worker)
+        result = plotWidget.refreshPlot(window, False, worker=window.worker)
+
+        self.assertFalse(result)
+        self.assertFalse(window.worker.running)
+        self.assertIn("Worker error: RuntimeError: current error", window.statuses[-1][0])
+        self.assertEqual(window.plot_states[-1][0][0], "Plot load failed")
+        self.assertEqual(
+            window.errors,
+            [("Plot Error", "A plot worker failed.", "RuntimeError: current error")],
+            )
+        self.assertEqual(window._last_error_text, "RuntimeError: current error")
+        self.assertEqual(window.end_wait.emitted, 1)
 
 
 class PlotStateOverlayTestCase(unittest.TestCase):
@@ -243,6 +381,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window = plotWidget.__new__(plotWidget)
         worker = Worker()
         states = []
+        window.worker = worker
         window.end_wait = Signal()
         window.show_plot_state = lambda *args, **kwargs: states.append((args, kwargs))
 
