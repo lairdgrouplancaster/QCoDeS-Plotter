@@ -122,10 +122,11 @@ class DatabaseActionsMixin:
 
     def load_startup_database(self):
         """
-        Load a requested startup database, or the last database when available.
+        Load the highest-priority available startup database.
 
-        Missing or unset paths are ignored so first-run and moved-file startup
-        behaviour stays the same as an empty launch.
+        An explicit path is always attempted so invalid command-line paths keep
+        their visible error. Missing saved paths fall back to QCoDeS' current
+        database when it exists.
 
         """
         startup_database_path = getattr(self, "startup_database_path", None)
@@ -135,16 +136,18 @@ class DatabaseActionsMixin:
         try:
             last_file = self.config.get("file.last_file_path")
         except KeyError:
-            return False
+            last_file = None
 
-        if not last_file:
-            return False
+        if last_file:
+            last_file = os.path.abspath(last_file)
+            if os.path.isfile(last_file):
+                return self.load_database_path(last_file)
 
-        last_file = os.path.abspath(last_file)
-        if not os.path.isfile(last_file):
-            return False
+        qcodes_database = get_DB_location()
+        if qcodes_database and os.path.isfile(qcodes_database):
+            return self.load_database_path(qcodes_database)
 
-        return self.load_database_path(last_file)
+        return False
 
 
     @QtCore.pyqtSlot()
@@ -536,6 +539,10 @@ class DatabaseActionsMixin:
             load_started_at = perf_counter()
         log_event("Loading database file: %s", abspath, logger_name=__name__)
 
+        if self._database_load_active:
+            self.show_status("Wait for the current database load to finish.", 5000)
+            return False
+
         if abspath == get_DB_location() and self.fileTextbox.text() == abspath:
             if not self.infoBox.preview.has_database(abspath):
                 self.infoBox.preview.set_database_runs(
@@ -546,10 +553,6 @@ class DatabaseActionsMixin:
             self.show_status(f"Database is already loaded ({elapsed:.2f} s).", 3000)
             self.remember_loaded_database(abspath)
             return True
-
-        if self._database_load_active:
-            self.show_status("Wait for the current database load to finish.", 5000)
-            return False
 
         load_message = f"Loading database {os.path.basename(abspath)}..."
 
@@ -727,6 +730,9 @@ class DatabaseActionsMixin:
         if callable(prioritize_previews):
             prioritize_previews()
         self._sync_empty_state()
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._current_refresh_interval())
 
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)

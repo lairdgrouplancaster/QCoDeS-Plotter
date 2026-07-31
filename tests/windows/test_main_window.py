@@ -1,4 +1,5 @@
 import errno
+import os
 import sqlite3
 import sys
 import tempfile
@@ -1421,13 +1422,19 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.started.append(worker)
 
     class Config:
+        def __init__(self, values=None):
+            self.values = values or {}
+
         def get(self, key):
             if key == "runtime_settings.cloud_sync_timeout":
                 return 30
-            raise KeyError(key)
+            return self.values[key]
 
     class Harness(QtCore.QObject):
         load_file = main_window.MainWindow.load_file
+        load_database_path = main_window.MainWindow.load_database_path
+        load_startup_database = main_window.MainWindow.load_startup_database
+        close_database = main_window.MainWindow.close_database
         cancel_database_load = main_window.MainWindow.cancel_database_load
         database_load_finished = main_window.MainWindow.database_load_finished
         database_load_status = main_window.MainWindow.database_load_status
@@ -1463,6 +1470,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             main_window.MainWindow._empty_database_refresh_status
             )
         _main_refresh_interval = main_window.MainWindow._main_refresh_interval
+        _apply_refresh_interval = main_window.MainWindow._apply_refresh_interval
         _database_detail_priority_run_ids = (
             main_window.MainWindow._database_detail_priority_run_ids
             )
@@ -1502,7 +1510,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.spinBox = DatabaseLoadUiTestCase.SpinBox()
             self.config = DatabaseLoadUiTestCase.Config()
             self.databaseLoadThreadPool = DatabaseLoadUiTestCase.ThreadPool()
+            self.dataset_holder = {}
             self.localLastFile = None
+            self.startup_database_path = None
             self.status_messages = []
             self.error_messages = []
             self.remembered_databases = []
@@ -1581,6 +1591,218 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.assertTrue(harness.refreshDatabaseButton.enabled)
             self.assertTrue(harness.databaseInfoButton.enabled)
             self.assertTrue(harness.openDatabaseFolderButton.enabled)
+        finally:
+            set_qcodes_database_location(active_database)
+
+    def test_existing_qcodes_database_is_not_displayed_before_it_is_loaded(self):
+        class Harness(qtw.QMainWindow):
+            load_database_path = lambda *_args: True
+            copy_database_path = lambda *_args: None
+            show_database_info = lambda *_args: None
+            getfile = lambda *_args: None
+            open_database_location = lambda *_args: None
+            cancel_database_load = lambda *_args: None
+
+            def __init__(self):
+                super().__init__()
+                self.closeAllPlotsButton = qtw.QToolButton()
+
+        active_database = get_DB_location()
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            set_qcodes_database_location(database.name)
+            harness = Harness()
+            try:
+                main_window.MainWindow.initFile(harness)
+                self.assertEqual(harness.fileTextbox.text(), "")
+            finally:
+                harness.deleteLater()
+                set_qcodes_database_location(active_database)
+
+    def test_startup_last_file_equal_to_qcodes_database_starts_worker(self):
+        active_database = get_DB_location()
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database_path = os.path.abspath(database.name)
+            set_qcodes_database_location(database_path)
+            try:
+                harness = self.Harness()
+                harness.config = self.Config({"file.last_file_path": database_path})
+
+                self.assertTrue(harness.load_startup_database())
+
+                self.assertEqual(harness.fileTextbox.text(), "")
+                self.assertTrue(harness._database_load_active)
+                self.assertEqual(harness._database_load_state["abspath"], database_path)
+                self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_startup_uses_existing_qcodes_database_without_last_file(self):
+        active_database = get_DB_location()
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database_path = os.path.abspath(database.name)
+            set_qcodes_database_location(database_path)
+            try:
+                harness = self.Harness()
+
+                self.assertTrue(harness.load_startup_database())
+
+                self.assertEqual(harness._database_load_state["abspath"], database_path)
+                self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_startup_missing_last_file_falls_back_to_qcodes_database(self):
+        active_database = get_DB_location()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            qcodes_database = Path(temp_dir) / "qcodes.db"
+            qcodes_database.touch()
+            missing_database = Path(temp_dir) / "missing.db"
+            set_qcodes_database_location(str(qcodes_database))
+            try:
+                harness = self.Harness()
+                harness.config = self.Config(
+                    {"file.last_file_path": str(missing_database)}
+                    )
+
+                self.assertTrue(harness.load_startup_database())
+
+                self.assertEqual(
+                    harness._database_load_state["abspath"],
+                    str(qcodes_database),
+                    )
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_explicit_startup_database_takes_precedence_over_fallbacks(self):
+        active_database = get_DB_location()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            startup_database = Path(temp_dir) / "startup.db"
+            last_database = Path(temp_dir) / "last.db"
+            qcodes_database = Path(temp_dir) / "qcodes.db"
+            for database in (startup_database, last_database, qcodes_database):
+                database.touch()
+            set_qcodes_database_location(str(qcodes_database))
+            try:
+                harness = self.Harness()
+                harness.startup_database_path = str(startup_database)
+                harness.config = self.Config(
+                    {"file.last_file_path": str(last_database)}
+                    )
+
+                self.assertTrue(harness.load_startup_database())
+
+                self.assertEqual(
+                    harness._database_load_state["abspath"],
+                    str(startup_database),
+                    )
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_invalid_explicit_startup_database_does_not_fall_back(self):
+        active_database = get_DB_location()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing_database = Path(temp_dir) / "missing.db"
+            qcodes_database = Path(temp_dir) / "qcodes.db"
+            qcodes_database.touch()
+            set_qcodes_database_location(str(qcodes_database))
+            try:
+                harness = self.Harness()
+                harness.startup_database_path = str(missing_database)
+
+                self.assertFalse(harness.load_startup_database())
+
+                self.assertEqual(harness.databaseLoadThreadPool.started, [])
+                self.assertEqual(harness.error_messages[0][0], "Database Load Failed")
+                self.assertEqual(harness.error_messages[0][2], str(missing_database))
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_successful_startup_load_commits_complete_database_view(self):
+        active_database = get_DB_location()
+        runs = {9: {"guid": "guid-9", "run_timestamp": 456.0}}
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database_path = os.path.abspath(database.name)
+            set_qcodes_database_location(database_path)
+            try:
+                harness = self.Harness()
+                harness.config = self.Config({"file.last_file_path": database_path})
+
+                self.assertTrue(harness.load_startup_database())
+                generation = harness._database_load_generation
+                harness.database_load_finished(
+                    generation,
+                    database_path,
+                    runs,
+                    None,
+                    )
+
+                self.assertEqual(harness.fileTextbox.text(), database_path)
+                self.assertEqual(harness.RunList.runs, runs)
+                self.assertEqual(
+                    harness.infoBox.preview.database_runs,
+                    (database_path, runs),
+                    )
+                self.assertEqual(harness.detail_loads, [(database_path, runs)])
+                self.assertEqual(harness.monitor.started, [1500])
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_committed_empty_database_uses_already_loaded_shortcut(self):
+        active_database = get_DB_location()
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database_path = os.path.abspath(database.name)
+            try:
+                harness = self.Harness()
+                self.assertTrue(harness.load_database_path(database_path))
+                generation = harness._database_load_generation
+                harness.database_load_finished(generation, database_path, {}, None)
+                started_workers = list(harness.databaseLoadThreadPool.started)
+
+                self.assertTrue(harness.load_database_path(database_path))
+
+                self.assertEqual(
+                    harness.databaseLoadThreadPool.started,
+                    started_workers,
+                    )
+                self.assertIn("Database is already loaded", harness.status_messages[-1][0])
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_close_then_reopen_same_empty_database_starts_new_load(self):
+        active_database = get_DB_location()
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database_path = os.path.abspath(database.name)
+            try:
+                harness = self.Harness()
+                self.assertTrue(harness.load_database_path(database_path))
+                generation = harness._database_load_generation
+                harness.database_load_finished(generation, database_path, {}, None)
+
+                harness.close_database(status=False)
+                self.assertTrue(harness.load_database_path(database_path))
+
+                self.assertEqual(harness.fileTextbox.text(), "")
+                self.assertTrue(harness._database_load_active)
+                self.assertEqual(len(harness.databaseLoadThreadPool.started), 2)
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_active_load_blocks_already_loaded_shortcut(self):
+        active_database = get_DB_location()
+        try:
+            set_qcodes_database_location("committed.db")
+            harness = self.Harness()
+            harness.fileTextbox.setText("committed.db")
+            harness.infoBox.preview.set_database_runs("committed.db", {})
+
+            self.assertTrue(harness.load_file("pending.db"))
+            self.assertFalse(harness.load_file("committed.db"))
+
+            self.assertEqual(
+                harness.status_messages[-1],
+                ("Wait for the current database load to finish.", 5000),
+                )
+            self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
         finally:
             set_qcodes_database_location(active_database)
 

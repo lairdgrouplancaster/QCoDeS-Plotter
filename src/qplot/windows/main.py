@@ -9,7 +9,6 @@ from PyQt6 import (
 from PyQt6 import (
     QtWidgets as qtw,
 )
-from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot import config
 from qplot.datahandling.database import (
@@ -376,8 +375,6 @@ class MainWindow(  # type: ignore[misc]
         database_load_layout.addWidget(self.databaseLoadCancelButton)
         self.databaseLoadFrame.setVisible(False)
         
-        if os.path.isfile(get_DB_location()):
-            self.fileTextbox.setText(str(get_DB_location()))
 ###############################################################################
 #Open/Close events
 
