@@ -22,6 +22,8 @@ class PlotActionsMixin:
     helpers.
     """
 
+    _selected_dataset_key: DatasetKey | None
+
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
         """

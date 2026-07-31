@@ -14,6 +14,9 @@ from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
 )
 
+if TYPE_CHECKING:
+    from ._dataset_handle import DatasetKey
+
 _MAX_EXPORTED_IMAGE_SIZE = 20_000
 _HIGH_DPI_COPY_RESOLUTION = 300
 _INCHES_PER_METER = 39.370_078_740_157_48
@@ -21,6 +24,7 @@ _DpiAxis = Literal["x", "y"]
 
 if TYPE_CHECKING:
     class _PlotExportBase(qtw.QMainWindow):
+        _dataset_key: DatasetKey
         ds: Any
         param: Any
         plot: Any
