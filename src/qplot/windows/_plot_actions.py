@@ -396,11 +396,13 @@ class PlotActionsMixin:
             target_guid = guid or getattr(self.ds, "guid", "")
             dataset_key = self._current_dataset_key(target_guid)
 
+        loaded_by_open_plot = False
         try:
             if not self.ds or getattr(self, "_selected_dataset_key", None) != dataset_key:
                 handle = self.dataset_holder.get(dataset_key)
                 if handle is None:
                     ds = self._load_dataset(dataset_key)
+                    loaded_by_open_plot = True
                 else:
                     ds = handle.dataset
             else:
@@ -410,12 +412,12 @@ class PlotActionsMixin:
             self.show_error("Run Load Failed", "Could not load the selected run.", str(err))
             return
 
-        if not params:
-            params = ds.get_parameters()
-
         opened = 0
         skipped = 0
         try:
+            if not params:
+                params = ds.get_parameters()
+
             for param in params:
                 if param.depends_on == "":
                     continue
@@ -478,12 +480,17 @@ class PlotActionsMixin:
                 self.show_status("No plottable parameters found for this run.", 5000)
 
         except Exception as err:
-            try:
-                ds.conn.close()
-            except Exception:
-                pass
             log_exception("Plot open failed", err, __name__)
             self.show_error("Plot Open Failed", "Could not open plot windows.", str(err))
+        finally:
+            dataset_is_held = dataset_key in self.dataset_holder or any(
+                handle.dataset is ds for handle in self.dataset_holder.values()
+            )
+            if loaded_by_open_plot and self.ds is not ds and not dataset_is_held:
+                try:
+                    ds.conn.close()
+                except Exception as err:
+                    log_exception("Unused plot dataset cleanup failed", err, __name__)
 
 
     def open_param_by_index(self, index: int):

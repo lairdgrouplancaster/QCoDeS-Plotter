@@ -188,6 +188,158 @@ class DatasetHandleTestCase(unittest.TestCase):
         self.assertEqual(harness.windows, [])
 
 
+class OpenPlotDatasetOwnershipTestCase(unittest.TestCase):
+    class Connection:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class Dataset:
+        guid = "guid"
+
+        def __init__(self, params=()):
+            self.conn = OpenPlotDatasetOwnershipTestCase.Connection()
+            self.params = list(params)
+
+        def get_parameters(self):
+            return self.params
+
+    class Field:
+        def text(self):
+            return "database.db"
+
+    class SpinBox:
+        def value(self):
+            return 1.0
+
+    class Param:
+        def __init__(self, name, depends_on="x"):
+            self.name = name
+            self.depends_on = depends_on
+            self.depends_on_ = ("x",) if depends_on else ()
+
+    class Harness(PlotActionsMixin):
+        def __init__(self, dataset, selected=False):
+            self.fileTextbox = OpenPlotDatasetOwnershipTestCase.Field()
+            self.spinBox = OpenPlotDatasetOwnershipTestCase.SpinBox()
+            self.dataset_holder = {}
+            self.windows = []
+            self.ds = dataset if selected else None
+            self._selected_dataset_key = (
+                self._current_dataset_key(dataset.guid) if selected else None
+            )
+            self.loaded_dataset = dataset
+            self.load_count = 0
+            self.open_win = lambda *args, **kwargs: None
+            self.errors = []
+            self.status_messages = []
+
+        def _load_dataset(self, dataset_key):
+            self.load_count += 1
+            return self.loaded_dataset
+
+        def openWin(self, *args, **kwargs):
+            return self.open_win(*args, **kwargs)
+
+        def post_admin(self):
+            pass
+
+        def show_error(self, *args):
+            self.errors.append(args)
+
+        def show_status(self, *args):
+            self.status_messages.append(args)
+
+    @staticmethod
+    def fail_plot_open(*args, **kwargs):
+        raise RuntimeError("plot construction failed")
+
+    def test_failure_does_not_close_selected_dataset(self):
+        param = self.Param("signal")
+        dataset = self.Dataset([param])
+        harness = self.Harness(dataset, selected=True)
+        harness.open_win = self.fail_plot_open
+
+        harness.openPlot(params=[param], show=False)
+
+        self.assertFalse(dataset.conn.closed)
+        self.assertEqual(harness.load_count, 0)
+        self.assertEqual(len(harness.errors), 1)
+
+    def test_failure_does_not_close_cached_dataset_handle(self):
+        param = self.Param("signal")
+        dataset = self.Dataset([param])
+        harness = self.Harness(dataset)
+        dataset_key = harness._current_dataset_key(dataset.guid)
+        handle = DatasetHandle(dataset)
+        harness.dataset_holder[dataset_key] = handle
+        harness.open_win = self.fail_plot_open
+
+        harness.openPlot(dataset_key, params=[param], show=False)
+
+        self.assertFalse(dataset.conn.closed)
+        self.assertIs(harness.dataset_holder[dataset_key], handle)
+        self.assertEqual(harness.load_count, 0)
+        self.assertEqual(len(harness.errors), 1)
+
+    def test_partial_success_keeps_published_dataset_connection_open(self):
+        params = [self.Param("first"), self.Param("second")]
+        dataset = self.Dataset(params)
+        harness = self.Harness(dataset)
+        dataset_key = harness._current_dataset_key(dataset.guid)
+        opened_window = type(
+            "OpenedWindow",
+            (),
+            {"_dataset_key": dataset_key, "ds": dataset, "param": params[0]},
+        )()
+
+        def open_then_fail(widget, opened_dataset, param, **kwargs):
+            if param is params[0]:
+                harness.dataset_holder[dataset_key] = DatasetHandle(opened_dataset)
+                harness.windows.append(opened_window)
+                return
+            raise RuntimeError("plot construction failed")
+
+        harness.open_win = open_then_fail
+
+        harness.openPlot(dataset_key, params=params, show=False)
+
+        self.assertFalse(dataset.conn.closed)
+        self.assertIs(harness.dataset_holder[dataset_key].dataset, dataset)
+        self.assertEqual(harness.windows, [opened_window])
+        self.assertIs(opened_window.ds, dataset)
+        self.assertEqual(len(harness.errors), 1)
+
+    def test_failure_before_ownership_is_published_closes_transient_dataset(self):
+        param = self.Param("signal")
+        dataset = self.Dataset([param])
+        harness = self.Harness(dataset)
+        dataset_key = harness._current_dataset_key(dataset.guid)
+        harness.open_win = self.fail_plot_open
+
+        harness.openPlot(dataset_key, params=[param], show=False)
+
+        self.assertTrue(dataset.conn.closed)
+        self.assertNotIn(dataset_key, harness.dataset_holder)
+        self.assertEqual(harness.load_count, 1)
+        self.assertEqual(len(harness.errors), 1)
+
+    def test_transient_dataset_without_plottable_parameters_is_closed(self):
+        independent = self.Param("setpoint", depends_on="")
+        dataset = self.Dataset([independent])
+        harness = self.Harness(dataset)
+        dataset_key = harness._current_dataset_key(dataset.guid)
+
+        harness.openPlot(dataset_key, show=False)
+
+        self.assertTrue(dataset.conn.closed)
+        self.assertNotIn(dataset_key, harness.dataset_holder)
+        self.assertEqual(harness.load_count, 1)
+        self.assertEqual(harness.errors, [])
+
+
 class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
     class Field:
         def __init__(self, value):
