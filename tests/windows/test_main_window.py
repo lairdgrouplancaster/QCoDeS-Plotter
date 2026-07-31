@@ -1829,7 +1829,7 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
                     patch(
                         "builtins.open",
                         side_effect=[
-                            TimeoutError(60, "Operation timed out"),
+                            TimeoutError(errno.ETIMEDOUT, "Operation timed out"),
                             handle,
                             ],
                         ) as open_file,
