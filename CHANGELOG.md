@@ -9,12 +9,63 @@ installation commands and release validation, see `docs/distribution.md`.
 
 No changes yet.
 
+## 1.5.0-b2 - 2026-08-01
+
+### Highlights
+
+- Database changes, plot opening, and background plot refreshes now preserve
+  the last successfully committed state when newer work fails or becomes stale.
+- The run table now distinguishes successful, interrupted, failed, and still
+  unfinished measurements.
+- Existing QCoDeS and last-used databases now populate their run data correctly
+  when qPlot starts.
+
+### Changed
+
+- Database switching now keeps the committed database visible and active until
+  the requested database has loaded successfully.
+- Dataset identity now includes database provenance as well as GUID, allowing
+  copied databases that contain matching GUIDs to coexist safely.
+
+### Fixed
+
+- Prevent cancellation, failure, and stale database-load callbacks from
+  replacing the committed database.
+- Retry transient cloud-provider timeout and cancellation errors while a
+  database placeholder is being downloaded, within the existing overall load
+  timeout.
+- Prevent plot-opening failures from closing selected, cached, or
+  already-published dataset connections; transient connections are still
+  cleaned up when construction fails.
+- Prevent superseded plot workers from replacing newer plot data or showing
+  stale successes, failures, status messages, or error dialogs.
+- Show completed keyboard interruptions as interrupted and completed
+  measurement exceptions as failed, while retaining distinct successful and
+  unfinished run states.
+- Load run data for an explicit startup database, a valid last-used database,
+  or an existing QCoDeS database through the normal startup loading path.
+
+### Known Limitations
+
+- Derivative operations currently retain the original displayed labels and
+  units.
+- Operation validation and failure handling can skip invalid operations or
+  leave a partially applied operation pipeline.
+- Large-dataset performance has not yet been comprehensively benchmarked.
+- Restore Defaults in Preferences applies immediately, so Cancel does not
+  restore the previous preferences.
+- `qplot-cfg` does not correctly support every empty-string or empty-list
+  update.
+- Closed plots may occasionally remain in Add to Plot choices until the list is
+  refreshed.
+
 ## 1.5.0-b1 - 2026-07-31
 
 
 ### Highlights
 
-- Bugs identified by GPT-5.6 Sol have all been fixed.
+- This beta introduced spatial heatmap aggregation and geometry improvements,
+  together with targeted database, plot-opening, operation, and trace fixes.
 - As a result, thumbnails and previews now work properly.
 - Handling large datasets remains slow and I have not benchmarked this against Ben Wordsworth's original version.
 - I have also not tested this version thoroughly, which is why it's still a beta.
