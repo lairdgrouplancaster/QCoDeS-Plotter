@@ -127,8 +127,15 @@ class PlotRefreshMixin(_PlotRefreshBase):
             lambda finished, worker=worker: self.refreshPlot(finished, worker=worker)
             )
         # Error event handling
-        worker.emitter.errorOccurred.connect(self.err_raiser)
-        worker.emitter.printer.connect(self.worker_printer)
+        worker.emitter.errorOccurred.connect(
+            lambda err, worker=worker: self.err_raiser(err, worker=worker)
+            )
+        worker.emitter.printer.connect(
+            lambda message, worker=worker: self.worker_printer(
+                message,
+                worker=worker,
+                )
+            )
 
         if wait_on_thread:  # Force freeze main thread
             hold_up = QtCore.QEventLoop()
@@ -213,22 +220,21 @@ class PlotRefreshMixin(_PlotRefreshBase):
             is not ran.
 
         """
+        if worker is None:
+            worker = self.worker
+
+        if worker is not self.worker:
+            worker.running = False
+            return False
+
         try:
             if not finished:  # error in worker
-                if worker is not None:
-                    worker.running = False
+                worker.running = False
                 self.show_plot_state(
                     "Plot load failed",
                     "Check the status bar or diagnostic log for details.",
                     kind="error",
                     )
-                return False
-
-            if worker is None:
-                worker = self.worker
-
-            if worker is not self.worker:
-                worker.running = False
                 return False
 
             # Update qcodes dataset variables if db read happened
@@ -303,11 +309,15 @@ class PlotRefreshMixin(_PlotRefreshBase):
             return None
 
         finally:  # Allow code to move on from wait_on_thread
-            self.end_wait.emit()
+            if worker is self.worker:
+                self.end_wait.emit()
 
 
     @QtCore.pyqtSlot(Exception)
-    def err_raiser(self, err: Exception) -> None:
+    def err_raiser(self, err: Exception, worker: Any | None = None) -> None:
+        if worker is not None and worker is not self.worker:
+            return
+
         message = f"{type(err).__name__}: {err}"
         log_exception("Plot worker error", err, __name__)
         self.show_status(f"Worker error: {message}", 10_000)
@@ -321,7 +331,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
 
     @QtCore.pyqtSlot(str)
-    def worker_printer(self, fstr: str) -> None:
+    def worker_printer(self, fstr: str, worker: Any | None = None) -> None:
+        if worker is not None and worker is not self.worker:
+            return
+
         # Worker print() often does not work, so done through event handlers
         self.show_status(fstr, 5000)
         print(fstr)
