@@ -18,7 +18,7 @@ from ._commands import (
     create_action,
     toolbar_toggle_command_spec,
 )
-from ._dataset_handle import DatasetKey
+from ._dataset_handle import DatasetKey, TraceKey
 from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
@@ -202,6 +202,7 @@ class plotWidget(
             set_parameter_complete(self.param, False)
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
+        self._trace_key = TraceKey(self._dataset_key, self.param.name)
         self.monitor = QtCore.QTimer()
         self.threadPool = threadPool
         self.last_ds_len = self.ds.number_of_results
@@ -212,7 +213,7 @@ class plotWidget(
         self.show_status("Working, please wait", 0)
         
         ### WIDGETS
-        self.layout = qtw.QVBoxLayout()
+        self._window_layout = qtw.QVBoxLayout()
         
         self.widget = pg.GraphicsLayoutWidget()
         self.plot_state_overlay = PlotStateOverlay(self.widget)
@@ -231,7 +232,7 @@ class plotWidget(
         self.vb.setParent(self.plot)
         self.vb.set_marquee_owner(self)
         self._init_marquee()
-        self.layout.addWidget(self.widget)
+        self._window_layout.addWidget(self.widget)
         
         ### CORE INIT FUNCTIONS
         self.initAxes()
@@ -256,12 +257,12 @@ class plotWidget(
             screenrect = qtw.QApplication.primaryScreen().availableGeometry()
             sizeFrac = self.config.get("GUI.plot_frame_fraction")
     
-            self.width = int(sizeFrac * screenrect.width())
-            self.height = int(sizeFrac * screenrect.height())
-            self.resize(self.width, self.height)
+            initial_width = int(sizeFrac * screenrect.width())
+            initial_height = int(sizeFrac * screenrect.height())
+            self.resize(initial_width, initial_height)
             
             w = qtw.QFrame()
-            w.setLayout(self.layout)
+            w.setLayout(self._window_layout)
             self.setCentralWidget(w)
         
         #start refresh cycle if live

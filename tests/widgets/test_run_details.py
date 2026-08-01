@@ -673,6 +673,48 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
         self.assertIn(("guid-2", False), generation_changes)
 
+    def test_stale_preview_callback_keeps_current_generation_active(self):
+        preview = PreviewTab(preview_size=100)
+        preview._schedule_start_next = lambda: None
+        generation_changes = []
+        started_workers = []
+        preview.previewGenerationChanged.connect(
+            lambda *args: generation_changes.append(args)
+            )
+
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        runs = {1: {"guid": "shared-guid", "run_timestamp": 100.0}}
+
+        preview.set_database_runs("old.db", runs)
+        preview._start_next()
+        stale_generation = preview.generation
+
+        preview.set_database_runs("current.db", runs)
+        preview._start_next()
+        current_generation = preview.generation
+
+        preview._worker_finished(stale_generation, "shared-guid", [], None)
+
+        self.assertEqual(len(started_workers), 2)
+        self.assertEqual(
+            preview.active,
+            {(current_generation, "shared-guid")},
+            )
+        self.assertEqual(
+            generation_changes,
+            [("shared-guid", True), ("shared-guid", True)],
+            )
+
+        preview._start_next = lambda: None
+        preview._worker_finished(current_generation, "shared-guid", [], None)
+
+        self.assertEqual(preview.active, set())
+        self.assertEqual(generation_changes[-1], ("shared-guid", False))
+
     def test_preview_tab_prioritizes_selected_then_visible_then_remaining_runs(self):
         preview = PreviewTab(preview_size=100)
         preview._start_next = lambda: None

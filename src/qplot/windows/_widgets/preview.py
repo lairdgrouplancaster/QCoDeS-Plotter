@@ -59,7 +59,7 @@ class PreviewTab(qtw.QWidget):
         self.cache = {}
         self.errors = {}
         self.queue = {}
-        self.active = set()
+        self.active: set[tuple[int, str]] = set()
         self.metadata_signatures = {}
         self._start_scheduled = False
 
@@ -309,7 +309,7 @@ class PreviewTab(qtw.QWidget):
             return
         if guid in self.errors:
             return
-        if guid in self.active and not allow_active:
+        if (self.generation, guid) in self.active and not allow_active:
             return
         if guid not in self.run_metadata:
             return
@@ -333,7 +333,10 @@ class PreviewTab(qtw.QWidget):
 
 
     def _start_next(self):
-        if self.active or not self.queue:
+        if any(
+                generation == self.generation
+                for generation, _guid in self.active
+                ) or not self.queue:
             return
 
         guid = max(
@@ -344,7 +347,7 @@ class PreviewTab(qtw.QWidget):
                 ),
         )
         self.queue.pop(guid, None)
-        self.active.add(guid)
+        self.active.add((self.generation, guid))
         self.previewGenerationChanged.emit(guid, True)
 
         worker = PreviewWorker(
@@ -360,9 +363,10 @@ class PreviewTab(qtw.QWidget):
 
     @QtCore.pyqtSlot(int, str, object, object)
     def _worker_finished(self, generation, guid, previews, error):
-        was_active = guid in self.active
-        self.active.discard(guid)
-        if was_active:
+        active_key = (generation, guid)
+        was_active = active_key in self.active
+        self.active.discard(active_key)
+        if was_active and generation == self.generation:
             self.previewGenerationChanged.emit(guid, False)
 
         if generation != self.generation:

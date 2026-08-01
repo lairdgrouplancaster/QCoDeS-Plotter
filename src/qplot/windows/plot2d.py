@@ -224,9 +224,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 self.bar = self.plot.addColorBar(
                     self._heatmap_colorbar_items(),
                     colorMap=self._colorbar_colormap(),
-                    rounding=(
-                        np.nanmax(self.dataGrid) - np.nanmin(self.dataGrid)
-                        ) / 1e5,  # Add 10,000 colours
+                    rounding=self._data_colorbar_rounding(),
                     colorMapMenu=False,
                     )
                 self._set_colorbar_tick_formatter()

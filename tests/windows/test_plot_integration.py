@@ -114,7 +114,7 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
         line_dataset = load_by_id(line_run_id)
         line_param = dependent_parameter(line_dataset, 1)
         window.ds = line_dataset
-        window.openPlot(params=[line_param], show=False)
+        window.openPlot(params=[line_param], show=True)
         line_window = window.windows[-1]
         wait_for(
             lambda: (
@@ -126,6 +126,11 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
         assert line_window.axis_data["x"].size == 11
         assert line_window.axis_data["y"].size == 11
         assert np.isfinite(line_window.axis_data["y"]).all()
+        assert isinstance(window.x(), int)
+        assert isinstance(window.y(), int)
+        assert line_window.layout() is not None
+        assert line_window.width() > 0
+        assert line_window.height() > 0
 
         heatmap_dataset = load_by_id(heatmap_run_id)
         heatmap_param = dependent_parameter(heatmap_dataset, 2)

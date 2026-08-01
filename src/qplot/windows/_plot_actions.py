@@ -13,6 +13,15 @@ from .plot1d import plot1d
 from .plot2d import plot2d
 
 
+def _plot_has_trace_window(target, candidate):
+    """Return whether a source window is already represented on a 1D plot."""
+
+    checker = getattr(target, "_has_trace_window", None)
+    if callable(checker):
+        return checker(candidate)
+    return candidate.label in target.lines
+
+
 class PlotActionsMixin:
     """
     Plot launching, preview plotting, CSV export, and plot dataset tracking.
@@ -117,17 +126,19 @@ class PlotActionsMixin:
         if show:
             win.update_theme(self.config)
 
-            win.move(self.x, self.y)
+            win.move(self._next_plot_x, self._next_plot_y)
             win.show()
 
             tolerance = 30
-            self.x += win.width
-            if self.x + win.width - tolerance > self.screenrect.right():
-                self.x = self.screenrect.left()
-                self.y += win.height
+            plot_width = win.width()
+            plot_height = win.height()
+            self._next_plot_x += plot_width
+            if self._next_plot_x + plot_width - tolerance > self.screenrect.right():
+                self._next_plot_x = self.screenrect.left()
+                self._next_plot_y += plot_height
 
-                if self.y + win.height - tolerance > self.screenrect.bottom():
-                    self.y = self.screenrect.top()
+                if self._next_plot_y + plot_height - tolerance > self.screenrect.bottom():
+                    self._next_plot_y = self.screenrect.top()
 
 
     @QtCore.pyqtSlot(object, object)
@@ -622,7 +633,11 @@ class PlotActionsMixin:
             target_win.add_option_box()
             box = target_win.option_boxes[-1]
 
-        index = box.option_box.findText(from_win.label)
+        source_trace_key = getattr(from_win, "_trace_key", from_win.label)
+        find_data = getattr(box.option_box, "findData", None)
+        index = find_data(source_trace_key) if callable(find_data) else -1
+        if index < 0:
+            index = box.option_box.findText(from_win.label)
         if index < 0:
             self.show_status(
                 f"Cannot add {parameter_name}; it is already shown or incompatible.",
@@ -857,14 +872,14 @@ class PlotActionsMixin:
         for item in self.windows:
             try:
                 if item.param.depends_on == win.param.depends_on:
-                    if item.label not in win.lines.keys():
+                    if not _plot_has_trace_window(win, item):
                         wins.append(item)
 
                 elif (
                     item.__class__.__name__ == "sweeper"
                     and item.axis_options["x"] == win.param.depends_on
                 ):
-                    if item.label not in win.lines.keys():
+                    if not _plot_has_trace_window(win, item):
                         wins.append(item)
             except AttributeError:
                 continue

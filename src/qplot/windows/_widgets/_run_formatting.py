@@ -193,7 +193,9 @@ def time_taken_seconds(metadata):
     completed = metadata.get("completed_timestamp")
     if completed:
         end = completed
-    elif not run_is_complete(metadata) and metadata.get("database_modified_timestamp"):
+    elif run_is_complete(metadata):
+        return None
+    elif metadata.get("database_modified_timestamp"):
         end = metadata.get("database_modified_timestamp")
     else:
         end = datetime.now().timestamp()

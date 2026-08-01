@@ -8,6 +8,37 @@ from qplot.datahandling import readSQL
 
 
 class RunSizeTestCase(unittest.TestCase):
+    def test_has_finished_returns_optional_timestamp_scalar(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "runs.db")
+            conn = sqlite3.connect(database_path)
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "CREATE TABLE runs (guid TEXT, completed_timestamp REAL)"
+                    )
+                cursor.executemany(
+                    "INSERT INTO runs VALUES (?, ?)",
+                    [
+                        ("finished-guid", 123.5),
+                        ("unfinished-guid", None),
+                        ],
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            old_connection = readSQL.qcodes_read_only_connection
+            readSQL.qcodes_read_only_connection = (
+                lambda _database_path: sqlite3.connect(database_path)
+                )
+            try:
+                self.assertEqual(readSQL.has_finished("finished-guid"), 123.5)
+                self.assertIsNone(readSQL.has_finished("unfinished-guid"))
+                self.assertIsNone(readSQL.has_finished("missing-guid"))
+            finally:
+                readSQL.qcodes_read_only_connection = old_connection
+
     def test_find_new_runs_uses_run_id_when_timestamps_are_missing_or_equal(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = os.path.join(temp_dir, "runs.db")

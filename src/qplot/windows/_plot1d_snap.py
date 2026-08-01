@@ -14,7 +14,7 @@ if TYPE_CHECKING:
         toolbarCo_ord: qtw.QToolBar
         snap_to_trace_action: QtGui.QAction | None
         trace_label: qtw.QLabel | None
-        lines: dict[str, Any]
+        lines: dict[Any, Any]
         pos_labels: dict[str, qtw.QLabel]
         plot: Any
         right_vb: Any
@@ -255,7 +255,14 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self.trace_label.setText(
             f"Snapped to run {run_id}, trace {trace}, point {point_number}."
             )
-        self.trace_label.setToolTip(str(label))
+        line = self.lines.get(label)
+        display_label = getattr(self, "_trace_display_label", None)
+        if callable(display_label):
+            label_text = display_label(label, line)
+        else:
+            source = getattr(line, "from_win", None)
+            label_text = str(getattr(source, "label", label))
+        self.trace_label.setToolTip(label_text)
         self.trace_label.adjustSize()
         self.trace_label.updateGeometry()
         self.toolbarCo_ord.updateGeometry()

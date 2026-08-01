@@ -1402,6 +1402,39 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertTrue(window.relevel_refresh.checked)
         self.assertEqual(window.bar.values, (0.0, 40.0))
 
+    def test_colorbar_autoscale_ignores_empty_and_all_nonfinite_data(self):
+        for data in (
+                np.array([]),
+                np.array([[np.nan, np.inf, -np.inf]]),
+                ):
+            with self.subTest(data=data):
+                window = plot2d.__new__(plot2d)
+                window.bar = self.Colorbar()
+                window.bar.values = (10.0, 20.0)
+                window._colorbar_manual_levels = (10.0, 20.0)
+                window.dataGrid = data
+
+                window.scaleColorbar()
+
+                self.assertEqual(window.bar.values, (10.0, 20.0))
+                self.assertEqual(window._colorbar_manual_levels, (10.0, 20.0))
+
+    def test_constant_heatmap_uses_positive_finite_colorbar_rounding(self):
+        window = plot2d.__new__(plot2d)
+
+        for value in (0.0, 7.5, -7.5, np.nextafter(0.0, 1.0)):
+            with self.subTest(value=value):
+                window.dataGrid = np.full((2, 2), value)
+
+                rounding = window._data_colorbar_rounding()
+
+                self.assertTrue(np.isfinite(rounding))
+                self.assertGreaterEqual(rounding, np.finfo(float).tiny)
+
+                bar = pg.ColorBarItem(values=(0.0, 1.0), rounding=rounding)
+                bar._regionChanging()
+                self.assertTrue(np.isfinite(bar.values).all())
+
     def test_outside_colorbar_drag_widens_levels_about_midpoint(self):
         for start_y, drag_y in ((40.0, 24.0), (210.0, 226.0)):
             with self.subTest(start_y=start_y):

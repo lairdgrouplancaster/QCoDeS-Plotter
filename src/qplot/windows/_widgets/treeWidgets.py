@@ -619,6 +619,9 @@ class RunList(qtw.QTreeWidget):
                     "database_modified_timestamp"
                     ]
 
+            if status.get("is_completed") is not None:
+                run.run_metadata["is_completed"] = bool(status["is_completed"])
+
             if status.get("result_count") is not None:
                 run.run_metadata["result_count"] = status["result_count"]
                 if not run.run_metadata.get("expected_results"):
@@ -664,11 +667,11 @@ class RunList(qtw.QTreeWidget):
                 run.setText(storage_col, format_storage_size(status["storage_bytes"]))
                 run.setData(storage_col, QtCore.Qt.ItemDataRole.UserRole, status["storage_bytes"])
 
-            finished = status.get("completed_timestamp")
+            completed_timestamp = status.get("completed_timestamp")
+            if completed_timestamp is not None:
+                run.run_metadata["completed_timestamp"] = completed_timestamp
 
-            if finished:
-                run.run_metadata["completed_timestamp"] = finished
-                run.run_metadata["is_completed"] = status.get("is_completed", True)
+            if run_is_complete(run.run_metadata):
                 complete_col = self.cols.index("Status")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
                 run.setData(
