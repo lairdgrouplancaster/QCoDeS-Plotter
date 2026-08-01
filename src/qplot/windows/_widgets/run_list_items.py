@@ -178,6 +178,14 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
         | QtCore.Qt.AlignmentFlag.AlignVCenter
         )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._right_width_cache = {}
+
+
+    def invalidate_width_cache(self):
+        self._right_width_cache.clear()
+
     def paint(self, painter, option, index):
         text = index.data(QtCore.Qt.ItemDataRole.DisplayRole)
         if text is None or text == "":
@@ -291,8 +299,12 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
         if not isinstance(view, qtw.QTreeWidget):
             return 0
 
-        max_width = 0
         column = index.column()
+        cached = self._right_width_cache.get(column)
+        if cached is not None:
+            return cached
+
+        max_width = 0
         for row in range(view.topLevelItemCount()):
             item = view.topLevelItem(row)
             if item is None:
@@ -311,6 +323,7 @@ class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
                 continue
 
             max_width = max(max_width, metrics.horizontalAdvance(right))
+        self._right_width_cache[column] = max_width
         return max_width
 
 

@@ -36,7 +36,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
     """
     operation_kind = "plot2d"
     open_subplot = QtCore.pyqtSignal([object, object, tuple])
-    sweep_moved = QtCore.pyqtSignal([int, int])
+    sweep_moved = QtCore.pyqtSignal([int, float])
     close_sweeps_requested = QtCore.pyqtSignal([object, object])
     
     def __init__(

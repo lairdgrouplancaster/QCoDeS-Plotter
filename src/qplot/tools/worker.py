@@ -1175,6 +1175,7 @@ class loader(QtCore.QRunnable):
         axis_param = {}
         axis_dimension = {}
         valid = {}
+        shaped_axes_are_rectilinear = True
         depvarData = np.asarray(depvarData, dtype=float)
         
         # Find correct data for each axis
@@ -1184,12 +1185,31 @@ class loader(QtCore.QRunnable):
 
             param_data = np.asarray(data[name], dtype=float)
             dimension = self._shaped_axis_dimension(name, param_data, depvarData)
+            shaped_axes_are_rectilinear &= self._shaped_axis_is_rectilinear(
+                param_data,
+                dimension,
+                )
             param_data = self._shaped_axis_values(param_data, dimension)
 
             valid[axis] = np.isfinite(param_data)
             axis_data[axis] = param_data[valid[axis]]
             axis_param[axis] = param
             axis_dimension[axis] = dimension
+
+        # QCoDeS shaped data can still contain a serpentine (snake) scan.  In
+        # that case alternate rows of the fast coordinate run in the opposite
+        # direction and the raw result array is not a rectilinear image.  Map
+        # values by their recorded coordinates instead of silently mirroring
+        # those rows.
+        if (
+                not shaped_axes_are_rectilinear
+                or axis_dimension["x"] == axis_dimension["y"]
+                ):
+            valid_rows = np.isfinite(depvarData)
+            for axis in ("x", "y"):
+                name = self.axes_dict[axis]
+                valid_rows &= np.isfinite(np.asarray(data[name], dtype=float))
+            return self.for_unshaped_2d(data, valid_rows, depvarData)
 
         dataGrid = self._shaped_data_grid(
             data,
@@ -1240,6 +1260,22 @@ class loader(QtCore.QRunnable):
             return np.inf
 
         return float(np.nanmax(np.abs(param_data[valid] - expected[valid])))
+
+
+    def _shaped_axis_is_rectilinear(self, param_data, dimension):
+        values = self._shaped_axis_values(param_data, dimension)
+        shape = [1] * param_data.ndim
+        shape[dimension] = values.size
+        expected = np.broadcast_to(values.reshape(shape), param_data.shape)
+        valid = np.isfinite(param_data) & np.isfinite(expected)
+        if not np.any(valid):
+            return True
+        return bool(np.all(np.isclose(
+            param_data[valid],
+            expected[valid],
+            rtol=1e-10,
+            atol=1e-12,
+            )))
 
 
     def _shaped_data_grid(self, data, depvarData, axis_dimension, valid):

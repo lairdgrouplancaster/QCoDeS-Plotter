@@ -269,8 +269,8 @@ class plotWidget(
             self.setCentralWidget(w)
         
         #start refresh cycle if live
-        if self.ds.running: 
-            self.monitor.start(int(self.spinBox.value() * 1000))
+        if self.ds.running:
+            self.monitorIntervalChanged(self.spinBox.value())
 
 
     def _install_preview_drop_target(self):
@@ -1308,7 +1308,7 @@ class plotWidget(
         """
         self.monitor.stop()
         if interval > 0:
-            self.monitor.start(int(interval * 1000)) #convert to seconds
+            self.monitor.start(max(1, round(interval * 1000)))
             
             
     def add_or_remove_operations(self, key : str, func : callable = None):

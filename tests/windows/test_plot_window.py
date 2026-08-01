@@ -128,6 +128,20 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.load_calls, ["load"])
         self.assertEqual(window.restart_intervals, [0.2])
 
+    def test_completion_sync_is_coalesced_while_worker_is_busy(self):
+        window = self._window(worker_running=True)
+        window.last_ds_len = window.ds.number_of_results
+
+        plotWidget.refreshWindow(window)
+
+        self.assertEqual(window.load_calls, [])
+        self.assertTrue(window._refresh_pending)
+
+        window.worker.running = False
+        plotWidget._run_pending_refresh(window)
+
+        self.assertEqual(window.load_calls, ["load"])
+
     def test_secondary_trace_restart_does_not_depend_on_dictionary_order(self):
         window = self._window(worker_running=False)
         window.ds.running = False

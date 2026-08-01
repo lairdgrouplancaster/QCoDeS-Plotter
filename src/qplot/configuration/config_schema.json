@@ -14,7 +14,11 @@
                 },
                 "main_frame_size": {
                     "type": "array",
-                    "items": { "type": "integer"},
+                    "items": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 16777215
+                    },
                     "minItems": 2,
                     "maxItems": 2,
                     "default": [780, 700]
@@ -162,6 +166,7 @@
                 "default_refresh_rate": {
                     "type": "number",
                     "minimum": 0,
+                    "maximum": 86400,
                     "default": 1
                 }
             },
@@ -175,6 +180,7 @@
                 "max_threads": {
                     "type": "integer",
                     "minimum": 1,
+                    "maximum": 999,
                     "default": 4
                 },
                 "max_full_heatmap_points": {

@@ -63,6 +63,9 @@ from .run_list_items import (
     SortableTreeWidgetItem,
 )
 
+MAX_RUN_PREVIEW_WIDGETS = 500
+MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS = 100_000
+
 
 class RunList(qtw.QTreeWidget):
     """
@@ -148,6 +151,7 @@ class RunList(qtw.QTreeWidget):
         self._items_by_guid: dict[str, SortableTreeWidgetItem] = {}
         self._resizing_columns = False
         self._manual_column_widths = False
+        self._preview_widgets_enabled = True
         self.maxRunId = 0
         
         self.setColumnCount(len(self.cols))
@@ -156,9 +160,10 @@ class RunList(qtw.QTreeWidget):
         self.setIndentation(0)
         self.setUniformRowHeights(False)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._setpoints_delegate = EqualsAlignedDelegate(self)
         self.setItemDelegateForColumn(
             self.cols.index("Setpoints"),
-            EqualsAlignedDelegate(self)
+            self._setpoints_delegate,
             )
         self._resize_columns()
 
@@ -206,6 +211,12 @@ class RunList(qtw.QTreeWidget):
         """
         if not runs:
             return
+
+        if (
+                self._preview_widgets_enabled
+                and self.topLevelItemCount() + len(runs) > MAX_RUN_PREVIEW_WIDGETS
+                ):
+            self._disable_measurement_preview_widgets()
 
         self.setSortingEnabled(False) # Prevent constant restort on adding items
 
@@ -289,12 +300,16 @@ class RunList(qtw.QTreeWidget):
             
             # Add to top
             self.addTopLevelItem(item)
-            self._set_measurement_preview_cell(item, measurement_count)
+            if self._preview_widgets_enabled:
+                self._set_measurement_preview_cell(item, measurement_count)
+            else:
+                self._set_compact_measurement_cell(item, measurement_count)
             
             # If unfinished run
             if append_to_watching:
                 self.watching.append(item)
             
+        self._setpoints_delegate.invalidate_width_cache()
         self.setSortingEnabled(True)
 
 
@@ -310,7 +325,15 @@ class RunList(qtw.QTreeWidget):
             return {}
 
         updated = {}
-        self.setSortingEnabled(False)
+        sorting_enabled = self.isSortingEnabled()
+        sort_column = self.sortColumn()
+        mutable_columns = {
+            self.cols.index(name)
+            for name in ("Measurements", "Setpoints", "Status", "Duration", "Size")
+            }
+        suspend_sorting = sorting_enabled and sort_column in mutable_columns
+        if suspend_sorting:
+            self.setSortingEnabled(False)
         for run_id, metadata in runs.items():
             guid = metadata.get("guid")
             item = self._item_for_guid(guid)
@@ -331,7 +354,9 @@ class RunList(qtw.QTreeWidget):
             self._sync_watching_item(item)
             updated[run_id] = dict(item.run_metadata)
 
-        self.setSortingEnabled(True)
+        self._setpoints_delegate.invalidate_width_cache()
+        if suspend_sorting:
+            self.setSortingEnabled(True)
         return updated
 
 
@@ -355,8 +380,13 @@ class RunList(qtw.QTreeWidget):
             QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6),
             )
         cell = self.preview_cells.get(item.guid)
-        if cell is None or cell.placeholder_count != measurement_count:
+        if (
+                self._preview_widgets_enabled
+                and (cell is None or cell.placeholder_count != measurement_count)
+                ):
             self._set_measurement_preview_cell(item, measurement_count)
+        elif not self._preview_widgets_enabled:
+            self._set_compact_measurement_cell(item, measurement_count)
 
         setpoints_col = self.cols.index("Setpoints")
         item.setText(setpoints_col, format_point_count(metadata))
@@ -407,6 +437,9 @@ class RunList(qtw.QTreeWidget):
     def clear(self):
         self.preview_cells = {}
         self._items_by_guid = {}
+        self._preview_widgets_enabled = True
+        self.setUniformRowHeights(False)
+        self._setpoints_delegate.invalidate_width_cache()
         super().clear()
 
 
@@ -425,6 +458,33 @@ class RunList(qtw.QTreeWidget):
             )
         self.preview_cells[item.guid] = cell
         self.setItemWidget(item, column, cell)
+
+
+    def _set_compact_measurement_cell(self, item, measurement_count):
+        column = self.cols.index("Measurements")
+        item.setText(column, str(measurement_count))
+        item.setSizeHint(column, QtCore.QSize(0, 22))
+        item.setToolTip(
+            column,
+            "Inline previews are disabled for this large run list. "
+            "Select the run to use the Preview tab.",
+            )
+
+
+    def _disable_measurement_preview_widgets(self):
+        column = self.cols.index("Measurements")
+        for guid, cell in tuple(self.preview_cells.items()):
+            item = self._items_by_guid.get(guid)
+            if item is not None:
+                self.removeItemWidget(item, column)
+                self._set_compact_measurement_cell(
+                    item,
+                    measured_parameter_count(item.run_metadata),
+                    )
+            cell.deleteLater()
+        self.preview_cells.clear()
+        self._preview_widgets_enabled = False
+        self.setUniformRowHeights(True)
 
 
     @QtCore.pyqtSlot(str, object)
@@ -995,6 +1055,7 @@ class moreInfo(qtw.QTabWidget):
     def __init__(self, *args, preview_size=None):
         super().__init__(*args)
         self.setObjectName("runDetailsTabs")
+        self._setpoint_summary_cache = {}
 
         self.overview = CopyableTableWidget()
         self.parameters = CopyableTableWidget()
@@ -1274,11 +1335,33 @@ class moreInfo(qtw.QTabWidget):
             run_metadata.get("result_table_name")
             or self._dataset_attr(dataset, "table_name")
             )
-        summaries = self._setpoint_summaries_from_sql(
+        try:
+            result_count = int(run_metadata.get("result_count") or 0)
+        except (TypeError, ValueError, OverflowError):
+            result_count = 0
+
+        cache_key = (
             database_path,
             table_name,
-            setpoint_names,
+            tuple(setpoint_names),
+            result_count,
             )
+        cached = self._setpoint_summary_cache.get(cache_key)
+        if cached is not None:
+            summaries = {name: dict(summary) for name, summary in cached.items()}
+        elif result_count > MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS:
+            summaries = {}
+        else:
+            summaries = self._setpoint_summaries_from_sql(
+                database_path,
+                table_name,
+                setpoint_names,
+                )
+            if len(self._setpoint_summary_cache) >= 32:
+                self._setpoint_summary_cache.clear()
+            self._setpoint_summary_cache[cache_key] = {
+                name: dict(summary) for name, summary in summaries.items()
+                }
         self._add_setpoint_shape_steps(summaries, setpoint_names, run_metadata)
         return summaries
 

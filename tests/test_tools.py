@@ -89,6 +89,32 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(axis_data["y"], np.array([0.0, 1.0]))
         np.testing.assert_array_equal(data_grid, np.array([[42.0], [43.0]]))
 
+    def test_shaped_2d_loader_maps_serpentine_rows_by_coordinates(self):
+        worker = loader.__new__(loader)
+        worker.axes_dict = {"x": "fast", "y": "slow"}
+        worker.param = type("Param", (), {"depends_on_": ("slow", "fast")})()
+        worker.param_dict = {
+            "slow": type("Param", (), {"name": "slow"})(),
+            "fast": type("Param", (), {"name": "fast"})(),
+            }
+
+        slow = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
+        fast = np.array([[0.0, 1.0, 2.0], [2.0, 1.0, 0.0]])
+        signal = np.array([[0.0, 1.0, 2.0], [12.0, 11.0, 10.0]])
+
+        axis_data, _axis_param, data_grid = loader.for_shaped_2d(
+            worker,
+            {"slow": slow, "fast": fast},
+            signal,
+            )
+
+        np.testing.assert_array_equal(axis_data["x"], np.array([0.0, 1.0, 2.0]))
+        np.testing.assert_array_equal(axis_data["y"], np.array([0.0, 1.0]))
+        np.testing.assert_array_equal(
+            data_grid,
+            np.array([[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]]),
+            )
+
     def test_worker_canonicalizes_descending_heatmap_axes_and_grid(self):
         worker = loader.__new__(loader)
         worker.axis_data = {

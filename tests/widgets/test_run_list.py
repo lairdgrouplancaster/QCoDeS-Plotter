@@ -1233,3 +1233,164 @@ class RunListTooltipTestCase(unittest.TestCase):
                 )
         finally:
             treeWidgets.isfile = old_isfile
+
+    def test_large_run_list_uses_compact_cells_instead_of_widgets_per_run(self):
+        old_isfile = treeWidgets.isfile
+        old_limit = treeWidgets.MAX_RUN_PREVIEW_WIDGETS
+        treeWidgets.isfile = lambda _: False
+        treeWidgets.MAX_RUN_PREVIEW_WIDGETS = 2
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                run_id: {
+                    "run_timestamp": 100.0 + run_id,
+                    "completed_timestamp": 110.0 + run_id,
+                    "is_completed": True,
+                    "guid": f"guid-{run_id}",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "result_count": 10,
+                    }
+                for run_id in range(1, 4)
+                })
+
+            self.assertFalse(run_list._preview_widgets_enabled)
+            self.assertEqual(run_list.preview_cells, {})
+            self.assertTrue(run_list.uniformRowHeights())
+            for row in range(run_list.topLevelItemCount()):
+                item = run_list.topLevelItem(row)
+                self.assertIsNone(run_list.itemWidget(item, 1))
+                self.assertEqual(item.text(1), "1")
+        finally:
+            treeWidgets.MAX_RUN_PREVIEW_WIDGETS = old_limit
+            treeWidgets.isfile = old_isfile
+
+    def test_setpoint_width_scan_is_cached_until_run_data_changes(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "guid-1",
+                    "sweep_parameters": ["x", "y"],
+                    "measure_parameters": ["signal"],
+                    "setpoint_count": 100,
+                    "setpoint_shape": [10, 10],
+                    "result_count": 100,
+                    },
+                })
+            item = run_list.topLevelItem(0)
+            column = run_list.cols.index("Setpoints")
+            index = run_list.indexFromItem(item, column)
+            delegate = run_list.itemDelegateForColumn(column)
+            metrics = QtGui.QFontMetrics(run_list.font())
+
+            first_width = delegate._max_right_width(index, metrics)
+            item.setText(column, "100 = 1000000 × 1000000")
+            cached_width = delegate._max_right_width(index, metrics)
+            delegate.invalidate_width_cache()
+            refreshed_width = delegate._max_right_width(index, metrics)
+
+            self.assertEqual(cached_width, first_width)
+            self.assertGreater(refreshed_width, first_width)
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_detail_batches_do_not_resort_when_sort_key_is_unchanged(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        class RecordingRunList(treeWidgets.RunList):
+            def __init__(self):
+                self.sorting_changes = []
+                super().__init__()
+
+            def setSortingEnabled(self, enabled):
+                self.sorting_changes.append(enabled)
+                super().setSortingEnabled(enabled)
+
+        try:
+            run_list = RecordingRunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "guid": "guid-1",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "result_count": 1,
+                    },
+                })
+            run_list.sortItems(0, QtCore.Qt.SortOrder.DescendingOrder)
+            run_list.sorting_changes.clear()
+
+            run_list.updateRuns({
+                1: {
+                    "guid": "guid-1",
+                    "result_count": 2,
+                    },
+                })
+
+            self.assertEqual(run_list.sorting_changes, [])
+            self.assertTrue(run_list.isSortingEnabled())
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_large_selected_run_skips_full_table_setpoint_grouping(self):
+        details = treeWidgets.moreInfo(preview_size=100)
+        sql_calls = []
+        details._setpoint_summaries_from_sql = (
+            lambda *args: sql_calls.append(args) or {"gate": {"steps": 5}}
+            )
+
+        summaries = details._setpoint_summaries(
+            None,
+            ["gate"],
+            run_metadata={
+                "result_table_name": "results",
+                "result_count": (
+                    treeWidgets.MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS + 1
+                    ),
+                "setpoint_shape": [1000],
+                },
+            database_path="large.db",
+            )
+
+        self.assertEqual(sql_calls, [])
+        self.assertEqual(summaries, {"gate": {"steps": 1000}})
+        details.deleteLater()
+
+    def test_selected_run_setpoint_summary_query_is_cached(self):
+        details = treeWidgets.moreInfo(preview_size=100)
+        sql_calls = []
+        details._setpoint_summaries_from_sql = (
+            lambda *args: sql_calls.append(args) or {"gate": {"steps": 5}}
+            )
+        metadata = {
+            "result_table_name": "results",
+            "result_count": 50,
+            }
+
+        first = details._setpoint_summaries(
+            None,
+            ["gate"],
+            run_metadata=metadata,
+            database_path="small.db",
+            )
+        second = details._setpoint_summaries(
+            None,
+            ["gate"],
+            run_metadata=metadata,
+            database_path="small.db",
+            )
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(sql_calls), 1)
+        details.deleteLater()

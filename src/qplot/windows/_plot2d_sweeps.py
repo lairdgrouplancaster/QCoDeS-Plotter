@@ -1,6 +1,7 @@
 from itertools import count
 from typing import TYPE_CHECKING, Any, Literal
 
+import numpy as np
 import numpy.typing as npt
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
@@ -83,12 +84,19 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             fixed_var = axes["x"]
             sweep_var = axes["y"]
             fixed_index = z_index[0]
+            fixed_axis: _SweepAxis = "x"
         elif side == "h":
             fixed_var = axes["y"]
             sweep_var = axes["x"]
             fixed_index = z_index[1]
+            fixed_axis = "y"
         else:
             raise KeyError(f"Invalid sweep side, {side=}, must be 'v' or 'h'.")
+
+        fixed_value = float(fixed_index)
+        geometry_getter = getattr(self, "_heatmap_geometry", None)
+        if callable(geometry_getter) and geometry_getter() is not None:
+            fixed_value = self.sweep_pixel_centre(fixed_axis, fixed_index)
             
         sweep_id = self._reserve_sweep_id()
 
@@ -100,19 +108,19 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
                 sweep_id,
                 sweep_var,
                 fixed_var,
-                fixed_index,
+                fixed_value,
                 self.param
                 )
             )
         
 
-    @QtCore.pyqtSlot(int, str, str, int, object)
+    @QtCore.pyqtSlot(int, str, str, float, object)
     def update_sweep_line(
             self,
             sweep_id: int,
             sweep_param: str,
             fixed_param: str,
-            fixed_index: int,
+            fixed_value: float,
             line_col: Any,
             ) -> None:
         """
@@ -129,8 +137,8 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             that a cursor can be plotted
         fixed_param : str
             The static parameter and the parameter to place the line on.
-        fixed_index : int
-            index of on heatmap to place the line.
+        fixed_value : float
+            Physical fixed-axis coordinate at which to place the line.
         line_col : QPen
             The plen color of the line.
 
@@ -148,11 +156,24 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         if axis_name not in ("x", "y"):
             return
         axis: _SweepAxis = "x" if axis_name == "x" else "y"
-    
+
+        fixed_index = self.sweep_index_at_value(axis, fixed_value, clamp=False)
+        if fixed_index is None:
+            line = self.sweep_lines.get(sweep_id)
+            if line is not None:
+                line.sweep_index = None
+                set_visible = getattr(line, "setVisible", None)
+                if callable(set_visible):
+                    set_visible(False)
+            return
+
         at_value = self.sweep_pixel_centre(axis, fixed_index)
     
         if self.sweep_lines.get(sweep_id, None) is not None:
             line = self.sweep_lines[sweep_id]
+            set_visible = getattr(line, "setVisible", None)
+            if callable(set_visible):
+                set_visible(True)
             
             # Update line data
             line.angle = (90 if axis == "x" else 0)
@@ -287,7 +308,13 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         return axis_geometry.centre(index)
 
 
-    def sweep_index_at_value(self, axis: _SweepAxis, value: float) -> int | None:
+    def sweep_index_at_value(
+            self,
+            axis: _SweepAxis,
+            value: float,
+            *,
+            clamp: bool = True,
+            ) -> int | None:
         """
         Return the heatmap pixel index containing a plot coordinate.
 
@@ -296,7 +323,7 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         if geometry is None:
             return None
         axis_geometry = geometry.x if axis == "x" else geometry.y
-        return axis_geometry.index_at(value, clamp=True)
+        return axis_geometry.index_at(value, clamp=clamp)
 
 
     def line_sweep_axis(self, line: Any) -> _SweepAxis:
@@ -493,7 +520,7 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         self.active_sweep_line_id = line.sweep_id
 
         if emit:
-            self.sweep_moved.emit(line.sweep_id, index)
+            self.sweep_moved.emit(line.sweep_id, float(line.value()))
 
 
     def _snap_sweep_lines_to_pixel_centres(self) -> None:
@@ -501,14 +528,27 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             return
         for line in self.__dict__.get("sweep_lines", {}).values():
             axis = self.line_sweep_axis(line)
-            previous_index = getattr(line, "sweep_index", None)
-            index = self.sweep_index_at_value(axis, line.value())
-            if index is not None:
-                self.set_sweep_line_index(
-                    line,
-                    index,
-                    emit=previous_index is not None and index != previous_index,
-                    )
+            previous_value = float(line.value())
+            index = self.sweep_index_at_value(
+                axis,
+                previous_value,
+                clamp=False,
+                )
+            set_visible = getattr(line, "setVisible", None)
+            if index is None:
+                line.sweep_index = None
+                if callable(set_visible):
+                    set_visible(False)
+                continue
+
+            if callable(set_visible):
+                set_visible(True)
+            snapped_value = self.sweep_pixel_centre(axis, index)
+            self.set_sweep_line_index(
+                line,
+                index,
+                emit=not np.isclose(snapped_value, previous_value),
+                )
 
 
     def move_sweep_with_arrow_key(self, key: QtCore.Qt.Key) -> None:
