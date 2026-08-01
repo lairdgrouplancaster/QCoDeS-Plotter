@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pyqtgraph as pg
@@ -14,6 +15,149 @@ from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
 
 class Plot2dLiveRefreshTestCase(unittest.TestCase):
+    def test_empty_cut_refresh_clears_trace_and_releases_worker(self):
+        class Slider:
+            def __init__(self):
+                self.range = None
+                self.enabled = True
+                self.blocked = True
+
+            def setRange(self, low, high):
+                self.range = (low, high)
+
+            def setEnabled(self, enabled):
+                self.enabled = enabled
+
+            def blockSignals(self, blocked):
+                self.blocked = blocked
+
+        class TextBox:
+            def text(self):
+                return ""
+
+        class Line:
+            def __init__(self):
+                self.calls = []
+
+            def setData(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+
+        class Worker:
+            running = True
+
+        cut = sweeper.__new__(sweeper)
+        qtw.QMainWindow.__init__(cut)
+        worker = Worker()
+        slider = Slider()
+        cut.worker = worker
+        cut.axis_data = {"x": np.asarray([]), "y": np.asarray([])}
+        cut.axis_param = {"x": object(), "y": object()}
+        cut.dataGrid = np.empty((0, 0))
+        cut.line = Line()
+        cut.picker = type(
+            "Picker",
+            (),
+            {"slider": slider, "text_box": TextBox()},
+            )()
+        cut.param = type("Param", (), {"name": "signal"})()
+        statuses = []
+        states = []
+        cut.show_status = lambda *args: statuses.append(args)
+        cut.show_plot_state = lambda *args, **kwargs: states.append((args, kwargs))
+        trace_updates = []
+        cut.trace_updated.connect(lambda: trace_updates.append(True))
+
+        with patch.object(plotWidget, "refreshPlot", return_value=True):
+            sweeper.refreshPlot(cut, True, worker=worker)
+
+        self.assertFalse(worker.running)
+        self.assertEqual(cut.line.calls[-1], (([], []), {}))
+        self.assertEqual(slider.range, (0, 0))
+        self.assertFalse(slider.enabled)
+        self.assertFalse(slider.blocked)
+        self.assertEqual(trace_updates, [True])
+        self.assertIn("Waiting for plottable data", statuses[-1][0])
+        self.assertEqual(states[-1][0][0], "Waiting for plottable cut data")
+
+    def test_cursor_driven_cut_update_notifies_merged_traces(self):
+        class Signal:
+            def __init__(self):
+                self.emissions = []
+
+            def emit(self, *args):
+                self.emissions.append(args)
+
+        class Line:
+            def __init__(self):
+                self.data = None
+
+            def setData(self, *, x, y):
+                self.data = (x, y)
+
+        cut = type("Cut", (), {})()
+        cut.fixed_index = 1
+        cut.dataGrid = np.array([[10.0, 11.0], [20.0, 21.0]])
+        cut.axis_data = {"x": np.array([0.0, 1.0]), "y": np.array([])}
+        cut.line = Line()
+        cut.trace_updated = Signal()
+        cut.sweep_moved = Signal()
+
+        sweeper.update_sweep(cut, emit=False)
+
+        np.testing.assert_array_equal(cut.axis_data["y"], [20.0, 21.0])
+        np.testing.assert_array_equal(cut.line.data[0], [0.0, 1.0])
+        np.testing.assert_array_equal(cut.line.data[1], [20.0, 21.0])
+        self.assertEqual(cut.trace_updated.emissions, [()])
+        self.assertEqual(cut.sweep_moved.emissions, [])
+
+    def test_cut_axis_changes_publish_merge_compatibility_updates(self):
+        class Signal:
+            def __init__(self):
+                self.emissions = []
+
+            def emit(self, *args):
+                self.emissions.append(args)
+
+        class Control:
+            def __init__(self, text=""):
+                self.text = text
+
+            def blockSignals(self, _blocked):
+                pass
+
+            def currentText(self):
+                return self.text
+
+            def setText(self, text):
+                self.text = text
+
+            def setValue(self, _value):
+                pass
+
+        cut = type("Cut", (), {})()
+        cut.picker = type(
+            "Picker",
+            (),
+            {
+                "slider": Control(),
+                "text_box": Control(),
+                "option_box": Control("field"),
+            },
+        )()
+        cut.axis_dropdown = {"x": Control("gate")}
+        cut.axis_options = {"x": "gate", "y": "field"}
+        cut.sweep_indep = "gate"
+        cut.fixed_indep = "field"
+        cut.merge_compatibility_changed = Signal()
+        refreshes = []
+        cut.refreshWindow = lambda *, force: refreshes.append(force)
+
+        sweeper.change_axis(cut, "x")
+        sweeper.change_fixed_param(cut, 0)
+
+        self.assertEqual(refreshes, [True, True])
+        self.assertEqual(cut.merge_compatibility_changed.emissions, [(), ()])
+
     def test_heatmap_cut_identity_includes_unique_id_and_visible_number(self):
         cut = sweeper.__new__(sweeper)
         cut.label = "ID:1 heatmap_signal"
@@ -1506,6 +1650,45 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertEqual(levels, (0.0, smallest))
         self.assertEqual(rounding, smallest)
         self.assertEqual(tuple(bar.levels()), levels)
+
+    def test_programmatic_colorbar_levels_recompute_interaction_rounding(self):
+        window = plot2d.__new__(plot2d)
+        window.bar = pg.ColorBarItem(values=(0.0, 1e9), rounding=1e4)
+
+        window._set_colorbar_levels(-1e-6, 1e-6)
+        window.bar._regionChanging()
+
+        self.assertEqual(window.bar.rounding, 2e-11)
+        self.assertEqual(tuple(window.bar.levels()), (-1e-6, 1e-6))
+
+        smallest = np.nextafter(0.0, 1.0)
+        window._set_colorbar_levels(0.0, smallest)
+        window.bar._regionChanging()
+
+        self.assertEqual(window.bar.rounding, smallest)
+        self.assertEqual(tuple(window.bar.levels()), (0.0, smallest))
+
+    def test_extreme_colorbar_levels_keep_native_interaction_finite(self):
+        window = plot2d.__new__(plot2d)
+        maximum = np.finfo(float).max
+        levels = window._constant_colorbar_levels(maximum)
+        window.bar = pg.ColorBarItem(values=(0.0, 1.0), rounding=1e-5)
+
+        window._set_colorbar_levels(*levels)
+        window.bar.region.blockSignals(True)
+        window.bar.region.setRegion((63, 255))
+        window.bar.region.blockSignals(False)
+        window.bar._regionChanging()
+
+        self.assertTrue(np.isfinite(window.bar.levels()).all())
+        self.assertLessEqual(window.bar.levels()[1], maximum)
+
+        window._set_colorbar_levels(-maximum, maximum)
+        before = tuple(window.bar.levels())
+        window.bar._regionChanging()
+
+        self.assertFalse(window.bar.region.isEnabled())
+        self.assertEqual(tuple(window.bar.levels()), before)
 
     def test_outside_colorbar_drag_widens_levels_about_midpoint(self):
         for start_y, drag_y in ((40.0, 24.0), (210.0, 226.0)):

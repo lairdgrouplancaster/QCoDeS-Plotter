@@ -119,8 +119,14 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         if levels is None:
             return 1e-5
 
-        vmin, vmax = levels
-        span = vmax - vmin
+        return self._colorbar_rounding_for_levels(*levels)
+
+    @staticmethod
+    def _colorbar_rounding_for_levels(vmin, vmax):
+        """Return an interaction step appropriate for specific levels."""
+
+        with np.errstate(over="ignore", invalid="ignore"):
+            span = float(vmax) - float(vmin)
         if not np.isfinite(span) or span <= 0:
             span = max(abs(vmin), abs(vmax))
         if not np.isfinite(span) or span <= 0:
@@ -139,6 +145,17 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         """
         bar = self.__dict__.get("bar")
         if bar is not None:
+            bar.rounding = self._colorbar_rounding_for_levels(vmin, vmax)
+            finite_limit = np.finfo(float).max
+            bar.lo_lim = -finite_limit
+            bar.hi_lim = finite_limit
+            with np.errstate(over="ignore", invalid="ignore"):
+                span = float(vmax) - float(vmin)
+            interaction_enabled = bool(np.isfinite(span) and span > 0)
+            region = getattr(bar, "region", None)
+            if region is not None:
+                region.setEnabled(interaction_enabled)
+                bar.region_changed_enable = interaction_enabled
             bar.setLevels((vmin, vmax))
             self._sync_colorbar_axis_scaling()
 

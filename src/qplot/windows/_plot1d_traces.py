@@ -149,6 +149,23 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             if line is not None and line is not main_line
             ]
 
+    def _sync_right_axis_visibility(self) -> None:
+        """Show right-axis values exactly when a secondary trace uses them."""
+
+        plot = self.__dict__.get("plot")
+        if plot is None:
+            return
+
+        main_line = self.__dict__.get("line")
+        styles = self._ensure_trace_styles()
+        show_values = any(
+            line is not None
+            and line is not main_line
+            and styles.get(key, self._initial_trace_style()).y_axis == "Right"
+            for key, line in self.__dict__.get("lines", {}).items()
+            )
+        plot.getAxis("right").setStyle(showValues=show_values)
+
     def _trace_display_label(self, key: Any, line: Any) -> str:
         """Return the unchanged user-facing label for an internally keyed trace."""
 
@@ -202,6 +219,10 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             label,
             self._initial_trace_style(),
             )
+        if self.__dict__.get("lines", {}).get(label) is self.__dict__.get("line"):
+            style.y_axis = "Left"
+            self._sync_trace_control(label)
+            return
         style.y_axis = "Right" if side.lower() == "right" else "Left"
         self._apply_trace_style(label, self.__dict__.get("lines", {}).get(label))
 
@@ -403,9 +424,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
                 and from_win.ds.running
                 and not from_win.monitor.isActive()
                 ):
-                from_win.spinBox.setValue(self.spinBox.value())
-                from_win.monitor.start(int(self.spinBox.value() * 1000))
-                self.spinBox.valueChanged.connect(line.from_win.spinBox.setValue)
+                from_win.monitorIntervalChanged(from_win.spinBox.value())
     
     
     @QtCore.pyqtSlot(str)
@@ -472,16 +491,30 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
                 )
             self.vb.autoRange_triggered.connect(self.right_vb.autoRange)
             
-        # Produce new box to allow another selection
-        self.add_option_box()
-        
         # Create and track new line
         self.make_ds.emit(win._dataset_key)
-        subplot = subplot1d(self, win)
         trace_key = self._window_trace_key(win)
+        try:
+            subplot = subplot1d(self, win)
+        except Exception:
+            self.remove_dataset.emit(win._dataset_key)
+            self.mergable.append(win)
+            for box in self.option_boxes:
+                if not self._picker_matches_trace(box, trace_key, label):
+                    continue
+                box.option_box.setEnabled(True)
+                box.del_box.setEnabled(False)
+                box.reset_box(
+                    [item.label for item in self.mergable],
+                    item_data=[self._window_trace_key(item) for item in self.mergable],
+                    )
+                break
+            raise
+
+        # Produce a new empty box for the next selection only after the line
+        # has been constructed successfully.
+        self.add_option_box()
         self.lines[trace_key] = subplot
-        
-        self.plot.getAxis('right').setStyle(showValues=True)
         
         # Connect box options to line
         selected_box = None
@@ -528,8 +561,13 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             if callable(disconnect_source_updates):
                 disconnect_source_updates()
             self.remove_dataset.emit(line.from_win._dataset_key)
-            if not line.from_win.visible:
-                line.from_win.monitor.stop()
+
+        main_line = self.__dict__.get("line")
+        self.lines = {
+            key: line
+            for key, line in self.__dict__.get("lines", {}).items()
+            if line is main_line
+            }
                 
             
         super().closeEvent(event)
@@ -580,17 +618,10 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         vb = self.plot if side.lower() == "left" else self.right_vb
         vb.removeItem(line)
 
-        if not any(
-                getattr(line, "side", "left") == "right"
-                for line in self.lines.values()
-                ):
-            self.plot.getAxis('right').setStyle(showValues=False)
+        self._sync_right_axis_visibility()
         
         # Remove track of window
         self.remove_dataset.emit(line.from_win._dataset_key)
-        # Stop refresh monitor for line if needed
-        if not line.from_win.visible:
-            line.from_win.monitor.stop()
         
         # Update box options
         self.get_mergables.emit()
@@ -649,6 +680,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def _apply_trace_style(self, label: Any, line: Any) -> None:
         styles = self._ensure_trace_styles()
         style = styles.setdefault(label, self._initial_trace_style(order=len(styles)))
+        if style.dots_enabled and style.markers_enabled:
+            style.dots_enabled = False
         self._sync_trace_control(label)
         if line is None:
             return
@@ -679,6 +712,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         current_side = getattr(line, "side", "left")
         if hasattr(line, "set_side") and current_side != target_side:
             line.set_side(target_side)
+
+        self._sync_right_axis_visibility()
 
         z = style.order
         set_z = getattr(line, "setZValue", None)
@@ -1043,6 +1078,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
             *self._dots_controls,
             *self._marker_controls,
             ]
+        self.dots_enable.toggled.connect(self._dots_enabled_changed)
+        self.marker_enable.toggled.connect(self._markers_enabled_changed)
         for _widget, signal in [
             (self.line_enable, self.line_enable.toggled), (self.line_color, self.line_color.currentIndexChanged),
             (self.line_width, self.line_width.valueChanged), (self.line_style, self.line_style.currentIndexChanged),
@@ -1054,6 +1091,28 @@ class _TraceAppearanceDialog(qtw.QDialog):
         ]:
             signal.connect(self._apply_selection)
         self._update_control_enabled_states(False)
+
+    def _dots_enabled_changed(self, enabled: bool) -> None:
+        if not enabled:
+            return
+
+        was_building = self._building
+        self._building = True
+        try:
+            self.marker_enable.setChecked(False)
+        finally:
+            self._building = was_building
+
+    def _markers_enabled_changed(self, enabled: bool) -> None:
+        if not enabled:
+            return
+
+        was_building = self._building
+        self._building = True
+        try:
+            self.dots_enable.setChecked(False)
+        finally:
+            self._building = was_building
 
     def _add_display_row(
             self,
@@ -1526,6 +1585,14 @@ class _TraceAppearanceDialog(qtw.QDialog):
             widget.setEnabled(has_selection and self.dots_enable.isChecked())
         for widget in self._marker_controls:
             widget.setEnabled(has_selection and self.marker_enable.isChecked())
+        selected_lines = [
+            self.owner.lines.get(label)
+            for label in self._selected_labels()
+            ] if has_selection else []
+        self.y_axis.setEnabled(
+            has_selection
+            and all(line is not self.owner.__dict__.get("line") for line in selected_lines)
+            )
         self._update_move_button_states()
 
     def _update_move_button_states(self) -> None:
@@ -1550,7 +1617,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
             style.line_enabled = self.line_enable.isChecked(); style.line_color = self._combo_value(self.line_color); style.line_width = self.line_width.value(); style.line_style = self._combo_value(self.line_style)
             style.dots_enabled = self.dots_enable.isChecked(); style.dots_color = self._combo_value(self.dots_color); style.dots_size = self.dots_size.value()
             style.markers_enabled = self.marker_enable.isChecked(); style.markers_color = self._combo_value(self.marker_color); style.markers_symbol = self._combo_value(self.marker_symbol); style.markers_size = self.marker_size.value()
-            style.x_axis = self.x_axis.currentText(); style.y_axis = self.y_axis.currentText(); style.visible = self.visible.isChecked()
+            style.x_axis = self.x_axis.currentText()
+            if self.y_axis.isEnabled():
+                style.y_axis = self.y_axis.currentText()
+            style.visible = self.visible.isChecked()
             line = self.owner.lines.get(label)
             if line is not None:
                 self.owner._apply_trace_style(label, line)

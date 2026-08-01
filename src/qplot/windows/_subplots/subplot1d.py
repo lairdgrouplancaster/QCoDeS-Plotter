@@ -47,16 +47,29 @@ class subplot1d(pg.PlotDataItem):
         
         self.parent = parent
         self.from_win = from_win
+        self._source_consumer_registered = False
+        self._source_interval_signal = None
+        self._source_interval_slot = None
 
         self.choose_from: tuple[str, str] | None = None
-        self._source_update_signal = getattr(from_win, "sweep_moved", None)
+        self._source_update_signal = getattr(from_win, "trace_updated", None)
         if self._source_update_signal is not None:
-            self._source_update_signal.connect(self._source_sweep_changed)
+            self._source_update_signal.connect(self._source_trace_updated)
+        self._source_compatibility_signal = getattr(
+            from_win,
+            "merge_compatibility_changed",
+            None,
+            )
+        if self._source_compatibility_signal is not None:
+            self._source_compatibility_signal.connect(
+                self._source_compatibility_changed
+                )
 
         self.refresh()
         
         self.side = "left"
         self.parent.plot.addItem(self)
+        self._register_source_consumer()
             
             
     def refresh(self, *, source_ready: bool = False):
@@ -87,30 +100,92 @@ class subplot1d(pg.PlotDataItem):
 
         # Wait for data to finish
         if from_win.worker.running and not source_ready:
-            from_win.end_wait.connect(self.call_update)
-        else:
-            self.call_update()
+            if self._source_update_signal is None:
+                from_win.end_wait.connect(self.call_update)
+            return
+
+        self.call_update()
 
 
-    @QtCore.pyqtSlot(int, str, str, int, object)
-    def _source_sweep_changed(
-            self,
-            _sweep_id,
-            _sweep_indep,
-            _fixed_indep,
-            _fixed_index,
-            _pen,
-            ):
+    @QtCore.pyqtSlot()
+    def _source_trace_updated(self):
         """Refresh immediately after a cut publishes new, ready-to-use data."""
 
         self.refresh(source_ready=True)
 
 
+    @QtCore.pyqtSlot()
+    def _source_compatibility_changed(self):
+        """Clear old cut data until the changed axes publish replacement data."""
+
+        self._disconnect_pending_update()
+        self.choose_from = _subplot_axis_order(
+            self.parent.axis_options,
+            self.from_win.axis_options,
+            source_is_cut=hasattr(self.from_win, "sweep_id"),
+            )
+        self.setData(x=[], y=[])
+
+
     def _disconnect_pending_update(self):
         try:
             self.from_win.end_wait.disconnect(self.call_update)
-        except TypeError:  # Signal was not connected.
+        except (TypeError, RuntimeError):  # Signal was absent or already gone.
             pass
+
+
+    def _register_source_consumer(self):
+        if self._source_consumer_registered:
+            return
+
+        source = self.from_win
+        source._merged_trace_users = max(
+            int(getattr(source, "_merged_trace_users", 0)),
+            0,
+            ) + 1
+        self._source_consumer_registered = True
+
+        if not getattr(source, "visible", True):
+            parent_spinbox = getattr(self.parent, "spinBox", None)
+            source_spinbox = getattr(source, "spinBox", None)
+            if parent_spinbox is not None and source_spinbox is not None:
+                source_spinbox.setValue(parent_spinbox.value())
+                interval_signal = getattr(parent_spinbox, "valueChanged", None)
+                if interval_signal is not None:
+                    interval_slot = source_spinbox.setValue
+                    interval_signal.connect(interval_slot)
+                    self._source_interval_signal = interval_signal
+                    self._source_interval_slot = interval_slot
+
+        if (
+                getattr(source, "_closed", False)
+                and getattr(source.ds, "running", False)
+                and not source.monitor.isActive()
+                ):
+            source.monitorIntervalChanged(source.spinBox.value())
+
+
+    def _release_source_consumer(self):
+        if not self._source_consumer_registered:
+            return
+
+        source = self.from_win
+        remaining = max(int(getattr(source, "_merged_trace_users", 1)) - 1, 0)
+        source._merged_trace_users = remaining
+        self._source_consumer_registered = False
+
+        if self._source_interval_signal is not None:
+            try:
+                self._source_interval_signal.disconnect(self._source_interval_slot)
+            except (TypeError, RuntimeError):  # Signal was absent or already gone.
+                pass
+            self._source_interval_signal = None
+            self._source_interval_slot = None
+
+        if remaining == 0 and not getattr(source, "visible", True):
+            monitor = getattr(source, "monitor", None)
+            if monitor is not None:
+                monitor.stop()
 
 
     def disconnect_source_updates(self):
@@ -118,11 +193,20 @@ class subplot1d(pg.PlotDataItem):
 
         if self._source_update_signal is not None:
             try:
-                self._source_update_signal.disconnect(self._source_sweep_changed)
-            except TypeError:  # Signal was already disconnected.
+                self._source_update_signal.disconnect(self._source_trace_updated)
+            except (TypeError, RuntimeError):  # Signal was absent or already gone.
                 pass
             self._source_update_signal = None
+        if self._source_compatibility_signal is not None:
+            try:
+                self._source_compatibility_signal.disconnect(
+                    self._source_compatibility_changed
+                    )
+            except (TypeError, RuntimeError):  # Signal was absent or already gone.
+                pass
+            self._source_compatibility_signal = None
         self._disconnect_pending_update()
+        self._release_source_consumer()
     
     @QtCore.pyqtSlot()
     def call_update(self):

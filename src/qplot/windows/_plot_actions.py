@@ -142,12 +142,14 @@ class PlotActionsMixin:
             win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
 
         elif window_type == "sweeper":
+            win.merge_compatibility_changed.connect(self.post_admin)
             for item in self.windows:
                 if item.ds == win.ds and item.param == win.param and isinstance(item, plot2d):
                     win.sweep_moved.connect(item.update_sweep_line)
                     win.remove_sweep.connect(item.remove_sweep)
                     item.sweep_moved.connect(win.update_sweep_line)
                     break
+            self.post_admin()
 
         if show:
             win.update_theme(self.config)
@@ -726,8 +728,7 @@ class PlotActionsMixin:
                 continue
             try:
                 if win._dataset_key == source_key and win.param.name == param.name:
-                    if win.ds.running and not target_win.monitor.isActive():
-                        target_win.monitorIntervalChanged(target_win.spinBox.value())
+                    if win.ds.running:
                         target_win.toolbarRef.show()
                     return win
             except AttributeError:

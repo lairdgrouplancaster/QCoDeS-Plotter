@@ -163,7 +163,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         return y_data[mask]
 
 
-    def refreshPlot(self, finished: bool = True, worker: object | None = None) -> None:
+    def refreshPlot(self, finished: bool = True, worker: Any | None = None) -> None:
         """
         Updates plot based on data produced by the thread worker. Data is 
         assigned in plotWidget.refreshPlot, then all plot items are produced
@@ -175,35 +175,37 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
             In the event the worker had to abort, finished is False and refresh
             is not ran.
         """
+        plot_worker = worker if worker is not None else self.worker
         if not super().refreshPlot(finished, worker=worker):
             return
 
-        if not self._has_plottable_line_data():
-            self.line.setData([], [])
-            self.show_status(
-                f"Waiting for plottable data for {self.param.name}...",
-                5000,
-                )
-            self.show_plot_state(
-                "Waiting for plottable data",
-                f"{self.param.name} has no finite line data yet.",
-                kind="empty",
-                )
-            self.worker.running = False
-            return
-        
-        # Main line
-        self.line.setData(
-            x=self.axis_data["x"], 
-            y=self.axis_data["y"],
-            )
-        if self.marquee is not None:
-            self.set_marquee_rect(self.marquee)
+        try:
+            if not self._has_plottable_line_data():
+                self.line.setData([], [])
+                self.show_status(
+                    f"Waiting for plottable data for {self.param.name}...",
+                    5000,
+                    )
+                self.show_plot_state(
+                    "Waiting for plottable data",
+                    f"{self.param.name} has no finite line data yet.",
+                    kind="empty",
+                    )
+                self.trace_updated.emit()
+                return
 
-        self.refresh_secondary_lines()
-        
-        # Allow new worker to be produced
-        self.worker.running = False
+            # Main line
+            self.line.setData(
+                x=self.axis_data["x"],
+                y=self.axis_data["y"],
+                )
+            if self.marquee is not None:
+                self.set_marquee_rect(self.marquee)
+
+            self.trace_updated.emit()
+            self.refresh_secondary_lines()
+        finally:
+            plot_worker.running = False
 
 
     def _has_plottable_line_data(self) -> bool:

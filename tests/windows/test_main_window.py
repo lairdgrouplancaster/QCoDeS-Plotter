@@ -377,6 +377,54 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
     class Param:
         name = "signal"
 
+    def test_cut_compatibility_changes_refresh_add_to_plot_candidates(self):
+        class Signal:
+            def __init__(self):
+                self.slots = []
+
+            def connect(self, slot):
+                self.slots.append(slot)
+
+            def emit(self, *args):
+                for slot in list(self.slots):
+                    slot(*args)
+
+        class sweeper:
+            def __init__(self, dataset_key, *_args, **_kwargs):
+                holder = _args[-1]
+                self._dataset_key = dataset_key
+                self.ds = holder[dataset_key].dataset
+                self.param = object()
+                self.closed = Signal()
+                self.make_ds = Signal()
+                self.previewTraceDropRequested = Signal()
+                self.merge_compatibility_changed = Signal()
+                self.sweep_moved = Signal()
+                self.remove_sweep = Signal()
+
+        class Harness(PlotActionsMixin):
+            def __init__(self):
+                self.config = DatabaseAwareDatasetCacheTestCase.Config()
+                self.threadPool = object()
+                self.dataset_holder = {}
+                self.windows = []
+                self.fileTextbox = DatabaseAwareDatasetCacheTestCase.Field("database.db")
+                self.admin_calls = 0
+
+            def post_admin(self):
+                self.admin_calls += 1
+
+        harness = Harness()
+        dataset = self.Dataset("database.db")
+        dataset_key = DatasetKey("database.db", dataset.guid)
+
+        harness.openWin(sweeper, dataset, show=False, dataset_key=dataset_key)
+        cut = harness.windows[0]
+
+        self.assertEqual(harness.admin_calls, 1)
+        cut.merge_compatibility_changed.emit()
+        self.assertEqual(harness.admin_calls, 2)
+
     def test_database_path_aliases_produce_the_same_key(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "database.db"

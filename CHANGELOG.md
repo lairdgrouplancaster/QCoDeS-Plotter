@@ -14,7 +14,12 @@ installation commands and release validation, see `docs/distribution.md`.
 - Keep multiple cuts from the same heatmap distinct and visibly numbered when
   they are added to a 1D plot.
 - Refresh merged heatmap cuts as they move, clear them when their sweep axis is
-  incompatible, and avoid offering unsupported cut drag-and-drop.
+  incompatible, update Add to Plot choices when that axis changes, and handle
+  empty cut data without wedging its refresh worker.
+- Keep ordinary merged live traces updating after their source window closes,
+  while sharing and releasing hidden-source polling safely across target plots.
+- Release line and cut workers after rendering failures, and roll back failed
+  secondary-trace construction without leaking dataset ownership.
 - Keep reordered and removed secondary traces safe during refresh, cleanup,
   legacy picker selection, and Trace Appearance updates.
 - Preserve explicit database provenance while opening plots, and select the
@@ -24,11 +29,15 @@ installation commands and release validation, see `docs/distribution.md`.
   colorbar.
 - Give constant-valued heatmaps an accurate finite color scale, including at
   floating-point extremes.
-- Keep colorbar interaction rounding finite and positive for constant-valued
-  heatmaps.
+- Keep colorbar interaction rounding finite, positive, and synchronized with
+  changing levels, including constant and extreme-valued heatmaps.
 - Stop polling completed runs whose database row has no completion timestamp.
 - Detect live-plot completion even when no final data row is added, and ignore
   late worker callbacks after their last dataset owner closes.
+- Restart live polling after transient result-count failures, and prevent stale
+  closed-window callbacks from releasing the current worker's waiter.
+- Keep right-axis values synchronized with the traces that actually use them,
+  and make the mutually exclusive dot and marker controls behave consistently.
 - Prevent stale preview workers from clearing current-database worker state.
 - Return a scalar completion timestamp, or `None`, from `has_finished`.
 - Preserve the inherited Qt `layout()`, `width()`, `height()`, `x()`, and `y()`

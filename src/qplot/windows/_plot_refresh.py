@@ -72,6 +72,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if not self.__dict__.get("_closed", False):
             return True
 
+        if self.__dict__.get("_merged_trace_users", 0) <= 0:
+            return False
+
         dataset_holder = self.__dict__.get("_dataset_holder")
         dataset_key = self.__dict__.get("_dataset_key")
         if not isinstance(dataset_holder, dict) or dataset_key is None:
@@ -208,10 +211,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
             return
 
         retry = False
-        dataset = self.ds
-        current_ds_len = dataset.number_of_results
+        dataset = None
 
         try:
+            dataset = self.ds
+            current_ds_len = dataset.number_of_results
+
             # Plot has started, worker first defined in initFrame
             if not hasattr(self, "worker"):
                 self.initFrame()  # defined in children classes
@@ -233,21 +238,33 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 # when there is no plot data to reload.
                 self._sync_dataset_completion(dataset)
 
+        except Exception:
+            retry = True
+            raise
+
         finally:  # Ran after return or otherwise
 
             # restart monitor
-            if dataset.running or retry:
+            if retry or (dataset is not None and dataset.running):
                 self.monitorIntervalChanged(self.spinBox.value())
 
             # restard monitor if any subplots are live
-            else:
+            elif dataset is not None:
                 lines = self.__dict__.get("lines")
                 if isinstance(lines, dict) and lines:
                     main_line = self.__dict__.get("line")
                     for subplot in lines.values():
                         if subplot is main_line:
                             continue
-                        if getattr(subplot, "running", False):
+                        source = getattr(subplot, "from_win", None)
+                        source_dataset = getattr(source, "ds", None)
+                        running = getattr(
+                            source_dataset,
+                            "running",
+                            getattr(subplot, "running", False),
+                            )
+                        subplot.running = bool(running)
+                        if running:
                             self.monitorIntervalChanged(self.spinBox.value())
                             break
 
@@ -272,17 +289,18 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if worker is None:
             worker = self.__dict__.get("worker")
 
-        if not self._can_process_refresh():
-            if worker is not None:
-                worker.running = False
-            self.end_wait.emit()
-            return False
-
         if worker is None:
             return False
 
-        if worker is not self.worker:
+        current_worker = self.__dict__.get("worker")
+        if worker is not current_worker:
             worker.running = False
+            return False
+        worker = current_worker
+
+        if not self._can_process_refresh():
+            worker.running = False
+            self.end_wait.emit()
             return False
 
         try:

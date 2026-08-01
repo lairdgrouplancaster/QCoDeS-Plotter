@@ -156,6 +156,7 @@ class plotWidget(
     end_wait = QtCore.pyqtSignal()
     make_ds = QtCore.pyqtSignal([object])
     previewTraceDropRequested = QtCore.pyqtSignal(object, object, str)
+    trace_updated = QtCore.pyqtSignal()
     
     _label_width = 95 #About the size of 3 s.f. scientific
     def __init__(self, 
@@ -209,6 +210,7 @@ class plotWidget(
         self.config = config
         self.visible = show
         self._closed = False
+        self._merged_trace_users = 0
         self.operations = {}
         self._last_error_text = None
         self.show_status("Working, please wait", 0)
@@ -1194,10 +1196,18 @@ class plotWidget(
         Unused but required by slot.
 
         """
-        self.monitor.stop()
+        if self.__dict__.get("_merged_trace_users", 0) <= 0:
+            self.monitor.stop()
         self.visible = False
         self._closed = True
         self.closed.emit(self)
+
+        if (
+                self.__dict__.get("_merged_trace_users", 0) > 0
+                and self.ds.running
+                and not self.monitor.isActive()
+                ):
+            self.monitorIntervalChanged(self.spinBox.value())
 
 
     @QtCore.pyqtSlot(object)
