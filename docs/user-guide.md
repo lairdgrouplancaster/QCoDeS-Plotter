@@ -184,8 +184,7 @@ Heatmaps add color-scale controls and 1D cut extraction.
 
 Color-scale controls:
 
-* Right-click the plot and choose `Autoscale Color`, or use the color autoscale
-  button.
+* Right-click the plot and choose `Autoscale Color`, or press `C`.
 * Double-click the color scale bar to open the color scaling dialog.
 * Drag one color-scale handle to adjust a limit.
 * Drag between handles to slide the range.

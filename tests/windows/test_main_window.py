@@ -2248,16 +2248,19 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         self.assertEqual(seen_last_run_ids, [10])
         self.assertTrue(harness.RunList.checked_watching)
         self.assertEqual(harness.RunList.maxRunId, 13)
-        expected_runs = {12: new_runs[12], 13: new_runs[13]}
+        expected_runs = new_runs
         self.assertEqual(harness.RunList.added_runs, expected_runs)
         self.assertEqual(harness.infoBox.preview.added_runs, expected_runs)
         self.assertEqual(harness.sync_count, 1)
-        self.assertEqual(harness.plotted_guids, ["guid-12", "guid-13"])
+        self.assertEqual(
+            harness.plotted_guids,
+            ["guid-11", "guid-12", "guid-13"],
+            )
         self.assertEqual(
             harness.status_messages,
             [
                 ("Checking for new runs...", 0),
-                ("Found 2 new runs.", 5000),
+                ("Found 3 new runs.", 5000),
                 ],
             )
 
