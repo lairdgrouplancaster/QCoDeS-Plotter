@@ -791,7 +791,13 @@ class plotWidget(
             self.axis_dropdown[axis].currentIndexChanged.connect(
                                         lambda index, axis=axis: self.change_axis(axis)
                                         )
-        self._axis_selection = self.axis_options
+        # Do not call the overridable ``axis_options`` property while the base
+        # controls are still being constructed. Cut windows add their fixed-
+        # axis picker only after this method returns.
+        self._axis_selection = {
+            axis: dropdown.currentText()
+            for axis, dropdown in self.axis_dropdown.items()
+            }
             
         # Produce seperations line as QDockWidget as none inbuilt
         sep = qtw.QFrame()

@@ -11,6 +11,8 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ### Fixed
 
+- Restore horizontal and vertical heatmap cut windows after axis-state
+  initialization prevented their fixed-axis controls from being constructed.
 - Reject measurements with more than two independent axes instead of silently
   averaging omitted dimensions, and show unsupported-dimensionality
   placeholders in run previews.
