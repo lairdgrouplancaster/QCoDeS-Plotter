@@ -115,10 +115,13 @@ class sysHandle:
         self.config.get(key)
 
         convrt_value: object
-        if value[0] == "[" or value[0] == "(":
-            convrt_value = value[1:-1].split(",")
-            for itr in range(len(convrt_value)):
-                convrt_value[itr] = try_as_num(convrt_value[itr])
+        if value.startswith(("[", "(")):
+            list_value = value[1:-1].strip()
+            convrt_value = (
+                []
+                if not list_value
+                else [try_as_num(item) for item in list_value.split(",")]
+                )
         else:
             if value.lower() == "true":
                 convrt_value = True

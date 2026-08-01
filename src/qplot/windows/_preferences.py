@@ -404,9 +404,13 @@ class PreferencesDialog(qtw.QDialog):
 
         """
         try:
-            for key, value in self.preference_values().items():
-                if self.config.get(key) != value:
-                    self.config.update(key, value)
+            changed_values = {
+                key: value
+                for key, value in self.preference_values().items()
+                if self.config.get(key) != value
+                }
+            if changed_values:
+                self.config.update_many(changed_values)
         except Exception as err:
             qtw.QMessageBox.critical(
                 self,
@@ -434,7 +438,7 @@ class PreferencesDialog(qtw.QDialog):
             return False
 
         self.set_preference_values(self.default_preference_values())
-        return self.apply_preferences()
+        return True
 
     def choose_default_load_path(self):
         current_path = self.defaultLoadPathEdit.text().strip()

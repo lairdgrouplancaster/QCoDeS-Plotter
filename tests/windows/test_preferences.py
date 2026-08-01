@@ -47,6 +47,10 @@ class FakeConfig:
         self.updates.append((key, value))
         self.values[key] = value
 
+    def update_many(self, values):
+        self.updates.extend(values.items())
+        self.values.update(values)
+
     def _schema_for_defaults(self):
         schema = {"properties": {}}
         for key, value in self.defaults.items():
@@ -189,7 +193,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
 
             self.assertTrue(dialog.restore_defaults())
 
-            self.assertEqual(cfg.values, cfg.defaults)
+            self.assertNotEqual(cfg.values, cfg.defaults)
             self.assertEqual(dialog.themeCombo.currentData(), "light")
             self.assertEqual(dialog.previewSizeSpin.value(), 200)
             self.assertEqual(dialog.mouseModeCombo.currentData(), "pan")
@@ -205,6 +209,10 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertEqual(dialog.maxFullHeatmapPointsSpin.value(), 2_000_000)
             self.assertEqual(dialog.delGracePeriodSpin.value(), 10.0)
             self.assertEqual(dialog.cloudSyncTimeoutSpin.value(), 120.0)
+            self.assertEqual(applied, [])
+
+            self.assertTrue(dialog.apply_preferences())
+            self.assertEqual(cfg.values, cfg.defaults)
             self.assertEqual(applied, [True])
         finally:
             qtw.QMessageBox.question = old_question

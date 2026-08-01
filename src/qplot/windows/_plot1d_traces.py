@@ -300,15 +300,19 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             Updates internal save of plots which can be added.
 
         """
-        if wins:
+        if wins is not None:
             self.mergable = wins
         
         # Only add options which are not already being plotted
-        if self.option_boxes and self.mergable:
+        if self.option_boxes:
             box_texts = [box.option_box.currentText() for box in self.option_boxes]
+            available = [
+                item.label for item in self.mergable
+                if item.label not in box_texts
+                ]
             for box in self.option_boxes:
                 if box.option_box.isEnabled():
-                    self.option_boxes[-1].reset_box([item.label for item in self.mergable if item.label not in box_texts])
+                    box.reset_box(available)
 
 
     def refresh_secondary_lines(self) -> None:

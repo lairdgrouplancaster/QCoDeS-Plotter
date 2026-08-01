@@ -149,38 +149,43 @@ class config:
             Either due to incorrect typing or trying to add a new value.
 
         """
-        keys = key.split(".")
+        self.update_many({key: value})
 
-        # Create copy to prevent unwanted changes to file
-        config = deepcopy(self.config)
 
-        target = config
-        for part in keys[:-1]:
-            try:
-                target = target[part]
-            except KeyError as err:
+    def update_many(self, values):
+        """Validate and persist several values as one configuration update."""
+
+        updated_config = deepcopy(self.config)
+        for key, value in values.items():
+            keys = key.split(".")
+            target = updated_config
+            for part in keys[:-1]:
+                try:
+                    target = target[part]
+                except KeyError as err:
+                    raise KeyError(
+                        f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
+                    ) from err
+
+                if not isinstance(target, dict):
+                    raise KeyError(
+                        f"Key: {key}, cannot be updated because {part} is not a section"
+                    )
+
+            if keys[-1] not in target:
                 raise KeyError(
                     f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
-                ) from err
-
-            if not isinstance(target, dict):
-                raise KeyError(
-                    f"Key: {key}, cannot be updated because {part} is not a section"
                 )
+            target[keys[-1]] = value
 
-        if keys[-1] not in target:
-            raise KeyError(
-                f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
-            )
-
-        target[keys[-1]] = value
-        
-        # Check update is allowed by schema
-        jsonschema.validate(config, self.schema)
-        
-        # Update config file
-        self.config = config
-        self.save_config(self.default_file)
+        jsonschema.validate(updated_config, self.schema)
+        previous_config = self.config
+        self.config = updated_config
+        try:
+            self.save_config(self.default_file)
+        except Exception:
+            self.config = previous_config
+            raise
     
     
     def load_config(self, path: str):

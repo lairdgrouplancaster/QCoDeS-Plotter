@@ -68,13 +68,13 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.last_ds_len, 0)
         self.assertEqual(window.restart_intervals, [0.2])
 
-    def test_refresh_records_row_count_when_worker_is_started(self):
+    def test_refresh_keeps_row_count_pending_until_worker_succeeds(self):
         window = self._window(worker_running=False)
 
         plotWidget.refreshWindow(window)
 
         self.assertEqual(window.load_calls, ["load"])
-        self.assertEqual(window.last_ds_len, 10)
+        self.assertEqual(window.last_ds_len, 0)
         self.assertEqual(window.restart_intervals, [0.2])
 
     def test_invalid_operation_input_stops_load_with_visible_feedback(self):
@@ -148,6 +148,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
 
         class Dataset:
             cache = Cache()
+            number_of_results = 42
 
         class Param:
             name = "signal"
@@ -236,6 +237,15 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.refresh_calls, [(True, worker)])
         self.assertEqual(window.error_calls, [(error, worker)])
         self.assertEqual(window.printer_calls, [("working", worker)])
+
+    def test_failed_pending_refresh_is_retried(self):
+        window = self._window(worker_running=False)
+
+        plotWidget.refreshWindow(window)
+        plotWidget.refreshWindow(window)
+
+        self.assertEqual(window.load_calls, ["load", "load"])
+        self.assertEqual(window.last_ds_len, 0)
 
 
 class PlotWorkerCallbackTestCase(unittest.TestCase):
@@ -342,6 +352,8 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
     def test_current_worker_failure_reports_error_and_releases_wait(self):
         window = self._window()
         error = RuntimeError("current error")
+        window.last_ds_len = 3
+        window.worker.dataset_length_at_start = 10
 
         plotWidget.err_raiser(window, error, worker=window.worker)
         result = plotWidget.refreshPlot(window, False, worker=window.worker)
@@ -356,6 +368,7 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
             )
         self.assertEqual(window._last_error_text, "RuntimeError: current error")
         self.assertEqual(window.end_wait.emitted, 1)
+        self.assertEqual(window.last_ds_len, 3)
 
 
 class PlotStateOverlayTestCase(unittest.TestCase):
@@ -432,6 +445,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         class Worker:
             read_data = False
             running = True
+            dataset_length_at_start = 5
             axis_data = {"x": [], "y": []}
             axis_param = {"x": object(), "y": object()}
             started_at = 0
@@ -463,6 +477,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         plot1d.refreshPlot(window, True, worker=worker)
 
         self.assertFalse(worker.running)
+        self.assertEqual(window.last_ds_len, 5)
         self.assertEqual(window.end_wait.emitted, 1)
         self.assertEqual(line.calls[-1], (([], []), {}))
         self.assertIn("Waiting for plottable data", statuses[-1][0])

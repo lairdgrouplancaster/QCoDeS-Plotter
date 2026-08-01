@@ -115,6 +115,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             heatmap_axis_ranges=heatmap_axis_ranges,
             heatmap_full_axis_ranges=heatmap_full_axis_ranges,
             )
+        worker.dataset_length_at_start = self.ds.number_of_results
 
         use_sql_heatmap = force_sql_heatmap
         if not use_sql_heatmap and not cache_is_live(self.ds.cache):
@@ -181,7 +182,6 @@ class PlotRefreshMixin(_PlotRefreshBase):
         """
         self.monitor.stop()
         retry = False
-        skipped_busy_worker = False
         current_ds_len = self.ds.number_of_results
 
         try:
@@ -195,17 +195,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
             if current_ds_len != self.last_ds_len or force:
                 if self.worker.running:  # No need to run if already updating
                     if not force:
-                        skipped_busy_worker = True
                         return
 
                 # The actual refresh line
                 self.load_data()
 
         finally:  # Ran after return or otherwise
-
-            # number_of_results Uses SQL check so can be used regardless of loader progress
-            if not skipped_busy_worker:
-                self.last_ds_len = current_ds_len
 
             # restart monitor
             if self.ds.running or retry:
@@ -315,6 +310,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     f"in {elapsed:.2f} seconds",
                     5000,
                     )
+            dataset_length = getattr(worker, "dataset_length_at_start", None)
+            if dataset_length is None:
+                dataset_length = self.ds.number_of_results
+            self.last_ds_len = dataset_length
             self.hide_plot_state()
             return True
 
