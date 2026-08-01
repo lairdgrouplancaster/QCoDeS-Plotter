@@ -1,0 +1,172 @@
+import csv
+
+import numpy as np
+import pytest
+import qcodes as qc
+from qcodes.dataset import initialise_or_create_database_at, load_by_id
+
+from qplot.testdata import (
+    CSV_COLUMNS,
+    SpecificationError,
+    generate_database_from_csv,
+    main,
+    read_specifications,
+    write_example_csv,
+)
+
+
+def write_specification(path, rows):
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(CSV_COLUMNS)
+        writer.writerows(rows)
+
+
+def test_example_csv_is_ready_to_generate(tmp_path):
+    csv_path = tmp_path / "example.csv"
+
+    assert write_example_csv(csv_path) == csv_path
+    specifications = read_specifications(csv_path)
+
+    assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert [specification.dimensions for specification in specifications] == [1, 1, 2, 2]
+    assert [specification.point_count for specification in specifications] == [
+        101,
+        501,
+        121 * 81,
+        201 * 101,
+    ]
+    with pytest.raises(SpecificationError, match="already exists"):
+        write_example_csv(csv_path)
+
+
+def test_example_cli_reports_written_path(tmp_path, capsys):
+    csv_path = tmp_path / "example.csv"
+
+    assert main(["--write-example", str(csv_path)]) == 0
+
+    assert csv_path.is_file()
+    assert f"Wrote example CSV: {csv_path}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        (
+            ("3", "current", "Current", "nA", "-1", "1", "11", "", "", ""),
+            "dimensions must be 1 or 2",
+        ),
+        (
+            ("1", "V_SD", "Current", "nA", "-1", "1", "11", "", "", ""),
+            "measured_name cannot be V_SD or V_G",
+        ),
+        (
+            ("1", "current", "Current", "nA", "-1", "1", "11", "-2", "2", "5"),
+            "v_g_start, v_g_stop, and v_g_points must be blank for a 1D run",
+        ),
+        (
+            ("2", "current", "Current", "nA", "-1", "1", "11", "", "2", "5"),
+            "v_g_start is required",
+        ),
+    ],
+)
+def test_invalid_rows_report_the_csv_row(tmp_path, row, message):
+    csv_path = tmp_path / "invalid.csv"
+    write_specification(csv_path, [row])
+
+    with pytest.raises(SpecificationError, match=f"CSV row 2: {message}"):
+        read_specifications(csv_path)
+
+
+def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [
+            ("1", "current", "Current", "nA", "-2", "2", "5", "", "", ""),
+            (
+                "2",
+                "conductance",
+                "Conductance",
+                "uS",
+                "-0.1",
+                "0.1",
+                "3",
+                "-1",
+                "1",
+                "4",
+            ),
+        ],
+    )
+
+    random_seed = 1234
+    generated_path, specifications = generate_database_from_csv(
+        csv_path,
+        database_path,
+        rng=np.random.default_rng(random_seed),
+    )
+
+    assert generated_path == database_path
+    assert database_path.is_file()
+    assert [specification.point_count for specification in specifications] == [5, 12]
+
+    previous_database_path = qc.config["core"]["db_location"]
+    try:
+        initialise_or_create_database_at(database_path, journal_mode="DELETE")
+        line_run = load_by_id(1)
+        map_run = load_by_id(2)
+
+        assert line_run.name == "run_1"
+        assert map_run.name == "run_2"
+        assert line_run.completed
+        assert map_run.completed
+
+        line_parameters = {parameter.name: parameter for parameter in line_run.get_parameters()}
+        assert set(line_parameters) == {"V_SD", "current"}
+        assert line_parameters["current"].label == "Current"
+        assert line_parameters["current"].unit == "nA"
+        assert line_parameters["current"].depends_on_ == ["V_SD"]
+
+        line_data = line_run.get_parameter_data("current")["current"]
+        np.testing.assert_allclose(line_data["V_SD"], np.linspace(-2.0, 2.0, 5))
+        expected_generator = np.random.default_rng(random_seed)
+        expected_amplitude = expected_generator.uniform(0.5, 1.5)
+        expected_phase = expected_generator.uniform(0.0, 2.0 * np.pi)
+        np.testing.assert_allclose(
+            line_data["current"],
+            expected_amplitude
+            * np.sin(
+                4.0 * np.pi * np.linspace(0.0, 1.0, 5) + expected_phase
+            ),
+            atol=1e-12,
+        )
+
+        map_parameters = {parameter.name: parameter for parameter in map_run.get_parameters()}
+        assert set(map_parameters) == {"V_SD", "V_G", "conductance"}
+        assert map_parameters["conductance"].depends_on_ == ["V_SD", "V_G"]
+        map_data = map_run.get_parameter_data("conductance")["conductance"]
+        assert map_data["conductance"].size == 12
+        assert np.isfinite(map_data["conductance"]).all()
+        assert np.min(map_data["conductance"]) >= -1.5
+        assert np.max(map_data["conductance"]) <= 1.5
+    finally:
+        qc.config["core"]["db_location"] = previous_database_path
+
+
+def test_generate_database_requires_explicit_overwrite(tmp_path):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+    )
+    generate_database_from_csv(csv_path, database_path)
+
+    with pytest.raises(SpecificationError, match="use --overwrite"):
+        generate_database_from_csv(csv_path, database_path)
+
+    generated_path, _ = generate_database_from_csv(
+        csv_path, database_path, overwrite=True
+    )
+    assert generated_path == database_path

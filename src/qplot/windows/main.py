@@ -32,7 +32,7 @@ from qplot.datahandling.database import (
 from qplot.diagnostics import log_user_error
 
 from ._commands import create_action
-from ._database_actions import DatabaseActionsMixin
+from ._database_actions import DatabaseActionsMixin, TestDatabaseGenerationWorker
 from ._dataset_handle import DatasetHandle, DatasetKey
 from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
@@ -142,6 +142,8 @@ class MainWindow(
         self.databaseExpensiveDetailThreadPool.setMaxThreadCount(1)
         self.databaseRefreshThreadPool = QtCore.QThreadPool(self)
         self.databaseRefreshThreadPool.setMaxThreadCount(1)
+        self.testDatabaseGenerationThreadPool = QtCore.QThreadPool(self)
+        self.testDatabaseGenerationThreadPool.setMaxThreadCount(1)
         self._database_load_generation = 0
         self._database_load_active = False
         self._database_load_state = None
@@ -156,6 +158,8 @@ class MainWindow(
         self._database_refresh_active = False
         self._database_refresh_pending = False
         self._database_refresh_worker: DatabaseRefreshWorker | None = None
+        self._test_database_generation_active = False
+        self._test_database_generation_worker: TestDatabaseGenerationWorker | None = None
         self._next_plot_x = 0
         self._next_plot_y = 0
         self.localLastFile = None
@@ -236,6 +240,21 @@ class MainWindow(
         refreshAction = create_action("window.refresh", self)
         refreshAction.triggered.connect(self.refreshMain)
         fileMenu.addAction(refreshAction)
+
+        fileMenu.addSeparator()
+
+        test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("Generate &Test Data"))
+        create_csv_action = create_action("testdata.create_csv", self)
+        create_csv_action.triggered.connect(self.create_test_database_csv)
+        test_data_menu.addAction(create_csv_action)
+        self.generateTestDatabaseAction = create_action(
+            "testdata.generate_database",
+            self,
+        )
+        self.generateTestDatabaseAction.triggered.connect(
+            self.generate_test_database_from_csv
+        )
+        test_data_menu.addAction(self.generateTestDatabaseAction)
 
         fileMenu.addSeparator()
 
@@ -429,6 +448,9 @@ class MainWindow(
         refresh_worker = getattr(self, "_database_refresh_worker", None)
         if refresh_worker is not None:
             refresh_worker.cancel()
+        generation_worker = getattr(self, "_test_database_generation_worker", None)
+        if generation_worker is not None:
+            generation_worker.cancel()
         self._database_load_generation += 1
         self._database_load_active = False
         self._database_load_state = None
@@ -449,6 +471,8 @@ class MainWindow(
         self._database_refresh_active = False
         self._database_refresh_pending = False
         self._database_refresh_worker = None
+        self._test_database_generation_active = False
+        self._test_database_generation_worker = None
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
         release_selected = getattr(self, "_release_selected_dataset", None)

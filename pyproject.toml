@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qplot"
-version = "1.5.0b3"
+version = "1.5.0b4"
 description = "PyQt-based viewer for completed and running QCoDeS database experiments"
 readme = "README.md"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"},{name="Edward Laird", email="e.a.laird@lancaster.ac.uk"}]
@@ -47,6 +47,7 @@ dev = [
 [project.scripts]
 qplot = "qplot.__main__:run"
 qplot-cfg = "qplot.configuration.scripts:scripts"
+qplot-generate-db = "qplot.testdata:main"
 
 [project.urls]
 Homepage = "https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git"
@@ -114,6 +115,7 @@ files = [
     "src/qplot/tools/operation_registry.py",
     "src/qplot/tools/plot_tools.py",
     "src/qplot/tools/worker.py",
+    "src/qplot/testdata.py",
     "src/qplot/windows/__init__.py",
     "src/qplot/windows/_commands.py",
     "src/qplot/windows/main.py",
