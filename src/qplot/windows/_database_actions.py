@@ -1,4 +1,7 @@
 import os
+import subprocess
+import sys
+import threading
 from time import perf_counter
 
 from PyQt6 import QtCore, QtGui
@@ -16,6 +19,12 @@ from qplot.datahandling.database import (
 )
 from qplot.datahandling.readonly import set_qcodes_database_location
 from qplot.diagnostics import log_event, log_exception
+from qplot.testdata import (
+    GenerationCancelled,
+    generate_database,
+    read_specifications,
+    write_example_csv,
+)
 
 from ._widgets.details_tables import (
     CopyableTableWidget,
@@ -112,6 +121,71 @@ def _database_info_rows_clipboard_text(rows):
     return "\n".join("\t".join(row) for row in rows)
 
 
+def reveal_file_in_file_manager(file_path):
+    """Reveal a generated file in Finder, or open its folder elsewhere."""
+    file_path = os.path.abspath(file_path)
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                ["open", "-R", file_path],
+                capture_output=True,
+                check=False,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
+
+    folder = os.path.dirname(file_path)
+    return QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(folder))
+
+
+class TestDatabaseGenerationSignals(QtCore.QObject):
+    """Signals emitted by background test-database generation."""
+
+    finished = QtCore.pyqtSignal(str, object, object)
+
+
+class TestDatabaseGenerationWorker(QtCore.QRunnable):
+    """Generate a test database without blocking the GUI thread."""
+
+    def __init__(self, specifications, database_path):
+        super().__init__()
+        self.signals = TestDatabaseGenerationSignals()
+        self.specifications = list(specifications)
+        self.database_path = str(database_path)
+        self._cancelled = threading.Event()
+
+    def cancel(self):
+        """Request cooperative cancellation and temporary-file cleanup."""
+        self._cancelled.set()
+
+    def run(self):
+        error = None
+        try:
+            generate_database(
+                self.specifications,
+                self.database_path,
+                overwrite=True,
+                cancelled_callback=self._cancelled.is_set,
+            )
+        except GenerationCancelled:
+            return
+        except Exception as err:
+            error = err
+            log_exception("Test database generation failed", err, __name__)
+
+        try:
+            self.signals.finished.emit(
+                self.database_path,
+                self.specifications,
+                error,
+            )
+        except RuntimeError as err:
+            if "wrapped C/C++ object" not in str(err):
+                raise
+
+
 class DatabaseActionsMixin:
     """
     Database loading, refresh, recent-file, and database-status actions.
@@ -121,6 +195,7 @@ class DatabaseActionsMixin:
     """
 
     _database_refresh_worker: DatabaseRefreshWorker | None
+    _test_database_generation_worker: TestDatabaseGenerationWorker | None
 
     def load_startup_database(self):
         """
@@ -181,6 +256,139 @@ class DatabaseActionsMixin:
                 "The database folder could not be opened.",
                 folder,
             )
+
+
+    @QtCore.pyqtSlot()
+    def create_test_database_csv(self):
+        """Create an example test-data CSV and open its folder."""
+        suggested_path = os.path.join(
+            self.database_open_directory(),
+            "qplot-test-runs.csv",
+        )
+        csv_path = qtw.QFileDialog.getSaveFileName(
+            self,
+            "Create Test Database CSV",
+            suggested_path,
+            "CSV Files (*.csv)",
+        )[0]
+        if not csv_path:
+            self.show_status("Example CSV creation cancelled.", 3000)
+            return False
+        if not csv_path.lower().endswith(".csv"):
+            csv_path += ".csv"
+        csv_path = os.path.abspath(csv_path)
+
+        try:
+            write_example_csv(csv_path, overwrite=True)
+        except Exception as err:
+            log_exception("Example test-data CSV creation failed", err, __name__)
+            self.show_error(
+                "Example CSV Creation Failed",
+                "Could not create the example test-database CSV.",
+                str(err),
+            )
+            return False
+
+        opened = reveal_file_in_file_manager(csv_path)
+        if not opened:
+            self.show_error(
+                "Open CSV Folder Failed",
+                "The example CSV was created, but its folder could not be opened.",
+                csv_path,
+            )
+            return True
+
+        self.show_status(f"Created example CSV and opened its folder: {csv_path}", 5000)
+        return True
+
+
+    @QtCore.pyqtSlot()
+    def generate_test_database_from_csv(self):
+        """Choose a CSV and generate its QCoDeS database in the background."""
+        if getattr(self, "_test_database_generation_active", False):
+            self.show_status("A test database is already being generated.", 5000)
+            return False
+
+        csv_path = qtw.QFileDialog.getOpenFileName(
+            self,
+            "Select Test Database CSV",
+            self.database_open_directory(),
+            "CSV Files (*.csv)",
+        )[0]
+        if not csv_path:
+            self.show_status("Test database generation cancelled.", 3000)
+            return False
+
+        try:
+            specifications = read_specifications(csv_path)
+        except Exception as err:
+            log_exception("Test-data CSV validation failed", err, __name__)
+            self.show_error(
+                "Invalid Test Database CSV",
+                "The selected CSV could not be used to generate a database.",
+                str(err),
+            )
+            return False
+
+        suggested_path = str(os.path.splitext(os.path.abspath(csv_path))[0] + ".db")
+        database_path = qtw.QFileDialog.getSaveFileName(
+            self,
+            "Save Test Database",
+            suggested_path,
+            "QCoDeS Database (*.db)",
+        )[0]
+        if not database_path:
+            self.show_status("Test database generation cancelled.", 3000)
+            return False
+        if not database_path.lower().endswith(".db"):
+            database_path += ".db"
+        database_path = os.path.abspath(database_path)
+
+        self._test_database_generation_active = True
+        action = getattr(self, "generateTestDatabaseAction", None)
+        if action is not None:
+            action.setEnabled(False)
+        worker = TestDatabaseGenerationWorker(specifications, database_path)
+        self._test_database_generation_worker = worker
+        worker.signals.finished.connect(self.test_database_generation_finished)
+        self.show_status(
+            f"Generating test database {os.path.basename(database_path)}...",
+            0,
+        )
+        self.testDatabaseGenerationThreadPool.start(worker)
+        return True
+
+
+    @QtCore.pyqtSlot(str, object, object)
+    def test_database_generation_finished(
+            self,
+            database_path,
+            specifications,
+            error,
+            ):
+        """Apply the result of background test-database generation."""
+        self._test_database_generation_active = False
+        self._test_database_generation_worker = None
+        action = getattr(self, "generateTestDatabaseAction", None)
+        if action is not None:
+            action.setEnabled(True)
+
+        if error is not None:
+            self.show_error(
+                "Test Database Generation Failed",
+                "Could not generate the test database.",
+                str(error),
+            )
+            return
+
+        run_count = len(specifications)
+        point_count = sum(specification.point_count for specification in specifications)
+        run_word = "run" if run_count == 1 else "runs"
+        self.show_status(
+            f"Generated {os.path.basename(database_path)} with {run_count} "
+            f"{run_word} and {point_count} points.",
+            7000,
+        )
 
 
     @QtCore.pyqtSlot()

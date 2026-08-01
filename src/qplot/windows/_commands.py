@@ -194,6 +194,18 @@ COMMANDS: dict[str, CommandSpec] = {
         "Ctrl+Shift+D",
         help_section="General",
     ),
+    "testdata.create_csv": CommandSpec(
+        "testdata.create_csv",
+        "Create Example &CSV...",
+        "Create an example CSV specification for generated test databases",
+        object_name="createTestDatabaseCsvAction",
+    ),
+    "testdata.generate_database": CommandSpec(
+        "testdata.generate_database",
+        "Generate &Database from CSV...",
+        "Generate a QCoDeS test database from a CSV specification",
+        object_name="generateTestDatabaseAction",
+    ),
     "window.main_front_back": CommandSpec(
         "window.main_front_back",
         "Main Window &Front/Back",

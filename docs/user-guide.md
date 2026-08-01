@@ -104,6 +104,12 @@ Common actions:
 * `File -> Refresh` checks the current database for new runs.
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
+* `File -> Generate Test Data -> Create Example CSV...` writes a spreadsheet
+  template, reveals it in Finder on macOS, or opens its containing folder in
+  the platform file manager.
+* `File -> Generate Test Data -> Generate Database from CSV...` creates a
+  QCoDeS test database from an edited specification without blocking the qPlot
+  interface.
 * `Options -> Preferences...` edits common theme, plot mouse mode, default
   load location, preview, refresh, confirmation, and runtime settings. On
   macOS this appears as `qPlot -> Preferences...`.

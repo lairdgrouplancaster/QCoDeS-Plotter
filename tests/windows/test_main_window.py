@@ -967,6 +967,12 @@ class OptionsMenuTestCase(unittest.TestCase):
         def refreshMain(self):
             pass
 
+        def create_test_database_csv(self):
+            pass
+
+        def generate_test_database_from_csv(self):
+            pass
+
         def closeAll(self):
             pass
 
@@ -1006,6 +1012,36 @@ class OptionsMenuTestCase(unittest.TestCase):
             self.assertNotIn("Preview Size", option_texts)
             self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
             self.assertNotIn("Confirm Before Quit", option_texts)
+        finally:
+            window.deleteLater()
+
+    def test_file_menu_exposes_test_data_generation_actions(self):
+        window = self.Harness()
+
+        try:
+            window.initMenu()
+            menus = {
+                action.text().replace("&", ""): action.menu()
+                for action in window.menuBar().actions()
+                }
+            file_menu = menus["File"]
+            test_data_menu = next(
+                action.menu()
+                for action in file_menu.actions()
+                if action.text().replace("&", "") == "Generate Test Data"
+                )
+            actions = {
+                action.objectName(): action.text().replace("&", "")
+                for action in test_data_menu.actions()
+                }
+
+            self.assertEqual(
+                actions,
+                {
+                    "createTestDatabaseCsvAction": "Create Example CSV...",
+                    "generateTestDatabaseAction": "Generate Database from CSV...",
+                },
+                )
         finally:
             window.deleteLater()
 

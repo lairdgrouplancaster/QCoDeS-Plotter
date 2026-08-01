@@ -4,6 +4,37 @@ qPlot does not keep generated QCoDeS databases in the repository. For demos,
 screenshots, and manual live-refresh checks, use the local helper scripts from
 the repository root.
 
+## Generate a Test Database
+
+In qPlot, use `File -> Generate Test Data -> Create Example CSV...` to choose
+where to save a ready-to-use specification. qPlot creates the file, reveals it
+in Finder on macOS, or opens its containing folder in the platform file manager.
+Edit the CSV in a spreadsheet application, then use
+`File -> Generate Test Data -> Generate Database from CSV...` to choose the CSV
+and its output `.db` file. Generation runs in the background so qPlot remains
+responsive.
+
+The installed `qplot-generate-db` command provides the same workflow from a
+terminal. Start by writing an example CSV:
+
+```console
+qplot-generate-db --write-example test-runs.csv
+```
+
+Edit the CSV in a spreadsheet application, then generate the database:
+
+```console
+qplot-generate-db test-runs.csv test-runs.db
+```
+
+Every nonblank CSV row creates one run, named `run_1`, `run_2`, and so on. A 1D
+row sweeps `V_SD`; a 2D row sweeps both `V_SD` and `V_G`. Each run receives a
+random sinusoid amplitude and phase. The measured parameter name, label, unit,
+sweep ranges, and point counts are set in the CSV. Existing CSV or database
+files are not replaced unless `--overwrite` is supplied.
+
+Run `qplot-generate-db --help` for the complete command reference.
+
 ## Screenshots
 
 The committed screenshots below are generated from a small synthetic database.

@@ -47,6 +47,7 @@ dev = [
 [project.scripts]
 qplot = "qplot.__main__:run"
 qplot-cfg = "qplot.configuration.scripts:scripts"
+qplot-generate-db = "qplot.testdata:main"
 
 [project.urls]
 Homepage = "https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git"
@@ -114,6 +115,7 @@ files = [
     "src/qplot/tools/operation_registry.py",
     "src/qplot/tools/plot_tools.py",
     "src/qplot/tools/worker.py",
+    "src/qplot/testdata.py",
     "src/qplot/windows/__init__.py",
     "src/qplot/windows/_commands.py",
     "src/qplot/windows/main.py",

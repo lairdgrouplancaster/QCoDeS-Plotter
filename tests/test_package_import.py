@@ -19,6 +19,7 @@ def test_console_scripts_are_declared():
 
     assert scripts["qplot"] == "qplot.__main__:run"
     assert scripts["qplot-cfg"] == "qplot.configuration.scripts:scripts"
+    assert scripts["qplot-generate-db"] == "qplot.testdata:main"
 
 
 def test_config_schema_is_packaged():

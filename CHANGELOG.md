@@ -7,6 +7,14 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+### Added
+
+- Add `qplot-generate-db` for creating 1D and 2D QCoDeS test runs with randomly
+  phased and scaled sinusoidal data from spreadsheet-friendly CSV
+  specifications, including CLI and File-menu actions for writing a ready-to-use
+  example CSV, revealing its folder, and generating the database in the
+  background.
+
 ## 1.5.0-b3 - 2026-08-01
 
 ### Fixed
