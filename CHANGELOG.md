@@ -7,6 +7,8 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.5.0-b4 - 2026-08-01
+
 ### Added
 
 - Add `qplot-generate-db` for creating 1D and 2D QCoDeS test runs with randomly
