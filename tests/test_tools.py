@@ -8,6 +8,7 @@ import qplot.tools.worker as worker_module
 from qplot.configuration.scripts import try_as_num
 from qplot.tools.general import data2matrix
 from qplot.tools.heatmap_geometry import HeatmapGeometry
+from qplot.tools.operation_registry import OperationCall
 from qplot.tools.plot_tools import (
     differentiate,
     fill_heatmap,
@@ -554,18 +555,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             ]),
         )
 
-    def test_worker_operations_continue_after_one_operation_fails(self):
-        class Signal:
-            def __init__(self):
-                self.values = []
-
-            def emit(self, value):
-                self.values.append(value)
-
-        class Emitter:
-            def __init__(self):
-                self.errorOccurred = Signal()
-
+    def test_worker_operation_pipeline_fails_atomically(self):
         def failing_operation(_data):
             raise ValueError("bad operation")
 
@@ -579,14 +569,67 @@ class ToolFunctionTestCase(unittest.TestCase):
             lambda data: {"y": data["y"] * 2},
             lambda data: {"x": data["x"] + 10},
             ]
-        worker.emitter = Emitter()
+        with self.assertRaisesRegex(RuntimeError, "bad operation"):
+            loader.do_operations(worker)
 
-        result = loader.do_operations(worker)
+        np.testing.assert_array_equal(worker.axis_data["x"], [1.0, 2.0])
+        np.testing.assert_array_equal(worker.axis_data["y"], [3.0, 4.0])
 
-        self.assertEqual(len(worker.emitter.errorOccurred.values), 1)
-        np.testing.assert_array_equal(result[0], np.array([11.0, 12.0]))
-        np.testing.assert_array_equal(result[1], np.array([6.0, 8.0]))
-        self.assertIsNone(result[2])
+    def test_large_heatmap_with_operations_does_not_aggregate_in_sql(self):
+        worker = self._sql_heatmap_worker(None)
+        worker.max_full_heatmap_points = 10
+        worker.operations = [lambda data: data]
+
+        self.assertFalse(loader._should_use_sql_heatmap(worker))
+
+    def test_derivative_operation_updates_dependent_label_and_unit(self):
+        class Param:
+            def __init__(self, name, label, unit, depends_on=()):
+                self.name = name
+                self.label = label
+                self.unit = unit
+                self.depends_on_ = depends_on
+
+        worker = loader.__new__(loader)
+        worker.param = Param("current", "Current", "A", ("gate",))
+        worker.display_param = Param("current", "Current", "A", ("gate",))
+        worker.axis_param = {
+            "x": Param("gate", "Gate voltage", "V"),
+            "y": worker.param,
+            }
+        worker.operations = [
+            OperationCall("dy/dx", lambda data: data, derivative_axis="x"),
+            ]
+
+        loader._apply_operation_metadata(worker)
+
+        self.assertEqual(worker.display_param.label, "d(Current)/d(Gate voltage)")
+        self.assertEqual(worker.display_param.unit, "A/V")
+        self.assertIs(worker.axis_param["y"], worker.display_param)
+
+    def test_operated_heatmap_is_aggregated_after_operations(self):
+        worker = self._sql_heatmap_worker(None)
+        worker.operations = [
+            lambda data: {"z": np.gradient(data["z"], data["x"], axis=1)},
+            ]
+        worker.axis_data = {
+            "x": np.array([0.0, 1.0, 2.0, 3.0]),
+            "y": np.array([0.0]),
+            }
+        worker.dataGrid = np.array([[0.0, 1.0, 4.0, 9.0]])
+        worker.max_full_heatmap_points = 2
+        worker.sampled_heatmap_source = False
+        worker.aggregated_heatmap_source = False
+
+        results = loader.do_operations(worker)
+        worker.dataGrid = results[2]
+        loader._aggregate_operated_heatmap_if_needed(worker)
+
+        np.testing.assert_allclose(worker.dataGrid, [[1.5, 4.5]])
+        self.assertEqual(
+            worker.heatmap_downsample_info["source_aggregation_strategy"],
+            "operations, then spatial mean",
+            )
 
     def test_subtract_mean_operates_by_axis(self):
         data = {

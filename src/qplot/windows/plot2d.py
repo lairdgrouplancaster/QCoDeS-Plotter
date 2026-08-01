@@ -235,6 +235,9 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 else:
                     self._set_colorbar_levels(*self._colorbar_manual_levels)
 
+            # The dependent-variable label may have changed when an operation
+            # such as differentiation was added or removed.
+            self._sync_colorbar_axis_scaling()
             if autoLevels:
                 self.__dict__["_colorbar_manual_levels"] = None
                 self.scaleColorbar()

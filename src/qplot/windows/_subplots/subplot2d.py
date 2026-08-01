@@ -139,7 +139,7 @@ class sweeper(plotWidget):
         self.fixed_indep_data = self.axis_data["y"]
         
         # Get correct row and param for y data
-        self.axis_param["y"] = self.param
+        self.axis_param["y"] = getattr(self, "display_param", self.param)
         
         # Set-up fixed axis picker and slide
         # Match range to index of fixed param data

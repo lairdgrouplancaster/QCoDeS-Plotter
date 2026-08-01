@@ -4,7 +4,7 @@ import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.tools.operation_registry import operation_specs_for
+from qplot.tools.operation_registry import OperationValidationError, operation_specs_for
 from qplot.windows._widgets.operations import (
     operations_options_1d,
     operations_options_2d,
@@ -55,29 +55,20 @@ class OperationsPanelTestCase(unittest.TestCase):
         self.assertIn("Subtract Row Mean", names)
         self.assertIn("Fill Below", names)
 
-    def test_invalid_integer_operation_input_does_not_raise_from_callback(self):
+    def test_invalid_integer_operation_input_is_reported(self):
         main, widget = self._panel(operations_options_2d)
         try:
             option = self._option(widget, "Fill Below")
             option.input.setChecked(True)
             operation = option.operation_row
             operation.input.setText("1.5")
-            callback_errors = []
-            callback_results = []
-
-            def refresh_callback():
-                try:
-                    callback_results.append(widget.get_data())
-                except Exception as error:
-                    callback_errors.append(error)
-
-            widget.apply_but.clicked.connect(refresh_callback)
-            widget.apply_but.click()
-
             self.assertIsInstance(operation.input.validator(), QtGui.QIntValidator)
             self.assertFalse(operation.input.hasAcceptableInput())
-            self.assertEqual(callback_errors, [])
-            self.assertEqual(callback_results, [[]])
+            with self.assertRaisesRegex(
+                    OperationValidationError,
+                    "Fill Below: enter a valid value",
+                    ):
+                widget.get_data()
         finally:
             main.deleteLater()
 
@@ -91,6 +82,7 @@ class OperationsPanelTestCase(unittest.TestCase):
             operations = widget.get_data()
 
             self.assertEqual(len(operations), 1)
+            self.assertEqual(operations[0].name, "Limit Maximum")
             result = operations[0]({
                 "x": np.array([0.0, 1.0]),
                 "y": np.array([5.0, 15.0]),

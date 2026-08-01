@@ -6,6 +6,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.tools.operation_registry import OperationValidationError
 from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plot_state import PlotStateOverlay
@@ -75,6 +76,26 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.load_calls, ["load"])
         self.assertEqual(window.last_ds_len, 10)
         self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_invalid_operation_input_stops_load_with_visible_feedback(self):
+        class Operations:
+            def get_data(self):
+                raise OperationValidationError("Fill Below: enter a valid value.")
+
+        window = plotWidget.__new__(plotWidget)
+        window.oper_widget = Operations()
+        window.statuses = []
+        window.plot_states = []
+        window.show_status = lambda *args: window.statuses.append(args)
+        window.show_plot_state = lambda *args, **kwargs: window.plot_states.append(
+            (args, kwargs)
+            )
+
+        result = plotWidget.load_data(window)
+
+        self.assertFalse(result)
+        self.assertIn("Fill Below", window.statuses[-1][0])
+        self.assertEqual(window.plot_states[-1][0][0], "Operations not applied")
 
     def test_load_data_uses_sampled_sql_and_wires_originating_worker(self):
         class Signal:
