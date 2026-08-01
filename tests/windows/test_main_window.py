@@ -499,6 +499,51 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
 
         self.assertEqual(candidates, [source])
 
+    def test_sibling_heatmap_cuts_remain_distinct_merge_candidates(self):
+        dataset_key = DatasetKey("database.db", "guid")
+
+        target_param = self.Param()
+        target_param.name = "line_signal"
+        target_param.depends_on = "gate"
+        target = plot1d.__new__(plot1d)
+        target._trace_key = TraceKey(dataset_key, target_param.name)
+        target.param = target_param
+        target.label = "ID:1 line_signal"
+        target.line = object()
+
+        heatmap_param = self.Param()
+        heatmap_param.name = "heatmap_signal"
+        heatmap_param.depends_on = "gate, field"
+
+        class sweeper:
+            def __init__(self, sweep_id):
+                self._trace_key = TraceKey(
+                    dataset_key,
+                    heatmap_param.name,
+                    sweep_id=sweep_id,
+                    )
+                self.param = heatmap_param
+                self.label = f"ID:1 heatmap_signal [cut {sweep_id + 1}]"
+                self.axis_options = {"x": target_param.depends_on}
+
+        first_cut = sweeper(0)
+        second_cut = sweeper(1)
+        first_line = type("Line", (), {"from_win": first_cut})()
+        target.lines = {
+            target.label: target.line,
+            first_cut._trace_key: first_line,
+            }
+        candidates = []
+        target.update_line_picker = lambda wins: candidates.extend(wins)
+
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.windows = [target, first_cut, second_cut]
+
+        harness.get_1d_wins(target)
+
+        self.assertNotEqual(first_cut._trace_key, second_cut._trace_key)
+        self.assertEqual(candidates, [second_cut])
+
     def test_closing_one_database_plot_keeps_other_database_handle(self):
         harness = type("Harness", (PlotActionsMixin,), {})()
         harness.config = self.Config()

@@ -11,6 +11,8 @@ installation commands and release validation, see `docs/distribution.md`.
 
 - Keep 1D traces from different databases distinct when their run IDs and
   parameter names match.
+- Keep multiple cuts from the same heatmap distinct and visibly numbered when
+  they are added to a 1D plot.
 - Ignore empty or entirely non-finite heatmap data when autoscaling the
   colorbar.
 - Keep colorbar interaction rounding finite and positive for constant-valued

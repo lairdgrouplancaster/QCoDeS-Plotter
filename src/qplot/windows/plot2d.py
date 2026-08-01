@@ -44,7 +44,6 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             **kargs: Any,
             ) -> None:
         super().__init__(*args, **kargs)
-        self.sweep_id = 0
         self.sweep_lines: dict[int, Any] = {}
         self.active_sweep_line_id = None
         self.__dict__["rotate"] = None # FOR SUBPLOT CURSOR

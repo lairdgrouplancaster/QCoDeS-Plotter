@@ -6,12 +6,55 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.heatmap_geometry import HeatmapGeometry
-from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
+from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
+from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
 from qplot.windows._plotWin import plotWidget
+from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
 
 class Plot2dLiveRefreshTestCase(unittest.TestCase):
+    def test_heatmap_cut_identity_includes_unique_id_and_visible_number(self):
+        cut = sweeper.__new__(sweeper)
+        cut.label = "ID:1 heatmap_signal"
+        cut.sweep_id = 4
+        cut._dataset_key = DatasetKey("database.db", "guid")
+        cut.param = type("Param", (), {"name": "heatmap_signal"})()
+
+        cut._set_cut_trace_identity()
+
+        self.assertEqual(cut.label, "ID:1 heatmap_signal [cut 5]")
+        self.assertEqual(
+            cut._trace_key,
+            TraceKey(cut._dataset_key, "heatmap_signal", sweep_id=4),
+            )
+
+    def test_heatmap_instances_emit_distinct_cut_ids(self):
+        class Signal:
+            def __init__(self):
+                self.emissions = []
+
+            def emit(self, *args):
+                self.emissions.append(args)
+
+        class Window(Plot2DSweepMixin):
+            def __init__(self):
+                self.z_index = [2, 3]
+                self.axis_options = {"x": "gate", "y": "field"}
+                self.open_subplot = Signal()
+                self._dataset_key = DatasetKey("database.db", "guid")
+                self.param = object()
+
+        first = Window()
+        second = Window()
+
+        first.openSweep("v")
+        second.openSweep("h")
+
+        first_cut_id = first.open_subplot.emissions[0][2][0]
+        second_cut_id = second.open_subplot.emissions[0][2][0]
+        self.assertNotEqual(first_cut_id, second_cut_id)
+
     def test_large_heatmap_range_controls_cover_axis_and_auto_actions(self):
         class Signal:
             def __init__(self):
