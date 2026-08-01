@@ -6,12 +6,55 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.heatmap_geometry import HeatmapGeometry
-from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
+from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
+from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
 from qplot.windows._plotWin import plotWidget
+from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
 
 class Plot2dLiveRefreshTestCase(unittest.TestCase):
+    def test_heatmap_cut_identity_includes_unique_id_and_visible_number(self):
+        cut = sweeper.__new__(sweeper)
+        cut.label = "ID:1 heatmap_signal"
+        cut.sweep_id = 4
+        cut._dataset_key = DatasetKey("database.db", "guid")
+        cut.param = type("Param", (), {"name": "heatmap_signal"})()
+
+        cut._set_cut_trace_identity()
+
+        self.assertEqual(cut.label, "ID:1 heatmap_signal [cut 5]")
+        self.assertEqual(
+            cut._trace_key,
+            TraceKey(cut._dataset_key, "heatmap_signal", sweep_id=4),
+            )
+
+    def test_heatmap_instances_emit_distinct_cut_ids(self):
+        class Signal:
+            def __init__(self):
+                self.emissions = []
+
+            def emit(self, *args):
+                self.emissions.append(args)
+
+        class Window(Plot2DSweepMixin):
+            def __init__(self):
+                self.z_index = [2, 3]
+                self.axis_options = {"x": "gate", "y": "field"}
+                self.open_subplot = Signal()
+                self._dataset_key = DatasetKey("database.db", "guid")
+                self.param = object()
+
+        first = Window()
+        second = Window()
+
+        first.openSweep("v")
+        second.openSweep("h")
+
+        first_cut_id = first.open_subplot.emissions[0][2][0]
+        second_cut_id = second.open_subplot.emissions[0][2][0]
+        self.assertNotEqual(first_cut_id, second_cut_id)
+
     def test_large_heatmap_range_controls_cover_axis_and_auto_actions(self):
         class Signal:
             def __init__(self):
@@ -1401,6 +1444,39 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertIsNone(window._colorbar_manual_levels)
         self.assertTrue(window.relevel_refresh.checked)
         self.assertEqual(window.bar.values, (0.0, 40.0))
+
+    def test_colorbar_autoscale_ignores_empty_and_all_nonfinite_data(self):
+        for data in (
+                np.array([]),
+                np.array([[np.nan, np.inf, -np.inf]]),
+                ):
+            with self.subTest(data=data):
+                window = plot2d.__new__(plot2d)
+                window.bar = self.Colorbar()
+                window.bar.values = (10.0, 20.0)
+                window._colorbar_manual_levels = (10.0, 20.0)
+                window.dataGrid = data
+
+                window.scaleColorbar()
+
+                self.assertEqual(window.bar.values, (10.0, 20.0))
+                self.assertEqual(window._colorbar_manual_levels, (10.0, 20.0))
+
+    def test_constant_heatmap_uses_positive_finite_colorbar_rounding(self):
+        window = plot2d.__new__(plot2d)
+
+        for value in (0.0, 7.5, -7.5, np.nextafter(0.0, 1.0)):
+            with self.subTest(value=value):
+                window.dataGrid = np.full((2, 2), value)
+
+                rounding = window._data_colorbar_rounding()
+
+                self.assertTrue(np.isfinite(rounding))
+                self.assertGreaterEqual(rounding, np.finfo(float).tiny)
+
+                bar = pg.ColorBarItem(values=(0.0, 1.0), rounding=rounding)
+                bar._regionChanging()
+                self.assertTrue(np.isfinite(bar.values).all())
 
     def test_outside_colorbar_drag_widens_levels_about_midpoint(self):
         for start_y, drag_y in ((40.0, 24.0), (210.0, 226.0)):

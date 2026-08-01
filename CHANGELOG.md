@@ -7,7 +7,21 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
-No changes yet.
+### Fixed
+
+- Keep 1D traces from different databases distinct when their run IDs and
+  parameter names match.
+- Keep multiple cuts from the same heatmap distinct and visibly numbered when
+  they are added to a 1D plot.
+- Ignore empty or entirely non-finite heatmap data when autoscaling the
+  colorbar.
+- Keep colorbar interaction rounding finite and positive for constant-valued
+  heatmaps.
+- Stop polling completed runs whose database row has no completion timestamp.
+- Prevent stale preview workers from clearing current-database worker state.
+- Return a scalar completion timestamp, or `None`, from `has_finished`.
+- Preserve the inherited Qt `layout()`, `width()`, `height()`, `x()`, and `y()`
+  methods on qPlot windows.
 
 ## 1.5.0-b2 - 2026-08-01
 

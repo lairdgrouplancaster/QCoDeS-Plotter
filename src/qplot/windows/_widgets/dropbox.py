@@ -23,7 +23,7 @@ class picker_1d(qtw.QWidget):
     del_but_width = 15
     color_box_width = 75
     
-    def __init__(self, main, cfg, items, *args, **kargs):
+    def __init__(self, main, cfg, items, *args, item_data=None, **kargs):
         super().__init__()
         
         layout = qtw.QVBoxLayout(self)
@@ -36,7 +36,7 @@ class picker_1d(qtw.QWidget):
         # Selection box
         self.option_box = expandingComboBox(*args, **kargs)
         self.option_box.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Fixed)
-        self.reset_box(items)
+        self.reset_box(items, item_data=item_data)
         self.option_box.currentIndexChanged.connect(self.selectedOption)
         row_1.addWidget(self.option_box)
         
@@ -69,7 +69,7 @@ class picker_1d(qtw.QWidget):
         layout.addLayout(row_2)
         
     
-    def reset_box(self, items):
+    def reset_box(self, items, item_data=None):
         """
         Resets the widget to default and sets selectable items
 
@@ -77,6 +77,9 @@ class picker_1d(qtw.QWidget):
         ----------
         items : list[str]
             List of items that the user can select from
+        item_data : list[object], optional
+            Stable internal identities corresponding to ``items``. When omitted,
+            the displayed text is also used as the identity.
 
         """
         self.option_box.blockSignals(True)
@@ -84,7 +87,9 @@ class picker_1d(qtw.QWidget):
         # Reset selection
         self.option_box.clear()
         if items:
-            self.option_box.addItems(items)
+            identities = items if item_data is None else item_data
+            for label, identity in zip(items, identities, strict=True):
+                self.option_box.addItem(label, userData=identity)
         
         # Reset display
         self.option_box.setEditable(True)

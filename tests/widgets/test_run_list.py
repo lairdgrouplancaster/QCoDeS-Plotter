@@ -864,6 +864,53 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
             treeWidgets.get_run_status = old_get_run_status
 
+    def test_check_watching_stops_completed_run_without_completion_timestamp(self):
+        old_isfile = treeWidgets.isfile
+        old_get_run_status = treeWidgets.get_run_status
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "guid": "completed-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "result_count": 10,
+                    "setpoint_count": 100,
+                    "expected_results": 100,
+                    }
+                })
+            item = run_list.topLevelItem(0)
+
+            treeWidgets.get_run_status = lambda guid: {
+                "completed_timestamp": None,
+                "is_completed": True,
+                "result_count": 100,
+                "database_modified_timestamp": 120.0,
+                }
+
+            updated_runs = run_list.checkWatching()
+
+            self.assertEqual(run_list.watching, [])
+            self.assertTrue(updated_runs[1]["is_completed"])
+            self.assertIsNone(updated_runs[1]["completed_timestamp"])
+            self.assertEqual(
+                item.text(run_list.cols.index("Status")),
+                "✓",
+                )
+            self.assertEqual(
+                item.text(run_list.cols.index("Duration")),
+                "unknown",
+                )
+            self.assertIn("Complete</td>", item.toolTip(0))
+        finally:
+            treeWidgets.isfile = old_isfile
+            treeWidgets.get_run_status = old_get_run_status
+
     def test_run_table_measurement_previews_use_preview_metadata(self):
         old_isfile = treeWidgets.isfile
         treeWidgets.isfile = lambda _: False

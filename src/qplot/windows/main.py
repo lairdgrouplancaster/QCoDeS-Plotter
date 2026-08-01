@@ -147,8 +147,8 @@ class MainWindow(  # type: ignore[misc]
         self._database_expensive_detail_generation = 0
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
-        self.x = 0
-        self.y = 0
+        self._next_plot_x = 0
+        self._next_plot_y = 0
         self.localLastFile = None
         self.startup_database_path = startup_database_path
         
@@ -188,8 +188,8 @@ class MainWindow(  # type: ignore[misc]
         # Get user's window dimensions to control new window position
         primary_screen = cast(QtGui.QScreen, qtw.QApplication.primaryScreen())
         self.screenrect = primary_screen.availableGeometry()
-        self.x = self.screenrect.left() 
-        self.y = self.screenrect.top()
+        self._next_plot_x = self.screenrect.left()
+        self._next_plot_y = self.screenrect.top()
         
         # Try to bring window to top 
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowType.WindowStaysOnTopHint)

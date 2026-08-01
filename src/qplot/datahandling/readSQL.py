@@ -780,7 +780,7 @@ def get_run_status(guid):
         conn.close()
 
 
-def has_finished(guid):
+def has_finished(guid) -> float | None:
     """
     Checks if specific run (by guid) has finished running.
     If the run with guid has finished, returns the completed time. 
@@ -793,9 +793,9 @@ def has_finished(guid):
 
     Returns
     -------
-    completed_timestamp : list[float, None]
-        Result of the SQL query. Either completed_timestamp as a unix time float
-        or None if no entry is found.
+    completed_timestamp : float | None
+        The completion timestamp as a Unix-time float. Returns None when the
+        run is present but unfinished, or when no matching run exists.
 
     """
     conn = qcodes_read_only_connection(get_DB_location())
@@ -810,8 +810,9 @@ def has_finished(guid):
           WHERE guid=?
           LIMIT 1
         """, (guid, ))
-        value = cursor.fetchall()
-
-        return value[0]
+        row = cursor.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return float(row[0])
     finally:
         conn.close()

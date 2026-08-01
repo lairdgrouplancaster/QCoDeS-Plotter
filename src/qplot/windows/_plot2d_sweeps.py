@@ -1,3 +1,4 @@
+from itertools import count
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy.typing as npt
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
         param: Any
         plot: Any
         rotate: bool | None
-        sweep_id: int
         sweep_lines: dict[int, Any]
         sweep_moved: Any
 
@@ -41,8 +41,17 @@ else:
         pass
 
 
+_SWEEP_ID_COUNTER = count()
+
+
 class Plot2DSweepMixin(_Plot2DSweepBase):
     """Sweep and cut interactions for 2D heatmap plot windows."""
+
+    @staticmethod
+    def _reserve_sweep_id() -> int:
+        """Return an application-session-unique identity for a heatmap cut."""
+
+        return next(_SWEEP_ID_COUNTER)
 
     def openSweep(self, side: str) -> None:
         """
@@ -81,20 +90,20 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         else:
             raise KeyError(f"Invalid sweep side, {side=}, must be 'v' or 'h'.")
             
+        sweep_id = self._reserve_sweep_id()
+
         # Emit to Main window to open new window
         self.open_subplot.emit(
                 sweeper,
                 self._dataset_key,
                 (
-                self.sweep_id,
+                sweep_id,
                 sweep_var,
                 fixed_var,
                 fixed_index,
                 self.param
                 )
             )
-        # Update interal id for multiple sweeps
-        self.sweep_id += 1
         
 
     @QtCore.pyqtSlot(int, str, str, int, object)

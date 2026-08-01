@@ -36,7 +36,7 @@ if TYPE_CHECKING:
         label: str
         line: Any
         lineScroll: qtw.QScrollArea
-        lines: dict[str, Any]
+        lines: dict[Any, Any]
         make_ds: Any
         mergable: Any
         option_boxes: list[Any]
@@ -81,23 +81,23 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
     """Trace controls and secondary-axis handling for 1D plot windows."""
 
-    _trace_styles: dict[str, _TraceStyle]
-    _trace_controls: dict[str, Any]
+    _trace_styles: dict[Any, _TraceStyle]
+    _trace_controls: dict[Any, Any]
     _trace_appearance_dialog: "_TraceAppearanceDialog | None"
 
-    def _ensure_trace_styles(self) -> dict[str, _TraceStyle]:
+    def _ensure_trace_styles(self) -> dict[Any, _TraceStyle]:
         styles = self.__dict__.get("_trace_styles")
         if not isinstance(styles, dict):
             styles = {}
             self.__dict__["_trace_styles"] = styles
-        return cast(dict[str, Plot1DTraceMixin._TraceStyle], styles)
+        return cast(dict[Any, Plot1DTraceMixin._TraceStyle], styles)
 
-    def _ensure_trace_controls(self) -> dict[str, Any]:
+    def _ensure_trace_controls(self) -> dict[Any, Any]:
         controls = self.__dict__.get("_trace_controls")
         if not isinstance(controls, dict):
             controls = {}
             self.__dict__["_trace_controls"] = controls
-        return cast(dict[str, Any], controls)
+        return cast(dict[Any, Any], controls)
 
     def _initial_trace_style(self, order: int = 0) -> _TraceStyle:
         style = self._TraceStyle(order=order)
@@ -105,6 +105,37 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         style.dots_color = style.line_color
         style.markers_color = style.line_color
         return style
+
+    @staticmethod
+    def _window_trace_key(window: Any) -> Any:
+        """Return a database-aware identity, with labels as a legacy fallback."""
+
+        return getattr(window, "_trace_key", getattr(window, "label", None))
+
+    def _stored_trace_key(self, key: Any, line: Any) -> Any:
+        """Return the source identity represented by one stored plot line."""
+
+        if line is self.__dict__.get("line"):
+            return getattr(self, "_trace_key", key)
+        from_win = getattr(line, "from_win", None)
+        return self._window_trace_key(from_win) if from_win is not None else key
+
+    def _has_trace_window(self, window: Any) -> bool:
+        """Return whether ``window`` is already represented on this plot."""
+
+        trace_key = self._window_trace_key(window)
+        return any(
+            self._stored_trace_key(stored_key, line) == trace_key
+            for stored_key, line in self.__dict__.get("lines", {}).items()
+            )
+
+    def _trace_display_label(self, key: Any, line: Any) -> str:
+        """Return the unchanged user-facing label for an internally keyed trace."""
+
+        if line is self.__dict__.get("line"):
+            return self.label
+        from_win = getattr(line, "from_win", None)
+        return str(getattr(from_win, "label", key))
 
     def _register_main_line(self) -> None:
         """
@@ -138,7 +169,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def _set_main_line_color(self, color: Any) -> None:
         self._set_trace_line_color(self.label, color)
 
-    def _set_trace_line_color(self, label: str, color: Any) -> None:
+    def _set_trace_line_color(self, label: Any, color: Any) -> None:
         style = self._ensure_trace_styles().setdefault(
             label,
             self._initial_trace_style(),
@@ -146,7 +177,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         style.line_color = color.name() if hasattr(color, "name") else str(color)
         self._apply_trace_style(label, self.__dict__.get("lines", {}).get(label))
 
-    def _set_trace_y_axis(self, label: str, side: str) -> None:
+    def _set_trace_y_axis(self, label: Any, side: str) -> None:
         style = self._ensure_trace_styles().setdefault(
             label,
             self._initial_trace_style(),
@@ -154,7 +185,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         style.y_axis = "Right" if side.lower() == "right" else "Left"
         self._apply_trace_style(label, self.__dict__.get("lines", {}).get(label))
 
-    def _sync_trace_control(self, label: str) -> None:
+    def _sync_trace_control(self, label: Any) -> None:
         control = self._ensure_trace_controls().get(label)
         style = self._ensure_trace_styles().get(label)
         if control is None or style is None:
@@ -269,11 +300,28 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if options is not None:
             new_option = picker_1d(self, self.config, options)
         else:
-            new_option = picker_1d(self, self.config, [item.label for item in self.mergable])
+            labels = [item.label for item in self.mergable]
+            trace_keys = [self._window_trace_key(item) for item in self.mergable]
+            new_option = picker_1d(
+                self,
+                self.config,
+                labels,
+                item_data=trace_keys,
+                )
         
         # Connect Slots
-        new_option.itemSelected.connect(lambda label: self.add_line(label))
-        new_option.closed.connect(self.remove_line)
+        new_option.itemSelected.connect(
+            lambda label, option=new_option: self.add_line(
+                label,
+                option.option_box.currentData(),
+                )
+            )
+        new_option.closed.connect(
+            lambda label, option=new_option: self.remove_line(
+                label,
+                getattr(option, "_trace_key", option.option_box.currentData()),
+                )
+            )
         
         # Adjust apperance
         cols = self.config.theme.colors
@@ -305,14 +353,21 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         
         # Only add options which are not already being plotted
         if self.option_boxes:
-            box_texts = [box.option_box.currentText() for box in self.option_boxes]
+            selected_keys = {
+                getattr(box, "_trace_key", box.option_box.currentData())
+                for box in self.option_boxes
+                if box.option_box.currentIndex() >= 0
+                }
             available = [
-                item.label for item in self.mergable
-                if item.label not in box_texts
+                item for item in self.mergable
+                if self._window_trace_key(item) not in selected_keys
                 ]
             for box in self.option_boxes:
                 if box.option_box.isEnabled():
-                    box.reset_box(available)
+                    box.reset_box(
+                        [item.label for item in available],
+                        item_data=[self._window_trace_key(item) for item in available],
+                        )
 
 
     def refresh_secondary_lines(self) -> None:
@@ -334,7 +389,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     
     
     @QtCore.pyqtSlot(str)
-    def add_line(self, label: str) -> None:
+    def add_line(self, label: str, trace_key: Any = None) -> None:
         """
         Produces a secondary plot based on user selection in dropdown menus
         
@@ -346,6 +401,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         ----------
         label : str
             The label of the chosen plot.
+        trace_key : object, optional
+            Database-aware source identity supplied by the picker.
 
         Returns
         -------
@@ -355,9 +412,18 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         
         win = None
         
-        # Find selected window from open windows.
-        for item in self.mergable:
-            if item.label == label:
+        # Find the exact selected window. Labels remain display-only and may be
+        # shared by copied runs opened from different databases.
+        if trace_key is not None:
+            for item in self.mergable:
+                if self._window_trace_key(item) == trace_key:
+                    win = item
+                    self.mergable.remove(item)
+                    break
+        if win is None:
+            for item in self.mergable:
+                if item.label != label:
+                    continue
                 win = item
                 self.mergable.remove(item)
                 break
@@ -392,28 +458,33 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # Create and track new line
         self.make_ds.emit(win._dataset_key)
         subplot = subplot1d(self, win)
-        self.lines[label] = subplot
+        trace_key = self._window_trace_key(win)
+        self.lines[trace_key] = subplot
         
         self.plot.getAxis('right').setStyle(showValues=True)
         
         # Connect box options to line
         selected_box = None
         for box in self.option_boxes:
-            if label == box.option_box.currentText():
+            box_key = box.option_box.currentData()
+            if box_key == trace_key or (
+                    box_key is None and label == box.option_box.currentText()
+                    ):
                 
                 box.color_box.selectedColor.connect(
-                    lambda color, trace_label=label: self._set_trace_line_color(
-                        trace_label,
+                    lambda color, selected_key=trace_key: self._set_trace_line_color(
+                        selected_key,
                         color,
                         )
                     )
                 
                 box.axis_side.currentTextChanged.connect(
-                    lambda side, trace_label=label: self._set_trace_y_axis(
-                        trace_label,
+                    lambda side, selected_key=trace_key: self._set_trace_y_axis(
+                        selected_key,
                         side,
                         )
                     )
+                box._trace_key = trace_key
                 selected_box = box
                 break
         
@@ -421,11 +492,11 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         assert selected_box is not None
         
         styles = self._ensure_trace_styles()
-        style = styles.setdefault(label, self._initial_trace_style(order=len(styles)))
+        style = styles.setdefault(trace_key, self._initial_trace_style(order=len(styles)))
         style.line_color = selected_box.color_box.color().name()
         style.y_axis = "Right" if selected_box.axis_side.currentText().lower() == "right" else "Left"
-        self._ensure_trace_controls()[label] = selected_box
-        self._apply_trace_style(label, subplot)
+        self._ensure_trace_controls()[trace_key] = selected_box
+        self._apply_trace_style(trace_key, subplot)
         
     
     @QtCore.pyqtSlot(bool)
@@ -441,7 +512,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         
     
     @QtCore.pyqtSlot(str)
-    def remove_line(self, label: str) -> None:
+    def remove_line(self, label: str, trace_key: Any = None) -> None:
         """
         Deletes line connect to box widget.
 
@@ -449,22 +520,31 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         ----------
         label : str
             The label of the chosen plot.
+        trace_key : object, optional
+            Database-aware identity of the trace to remove.
             
         """
         # Find box and remove box
         side = None
+        selected_key = trace_key
         for option in self.option_boxes:
-            if option.option_box.currentText() == label:
-                side = option.axis_side.currentText()
-                self.option_boxes.remove(option)
-                break
+            option_key = getattr(option, "_trace_key", option.option_box.currentData())
+            if selected_key is not None and option_key != selected_key:
+                continue
+            if selected_key is None and option.option_box.currentText() != label:
+                continue
+            selected_key = option_key if option_key is not None else label
+            side = option.axis_side.currentText()
+            self.option_boxes.remove(option)
+            break
         assert side is not None
+        assert selected_key is not None
         
         # Remove line from viewbox
-        line = self.lines[label]
-        self.lines.pop(label)
-        self._trace_styles.pop(label, None)
-        self._ensure_trace_controls().pop(label, None)
+        line = self.lines[selected_key]
+        self.lines.pop(selected_key)
+        self._trace_styles.pop(selected_key, None)
+        self._ensure_trace_controls().pop(selected_key, None)
         # Fetch correct viewbox to remove from
         vb = self.plot if side.lower() == "left" else self.right_vb
         vb.removeItem(line)
@@ -525,14 +605,14 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if dialog is not None:
             dialog.refresh_theme()
 
-    def _trace_measurement_name(self, label: str, line: Any) -> str:
-        if label == self.label:
+    def _trace_measurement_name(self, label: Any, line: Any) -> str:
+        if line is self.__dict__.get("line"):
             return self.param.name
         from_win = getattr(line, "from_win", None)
         param = getattr(from_win, "param", None)
         return getattr(param, "name", str(label))
 
-    def _apply_trace_style(self, label: str, line: Any) -> None:
+    def _apply_trace_style(self, label: Any, line: Any) -> None:
         styles = self._ensure_trace_styles()
         style = styles.setdefault(label, self._initial_trace_style(order=len(styles)))
         self._sync_trace_control(label)
@@ -617,13 +697,13 @@ class _TraceTableWidget(qtw.QTableWidget):
         if not index.isValid():
             return
 
-        label = self.dialog._label_for_row(index.row())
-        mime_data = self.dialog._trace_mime_data(label)
+        trace_key = self.dialog._trace_key_for_row(index.row())
+        mime_data = self.dialog._trace_mime_data(trace_key)
         if mime_data is None:
             super().startDrag(supported_actions)
             return
 
-        style = self.dialog.owner._trace_styles.get(label)
+        style = self.dialog.owner._trace_styles.get(trace_key)
         drag = QtGui.QDrag(self)
         drag.setMimeData(mime_data)
         if style is not None:
@@ -1222,12 +1302,13 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         try:
-            for row, (label, line) in enumerate(self.owner.lines.items()):
+            for row, (trace_key, line) in enumerate(self.owner.lines.items()):
                 self.table.insertRow(row)
+                label = self.owner._trace_display_label(trace_key, line)
                 trace_id = label.split()[0].replace("ID:", "") if label.startswith("ID:") else str(row + 1)
-                measurement = self.owner._trace_measurement_name(label, line)
+                measurement = self.owner._trace_measurement_name(trace_key, line)
                 style = self.owner._trace_styles.setdefault(
-                    label,
+                    trace_key,
                     self.owner._initial_trace_style(order=row),
                     )
 
@@ -1260,10 +1341,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
 
                 label_item = self.table.item(row, self._COL_ID)
                 if label_item is not None:
-                    label_item.setData(QtCore.Qt.ItemDataRole.UserRole, label)
+                    label_item.setData(QtCore.Qt.ItemDataRole.UserRole, trace_key)
                     label_item.setToolTip(label)
                 self.table.setRowHeight(row, 28)
-                if label in selected:
+                if trace_key in selected:
                     self.table.selectRow(row)
         finally:
             self.table.blockSignals(False)
@@ -1323,8 +1404,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
             return []
         return sorted({idx.row() for idx in selection_model.selectedRows()})
 
-    def _selected_labels(self) -> list[str]:
-        labels: list[str] = []
+    def _selected_labels(self) -> list[Any]:
+        labels: list[Any] = []
         selection_model = self.table.selectionModel()
         if selection_model is None:
             return labels
@@ -1334,15 +1415,19 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 labels.append(item.data(QtCore.Qt.ItemDataRole.UserRole))
         return labels
 
-    def _label_for_row(self, row: int) -> str:
+    def _trace_key_for_row(self, row: int) -> Any:
         item = self.table.item(row, self._COL_ID)
         if item is None:
-            return ""
-        return str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "")
+            return None
+        return item.data(QtCore.Qt.ItemDataRole.UserRole)
 
-    def _trace_mime_data(self, label: str) -> QtCore.QMimeData | None:
+    def _trace_mime_data(self, label: Any) -> QtCore.QMimeData | None:
         line = self.owner.lines.get(label)
-        source = self.owner if label == self.owner.label else getattr(line, "from_win", None)
+        source = (
+            self.owner
+            if line is self.owner.__dict__.get("line")
+            else getattr(line, "from_win", None)
+            )
         if source is None:
             return None
 

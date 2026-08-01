@@ -7,7 +7,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _plotWin as plotwin_module
-from qplot.windows._dataset_handle import DatasetKey
+from qplot.windows._dataset_handle import DatasetKey, TraceKey
 from qplot.windows._plot1d_snap import _nearest_trace_sample
 from qplot.windows._plot1d_traces import (
     TRACE_COLOR_PALETTE,
@@ -32,6 +32,12 @@ class SnapToTraceTestCase(unittest.TestCase):
             def isEnabled(self):
                 return True
 
+            def currentData(self):
+                return "closed plot"
+
+            def currentIndex(self):
+                return 0
+
             def currentText(self):
                 return "closed plot"
 
@@ -40,7 +46,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 self.option_box = Combo()
                 self.resets = []
 
-            def reset_box(self, items):
+            def reset_box(self, items, item_data=None):
                 self.resets.append(items)
 
         host = Plot1DTraceMixin.__new__(Plot1DTraceMixin)
@@ -273,6 +279,39 @@ class SnapToTraceTestCase(unittest.TestCase):
         finally:
             action.deleteLater()
             widget.deleteLater()
+
+    def test_snap_report_keeps_cross_database_trace_display_label(self):
+        class Dataset:
+            run_id = 1
+
+        class Param:
+            name = "voltage"
+
+        class Source:
+            label = "ID:1 voltage"
+            ds = Dataset()
+            param = Param()
+
+        class Line:
+            from_win = Source()
+
+        trace_key = TraceKey(
+            DatasetKey("database-b.db", "shared-guid"),
+            "voltage",
+            )
+        window = plot1d.__new__(plot1d)
+        window.line = object()
+        window.lines = {trace_key: Line()}
+        window.trace_label = qtw.QLabel()
+        window.toolbarCo_ord = qtw.QToolBar()
+
+        window._show_snap_report(trace_key, 2)
+
+        self.assertEqual(
+            window.trace_label.text(),
+            "Snapped to run 1, trace voltage, point 2.",
+            )
+        self.assertEqual(window.trace_label.toolTip(), Source.label)
 
     def test_register_main_line_defers_until_line_exists(self):
         window = plot1d.__new__(plot1d)
@@ -707,7 +746,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertIs(window.lines["main"], line)
 
-    def test_add_and_remove_secondary_trace_manages_right_axis(self):
+    def test_same_label_cross_database_trace_does_not_replace_main_line(self):
         class Theme:
             colors = [
                 QtGui.QColor("#008000"),
@@ -725,9 +764,10 @@ class SnapToTraceTestCase(unittest.TestCase):
             running = False
 
         class SourceWindow:
-            label = "ID:2 voltage"
-            _guid = "source-guid"
-            _dataset_key = DatasetKey("database.db", "source-guid")
+            label = "ID:1 voltage"
+            _guid = "shared-guid"
+            _dataset_key = DatasetKey("database-b.db", "shared-guid")
+            _trace_key = TraceKey(_dataset_key, "voltage")
             visible = False
             ds = Dataset()
             worker = Worker()
@@ -776,24 +816,33 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.box_count = 1
             host.right_vb = None
             host.line = host.plot.plot(x=[0.0, 1.0], y=[1.0, 2.0])
-            host.lines = {"main": host.line}
+            host.label = source.label
+            host._dataset_key = DatasetKey("database-a.db", "shared-guid")
+            host._trace_key = TraceKey(host._dataset_key, "voltage")
+            host.lines = {host.label: host.line}
             host.axis_options = {"x": "gate", "y": "current"}
             host.mergable = [source]
             host.make_ds.connect(made_datasets.append)
             host.remove_dataset.connect(removed_datasets.append)
             host.get_mergables.connect(lambda: picker_updates.append(True))
 
-            selected_box = picker_1d(host, host.config, [source.label])
+            selected_box = picker_1d(
+                host,
+                host.config,
+                [source.label],
+                item_data=[source._trace_key],
+                )
             selected_box.option_box.setCurrentIndex(0)
             selected_box.axis_side.setCurrentText("Right")
             selected_box.color_box.setColor(host.config.theme.colors[1])
             host.option_boxes = [selected_box]
 
-            host.add_line(source.label)
-            secondary = host.lines[source.label]
+            host.add_line(source.label, source._trace_key)
+            secondary = host.lines[source._trace_key]
 
             self.assertEqual(made_datasets, [source._dataset_key])
             self.assertEqual(host.mergable, [])
+            self.assertIs(host.lines[host.label], host.line)
             self.assertIsNotNone(host.right_vb)
             self.assertEqual(secondary.side, "right")
             self.assertIn(secondary, host.right_vb.addedItems)
@@ -804,15 +853,16 @@ class SnapToTraceTestCase(unittest.TestCase):
             selected_box.color_box.selectedColor.emit(QtGui.QColor("#123456"))
             selected_box.axis_side.setCurrentText("Left")
 
-            style = host._trace_styles[source.label]
+            style = host._trace_styles[source._trace_key]
             self.assertEqual(style.line_color, "#123456")
             self.assertEqual(style.y_axis, "Left")
             self.assertEqual(secondary.opts["pen"].color().name(), style.line_color)
             self.assertEqual(secondary.side, "left")
 
-            host.remove_line(source.label)
+            host.remove_line(source.label, source._trace_key)
 
-            self.assertNotIn(source.label, host.lines)
+            self.assertNotIn(source._trace_key, host.lines)
+            self.assertIs(host.lines[host.label], host.line)
             self.assertNotIn(secondary, host.right_vb.addedItems)
             self.assertFalse(host.plot.getAxis("right").style["showValues"])
             self.assertEqual(removed_datasets, [source._dataset_key])

@@ -21,6 +21,20 @@ class DatasetKey:
         object.__setattr__(self, "guid", str(self.guid))
 
 
+@dataclass(frozen=True, slots=True)
+class TraceKey:
+    """Identifies one trace source in one database-backed dataset."""
+
+    dataset_key: DatasetKey
+    parameter_name: str
+    sweep_id: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parameter_name", str(self.parameter_name))
+        if self.sweep_id is not None:
+            object.__setattr__(self, "sweep_id", int(self.sweep_id))
+
+
 @dataclass
 class DatasetHandle:
     """

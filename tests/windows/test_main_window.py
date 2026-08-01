@@ -15,7 +15,7 @@ from qplot.datahandling import database as database_module
 from qplot.datahandling.readonly import set_qcodes_database_location
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
-from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
+from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
 from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._run_controls import AUTO_PLOT_KEY
@@ -27,6 +27,7 @@ from qplot.windows._window_controls import (
     add_restore_defaults_option,
     ask_confirmation_with_dont_ask_again,
 )
+from qplot.windows.plot1d import plot1d
 
 
 class MeasurementExportDataFrameTestCase(unittest.TestCase):
@@ -468,6 +469,80 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
 
         self.assertEqual(len(opened), 1)
         self.assertIs(opened[0][0][1], dataset_b)
+
+    def test_same_label_plot_from_another_database_is_a_merge_candidate(self):
+        key_a = DatasetKey("database-a.db", "shared-guid")
+        key_b = DatasetKey("database-b.db", "shared-guid")
+        param_a = self.Param()
+        param_a.depends_on = "x"
+        param_b = self.Param()
+        param_b.depends_on = "x"
+
+        target = plot1d.__new__(plot1d)
+        target._trace_key = TraceKey(key_a, param_a.name)
+        target.param = param_a
+        target.label = "ID:1 signal"
+        target.line = object()
+        target.lines = {target.label: target.line}
+        candidates = []
+        target.update_line_picker = lambda wins: candidates.extend(wins)
+
+        source = plot1d.__new__(plot1d)
+        source._trace_key = TraceKey(key_b, param_b.name)
+        source.param = param_b
+        source.label = target.label
+
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.windows = [target, source]
+
+        harness.get_1d_wins(target)
+
+        self.assertEqual(candidates, [source])
+
+    def test_sibling_heatmap_cuts_remain_distinct_merge_candidates(self):
+        dataset_key = DatasetKey("database.db", "guid")
+
+        target_param = self.Param()
+        target_param.name = "line_signal"
+        target_param.depends_on = "gate"
+        target = plot1d.__new__(plot1d)
+        target._trace_key = TraceKey(dataset_key, target_param.name)
+        target.param = target_param
+        target.label = "ID:1 line_signal"
+        target.line = object()
+
+        heatmap_param = self.Param()
+        heatmap_param.name = "heatmap_signal"
+        heatmap_param.depends_on = "gate, field"
+
+        class sweeper:
+            def __init__(self, sweep_id):
+                self._trace_key = TraceKey(
+                    dataset_key,
+                    heatmap_param.name,
+                    sweep_id=sweep_id,
+                    )
+                self.param = heatmap_param
+                self.label = f"ID:1 heatmap_signal [cut {sweep_id + 1}]"
+                self.axis_options = {"x": target_param.depends_on}
+
+        first_cut = sweeper(0)
+        second_cut = sweeper(1)
+        first_line = type("Line", (), {"from_win": first_cut})()
+        target.lines = {
+            target.label: target.line,
+            first_cut._trace_key: first_line,
+            }
+        candidates = []
+        target.update_line_picker = lambda wins: candidates.extend(wins)
+
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.windows = [target, first_cut, second_cut]
+
+        harness.get_1d_wins(target)
+
+        self.assertNotEqual(first_cut._trace_key, second_cut._trace_key)
+        self.assertEqual(candidates, [second_cut])
 
     def test_closing_one_database_plot_keeps_other_database_handle(self):
         harness = type("Harness", (PlotActionsMixin,), {})()

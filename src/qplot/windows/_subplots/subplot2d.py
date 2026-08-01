@@ -3,7 +3,7 @@ from typing import Any
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from qplot.windows._dataset_handle import DatasetKey
+from qplot.windows._dataset_handle import DatasetKey, TraceKey
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._widgets import (
     expandingComboBox,
@@ -42,11 +42,24 @@ class sweeper(plotWidget):
         super().__init__(dataset_key, *args, **kargs)
         
         
+    def _set_cut_trace_identity(self) -> None:
+        """Give this cut a unique internal key and a distinguishable label."""
+
+        self.label = f"{self.label} [cut {self.sweep_id + 1}]"
+        self._trace_key = TraceKey(
+            self._dataset_key,
+            self.param.name,
+            sweep_id=self.sweep_id,
+            )
+
+
     def initAxes(self):
         """
         Adds to left toolbar to allow for sweep parameter control
 
         """
+        self._set_cut_trace_identity()
+
         # Got back to default before line picker
         super().initAxes()
         

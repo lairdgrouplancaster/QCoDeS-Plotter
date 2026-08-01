@@ -57,15 +57,49 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         Return finite min/max levels from the current heatmap data.
 
         """
+        data_range = self._finite_data_colorbar_range()
+        if data_range is None:
+            return None
+
+        vmin, vmax = data_range
+        if vmin >= vmax:
+            return None
+
+        return vmin, vmax
+
+    def _finite_data_colorbar_range(self):
+        """Return the finite data range without reducing an empty array."""
+
         data = getattr(self, "dataGrid", None)
         if data is None:
             return None
 
-        vmin, vmax = np.nanmin(data), np.nanmax(data)
-        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+        values = np.asarray(data)
+        finite_values = values[np.isfinite(values)]
+        if finite_values.size == 0:
             return None
 
-        return float(vmin), float(vmax)
+        return float(np.min(finite_values)), float(np.max(finite_values))
+
+    def _data_colorbar_rounding(self):
+        """Return a finite, positive colorbar interaction step."""
+
+        data_range = self._finite_data_colorbar_range()
+        if data_range is None:
+            return 1e-5
+
+        vmin, vmax = data_range
+        span = vmax - vmin
+        if not np.isfinite(span) or span <= 0:
+            span = max(abs(vmin), abs(vmax))
+        if not np.isfinite(span) or span <= 0:
+            span = 1.0
+
+        rounding = span / 1e5
+        minimum_rounding = np.finfo(float).tiny
+        if not np.isfinite(rounding) or rounding < minimum_rounding:
+            return float(minimum_rounding)
+        return float(rounding)
 
     def _set_colorbar_levels(self, vmin, vmax):
         """
