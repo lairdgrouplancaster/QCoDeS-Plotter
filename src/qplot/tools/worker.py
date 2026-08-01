@@ -1,4 +1,5 @@
 import math
+from copy import copy
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -20,6 +21,7 @@ from qplot.datahandling.readonly import (
     sqlite_read_only_connection,
 )
 from qplot.diagnostics import log_exception
+from qplot.tools.operation_registry import OperationExecutionError
 
 from . import data2matrix
 from .heatmap_geometry import canonicalize_heatmap_data
@@ -89,6 +91,7 @@ class loader(QtCore.QRunnable):
         self.cache = cache
         self.table_name = cache_table_name(cache)
         self.param = param
+        self.display_param = copy(param)
         self.param_dict = param_dict
         
         self.axes_dict = axes
@@ -192,22 +195,23 @@ class loader(QtCore.QRunnable):
             self.emitter.finished.emit(False) # False: Failed
             return
 
-        # Run additional operations
-        results = self.do_operations()
-
-        # Update based on operations
-        if results is not None:
-            (
-                self.axis_data["x"],
-                self.axis_data["y"]
-            ) = results[:2]
-            if hasattr(self, "dataGrid"):
-                self.dataGrid = results[2]
-
         try:
+            # Operations are an ordered, atomic pipeline. Large heatmaps are
+            # reduced for display only after this pipeline has completed.
+            results = self.do_operations()
+            if results is not None:
+                (
+                    self.axis_data["x"],
+                    self.axis_data["y"]
+                ) = results[:2]
+                if hasattr(self, "dataGrid"):
+                    self.dataGrid = results[2]
+                self._apply_operation_metadata()
+
+            self._aggregate_operated_heatmap_if_needed()
             self._canonicalize_heatmap()
         except Exception as err:
-            log_exception("Invalid heatmap geometry", err, __name__)
+            log_exception("Plot processing failed", err, __name__)
             self.emitter.errorOccurred.emit(err)
             self.emitter.finished.emit(False)
             return
@@ -239,6 +243,12 @@ class loader(QtCore.QRunnable):
 
     def _should_use_sql_heatmap(self):
         if len(getattr(self.param, "depends_on_", ())) <= 1:
+            return False
+
+        # SQL heatmap loading aggregates before Python operations. When the
+        # user has selected operations, preserve their semantics by loading
+        # the raw grid and reducing it only after the pipeline succeeds.
+        if getattr(self, "operations", None):
             return False
 
         if self.force_sql_heatmap:
@@ -691,7 +701,15 @@ class loader(QtCore.QRunnable):
         return x_data[finite], y_data[finite], z_data[finite]
 
 
-    def _heatmap_grid_from_arrays(self, x_data, y_data, z_data):
+    def _heatmap_grid_from_arrays(
+            self,
+            x_data,
+            y_data,
+            z_data,
+            *,
+            max_cells=MAX_SQL_HEATMAP_GRID_CELLS,
+            ):
+        max_cells = max(1, int(max_cells))
         if z_data.size == 0:
             self._heatmap_grid_info = {
                 "unique_x_count": 0,
@@ -701,7 +719,7 @@ class loader(QtCore.QRunnable):
                 "grid_rows": 0,
                 "grid_cell_count": 0,
                 "grid_binned": False,
-                "grid_cell_limit": MAX_SQL_HEATMAP_GRID_CELLS,
+                "grid_cell_limit": max_cells,
                 "empty_bins_filled": False,
                 }
             return (
@@ -736,7 +754,7 @@ class loader(QtCore.QRunnable):
 
         if (
                 not getattr(self, "sampled_heatmap_source", False)
-                and exact_cells <= MAX_SQL_HEATMAP_GRID_CELLS
+                and exact_cells <= max_cells
                 ):
             x_axis, y_axis, data_grid = self._unique_heatmap_grid(
                 x_data,
@@ -756,12 +774,11 @@ class loader(QtCore.QRunnable):
                 "grid_rows": int(unique_y.size),
                 "grid_cell_count": int(exact_cells),
                 "grid_binned": False,
-                "grid_cell_limit": MAX_SQL_HEATMAP_GRID_CELLS,
+                "grid_cell_limit": max_cells,
                 "empty_bins_filled": False,
                 }
             return x_axis, y_axis, data_grid
 
-        max_cells = MAX_SQL_HEATMAP_GRID_CELLS
         fill_empty = False
         if getattr(self, "sampled_heatmap_source", False):
             max_cells = min(
@@ -1236,21 +1253,19 @@ class loader(QtCore.QRunnable):
         """
         Runs through all functions in self.operations and performs those on the
         data.
-        Copies data to allow a fall
+        Work is performed on copies so a failure cannot return partial output.
 
         Returns
         -------
         data_dict["x"], data_dict["y"], data_dict["z"] : np.ndarray
             The updated data after all operations have been performed
         None : NoneType
-            No operations to be perform or all failed.
+            No operations to perform.
     
         """
         operations = self.operations
         if len(operations) == 0:
             return None
-        
-        one_succeeded = False
         
         data_dict = {
             "x" : self.axis_data["x"].copy(),
@@ -1258,21 +1273,109 @@ class loader(QtCore.QRunnable):
             "z" : self.dataGrid.copy() if hasattr(self, "dataGrid") else None # Only give dataGrid if it exists
             }
         
-        for func in operations:
+        for operation in operations:
             try:
-                results = func(data_dict)
+                results = operation(data_dict)
                 for key in results.keys():
                     data_dict[key] = results[key]
-                one_succeeded = True
-                
             except Exception as err:
-                log_exception("Plot operation failed", err, __name__)
-                self.emitter.errorOccurred.emit(err)
-                
-        if one_succeeded:
-            return data_dict["x"], data_dict["y"], data_dict["z"]
-        else: # If all failed, go back to before operations data
-            return None
+                name = getattr(operation, "name", None)
+                description = f' "{name}"' if name else ""
+                raise OperationExecutionError(
+                    f"Operation{description} failed: {err}"
+                    ) from err
+
+        return data_dict["x"], data_dict["y"], data_dict["z"]
+
+
+    def _apply_operation_metadata(self):
+        """Update the dependent-variable label and unit after derivatives."""
+
+        for operation in self.operations:
+            axis_name = getattr(operation, "derivative_axis", None)
+            if axis_name not in ("x", "y"):
+                continue
+
+            axis_param = self.axis_param[axis_name]
+            value_label = (
+                getattr(self.display_param, "label", "")
+                or getattr(self.display_param, "name", "")
+                )
+            axis_label = (
+                getattr(axis_param, "label", "")
+                or getattr(axis_param, "name", axis_name)
+                )
+            self.display_param.label = f"d({value_label})/d({axis_label})"
+
+            value_unit = getattr(self.display_param, "unit", "")
+            axis_unit = getattr(axis_param, "unit", "")
+            if value_unit and axis_unit:
+                self.display_param.unit = f"{value_unit}/{axis_unit}"
+            elif axis_unit:
+                self.display_param.unit = f"1/{axis_unit}"
+
+        if len(getattr(self.param, "depends_on_", ())) == 1:
+            self.axis_param["y"] = self.display_param
+
+
+    def _aggregate_operated_heatmap_if_needed(self):
+        """Reduce an operated raw heatmap to the configured display limit."""
+
+        if not self.operations or not hasattr(self, "dataGrid"):
+            return
+
+        data_grid = np.asarray(self.dataGrid, dtype=float)
+        if data_grid.size <= self.max_full_heatmap_points:
+            return
+
+        x_axis = np.asarray(self.axis_data["x"], dtype=float)
+        y_axis = np.asarray(self.axis_data["y"], dtype=float)
+        if data_grid.shape != (y_axis.size, x_axis.size):
+            raise ValueError(
+                "Operated heatmap dimensions do not match its coordinate axes."
+                )
+
+        source_rows, source_columns = data_grid.shape
+        self.heatmap_source_grid_shape = (source_rows, source_columns)
+        self.heatmap_source_axis_ranges = {
+            "x": (float(np.nanmin(x_axis)), float(np.nanmax(x_axis))),
+            "y": (float(np.nanmin(y_axis)), float(np.nanmax(y_axis))),
+            }
+        x_data = np.tile(x_axis, y_axis.size)
+        y_data = np.repeat(y_axis, x_axis.size)
+        z_data = data_grid.reshape(-1)
+        finite = np.isfinite(x_data) & np.isfinite(y_data) & np.isfinite(z_data)
+        x_data = x_data[finite]
+        y_data = y_data[finite]
+        z_data = z_data[finite]
+
+        max_cells = min(
+            self.max_full_heatmap_points,
+            MAX_SQL_HEATMAP_GRID_CELLS,
+            )
+        x_axis, y_axis, data_grid = self._heatmap_grid_from_arrays(
+            x_data,
+            y_data,
+            z_data,
+            max_cells=max_cells,
+            )
+        source_count = int(source_rows * source_columns)
+        self._heatmap_aggregated_source_rows = int(z_data.size)
+        self._heatmap_source_info = {
+            "row_count": source_count,
+            "estimated_range_rows": source_count,
+            "sampled": False,
+            "aggregated": True,
+            "sample_limit": None,
+            "sample_stride": None,
+            "strategy": "operations, then spatial mean",
+            "axis_ranges": self.heatmap_source_axis_ranges,
+            }
+        self.axis_data["x"] = x_axis
+        self.axis_data["y"] = y_axis
+        self.dataGrid = data_grid
+        self.loaded_point_count = int(data_grid.size)
+        self.heatmap_downsample_info = self._heatmap_downsample_info()
 
         
 class _emitter(QtCore.QObject):

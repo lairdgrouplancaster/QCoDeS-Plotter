@@ -9,7 +9,11 @@ from PyQt6 import (
     QtWidgets as qtw,
 )
 
-from qplot.tools.operation_registry import operation_specs_for
+from qplot.tools.operation_registry import (
+    OperationCall,
+    OperationValidationError,
+    operation_specs_for,
+)
 
 from .dropbox import expandingComboBox
 
@@ -113,6 +117,7 @@ class operations_options_base(qtw.QWidget):
         func: OperationFunc,
         input_type: OperationInputType,
         default: object = "",
+        derivative_axis: str | None = None,
         ) -> None:
         """
         Adds an option to the list_options with a tickbox.
@@ -141,6 +146,7 @@ class operations_options_base(qtw.QWidget):
     
         # create item to add to active box. This data is fetched by self.get_data()
         row.operation_row = rowItem(name, func, input_type, default=default)
+        row.operation_row.derivative_axis = derivative_axis
         row.input.stateChanged.connect(lambda state: 
                     self.add_or_remove_operation(state, row.operation_row)
                     )
@@ -190,6 +196,7 @@ class operations_options_base(qtw.QWidget):
                 spec.func,
                 cast(OperationInputType, spec.input_type),
                 spec.default,
+                spec.derivative_axis,
                 )
         self.list_options.adjustSize()
             
@@ -201,7 +208,7 @@ class operations_options_base(qtw.QWidget):
             item.input.setChecked(False)
             
     
-    def get_data(self) -> list[OperationFunc]:
+    def get_data(self) -> list[OperationCall]:
         """
         Returns the function of the items in the active operation listWidget
         (self.list_order) from top to bottom. Also adds the user input to the
@@ -213,7 +220,7 @@ class operations_options_base(qtw.QWidget):
             List of functions to be performed on the data during refresh.
 
         """
-        operations: list[OperationFunc] = []
+        operations: list[OperationCall] = []
         for i in range(self.list_order.count()):
             item = cast(rowItem, self.list_order.item(i))
             if item.isHidden():
@@ -225,26 +232,36 @@ class operations_options_base(qtw.QWidget):
                     and input_widget.text()
                     and not input_widget.hasAcceptableInput()
                     ):
-                continue
+                raise OperationValidationError(
+                    f'{item.label}: enter a valid value.'
+                    )
 
             try:
                 output = item.output()
-            except (TypeError, ValueError, OverflowError):
-                continue
+            except (TypeError, ValueError, OverflowError) as error:
+                raise OperationValidationError(
+                    f'{item.label}: enter a valid value.'
+                    ) from error
 
             if output == "": # Data not entered
                 if hasattr(input_widget, "placeholderText"):
                     output = cast(Any, input_widget).placeholderText()
                     if output == "": # still blank
-                        continue
+                        raise OperationValidationError(
+                            f'{item.label}: a value is required.'
+                            )
                     
                     if isinstance(item.input_type, type):
                         try:
                             output = item.input_type(output)
-                        except (TypeError, ValueError, OverflowError):
-                            continue
+                        except (TypeError, ValueError, OverflowError) as error:
+                            raise OperationValidationError(
+                                f'{item.label}: enter a valid value.'
+                                ) from error
                 else:
-                    continue
+                    raise OperationValidationError(
+                        f'{item.label}: a value is required.'
+                        )
             
             if output is None: # No input requried
                 func = item.func
@@ -252,7 +269,11 @@ class operations_options_base(qtw.QWidget):
                 # Some weird internal python stuff causes issues with lambda in loops
                 func = func_with_input(item.func, output) 
                 
-            operations.append(func)
+            operations.append(OperationCall(
+                item.label,
+                func,
+                getattr(item, "derivative_axis", None),
+                ))
         return operations
  
     
@@ -311,6 +332,7 @@ class rowItem(qtw.QListWidgetItem):
         super().__init__()
         
         self.func: OperationFunc
+        self.derivative_axis: str | None = None
         if callable(func):
             self.func = func
         elif func is not None:

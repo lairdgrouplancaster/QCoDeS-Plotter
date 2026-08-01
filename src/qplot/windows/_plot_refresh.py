@@ -12,6 +12,7 @@ from qplot.datahandling.qcodes_cache import (
 )
 from qplot.diagnostics import log_exception
 from qplot.tools import loader
+from qplot.tools.operation_registry import OperationValidationError
 
 if TYPE_CHECKING:
     class _PlotRefreshBase(qtw.QMainWindow):
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
         axis_param: dict[str, Any]
         config: Any
         dataGrid: Any
+        display_param: Any
         ds: Any
         end_wait: Any
         last_ds_len: int
@@ -72,7 +74,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             heatmap_axis_ranges: dict[str, tuple[float, float]] | None = None,
             heatmap_full_axis_ranges: dict[str, tuple[float, float]] | None = None,
             status_message: str | None = None,
-            ) -> None:
+            ) -> bool:
         """
         Produces a worker for loading/refreshing the dataset.
         Then adds the worker to the threadPool queue to work.
@@ -87,13 +89,25 @@ class PlotRefreshMixin(_PlotRefreshBase):
             worker has finished its task. The default is False.
 
         """
+        try:
+            operations = self.oper_widget.get_data()
+        except OperationValidationError as error:
+            message = str(error)
+            self.show_status(message, 10_000)
+            self.show_plot_state(
+                "Operations not applied",
+                message,
+                kind="error",
+                )
+            return False
+
         worker: Any = loader(
             self.ds.cache,
             self.param,
             self.param_dict,
             self.axis_options,
             read_data=True,
-            operations=self.oper_widget.get_data(),
+            operations=operations,
             force_sql_heatmap=force_sql_heatmap,
             max_full_heatmap_points=self.config.get(
                 "runtime_settings.max_full_heatmap_points"
@@ -148,6 +162,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if wait_on_thread:
             hold_up.exec()  # The actual place the code waits for self.end_wait.emit
             self.end_wait.disconnect(hold_up.quit)
+
+        return True
 
 
     @QtCore.pyqtSlot()
@@ -262,6 +278,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 "x": worker.axis_param["x"],
                 "y": worker.axis_param["y"],
                 }
+            self.display_param = getattr(worker, "display_param", self.param)
 
             # For 2d plots
             if hasattr(worker, "dataGrid"):

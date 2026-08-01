@@ -1867,6 +1867,27 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             )
         self.assertNotIn("(x", window.bar.getAxis("right").labelString())
 
+    def test_colorbar_label_uses_operation_display_parameter(self):
+        class SourceParam:
+            label = "Current"
+            unit = "A"
+
+        class DisplayParam:
+            label = "d(Current)/d(Gate voltage)"
+            unit = "A/V"
+
+        window = plot2d.__new__(plot2d)
+        window.param = SourceParam()
+        window.display_param = DisplayParam()
+        window.bar = pg.ColorBarItem(values=(-1.0, 1.0))
+
+        window._set_colorbar_tick_formatter()
+
+        self.assertIn(
+            "d(Current)/d(Gate voltage) (A/V)",
+            window.bar.getAxis("right").labelString(),
+            )
+
     def test_colorbar_label_reads_downwards(self):
         class Param:
             label = "Gate v2"
