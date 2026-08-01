@@ -208,6 +208,7 @@ class plotWidget(
         self.last_ds_len = self.ds.number_of_results
         self.config = config
         self.visible = show
+        self._closed = False
         self.operations = {}
         self._last_error_text = None
         self.show_status("Working, please wait", 0)
@@ -1195,8 +1196,8 @@ class plotWidget(
         """
         self.monitor.stop()
         self.visible = False
-        self.closed.emit(self) 
-        del self # Pretty much pointless but its here anyway.
+        self._closed = True
+        self.closed.emit(self)
 
 
     @QtCore.pyqtSlot(object)

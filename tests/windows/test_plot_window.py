@@ -37,6 +37,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         def __init__(self, number_of_results=10, running=True):
             self.number_of_results = number_of_results
             self.running = running
+            self.cache = object()
 
     class Worker:
         def __init__(self, running):
@@ -75,6 +76,44 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
 
         self.assertEqual(window.load_calls, ["load"])
         self.assertEqual(window.last_ds_len, 0)
+        self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_refresh_detects_completion_without_a_new_result_row(self):
+        window = self._window(worker_running=False)
+        window.last_ds_len = window.ds.number_of_results
+        window.param = object()
+        completion_checks = []
+
+        old_prep = plot_refresh_module.load_param_data_from_db_prep
+        try:
+            def complete(cache, param):
+                completion_checks.append((cache, param))
+                window.ds.running = False
+                return True
+
+            plot_refresh_module.load_param_data_from_db_prep = complete
+            plotWidget.refreshWindow(window)
+        finally:
+            plot_refresh_module.load_param_data_from_db_prep = old_prep
+
+        self.assertEqual(completion_checks, [(window.ds.cache, window.param)])
+        self.assertEqual(window.load_calls, [])
+        self.assertEqual(window.restart_intervals, [])
+
+    def test_secondary_trace_restart_does_not_depend_on_dictionary_order(self):
+        window = self._window(worker_running=False)
+        window.ds.running = False
+        window.last_ds_len = window.ds.number_of_results
+        main_line = self.Worker(running=True)
+        secondary_line = self.Worker(running=True)
+        window.line = main_line
+        window.lines = {
+            "secondary": secondary_line,
+            "main": main_line,
+            }
+
+        plotWidget.refreshWindow(window)
+
         self.assertEqual(window.restart_intervals, [0.2])
 
     def test_invalid_operation_input_stops_load_with_visible_feedback(self):
@@ -348,6 +387,46 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         plotWidget.refreshPlot(window, True, worker=self.Worker())
 
         self.assertEqual(window.end_wait.emitted, 0)
+
+    def test_closed_worker_callback_does_not_revive_unowned_dataset(self):
+        class DeleteTimer:
+            def __init__(self):
+                self.stopped = 0
+
+            def stop(self):
+                self.stopped += 1
+
+        window = self._window()
+        dataset_key = DatasetKey("database.db", "guid")
+        delete_timer = DeleteTimer()
+        handle = DatasetHandle(
+            object(),
+            users=0,
+            delete_timer=delete_timer,
+            )
+        window._closed = True
+        window._dataset_key = dataset_key
+        window._dataset_holder = {dataset_key: handle}
+
+        result = plotWidget.refreshPlot(window, True, worker=window.worker)
+
+        self.assertFalse(result)
+        self.assertFalse(window.worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertIs(window._dataset_holder[dataset_key], handle)
+        self.assertIs(handle.delete_timer, delete_timer)
+        self.assertEqual(delete_timer.stopped, 0)
+
+    def test_closed_hidden_source_can_refresh_while_a_trace_retains_it(self):
+        window = self._window()
+        dataset_key = DatasetKey("database.db", "guid")
+        window._closed = True
+        window._dataset_key = dataset_key
+        window._dataset_holder = {
+            dataset_key: DatasetHandle(object(), users=1),
+            }
+
+        self.assertTrue(plotWidget._can_process_refresh(window))
 
     def test_current_worker_failure_reports_error_and_releases_wait(self):
         window = self._window()

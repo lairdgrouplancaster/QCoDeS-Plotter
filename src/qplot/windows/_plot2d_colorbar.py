@@ -62,10 +62,41 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             return None
 
         vmin, vmax = data_range
-        if vmin >= vmax:
+        if vmin == vmax:
+            return self._constant_colorbar_levels(vmin)
+        if vmin > vmax:
             return None
 
         return vmin, vmax
+
+    @staticmethod
+    def _constant_colorbar_levels(value):
+        """Return a small finite range containing one constant data value."""
+
+        value = float(value)
+        if not np.isfinite(value):
+            return None
+
+        if value == 0.0:
+            padding = 1e-6
+        else:
+            padding = abs(value) * 1e-6
+
+        with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+            low = value - padding
+            high = value + padding
+            if np.isfinite(low) and np.isfinite(high) and low < high:
+                return float(low), float(high)
+
+            low = float(np.nextafter(value, -np.inf))
+            high = float(np.nextafter(value, np.inf))
+        if not np.isfinite(low):
+            low = value
+        if not np.isfinite(high):
+            high = value
+        if low < high:
+            return low, high
+        return None
 
     def _finite_data_colorbar_range(self):
         """Return the finite data range without reducing an empty array."""
@@ -84,11 +115,11 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     def _data_colorbar_rounding(self):
         """Return a finite, positive colorbar interaction step."""
 
-        data_range = self._finite_data_colorbar_range()
-        if data_range is None:
+        levels = self._data_colorbar_levels()
+        if levels is None:
             return 1e-5
 
-        vmin, vmax = data_range
+        vmin, vmax = levels
         span = vmax - vmin
         if not np.isfinite(span) or span <= 0:
             span = max(abs(vmin), abs(vmax))
@@ -96,7 +127,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             span = 1.0
 
         rounding = span / 1e5
-        minimum_rounding = np.finfo(float).tiny
+        minimum_rounding = np.nextafter(0.0, 1.0)
         if not np.isfinite(rounding) or rounding < minimum_rounding:
             return float(minimum_rounding)
         return float(rounding)

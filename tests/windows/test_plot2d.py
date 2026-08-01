@@ -1462,21 +1462,50 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 self.assertEqual(window.bar.values, (10.0, 20.0))
                 self.assertEqual(window._colorbar_manual_levels, (10.0, 20.0))
 
-    def test_constant_heatmap_uses_positive_finite_colorbar_rounding(self):
+    def test_constant_heatmap_uses_padded_levels_and_finite_rounding(self):
         window = plot2d.__new__(plot2d)
 
-        for value in (0.0, 7.5, -7.5, np.nextafter(0.0, 1.0)):
+        for value in (
+                0.0,
+                7.5,
+                -7.5,
+                np.nextafter(0.0, 1.0),
+                np.finfo(float).max,
+                -np.finfo(float).max,
+                ):
             with self.subTest(value=value):
                 window.dataGrid = np.full((2, 2), value)
 
+                levels = window._data_colorbar_levels()
                 rounding = window._data_colorbar_rounding()
 
+                self.assertIsNotNone(levels)
+                low, high = levels
+                self.assertTrue(np.isfinite((low, high)).all())
+                self.assertLess(low, high)
+                self.assertLessEqual(low, value)
+                self.assertGreaterEqual(high, value)
                 self.assertTrue(np.isfinite(rounding))
-                self.assertGreaterEqual(rounding, np.finfo(float).tiny)
+                self.assertGreater(rounding, 0.0)
+                self.assertLessEqual(rounding, high - low)
 
-                bar = pg.ColorBarItem(values=(0.0, 1.0), rounding=rounding)
+                bar = pg.ColorBarItem(values=levels, rounding=rounding)
                 bar._regionChanging()
                 self.assertTrue(np.isfinite(bar.values).all())
+
+    def test_subnormal_colorbar_interaction_preserves_data_scale(self):
+        window = plot2d.__new__(plot2d)
+        smallest = np.nextafter(0.0, 1.0)
+        window.dataGrid = np.array([[0.0, smallest]])
+
+        levels = window._data_colorbar_levels()
+        rounding = window._data_colorbar_rounding()
+        bar = pg.ColorBarItem(values=levels, rounding=rounding)
+        bar._regionChanging()
+
+        self.assertEqual(levels, (0.0, smallest))
+        self.assertEqual(rounding, smallest)
+        self.assertEqual(tuple(bar.levels()), levels)
 
     def test_outside_colorbar_drag_widens_levels_about_midpoint(self):
         for start_y, drag_y in ((40.0, 24.0), (210.0, 226.0)):

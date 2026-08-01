@@ -112,6 +112,16 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
         return getattr(window, "_trace_key", getattr(window, "label", None))
 
+    @staticmethod
+    def _picker_matches_trace(box: Any, trace_key: Any, label: str) -> bool:
+        """Return whether a picker row represents the newly added trace."""
+
+        box_key = box.option_box.currentData()
+        return box_key == trace_key or (
+            box_key in (None, label)
+            and label == box.option_box.currentText()
+            )
+
     def _stored_trace_key(self, key: Any, line: Any) -> Any:
         """Return the source identity represented by one stored plot line."""
 
@@ -128,6 +138,16 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             self._stored_trace_key(stored_key, line) == trace_key
             for stored_key, line in self.__dict__.get("lines", {}).items()
             )
+
+    def _secondary_lines(self) -> list[Any]:
+        """Return secondary traces without relying on their display order."""
+
+        main_line = self.__dict__.get("line")
+        return [
+            line
+            for line in self.__dict__.get("lines", {}).values()
+            if line is not None and line is not main_line
+            ]
 
     def _trace_display_label(self, key: Any, line: Any) -> str:
         """Return the unchanged user-facing label for an internally keyed trace."""
@@ -375,7 +395,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         Refreshes added trace lines and restarts hidden live-trace monitors.
 
         """
-        for line in list(self.lines.values())[1:]:
+        for line in self._secondary_lines():
             line.refresh()
             from_win = line.from_win
             if (
@@ -466,10 +486,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # Connect box options to line
         selected_box = None
         for box in self.option_boxes:
-            box_key = box.option_box.currentData()
-            if box_key == trace_key or (
-                    box_key is None and label == box.option_box.currentText()
-                    ):
+            if self._picker_matches_trace(box, trace_key, label):
                 
                 box.color_box.selectedColor.connect(
                     lambda color, selected_key=trace_key: self._set_trace_line_color(
@@ -502,7 +519,14 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event: object) -> None:
         # Stopped lines as needed
-        for line in list(self.lines.values())[1:]:
+        for line in self._secondary_lines():
+            disconnect_source_updates = getattr(
+                line,
+                "disconnect_source_updates",
+                None,
+                )
+            if callable(disconnect_source_updates):
+                disconnect_source_updates()
             self.remove_dataset.emit(line.from_win._dataset_key)
             if not line.from_win.visible:
                 line.from_win.monitor.stop()
@@ -545,6 +569,13 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self.lines.pop(selected_key)
         self._trace_styles.pop(selected_key, None)
         self._ensure_trace_controls().pop(selected_key, None)
+        disconnect_source_updates = getattr(
+            line,
+            "disconnect_source_updates",
+            None,
+            )
+        if callable(disconnect_source_updates):
+            disconnect_source_updates()
         # Fetch correct viewbox to remove from
         vb = self.plot if side.lower() == "left" else self.right_vb
         vb.removeItem(line)
@@ -565,6 +596,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self.get_mergables.emit()
         # Resize dock widget
         self._resize_scrollArea()
+        dialog = self.__dict__.get("_trace_appearance_dialog")
+        if dialog is not None:
+            dialog.refresh_rows()
     
     
     @QtCore.pyqtSlot(object)
@@ -700,7 +734,6 @@ class _TraceTableWidget(qtw.QTableWidget):
         trace_key = self.dialog._trace_key_for_row(index.row())
         mime_data = self.dialog._trace_mime_data(trace_key)
         if mime_data is None:
-            super().startDrag(supported_actions)
             return
 
         style = self.dialog.owner._trace_styles.get(trace_key)
@@ -1307,6 +1340,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 label = self.owner._trace_display_label(trace_key, line)
                 trace_id = label.split()[0].replace("ID:", "") if label.startswith("ID:") else str(row + 1)
                 measurement = self.owner._trace_measurement_name(trace_key, line)
+                trace_is_draggable = self._trace_mime_data(trace_key) is not None
                 style = self.owner._trace_styles.setdefault(
                     trace_key,
                     self.owner._initial_trace_style(order=row),
@@ -1318,7 +1352,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
                     }
                 for col, value in values.items():
                     item = qtw.QTableWidgetItem(value)
-                    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                    flags = item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
+                    if not trace_is_draggable:
+                        flags &= ~QtCore.Qt.ItemFlag.ItemIsDragEnabled
+                    item.setFlags(flags)
                     if col == self._COL_ID:
                         item.setTextAlignment(
                             QtCore.Qt.AlignmentFlag.AlignRight
@@ -1332,11 +1369,17 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 preview_item = qtw.QTableWidgetItem()
                 preview_item.setIcon(self._trace_icon(style))
                 preview_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                preview_item.setFlags(
-                    (preview_item.flags() | QtCore.Qt.ItemFlag.ItemIsDragEnabled)
+                preview_flags = (
+                    preview_item.flags()
                     & ~QtCore.Qt.ItemFlag.ItemIsEditable
                     )
-                preview_item.setToolTip("Drag trace preview")
+                if trace_is_draggable:
+                    preview_flags |= QtCore.Qt.ItemFlag.ItemIsDragEnabled
+                    preview_item.setToolTip("Drag trace preview")
+                else:
+                    preview_flags &= ~QtCore.Qt.ItemFlag.ItemIsDragEnabled
+                    preview_item.setToolTip("This trace cannot be dragged between plots")
+                preview_item.setFlags(preview_flags)
                 self.table.setItem(row, self._COL_PREVIEW, preview_item)
 
                 label_item = self.table.item(row, self._COL_ID)
@@ -1412,7 +1455,9 @@ class _TraceAppearanceDialog(qtw.QDialog):
         for idx in selection_model.selectedRows():
             item = self.table.item(idx.row(), self._COL_ID)
             if item is not None:
-                labels.append(item.data(QtCore.Qt.ItemDataRole.UserRole))
+                label = item.data(QtCore.Qt.ItemDataRole.UserRole)
+                if label in self.owner.lines:
+                    labels.append(label)
         return labels
 
     def _trace_key_for_row(self, row: int) -> Any:
@@ -1434,7 +1479,11 @@ class _TraceAppearanceDialog(qtw.QDialog):
         guid = getattr(source, "_guid", "")
         param = getattr(source, "param", None)
         parameter = getattr(param, "name", "")
-        if not guid or not parameter:
+        if (
+                not guid
+                or not parameter
+                or len(getattr(param, "depends_on_", ())) != 1
+                ):
             return None
         return make_run_preview_mime(
             guid,

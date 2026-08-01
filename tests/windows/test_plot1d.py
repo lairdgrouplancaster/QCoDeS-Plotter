@@ -16,6 +16,7 @@ from qplot.windows._plot1d_traces import (
 )
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots import custom_viewbox
+from qplot.windows._subplots.subplot1d import _subplot_axis_order, subplot1d
 from qplot.windows._widgets import QDock_context, picker_1d
 from qplot.windows.plot1d import plot1d
 
@@ -511,6 +512,7 @@ class SnapToTraceTestCase(unittest.TestCase):
     def test_trace_appearance_table_uses_readonly_preview_rows(self):
         class Param:
             name = "current"
+            depends_on_ = ("gate",)
 
         class Host(Plot1DTraceMixin, qtw.QMainWindow):
             pass
@@ -520,7 +522,10 @@ class SnapToTraceTestCase(unittest.TestCase):
         try:
             host.label = "ID:1 current"
             host.param = Param()
-            host.lines = {host.label: object()}
+            host._guid = "guid"
+            host._dataset_key = DatasetKey("database.db", host._guid)
+            host.line = object()
+            host.lines = {host.label: host.line}
             host._trace_styles = {
                 host.label: host._TraceStyle(line_color="#d62728", dots_enabled=True)
                 }
@@ -551,6 +556,64 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertTrue(preview_item.flags() & QtCore.Qt.ItemFlag.ItemIsDragEnabled)
             self.assertFalse(measurement_item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
             self.assertFalse(dialog.line_color.itemIcon(0).isNull())
+        finally:
+            if dialog is not None:
+                dialog.deleteLater()
+            host.deleteLater()
+
+    def test_trace_appearance_cut_row_is_not_draggable(self):
+        class Host(Plot1DTraceMixin, qtw.QMainWindow):
+            pass
+
+        cut_key = TraceKey(
+            DatasetKey("database.db", "guid"),
+            "heatmap_signal",
+            sweep_id=1,
+        )
+        cut_source = type(
+            "CutSource",
+            (),
+            {
+                "_guid": "guid",
+                "_dataset_key": cut_key.dataset_key,
+                "label": "ID:1 heatmap_signal [cut 2]",
+                "param": type(
+                    "Param",
+                    (),
+                    {
+                        "name": "heatmap_signal",
+                        "depends_on_": ("gate", "field"),
+                    },
+                )(),
+            },
+        )()
+        cut_line = type("CutLine", (), {"from_win": cut_source})()
+        host = Host()
+        dialog = None
+        try:
+            host.label = "ID:2 current"
+            host.param = type(
+                "Param",
+                (),
+                {"name": "current", "depends_on_": ("gate",)},
+            )()
+            host._guid = "target-guid"
+            host._dataset_key = DatasetKey("database.db", host._guid)
+            host.line = object()
+            host.lines = {host.label: host.line, cut_key: cut_line}
+            host._trace_styles = {
+                label: host._initial_trace_style()
+                for label in host.lines
+            }
+
+            dialog = _TraceAppearanceDialog(host)
+            dialog.refresh_rows()
+
+            preview_item = dialog.table.item(1, dialog._COL_PREVIEW)
+            self.assertFalse(
+                preview_item.flags() & QtCore.Qt.ItemFlag.ItemIsDragEnabled
+            )
+            self.assertIsNone(dialog._trace_mime_data(cut_key))
         finally:
             if dialog is not None:
                 dialog.deleteLater()
@@ -686,22 +749,39 @@ class SnapToTraceTestCase(unittest.TestCase):
             pass
 
         class Line:
-            def __init__(self):
+            def __init__(self, source=None):
                 self.z_value = None
+                self.refresh_count = 0
+                if source is not None:
+                    self.from_win = source
 
             def setZValue(self, value):
                 self.z_value = value
+
+            def refresh(self):
+                self.refresh_count += 1
+
+        source = type(
+            "Source",
+            (),
+            {
+                "visible": True,
+                "ds": type("Dataset", (), {"running": False})(),
+            },
+        )()
 
         host = Host()
         dialog = None
         try:
             host.label = "ID:1 current"
             host.param = type("Param", (), {"name": "current"})()
+            main_line = Line()
+            host.line = main_line
             host.lines = {
-                "trace a": Line(),
-                "trace b": Line(),
-                "trace c": Line(),
-                }
+                "trace a": main_line,
+                "trace b": Line(source),
+                "trace c": Line(source),
+            }
             host._trace_styles = {
                 label: host._TraceStyle(order=-1)
                 for label in host.lines
@@ -730,10 +810,186 @@ class SnapToTraceTestCase(unittest.TestCase):
                 [2, 1, 0],
                 )
             self.assertEqual(dialog._selected_labels(), ["trace b"])
+
+            host.refresh_secondary_lines()
+
+            self.assertEqual(main_line.refresh_count, 0)
+            self.assertEqual(host.lines["trace b"].refresh_count, 1)
+            self.assertEqual(host.lines["trace c"].refresh_count, 1)
+            self.assertEqual(
+                host._secondary_lines(),
+                [host.lines["trace b"], host.lines["trace c"]],
+            )
         finally:
             if dialog is not None:
                 dialog.deleteLater()
             host.deleteLater()
+
+    def test_close_releases_reordered_secondary_traces_only(self):
+        class Host(Plot1DTraceMixin, qtw.QMainWindow):
+            remove_dataset = QtCore.pyqtSignal([object])
+
+        class Monitor:
+            def __init__(self):
+                self.stop_count = 0
+
+            def stop(self):
+                self.stop_count += 1
+
+        class Secondary:
+            def __init__(self, source):
+                self.from_win = source
+                self.disconnect_count = 0
+
+            def disconnect_source_updates(self):
+                self.disconnect_count += 1
+
+        dataset_key = DatasetKey("database.db", "guid")
+        source = type(
+            "Source",
+            (),
+            {
+                "_dataset_key": dataset_key,
+                "visible": False,
+                "monitor": Monitor(),
+            },
+        )()
+        host = Host()
+        released = []
+        try:
+            host.line = object()
+            secondary = Secondary(source)
+            host.lines = {"secondary": secondary, "main": host.line}
+            host.remove_dataset.connect(released.append)
+
+            host.closeEvent(QtGui.QCloseEvent())
+
+            self.assertEqual(released, [dataset_key])
+            self.assertEqual(source.monitor.stop_count, 1)
+            self.assertEqual(secondary.disconnect_count, 1)
+        finally:
+            host.deleteLater()
+
+    def test_legacy_label_picker_matches_resolved_trace_key(self):
+        class Combo:
+            def currentData(self):
+                return "ID:1 voltage"
+
+            def currentText(self):
+                return "ID:1 voltage"
+
+        box = type("Box", (), {"option_box": Combo()})()
+        trace_key = TraceKey(
+            DatasetKey("database.db", "guid"),
+            "voltage",
+        )
+
+        self.assertTrue(
+            Plot1DTraceMixin._picker_matches_trace(
+                box,
+                trace_key,
+                "ID:1 voltage",
+            )
+        )
+
+    def test_subplot_axis_mapping_rejects_incompatible_cut_axis(self):
+        self.assertEqual(
+            _subplot_axis_order(
+                {"x": "gate", "y": "current"},
+                {"x": "gate", "y": "field"},
+                source_is_cut=True,
+            ),
+            ("x", "y"),
+        )
+        self.assertEqual(
+            _subplot_axis_order(
+                {"x": "current", "y": "gate"},
+                {"x": "gate", "y": "field"},
+                source_is_cut=True,
+            ),
+            ("y", "x"),
+        )
+        self.assertIsNone(
+            _subplot_axis_order(
+                {"x": "gate", "y": "current"},
+                {"x": "field", "y": "gate"},
+                source_is_cut=True,
+            )
+        )
+
+    def test_completed_cut_updates_and_clears_merged_subplot_immediately(self):
+        class Signal:
+            def __init__(self):
+                self.slots = []
+
+            def connect(self, slot):
+                self.slots.append(slot)
+
+            def disconnect(self, slot):
+                if slot not in self.slots:
+                    raise TypeError("slot is not connected")
+                self.slots.remove(slot)
+
+            def emit(self, *args):
+                for slot in list(self.slots):
+                    slot(*args)
+
+        class Plot:
+            def __init__(self):
+                self.items = []
+
+            def addItem(self, item):
+                self.items.append(item)
+
+        source = type(
+            "CutSource",
+            (),
+            {
+                "label": "ID:1 signal [cut 1]",
+                "param_dict": {},
+                "sweep_id": 0,
+                "ds": type("Dataset", (), {"running": False})(),
+                "worker": type("Worker", (), {"running": False})(),
+                "end_wait": Signal(),
+                "sweep_moved": Signal(),
+                "axis_options": {"x": "gate", "y": "field"},
+                "axis_data": {
+                    "x": np.array([0.0, 1.0]),
+                    "y": np.array([10.0, 11.0]),
+                },
+            },
+        )()
+        parent = type(
+            "Parent",
+            (),
+            {
+                "axis_options": {"x": "gate", "y": "current"},
+                "plot": Plot(),
+            },
+        )()
+        line = subplot1d(parent, source)
+
+        _, initial_y = line.getData()
+        np.testing.assert_array_equal(initial_y, [10.0, 11.0])
+
+        source.axis_data["y"] = np.array([20.0, 21.0])
+        source.sweep_moved.emit(0, "gate", "field", 1, object())
+        _, updated_y = line.getData()
+        np.testing.assert_array_equal(updated_y, [20.0, 21.0])
+
+        source.axis_options = {"x": "field", "y": "gate"}
+        source.sweep_moved.emit(0, "field", "gate", 1, object())
+        empty_x, empty_y = line.getData()
+        self.assertTrue(empty_x is None or len(empty_x) == 0)
+        self.assertTrue(empty_y is None or len(empty_y) == 0)
+
+        line.disconnect_source_updates()
+        source.axis_options = {"x": "gate", "y": "field"}
+        source.axis_data["y"] = np.array([30.0, 31.0])
+        source.sweep_moved.emit(0, "gate", "field", 1, object())
+        disconnected_x, disconnected_y = line.getData()
+        self.assertTrue(disconnected_x is None or len(disconnected_x) == 0)
+        self.assertTrue(disconnected_y is None or len(disconnected_y) == 0)
 
     def test_register_main_line_replaces_initial_empty_trace(self):
         line = object()
@@ -798,6 +1054,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         made_datasets = []
         removed_datasets = []
         picker_updates = []
+        trace_dialog = None
 
         try:
             host.config = Config()
@@ -817,6 +1074,12 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.right_vb = None
             host.line = host.plot.plot(x=[0.0, 1.0], y=[1.0, 2.0])
             host.label = source.label
+            host._guid = "shared-guid"
+            host.param = type(
+                "Param",
+                (),
+                {"name": "voltage", "depends_on_": ("gate",)},
+            )()
             host._dataset_key = DatasetKey("database-a.db", "shared-guid")
             host._trace_key = TraceKey(host._dataset_key, "voltage")
             host.lines = {host.label: host.line}
@@ -859,6 +1122,11 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertEqual(secondary.opts["pen"].color().name(), style.line_color)
             self.assertEqual(secondary.side, "left")
 
+            trace_dialog = _TraceAppearanceDialog(host)
+            host._trace_appearance_dialog = trace_dialog
+            trace_dialog.refresh_rows()
+            self.assertEqual(trace_dialog.table.rowCount(), 2)
+
             host.remove_line(source.label, source._trace_key)
 
             self.assertNotIn(source._trace_key, host.lines)
@@ -867,7 +1135,12 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertFalse(host.plot.getAxis("right").style["showValues"])
             self.assertEqual(removed_datasets, [source._dataset_key])
             self.assertEqual(picker_updates, [True])
+            self.assertEqual(trace_dialog.table.rowCount(), 1)
+            trace_dialog.table.selectRow(0)
+            self.assertEqual(trace_dialog._selected_labels(), [host.label])
         finally:
+            if trace_dialog is not None:
+                trace_dialog.deleteLater()
             host.deleteLater()
 
     def test_alt_drag_edge_handle_resizes_marquee_symmetrically(self):

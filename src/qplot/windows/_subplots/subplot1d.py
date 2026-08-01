@@ -3,6 +3,37 @@ from PyQt6 import QtCore
 from PyQt6.QtGui import QColor
 
 
+def _subplot_axis_order(
+        parent_options: dict[str, str],
+        source_options: dict[str, str],
+        *,
+        source_is_cut: bool = False,
+        ) -> tuple[str, str] | None:
+    """Map source data axes onto a host plot, or reject incompatible axes."""
+
+    if source_is_cut:
+        shared_axis = source_options.get("x")
+        if not shared_axis:
+            return None
+        if parent_options.get("x") == shared_axis:
+            return "x", "y"
+        if parent_options.get("y") == shared_axis:
+            return "y", "x"
+        return None
+
+    if (
+            parent_options.get("x") == source_options.get("x")
+            or parent_options.get("y") == source_options.get("y")
+            ):
+        return "x", "y"
+    if (
+            parent_options.get("x") == source_options.get("y")
+            or parent_options.get("y") == source_options.get("x")
+            ):
+        return "y", "x"
+    return None
+
+
 class subplot1d(pg.PlotDataItem):
     """
     Class for handling secondary line plots on plot1d
@@ -16,21 +47,28 @@ class subplot1d(pg.PlotDataItem):
         
         self.parent = parent
         self.from_win = from_win
-        
+
+        self.choose_from: tuple[str, str] | None = None
+        self._source_update_signal = getattr(from_win, "sweep_moved", None)
+        if self._source_update_signal is not None:
+            self._source_update_signal.connect(self._source_sweep_changed)
+
         self.refresh()
         
         self.side = "left"
         self.parent.plot.addItem(self)
             
             
-    def refresh(self):
+    def refresh(self, *, source_ready: bool = False):
         """
         Fetches data from source window and updates view on parent window
 
         """
         parent = self.parent
         from_win = self.from_win
-        
+
+        self._disconnect_pending_update()
+
         # Update live state
         self.running = from_win.ds.running
         
@@ -38,18 +76,53 @@ class subplot1d(pg.PlotDataItem):
         parent_options = parent.axis_options
         from_win_options = from_win.axis_options
 
-        # for subplot, must share 1 axis parameter name, so check if flipped
-        if parent_options["x"] == from_win_options["x"] or parent_options["y"] == from_win_options["y"]:
-            self.choose_from = ["x", "y"]
-        else:
-            self.choose_from = ["y", "x"]
-            
+        self.choose_from = _subplot_axis_order(
+            parent_options,
+            from_win_options,
+            source_is_cut=hasattr(from_win, "sweep_id"),
+            )
+        if self.choose_from is None:
+            self.setData(x=[], y=[])
+            return
+
         # Wait for data to finish
-        if from_win.worker.running:
+        if from_win.worker.running and not source_ready:
             from_win.end_wait.connect(self.call_update)
         else:
             self.call_update()
-            
+
+
+    @QtCore.pyqtSlot(int, str, str, int, object)
+    def _source_sweep_changed(
+            self,
+            _sweep_id,
+            _sweep_indep,
+            _fixed_indep,
+            _fixed_index,
+            _pen,
+            ):
+        """Refresh immediately after a cut publishes new, ready-to-use data."""
+
+        self.refresh(source_ready=True)
+
+
+    def _disconnect_pending_update(self):
+        try:
+            self.from_win.end_wait.disconnect(self.call_update)
+        except TypeError:  # Signal was not connected.
+            pass
+
+
+    def disconnect_source_updates(self):
+        """Release the persistent cut-update connection when a trace is removed."""
+
+        if self._source_update_signal is not None:
+            try:
+                self._source_update_signal.disconnect(self._source_sweep_changed)
+            except TypeError:  # Signal was already disconnected.
+                pass
+            self._source_update_signal = None
+        self._disconnect_pending_update()
     
     @QtCore.pyqtSlot()
     def call_update(self):
@@ -59,10 +132,16 @@ class subplot1d(pg.PlotDataItem):
 
         """
         data = {}
-    
+
+        choose_from = self.choose_from
+        if choose_from is None:
+            self.setData(x=[], y=[])
+            self._disconnect_pending_update()
+            return
+
         # Assign data to correct axis
         for itr, axis in enumerate(["x", "y"]):
-            data[axis] = self.from_win.axis_data[self.choose_from[itr]]
+            data[axis] = self.from_win.axis_data[choose_from[itr]]
                     
         # Updates display
         self.setData(
@@ -70,10 +149,7 @@ class subplot1d(pg.PlotDataItem):
             y=data["y"],
             )
         
-        try:
-            self.from_win.end_wait.disconnect(self.call_update)
-        except TypeError: # Type error if not connected
-            pass
+        self._disconnect_pending_update()
     
     @QtCore.pyqtSlot(QColor)
     def set_color(self, col):

@@ -66,6 +66,26 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
     """
 
+    def _can_process_refresh(self) -> bool:
+        """Return whether this window still has an active dataset owner."""
+
+        if not self.__dict__.get("_closed", False):
+            return True
+
+        dataset_holder = self.__dict__.get("_dataset_holder")
+        dataset_key = self.__dict__.get("_dataset_key")
+        if not isinstance(dataset_holder, dict) or dataset_key is None:
+            return False
+
+        handle = dataset_holder.get(dataset_key)
+        return handle is not None and getattr(handle, "users", 0) > 0
+
+    def _sync_dataset_completion(self, dataset: Any) -> None:
+        """Refresh cached QCoDeS completion state without loading plot data."""
+
+        if getattr(dataset, "running", False):
+            load_param_data_from_db_prep(dataset.cache, self.param)
+
     def load_data(
             self,
             wait_on_thread: bool = False,
@@ -89,6 +109,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
             worker has finished its task. The default is False.
 
         """
+        if not self._can_process_refresh():
+            return False
+
         try:
             operations = self.oper_widget.get_data()
         except OperationValidationError as error:
@@ -181,8 +204,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         """
         self.monitor.stop()
+        if not self._can_process_refresh():
+            return
+
         retry = False
-        current_ds_len = self.ds.number_of_results
+        dataset = self.ds
+        current_ds_len = dataset.number_of_results
 
         try:
             # Plot has started, worker first defined in initFrame
@@ -200,18 +227,29 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 # The actual refresh line
                 self.load_data()
 
+            elif dataset.running:
+                # Completion is a runs-table update and need not add a final
+                # result row. Keep QCoDeS' cached ``running`` flag in sync even
+                # when there is no plot data to reload.
+                self._sync_dataset_completion(dataset)
+
         finally:  # Ran after return or otherwise
 
             # restart monitor
-            if self.ds.running or retry:
+            if dataset.running or retry:
                 self.monitorIntervalChanged(self.spinBox.value())
 
             # restard monitor if any subplots are live
-            elif hasattr(self, "lines") and self.lines:
-                for subplot in list(self.lines.values())[1:]:
-                    if subplot.running:
-                        self.monitorIntervalChanged(self.spinBox.value())
-                        break
+            else:
+                lines = self.__dict__.get("lines")
+                if isinstance(lines, dict) and lines:
+                    main_line = self.__dict__.get("line")
+                    for subplot in lines.values():
+                        if subplot is main_line:
+                            continue
+                        if getattr(subplot, "running", False):
+                            self.monitorIntervalChanged(self.spinBox.value())
+                            break
 
 
     @QtCore.pyqtSlot(bool)
@@ -232,7 +270,16 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         """
         if worker is None:
-            worker = self.worker
+            worker = self.__dict__.get("worker")
+
+        if not self._can_process_refresh():
+            if worker is not None:
+                worker.running = False
+            self.end_wait.emit()
+            return False
+
+        if worker is None:
+            return False
 
         if worker is not self.worker:
             worker.running = False
@@ -331,6 +378,11 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
     @QtCore.pyqtSlot(Exception)
     def err_raiser(self, err: Exception, worker: Any | None = None) -> None:
+        if not self._can_process_refresh():
+            if worker is not None:
+                worker.running = False
+            return
+
         if worker is not None and worker is not self.worker:
             return
 
@@ -348,6 +400,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
     @QtCore.pyqtSlot(str)
     def worker_printer(self, fstr: str, worker: Any | None = None) -> None:
+        if not self._can_process_refresh():
+            return
+
         if worker is not None and worker is not self.worker:
             return
 

@@ -13,11 +13,22 @@ installation commands and release validation, see `docs/distribution.md`.
   parameter names match.
 - Keep multiple cuts from the same heatmap distinct and visibly numbered when
   they are added to a 1D plot.
+- Refresh merged heatmap cuts as they move, clear them when their sweep axis is
+  incompatible, and avoid offering unsupported cut drag-and-drop.
+- Keep reordered and removed secondary traces safe during refresh, cleanup,
+  legacy picker selection, and Trace Appearance updates.
+- Preserve explicit database provenance while opening plots, and select the
+  exact same-label trace during cross-database drops without closing a visible
+  source window.
 - Ignore empty or entirely non-finite heatmap data when autoscaling the
   colorbar.
+- Give constant-valued heatmaps an accurate finite color scale, including at
+  floating-point extremes.
 - Keep colorbar interaction rounding finite and positive for constant-valued
   heatmaps.
 - Stop polling completed runs whose database row has no completion timestamp.
+- Detect live-plot completion even when no final data row is added, and ignore
+  late worker callbacks after their last dataset owner closes.
 - Prevent stale preview workers from clearing current-database worker state.
 - Return a scalar completion timestamp, or `None`, from `has_finished`.
 - Preserve the inherited Qt `layout()`, `width()`, `height()`, `x()`, and `y()`
