@@ -22,6 +22,20 @@ def _plot_has_trace_window(target, candidate):
     return candidate.label in target.lines
 
 
+def _combo_index_for_data(combo, value):
+    """Return the first combo row whose Python user data equals ``value``."""
+
+    count = getattr(combo, "count", None)
+    item_data = getattr(combo, "itemData", None)
+    if not callable(count) or not callable(item_data):
+        return -1
+
+    for index in range(count()):
+        if item_data(index) == value:
+            return index
+    return -1
+
+
 class PlotActionsMixin:
     """
     Plot launching, preview plotting, CSV export, and plot dataset tracking.
@@ -47,7 +61,15 @@ class PlotActionsMixin:
 
 
     @QtCore.pyqtSlot(object, object, tuple)
-    def openWin(self, widget, key_or_ds, *args, show=True, **kargs):
+    def openWin(
+            self,
+            widget,
+            key_or_ds,
+            *args,
+            show=True,
+            dataset_key: DatasetKey | None = None,
+            **kargs,
+            ):
         """
         Handles opening Plot window, widget.
 
@@ -57,11 +79,15 @@ class PlotActionsMixin:
 
         if isinstance(key_or_ds, DatasetKey):
             ds = None
+            if dataset_key is not None and dataset_key != key_or_ds:
+                raise ValueError("Conflicting dataset keys supplied while opening a plot.")
             dataset_key = key_or_ds
         else:
             ds = key_or_ds
-            dataset_key = self._current_dataset_key(ds.guid)
+            if dataset_key is None:
+                dataset_key = self._current_dataset_key(ds.guid)
 
+        assert dataset_key is not None
         shared_handle = self.dataset_holder.get(dataset_key)
         loaded_for_construction = shared_handle is None and ds is None
         if shared_handle is not None:
@@ -116,12 +142,14 @@ class PlotActionsMixin:
             win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
 
         elif window_type == "sweeper":
+            win.merge_compatibility_changed.connect(self.post_admin)
             for item in self.windows:
                 if item.ds == win.ds and item.param == win.param and isinstance(item, plot2d):
                     win.sweep_moved.connect(item.update_sweep_line)
                     win.remove_sweep.connect(item.remove_sweep)
                     item.sweep_moved.connect(win.update_sweep_line)
                     break
+            self.post_admin()
 
         if show:
             win.update_theme(self.config)
@@ -455,6 +483,7 @@ class PlotActionsMixin:
                         param,
                         refrate=self.spinBox.value(),
                         show=show,
+                        dataset_key=dataset_key,
                     )
                     opened += 1
 
@@ -477,6 +506,7 @@ class PlotActionsMixin:
                         param,
                         refrate=self.spinBox.value(),
                         show=show,
+                        dataset_key=dataset_key,
                     )
                     opened += 1
 
@@ -634,8 +664,7 @@ class PlotActionsMixin:
             box = target_win.option_boxes[-1]
 
         source_trace_key = getattr(from_win, "_trace_key", from_win.label)
-        find_data = getattr(box.option_box, "findData", None)
-        index = find_data(source_trace_key) if callable(find_data) else -1
+        index = _combo_index_for_data(box.option_box, source_trace_key)
         if index < 0:
             index = box.option_box.findText(from_win.label)
         if index < 0:
@@ -648,7 +677,8 @@ class PlotActionsMixin:
             return False
 
         box.option_box.setCurrentIndex(index)
-        from_win.close()
+        if not getattr(from_win, "visible", False):
+            from_win.close()
         return True
 
 
@@ -698,8 +728,7 @@ class PlotActionsMixin:
                 continue
             try:
                 if win._dataset_key == source_key and win.param.name == param.name:
-                    if win.ds.running and not target_win.monitor.isActive():
-                        target_win.monitorIntervalChanged(target_win.spinBox.value())
+                    if win.ds.running:
                         target_win.toolbarRef.show()
                     return win
             except AttributeError:

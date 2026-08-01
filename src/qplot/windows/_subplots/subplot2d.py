@@ -1,5 +1,6 @@
 from typing import Any
 
+import numpy as np
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
@@ -21,6 +22,7 @@ class sweeper(plotWidget):
     their counterpart.
     """
     sweep_moved = QtCore.pyqtSignal([int, str, str, int, object])
+    merge_compatibility_changed = QtCore.pyqtSignal()
     remove_sweep = QtCore.pyqtSignal([int])
     
     def __init__(self,
@@ -144,35 +146,68 @@ class sweeper(plotWidget):
             is not ran.
 
         """
+        plot_worker = worker if worker is not None else self.worker
         if not super().refreshPlot(finished, worker=worker):
             return
-        
-        ### NOTE. self.axis_data["y"] is set to fixed param in super().refreshPlot,
-        ###       then updated to y axis value (indep param) in self.update_sweep()
-        self.fixed_indep_data = self.axis_data["y"]
-        
-        # Get correct row and param for y data
-        self.axis_param["y"] = getattr(self, "display_param", self.param)
-        
-        # Set-up fixed axis picker and slide
-        # Match range to index of fixed param data
-        self.picker.slider.setRange(0, len(self.fixed_indep_data) - 1)
-        
-        # Refresh plot
-        # blank text_box means slider signal blocked, during axis switch
-        if not self.picker.text_box.text():
-            self.picker.slider.setValue(self.fixed_index) 
-            self.picker.text_box.setText(
-                self.formatNum(self.fixed_indep_data[self.fixed_index])
+
+        try:
+            x_data = np.asarray(self.axis_data.get("x", []))
+            fixed_data = np.asarray(self.axis_data.get("y", []))
+            data_grid = np.asarray(self.dataGrid)
+            has_cut_data = (
+                x_data.size > 0
+                and fixed_data.size > 0
+                and data_grid.ndim == 2
+                and data_grid.shape[0] > 0
+                and data_grid.shape[1] > 0
                 )
-            
-            self.update_sweep()
-            self.picker.slider.blockSignals(False)
-            
-        else:
-            self.update_sweep()
-        
-        self.worker.running = False
+            if not has_cut_data:
+                self.fixed_indep_data = np.asarray([])
+                self.axis_data = {"x": np.asarray([]), "y": np.asarray([])}
+                self.line.setData([], [])
+                self.picker.slider.setRange(0, 0)
+                self.picker.slider.setEnabled(False)
+                self.picker.slider.blockSignals(False)
+                self.show_status(
+                    f"Waiting for plottable data for {self.param.name}...",
+                    5000,
+                    )
+                self.show_plot_state(
+                    "Waiting for plottable cut data",
+                    f"{self.param.name} has no cut data yet.",
+                    kind="empty",
+                    )
+                self.trace_updated.emit()
+                return
+
+            row_count = min(fixed_data.size, data_grid.shape[0])
+            column_count = min(x_data.size, data_grid.shape[1])
+            self.fixed_indep_data = fixed_data[:row_count]
+            self.axis_data["x"] = x_data[:column_count]
+            self.dataGrid = data_grid[:row_count, :column_count]
+            self.fixed_index = min(max(self.fixed_index, 0), row_count - 1)
+
+            # Get correct row and param for y data
+            self.axis_param["y"] = getattr(self, "display_param", self.param)
+
+            # Set-up fixed axis picker and slider
+            self.picker.slider.setEnabled(True)
+            self.picker.slider.setRange(0, row_count - 1)
+
+            # blank text_box means slider signal blocked during an axis switch
+            if not self.picker.text_box.text():
+                self.picker.slider.setValue(self.fixed_index)
+                self.picker.text_box.setText(
+                    self.formatNum(self.fixed_indep_data[self.fixed_index])
+                    )
+
+                self.update_sweep()
+                self.picker.slider.blockSignals(False)
+
+            else:
+                self.update_sweep()
+        finally:
+            plot_worker.running = False
         
         
     @property
@@ -223,6 +258,7 @@ class sweeper(plotWidget):
             x=self.axis_data["x"], 
             y=self.axis_data["y"],
             )
+        self.trace_updated.emit()
         
         if emit:
             # Tell source graph to update scan line on source graph
@@ -300,12 +336,12 @@ class sweeper(plotWidget):
             self.worker.axis_param["x"] = temp_y_param
         
             self.sweep_indep, self.fixed_indep = self.axis_options.values()
-        
+            self.merge_compatibility_changed.emit()
             self.refreshPlot() # Refresh without new data
             
         else:
             self.sweep_indep, self.fixed_indep = self.axis_options.values()
-            
+            self.merge_compatibility_changed.emit()
             # Get new data
             self.refreshWindow(force=True) 
             
@@ -355,12 +391,12 @@ class sweeper(plotWidget):
             self.worker.axis_param["x"] = temp_y_param
         
             self.sweep_indep, self.fixed_indep = self.axis_options.values()
-        
+            self.merge_compatibility_changed.emit()
             self.refreshPlot() # Refresh without new data
             
         else:
             self.sweep_indep, self.fixed_indep = self.axis_options.values()
-            
+            self.merge_compatibility_changed.emit()
             # Get new data
             self.refreshWindow(force=True) 
             

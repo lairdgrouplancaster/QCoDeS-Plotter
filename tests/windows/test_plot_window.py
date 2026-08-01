@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -37,6 +38,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         def __init__(self, number_of_results=10, running=True):
             self.number_of_results = number_of_results
             self.running = running
+            self.cache = object()
 
     class Worker:
         def __init__(self, running):
@@ -76,6 +78,83 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.load_calls, ["load"])
         self.assertEqual(window.last_ds_len, 0)
         self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_refresh_restarts_monitor_after_transient_row_count_error(self):
+        class Dataset:
+            running = True
+
+            @property
+            def number_of_results(self):
+                raise RuntimeError("database temporarily unavailable")
+
+        window = self._window(worker_running=False)
+        window._dataset_holder[window._dataset_key].dataset = Dataset()
+
+        with self.assertRaisesRegex(RuntimeError, "temporarily unavailable"):
+            plotWidget.refreshWindow(window)
+
+        self.assertEqual(window.monitor.stopped, 1)
+        self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_refresh_detects_completion_without_a_new_result_row(self):
+        window = self._window(worker_running=False)
+        window.last_ds_len = window.ds.number_of_results
+        window.param = object()
+        completion_checks = []
+
+        old_prep = plot_refresh_module.load_param_data_from_db_prep
+        try:
+            def complete(cache, param):
+                completion_checks.append((cache, param))
+                window.ds.running = False
+                return True
+
+            plot_refresh_module.load_param_data_from_db_prep = complete
+            plotWidget.refreshWindow(window)
+        finally:
+            plot_refresh_module.load_param_data_from_db_prep = old_prep
+
+        self.assertEqual(completion_checks, [(window.ds.cache, window.param)])
+        self.assertEqual(window.load_calls, [])
+        self.assertEqual(window.restart_intervals, [])
+
+    def test_secondary_trace_restart_does_not_depend_on_dictionary_order(self):
+        window = self._window(worker_running=False)
+        window.ds.running = False
+        window.last_ds_len = window.ds.number_of_results
+        main_line = self.Worker(running=True)
+        secondary_line = self.Worker(running=True)
+        window.line = main_line
+        window.lines = {
+            "secondary": secondary_line,
+            "main": main_line,
+            }
+
+        plotWidget.refreshWindow(window)
+
+        self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_completed_secondary_source_does_not_keep_target_monitor_running(self):
+        window = self._window(worker_running=False)
+        window.ds.running = False
+        window.last_ds_len = window.ds.number_of_results
+        main_line = self.Worker(running=False)
+        secondary_line = self.Worker(running=True)
+        secondary_line.from_win = type(
+            "Source",
+            (),
+            {"ds": self.Dataset(running=False)},
+            )()
+        window.line = main_line
+        window.lines = {
+            "secondary": secondary_line,
+            "main": main_line,
+            }
+
+        plotWidget.refreshWindow(window)
+
+        self.assertFalse(secondary_line.running)
+        self.assertEqual(window.restart_intervals, [])
 
     def test_invalid_operation_input_stops_load_with_visible_feedback(self):
         class Operations:
@@ -349,6 +428,146 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
 
         self.assertEqual(window.end_wait.emitted, 0)
 
+    def test_closed_stale_completion_cannot_release_current_worker_wait(self):
+        window = self._window()
+        stale_worker = self.Worker()
+        window._closed = True
+        window._merged_trace_users = 0
+
+        result = plotWidget.refreshPlot(window, True, worker=stale_worker)
+
+        self.assertFalse(result)
+        self.assertFalse(stale_worker.running)
+        self.assertTrue(window.worker.running)
+        self.assertEqual(window.end_wait.emitted, 0)
+
+    def test_closed_worker_callback_does_not_revive_unowned_dataset(self):
+        class DeleteTimer:
+            def __init__(self):
+                self.stopped = 0
+
+            def stop(self):
+                self.stopped += 1
+
+        window = self._window()
+        dataset_key = DatasetKey("database.db", "guid")
+        delete_timer = DeleteTimer()
+        handle = DatasetHandle(
+            object(),
+            users=0,
+            delete_timer=delete_timer,
+            )
+        window._closed = True
+        window._dataset_key = dataset_key
+        window._dataset_holder = {dataset_key: handle}
+
+        result = plotWidget.refreshPlot(window, True, worker=window.worker)
+
+        self.assertFalse(result)
+        self.assertFalse(window.worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertIs(window._dataset_holder[dataset_key], handle)
+        self.assertIs(handle.delete_timer, delete_timer)
+        self.assertEqual(delete_timer.stopped, 0)
+
+    def test_closed_hidden_source_can_refresh_while_a_trace_retains_it(self):
+        window = self._window()
+        dataset_key = DatasetKey("database.db", "guid")
+        window._closed = True
+        window._merged_trace_users = 1
+        window._dataset_key = dataset_key
+        window._dataset_holder = {
+            dataset_key: DatasetHandle(object(), users=1),
+            }
+
+        self.assertTrue(plotWidget._can_process_refresh(window))
+
+    def test_closed_source_rejects_callbacks_from_unrelated_dataset_user(self):
+        window = self._window()
+        dataset_key = DatasetKey("database.db", "guid")
+        window._closed = True
+        window._merged_trace_users = 0
+        window._dataset_key = dataset_key
+        window._dataset_holder = {
+            dataset_key: DatasetHandle(object(), users=2),
+            }
+
+        self.assertFalse(plotWidget._can_process_refresh(window))
+
+    def test_line_refresh_releases_worker_when_secondary_refresh_raises(self):
+        class Line:
+            def setData(self, *args, **kwargs):
+                pass
+
+        class Worker:
+            running = True
+
+        window = plot1d.__new__(plot1d)
+        qtw.QMainWindow.__init__(window)
+        worker = Worker()
+        window.worker = worker
+        window.axis_data = {"x": [0.0, 1.0], "y": [10.0, 20.0]}
+        window.line = Line()
+        window.marquee = None
+        window.refresh_secondary_lines = lambda: (_ for _ in ()).throw(
+            RuntimeError("secondary refresh failed")
+            )
+        trace_updates = []
+        window.trace_updated.connect(lambda: trace_updates.append(True))
+
+        with (
+                patch.object(plotWidget, "refreshPlot", return_value=True),
+                self.assertRaisesRegex(RuntimeError, "secondary refresh failed"),
+                ):
+            plot1d.refreshPlot(window, True, worker=worker)
+
+        self.assertFalse(worker.running)
+        self.assertEqual(trace_updates, [True])
+
+    def test_closing_retained_live_source_keeps_its_monitor_running(self):
+        class Dataset:
+            running = True
+
+        class Monitor:
+            def __init__(self):
+                self.active = False
+                self.stop_count = 0
+
+            def isActive(self):
+                return self.active
+
+            def stop(self):
+                self.active = False
+                self.stop_count += 1
+
+        class SpinBox:
+            def value(self):
+                return 0.2
+
+        dataset_key = DatasetKey("database.db", "guid")
+        dataset = Dataset()
+        window = plotWidget.__new__(plotWidget)
+        qtw.QMainWindow.__init__(window)
+        window.monitor = Monitor()
+        window.spinBox = SpinBox()
+        window._dataset_key = dataset_key
+        window._dataset_holder = {
+            dataset_key: DatasetHandle(dataset, users=1),
+            }
+        window._merged_trace_users = 1
+        window._closed = False
+        window.visible = True
+        restart_intervals = []
+        window.monitorIntervalChanged = restart_intervals.append
+
+        plotWidget.closeEvent(window, QtGui.QCloseEvent())
+
+        self.assertTrue(window._closed)
+        self.assertFalse(window.visible)
+        self.assertEqual(window.monitor.stop_count, 0)
+        self.assertEqual(restart_intervals, [0.2])
+        self.assertTrue(plotWidget._can_process_refresh(window))
+
     def test_current_worker_failure_reports_error_and_releases_wait(self):
         window = self._window()
         error = RuntimeError("current error")
@@ -457,6 +676,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
             name = "signal"
 
         window = plot1d.__new__(plot1d)
+        qtw.QMainWindow.__init__(window)
         worker = Worker()
         line = Line()
         states = []
@@ -473,6 +693,8 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window.show_status = lambda *args: statuses.append(args)
         window.show_plot_state = lambda *args, **kwargs: states.append((args, kwargs))
         window.hide_plot_state = lambda: None
+        trace_updates = []
+        window.trace_updated.connect(lambda: trace_updates.append(True))
 
         plot1d.refreshPlot(window, True, worker=worker)
 
@@ -483,6 +705,63 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         self.assertIn("Waiting for plottable data", statuses[-1][0])
         self.assertEqual(states[-1][0][0], "Waiting for plottable data")
         self.assertEqual(states[-1][1]["kind"], "empty")
+        self.assertEqual(trace_updates, [True])
+
+    def test_successful_line_refresh_notifies_merged_traces_once(self):
+        class Signal:
+            def __init__(self):
+                self.emitted = 0
+
+            def emit(self):
+                self.emitted += 1
+
+        class Line:
+            def __init__(self):
+                self.calls = []
+
+            def setData(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+
+        class Worker:
+            read_data = False
+            running = True
+            dataset_length_at_start = 5
+            axis_data = {"x": [0.0, 1.0], "y": [10.0, 20.0]}
+            axis_param = {"x": object(), "y": object()}
+            started_at = 0
+
+        class Dataset:
+            number_of_results = 2
+
+        class Param:
+            name = "signal"
+
+        window = plot1d.__new__(plot1d)
+        qtw.QMainWindow.__init__(window)
+        worker = Worker()
+        window.worker = worker
+        window.line = Line()
+        window.marquee = None
+        window._guid = "guid"
+        window._dataset_key = DatasetKey("database.db", "guid")
+        window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
+        window.param = Param()
+        window.end_wait = Signal()
+        window._set_param_axis_labels = lambda: None
+        window.show_status = lambda *_args: None
+        window.show_plot_state = lambda *_args, **_kwargs: None
+        window.hide_plot_state = lambda: None
+        window.refresh_secondary_lines = lambda: None
+        trace_updates = []
+        window.trace_updated.connect(lambda: trace_updates.append(True))
+
+        plot1d.refreshPlot(window, True, worker=worker)
+
+        self.assertEqual(
+            window.line.calls,
+            [((), {"x": [0.0, 1.0], "y": [10.0, 20.0]})],
+            )
+        self.assertEqual(trace_updates, [True])
 
 
 class RunListParentLookupTestCase(unittest.TestCase):

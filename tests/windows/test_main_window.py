@@ -377,6 +377,54 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
     class Param:
         name = "signal"
 
+    def test_cut_compatibility_changes_refresh_add_to_plot_candidates(self):
+        class Signal:
+            def __init__(self):
+                self.slots = []
+
+            def connect(self, slot):
+                self.slots.append(slot)
+
+            def emit(self, *args):
+                for slot in list(self.slots):
+                    slot(*args)
+
+        class sweeper:
+            def __init__(self, dataset_key, *_args, **_kwargs):
+                holder = _args[-1]
+                self._dataset_key = dataset_key
+                self.ds = holder[dataset_key].dataset
+                self.param = object()
+                self.closed = Signal()
+                self.make_ds = Signal()
+                self.previewTraceDropRequested = Signal()
+                self.merge_compatibility_changed = Signal()
+                self.sweep_moved = Signal()
+                self.remove_sweep = Signal()
+
+        class Harness(PlotActionsMixin):
+            def __init__(self):
+                self.config = DatabaseAwareDatasetCacheTestCase.Config()
+                self.threadPool = object()
+                self.dataset_holder = {}
+                self.windows = []
+                self.fileTextbox = DatabaseAwareDatasetCacheTestCase.Field("database.db")
+                self.admin_calls = 0
+
+            def post_admin(self):
+                self.admin_calls += 1
+
+        harness = Harness()
+        dataset = self.Dataset("database.db")
+        dataset_key = DatasetKey("database.db", dataset.guid)
+
+        harness.openWin(sweeper, dataset, show=False, dataset_key=dataset_key)
+        cut = harness.windows[0]
+
+        self.assertEqual(harness.admin_calls, 1)
+        cut.merge_compatibility_changed.emit()
+        self.assertEqual(harness.admin_calls, 2)
+
     def test_database_path_aliases_produce_the_same_key(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "database.db"
@@ -469,6 +517,72 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
 
         self.assertEqual(len(opened), 1)
         self.assertIs(opened[0][0][1], dataset_b)
+
+    def test_open_plot_preserves_explicit_noncurrent_database_key(self):
+        class Signal:
+            def __init__(self):
+                self.slots = []
+
+            def connect(self, slot):
+                self.slots.append(slot)
+
+        class SpinBox:
+            def value(self):
+                return 1.0
+
+        class plot1d:
+            def __init__(
+                    self,
+                    dataset_key,
+                    param,
+                    _config,
+                    _thread_pool,
+                    dataset_holder,
+                    **_kwargs,
+                    ):
+                self._dataset_key = dataset_key
+                self.param = param
+                self.dataset = dataset_holder[dataset_key].dataset
+                self.closed = Signal()
+                self.make_ds = Signal()
+                self.previewTraceDropRequested = Signal()
+                self.get_mergables = Signal()
+                self.remove_dataset = Signal()
+
+        key_a = DatasetKey("database-a.db", "shared-guid")
+        key_b = DatasetKey("database-b.db", "shared-guid")
+        dataset_a = self.Dataset("A")
+        dataset_b = self.Dataset("B")
+        param = self.Param()
+        param.depends_on = "x"
+        param.depends_on_ = ("x",)
+
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.fileTextbox = self.Field(key_b.database_path)
+        harness.spinBox = SpinBox()
+        harness.config = object()
+        harness.threadPool = object()
+        harness.dataset_holder = {key_b: DatasetHandle(dataset_b)}
+        harness.windows = []
+        harness.ds = None
+        harness._selected_dataset_key = None
+        harness._load_dataset = lambda key: (
+            dataset_a
+            if key == key_a
+            else self.fail(f"unexpected dataset load: {key}")
+        )
+        harness.post_admin = lambda: None
+        harness.show_status = lambda *_args: None
+        harness.show_error = lambda *_args: self.fail("plot load failed")
+
+        with patch("qplot.windows._plot_actions.plot1d", plot1d):
+            harness.openPlot(key_a, params=[param], show=False)
+
+        self.assertEqual(len(harness.windows), 1)
+        self.assertEqual(harness.windows[0]._dataset_key, key_a)
+        self.assertIs(harness.windows[0].dataset, dataset_a)
+        self.assertIs(harness.dataset_holder[key_a].dataset, dataset_a)
+        self.assertIs(harness.dataset_holder[key_b].dataset, dataset_b)
 
     def test_same_label_plot_from_another_database_is_a_merge_candidate(self):
         key_a = DatasetKey("database-a.db", "shared-guid")
