@@ -76,7 +76,7 @@ the app picker, set a per-user `.db` association from Command Prompt after
 replacing the Python path:
 
 ```batch
-reg add HKCU\Software\Classes\qplot.db\shell\open\command /ve /d "\"C:\path\to\QCoDeS-Plotter\.venv\Scripts\pythonw.exe\" -m qplot \"%%1\"" /f
+reg add HKCU\Software\Classes\qplot.db\shell\open\command /ve /d "\"C:\path\to\QCoDeS-Plotter\.venv\Scripts\pythonw.exe\" -m qplot \"%1\"" /f
 reg add HKCU\Software\Classes\.db /ve /d qplot.db /f
 ```
 
@@ -117,7 +117,8 @@ Common actions:
   or troubleshooting.
 * The refresh interval controls how often qPlot checks for new runs. Set it to
   `0.0 s` to disable automatic checks.
-* `Auto-plot` opens newly detected runs automatically.
+* `Auto-plot` opens newly detected runs automatically. When enabled while a run
+  is already in progress, it also opens the newest running run immediately.
 
 The selected-run preview tab can plot or export individual measurements through
 double-click and context-menu actions.
@@ -133,8 +134,11 @@ There are several ways to open plots:
 * Enter `*` as the measurement to open all plottable measurements for the
   selected run.
 
-Parameters with one independent variable open as line plots. Parameters with
-two or more independent variables open as heatmaps.
+Parameters with one independent variable open as line plots, and parameters
+with two independent variables open as heatmaps. Measurements with three or
+more independent variables are not projected or averaged implicitly: qPlot
+shows an `nD` unsupported placeholder in the run table and leaves the data
+available for CSV export. Create an explicit 1D/2D slice before plotting it.
 
 Plot windows may appear before their data has finished loading. Check the plot
 window status bar; unless qPlot stops responding or shows an error, wait for the

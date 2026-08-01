@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING, Any
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from qplot.datahandling import load_param_data_from_db_prep
 from qplot.datahandling.qcodes_cache import (
+    cache_dataset_completed,
     cache_has_no_written_data,
-    cache_is_live,
+    set_parameter_complete,
     update_cache_parameter_data,
 )
 from qplot.diagnostics import log_exception
@@ -84,10 +84,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
         return handle is not None and getattr(handle, "users", 0) > 0
 
     def _sync_dataset_completion(self, dataset: Any) -> None:
-        """Refresh cached QCoDeS completion state without loading plot data."""
+        """Schedule a final worker read so completion and data commit together."""
 
         if getattr(dataset, "running", False):
-            load_param_data_from_db_prep(dataset.cache, self.param)
+            self.load_data()
 
     def load_data(
             self,
@@ -143,20 +143,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
             )
         worker.dataset_length_at_start = self.ds.number_of_results
 
-        use_sql_heatmap = force_sql_heatmap
-        if not use_sql_heatmap and not cache_is_live(self.ds.cache):
-            use_sql_heatmap = worker._should_use_sql_heatmap()
-
-        if use_sql_heatmap:
-            complete = False
-        else:
-            complete = load_param_data_from_db_prep(self.ds.cache, self.param)
-            worker.read_data = not complete
-
         if status_message is not None:
             message = status_message
-        elif complete:
-            message = f"Processing cached data for {self.param.name}..."
         else:
             message = f"Loading data for {self.param.name}..."
         self.show_status(message, 0)
@@ -226,8 +214,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
             # Check if new data has been added to the dataset
             if current_ds_len != self.last_ds_len or force:
                 if self.worker.running:  # No need to run if already updating
-                    if not force:
-                        return
+                    self._refresh_pending = True
+                    if force:
+                        self.show_status("Refresh queued after the current load.", 3000)
+                    return
 
                 # The actual refresh line
                 self.load_data()
@@ -267,6 +257,32 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         if running:
                             self.monitorIntervalChanged(self.spinBox.value())
                             break
+
+
+    def _schedule_pending_refresh(self) -> None:
+        state = self.__dict__
+        if not state.get("_refresh_pending", False):
+            return
+        if state.get("_refresh_pending_scheduled", False):
+            return
+
+        self._refresh_pending_scheduled = True
+        QtCore.QTimer.singleShot(0, self._run_pending_refresh)
+
+
+    def _run_pending_refresh(self) -> None:
+        self._refresh_pending_scheduled = False
+        if not self.__dict__.get("_refresh_pending", False):
+            return
+        if not self._can_process_refresh():
+            self._refresh_pending = False
+            return
+        if getattr(getattr(self, "worker", None), "running", False):
+            self._schedule_pending_refresh()
+            return
+
+        self._refresh_pending = False
+        self.refreshWindow(force=True)
 
 
     @QtCore.pyqtSlot(bool)
@@ -318,13 +334,23 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 cache = self.ds.cache
                 name = self.param.name
 
-                update_cache_parameter_data(
+                cache_updated = update_cache_parameter_data(
                     cache,
                     name,
                     worker.updated_read_status,
                     worker.updated_write_status,
                     worker.cache_data,
                     )
+                if not cache_updated:
+                    self._refresh_pending = True
+                    self.show_status(
+                        "A newer refresh finished first; synchronising this plot...",
+                        5000,
+                        )
+                    return False
+
+                if cache_dataset_completed(cache):
+                    set_parameter_complete(self.param, True)
 
                 if not cache_has_no_written_data(cache):
                     self._live = False
@@ -391,7 +417,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         finally:  # Allow code to move on from wait_on_thread
             if worker is self.worker:
+                worker.running = False
                 self.end_wait.emit()
+                self._schedule_pending_refresh()
 
 
     @QtCore.pyqtSlot(Exception)

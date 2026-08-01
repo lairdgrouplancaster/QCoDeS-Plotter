@@ -580,6 +580,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             "is_completed": False,
             }
         preview.run_metadata = {"run-guid": old_metadata}
+        preview.current_guid = "run-guid"
         preview.metadata_signatures = {
             "run-guid": preview._metadata_signature(old_metadata)
             }
@@ -598,6 +599,37 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertNotIn("run-guid", preview.cache)
         self.assertNotIn("run-guid", preview.errors)
         self.assertIn("run-guid", preview.queue)
+
+    def test_preview_signature_tracks_shape_but_not_storage_metadata(self):
+        preview = PreviewTab(preview_size=100)
+        metadata = {
+            "result_table_name": "results",
+            "result_count": 10,
+            "run_description": '{"shapes": {"signal": [2, 5]}}',
+            "measure_parameters": ["signal"],
+            "sweep_parameters": ["x", "y"],
+            "setpoint_shape": [2, 5],
+            "point_shape": [2, 5],
+            "storage_bytes": 100,
+            }
+
+        signature = preview._metadata_signature(metadata)
+
+        self.assertEqual(
+            signature,
+            preview._metadata_signature({**metadata, "storage_bytes": 999}),
+            )
+        self.assertNotEqual(
+            signature,
+            preview._metadata_signature({**metadata, "setpoint_shape": [5, 2]}),
+            )
+        self.assertNotEqual(
+            signature,
+            preview._metadata_signature({
+                **metadata,
+                "run_description": '{"shapes": {"signal": [5, 2]}}',
+                }),
+            )
 
     def test_preview_tab_can_update_metadata_without_queueing_preview(self):
         preview = PreviewTab(preview_size=100)
@@ -625,7 +657,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(preview.queue, {})
         self.assertEqual(preview.run_metadata["run-guid"]["result_count"], 100)
 
-    def test_preview_tab_queues_every_run_on_database_load(self):
+    def test_preview_tab_does_not_eagerly_queue_every_run_on_database_load(self):
         preview = PreviewTab(preview_size=100)
         preview._start_next = lambda: None
         generation_changes = []
@@ -638,10 +670,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             2: {"guid": "guid-2", "run_timestamp": 101.0},
             })
 
-        self.assertEqual(preview.queue, {
-            "guid-1": preview_module.PREVIEW_REMAINING_PRIORITY,
-            "guid-2": preview_module.PREVIEW_REMAINING_PRIORITY,
-            })
+        self.assertEqual(preview.queue, {})
         self.assertEqual(generation_changes, [])
 
     def test_preview_tab_marks_only_active_worker_as_generating(self):
@@ -662,8 +691,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             1: {"guid": "guid-1", "run_timestamp": 100.0},
             2: {"guid": "guid-2", "run_timestamp": 101.0},
             })
-
-        preview._start_next()
+        preview.set_current_run(type("Dataset", (), {"guid": "guid-2"})())
 
         self.assertEqual(generation_changes, [("guid-2", True)])
         self.assertEqual(started_workers[0].guid, "guid-2")
@@ -690,11 +718,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         runs = {1: {"guid": "shared-guid", "run_timestamp": 100.0}}
 
         preview.set_database_runs("old.db", runs)
-        preview._start_next()
+        preview.set_current_run(type("Dataset", (), {"guid": "shared-guid"})())
         stale_generation = preview.generation
 
         preview.set_database_runs("current.db", runs)
-        preview._start_next()
+        preview.set_current_run(type("Dataset", (), {"guid": "shared-guid"})())
         current_generation = preview.generation
 
         preview._worker_finished(stale_generation, "shared-guid", [], None)
@@ -715,7 +743,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(preview.active, set())
         self.assertEqual(generation_changes[-1], ("shared-guid", False))
 
-    def test_preview_tab_prioritizes_selected_then_visible_then_remaining_runs(self):
+    def test_preview_tab_queues_only_selected_and_visible_runs_by_priority(self):
         preview = PreviewTab(preview_size=100)
         preview._start_next = lambda: None
         preview.set_database_runs("previews.db", {
@@ -737,21 +765,48 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             preview.queue["guid-1"],
             preview_module.PREVIEW_VISIBLE_PRIORITY,
             )
-        self.assertEqual(
-            preview.queue["guid-3"],
-            preview_module.PREVIEW_REMAINING_PRIORITY,
-            )
+        self.assertNotIn("guid-3", preview.queue)
 
         preview.prioritize_runs(visible_run_ids=[3])
 
-        self.assertEqual(
-            preview.queue["guid-1"],
-            preview_module.PREVIEW_REMAINING_PRIORITY,
-            )
+        self.assertNotIn("guid-1", preview.queue)
+        self.assertNotIn("guid-2", preview.queue)
         self.assertEqual(
             preview.queue["guid-3"],
             preview_module.PREVIEW_VISIBLE_PRIORITY,
             )
+
+    def test_preview_tab_retries_a_transient_error_when_run_is_reselected(self):
+        preview = PreviewTab(preview_size=100)
+        preview.database_path = "previews.db"
+        preview.run_metadata = {"run-guid": {"guid": "run-guid"}}
+        preview.errors = {"run-guid": "database was temporarily locked"}
+        preview._start_next = lambda: None
+
+        preview.set_current_run(type("Dataset", (), {"guid": "run-guid"})())
+
+        self.assertNotIn("run-guid", preview.errors)
+        self.assertEqual(
+            preview.queue["run-guid"],
+            preview_module.PREVIEW_SELECTED_PRIORITY,
+            )
+
+    def test_preview_cache_evicts_least_recently_used_noncurrent_entry(self):
+        preview = PreviewTab(preview_size=100)
+        old_max_entries = preview_module.PREVIEW_CACHE_MAX_ENTRIES
+        preview_module.PREVIEW_CACHE_MAX_ENTRIES = 2
+        image = QtGui.QImage(2, 2, QtGui.QImage.Format.Format_ARGB32)
+        payload = [{"image": image}]
+        try:
+            preview._store_cached("guid-1", payload)
+            preview._store_cached("guid-2", payload)
+            preview._cached_previews("guid-1")
+            preview._store_cached("guid-3", payload)
+        finally:
+            preview_module.PREVIEW_CACHE_MAX_ENTRIES = old_max_entries
+
+        self.assertEqual(list(preview.cache), ["guid-1", "guid-3"])
+        self.assertEqual(preview.cache_bytes, image.sizeInBytes() * 2)
 
     def test_preview_sampling_is_limited_without_result_count(self):
         old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
@@ -1235,6 +1290,36 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             ["x", "y"],
             ])
         self.assertTrue(all(preview["image"].width() == PREVIEW_SIZE for preview in previews))
+
+    def test_generate_run_previews_rejects_three_dimensional_measurement(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "previews.db")
+            conn = sqlite3.connect(database_path)
+            try:
+                conn.execute(
+                    "CREATE TABLE results (x REAL, y REAL, z REAL, signal REAL)"
+                    )
+                conn.execute("INSERT INTO results VALUES (0, 0, 0, 1)")
+                conn.commit()
+            finally:
+                conn.close()
+
+            previews = generate_run_previews(database_path, {
+                "result_table_name": "results",
+                "result_count": 1,
+                "run_description": """
+                {
+                  "interdependencies_": {
+                    "dependencies": {"signal": ["x", "y", "z"]}
+                  }
+                }
+                """,
+                })
+
+        self.assertEqual(len(previews), 1)
+        self.assertTrue(previews[0]["unsupported"])
+        self.assertEqual(previews[0]["dimension_count"], 3)
+        self.assertNotIn("image", previews[0])
 
 
 if __name__ == "__main__":

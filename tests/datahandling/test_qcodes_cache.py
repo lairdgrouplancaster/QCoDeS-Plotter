@@ -1,3 +1,5 @@
+import numpy as np
+
 from qplot.datahandling import LoadFromDB as load_from_db
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
@@ -12,6 +14,7 @@ from qplot.datahandling.qcodes_cache import (
     prepare_cache_if_empty,
     set_cache_dataset_completed,
     set_parameter_complete,
+    snapshot_cache_parameter_state,
     update_cache_parameter_data,
 )
 
@@ -66,6 +69,19 @@ def test_cache_prepare_helper_prepares_empty_cache():
     assert cache._data == {"signal": {"signal": [5, 6]}}
 
 
+def test_cache_parameter_snapshot_copies_state_mappings():
+    cache = Cache()
+
+    write_status, read_status, data = snapshot_cache_parameter_state(cache, "signal")
+    cache._write_status["signal"] = 9
+    cache._read_status["signal"] = 9
+    cache._data["signal"]["extra"] = [3]
+
+    assert write_status == {"signal": 0}
+    assert read_status == {"signal": 0}
+    assert data == {"signal": {"signal": [1, 2]}}
+
+
 def test_dataset_completion_helper_sets_private_flag():
     cache = Cache()
 
@@ -77,7 +93,7 @@ def test_dataset_completion_helper_sets_private_flag():
 def test_cache_update_writes_single_parameter_state():
     cache = Cache()
 
-    update_cache_parameter_data(
+    committed = update_cache_parameter_data(
         cache,
         "signal",
         {"signal": 4},
@@ -89,6 +105,44 @@ def test_cache_update_writes_single_parameter_state():
     assert cache._write_status["signal"] == 4
     assert cache._data["signal"] == {"signal": [3, 4]}
     assert not cache_has_no_written_data(cache)
+    assert committed
+
+
+def test_cache_update_rejects_result_older_than_current_parameter_state():
+    cache = Cache()
+    cache._read_status["signal"] = 8
+    cache._write_status["signal"] = 8
+
+    committed = update_cache_parameter_data(
+        cache,
+        "signal",
+        {"signal": 4},
+        {"signal": 4},
+        {"signal": {"signal": [3, 4]}},
+    )
+
+    assert not committed
+    assert cache._read_status["signal"] == 8
+    assert cache._write_status["signal"] == 8
+    assert cache._data["signal"] == {"signal": [1, 2]}
+
+
+def test_cache_update_accepts_first_result_after_none_shaped_status():
+    cache = Cache()
+    cache._read_status["signal"] = None
+    cache._write_status["signal"] = None
+
+    committed = update_cache_parameter_data(
+        cache,
+        "signal",
+        {"signal": 0},
+        {"signal": 0},
+        {"signal": {"signal": []}},
+    )
+
+    assert committed
+    assert cache._read_status["signal"] == 0
+    assert cache._write_status["signal"] == 0
 
 
 def test_parameter_completion_helpers_set_private_flag():
@@ -101,7 +155,26 @@ def test_parameter_completion_helpers_set_private_flag():
     assert parameter_is_complete(param)
 
 
-def test_load_param_data_from_db_prep_marks_completed_param(monkeypatch):
+def test_shaped_merge_does_not_mutate_shared_existing_array():
+    class RunDescriber:
+        shapes = {"signal": (2,)}
+
+    existing = {"signal": {"signal": np.array([1.0, np.nan])}}
+
+    write_status, merged = load_from_db.append_shaped_parameter_data_to_existing_arrays(
+        RunDescriber(),
+        "signal",
+        {"signal": 1},
+        existing,
+        {"signal": {"signal": np.array([2.0])}},
+        )
+
+    np.testing.assert_array_equal(existing["signal"]["signal"], [1.0, np.nan])
+    np.testing.assert_array_equal(merged["signal"]["signal"], [1.0, 2.0])
+    assert write_status["signal"] == 2
+
+
+def test_load_param_data_from_db_prep_defers_parameter_completion_until_commit(monkeypatch):
     cache = Cache()
     cache._data = {}
     param = Param()
@@ -112,7 +185,7 @@ def test_load_param_data_from_db_prep_marks_completed_param(monkeypatch):
 
     assert result is False
     assert cache._dataset.completed
-    assert param._complete
+    assert not param._complete
     assert cache.prepare_called
 
 

@@ -1,4 +1,7 @@
 import json
+import os
+import stat
+import tempfile
 from copy import deepcopy
 from importlib.resources import files
 from os import makedirs, path
@@ -40,8 +43,6 @@ class config:
         # Make config file if missing
         if not path.isfile(self.default_file):
             makedirs(path.dirname(self.default_file), exist_ok=True)
-            open(self.default_file, 'x').close()
-            
             # Create config from schema
             self.reset_to_defaults()
         else:
@@ -223,8 +224,54 @@ class config:
             path of file
 
         """
-        with open(path, "w") as fp:
-            json.dump(self.config, fp, indent=4)
+        directory = os.path.dirname(os.path.abspath(path))
+        makedirs(directory, exist_ok=True)
+        file_mode = None
+        try:
+            file_mode = stat.S_IMODE(os.stat(path).st_mode)
+        except FileNotFoundError:
+            pass
+
+        file_descriptor, temporary_path = tempfile.mkstemp(
+            prefix=f".{os.path.basename(path)}.",
+            suffix=".tmp",
+            dir=directory,
+            text=True,
+            )
+        try:
+            with os.fdopen(file_descriptor, "w", encoding="utf-8") as fp:
+                json.dump(self.config, fp, indent=4)
+                fp.write("\n")
+                fp.flush()
+                os.fsync(fp.fileno())
+            if file_mode is not None:
+                os.chmod(temporary_path, file_mode)
+            os.replace(temporary_path, path)
+            self._sync_config_directory(directory)
+        except Exception:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+            raise
+
+
+    @staticmethod
+    def _sync_config_directory(directory: str) -> None:
+        """Persist the rename on platforms that support directory fsync."""
+
+        if os.name == "nt":
+            return
+        try:
+            descriptor = os.open(directory, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            pass
+        finally:
+            os.close(descriptor)
             
     
     def reset_to_defaults(self):

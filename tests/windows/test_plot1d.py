@@ -97,6 +97,18 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertEqual(sample.y_value, 10.0)
         self.assertEqual(sample.point_number, 2)
 
+    def test_nearest_trace_sample_uses_y_to_disambiguate_duplicate_x_values(self):
+        sample = _nearest_trace_sample(
+            [0.0, 1.0, 1.0, 2.0],
+            [0.0, 10.0, 20.0, 30.0],
+            1.0,
+            cursor_y=19.0,
+            )
+
+        self.assertEqual(sample.x_value, 1.0)
+        self.assertEqual(sample.y_value, 20.0)
+        self.assertEqual(sample.point_number, 3)
+
     def test_axis_label_uses_power_scaled_units_for_auto_si_prefix(self):
         axis = plotwin_module._PowerScaledAxisItem("bottom")
         axis.setLabel(text="Gate ch2", units="V")
@@ -163,6 +175,24 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertEqual(y_value, 4.0)
         self.assertIs(viewbox, plot_item.vb)
         self.assertEqual(point_number, 3)
+
+    def test_nearest_trace_point_uses_screen_distance_with_duplicate_x_values(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        line = plot_item.plot(x=[1.0, 1.0], y=[10.0, 20.0])
+        window = plot1d.__new__(plot1d)
+        window.plot = plot_item
+        window.right_vb = None
+        window.lines = {"main": line}
+
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 19.0))
+
+        _label, _x_value, y_value, _viewbox, point_number = (
+            window._nearest_trace_point(scene_pos)
+            )
+
+        self.assertEqual(y_value, 20.0)
+        self.assertEqual(point_number, 2)
 
     def test_nearest_trace_point_ignores_hidden_traces(self):
         widget = pg.GraphicsLayoutWidget()
@@ -1055,7 +1085,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             )
         )
 
-    def test_subplot_axis_mapping_rejects_incompatible_cut_axis(self):
+    def test_subplot_axis_mapping_requires_source_to_match_host_displayed_x(self):
         self.assertEqual(
             _subplot_axis_order(
                 {"x": "gate", "y": "current"},
@@ -1064,20 +1094,20 @@ class SnapToTraceTestCase(unittest.TestCase):
             ),
             ("x", "y"),
         )
-        self.assertEqual(
+        self.assertIsNone(
             _subplot_axis_order(
                 {"x": "current", "y": "gate"},
                 {"x": "gate", "y": "field"},
                 source_is_cut=True,
-            ),
-            ("y", "x"),
+            )
         )
-        self.assertIsNone(
+        self.assertEqual(
             _subplot_axis_order(
                 {"x": "gate", "y": "current"},
                 {"x": "field", "y": "gate"},
                 source_is_cut=True,
-            )
+            ),
+            ("y", "x"),
         )
 
     def test_completed_cut_updates_and_clears_merged_subplot_immediately(self):

@@ -7,8 +7,25 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.5.0-b3 - 2026-08-01
+
 ### Fixed
 
+- Restore horizontal and vertical heatmap cut windows after axis-state
+  initialization prevented their fixed-axis controls from being constructed.
+- Reject measurements with more than two independent axes instead of silently
+  averaging omitted dimensions, and show unsupported-dimensionality
+  placeholders in run previews.
+- Invalidate previews when dependency or grid-shape metadata changes, without
+  regenerating them for storage-size-only updates.
+- Coalesce repeated plot refresh requests and run main-window database polling
+  outside the GUI thread.
+- Close selected, exported, and cached dataset connections deterministically
+  when their last owner releases them.
+- Reject non-finite or reversed manual axis limits without raising from a Qt
+  callback.
+- Save configuration updates atomically so interrupted writes preserve the
+  previous valid file.
 - Keep 1D traces from different databases distinct when their run IDs and
   parameter names match.
 - Keep multiple cuts from the same heatmap distinct and visibly numbered when

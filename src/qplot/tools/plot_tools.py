@@ -137,7 +137,15 @@ def differentiate(
         axis_num = 0
        
     data = data_dict[key]
-    new_data = np.gradient(data, data_dict[dx], axis=axis_num)
+    coordinates = np.asarray(data_dict[dx], dtype=float)
+    if coordinates.ndim != 1 or coordinates.size < 2:
+        raise ValueError("Differentiation requires at least two axis coordinates.")
+    if not np.all(np.isfinite(coordinates)):
+        raise ValueError("Differentiation axis coordinates must be finite.")
+    if np.any(np.diff(coordinates) == 0):
+        raise ValueError("Differentiation axis coordinates must not repeat.")
+
+    new_data = np.gradient(data, coordinates, axis=axis_num)
     
     return {key : new_data}
 

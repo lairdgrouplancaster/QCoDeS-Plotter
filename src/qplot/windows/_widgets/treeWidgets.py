@@ -1,5 +1,6 @@
 from datetime import datetime
 from os.path import isfile
+from typing import cast
 
 import numpy as np
 from PyQt6 import (
@@ -601,7 +602,7 @@ class RunList(qtw.QTreeWidget):
             return text if text else None
 
 
-    def checkWatching(self):
+    def checkWatching(self, statuses=None):
         """
         Check unfinished runs within table and sets finish time if completed.
 
@@ -610,7 +611,11 @@ class RunList(qtw.QTreeWidget):
         updated_runs = {}
         for run in self.watching:
 
-            status = get_run_status(run.guid)
+            status = (
+                get_run_status(run.guid)
+                if statuses is None
+                else statuses.get(run.guid, {})
+                )
             if not status:
                 continue
 
@@ -709,9 +714,8 @@ class RunList(qtw.QTreeWidget):
         Produces the context menu at mouse position on right click.
         Allows user to open specific plots from the selected run.
         
-        Relies on the fact the the right click is consered the same as a left 
-        click for slots. So right click also runs the selection code of left
-        click before the context menu, auto loading data needed in Main Window.
+        Selects the row under the pointer before building actions so every menu
+        command targets the row that was actually clicked.
 
         Parameters
         ----------
@@ -722,6 +726,24 @@ class RunList(qtw.QTreeWidget):
         main = self.main_window()
         if main is None:
             return
+
+        item = self.itemAt(pos)
+        if item is None:
+            main.show_status("Right-click a run to open its plot menu.", 3000)
+            return
+        item = cast(qtw.QTreeWidgetItem, item)
+        while True:
+            parent = item.parent()
+            if parent is None:
+                break
+            item = parent
+        if not isinstance(item, SortableTreeWidgetItem):
+            return
+
+        if self.currentItem() is not item or item not in self.selectedItems():
+            self.clearSelection()
+            self.setCurrentItem(item)
+            item.setSelected(True)
 
         if main.ds is None:
             main.show_status("Select a run before opening the context menu.", 5000)

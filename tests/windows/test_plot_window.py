@@ -56,6 +56,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window.load_calls = []
         window.restart_intervals = []
         window.load_data = lambda: window.load_calls.append("load")
+        window.show_status = lambda *args: None
         window.monitorIntervalChanged = lambda interval: (
             window.restart_intervals.append(interval)
             )
@@ -69,6 +70,21 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.load_calls, [])
         self.assertEqual(window.last_ds_len, 0)
         self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_forced_refresh_while_busy_is_coalesced(self):
+        window = self._window(worker_running=True)
+
+        plotWidget.refreshWindow(window, force=True)
+        plotWidget.refreshWindow(window, force=True)
+
+        self.assertEqual(window.load_calls, [])
+        self.assertTrue(window._refresh_pending)
+
+        window.worker.running = False
+        plotWidget._run_pending_refresh(window)
+
+        self.assertEqual(window.load_calls, ["load"])
+        self.assertFalse(window._refresh_pending)
 
     def test_refresh_keeps_row_count_pending_until_worker_succeeds(self):
         window = self._window(worker_running=False)
@@ -96,27 +112,15 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.monitor.stopped, 1)
         self.assertEqual(window.restart_intervals, [0.2])
 
-    def test_refresh_detects_completion_without_a_new_result_row(self):
+    def test_refresh_schedules_final_worker_read_without_a_new_result_row(self):
         window = self._window(worker_running=False)
         window.last_ds_len = window.ds.number_of_results
         window.param = object()
-        completion_checks = []
 
-        old_prep = plot_refresh_module.load_param_data_from_db_prep
-        try:
-            def complete(cache, param):
-                completion_checks.append((cache, param))
-                window.ds.running = False
-                return True
+        plotWidget.refreshWindow(window)
 
-            plot_refresh_module.load_param_data_from_db_prep = complete
-            plotWidget.refreshWindow(window)
-        finally:
-            plot_refresh_module.load_param_data_from_db_prep = old_prep
-
-        self.assertEqual(completion_checks, [(window.ds.cache, window.param)])
-        self.assertEqual(window.load_calls, [])
-        self.assertEqual(window.restart_intervals, [])
+        self.assertEqual(window.load_calls, ["load"])
+        self.assertEqual(window.restart_intervals, [0.2])
 
     def test_secondary_trace_restart_does_not_depend_on_dictionary_order(self):
         window = self._window(worker_running=False)
@@ -175,6 +179,41 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertFalse(result)
         self.assertIn("Fill Below", window.statuses[-1][0])
         self.assertEqual(window.plot_states[-1][0][0], "Operations not applied")
+
+    def test_axis_swap_queues_a_fresh_worker_without_mutating_old_worker_data(self):
+        class Combo:
+            def __init__(self, items, current):
+                self.items = items
+                self.index = items.index(current)
+
+            def currentText(self):
+                return self.items[self.index]
+
+            def blockSignals(self, _blocked):
+                pass
+
+            def findText(self, text):
+                return self.items.index(text)
+
+            def setCurrentIndex(self, index):
+                self.index = index
+
+        window = plotWidget.__new__(plotWidget)
+        window.axis_dropdown = {
+            "x": Combo(["x", "y"], "y"),
+            "y": Combo(["x", "y"], "y"),
+            }
+        window._axis_selection = {"x": "x", "y": "y"}
+        old_worker = object()
+        window.worker = old_worker
+        refreshes = []
+        window.refreshWindow = lambda force=False: refreshes.append(force)
+
+        plotWidget.change_axis(window, "x")
+
+        self.assertEqual(window.axis_options, {"x": "y", "y": "x"})
+        self.assertIs(window.worker, old_worker)
+        self.assertEqual(refreshes, [True])
 
     def test_load_data_uses_sampled_sql_and_wires_originating_worker(self):
         class Signal:
@@ -285,23 +324,15 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
             )
 
         old_loader = plot_refresh_module.loader
-        old_prep = plot_refresh_module.load_param_data_from_db_prep
         try:
             plot_refresh_module.loader = Worker
-            plot_refresh_module.load_param_data_from_db_prep = (
-                lambda *_args: (_ for _ in ()).throw(
-                    AssertionError("completed cache prep should be skipped")
-                    )
-                )
-
             plotWidget.load_data(window)
         finally:
             plot_refresh_module.loader = old_loader
-            plot_refresh_module.load_param_data_from_db_prep = old_prep
 
         self.assertEqual(len(window.threadPool.started), 1)
         worker = window.threadPool.started[0]
-        self.assertTrue(worker.checked_large_heatmap)
+        self.assertFalse(worker.checked_large_heatmap)
         self.assertTrue(worker.read_data)
         self.assertFalse(worker.force_sql_heatmap)
         self.assertEqual(worker.operations, ["operation"])
@@ -821,9 +852,19 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             run_list = treeWidgets.RunList()
             main.setCentralWidget(run_list)
+            run_list.addRuns({
+                1: {"guid": "guid-1"},
+                2: {"guid": "guid-2"},
+                })
+            main.resize(900, 400)
+            main.show()
+            qtw.QApplication.processEvents()
+            run_list.setCurrentItem(run_list._item_for_guid("guid-1"))
+            item = run_list._item_for_guid("guid-2")
 
-            run_list.prepareMenu(QtCore.QPoint(0, 0))
+            run_list.prepareMenu(run_list.visualItemRect(item).center())
 
+            self.assertEqual(run_list.currentItem().guid, "guid-2")
             self.assertEqual(captured[0], "&Plot all")
             self.assertIn("&Plot all", captured)
             self.assertIn("  - signal", captured)
@@ -1484,6 +1525,44 @@ class RunListParentLookupTestCase(unittest.TestCase):
         finally:
             host.deleteLater()
             widget.deleteLater()
+
+    def test_axis_scale_rejects_non_finite_and_reversed_manual_ranges(self):
+        window = plotWidget.__new__(plotWidget)
+        window.vb = pg.ViewBox()
+        minimum = qtw.QLineEdit("nan")
+        maximum = qtw.QLineEdit("1")
+        manual = qtw.QRadioButton()
+        ui = type(
+            "AxisControls",
+            (),
+            {"minText": minimum, "maxText": maximum, "manualRadio": manual},
+            )()
+        window._axis_scale_controls = {"x": ui}
+        window.show_status = lambda *args: window.__dict__.setdefault(
+            "statuses",
+            [],
+            ).append(args)
+        window.vb.setXRange(0, 1, padding=0)
+
+        try:
+            before = list(window.vb.viewRange()[0])
+            plotWidget._axis_scale_range_text_changed(window, "x")
+            self.assertEqual(list(window.vb.viewRange()[0]), before)
+            self.assertTrue(all(value not in {"nan", "inf"} for value in (
+                minimum.text(),
+                maximum.text(),
+                )))
+
+            minimum.setText("2")
+            maximum.setText("1")
+            plotWidget._axis_scale_range_text_changed(window, "x")
+            self.assertEqual(list(window.vb.viewRange()[0]), before)
+            self.assertIn("finite numbers", window.statuses[-1][0])
+        finally:
+            minimum.deleteLater()
+            maximum.deleteLater()
+            manual.deleteLater()
+            window.vb.deleteLater()
 
     def test_colorbar_scale_action_opens_dialog_without_nested_menu(self):
         class Bar:

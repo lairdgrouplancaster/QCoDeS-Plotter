@@ -321,29 +321,9 @@ class sweeper(plotWidget):
                 )
             self.axis_dropdown["x"].blockSignals(False)
             
-        # NOTE, same as self.change_axis() from here
-            
-            # Switch data
-            temp_y_data = self.worker.axis_data["y"]
-            temp_y_param = self.worker.axis_param["y"]
-            self.worker.dataGrid = self.worker.dataGrid.transpose()
-            
-            # Switch worker data to track changes
-            self.worker.axis_data["y"] = self.worker.axis_data["x"]
-            self.worker.axis_data["x"] = temp_y_data
-            
-            self.worker.axis_param["y"] = self.worker.axis_param["x"]
-            self.worker.axis_param["x"] = temp_y_param
-        
-            self.sweep_indep, self.fixed_indep = self.axis_options.values()
-            self.merge_compatibility_changed.emit()
-            self.refreshPlot() # Refresh without new data
-            
-        else:
-            self.sweep_indep, self.fixed_indep = self.axis_options.values()
-            self.merge_compatibility_changed.emit()
-            # Get new data
-            self.refreshWindow(force=True) 
+        self.sweep_indep, self.fixed_indep = self.axis_options.values()
+        self.merge_compatibility_changed.emit()
+        self.refreshWindow(force=True)
             
     
     @QtCore.pyqtSlot()
@@ -376,29 +356,9 @@ class sweeper(plotWidget):
                 )
             self.picker.option_box.blockSignals(False)
             
-        # NOTE, same as self.change_fixed_param() from here
-            
-            # Switch data
-            temp_y_data = self.worker.axis_data["y"]
-            temp_y_param = self.worker.axis_param["y"]
-            self.worker.dataGrid = self.worker.dataGrid.transpose()
-            
-            # Switch worker data to track changes
-            self.worker.axis_data["y"] = self.worker.axis_data["x"]
-            self.worker.axis_data["x"] = temp_y_data
-            
-            self.worker.axis_param["y"] = self.worker.axis_param["x"]
-            self.worker.axis_param["x"] = temp_y_param
-        
-            self.sweep_indep, self.fixed_indep = self.axis_options.values()
-            self.merge_compatibility_changed.emit()
-            self.refreshPlot() # Refresh without new data
-            
-        else:
-            self.sweep_indep, self.fixed_indep = self.axis_options.values()
-            self.merge_compatibility_changed.emit()
-            # Get new data
-            self.refreshWindow(force=True) 
+        self.sweep_indep, self.fixed_indep = self.axis_options.values()
+        self.merge_compatibility_changed.emit()
+        self.refreshWindow(force=True)
             
             
     @QtCore.pyqtSlot(int, int)

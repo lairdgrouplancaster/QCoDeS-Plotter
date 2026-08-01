@@ -2,7 +2,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._run_formatting import one_dimensional_duplicate_point_count, run_tooltip_text
-from .preview import DraggablePreviewImageLabel
+from .preview import DraggablePreviewImageLabel, unsupported_preview_label
 
 MEASUREMENT_PREVIEW_SIZE = 22
 MEASUREMENT_PREVIEW_SPACING = 3
@@ -65,6 +65,16 @@ class RunPreviewCell(qtw.QWidget):
 
         preview_count = 0
         for preview in previews or []:
+            if preview.get("unsupported"):
+                label = unsupported_preview_label(
+                    preview,
+                    self.icon_size,
+                    "measurementPreviewUnsupported",
+                    )
+                self.content_layout.addWidget(label)
+                preview_count += 1
+                continue
+
             image = preview.get("image")
             if image is None:
                 continue

@@ -21,6 +21,9 @@ from qplot.datahandling.database import (
     DatabaseLoadWorker as DatabaseLoadWorker,
 )
 from qplot.datahandling.database import (
+    DatabaseRefreshWorker as DatabaseRefreshWorker,
+)
+from qplot.datahandling.database import (
     database_info_report as database_info_report,
 )
 from qplot.datahandling.database import (
@@ -101,7 +104,7 @@ class DatabasePathLineEdit(qtw.QLineEdit):
         self.databaseDropped.emit(os.path.abspath(path))
 
 
-class MainWindow(  # type: ignore[misc]
+class MainWindow(
     DatabaseActionsMixin,
     PlotActionsMixin,
     RunControlsMixin,
@@ -137,6 +140,8 @@ class MainWindow(  # type: ignore[misc]
         self.databaseDetailThreadPool.setMaxThreadCount(1)
         self.databaseExpensiveDetailThreadPool = QtCore.QThreadPool(self)
         self.databaseExpensiveDetailThreadPool.setMaxThreadCount(1)
+        self.databaseRefreshThreadPool = QtCore.QThreadPool(self)
+        self.databaseRefreshThreadPool.setMaxThreadCount(1)
         self._database_load_generation = 0
         self._database_load_active = False
         self._database_load_state = None
@@ -147,6 +152,10 @@ class MainWindow(  # type: ignore[misc]
         self._database_expensive_detail_generation = 0
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_refresh_generation = 0
+        self._database_refresh_active = False
+        self._database_refresh_pending = False
+        self._database_refresh_worker: DatabaseRefreshWorker | None = None
         self._next_plot_x = 0
         self._next_plot_y = 0
         self.localLastFile = None
@@ -414,6 +423,9 @@ class MainWindow(  # type: ignore[misc]
             )
         if expensive_detail_worker is not None:
             expensive_detail_worker.cancel()
+        refresh_worker = getattr(self, "_database_refresh_worker", None)
+        if refresh_worker is not None:
+            refresh_worker.cancel()
         self._database_load_generation += 1
         self._database_load_active = False
         self._database_load_state = None
@@ -428,8 +440,20 @@ class MainWindow(  # type: ignore[misc]
             )
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_refresh_generation = (
+            getattr(self, "_database_refresh_generation", 0) + 1
+            )
+        self._database_refresh_active = False
+        self._database_refresh_pending = False
+        self._database_refresh_worker = None
         self.monitor.stop()
         qtw.QApplication.closeAllWindows()
+        release_selected = getattr(self, "_release_selected_dataset", None)
+        if callable(release_selected):
+            release_selected()
+        close_handles = getattr(self, "_close_all_dataset_handles", None)
+        if callable(close_handles):
+            close_handles()
     
    
     @QtCore.pyqtSlot()

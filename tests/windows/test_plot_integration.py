@@ -146,5 +146,27 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
 
         assert heatmap_window.dataGrid.shape == (7, 5)
         assert np.isfinite(heatmap_window.dataGrid).all()
+
+        source_x = np.asarray(heatmap_window.axis_data["x"]).copy()
+        source_y = np.asarray(heatmap_window.axis_data["y"]).copy()
+        source_grid = np.asarray(heatmap_window.dataGrid).copy()
+
+        heatmap_window.z_index = [2, 1]
+        heatmap_window.openSweep("h")
+        horizontal_cut = window.windows[-1]
+        wait_for(lambda: not getattr(horizontal_cut.worker, "running", False))
+
+        np.testing.assert_array_equal(horizontal_cut.axis_data["x"], source_x)
+        np.testing.assert_array_equal(horizontal_cut.axis_data["y"], source_grid[1, :])
+        assert horizontal_cut.sweep_id in heatmap_window.sweep_lines
+
+        heatmap_window.z_index = [2, 1]
+        heatmap_window.openSweep("v")
+        vertical_cut = window.windows[-1]
+        wait_for(lambda: not getattr(vertical_cut.worker, "running", False))
+
+        np.testing.assert_array_equal(vertical_cut.axis_data["x"], source_y)
+        np.testing.assert_array_equal(vertical_cut.axis_data["y"], source_grid[:, 2])
+        assert vertical_cut.sweep_id in heatmap_window.sweep_lines
     finally:
         close_main_window(window)

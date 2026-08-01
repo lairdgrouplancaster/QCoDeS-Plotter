@@ -17,6 +17,8 @@ from PyQt6 import QtCore
 
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.datahandling.readSQL import (
+    find_new_runs,
+    get_run_status,
     get_runs_basic_via_sql,
     iter_run_detail_batches_via_sql,
     iter_run_shape_batches_via_sql,
@@ -427,6 +429,77 @@ class DatabaseDetailSignals(QtCore.QObject):
     finished = QtCore.pyqtSignal(int, str, object)
 
 
+class DatabaseRefreshSignals(QtCore.QObject):
+    """Signals emitted by a coalesced main-window refresh worker."""
+
+    finished = QtCore.pyqtSignal(int, str, object, object, object)
+
+
+class DatabaseRefreshWorker(QtCore.QRunnable):
+    """Fetch new runs and live-run status without blocking the GUI thread."""
+
+    def __init__(self, generation, database_path, last_run_id, watched_runs):
+        super().__init__()
+        self.signals = DatabaseRefreshSignals()
+        self.generation = generation
+        self.database_path = database_path
+        self.last_run_id = int(last_run_id or 0)
+        self.watched_runs = list(watched_runs or [])
+        self._cancelled = threading.Event()
+
+
+    def cancel(self):
+        self._cancelled.set()
+
+
+    def run(self):
+        new_runs = {}
+        statuses = {}
+        try:
+            if self._cancelled.is_set():
+                return
+
+            new_runs = find_new_runs(
+                self.last_run_id,
+                database_path=self.database_path,
+                cancelled_callback=self._cancelled.is_set,
+                ) or {}
+            for guid in self.watched_runs:
+                if self._cancelled.is_set():
+                    return
+                status = get_run_status(
+                    guid,
+                    database_path=self.database_path,
+                    include_storage_bytes=False,
+                    cancelled_callback=self._cancelled.is_set,
+                    )
+                if status:
+                    statuses[guid] = status
+        except Exception as err:
+            if self._cancelled.is_set():
+                return
+            log_exception("Database refresh worker failed", err, __name__)
+            self._emit_finished(new_runs, statuses, err)
+            return
+
+        self._emit_finished(new_runs, statuses, None)
+
+
+    def _emit_finished(self, new_runs, statuses, error):
+        try:
+            self.signals.finished.emit(
+                self.generation,
+                self.database_path,
+                new_runs,
+                statuses,
+                error,
+                )
+        except RuntimeError as err:
+            message = str(err)
+            if not ("wrapped C/C++ object" in message and "has been deleted" in message):
+                raise
+
+
 class DatabaseLoadWorker(QtCore.QRunnable):
     """
     Loads database metadata away from the GUI thread.
@@ -492,7 +565,10 @@ class DatabaseLoadWorker(QtCore.QRunnable):
 
             self._emit_status("Opening database read-only...")
             self._emit_status("Loading basic run list...")
-            runs = get_runs_basic_via_sql(self.database_path) or {}
+            runs = get_runs_basic_via_sql(
+                self.database_path,
+                cancelled_callback=self._is_cancelled,
+                ) or {}
             if self._is_cancelled():
                 return
         except InterruptedError:
@@ -685,28 +761,37 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
                 return
 
             self._emit_status(f"Loading run details... 0/{total}")
-            for details in iter_run_detail_batches_via_sql(
-                    self.database_path,
-                    self.run_ids,
-                    batch_size=self.batch_size,
-                    infer_missing_shapes=False,
-                    include_storage_bytes=False,
-                    include_storage_estimate=True,
-                    include_read_setpoint_count=False,
-                    ):
+            done = set()
+            while len(done) < total:
                 if self._is_cancelled():
                     return
 
-                completed += len(details)
-                if details:
-                    self._emit_batch_ready(details)
+                batch = self._next_priority_batch(done, self.batch_size)
+                if not batch:
+                    break
+                for details in iter_run_detail_batches_via_sql(
+                        self.database_path,
+                        batch,
+                        batch_size=self.batch_size,
+                        infer_missing_shapes=False,
+                        include_storage_bytes=False,
+                        include_storage_estimate=True,
+                        include_read_setpoint_count=False,
+                        cancelled_callback=self._is_cancelled,
+                        ):
+                    if self._is_cancelled():
+                        return
+                    if details:
+                        self._emit_batch_ready(details)
+
+                done.update(batch)
+                completed = len(done)
                 self._emit_status(
                     f"Loading run details... {min(completed, total)}/{total}"
                     )
-
-                if self._is_cancelled():
-                    return
         except Exception as err:
+            if self._is_cancelled():
+                return
             log_exception("Database detail worker failed", err, __name__)
             self._emit_finished(err)
             return
@@ -746,6 +831,7 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
                         self.database_path,
                         batch,
                         batch_size=1,
+                        cancelled_callback=self._is_cancelled,
                         ):
                     if self._is_cancelled():
                         return
@@ -776,6 +862,7 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
                         self.database_path,
                         batch,
                         batch_size=storage_batch_size,
+                        cancelled_callback=self._is_cancelled,
                         ):
                     if self._is_cancelled():
                         return
@@ -788,6 +875,8 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
                     f"Loading exact run sizes... {len(storage_done)}/{total}"
                     )
         except Exception as err:
+            if self._is_cancelled():
+                return
             log_exception("Expensive database detail worker failed", err, __name__)
             self._emit_finished(err)
             return

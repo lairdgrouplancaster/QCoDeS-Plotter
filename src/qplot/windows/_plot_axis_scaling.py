@@ -270,12 +270,26 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def _axis_scale_range_text_changed(self, axis: _AxisName) -> None:
         ui = self._axis_scale_controls[axis]
         axis_number = self._axis_scale_axis_number(axis)
-        values = list(self.vb.viewRange()[axis_number])
-        for index, text in enumerate((ui.minText.text(), ui.maxText.text())):
-            try:
-                values[index] = float(text)
-            except ValueError:
-                pass
+        previous_values = list(self.vb.viewRange()[axis_number])
+        try:
+            values = [float(ui.minText.text()), float(ui.maxText.text())]
+        except ValueError:
+            values = []
+
+        if (
+                len(values) != 2
+                or not all(isfinite(value) for value in values)
+                or values[0] >= values[1]
+                ):
+            ui.minText.setText(f"{previous_values[0]:.5g}")
+            ui.maxText.setText(f"{previous_values[1]:.5g}")
+            show_status = getattr(self, "show_status", None)
+            if callable(show_status):
+                show_status(
+                    "Axis limits must be finite numbers with minimum below maximum.",
+                    5000,
+                    )
+            return
 
         ui.manualRadio.setChecked(True)
         if axis == "x":

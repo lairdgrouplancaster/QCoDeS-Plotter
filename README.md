@@ -18,7 +18,7 @@ automatically when qPlot is installed.
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
 The commands below install the latest full release, `1.4.0`. The current beta
-is `1.5.0-b2`; it is documented below but is not used for the default install.
+is `1.5.0-b3`; it is documented below but is not used for the default install.
 
 Windows:
 
@@ -44,7 +44,7 @@ To test the current beta instead, install its explicit tag in the same virtual
 environment:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0-b2
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0-b3
 ```
 
 If the version check reports Python 3.10 or older, install Python 3.11 or newer
@@ -110,11 +110,14 @@ qplot.run()
 Plot windows may appear before their data has finished loading. Check the
 status bar at the bottom of the plot window before assuming a load has failed.
 
-For detailed workflows, plot controls, live data behavior, operations, CSV
-export, and keyboard shortcuts, see [docs/user-guide.md](docs/user-guide.md).
+For the installed `1.4.0` release, see its
+[versioned user guide](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/blob/v1.4.0/docs/user-guide.md).
+For the current beta, see [docs/user-guide.md](docs/user-guide.md).
 
-For setup and runtime problems, see
-[docs/troubleshooting.md](docs/troubleshooting.md).
+Likewise, use the
+[1.4.0 troubleshooting guide](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/blob/v1.4.0/docs/troubleshooting.md)
+for the full release or [docs/troubleshooting.md](docs/troubleshooting.md) for
+the current beta.
 
 For release history, see [CHANGELOG.md](CHANGELOG.md).
 

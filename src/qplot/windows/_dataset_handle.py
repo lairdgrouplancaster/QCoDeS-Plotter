@@ -4,6 +4,17 @@ from dataclasses import dataclass
 from PyQt6 import QtCore
 
 
+def close_dataset_connection(dataset: object) -> bool:
+    """Close a dataset's backing connection when it exposes one."""
+
+    connection = getattr(dataset, "conn", None)
+    close = getattr(connection, "close", None)
+    if not callable(close):
+        return False
+    close()
+    return True
+
+
 def canonical_database_path(database_path: str | os.PathLike[str]) -> str:
     """Return a stable, platform-normalised identity for a database file."""
     return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(database_path))))
@@ -45,6 +56,7 @@ class DatasetHandle:
     dataset: object
     users: int = 1
     delete_timer: QtCore.QTimer | None = None
+    closed: bool = False
 
     def retain(self):
         """
@@ -72,3 +84,14 @@ class DatasetHandle:
         if self.delete_timer is not None:
             self.delete_timer.stop()
             self.delete_timer = None
+
+
+    def close(self):
+        """Cancel pending eviction and deterministically close the dataset."""
+
+        self.cancel_delete_timer()
+        if self.closed:
+            return False
+        closed_connection = close_dataset_connection(self.dataset)
+        self.closed = True
+        return closed_connection

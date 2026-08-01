@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from jsonschema import ValidationError
 from PyQt6 import QtWidgets as qtw
@@ -70,6 +71,26 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(cfg.get("user_preference.theme"), "light")
         self.assertEqual(config().get("user_preference.theme"), "light")
+
+    def test_config_write_failure_preserves_previous_file(self):
+        cfg = config()
+        previous_contents = Path(config.default_file).read_text(encoding="utf-8")
+
+        with (
+            patch(
+                "qplot.configuration.config.json.dump",
+                side_effect=OSError("simulated write failure"),
+                ),
+            self.assertRaisesRegex(OSError, "simulated write failure"),
+            ):
+            cfg.update("user_preference.theme", "dark")
+
+        self.assertEqual(
+            Path(config.default_file).read_text(encoding="utf-8"),
+            previous_contents,
+            )
+        self.assertEqual(cfg.get("user_preference.theme"), "light")
+        self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
 
     def test_config_cli_set_value_converts_values(self):
         with redirect_stdout(io.StringIO()):
@@ -169,8 +190,9 @@ class TemporaryConfigTestCase(unittest.TestCase):
                 ]),
             "/tmp/example.db",
             )
-        self.assertIsNone(
-            qplot_main._database_path_from_arguments(["-style", "Fusion", "notes.txt"])
+        self.assertEqual(
+            qplot_main._database_path_from_arguments(["-style", "Fusion", "notes.txt"]),
+            "notes.txt",
             )
 
     def test_application_identity_uses_qplot_name(self):
@@ -192,6 +214,30 @@ class TemporaryConfigTestCase(unittest.TestCase):
             app.setApplicationName(old_name)
             if old_display_name is not None and hasattr(app, "setApplicationDisplayName"):
                 app.setApplicationDisplayName(old_display_name)
+
+    def test_run_returns_qt_event_loop_exit_status(self):
+        class Application:
+            def setApplicationName(self, _name):
+                pass
+
+            def setApplicationDisplayName(self, _name):
+                pass
+
+            def exec(self):
+                return 7
+
+        application = Application()
+        with (
+            patch.object(qplot_main.qtw, "QApplication", return_value=application),
+            patch.object(qplot_main, "MainWindow", return_value=object()),
+            patch.object(qplot_main, "configure_logging"),
+            patch.object(qplot_main, "install_excepthook"),
+            patch.object(qplot_main, "log_event"),
+            redirect_stdout(io.StringIO()),
+            ):
+            exit_status = qplot_main.run(database_path="example.db")
+
+        self.assertEqual(exit_status, 7)
 
     def test_main_window_uses_configured_default_refresh_rate(self):
         cfg = config()

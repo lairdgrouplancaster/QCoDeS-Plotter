@@ -6,12 +6,12 @@ from PyQt6 import QtWidgets as qtw
 from PyQt6.QtGui import QDesktopServices
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.datahandling import find_new_runs
 from qplot.datahandling.database import (
     DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
     DatabaseDetailWorker,
     DatabaseExpensiveDetailWorker,
     DatabaseLoadWorker,
+    DatabaseRefreshWorker,
     database_info_rows,
 )
 from qplot.datahandling.readonly import set_qcodes_database_location
@@ -120,6 +120,8 @@ class DatabaseActionsMixin:
     by MainWindow, plus show_status(), show_error(), and openPlot().
     """
 
+    _database_refresh_worker: DatabaseRefreshWorker | None
+
     def load_startup_database(self):
         """
         Load the highest-priority available startup database.
@@ -207,6 +209,7 @@ class DatabaseActionsMixin:
         cancel_detail_load = getattr(self, "_cancel_database_detail_load", None)
         if callable(cancel_detail_load):
             cancel_detail_load()
+        DatabaseActionsMixin._cancel_database_refresh(self)
 
         self._database_load_generation = getattr(self, "_database_load_generation", 0) + 1
         self._database_load_active = False
@@ -222,13 +225,21 @@ class DatabaseActionsMixin:
         self.run_idBox.setText("")
         self.measurementBox.setText("*")
         self.selected_run_id = None
-        self.ds = None
-        self._selected_dataset_key = None
+        release_selected = getattr(self, "_release_selected_dataset", None)
+        if callable(release_selected):
+            release_selected()
+        else:
+            self.ds = None
+            self._selected_dataset_key = None
         self.localLastFile = None
 
-        for holder in self.dataset_holder.values():
-            holder.cancel_delete_timer()
-        self.dataset_holder.clear()
+        close_handles = getattr(self, "_close_all_dataset_handles", None)
+        if callable(close_handles):
+            close_handles()
+        else:
+            for holder in self.dataset_holder.values():
+                holder.cancel_delete_timer()
+            self.dataset_holder.clear()
 
         self.RunList.blockSignals(True)
         self.RunList.clearSelection()
@@ -286,45 +297,116 @@ class DatabaseActionsMixin:
             self.show_status("Load a database before refreshing.", 5000)
             return
 
-        self.show_status("Checking for new runs...", 0)
-
-        try:
-            newRuns = find_new_runs(self.RunList.maxRunId)
-            updatedRuns = self.RunList.checkWatching()
-            if updatedRuns:
-                self.infoBox.preview.add_runs(updatedRuns)
-                prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
-                if callable(prioritize_previews):
-                    prioritize_previews()
-        except Exception as err:
-            log_exception("Main-window refresh failed", err, __name__)
-            self.show_error("Refresh Failed", "Could not refresh the run list.", str(err))
+        if getattr(self, "_database_refresh_active", False):
+            self._database_refresh_pending = True
+            self.show_status("Database refresh queued.", 3000)
             return
 
-        if newRuns:
-            self.RunList.maxRunId = max(self.RunList.maxRunId, max(newRuns))
+        self.show_status("Checking for new runs...", 0)
+        self._database_refresh_generation = (
+            getattr(self, "_database_refresh_generation", 0) + 1
+            )
+        generation = self._database_refresh_generation
+        self._database_refresh_active = True
+        self._database_refresh_pending = False
+        database_path = self.fileTextbox.text()
+        watched_guids = [
+            run.guid
+            for run in list(self.RunList.watching)
+            if getattr(run, "guid", None)
+            ]
+        worker = DatabaseRefreshWorker(
+            generation,
+            database_path,
+            self.RunList.maxRunId,
+            watched_guids,
+        )
+        self._database_refresh_worker = worker
+        worker.signals.finished.connect(
+            lambda *args: self.database_refresh_finished(*args)
+            )
+        self.databaseRefreshThreadPool.start(worker)
 
-        if not newRuns:
-            self._sync_empty_state()
+
+    @QtCore.pyqtSlot(int, str, object, object, object)
+    def database_refresh_finished(
+            self,
+            generation,
+            database_path,
+            new_runs,
+            statuses,
+            error,
+            ):
+        if generation != getattr(self, "_database_refresh_generation", 0):
+            return
+        if not getattr(self, "_database_refresh_active", False):
+            return
+
+        try:
+            if database_path != self.fileTextbox.text():
+                return
+            if error is not None:
+                log_exception("Main-window refresh failed", error, __name__)
+                self.show_error(
+                    "Refresh Failed",
+                    "Could not refresh the run list.",
+                    str(error),
+                    )
+                return
+
+            self._apply_database_refresh_result(new_runs or {}, statuses or {})
+        finally:
+            self._database_refresh_active = False
+            self._database_refresh_worker = None
+            pending = bool(getattr(self, "_database_refresh_pending", False))
+            self._database_refresh_pending = False
+            if pending and database_path == self.fileTextbox.text():
+                QtCore.QTimer.singleShot(0, self.refreshMain)
+
+
+    def _apply_database_refresh_result(self, new_runs, statuses):
+        updated_runs = self.RunList.checkWatching(statuses)
+        if updated_runs:
+            self.infoBox.preview.add_runs(updated_runs)
+            prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+            if callable(prioritize_previews):
+                prioritize_previews()
+
+        if new_runs:
+            self.RunList.maxRunId = max(self.RunList.maxRunId, max(new_runs))
+            self.RunList.addRuns(new_runs)
+            self.infoBox.preview.add_runs(new_runs)
+            prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+            if callable(prioritize_previews):
+                prioritize_previews()
+
+        self._sync_empty_state()
+        if not new_runs:
             if self.RunList.topLevelItemCount() == 0:
                 self.show_status(self._empty_database_refresh_status(), 3000)
             else:
                 self.show_status("No new runs found.", 3000)
             return
 
-        self.RunList.addRuns(newRuns)
-        self.infoBox.preview.add_runs(newRuns)
-        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
-        if callable(prioritize_previews):
-            prioritize_previews()
-        self._sync_empty_state()
-        count = len(newRuns)
+        count = len(new_runs)
         noun = "run" if count == 1 else "runs"
         self.show_status(f"Found {count} new {noun}.", 5000)
 
         if self.autoPlotBox.isChecked():
-            for run in newRuns.values():
+            for run in new_runs.values():
                 self.openPlot(run["guid"])
+
+
+    def _cancel_database_refresh(self):
+        worker = getattr(self, "_database_refresh_worker", None)
+        if worker is not None:
+            worker.cancel()
+        self._database_refresh_generation = (
+            getattr(self, "_database_refresh_generation", 0) + 1
+            )
+        self._database_refresh_active = False
+        self._database_refresh_pending = False
+        self._database_refresh_worker = None
 
 
     @QtCore.pyqtSlot()
@@ -536,6 +618,8 @@ class DatabaseActionsMixin:
             self.show_status("Wait for the current database load to finish.", 5000)
             return False
 
+        DatabaseActionsMixin._cancel_database_refresh(self)
+
         if abspath == get_DB_location() and self.fileTextbox.text() == abspath:
             if not self.infoBox.preview.has_database(abspath):
                 self.infoBox.preview.set_database_runs(
@@ -557,6 +641,7 @@ class DatabaseActionsMixin:
             "load_started_at": load_started_at,
         }
 
+        self._set_database_load_controls_enabled(False)
         self._show_database_load_panel(load_message)
 
         try:
@@ -580,8 +665,12 @@ class DatabaseActionsMixin:
         self.run_idBox.setText("")
         self.measurementBox.setText("*")
         self.selected_run_id = None
-        self.ds = None
-        self._selected_dataset_key = None
+        release_selected = getattr(self, "_release_selected_dataset", None)
+        if callable(release_selected):
+            release_selected()
+        else:
+            self.ds = None
+            self._selected_dataset_key = None
 
         self.RunList.clearSelection()
         self.RunList.clear()

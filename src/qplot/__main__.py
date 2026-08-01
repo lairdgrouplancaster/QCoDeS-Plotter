@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 
 from PyQt6 import QtWidgets as qtw
 
@@ -12,6 +11,25 @@ from qplot.diagnostics import (
 )
 from qplot.windows import MainWindow
 
+QT_OPTIONS_WITH_VALUES = {
+    "-display",
+    "-font",
+    "-geometry",
+    "-name",
+    "-platform",
+    "-platformpluginpath",
+    "-platformtheme",
+    "-plugin",
+    "-qwindowgeometry",
+    "-qwindowicon",
+    "-qwindowtitle",
+    "-session",
+    "-style",
+    "-stylesheet",
+    "-title",
+    "-visual",
+}
+
 
 def _database_path_from_arguments(args):
     """
@@ -21,12 +39,21 @@ def _database_path_from_arguments(args):
     Qt options are ignored here so they can still be handled by QApplication.
 
     """
+    skip_next = False
+    positional_only = False
     for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--":
+            positional_only = True
+            continue
+        if not positional_only and arg in QT_OPTIONS_WITH_VALUES:
+            skip_next = True
+            continue
         if arg.startswith("-"):
             continue
-
-        if Path(arg).suffix.lower() == ".db":
-            return arg
+        return arg
 
     return None
 
@@ -53,12 +80,13 @@ def run(return_objects=False, database_path=None):
         quietly and successfully.
     database_path : str, optional
         QCoDeS database path to load after the main window opens. When omitted,
-        qPlot uses the first `.db` path passed on the command line, if any.
+        qPlot uses the first positional path passed on the command line, if any.
 
     Returns
     -------
-    tuple[PyQt6.QtWidgets.QApplication, qplot.windows.main.MainWindow] | None
-        Returned only when return_objects is true.
+    tuple[PyQt6.QtWidgets.QApplication, qplot.windows.main.MainWindow] | int
+        Application objects when return_objects is true; otherwise the Qt
+        event-loop exit status.
         
     """
     configure_logging()
@@ -81,7 +109,7 @@ def run(return_objects=False, database_path=None):
 
     if return_objects:
         return app, w
-    return None
+    return exit_code
 
 if __name__=="__main__":
-    run()
+    raise SystemExit(run())

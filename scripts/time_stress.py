@@ -11,52 +11,52 @@ import sys
 from os.path import join
 from time import time
 
+import numpy as np
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
-from qcodes.dataset import load_by_guid
 
 from qplot import config
-from qplot.windows import MainWindow, plot1d, plot2d
+from qplot.windows import MainWindow, plot2d
 
 
 class test2d(plot2d):
     
     timer = QtCore.pyqtSignal([object, float, int])
     
-    def refreshWindow(self, force : bool = False):
-        
-        start_time = time()
-        
-        super().refreshWindow()
-        
-        refresh_time = time() - start_time
-        
-        current_length = len(self.depvarData)
-        
-        if current_length != self.last_df_len:
-            self.timer.emit(self, refresh_time, current_length)
+    def load_data(self, *args, **kwargs):
+        self._timing_started_at = time()
+        return super().load_data(*args, **kwargs)
+
+
+    def refreshPlot(self, finished=True, worker=None):
+        current_worker = worker if worker is not None else getattr(self, "worker", None)
+        super().refreshPlot(finished, worker=worker)
+        if not finished or current_worker is not getattr(self, "worker", None):
+            return
+        if not hasattr(self, "dataGrid"):
+            return
+
+        current_length = int(np.asarray(self.dataGrid).size)
+        previous_length = getattr(self, "_timed_data_length", None)
+        if current_length == previous_length:
+            return
+
+        self._timed_data_length = current_length
+        started_at = getattr(self, "_timing_started_at", time())
+        self.timer.emit(self, time() - started_at, current_length)
     
         
 class testMain(MainWindow):
-    
-    @QtCore.pyqtSlot(str)
-    def openPlot(self, guid : str=None):
-        if not self.ds:
-            ds = load_by_guid(guid)
-        elif guid and self.ds.guid != guid:
-            ds = load_by_guid(guid)
-        else:
-            ds = self.ds
-            
-        for param in ds.get_parameters():
-            if param.depends_on != "":
-                depends_on = param.depends_on_
-                if len(depends_on) == 1:
-                    self.openWin(plot1d, ds, param, self.config, refrate = self.spinBox.value())
-                else:
-                    self.openWin(test2d, ds, param, self.config, refrate = self.spinBox.value())
-                    
-                self.windows[-1].timer.connect(save_time_log)
+    def openWin(self, widget, *args, **kwargs):
+        timed_widget = test2d if widget is plot2d else widget
+        window_count = len(self.windows)
+        super().openWin(timed_widget, *args, **kwargs)
+        if len(self.windows) <= window_count:
+            return
+
+        window = self.windows[-1]
+        if isinstance(window, test2d):
+            window.timer.connect(save_time_log)
                 
                 
                 
