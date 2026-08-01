@@ -21,7 +21,8 @@ class sweeper(plotWidget):
     Both plots become linked, any changes to the cursor or sweep will update
     their counterpart.
     """
-    sweep_moved = QtCore.pyqtSignal([int, str, str, int, object])
+    operation_kind = "sweeper"
+    sweep_moved = QtCore.pyqtSignal([int, str, str, float, object])
     merge_compatibility_changed = QtCore.pyqtSignal()
     remove_sweep = QtCore.pyqtSignal([int])
     
@@ -30,14 +31,15 @@ class sweeper(plotWidget):
                  sweep_id : int,
                  sweep_indep : str,
                  fixed_indep : str, 
-                 fixed_index : int,
+                 fixed_value : float,
                  *args, 
                  **kargs
                  ):
         self.sweep_id = sweep_id
         self.sweep_indep = sweep_indep
         self.fixed_indep = fixed_indep
-        self.fixed_index = fixed_index
+        self.fixed_value = float(fixed_value)
+        self.fixed_index = 0
         
         self.line: Any = None
         
@@ -185,7 +187,7 @@ class sweeper(plotWidget):
             self.fixed_indep_data = fixed_data[:row_count]
             self.axis_data["x"] = x_data[:column_count]
             self.dataGrid = data_grid[:row_count, :column_count]
-            self.fixed_index = min(max(self.fixed_index, 0), row_count - 1)
+            self.fixed_index = self._fixed_index_for_value(self.fixed_value)
 
             # Get correct row and param for y data
             self.axis_param["y"] = getattr(self, "display_param", self.param)
@@ -251,6 +253,11 @@ class sweeper(plotWidget):
 
         """
         # Get correct row for y data
+        fixed_values = np.asarray(getattr(self, "fixed_indep_data", []))
+        if fixed_values.size > self.fixed_index:
+            self.fixed_value = float(fixed_values[self.fixed_index])
+        elif not hasattr(self, "fixed_value"):
+            self.fixed_value = float(self.fixed_index)
         self.axis_data["y"] = self.dataGrid[self.fixed_index, :]
         
         # update line
@@ -265,7 +272,7 @@ class sweeper(plotWidget):
             self.sweep_moved.emit(
                 self.sweep_id,
                 *self.axis_options.values(),
-                self.fixed_index,
+                self.fixed_value,
                 self.line.opts['pen']
                 )
 
@@ -289,6 +296,7 @@ class sweeper(plotWidget):
         
         # Update plot
         self.fixed_index = index
+        self.fixed_value = float(self.fixed_indep_data[index])
         self.update_sweep()
         
         self._set_param_axis_labels()
@@ -312,6 +320,7 @@ class sweeper(plotWidget):
         self.picker.slider.blockSignals(True)
         self.picker.slider.setValue(0)
         self.fixed_index = 0
+        self.fixed_value = 0.0
         self.picker.text_box.setText("") # Let refreshPlot know signal is blocked
         
         if self.picker.option_box.currentText() == self.axis_dropdown["x"].currentText():
@@ -347,6 +356,7 @@ class sweeper(plotWidget):
         self.picker.slider.blockSignals(True)
         self.picker.slider.setValue(0)
         self.fixed_index = 0
+        self.fixed_value = 0.0
         self.picker.text_box.setText("") # Let refreshPlot know signal is blocked
         
         if self.axis_dropdown["x"].currentText() == self.picker.option_box.currentText():
@@ -361,8 +371,8 @@ class sweeper(plotWidget):
         self.refreshWindow(force=True)
             
             
-    @QtCore.pyqtSlot(int, int)
-    def update_sweep_line(self, sweep_id, index):
+    @QtCore.pyqtSlot(int, float)
+    def update_sweep_line(self, sweep_id, fixed_value):
         """
         Event handler for moving sweep cursor on source plot.
 
@@ -371,23 +381,35 @@ class sweeper(plotWidget):
         sweep_id : int
             The sweep id of the line moved. Confirms that this is the intened
             plot to adjust
-        index : int
-            The index that the indep variable was set to.
+        fixed_value : float
+            The physical fixed-axis coordinate selected on the source plot.
 
         """
         if sweep_id != self.sweep_id:
             return
-        
-        self.fixed_index = index
+
+        self.fixed_value = float(fixed_value)
+        if not getattr(self, "fixed_indep_data", np.asarray([])).size:
+            return
+        self.fixed_index = self._fixed_index_for_value(self.fixed_value)
         
         self.picker.slider.blockSignals(True)
-        self.picker.slider.setValue(index)
+        self.picker.slider.setValue(self.fixed_index)
         self.picker.slider.blockSignals(False)
         self.picker.text_box.setText(
-            self.formatNum(self.fixed_indep_data[index])
+            self.formatNum(self.fixed_indep_data[self.fixed_index])
             )
         
         self.update_sweep(emit = False)
+
+
+    def _fixed_index_for_value(self, value: float) -> int:
+        values = np.asarray(self.fixed_indep_data, dtype=float)
+        finite = np.flatnonzero(np.isfinite(values))
+        if finite.size == 0:
+            return 0
+        nearest = int(np.argmin(np.abs(values[finite] - float(value))))
+        return int(finite[nearest])
 
     
 class fixed_var_picker(qtw.QWidget):

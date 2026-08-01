@@ -464,6 +464,267 @@ class RunSizeTestCase(unittest.TestCase):
             1010
             )
 
+    def test_parameter_roles_include_axisless_standalone_measurements(self):
+        run_description = {
+            "interdependencies_": {
+                "dependencies": {"signal": ["x"]},
+                "standalones": ["temperature"],
+                },
+            }
+
+        measure_parameters, sweep_parameters = readSQL._parameter_roles(
+            run_description,
+            "x,signal,temperature",
+            )
+
+        self.assertEqual(measure_parameters, ["signal", "temperature"])
+        self.assertEqual(sweep_parameters, ["x"])
+
+    def test_live_unshaped_status_refreshes_observed_count_until_completion(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "runs.db")
+            conn = sqlite3.connect(database_path)
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    CREATE TABLE runs (
+                        guid TEXT,
+                        completed_timestamp REAL,
+                        is_completed INTEGER,
+                        result_table_name TEXT,
+                        run_description TEXT,
+                        parameters TEXT
+                    )
+                    """
+                    )
+                cursor.execute("CREATE TABLE results_1 (x REAL, signal REAL)")
+                run_description = json.dumps({
+                    "interdependencies_": {
+                        "dependencies": {"signal": ["x"]},
+                        },
+                    })
+                cursor.execute(
+                    "INSERT INTO runs VALUES (?, NULL, 0, ?, ?, ?)",
+                    ("guid", "results_1", run_description, "x,signal"),
+                    )
+                cursor.execute("INSERT INTO results_1 VALUES (0, 1)")
+                conn.commit()
+
+                old_connection = readSQL.qcodes_read_only_connection
+                readSQL.qcodes_read_only_connection = (
+                    lambda _database_path: sqlite3.connect(database_path)
+                    )
+                try:
+                    first_status = readSQL.get_run_status("guid")
+                    cursor.executemany(
+                        "INSERT INTO results_1 VALUES (?, ?)",
+                        [(index, index + 1) for index in range(1, 5)],
+                        )
+                    conn.commit()
+                    growing_status = readSQL.get_run_status("guid")
+                    cursor.execute(
+                        "UPDATE runs SET completed_timestamp = 123, is_completed = 1"
+                        )
+                    conn.commit()
+                    completed_status = readSQL.get_run_status("guid")
+                finally:
+                    readSQL.qcodes_read_only_connection = old_connection
+
+                self.assertEqual(first_status["setpoint_shape"], [1])
+                self.assertEqual(first_status["setpoint_count"], 1)
+                self.assertEqual(first_status["setpoint_count_source"], "observed")
+                self.assertIsNone(first_status["expected_results"])
+
+                self.assertEqual(growing_status["setpoint_shape"], [5])
+                self.assertEqual(growing_status["setpoint_count"], 5)
+                self.assertEqual(growing_status["result_count"], 5)
+                self.assertIsNone(growing_status["expected_results"])
+
+                self.assertEqual(completed_status["setpoint_shape"], [5])
+                self.assertEqual(completed_status["setpoint_count"], 5)
+                self.assertEqual(completed_status["expected_results"], 5)
+                self.assertEqual(
+                    completed_status["expected_results_source"],
+                    "observed",
+                    )
+            finally:
+                conn.close()
+
+    def test_heterogeneous_dependencies_do_not_form_a_cartesian_shape(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, t REAL, a REAL, b REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?, ?, ?)",
+                [
+                    (0, None, 10, None),
+                    (1, None, 11, None),
+                    (2, None, 12, None),
+                    (3, None, 13, None),
+                    (None, 0, None, 20),
+                    (None, 1, None, 21),
+                    (None, 2, None, 22),
+                    (None, 3, None, 23),
+                    ],
+                )
+            metadata = {
+                "completed_timestamp": 123.0,
+                "is_completed": 1,
+                "parameters": "x,t,a,b",
+                "result_table_name": "results",
+                "run_description": json.dumps({
+                    "interdependencies_": {
+                        "dependencies": {
+                            "a": ["x"],
+                            "b": ["t"],
+                            },
+                        },
+                    }),
+                }
+
+            readSQL._add_run_basic_fields(metadata)
+            readSQL._add_run_detail_fields(
+                cursor,
+                metadata,
+                include_storage_bytes=False,
+                )
+
+            self.assertEqual(metadata["sweep_parameters"], ["x", "t"])
+            self.assertIsNone(metadata["setpoint_shape"])
+            self.assertIsNone(metadata["point_shape"])
+            self.assertEqual(metadata["setpoint_count"], 4)
+            self.assertEqual(metadata["setpoint_count_source"], "observed")
+            self.assertEqual(metadata["expected_results"], 8)
+            self.assertEqual(metadata["expected_results_source"], "observed")
+        finally:
+            conn.close()
+
+    def test_sparse_setpoints_do_not_form_a_cartesian_shape(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, y REAL, signal REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?, ?)",
+                [(0, 0, 10), (1, 1, 11), (2, 2, 12)],
+                )
+
+            self.assertIsNone(
+                readSQL._setpoint_shape_from_result_table(
+                    cursor,
+                    "results",
+                    ["x", "y"],
+                    )
+                )
+            self.assertEqual(
+                readSQL._read_setpoint_count(cursor, "results", ["x", "y"]),
+                3,
+                )
+        finally:
+            conn.close()
+
+    def test_shape_batches_keep_sparse_runs_with_an_observed_count(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "runs.db")
+            conn = sqlite3.connect(database_path)
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "CREATE TABLE experiments (exp_id INTEGER, name TEXT, sample_name TEXT)"
+                    )
+                cursor.execute(
+                    """
+                    CREATE TABLE runs (
+                        run_id INTEGER,
+                        exp_id INTEGER,
+                        name TEXT,
+                        run_timestamp REAL,
+                        completed_timestamp REAL,
+                        is_completed INTEGER,
+                        guid TEXT,
+                        result_table_name TEXT,
+                        parameters TEXT,
+                        run_description TEXT
+                    )
+                    """
+                    )
+                cursor.execute("CREATE TABLE results_1 (x REAL, y REAL, signal REAL)")
+                cursor.executemany(
+                    "INSERT INTO results_1 VALUES (?, ?, ?)",
+                    [(0, 0, 10), (1, 1, 11), (2, 2, 12)],
+                    )
+                run_description = json.dumps({
+                    "interdependencies_": {
+                        "dependencies": {"signal": ["x", "y"]},
+                        },
+                    })
+                cursor.execute("INSERT INTO experiments VALUES (1, 'exp', 'sample')")
+                cursor.execute(
+                    """
+                    INSERT INTO runs VALUES (
+                        1, 1, 'run', 100, 123, 1, 'guid',
+                        'results_1', 'x,y,signal', ?
+                    )
+                    """,
+                    (run_description, ),
+                    )
+                conn.commit()
+
+                old_connection = readSQL.qcodes_read_only_connection
+                readSQL.qcodes_read_only_connection = (
+                    lambda _database_path: sqlite3.connect(database_path)
+                    )
+                try:
+                    batches = list(readSQL.iter_run_shape_batches_via_sql(
+                        database_path,
+                        [1],
+                        ))
+                finally:
+                    readSQL.qcodes_read_only_connection = old_connection
+
+                self.assertEqual(len(batches), 1)
+                self.assertIsNone(batches[0][1]["setpoint_shape"])
+                self.assertEqual(batches[0][1]["setpoint_count"], 3)
+            finally:
+                conn.close()
+
+    def test_read_setpoint_count_is_aggregated_by_sql(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE results (x REAL, y REAL)")
+            cursor.executemany(
+                "INSERT INTO results VALUES (?, ?)",
+                [(index, index % 3) for index in range(100)],
+                )
+            statements = []
+            conn.set_trace_callback(statements.append)
+
+            count = readSQL._read_setpoint_count(
+                cursor,
+                "results",
+                ["x", "y"],
+                )
+            conn.set_trace_callback(None)
+
+            normalized_statements = [
+                " ".join(statement.upper().split())
+                for statement in statements
+                ]
+            self.assertEqual(count, 100)
+            self.assertTrue(any(
+                "SELECT COUNT(*) FROM ( SELECT DISTINCT" in statement
+                for statement in normalized_statements
+                ))
+            self.assertFalse(any(
+                statement.startswith("SELECT DISTINCT")
+                for statement in normalized_statements
+                ))
+        finally:
+            conn.close()
+
     def test_point_shape_falls_back_to_distinct_sweep_values(self):
         conn = sqlite3.connect(":memory:")
         try:

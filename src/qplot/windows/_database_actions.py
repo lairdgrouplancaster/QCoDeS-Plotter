@@ -873,7 +873,7 @@ class DatabaseActionsMixin:
         expensive_generation = self._database_expensive_detail_generation
         self._database_expensive_detail_active = True
 
-        worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=10)
+        worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=100)
         self._database_detail_worker = worker
         priority_run_ids = self._database_detail_priority_run_ids()
         worker.prioritize_run_ids(priority_run_ids)
@@ -891,7 +891,7 @@ class DatabaseActionsMixin:
             expensive_generation,
             abspath,
             run_ids,
-            batch_size=10,
+            batch_size=100,
             )
         self._database_expensive_detail_worker = expensive_worker
         expensive_worker.prioritize_run_ids(priority_run_ids)

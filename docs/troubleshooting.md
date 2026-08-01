@@ -14,15 +14,25 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-macOS/Linux:
+macOS:
 
 ```console
 python3.11 -m venv .venv-mac
 source .venv-mac/bin/activate
 ```
 
-Your prompt should start with the virtual environment name, such as `(.venv)` on
-Windows or `(.venv-mac)` on macOS/Linux.
+Linux development:
+
+```console
+python3.11 -m venv .venv-linux
+source .venv-linux/bin/activate
+```
+
+Your prompt should start with the virtual environment name, such as `(.venv)`
+on Windows, `(.venv-mac)` on macOS, or `(.venv-linux)` on Linux. Windows and
+macOS are the currently supported and GUI-tested desktop platforms. A source
+install may work on Linux, but Linux is not currently part of the GUI test or
+support matrix.
 
 ## Creating a Virtual Environment in VS Code
 
@@ -35,10 +45,9 @@ If you prefer VS Code to terminal setup:
 5. Choose a Python 3.11 or newer base interpreter.
 6. Open a new VS Code terminal with `Terminal -> New Terminal`.
 
-The terminal prompt should start with the virtual environment name, such as
-`(.venv)` on Windows or `(.venv-mac)` on macOS/Linux. Avoid choosing an
-interpreter inside `anaconda3`, `miniconda3`, or an `envs` folder unless you
-intentionally manage this project with Conda.
+The terminal prompt should start with the virtual environment name described
+above. Avoid choosing an interpreter inside `anaconda3`, `miniconda3`, or an
+`envs` folder unless you intentionally manage this project with Conda.
 
 ## VS Code Reports a Broken Virtual Environment
 
@@ -49,13 +58,15 @@ folder.
 
 ## `git` Is Not Found During Install
 
-The GitHub install command requires Git:
+The GitHub install command requires Git. Use the explicit release tag from the
+README; for example, the current full release is:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@main
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0
 ```
 
 Install Git, then open a new terminal before running the install command again.
+Do not substitute `@main` unless you intentionally want unreleased code.
 
 ## PowerShell Blocks Virtual Environment Activation
 

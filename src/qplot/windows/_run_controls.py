@@ -425,7 +425,7 @@ class RunControlsMixin:
         """
         self.monitor.stop()
         if interval > 0:
-            self.monitor.start(int(interval * 1000))
+            self.monitor.start(max(1, round(interval * 1000)))
 
     def _save_refresh_interval(self, interval):
         """

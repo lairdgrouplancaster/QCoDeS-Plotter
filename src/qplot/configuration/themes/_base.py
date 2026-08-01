@@ -269,14 +269,6 @@ _STYLESHEET_TEMPLATE = Template(
         width: 14px;
         height: 14px;
     }
-    QCheckBox::indicator:checked {
-        border: 1px solid $accent;
-        background-color: $accent;
-    }
-    QCheckBox::indicator:unchecked {
-        border: 1px solid $border_strong;
-        background-color: transparent;
-    }
     QRadioButton {
         color: $text;
         background-color: $window_bg;

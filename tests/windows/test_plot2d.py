@@ -110,6 +110,50 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         self.assertEqual(cut.trace_updated.emissions, [()])
         self.assertEqual(cut.sweep_moved.emissions, [])
 
+    def test_cut_maps_source_coordinate_against_its_full_axis(self):
+        class Signal:
+            def emit(self, *_args):
+                pass
+
+        class Line:
+            def setData(self, *, x, y):
+                self.data = (x, y)
+
+        class Slider:
+            def blockSignals(self, _blocked):
+                pass
+
+            def setValue(self, value):
+                self.value = value
+
+        class TextBox:
+            def setText(self, value):
+                self.value = value
+
+        cut = sweeper.__new__(sweeper)
+        cut.sweep_id = 7
+        cut.fixed_index = 0
+        cut.fixed_value = 0.0
+        cut.fixed_indep_data = np.arange(10.0)
+        cut.dataGrid = np.column_stack((np.arange(10.0), np.arange(10.0) + 100))
+        cut.axis_data = {"x": np.array([0.0, 1.0]), "y": np.asarray([])}
+        cut.line = Line()
+        cut.trace_updated = Signal()
+        cut.picker = type(
+            "Picker",
+            (),
+            {"slider": Slider(), "text_box": TextBox()},
+            )()
+        cut.formatNum = str
+
+        # Index 3 in a visible [5, 6, 7, 8, 9] heatmap is coordinate 8,
+        # which must remain index 8 in this cut's full coordinate array.
+        sweeper.update_sweep_line(cut, 7, 8.0)
+
+        self.assertEqual(cut.fixed_index, 8)
+        self.assertEqual(cut.picker.slider.value, 8)
+        np.testing.assert_array_equal(cut.axis_data["y"], [8.0, 108.0])
+
     def test_cut_axis_changes_publish_merge_compatibility_updates(self):
         class Signal:
             def __init__(self):
@@ -511,6 +555,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.drag_events = []
             self.hover_events = []
             self.mouseHovering = False
+            self.visible = True
 
         def setBounds(self, bounds):
             self.bounds = bounds
@@ -520,6 +565,9 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         def value(self):
             return self._value
+
+        def setVisible(self, visible):
+            self.visible = visible
 
         def setCursor(self, shape):
             self.cursor_shape = shape
@@ -1072,8 +1120,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertEqual(len(opened), 1)
         self.assertIn("2×2 points", opened[0])
-        self.assertIn("X range: 1.000 to 3.000", opened[0])
-        self.assertIn("Y range: 1.000 to 3.000", opened[0])
+        self.assertIn("X range: 1.00 to 3.00", opened[0])
+        self.assertIn("Y range: 1.00 to 3.00", opened[0])
         self.assertEqual(qtw.QApplication.clipboard().text(), "")
         self.assertIsNone(window.marquee)
 
@@ -1259,7 +1307,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertEqual(line.sweep_index, 2)
         self.assertEqual(line.value(), 4.0)
         self.assertEqual(line.bounds, (0.0, 4.0))
-        self.assertEqual(window.sweep_moved.calls, [(5, 2)])
+        self.assertEqual(window.sweep_moved.calls, [(5, 4.0)])
 
     def test_geometry_refresh_remaps_sweep_from_its_physical_coordinate(self):
         window = plot2d.__new__(plot2d)
@@ -1282,7 +1330,31 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertEqual(line.sweep_index, 1)
         self.assertEqual(line.value(), 2.0)
-        self.assertEqual(window.sweep_moved.calls, [(5, 1)])
+        self.assertEqual(window.sweep_moved.calls, [])
+
+    def test_visible_range_reload_does_not_clamp_cut_outside_range(self):
+        window = plot2d.__new__(plot2d)
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(10.0),
+            y_centres=[0.0, 1.0],
+            )
+        line = self.SweepLine(sweep_id=5, angle=90, value=8.0)
+        line.sweep_index = 8
+        window.__dict__["sweep_lines"] = {5: line}
+        window.__dict__["sweep_moved"] = self.SignalCatcher()
+        self.configure_geometry(
+            window,
+            x_centres=np.arange(5.0),
+            y_centres=[0.0, 1.0],
+            )
+
+        window._snap_sweep_lines_to_pixel_centres()
+
+        self.assertEqual(line.value(), 8.0)
+        self.assertIsNone(line.sweep_index)
+        self.assertFalse(line.visible)
+        self.assertEqual(window.sweep_moved.calls, [])
 
     def test_sweep_events_are_noops_without_geometry(self):
         window = plot2d.__new__(plot2d)
@@ -1354,7 +1426,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertEqual(window.active_sweep_line_id, 5)
         self.assertAlmostEqual(line.value(), 2.5)
         self.assertEqual(line.bounds, (0.5, 3.5))
-        self.assertEqual(window.sweep_moved.calls, [(5, 2)])
+        self.assertEqual(window.sweep_moved.calls, [(5, 2.5)])
 
     def test_shift_drag_moves_same_orientation_sweep_lines_together(self):
         window = plot2d.__new__(plot2d)
@@ -1386,7 +1458,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertAlmostEqual(companion_line.value(), 4.5)
         self.assertAlmostEqual(horizontal_line.value(), 11.5)
         self.assertEqual(window.active_sweep_line_id, 1)
-        self.assertEqual(window.sweep_moved.calls, [(1, 2), (2, 4)])
+        self.assertEqual(window.sweep_moved.calls, [(1, 2.5), (2, 4.5)])
 
     def test_shift_drag_keeps_sweep_group_spacing_at_heatmap_edge(self):
         window = plot2d.__new__(plot2d)
@@ -1542,7 +1614,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertEqual(line.sweep_index, 2)
         self.assertAlmostEqual(line.value(), 2.5)
-        self.assertEqual(window.sweep_moved.calls, [(8, 2)])
+        self.assertEqual(window.sweep_moved.calls, [(8, 2.5)])
 
     def test_arrow_key_clamps_sweep_line_to_heatmap_edge(self):
         window = plot2d.__new__(plot2d)
@@ -1561,7 +1633,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertEqual(line.sweep_index, 3)
         self.assertAlmostEqual(line.value(), 3.5)
-        self.assertEqual(window.sweep_moved.calls, [(8, 3)])
+        self.assertEqual(window.sweep_moved.calls, [(8, 3.5)])
 
     def test_manual_colorbar_range_sets_levels_and_disables_refresh_autoscale(self):
         window = plot2d.__new__(plot2d)

@@ -1,3 +1,4 @@
+import json
 import sys
 
 from jsonschema import ValidationError
@@ -114,25 +115,10 @@ class sysHandle:
         #check if key is valid
         self.config.get(key)
 
-        convrt_value: object
-        if value.startswith(("[", "(")):
-            list_value = value[1:-1].strip()
-            convrt_value = (
-                []
-                if not list_value
-                else [try_as_num(item) for item in list_value.split(",")]
-                )
-        else:
-            if value.lower() == "true":
-                convrt_value = True
-            elif value.lower() == "false":
-                convrt_value = False
-            else:
-                convrt_value =  try_as_num(value)
-        
         try:
+            convrt_value = _config_value(value, self.config.schema_for(key))
             self.config.update(key, convrt_value)
-        except ValidationError as error:
+        except (TypeError, ValueError, json.JSONDecodeError, ValidationError) as error:
             err_key = f"Value: {value}, is invalid."
             err_key += str(error)
             raise ValidationError(err_key) from error
@@ -208,6 +194,46 @@ def try_as_num(item):
     except ValueError: #if cannot conver to int or float
         item = str(item)
     return item
+
+
+def _config_value(value, schema):
+    """Parse a command-line value according to its target config schema."""
+
+    value_type = schema.get("type")
+    stripped = value.strip()
+
+    if value_type == "string":
+        return value
+    if value_type == "boolean":
+        if stripped.lower() == "true":
+            return True
+        if stripped.lower() == "false":
+            return False
+        raise ValueError("expected true or false")
+    if value_type == "integer":
+        return int(stripped, 10)
+    if value_type == "number":
+        return float(stripped)
+    if value_type == "array":
+        if not (
+                (stripped.startswith("[") and stripped.endswith("]"))
+                or (stripped.startswith("(") and stripped.endswith(")"))
+                ):
+            raise ValueError("expected a bracketed list")
+        json_list = f"[{stripped[1:-1]}]"
+        try:
+            return json.loads(json_list)
+        except json.JSONDecodeError:
+            inner = stripped[1:-1].strip()
+            if not inner:
+                return []
+            item_schema = schema.get("items", {})
+            return [
+                _config_value(item.strip(), item_schema)
+                for item in inner.split(",")
+                ]
+
+    return try_as_num(value)
 
 
 def scripts():

@@ -22,6 +22,18 @@ from qplot.windows.plot1d import plot1d
 
 
 class SnapToTraceTestCase(unittest.TestCase):
+    def test_trace_scroll_area_does_not_lock_dock_width(self):
+        host = Plot1DTraceMixin.__new__(Plot1DTraceMixin)
+        host.lineScroll = qtw.QScrollArea()
+        host.lineScroll.setMinimumWidth(500)
+        host.scrollWidget = qtw.QWidget()
+        host.scrollWidget.setMinimumWidth(600)
+        host.lineScroll.setWidget(host.scrollWidget)
+
+        host._resize_scrollArea()
+
+        self.assertEqual(host.lineScroll.minimumWidth(), 1)
+
     def test_nearest_trace_sample_returns_none_without_finite_points(self):
         self.assertIsNone(_nearest_trace_sample([], [], 0.0))
         self.assertIsNone(
@@ -1621,8 +1633,8 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         stats_text = window._marquee_stats_text()
 
-        self.assertIn("X range: 1.000 to 4.000", stats_text)
-        self.assertIn("Y range: 2.000 to 6.000", stats_text)
+        self.assertIn("X range: 1.00 to 4.00", stats_text)
+        self.assertIn("Y range: 2.00 to 6.00", stats_text)
 
     def test_zoom_marquee_sets_selected_axes_without_padding(self):
         class ViewBox:

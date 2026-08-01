@@ -86,8 +86,15 @@ class PlotRefreshMixin(_PlotRefreshBase):
     def _sync_dataset_completion(self, dataset: Any) -> None:
         """Schedule a final worker read so completion and data commit together."""
 
-        if getattr(dataset, "running", False):
-            self.load_data()
+        if not getattr(dataset, "running", False):
+            return
+
+        worker = getattr(self, "worker", None)
+        if worker is not None and getattr(worker, "running", False):
+            self._refresh_pending = True
+            return
+
+        self.load_data()
 
     def load_data(
             self,

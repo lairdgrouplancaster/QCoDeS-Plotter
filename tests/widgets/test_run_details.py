@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._widgets import preview as preview_module
@@ -23,6 +23,43 @@ from qplot.windows._widgets.preview import (
 
 
 class RunDetailsTabsTestCase(unittest.TestCase):
+    def test_axisless_standalone_parameter_is_reported_as_measured(self):
+        class Param:
+            def __init__(self, name, axes=()):
+                self.name = name
+                self.label = name
+                self.unit = ""
+                self.depends_on_ = axes
+
+        class Dataset:
+            running = False
+
+            def get_parameters(self):
+                return [
+                    Param("x"),
+                    Param("signal", ("x",)),
+                    Param("standalone"),
+                    ]
+
+        widget = treeWidgets.moreInfo()
+        widget.setInfo(
+            {
+                "Data Structure": {
+                    "x": {},
+                    "signal": {"axes": ["x"]},
+                    "standalone": {},
+                    },
+                },
+            Dataset(),
+            )
+        overview = {
+            widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
+            for row in range(widget.overview.rowCount())
+            }
+
+        self.assertEqual(overview["Measured parameters"], "signal, standalone")
+        self.assertEqual(overview["Setpoints"], "x")
+
     def test_run_details_show_overview_parameters_metadata_and_raw_tabs(self):
         class Param:
             def __init__(self, name, label, unit, axes=()):
@@ -834,6 +871,45 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             conn.close()
             preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
 
+    def test_1d_preview_samples_only_rows_for_selected_measurement(self):
+        old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
+        preview_module.MAX_PREVIEW_ROWS = 3
+        conn = sqlite3.connect(":memory:")
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "CREATE TABLE results (x REAL, signal REAL, other REAL)"
+                )
+            values = []
+            for index in range(6):
+                values.extend([
+                    (float(index), None, float(index + 100)),
+                    (float(index), float(index * 10), None),
+                    ])
+            cursor.executemany("INSERT INTO results VALUES (?, ?, ?)", values)
+
+            with patch.object(
+                    preview_module,
+                    "render_sparkline_preview",
+                    side_effect=lambda x, y, size: (x, y),
+                    ):
+                preview = preview_module._preview_1d(
+                    cursor,
+                    "results",
+                    {"result_count": len(values)},
+                    "signal",
+                    "x",
+                    size=100,
+                    )
+
+            x, signal = preview["image"]
+            self.assertEqual(x.tolist(), [0.0, 2.0, 4.0])
+            self.assertEqual(signal.tolist(), [0.0, 20.0, 40.0])
+            self.assertTrue(np.isfinite(signal).all())
+        finally:
+            conn.close()
+            preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
+
     def test_2d_preview_reads_complete_modest_known_grid(self):
         old_max_preview_rows = preview_module.MAX_PREVIEW_ROWS
         old_max_grid_cells = preview_module.MAX_PREVIEW_GRID_CELLS
@@ -1140,6 +1216,78 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         qtw.QApplication.sendEvent(image, event)
 
         self.assertEqual(requested, ["dmm_v2"])
+
+    def test_preview_is_accessible_and_keyboard_activatable(self):
+        preview = PreviewTab(preview_size=100)
+        requested = []
+        preview.plotRequested.connect(requested.append)
+        preview._show_previews([{
+            "parameter": "signal",
+            "title": "signal vs x",
+            "image": render_sparkline_preview(
+                np.array([0, 1], dtype=float),
+                np.array([1, 2], dtype=float),
+                size=100,
+                ),
+            }])
+
+        image = preview.findChild(qtw.QLabel, "previewImage")
+        self.assertEqual(image.focusPolicy(), QtCore.Qt.FocusPolicy.StrongFocus)
+        self.assertEqual(image.accessibleName(), "Plot preview: signal vs x")
+        self.assertIn("Enter or Space", image.accessibleDescription())
+        self.assertIn("Shift+F10", image.accessibleDescription())
+
+        for key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Space):
+            QtTest.QTest.keyClick(image, key)
+
+        self.assertEqual(requested, ["signal", "signal"])
+        self.assertTrue(image.property(PREVIEW_SELECTED_PROPERTY))
+
+    def test_preview_keyboard_menu_keys_open_plot_and_export_actions(self):
+        old_exec = qtw.QMenu.exec
+        captured_action_texts = []
+        preview = PreviewTab(preview_size=100)
+        image = None
+
+        def capture_menu(menu, *_args, **_kwargs):
+            captured_action_texts.append([
+                action.text().replace("&", "")
+                for action in menu.actions()
+                ])
+
+        try:
+            qtw.QMenu.exec = capture_menu
+            preview._show_previews([{
+                "parameter": "signal",
+                "title": "signal vs x",
+                "image": render_sparkline_preview(
+                    np.array([0, 1], dtype=float),
+                    np.array([1, 2], dtype=float),
+                    size=100,
+                    ),
+                }])
+            image = preview.findChild(qtw.QLabel, "previewImage")
+
+            QtTest.QTest.keyClick(
+                image,
+                QtCore.Qt.Key.Key_Menu,
+                )
+            QtTest.QTest.keyClick(
+                image,
+                QtCore.Qt.Key.Key_F10,
+                QtCore.Qt.KeyboardModifier.ShiftModifier,
+                )
+        finally:
+            if image is not None:
+                # On macOS QtTest leaves the synthetic modifier globally
+                # pressed, changing selection behaviour in later table tests.
+                QtTest.QTest.keyRelease(image, QtCore.Qt.Key.Key_Shift)
+            qtw.QMenu.exec = old_exec
+
+        self.assertEqual(captured_action_texts, [
+            ["Plot", "Export CSV..."],
+            ["Plot", "Export CSV..."],
+            ])
 
     def test_right_clicking_preview_can_request_export(self):
         old_exec = qtw.QMenu.exec

@@ -8,6 +8,7 @@ from qplot.tools.operation_registry import OperationValidationError, operation_s
 from qplot.windows._widgets.operations import (
     operations_options_1d,
     operations_options_2d,
+    operations_widget,
 )
 from qplot.windows._widgets.toolbar import QDock_context
 
@@ -47,6 +48,25 @@ class OperationsPanelTestCase(unittest.TestCase):
             if "Attempting to add QLayout" in message
             ]
         self.assertEqual(layout_warnings, [])
+
+    def test_operations_widget_uses_inherited_plot_kind(self):
+        class Plot2DWindow(qtw.QMainWindow):
+            operation_kind = "plot2d"
+
+            def __init__(self):
+                super().__init__()
+                self.oper_dock = QDock_context("Operations", self)
+
+        class TimedPlot2D(Plot2DWindow):
+            pass
+
+        window = TimedPlot2D()
+        try:
+            widget = operations_widget(window)
+
+            self.assertIsInstance(widget, operations_options_2d)
+        finally:
+            window.deleteLater()
 
     def test_operation_registry_lists_common_and_plot_specific_options(self):
         names = [spec.name for spec in operation_specs_for("plot2d")]

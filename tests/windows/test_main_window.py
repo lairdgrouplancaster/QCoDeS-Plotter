@@ -1373,6 +1373,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
     def test_restore_default_settings_resets_and_applies_defaults(self):
         old_question = qtw.QMessageBox.question
+        questions = []
 
         class FakeConfig:
             def __init__(self):
@@ -1404,7 +1405,11 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.Yes
+            def answer_yes(*args, **kwargs):
+                questions.append((args, kwargs))
+                return qtw.QMessageBox.StandardButton.Yes
+
+            qtw.QMessageBox.question = answer_yes
             harness = Harness()
             harness.restore_default_settings()
         finally:
@@ -1415,6 +1420,8 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertEqual(harness.closed_plots, [(False, False)])
         self.assertEqual(harness.closed_database, [False])
         self.assertEqual(harness.status_messages[-1][0], "Settings reset to defaults.")
+        self.assertIn("close the current database", questions[0][0][2])
+        self.assertIn("all plot windows", questions[0][0][2])
 
 
     def test_close_database_clears_loaded_database_state(self):
@@ -3321,7 +3328,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 12,
                 "details.db",
                 [2, 1],
-                batch_size=1,
+                batch_size=2,
                 )
             statuses = []
             batches = []
@@ -3337,8 +3344,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             database_module.iter_run_storage_batches_via_sql = old_iter_storage
 
         self.assertEqual(calls, [
-            ("shapes", "details.db", [1], 1),
-            ("shapes", "details.db", [2], 1),
+            ("shapes", "details.db", [1, 2], 2),
             ("storage", "details.db", [1, 2], 25),
             ])
         self.assertEqual(batches, [
@@ -3347,7 +3353,6 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             ])
         self.assertEqual(statuses, [
             (12, "Loading setpoint shapes... 0/2"),
-            (12, "Loading setpoint shapes... 1/2"),
             (12, "Loading setpoint shapes... 2/2"),
             (12, "Loading exact run sizes... 0/2"),
             (12, "Loading exact run sizes... 2/2"),

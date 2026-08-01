@@ -300,7 +300,6 @@ Plot-window shortcuts:
 | `Ctrl+0` | Autoscale the plot view |
 | `Ctrl+C` / `Cmd+C` | Copy the plot image to the clipboard using the selected copy format/resolution |
 | `Ctrl+E` | Export the plot |
-| `Ctrl+Shift+O` | Show or hide the operations panel |
 | `Ctrl+Alt+R` | Show or hide the refresh toolbar |
 | `Ctrl+Alt+C` | Show or hide the coordinate toolbar |
 | `Ctrl+Alt+A` | Show or hide the axis control panel |

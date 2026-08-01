@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import stat
 import tempfile
@@ -16,6 +17,38 @@ THEME_CLASSES = {
     "dark": dark,
     "pyqt": pyqt,
 }
+
+
+def _strict_integer(_checker, instance):
+    return isinstance(instance, int) and not isinstance(instance, bool)
+
+
+def _finite_number(_checker, instance):
+    if isinstance(instance, bool) or not isinstance(instance, (int, float)):
+        return False
+    try:
+        return math.isfinite(instance)
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
+_STRICT_TYPE_CHECKER = (
+    jsonschema.Draft202012Validator.TYPE_CHECKER
+    .redefine("integer", _strict_integer)
+    .redefine("number", _finite_number)
+    )
+StrictConfigValidator = jsonschema.validators.extend(
+    jsonschema.Draft202012Validator,
+    type_checker=_STRICT_TYPE_CHECKER,
+    )
+
+
+def _reject_json_constant(value):
+    raise json.JSONDecodeError(
+        f"Non-standard JSON numeric constant {value!r}",
+        value,
+        0,
+        )
 
 class config:
     """
@@ -54,7 +87,7 @@ class config:
                     )
 
                 changed = self.add_missing_defaults(loaded_config)
-                jsonschema.validate(loaded_config, self.schema)
+                self.validate(loaded_config)
                 self.config = loaded_config
                 if changed:
                     self.save_config(self.default_file)
@@ -179,7 +212,7 @@ class config:
                 )
             target[keys[-1]] = value
 
-        jsonschema.validate(updated_config, self.schema)
+        self.validate(updated_config)
         previous_config = self.config
         self.config = updated_config
         try:
@@ -210,7 +243,7 @@ class config:
 
         """
         with open(path) as fp:
-            config = json.load(fp)
+            config = json.load(fp, parse_constant=_reject_json_constant)
         return config
 
 
@@ -240,7 +273,7 @@ class config:
             )
         try:
             with os.fdopen(file_descriptor, "w", encoding="utf-8") as fp:
-                json.dump(self.config, fp, indent=4)
+                json.dump(self.config, fp, indent=4, allow_nan=False)
                 fp.write("\n")
                 fp.flush()
                 os.fsync(fp.fileno())
@@ -290,11 +323,33 @@ class config:
             config[key] = subdict
         
         # Confirm reset worked
-        jsonschema.validate(config, self.schema)
+        self.validate(config)
         
         # Save reset to file
         self.config = config
         self.save_config(self.default_file)
+
+
+    def validate(self, candidate):
+        """Validate a config with strict Python integer and finite-number types."""
+
+        StrictConfigValidator(self.schema).validate(candidate)
+
+
+    def schema_for(self, key):
+        """Return the JSON-schema node for a supported dotted config key."""
+
+        keys = key.split(".")
+        if len(keys) != 2:
+            raise KeyError(
+                f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
+                )
+        try:
+            return self.schema["properties"][keys[0]]["properties"][keys[1]]
+        except KeyError as err:
+            raise KeyError(
+                f"Key: {key}, not found. Please ensure you use a dot (.) seperated key"
+                ) from err
 
 
     def backup_invalid_config(self):

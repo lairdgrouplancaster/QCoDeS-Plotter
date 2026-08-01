@@ -129,7 +129,14 @@ def progress_percent_value(metadata):
 
 
 def interrupted_progress_percent_value(metadata):
-    expected = metadata.get("setpoint_count") or metadata.get("expected_results")
+    expected = None
+    if metadata.get("setpoint_count_source") != "observed":
+        expected = metadata.get("setpoint_count")
+    if (
+            not expected
+            and metadata.get("expected_results_source") != "observed"
+            ):
+        expected = metadata.get("expected_results")
     count = metadata.get("read_setpoint_count")
     if count is None:
         count = metadata.get("result_count")
@@ -182,7 +189,10 @@ def format_complete_cell(metadata):
 def format_timestamp(timestamp):
     if not timestamp:
         return "unknown"
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return "unknown"
 
 
 def time_taken_seconds(metadata):

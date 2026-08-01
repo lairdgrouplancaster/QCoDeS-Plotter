@@ -507,6 +507,7 @@ class PreviewCard(qtw.QWidget):
         image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         image.setPixmap(QtGui.QPixmap.fromImage(preview["image"]))
         image.setToolTip(preview["title"])
+        image.set_preview_accessibility(preview["title"])
         image.plotRequested.connect(self.plotRequested)
         image.exportRequested.connect(self.exportRequested)
 
@@ -524,9 +525,20 @@ class PreviewImageLabel(qtw.QLabel):
         super().__init__(*args)
         self.parameter = parameter
         self._selected = False
-        self.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.setProperty(PREVIEW_SELECTED_PROPERTY, False)
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.DefaultContextMenu)
+        self.set_preview_accessibility(parameter)
+
+
+    def set_preview_accessibility(self, title=None):
+        title = str(title or self.parameter or "").strip()
+        accessible_name = f"Plot preview: {title}" if title else "Plot preview"
+        self.setAccessibleName(accessible_name)
+        self.setAccessibleDescription(
+            "Press Enter or Space to plot. Press Menu or Shift+F10 for plot and "
+            "export actions."
+            )
 
 
     def set_selected(self, selected):
@@ -559,6 +571,12 @@ class PreviewImageLabel(qtw.QLabel):
         super().mousePressEvent(event)
 
 
+    def focusInEvent(self, event):
+        if self.parameter:
+            self.select_preview()
+        super().focusInEvent(event)
+
+
     def paintEvent(self, event):
         super().paintEvent(event)
 
@@ -581,12 +599,43 @@ class PreviewImageLabel(qtw.QLabel):
         super().mouseDoubleClickEvent(event)
 
 
+    def keyPressEvent(self, event):
+        key = event.key()
+        if self.parameter and key in (
+                QtCore.Qt.Key.Key_Return,
+                QtCore.Qt.Key.Key_Enter,
+                QtCore.Qt.Key.Key_Space,
+                ):
+            self.select_preview()
+            self.plotRequested.emit(self.parameter)
+            event.accept()
+            return
+
+        context_menu_key = key == QtCore.Qt.Key.Key_Menu
+        shift_f10 = (
+            key == QtCore.Qt.Key.Key_F10
+            and bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
+            )
+        if self.parameter and (context_menu_key or shift_f10):
+            self.select_preview()
+            self._show_context_menu(self.mapToGlobal(self.rect().center()))
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
+
     def contextMenuEvent(self, event):
         if not self.parameter:
             super().contextMenuEvent(event)
             return
 
         self.select_preview()
+        self._show_context_menu(event.globalPos())
+        event.accept()
+
+
+    def _show_context_menu(self, global_position):
         menu = qtw.QMenu(self)
 
         plot_action = QtGui.QAction("&Plot", menu)
@@ -597,7 +646,7 @@ class PreviewImageLabel(qtw.QLabel):
         export_action.triggered.connect(lambda: self.exportRequested.emit(self.parameter))
         menu.addAction(export_action)
 
-        menu.exec(event.globalPos())
+        menu.exec(global_position)
 
 
 class DraggablePreviewImageLabel(PreviewImageLabel):
@@ -744,7 +793,13 @@ def unsupported_preview_label(preview, size, object_name):
 
 
 def _preview_1d(cursor, table_name, metadata, parameter, axis, size):
-    x, y = _select_arrays(cursor, table_name, [axis, parameter], metadata)
+    x, y = _select_arrays(
+        cursor,
+        table_name,
+        [axis, parameter],
+        metadata,
+        eligible_columns=[axis, parameter],
+        )
     image = render_sparkline_preview(x, y, size=size)
     return {
         "parameter": parameter,
@@ -1584,12 +1639,23 @@ def _select_arrays(
         metadata,
         max_rows=None,
         sampling="stride",
+        eligible_columns=None,
         ):
     max_rows = int(max_rows or MAX_PREVIEW_ROWS)
     count = _metadata_result_count(metadata)
 
     selected_columns = ", ".join(_sqlite_identifier(column) for column in columns)
     table = _sqlite_identifier(table_name)
+    if eligible_columns:
+        rows = _select_eligible_rows(
+            cursor,
+            table,
+            selected_columns,
+            eligible_columns,
+            max_rows,
+            )
+        return _rows_to_float_arrays(rows, len(columns))
+
     rowid_span = _rowid_span(cursor, table_name)
     if rowid_span is None:
         cursor.execute(
@@ -1637,6 +1703,46 @@ def _select_arrays(
         return [np.array([], dtype=float) for _ in columns]
 
     return _rows_to_float_arrays(rows, len(columns))
+
+
+def _select_eligible_rows(
+        cursor,
+        table,
+        selected_columns,
+        eligible_columns,
+        max_rows,
+        ):
+    predicate = " AND ".join(
+        f"{_sqlite_identifier(column)} IS NOT NULL"
+        for column in dict.fromkeys(eligible_columns)
+        )
+    cursor.execute(f"SELECT COUNT(*) FROM {table} WHERE {predicate}")
+    eligible_count = int(cursor.fetchone()[0] or 0)
+    if eligible_count <= max_rows:
+        cursor.execute(
+            f"SELECT {selected_columns} FROM {table} "
+            f"WHERE {predicate} ORDER BY rowid"
+            )
+        return cursor.fetchall()
+
+    step = max(1, (eligible_count + max_rows - 1) // max_rows)
+    cursor.execute(
+        f"""
+        WITH eligible AS (
+            SELECT {selected_columns},
+                   ROW_NUMBER() OVER (ORDER BY rowid) AS qplot_preview_row_number
+            FROM {table}
+            WHERE {predicate}
+        )
+        SELECT {selected_columns}
+        FROM eligible
+        WHERE (qplot_preview_row_number - 1) % ? = 0
+        ORDER BY qplot_preview_row_number
+        LIMIT ?
+        """,
+        (step, max_rows),
+        )
+    return cursor.fetchall()
 
 
 def _select_stratified_rows(

@@ -37,8 +37,10 @@ class OperationsWindow(Protocol):
 def operations_widget(window: Any) -> "operations_options_base":
     """
     Entry point for getting the operation options.
-    Uses the window tupe to find the correct class to return.
-    Window is also passed to the class
+    Uses the plot kind declared by the window class to select the correct
+    options widget. Subclasses inherit this declaration, so instrumented or
+    otherwise specialised plot windows get the same operations as their base
+    plot type. Window is also passed to the class.
     
     PLEASE SEE BOTTOM OF FILE FOR WHICH OPTIONS ARE ADDED.
 
@@ -55,13 +57,19 @@ def operations_widget(window: Any) -> "operations_options_base":
         the inputted window type.
 
     """
-    options_dict: dict[str, type[operations_options_base]] = {
+    options_dict: dict[OperationKind, type[operations_options_base]] = {
         "plot1d" : operations_options_1d,
         "plot2d" : operations_options_2d,
         "sweeper": operations_options_sweep
         }
-    
-    out = options_dict[window.__class__.__name__](window)
+
+    operation_kind = getattr(window, "operation_kind", None)
+    if operation_kind not in options_dict:
+        raise TypeError(
+            "Plot windows must declare operation_kind as "
+            "'plot1d', 'plot2d', or 'sweeper'"
+            )
+    out = options_dict[cast(OperationKind, operation_kind)](window)
     
     return out
 

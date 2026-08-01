@@ -12,6 +12,11 @@ from qplot.windows._widgets.preview import (
 
 
 class RunListTooltipTestCase(unittest.TestCase):
+    def test_format_timestamp_tolerates_malformed_database_values(self):
+        self.assertEqual(treeWidgets.format_timestamp("not-a-timestamp"), "unknown")
+        self.assertEqual(treeWidgets.format_timestamp(float("nan")), "unknown")
+        self.assertEqual(treeWidgets.format_timestamp(10**30), "unknown")
+
     def test_add_runs_displays_run_with_missing_timestamp(self):
         old_isfile = treeWidgets.isfile
         treeWidgets.isfile = lambda _: False
@@ -165,6 +170,24 @@ class RunListTooltipTestCase(unittest.TestCase):
             "Interrupted (40.00%)"
             )
         self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40.0)
+
+    def test_unshaped_interrupted_run_does_not_report_observed_count_as_plan(self):
+        metadata = {
+            "is_completed": True,
+            "measurement_exception": "KeyboardInterrupt",
+            "result_count": 5,
+            "read_setpoint_count": 5,
+            "setpoint_count": 5,
+            "setpoint_count_source": "observed",
+            "expected_results": 5,
+            "expected_results_source": "observed",
+            }
+
+        self.assertEqual(
+            treeWidgets.format_run_status(metadata),
+            "Interrupted (unknown)",
+            )
+        self.assertIsNone(treeWidgets.complete_cell_sort_value(metadata))
 
     def test_completed_non_keyboard_measurement_exception_is_failed(self):
         metadata = {
@@ -496,6 +519,82 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
+    def test_resize_columns_preserves_manual_width_until_reset(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.resize(780, 300)
+            run_list.show()
+            qtw.QApplication.processEvents()
+            column = run_list.cols.index("Started")
+            manual_width = run_list.columnWidth(column) + 37
+
+            run_list.setColumnWidth(column, manual_width)
+            run_list.resize(900, 300)
+            qtw.QApplication.processEvents()
+            run_list._resize_columns()
+
+            self.assertEqual(run_list.columnWidth(column), manual_width)
+
+            run_list.reset_column_widths()
+
+            self.assertFalse(run_list._manual_column_widths)
+            self.assertNotEqual(run_list.columnWidth(column), manual_width)
+            run_list.hide()
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_columns_do_not_shrink_below_declared_minimums(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            widths = run_list._grow_column_widths(
+                run_list.minimum_column_widths,
+                run_list.readable_column_widths,
+                available_width=100,
+                order=run_list.compact_growth_order,
+                )
+
+            self.assertEqual(widths, run_list.minimum_column_widths)
+            self.assertEqual(
+                run_list.horizontalScrollBarPolicy(),
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_guid_index_tracks_added_and_cleared_rows(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "indexed-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "result_count": 1,
+                    },
+                })
+            item = run_list.topLevelItem(0)
+
+            self.assertIs(run_list._item_for_guid("indexed-guid"), item)
+
+            run_list.clear()
+
+            self.assertIsNone(run_list._item_for_guid("indexed-guid"))
+            self.assertEqual(run_list._items_by_guid, {})
+        finally:
+            treeWidgets.isfile = old_isfile
+
     def test_unknown_completion_duration_uses_database_modified_time(self):
         self.assertEqual(
             treeWidgets.format_complete_cell({
@@ -595,7 +694,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(run_list.indentation(), 0)
             self.assertEqual(
                 run_list.horizontalScrollBarPolicy(),
-                QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
                 )
             self.assertTrue(
                 all(
@@ -611,9 +710,20 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual([item.guid for item in run_list.watching], ["unfinished-guid"])
             self.assertEqual(items["unfinished-guid"].text(1), "")
             self.assertEqual(items["unfinished-guid"].data(1, QtCore.Qt.ItemDataRole.UserRole), 1)
+            self.assertEqual(
+                items["unfinished-guid"].data(
+                    1,
+                    QtCore.Qt.ItemDataRole.AccessibleTextRole,
+                    ),
+                "1 measurement: y",
+                )
             self.assertIsInstance(
                 run_list.itemWidget(items["unfinished-guid"], 1),
                 treeWidgets.RunPreviewCell
+                )
+            self.assertEqual(
+                run_list.itemWidget(items["unfinished-guid"], 1).accessibleName(),
+                "1 measurement: y",
                 )
             self.assertEqual(
                 len(
@@ -629,6 +739,13 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(items["unfinished-guid"].text(6), "100 KB")
             self.assertEqual(items["finished-guid"].text(1), "")
             self.assertEqual(items["finished-guid"].data(1, QtCore.Qt.ItemDataRole.UserRole), 2)
+            self.assertEqual(
+                items["finished-guid"].data(
+                    1,
+                    QtCore.Qt.ItemDataRole.AccessibleTextRole,
+                    ),
+                "2 measurements: z, w",
+                )
             self.assertEqual(
                 len(
                     run_list.itemWidget(
@@ -813,6 +930,72 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
             treeWidgets.get_run_status = old_get_run_status
+
+    def test_check_watching_replaces_stale_observed_live_shape(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "guid": "growing-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "result_count": 1,
+                    "point_shape": [1],
+                    "setpoint_shape": [1],
+                    "setpoint_shape_source": "observed",
+                    "setpoint_count": 1,
+                    "setpoint_count_source": "observed",
+                    "expected_results": 1,
+                    "expected_results_source": "observed",
+                    },
+                })
+            item = run_list.topLevelItem(0)
+
+            run_list.checkWatching({
+                "growing-guid": {
+                    "is_completed": False,
+                    "result_count": 5,
+                    "point_shape": [5],
+                    "setpoint_shape": [5],
+                    "setpoint_shape_source": "observed",
+                    "setpoint_count": 5,
+                    "setpoint_count_source": "observed",
+                    "expected_results": None,
+                    "expected_results_source": None,
+                    },
+                })
+
+            self.assertEqual(item.text(run_list.cols.index("Setpoints")), "5")
+            self.assertEqual(item.text(run_list.cols.index("Status")), "unknown")
+            self.assertIsNone(item.run_metadata["expected_results"])
+
+            run_list.checkWatching({
+                "growing-guid": {
+                    "completed_timestamp": 120.0,
+                    "is_completed": True,
+                    "result_count": 5,
+                    "point_shape": [5],
+                    "setpoint_shape": [5],
+                    "setpoint_shape_source": "observed",
+                    "setpoint_count": 5,
+                    "setpoint_count_source": "observed",
+                    "expected_results": 5,
+                    "expected_results_source": "observed",
+                    },
+                })
+
+            self.assertEqual(item.text(run_list.cols.index("Setpoints")), "5")
+            self.assertEqual(item.text(run_list.cols.index("Status")), "✓")
+            self.assertEqual(item.run_metadata["expected_results"], 5)
+            self.assertEqual(run_list.watching, [])
+        finally:
+            treeWidgets.isfile = old_isfile
 
     def test_check_watching_updates_finished_failed_run(self):
         old_isfile = treeWidgets.isfile
@@ -1050,3 +1233,164 @@ class RunListTooltipTestCase(unittest.TestCase):
                 )
         finally:
             treeWidgets.isfile = old_isfile
+
+    def test_large_run_list_uses_compact_cells_instead_of_widgets_per_run(self):
+        old_isfile = treeWidgets.isfile
+        old_limit = treeWidgets.MAX_RUN_PREVIEW_WIDGETS
+        treeWidgets.isfile = lambda _: False
+        treeWidgets.MAX_RUN_PREVIEW_WIDGETS = 2
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                run_id: {
+                    "run_timestamp": 100.0 + run_id,
+                    "completed_timestamp": 110.0 + run_id,
+                    "is_completed": True,
+                    "guid": f"guid-{run_id}",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "result_count": 10,
+                    }
+                for run_id in range(1, 4)
+                })
+
+            self.assertFalse(run_list._preview_widgets_enabled)
+            self.assertEqual(run_list.preview_cells, {})
+            self.assertTrue(run_list.uniformRowHeights())
+            for row in range(run_list.topLevelItemCount()):
+                item = run_list.topLevelItem(row)
+                self.assertIsNone(run_list.itemWidget(item, 1))
+                self.assertEqual(item.text(1), "1")
+        finally:
+            treeWidgets.MAX_RUN_PREVIEW_WIDGETS = old_limit
+            treeWidgets.isfile = old_isfile
+
+    def test_setpoint_width_scan_is_cached_until_run_data_changes(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 110.0,
+                    "is_completed": True,
+                    "guid": "guid-1",
+                    "sweep_parameters": ["x", "y"],
+                    "measure_parameters": ["signal"],
+                    "setpoint_count": 100,
+                    "setpoint_shape": [10, 10],
+                    "result_count": 100,
+                    },
+                })
+            item = run_list.topLevelItem(0)
+            column = run_list.cols.index("Setpoints")
+            index = run_list.indexFromItem(item, column)
+            delegate = run_list.itemDelegateForColumn(column)
+            metrics = QtGui.QFontMetrics(run_list.font())
+
+            first_width = delegate._max_right_width(index, metrics)
+            item.setText(column, "100 = 1000000 × 1000000")
+            cached_width = delegate._max_right_width(index, metrics)
+            delegate.invalidate_width_cache()
+            refreshed_width = delegate._max_right_width(index, metrics)
+
+            self.assertEqual(cached_width, first_width)
+            self.assertGreater(refreshed_width, first_width)
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_detail_batches_do_not_resort_when_sort_key_is_unchanged(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        class RecordingRunList(treeWidgets.RunList):
+            def __init__(self):
+                self.sorting_changes = []
+                super().__init__()
+
+            def setSortingEnabled(self, enabled):
+                self.sorting_changes.append(enabled)
+                super().setSortingEnabled(enabled)
+
+        try:
+            run_list = RecordingRunList()
+            run_list.addRuns({
+                1: {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "guid": "guid-1",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "result_count": 1,
+                    },
+                })
+            run_list.sortItems(0, QtCore.Qt.SortOrder.DescendingOrder)
+            run_list.sorting_changes.clear()
+
+            run_list.updateRuns({
+                1: {
+                    "guid": "guid-1",
+                    "result_count": 2,
+                    },
+                })
+
+            self.assertEqual(run_list.sorting_changes, [])
+            self.assertTrue(run_list.isSortingEnabled())
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_large_selected_run_skips_full_table_setpoint_grouping(self):
+        details = treeWidgets.moreInfo(preview_size=100)
+        sql_calls = []
+        details._setpoint_summaries_from_sql = (
+            lambda *args: sql_calls.append(args) or {"gate": {"steps": 5}}
+            )
+
+        summaries = details._setpoint_summaries(
+            None,
+            ["gate"],
+            run_metadata={
+                "result_table_name": "results",
+                "result_count": (
+                    treeWidgets.MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS + 1
+                    ),
+                "setpoint_shape": [1000],
+                },
+            database_path="large.db",
+            )
+
+        self.assertEqual(sql_calls, [])
+        self.assertEqual(summaries, {"gate": {"steps": 1000}})
+        details.deleteLater()
+
+    def test_selected_run_setpoint_summary_query_is_cached(self):
+        details = treeWidgets.moreInfo(preview_size=100)
+        sql_calls = []
+        details._setpoint_summaries_from_sql = (
+            lambda *args: sql_calls.append(args) or {"gate": {"steps": 5}}
+            )
+        metadata = {
+            "result_table_name": "results",
+            "result_count": 50,
+            }
+
+        first = details._setpoint_summaries(
+            None,
+            ["gate"],
+            run_metadata=metadata,
+            database_path="small.db",
+            )
+        second = details._setpoint_summaries(
+            None,
+            ["gate"],
+            run_metadata=metadata,
+            database_path="small.db",
+            )
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(sql_calls), 1)
+        details.deleteLater()

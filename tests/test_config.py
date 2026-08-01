@@ -72,6 +72,29 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(cfg.get("user_preference.theme"), "light")
         self.assertEqual(config().get("user_preference.theme"), "light")
 
+    def test_config_rejects_integral_floats_for_qt_integer_settings(self):
+        cfg = config()
+
+        with self.assertRaises(ValidationError):
+            cfg.update("runtime_settings.max_threads", 10.0)
+        with self.assertRaises(ValidationError):
+            cfg.update("GUI.main_frame_size", [900.0, 600.0])
+
+    def test_config_rejects_non_finite_numbers(self):
+        cfg = config()
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                cfg.update("GUI.plot_frame_fraction", value)
+
+    def test_config_rejects_values_outside_qt_widget_bounds(self):
+        cfg = config()
+
+        with self.assertRaises(ValidationError):
+            cfg.update("runtime_settings.max_threads", 1000)
+        with self.assertRaises(ValidationError):
+            cfg.update("GUI.main_frame_size", [2**31, 700])
+
     def test_config_write_failure_preserves_previous_file(self):
         cfg = config()
         previous_contents = Path(config.default_file).read_text(encoding="utf-8")
@@ -112,6 +135,16 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(cfg.get("GUI.preview_size"), 300)
         self.assertEqual(cfg.get("file.default_load_path"), "")
         self.assertEqual(cfg.get("file.recent_file_paths"), [])
+
+    def test_config_cli_rejects_integral_float_for_integer_setting(self):
+        with self.assertRaises(ValidationError):
+            sysHandle("-set_value", "runtime_settings.max_threads", "10.0")
+
+    def test_config_cli_preserves_numeric_strings(self):
+        with redirect_stdout(io.StringIO()):
+            sysHandle("-set_value", "file.default_load_path", "123")
+
+        self.assertEqual(config().get("file.default_load_path"), "123")
 
     def test_config_load_adds_new_defaults_to_existing_file(self):
         cfg = config()
@@ -161,6 +194,22 @@ class TemporaryConfigTestCase(unittest.TestCase):
             backup = json.load(fp)
         self.assertEqual(backup["user_preference"]["theme"], "missing-theme")
 
+    def test_non_standard_json_number_is_backed_up_and_reset(self):
+        config()
+        invalid = Path(config.default_file).read_text(encoding="utf-8").replace(
+            '"plot_frame_fraction": 0.47',
+            '"plot_frame_fraction": NaN',
+            )
+        Path(config.default_file).write_text(invalid, encoding="utf-8")
+
+        reloaded = config()
+
+        self.assertEqual(reloaded.get("GUI.plot_frame_fraction"), 0.47)
+        self.assertIn(
+            '"plot_frame_fraction": NaN',
+            Path(reloaded.invalid_config_backup_file).read_text(encoding="utf-8"),
+            )
+
     def test_scripts_without_arguments_shows_command_info(self):
         old_argv = sys.argv
         sys.argv = ["qplot-cfg"]
@@ -193,6 +242,12 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(
             qplot_main._database_path_from_arguments(["-style", "Fusion", "notes.txt"]),
             "notes.txt",
+            )
+
+    def test_database_path_from_arguments_accepts_dash_path_after_separator(self):
+        self.assertEqual(
+            qplot_main._database_path_from_arguments(["-style", "Fusion", "--", "-data.db"]),
+            "-data.db",
             )
 
     def test_application_identity_uses_qplot_name(self):

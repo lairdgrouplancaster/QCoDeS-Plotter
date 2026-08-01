@@ -53,6 +53,8 @@ class ThemeStylesheetTestCase(unittest.TestCase):
 
         self.assertIn("background-color: #010101", stylesheet)
         self.assertIn("border: 1px solid #151515", stylesheet)
+        self.assertNotIn("QCheckBox::indicator:checked", stylesheet)
+        self.assertNotIn("QCheckBox::indicator:unchecked", stylesheet)
         self.assertNotIn("$", stylesheet)
 
     def test_light_and_dark_stylesheets_parse_without_qt_warnings(self):
@@ -98,4 +100,3 @@ class ThemeStylesheetTestCase(unittest.TestCase):
             self.assertGreater(len(theme.main), 1000)
             self.assertEqual(len(theme.colors), 6)
             self.assertTrue(hasattr(theme, "style_plotItem"))
-
