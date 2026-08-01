@@ -27,6 +27,32 @@ class SnapToTraceTestCase(unittest.TestCase):
             _nearest_trace_sample([0.0, np.nan, np.inf], [np.nan, 1.0, 2.0], 0.0)
             )
 
+    def test_empty_window_update_clears_stale_add_to_plot_choices(self):
+        class Combo:
+            def isEnabled(self):
+                return True
+
+            def currentText(self):
+                return "closed plot"
+
+        class Box:
+            def __init__(self):
+                self.option_box = Combo()
+                self.resets = []
+
+            def reset_box(self, items):
+                self.resets.append(items)
+
+        host = Plot1DTraceMixin.__new__(Plot1DTraceMixin)
+        box = Box()
+        host.mergable = [object()]
+        host.option_boxes = [box]
+
+        host.update_line_picker([])
+
+        self.assertEqual(host.mergable, [])
+        self.assertEqual(box.resets, [[]])
+
     def test_nearest_trace_sample_preserves_original_point_number(self):
         sample = _nearest_trace_sample(
             [0.0, 1.0, 2.0],

@@ -7,6 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from jsonschema import ValidationError
 from PyQt6 import QtWidgets as qtw
 
 import qplot.__main__ as qplot_main
@@ -58,6 +59,18 @@ class TemporaryConfigTestCase(unittest.TestCase):
         with self.assertRaises(KeyError):
             cfg.update("user_preference.missing", True)
 
+    def test_config_update_many_is_atomic_when_a_value_is_invalid(self):
+        cfg = config()
+
+        with self.assertRaises(ValidationError):
+            cfg.update_many({
+                "user_preference.theme": "dark",
+                "GUI.preview_size": 1,
+                })
+
+        self.assertEqual(cfg.get("user_preference.theme"), "light")
+        self.assertEqual(config().get("user_preference.theme"), "light")
+
     def test_config_cli_set_value_converts_values(self):
         with redirect_stdout(io.StringIO()):
             sysHandle("-set_value", "user_preference.theme", "dark")
@@ -66,6 +79,8 @@ class TemporaryConfigTestCase(unittest.TestCase):
             sysHandle("-set_value", "user_preference.mouse_mode", "rect")
             sysHandle("-set_value", "GUI.main_frame_size", "[900, 600]")
             sysHandle("-set_value", "GUI.preview_size", "300")
+            sysHandle("-set_value", "file.default_load_path", "")
+            sysHandle("-set_value", "file.recent_file_paths", "[]")
 
         cfg = config()
         self.assertEqual(cfg.get("user_preference.theme"), "dark")
@@ -74,6 +89,8 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(cfg.get("user_preference.mouse_mode"), "rect")
         self.assertEqual(cfg.get("GUI.main_frame_size"), [900, 600])
         self.assertEqual(cfg.get("GUI.preview_size"), 300)
+        self.assertEqual(cfg.get("file.default_load_path"), "")
+        self.assertEqual(cfg.get("file.recent_file_paths"), [])
 
     def test_config_load_adds_new_defaults_to_existing_file(self):
         cfg = config()
