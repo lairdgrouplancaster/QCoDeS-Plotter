@@ -7,6 +7,8 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.5.0-b3 - 2026-08-01
+
 ### Fixed
 
 - Reject measurements with more than two independent axes instead of silently
