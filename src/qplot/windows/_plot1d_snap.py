@@ -63,6 +63,7 @@ def _nearest_trace_sample(
         x_data: npt.ArrayLike,
         y_data: npt.ArrayLike,
         cursor_x: float,
+        cursor_y: float | None = None,
         ) -> _SnapTraceSample | None:
     """
     Return the finite plotted sample nearest to a cursor X coordinate.
@@ -83,7 +84,11 @@ def _nearest_trace_sample(
     finite_indices = np.flatnonzero(finite)
     x_values = x_data[finite]
     y_values = y_data[finite]
-    index = int(np.argmin(np.abs(x_values - cursor_x)))
+    if cursor_y is None:
+        distances = np.abs(x_values - cursor_x)
+    else:
+        distances = np.square(x_values - cursor_x) + np.square(y_values - cursor_y)
+    index = int(np.argmin(distances))
 
     return _SnapTraceSample(
         x_value=float(x_values[index]),
@@ -309,15 +314,14 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
                 continue
 
             viewbox = self._viewbox_for_line(line)
-            mouse_point = viewbox.mapSceneToView(scene_pos)
-            sample = _nearest_trace_sample(data[0], data[1], mouse_point.x())
+            sample, distance = self._nearest_scene_trace_sample(
+                data[0],
+                data[1],
+                scene_pos,
+                viewbox,
+                )
             if sample is None:
                 continue
-
-            point_scene = viewbox.mapViewToScene(
-                QtCore.QPointF(sample.x_value, sample.y_value)
-                )
-            distance = _scene_distance_squared(point_scene, scene_pos)
 
             if nearest_distance is None or distance < nearest_distance:
                 nearest = (
@@ -330,6 +334,50 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
                 nearest_distance = distance
 
         return nearest
+
+
+    @staticmethod
+    def _nearest_scene_trace_sample(x_data, y_data, scene_pos, viewbox):
+        """Return the trace sample nearest to a scene position in screen space."""
+
+        x_data = np.asarray(x_data, dtype=float)
+        y_data = np.asarray(y_data, dtype=float)
+        count = min(x_data.size, y_data.size)
+        if count == 0:
+            return None, None
+
+        x_data = x_data[:count]
+        y_data = y_data[:count]
+        finite = np.isfinite(x_data) & np.isfinite(y_data)
+        if not np.any(finite):
+            return None, None
+
+        finite_indices = np.flatnonzero(finite)
+        x_values = x_data[finite]
+        y_values = y_data[finite]
+        origin = viewbox.mapViewToScene(QtCore.QPointF(0.0, 0.0))
+        x_basis = viewbox.mapViewToScene(QtCore.QPointF(1.0, 0.0))
+        y_basis = viewbox.mapViewToScene(QtCore.QPointF(0.0, 1.0))
+        scene_x = (
+            origin.x()
+            + x_values * (x_basis.x() - origin.x())
+            + y_values * (y_basis.x() - origin.x())
+            )
+        scene_y = (
+            origin.y()
+            + x_values * (x_basis.y() - origin.y())
+            + y_values * (y_basis.y() - origin.y())
+            )
+        distances = np.square(scene_x - scene_pos.x()) + np.square(
+            scene_y - scene_pos.y()
+            )
+        index = int(np.argmin(distances))
+        sample = _SnapTraceSample(
+            x_value=float(x_values[index]),
+            y_value=float(y_values[index]),
+            point_number=int(finite_indices[index]) + 1,
+            )
+        return sample, float(distances[index])
 
 
     def _viewbox_for_line(self, line):

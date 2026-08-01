@@ -13,6 +13,7 @@ from qplot.datahandling.readonly import load_by_guid_read_only, load_by_id_read_
 from qplot.diagnostics import log_exception
 
 from ._dataset_handle import DatasetHandle, DatasetKey, close_dataset_connection
+from ._subplots.subplot1d import _subplot_axis_order
 from .plot1d import plot1d
 from .plot2d import plot2d
 
@@ -182,9 +183,14 @@ class PlotActionsMixin:
                 show=show,
                 **kargs,
             )
-            window_type = win.__class__.__name__
-            if window_type not in {"plot1d", "plot2d", "sweeper"}:
-                raise TypeError(f"Unknown window of type: {window_type}")
+            if win.__class__.__name__ == "sweeper":
+                window_type = "sweeper"
+            elif isinstance(win, plot1d):
+                window_type = "plot1d"
+            elif isinstance(win, plot2d):
+                window_type = "plot2d"
+            else:
+                raise TypeError(f"Unknown window of type: {win.__class__.__name__}")
         except Exception:
             if loaded_for_construction:
                 try:
@@ -254,7 +260,7 @@ class PlotActionsMixin:
             try:
                 same_source = item.ds == source_win.ds and item.param == source_win.param
                 should_close = same_source and item.sweep_id in target_ids
-            except AttributeError:
+            except (AttributeError, RuntimeError):
                 continue
 
             if should_close:
@@ -370,7 +376,17 @@ class PlotActionsMixin:
         if ds is None:
             return
 
-        params = self._selected_measurement_params(ds)
+        try:
+            params = self._selected_measurement_params(ds)
+        except Exception as error:
+            log_exception("Run parameter enumeration failed", error, __name__)
+            self._close_dataset_if_unowned(ds)
+            self.show_error(
+                "Run Load Failed",
+                "Could not read the selected run's measurements.",
+                str(error),
+                )
+            return
         if params is None:
             self._close_dataset_if_unowned(ds)
             return
@@ -993,17 +1009,14 @@ class PlotActionsMixin:
 
         for item in self.windows:
             try:
-                if item.param.depends_on == win.param.depends_on:
-                    if not _plot_has_trace_window(win, item):
-                        wins.append(item)
-
-                elif (
-                    item.__class__.__name__ == "sweeper"
-                    and item.axis_options["x"] == win.param.depends_on
-                ):
-                    if not _plot_has_trace_window(win, item):
-                        wins.append(item)
-            except AttributeError:
+                compatible = _subplot_axis_order(
+                    win.axis_options,
+                    item.axis_options,
+                    source_is_cut=item.__class__.__name__ == "sweeper",
+                    )
+                if compatible is not None and not _plot_has_trace_window(win, item):
+                    wins.append(item)
+            except (AttributeError, RuntimeError):
                 continue
 
         win.update_line_picker(wins)

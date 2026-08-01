@@ -415,8 +415,9 @@ class plotWidget(
             self.toolbarRef.hide()
         
         self.spinBox = qtw.QDoubleSpinBox()
+        self.spinBox.setRange(0.0, 86_400.0)
         self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(1)
+        self.spinBox.setDecimals(3)
 
         self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
@@ -790,6 +791,7 @@ class plotWidget(
             self.axis_dropdown[axis].currentIndexChanged.connect(
                                         lambda index, axis=axis: self.change_axis(axis)
                                         )
+        self._axis_selection = self.axis_options
             
         # Produce seperations line as QDockWidget as none inbuilt
         sep = qtw.QFrame()
@@ -916,6 +918,11 @@ class plotWidget(
             Formated string for display.
 
         """
+        if not isfinite(num):
+            if num != num:
+                return "nan"
+            return "-inf" if num < 0 else "inf"
+
         try: # Get number of leading/following zeros
             log = int(log10(abs(num)))
         except ValueError:
@@ -1334,7 +1341,8 @@ class plotWidget(
             update.
 
         """
-        duplicates = [k for k, v in self.axis_dropdown.items() 
+        previous = getattr(self, "_axis_selection", self.axis_options)
+        duplicates = [k for k, v in self.axis_dropdown.items()
                           if self.axis_dropdown[key].currentText() == v.currentText()
                           and k != key
                      ]
@@ -1343,29 +1351,11 @@ class plotWidget(
         if len(duplicates) == 1:
             self.axis_dropdown[duplicates[0]].blockSignals(True)
             
-            # Fetch axis parameter from self.axis_param["<x/y>"]
             self.axis_dropdown[duplicates[0]].setCurrentIndex(
-                self.axis_dropdown[duplicates[0]].findText(self.axis_param[key].name)
+                self.axis_dropdown[duplicates[0]].findText(previous[key])
                 )
             
             self.axis_dropdown[duplicates[0]].blockSignals(False)
             
-            # Flip worker data to match change
-            temp_y_data = self.worker.axis_data["y"]
-            temp_y_param = self.worker.axis_param["y"]
-            
-            self.worker.axis_data["y"] = self.worker.axis_data["x"]
-            self.worker.axis_data["x"] = temp_y_data
-            
-            self.worker.axis_param["y"] = self.worker.axis_param["x"]
-            self.worker.axis_param["x"] = temp_y_param
-            
-            if hasattr(self.worker, "dataGrid"):
-                self.worker.dataGrid = self.worker.dataGrid.transpose()
-                
-            # Refresh without loading new dataset data
-            self.refreshPlot()
-            
-        else:
-            # get new data
-            self.refreshWindow(force=True)
+        self._axis_selection = self.axis_options
+        self.refreshWindow(force=True)

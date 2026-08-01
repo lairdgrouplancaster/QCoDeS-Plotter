@@ -1,4 +1,5 @@
 import json
+from collections import OrderedDict
 
 import numpy as np
 from PyQt6 import QtCore, QtGui
@@ -26,6 +27,8 @@ PREVIEW_REMAINING_PRIORITY = 0
 PREVIEW_VISIBLE_PRIORITY = 50
 PREVIEW_SELECTED_PRIORITY = 100
 PREVIEW_SELECTED_PROPERTY = "previewSelected"
+PREVIEW_CACHE_MAX_BYTES = 128 * 1024 * 1024
+PREVIEW_CACHE_MAX_ENTRIES = 512
 VIRIDIS_STOPS = np.asarray([
     (68, 1, 84),
     (72, 35, 116),
@@ -60,7 +63,8 @@ class PreviewTab(qtw.QWidget):
         self.generation = 0
         self.current_guid = None
         self.run_metadata = {}
-        self.cache = {}
+        self.cache = OrderedDict()
+        self.cache_bytes = 0
         self.errors = {}
         self.queue = {}
         self.active: set[tuple[int, str]] = set()
@@ -111,7 +115,8 @@ class PreviewTab(qtw.QWidget):
         self.preview_size = preview_size
         self._update_minimum_height()
         self.generation += 1
-        self.cache = {}
+        self.cache = OrderedDict()
+        self.cache_bytes = 0
         self.errors = {}
         self.queue = {}
         self.metadata_signatures = {
@@ -119,7 +124,6 @@ class PreviewTab(qtw.QWidget):
             for guid, metadata in self.run_metadata.items()
             }
 
-        self._enqueue_all(priority=PREVIEW_REMAINING_PRIORITY)
         if self.current_guid:
             self._show_message("Generating preview...")
             self._enqueue(
@@ -135,7 +139,8 @@ class PreviewTab(qtw.QWidget):
         self.database_path = database_path
         self.current_guid = None
         self.run_metadata = self._normalise_runs(runs)
-        self.cache = {}
+        self.cache = OrderedDict()
+        self.cache_bytes = 0
         self.errors = {}
         self.queue = {}
         self.active = set()
@@ -145,8 +150,6 @@ class PreviewTab(qtw.QWidget):
             }
 
         self._show_message("Select a run")
-        self._enqueue_all(priority=PREVIEW_REMAINING_PRIORITY)
-        self._schedule_start_next()
 
 
     def add_runs(self, runs, queue_previews=True):
@@ -161,10 +164,10 @@ class PreviewTab(qtw.QWidget):
             self.metadata_signatures[guid] = signature
 
             if changed:
-                self.cache.pop(guid, None)
+                self._drop_cached(guid)
                 self.errors.pop(guid, None)
 
-            if queue_previews:
+            if queue_previews and guid == self.current_guid:
                 self._enqueue(
                     guid,
                     priority=PREVIEW_REMAINING_PRIORITY,
@@ -185,14 +188,15 @@ class PreviewTab(qtw.QWidget):
             return
 
         if guid in self.cache:
-            self._show_previews(self.cache[guid])
+            self._show_previews(self._cached_previews(guid))
             return
 
         if guid in self.errors:
-            self._show_message("Preview failed", self.errors[guid])
-            return
+            self.errors.pop(guid, None)
+            self._show_message("Retrying preview...")
+        else:
+            self._show_message("Generating preview...")
 
-        self._show_message("Generating preview...")
         self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
         self._start_next()
 
@@ -243,9 +247,10 @@ class PreviewTab(qtw.QWidget):
             selected_guids.add(self.current_guid)
             visible_guids.discard(self.current_guid)
 
-        self._enqueue_all(priority=PREVIEW_REMAINING_PRIORITY)
+        requested_guids = selected_guids | visible_guids
         for guid in list(self.queue):
-            self.queue[guid] = PREVIEW_REMAINING_PRIORITY
+            if guid not in requested_guids:
+                self.queue.pop(guid, None)
 
         for guid in visible_guids:
             self._enqueue(guid, priority=PREVIEW_VISIBLE_PRIORITY)
@@ -324,6 +329,49 @@ class PreviewTab(qtw.QWidget):
         self.queue[guid] = max(priority, self.queue.get(guid, priority))
 
 
+    def _cached_previews(self, guid):
+        previews = self.cache.pop(guid)
+        self.cache[guid] = previews
+        return previews
+
+
+    def _drop_cached(self, guid):
+        previews = self.cache.pop(guid, None)
+        if previews is not None:
+            self.cache_bytes = max(
+                0,
+                self.cache_bytes - self._preview_bytes(previews),
+                )
+
+
+    def _store_cached(self, guid, previews):
+        self._drop_cached(guid)
+        self.cache[guid] = previews
+        self.cache_bytes += self._preview_bytes(previews)
+        while (
+                len(self.cache) > PREVIEW_CACHE_MAX_ENTRIES
+                or self.cache_bytes > PREVIEW_CACHE_MAX_BYTES
+                ):
+            evict_guid = next(
+                (cached_guid for cached_guid in self.cache if cached_guid != self.current_guid),
+                None,
+                )
+            if evict_guid is None:
+                break
+            self._drop_cached(evict_guid)
+
+
+    @staticmethod
+    def _preview_bytes(previews):
+        total = 0
+        for preview in previews or []:
+            image = preview.get("image") if isinstance(preview, dict) else None
+            size_in_bytes = getattr(image, "sizeInBytes", None)
+            if callable(size_in_bytes):
+                total += max(0, int(size_in_bytes()))
+        return total
+
+
     def _schedule_start_next(self):
         if self._start_scheduled:
             return
@@ -381,7 +429,7 @@ class PreviewTab(qtw.QWidget):
         if error:
             self.errors[guid] = str(error)
         else:
-            self.cache[guid] = previews
+            self._store_cached(guid, previews)
             self.previewsReady.emit(guid, previews)
 
         if guid == self.current_guid:

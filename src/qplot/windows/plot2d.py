@@ -1047,8 +1047,18 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         for axis in ("x", "y"):
             left_low, left_high = left[axis]
             right_low, right_high = right[axis]
-            width = max(abs(left_high - left_low), abs(right_high - right_low), 1.0)
-            tolerance = width * 0.01
+            width = max(abs(left_high - left_low), abs(right_high - right_low))
+            coordinate_scale = max(
+                abs(left_low),
+                abs(left_high),
+                abs(right_low),
+                abs(right_high),
+                1.0,
+                )
+            tolerance = max(
+                width * 0.01,
+                np.finfo(float).eps * coordinate_scale * 16,
+                )
             if (
                     abs(left_low - right_low) > tolerance
                     or abs(left_high - right_high) > tolerance

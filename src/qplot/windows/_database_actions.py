@@ -342,11 +342,6 @@ class DatabaseActionsMixin:
         if not getattr(self, "_database_refresh_active", False):
             return
 
-        self._database_refresh_active = False
-        self._database_refresh_worker = None
-        pending = bool(getattr(self, "_database_refresh_pending", False))
-        self._database_refresh_pending = False
-
         try:
             if database_path != self.fileTextbox.text():
                 return
@@ -361,6 +356,10 @@ class DatabaseActionsMixin:
 
             self._apply_database_refresh_result(new_runs or {}, statuses or {})
         finally:
+            self._database_refresh_active = False
+            self._database_refresh_worker = None
+            pending = bool(getattr(self, "_database_refresh_pending", False))
+            self._database_refresh_pending = False
             if pending and database_path == self.fileTextbox.text():
                 QtCore.QTimer.singleShot(0, self.refreshMain)
 
@@ -642,6 +641,7 @@ class DatabaseActionsMixin:
             "load_started_at": load_started_at,
         }
 
+        self._set_database_load_controls_enabled(False)
         self._show_database_load_panel(load_message)
 
         try:

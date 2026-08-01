@@ -27,7 +27,9 @@ from qcodes.instrument_drivers.mock_instruments import (
 )
 
 qc.Instrument.close_all()
-initialise_or_create_database_at(os.path.join(os.getcwd(), "tests", "data", "qplot-demo.db"))
+database_folder = os.path.join(os.getcwd(), "tests", "data")
+os.makedirs(database_folder, exist_ok=True)
+initialise_or_create_database_at(os.path.join(database_folder, "qplot-demo.db"))
 
 
 # A dummy signal generator with two parameters ch1 and ch2

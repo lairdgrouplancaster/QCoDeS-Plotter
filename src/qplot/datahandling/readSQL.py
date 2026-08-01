@@ -7,7 +7,21 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from qplot.datahandling.readonly import qcodes_read_only_connection
 
 
-def get_runs_via_sql(database_path=None, include_details=True):
+def _install_cancel_progress_handler(conn, cancelled_callback):
+    if cancelled_callback is None:
+        return
+    if cancelled_callback():
+        raise InterruptedError("Database read cancelled.")
+    set_progress_handler = getattr(conn, "set_progress_handler", None)
+    if callable(set_progress_handler):
+        set_progress_handler(lambda: int(bool(cancelled_callback())), 1000)
+
+
+def get_runs_via_sql(
+        database_path=None,
+        include_details=True,
+        cancelled_callback=None,
+        ):
     """
     Read from the currently initialised QCoDeS database and fetches all data to
     be displayed in Main Window runList
@@ -22,6 +36,7 @@ def get_runs_via_sql(database_path=None, include_details=True):
     """
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         return _fetch_run_rows(
             cursor,
@@ -32,7 +47,7 @@ def get_runs_via_sql(database_path=None, include_details=True):
         conn.close()
 
 
-def get_runs_basic_via_sql(database_path=None):
+def get_runs_basic_via_sql(database_path=None, cancelled_callback=None):
     """
     Read the run list without scanning result tables.
 
@@ -42,7 +57,11 @@ def get_runs_basic_via_sql(database_path=None):
     to later targeted loads.
 
     """
-    return get_runs_via_sql(database_path=database_path, include_details=False)
+    return get_runs_via_sql(
+        database_path=database_path,
+        include_details=False,
+        cancelled_callback=cancelled_callback,
+        )
 
 
 def iter_run_detail_batches_via_sql(
@@ -53,6 +72,7 @@ def iter_run_detail_batches_via_sql(
         include_storage_bytes=True,
         include_storage_estimate=False,
         include_read_setpoint_count=True,
+        cancelled_callback=None,
         ):
     """
     Yield detailed run metadata in small batches.
@@ -68,8 +88,11 @@ def iter_run_detail_batches_via_sql(
     batch_size = max(1, int(batch_size or 1))
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         for offset in range(0, len(run_ids), batch_size):
+            if cancelled_callback is not None and cancelled_callback():
+                raise InterruptedError("Database detail read cancelled.")
             batch = run_ids[offset:offset + batch_size]
             placeholders = ", ".join("?" for _ in batch)
             rows = _fetch_run_rows(
@@ -88,7 +111,12 @@ def iter_run_detail_batches_via_sql(
         conn.close()
 
 
-def iter_run_shape_batches_via_sql(database_path, run_ids, batch_size=1):
+def iter_run_shape_batches_via_sql(
+        database_path,
+        run_ids,
+        batch_size=1,
+        cancelled_callback=None,
+        ):
     """
     Yield setpoint-shape metadata for runs that need result-table inference.
 
@@ -103,8 +131,11 @@ def iter_run_shape_batches_via_sql(database_path, run_ids, batch_size=1):
     batch_size = max(1, int(batch_size or 1))
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         for offset in range(0, len(run_ids), batch_size):
+            if cancelled_callback is not None and cancelled_callback():
+                raise InterruptedError("Database shape read cancelled.")
             batch = run_ids[offset:offset + batch_size]
             placeholders = ", ".join("?" for _ in batch)
             rows = _fetch_run_rows(
@@ -128,7 +159,12 @@ def iter_run_shape_batches_via_sql(database_path, run_ids, batch_size=1):
         conn.close()
 
 
-def iter_run_storage_batches_via_sql(database_path, run_ids, batch_size=25):
+def iter_run_storage_batches_via_sql(
+        database_path,
+        run_ids,
+        batch_size=25,
+        cancelled_callback=None,
+        ):
     """
     Yield per-run storage sizes after the cheap detail pass has completed.
 
@@ -144,6 +180,7 @@ def iter_run_storage_batches_via_sql(database_path, run_ids, batch_size=25):
     batch_size = max(1, int(batch_size or 1))
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         run_tables = _run_storage_tables(cursor, run_ids)
         table_names = {
@@ -156,6 +193,8 @@ def iter_run_storage_batches_via_sql(database_path, run_ids, batch_size=25):
             return
 
         for offset in range(0, len(run_ids), batch_size):
+            if cancelled_callback is not None and cancelled_callback():
+                raise InterruptedError("Database storage read cancelled.")
             rows = {}
             for run_id in run_ids[offset:offset + batch_size]:
                 metadata = run_tables.get(run_id)
@@ -177,7 +216,7 @@ def iter_run_storage_batches_via_sql(database_path, run_ids, batch_size=25):
         conn.close()
 
 
-def find_new_runs(last_run_id, database_path=None):
+def find_new_runs(last_run_id, database_path=None, cancelled_callback=None):
     """
     Fetch all runs created after the last seen run ID.
 
@@ -199,6 +238,7 @@ def find_new_runs(last_run_id, database_path=None):
     conn = qcodes_read_only_connection(database_path or get_DB_location())
 
     try:
+        _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         return _fetch_run_rows(cursor, "WHERE runs.run_id > ?", (last_run_id, ))
     finally:
@@ -725,13 +765,19 @@ def _estimated_table_row_bytes(columns):
     return row_bytes
 
 
-def get_run_status(guid, database_path=None, include_storage_bytes=True):
+def get_run_status(
+        guid,
+        database_path=None,
+        include_storage_bytes=True,
+        cancelled_callback=None,
+        ):
     """
     Returns completion and result count information for one run.
 
     """
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
         optional_select = "".join(

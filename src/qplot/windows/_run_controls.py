@@ -44,8 +44,9 @@ class RunControlsMixin:
 
         """
         self.spinBox = qtw.QDoubleSpinBox()
+        self.spinBox.setRange(0.0, 86_400.0)
         self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(1)
+        self.spinBox.setDecimals(3)
         self.spinBox.setSuffix(" s")
         self.spinBox.setFixedWidth(84)
         self.spinBox.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
@@ -57,7 +58,9 @@ class RunControlsMixin:
 
         self.autoPlotBox = qtw.QCheckBox()
         self.autoPlotBox.setChecked(self.config.get(AUTO_PLOT_KEY))
-        self.autoPlotBox.setToolTip("Automatically open plots for newly detected runs")
+        self.autoPlotBox.setToolTip(
+            "Open newly detected runs and the newest running run when enabled"
+            )
         self.autoPlotBox.toggled.connect(self._auto_plot_changed)
 
         self.refreshDatabaseButton = qtw.QToolButton()

@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING, Any
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from qplot.datahandling import load_param_data_from_db_prep
 from qplot.datahandling.qcodes_cache import (
+    cache_dataset_completed,
     cache_has_no_written_data,
-    cache_is_live,
+    set_parameter_complete,
     update_cache_parameter_data,
 )
 from qplot.diagnostics import log_exception
@@ -84,10 +84,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
         return handle is not None and getattr(handle, "users", 0) > 0
 
     def _sync_dataset_completion(self, dataset: Any) -> None:
-        """Refresh cached QCoDeS completion state without loading plot data."""
+        """Schedule a final worker read so completion and data commit together."""
 
         if getattr(dataset, "running", False):
-            load_param_data_from_db_prep(dataset.cache, self.param)
+            self.load_data()
 
     def load_data(
             self,
@@ -143,20 +143,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
             )
         worker.dataset_length_at_start = self.ds.number_of_results
 
-        use_sql_heatmap = force_sql_heatmap
-        if not use_sql_heatmap and not cache_is_live(self.ds.cache):
-            use_sql_heatmap = worker._should_use_sql_heatmap()
-
-        if use_sql_heatmap:
-            complete = False
-        else:
-            complete = load_param_data_from_db_prep(self.ds.cache, self.param)
-            worker.read_data = not complete
-
         if status_message is not None:
             message = status_message
-        elif complete:
-            message = f"Processing cached data for {self.param.name}..."
         else:
             message = f"Loading data for {self.param.name}..."
         self.show_status(message, 0)
@@ -346,13 +334,23 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 cache = self.ds.cache
                 name = self.param.name
 
-                update_cache_parameter_data(
+                cache_updated = update_cache_parameter_data(
                     cache,
                     name,
                     worker.updated_read_status,
                     worker.updated_write_status,
                     worker.cache_data,
                     )
+                if not cache_updated:
+                    self._refresh_pending = True
+                    self.show_status(
+                        "A newer refresh finished first; synchronising this plot...",
+                        5000,
+                        )
+                    return False
+
+                if cache_dataset_completed(cache):
+                    set_parameter_complete(self.param, True)
 
                 if not cache_has_no_written_data(cache):
                     self._live = False

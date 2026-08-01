@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
@@ -663,6 +663,13 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         self.assertIs(harness.dataset_holder[key_b].dataset, dataset_b)
 
     def test_same_label_plot_from_another_database_is_a_merge_candidate(self):
+        class Combo:
+            def __init__(self, text):
+                self._text = text
+
+            def currentText(self):
+                return self._text
+
         key_a = DatasetKey("database-a.db", "shared-guid")
         key_b = DatasetKey("database-b.db", "shared-guid")
         param_a = self.Param()
@@ -676,6 +683,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         target.label = "ID:1 signal"
         target.line = object()
         target.lines = {target.label: target.line}
+        target.axis_dropdown = {"x": Combo("x"), "y": Combo("signal")}
         candidates = []
         target.update_line_picker = lambda wins: candidates.extend(wins)
 
@@ -683,6 +691,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         source._trace_key = TraceKey(key_b, param_b.name)
         source.param = param_b
         source.label = target.label
+        source.axis_dropdown = {"x": Combo("x"), "y": Combo("signal")}
 
         harness = type("Harness", (PlotActionsMixin,), {})()
         harness.windows = [target, source]
@@ -692,6 +701,13 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         self.assertEqual(candidates, [source])
 
     def test_sibling_heatmap_cuts_remain_distinct_merge_candidates(self):
+        class Combo:
+            def __init__(self, text):
+                self._text = text
+
+            def currentText(self):
+                return self._text
+
         dataset_key = DatasetKey("database.db", "guid")
 
         target_param = self.Param()
@@ -702,6 +718,10 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         target.param = target_param
         target.label = "ID:1 line_signal"
         target.line = object()
+        target.axis_dropdown = {
+            "x": Combo("gate"),
+            "y": Combo("line_signal"),
+            }
 
         heatmap_param = self.Param()
         heatmap_param.name = "heatmap_signal"
@@ -1855,9 +1875,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.assertTrue(harness._database_load_active)
             self.assertEqual(harness._database_load_state["abspath"], "database-b.db")
             self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
-            self.assertTrue(harness.refreshDatabaseButton.enabled)
-            self.assertTrue(harness.databaseInfoButton.enabled)
-            self.assertTrue(harness.openDatabaseFolderButton.enabled)
+            self.assertFalse(harness.loadDatabaseButton.enabled)
+            self.assertFalse(harness.refreshDatabaseButton.enabled)
+            self.assertFalse(harness.databaseInfoButton.enabled)
+            self.assertFalse(harness.openDatabaseFolderButton.enabled)
         finally:
             set_qcodes_database_location(active_database)
 
@@ -2397,6 +2418,29 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             ("Database refresh queued.", 3000),
             )
 
+    def test_refresh_request_during_error_dialog_is_coalesced(self):
+        harness = self.Harness()
+        harness.refreshMain()
+
+        def show_error(_title, _message, _details=None):
+            harness.refreshMain()
+
+        harness.show_error = show_error
+        with patch(
+                "qplot.windows._database_actions.QtCore.QTimer.singleShot",
+                side_effect=lambda _delay, callback: callback(),
+                ):
+            harness.database_refresh_finished(
+                harness._database_refresh_generation,
+                "empty.db",
+                {},
+                {},
+                RuntimeError("database temporarily unavailable"),
+                )
+
+        self.assertEqual(len(harness.databaseRefreshThreadPool.workers), 2)
+        self.assertTrue(harness._database_refresh_active)
+
 
 class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
     class RunList:
@@ -2855,15 +2899,21 @@ class DatabaseRefreshWorkerTestCase(unittest.TestCase):
             ):
             worker.run()
 
-        find_runs.assert_called_once_with(10, database_path="example.db")
+        find_runs.assert_called_once_with(
+            10,
+            database_path="example.db",
+            cancelled_callback=ANY,
+            )
         self.assertEqual(seen_status_calls, [
             ("guid-1", {
                 "database_path": "example.db",
                 "include_storage_bytes": False,
+                "cancelled_callback": ANY,
                 }),
             ("guid-2", {
                 "database_path": "example.db",
                 "include_storage_bytes": False,
+                "cancelled_callback": ANY,
                 }),
             ])
         self.assertEqual(results, [(
@@ -2888,7 +2938,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             calls.append(("access", database_path))
             return None
 
-        def get_runs(database_path):
+        def get_runs(database_path, cancelled_callback=None):
+            self.assertTrue(callable(cancelled_callback))
             calls.append(("basic_runs", database_path))
             return {1: {"guid": "guid-1", "run_timestamp": 123.0}}
 
@@ -2945,7 +2996,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         set_qcodes_database_location("active.db")
         database_module.database_access_error = lambda _path: None
 
-        def fail_to_get_runs(_database_path):
+        def fail_to_get_runs(_database_path, cancelled_callback=None):
+            self.assertTrue(callable(cancelled_callback))
             raise RuntimeError("broken run table")
 
         database_module.get_runs_basic_via_sql = fail_to_get_runs
@@ -2969,7 +3021,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         try:
             worker = main_window.DatabaseLoadWorker(11, "cancelled.db")
 
-            def cancel_while_getting_runs(_database_path):
+            def cancel_while_getting_runs(_database_path, cancelled_callback=None):
+                self.assertTrue(callable(cancelled_callback))
                 worker.cancel()
                 return {}
 
@@ -2989,7 +3042,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
         set_qcodes_database_location("active.db")
         database_module.database_access_error = lambda _path: None
-        database_module.get_runs_basic_via_sql = lambda _path: {}
+        database_module.get_runs_basic_via_sql = lambda _path, **_kwargs: {}
         try:
             harness = DatabaseLoadUiTestCase.Harness()
             harness._database_load_generation = 13
@@ -3014,7 +3067,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
         set_qcodes_database_location("active.db")
         database_module.database_access_error = lambda _path: None
-        database_module.get_runs_basic_via_sql = lambda _path: runs
+        database_module.get_runs_basic_via_sql = lambda _path, **_kwargs: runs
         try:
             harness = DatabaseLoadUiTestCase.Harness()
             harness._database_load_generation = 14
@@ -3137,7 +3190,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         database_module.database_cloud_storage_label = lambda _path: "OneDrive"
         database_module.database_is_likely_cloud_placeholder = lambda _path: False
         database_module.prefetch_database_file_with_timeout = prefetch
-        database_module.get_runs_basic_via_sql = lambda _path: {}
+        database_module.get_runs_basic_via_sql = lambda _path, **_kwargs: {}
         try:
             with tempfile.NamedTemporaryFile(suffix=".db") as database:
                 worker = main_window.DatabaseLoadWorker(9, database.name, 12)
@@ -3175,7 +3228,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 include_storage_bytes=True,
                 include_storage_estimate=False,
                 include_read_setpoint_count=True,
+                cancelled_callback=None,
                 ):
+            self.assertTrue(callable(cancelled_callback))
             calls.append((
                 database_path,
                 run_ids,
@@ -3185,8 +3240,17 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 include_storage_estimate,
                 include_read_setpoint_count,
                 ))
-            yield {2: {"guid": "guid-2", "result_count": 20, "storage_bytes": 1000}}
-            yield {1: {"guid": "guid-1", "result_count": 10}}
+            for run_id in run_ids:
+                if run_id == 2:
+                    yield {
+                        2: {
+                            "guid": "guid-2",
+                            "result_count": 20,
+                            "storage_bytes": 1000,
+                            }
+                        }
+                elif run_id == 1:
+                    yield {1: {"guid": "guid-1", "result_count": 10}}
 
         database_module.iter_run_detail_batches_via_sql = iter_details
         try:
@@ -3208,10 +3272,13 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         finally:
             database_module.iter_run_detail_batches_via_sql = old_iter_details
 
-        self.assertEqual(calls, [("details.db", [2, 1], 1, False, False, True, False)])
+        self.assertEqual(calls, [
+            ("details.db", [1], 1, False, False, True, False),
+            ("details.db", [2], 1, False, False, True, False),
+            ])
         self.assertEqual(batches, [
-            (11, "details.db", {2: {"guid": "guid-2", "result_count": 20, "storage_bytes": 1000}}),
             (11, "details.db", {1: {"guid": "guid-1", "result_count": 10}}),
+            (11, "details.db", {2: {"guid": "guid-2", "result_count": 20, "storage_bytes": 1000}}),
             ])
         self.assertEqual(statuses, [
             (11, "Loading run details... 0/2"),
@@ -3225,12 +3292,24 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_iter_storage = database_module.iter_run_storage_batches_via_sql
         calls = []
 
-        def iter_shapes(database_path, run_ids, batch_size=1):
+        def iter_shapes(
+                database_path,
+                run_ids,
+                batch_size=1,
+                cancelled_callback=None,
+                ):
+            self.assertTrue(callable(cancelled_callback))
             calls.append(("shapes", database_path, run_ids, batch_size))
             if 1 in run_ids:
                 yield {1: {"guid": "guid-1", "setpoint_shape": [10], "setpoint_count": 10}}
 
-        def iter_storage(database_path, run_ids, batch_size=25):
+        def iter_storage(
+                database_path,
+                run_ids,
+                batch_size=25,
+                cancelled_callback=None,
+                ):
+            self.assertTrue(callable(cancelled_callback))
             calls.append(("storage", database_path, run_ids, batch_size))
             if 1 in run_ids:
                 yield {1: {"guid": "guid-1", "storage_bytes": 2000}}

@@ -8,6 +8,36 @@ from qplot.datahandling import readSQL
 
 
 class RunSizeTestCase(unittest.TestCase):
+    def test_cancel_progress_handler_interrupts_a_running_sql_statement(self):
+        conn = sqlite3.connect(":memory:")
+        callback_count = 0
+
+        def cancelled():
+            nonlocal callback_count
+            callback_count += 1
+            return callback_count > 5
+
+        try:
+            readSQL._install_cancel_progress_handler(conn, cancelled)
+            with self.assertRaisesRegex(sqlite3.OperationalError, "interrupted"):
+                conn.execute(
+                    "WITH RECURSIVE values_(n) AS ("
+                    "SELECT 1 UNION ALL SELECT n + 1 FROM values_ WHERE n < 10000000"
+                    ") SELECT SUM(n) FROM values_"
+                    ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertGreater(callback_count, 5)
+
+    def test_cancel_progress_handler_rejects_already_cancelled_read(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            with self.assertRaisesRegex(InterruptedError, "cancelled"):
+                readSQL._install_cancel_progress_handler(conn, lambda: True)
+        finally:
+            conn.close()
+
     def test_has_finished_returns_optional_timestamp_scalar(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = os.path.join(temp_dir, "runs.db")

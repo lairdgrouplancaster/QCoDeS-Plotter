@@ -5,17 +5,16 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from PyQt6 import QtCore
 
-from qplot.datahandling import load_param_data_from_db
+from qplot.datahandling import load_param_data_from_db, load_param_data_from_db_prep
 from qplot.datahandling.dimensions import ensure_supported_plot_dimensions
 from qplot.datahandling.qcodes_cache import (
-    cache_data,
     cache_database_path,
+    cache_is_live,
     cache_parameter_data,
-    cache_read_status,
     cache_rundescriber,
     cache_table_name,
-    cache_write_status,
     set_parameter_complete,
+    snapshot_cache_parameter_state,
 )
 from qplot.datahandling.readonly import (
     qcodes_read_only_connection,
@@ -118,15 +117,44 @@ class loader(QtCore.QRunnable):
             ensure_supported_plot_dimensions(
                 getattr(self.param, "name", "Measurement"),
                 getattr(self.param, "depends_on_", ()),
-                )
+            )
             cache = self.cache
+            cache_live = cache_is_live(cache)
 
-            if self.read_data and self._should_use_sql_heatmap():
+            # Completion checks and cache preparation can query SQLite, so do
+            # them here rather than on the GUI thread. In-memory live caches
+            # are already authoritative and should never be read via SQLite.
+            if self.read_data:
+                if cache_live:
+                    self.read_data = False
+                else:
+                    completion_conn = qcodes_read_only_connection(
+                        cache_database_path(cache)
+                        )
+                    try:
+                        complete = load_param_data_from_db_prep(
+                            cache,
+                            self.param,
+                            connection=completion_conn,
+                            )
+                    finally:
+                        completion_conn.close()
+                    self.read_data = not complete
+
+            use_sql_heatmap = (
+                self.read_data
+                and not cache_live
+                and self._should_use_sql_heatmap()
+                )
+            if use_sql_heatmap:
                 set_parameter_complete(self.param, False)
                 self._load_large_heatmap_from_sql()
 
             else:
                 if self.read_data:
+                    write_status, read_status, existing_data = (
+                        snapshot_cache_parameter_state(cache, self.param.name)
+                        )
                     conn = qcodes_read_only_connection(cache_database_path(cache))
                     try:
                         (
@@ -138,9 +166,9 @@ class loader(QtCore.QRunnable):
                             self.table_name,
                             cache_rundescriber(cache),
                             self.param.name,
-                            cache_write_status(cache),
-                            cache_read_status(cache),
-                            cache_data(cache)
+                            write_status,
+                            read_status,
+                            existing_data,
                         )
                     finally:
                         conn.close()
@@ -250,13 +278,11 @@ class loader(QtCore.QRunnable):
         if len(getattr(self.param, "depends_on_", ())) <= 1:
             return False
 
-        # SQL heatmap loading aggregates before Python operations. When the
-        # user has selected operations, preserve their semantics by loading
-        # the raw grid and reducing it only after the pipeline succeeds.
-        if getattr(self, "operations", None):
-            return False
-
         if self.force_sql_heatmap:
+            if getattr(self, "operations", None):
+                raise OperationExecutionError(
+                    "Operations cannot be applied to a heatmap detail reload."
+                    )
             return True
 
         setpoint_count = self._large_heatmap_point_count()
@@ -268,7 +294,14 @@ class loader(QtCore.QRunnable):
             "max_full_heatmap_points",
             MAX_FULL_HEATMAP_POINTS,
             )))
-        return setpoint_count > limit
+        requires_bounded_load = setpoint_count > limit
+        if requires_bounded_load and getattr(self, "operations", None):
+            raise OperationExecutionError(
+                f"This heatmap has approximately {setpoint_count:,} points, "
+                f"which exceeds the full-resolution operation limit of {limit:,}. "
+                "Disable operations or increase max_full_heatmap_points."
+                )
+        return requires_bounded_load
 
 
     def _large_heatmap_point_count(self):
@@ -829,7 +862,7 @@ class loader(QtCore.QRunnable):
         data_grid = np.full(
             (y_axis.size, x_axis.size),
             np.nan,
-            dtype=np.float32,
+            dtype=float,
             )
         data_grid[y_indices, x_indices] = z_data
         empty_bins_filled = bool(np.any(~np.isfinite(data_grid)))
@@ -963,7 +996,7 @@ class loader(QtCore.QRunnable):
         np.add.at(grid_sum, (y_index, x_index), z_data)
         np.add.at(grid_count, (y_index, x_index), 1)
 
-        data_grid = np.full(grid_sum.shape, np.nan, dtype=np.float32)
+        data_grid = np.full(grid_sum.shape, np.nan, dtype=float)
         np.divide(
             grid_sum,
             grid_count,
@@ -1006,7 +1039,7 @@ class loader(QtCore.QRunnable):
         np.add.at(grid_sum, (y_index, x_index), z_data)
         np.add.at(grid_count, (y_index, x_index), 1)
 
-        data_grid = np.full(grid_sum.shape, np.nan, dtype=np.float32)
+        data_grid = np.full(grid_sum.shape, np.nan, dtype=float)
         np.divide(
             grid_sum,
             grid_count,
@@ -1028,7 +1061,7 @@ class loader(QtCore.QRunnable):
         if not np.any(np.isfinite(data_grid)):
             return data_grid
 
-        filled = np.array(data_grid, dtype=np.float32, copy=True)
+        filled = np.array(data_grid, dtype=float, copy=True)
         row_positions = np.arange(filled.shape[0], dtype=float)
         column_positions = np.arange(filled.shape[1], dtype=float)
 
@@ -1296,6 +1329,10 @@ class loader(QtCore.QRunnable):
     def _apply_operation_metadata(self):
         """Update the dependent-variable label and unit after derivatives."""
 
+        is_line_plot = len(getattr(self.param, "depends_on_", ())) == 1
+        if is_line_plot:
+            self.display_param = copy(self.axis_param["y"])
+
         for operation in self.operations:
             axis_name = getattr(operation, "derivative_axis", None)
             if axis_name not in ("x", "y"):
@@ -1319,7 +1356,7 @@ class loader(QtCore.QRunnable):
             elif axis_unit:
                 self.display_param.unit = f"1/{axis_unit}"
 
-        if len(getattr(self.param, "depends_on_", ())) == 1:
+        if is_line_plot:
             self.axis_param["y"] = self.display_param
 
 

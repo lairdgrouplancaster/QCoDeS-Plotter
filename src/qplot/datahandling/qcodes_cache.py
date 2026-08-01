@@ -5,6 +5,20 @@ qPlot needs per-parameter refreshes that QCoDeS does not expose as a stable
 public API. Keep those private-attribute touches in this module so future
 QCoDeS upgrades have one place to adapt.
 """
+from threading import Lock, RLock
+
+_CACHE_LOCK_CREATION = Lock()
+
+
+def cache_lock(cache):
+    """Return qPlot's per-cache lock, creating it safely on first use."""
+
+    with _CACHE_LOCK_CREATION:
+        lock = getattr(cache, "_qplot_lock", None)
+        if lock is None:
+            lock = RLock()
+            cache._qplot_lock = lock
+        return lock
 
 
 def cache_dataset(cache):
@@ -68,8 +82,21 @@ def set_parameter_complete(param, complete=True):
 
 
 def prepare_cache_if_empty(cache):
-    if cache_data(cache) == {}:
-        cache.prepare()
+    with cache_lock(cache):
+        if cache_data(cache) == {}:
+            cache.prepare()
+
+
+def snapshot_cache_parameter_state(cache, parameter_name):
+    """Take a consistent shallow snapshot for one parameter-tree read."""
+
+    with cache_lock(cache):
+        parameter_data = dict(cache_parameter_data(cache, parameter_name))
+        return (
+            dict(cache_write_status(cache)),
+            dict(cache_read_status(cache)),
+            {parameter_name: parameter_data},
+            )
 
 
 def update_cache_parameter_data(
@@ -79,9 +106,27 @@ def update_cache_parameter_data(
         updated_write_status,
         updated_data,
         ):
-    cache_read_status(cache)[parameter_name] = updated_read_status[parameter_name]
-    cache_write_status(cache)[parameter_name] = updated_write_status[parameter_name]
-    cache_data(cache)[parameter_name] = updated_data[parameter_name]
+    """Commit a parameter refresh unless a newer worker already won the race."""
+
+    with cache_lock(cache):
+        next_read_status = updated_read_status[parameter_name]
+        next_write_status = updated_write_status[parameter_name]
+        current_read_status = cache_read_status(cache).get(parameter_name, -1)
+        current_write_status = cache_write_status(cache).get(parameter_name, -1)
+
+        # QCoDeS represents an untouched shaped parameter with ``None``. Treat
+        # it as older than any concrete row count when comparing results.
+        comparable = lambda status: -1 if status is None else status
+        if (
+                comparable(current_read_status) > comparable(next_read_status)
+                or comparable(current_write_status) > comparable(next_write_status)
+                ):
+            return False
+
+        cache_read_status(cache)[parameter_name] = next_read_status
+        cache_write_status(cache)[parameter_name] = next_write_status
+        cache_data(cache)[parameter_name] = updated_data[parameter_name]
+        return True
 
 
 def cache_has_no_written_data(cache):

@@ -15,7 +15,7 @@ from qplot.tools.plot_tools import (
     pass_filter,
     subtract_mean,
 )
-from qplot.tools.worker import loader
+from qplot.tools.worker import OperationExecutionError, loader
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plotWin import plotWidget
 
@@ -509,6 +509,16 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(filtered["y"], np.array([2.0, 4.0, 5.0]))
         np.testing.assert_allclose(differentiated["y"], np.array([2.0, 2.0, 2.0]))
 
+    def test_derivative_rejects_duplicate_coordinates(self):
+        data = {
+            "x": np.array([0.0, 1.0, 1.0]),
+            "y": np.array([0.0, 1.0, 2.0]),
+            "z": None,
+        }
+
+        with self.assertRaisesRegex(ValueError, "must not repeat"):
+            differentiate("x", data)
+
     def test_fill_below_handles_bounded_leading_trailing_and_over_limit_gaps(self):
         data_grid = np.array([
             [1.0, np.nan, 1.0, 1.0],
@@ -575,12 +585,35 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(worker.axis_data["x"], [1.0, 2.0])
         np.testing.assert_array_equal(worker.axis_data["y"], [3.0, 4.0])
 
-    def test_large_heatmap_with_operations_does_not_aggregate_in_sql(self):
+    def test_large_heatmap_with_operations_is_rejected_before_full_load(self):
         worker = self._sql_heatmap_worker(None)
         worker.max_full_heatmap_points = 10
         worker.operations = [lambda data: data]
 
-        self.assertFalse(loader._should_use_sql_heatmap(worker))
+        with self.assertRaisesRegex(
+                OperationExecutionError,
+                "exceeds the full-resolution operation limit",
+                ):
+            loader._should_use_sql_heatmap(worker)
+
+    def test_heatmap_gridding_preserves_float64_coordinate_and_value_precision(self):
+        worker = loader.__new__(loader)
+        worker.sampled_heatmap_source = False
+        worker.aggregated_heatmap_source = False
+        baseline = 1_000_000_000_000.0
+
+        x_axis, _y_axis, data_grid = loader._heatmap_grid_from_arrays(
+            worker,
+            np.array([baseline, baseline + 1.0]),
+            np.array([0.0, 0.0]),
+            np.array([baseline + 2.0, baseline + 3.0]),
+            max_cells=4,
+            )
+
+        self.assertEqual(x_axis.dtype, np.dtype(float))
+        self.assertEqual(data_grid.dtype, np.dtype(float))
+        self.assertEqual(x_axis[1] - x_axis[0], 1.0)
+        self.assertEqual(data_grid[0, 1] - data_grid[0, 0], 1.0)
 
     def test_derivative_operation_updates_dependent_label_and_unit(self):
         class Param:

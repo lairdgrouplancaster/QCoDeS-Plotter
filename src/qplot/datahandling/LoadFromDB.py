@@ -20,10 +20,10 @@ from qplot.datahandling.qcodes_cache import (
     cache_dataset_connection,
     cache_dataset_run_id,
     cache_is_live,
+    cache_lock,
     parameter_is_complete,
     prepare_cache_if_empty,
     set_cache_dataset_completed,
-    set_parameter_complete,
 )
 
 if TYPE_CHECKING:
@@ -69,6 +69,15 @@ def append_shaped_parameter_data_to_existing_arrays(
     else:
         shape = None
 
+    # QCoDeS inserts shaped refreshes into existing arrays in place. Work on
+    # private copies so a concurrent worker cannot mutate the shared cache
+    # before qPlot's monotonic commit check.
+    if shape is not None:
+        existing_data_1_tree = {
+            name: values.copy()
+            for name, values in existing_data_1_tree.items()
+            }
+
     (merged_data[meas_parameter], updated_write_status[meas_parameter]) = (
         _merge_data(
             existing_data_1_tree,
@@ -83,7 +92,8 @@ def append_shaped_parameter_data_to_existing_arrays(
 
 def load_param_data_from_db_prep(
         cache : "qcodes.dataset.data_set_cache.DataSetCacheWithDBBackend",
-        param : "qcodes.dataset.descriptions.param_spec.ParamSpec"
+        param : "qcodes.dataset.descriptions.param_spec.ParamSpec",
+        connection=None,
         ):
     if cache_is_live(cache):
         raise RuntimeError(
@@ -95,13 +105,15 @@ def load_param_data_from_db_prep(
     if parameter_is_complete(param): # Altered to be per param
         return True
 
-    is_completed = completed(cache_dataset_connection(cache), cache_dataset_run_id(cache))
-    if cache_dataset_completed(cache) != is_completed:
-        set_cache_dataset_completed(cache, is_completed)
-    if cache_dataset_completed(cache):
-        set_parameter_complete(param, True)
-    if cache_data(cache) == {}:
-        prepare_cache_if_empty(cache)
+    with cache_lock(cache):
+        is_completed = completed(
+            connection or cache_dataset_connection(cache),
+            cache_dataset_run_id(cache),
+            )
+        if cache_dataset_completed(cache) != is_completed:
+            set_cache_dataset_completed(cache, is_completed)
+        if cache_data(cache) == {}:
+            prepare_cache_if_empty(cache)
     
     return False
 
