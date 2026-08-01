@@ -115,6 +115,42 @@ class ToolFunctionTestCase(unittest.TestCase):
             np.array([[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]]),
             )
 
+    def test_shaped_2d_loader_maps_high_offset_serpentine_rows(self):
+        worker = loader.__new__(loader)
+        worker.axes_dict = {"x": "frequency", "y": "slow"}
+        worker.param = type(
+            "Param",
+            (),
+            {"depends_on_": ("slow", "frequency")},
+            )()
+        worker.param_dict = {
+            "slow": type("Param", (), {"name": "slow"})(),
+            "frequency": type("Param", (), {"name": "frequency"})(),
+            }
+
+        frequency = 5e9 + np.array([
+            [0.0, 0.1, 0.2],
+            [0.2, 0.1, 0.0],
+            ])
+        slow = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
+        signal = np.array([[0.0, 1.0, 2.0], [12.0, 11.0, 10.0]])
+
+        axis_data, _axis_param, data_grid = loader.for_shaped_2d(
+            worker,
+            {"slow": slow, "frequency": frequency},
+            signal,
+            )
+
+        np.testing.assert_array_equal(
+            axis_data["x"],
+            5e9 + np.array([0.0, 0.1, 0.2]),
+            )
+        np.testing.assert_array_equal(axis_data["y"], np.array([0.0, 1.0]))
+        np.testing.assert_array_equal(
+            data_grid,
+            np.array([[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]]),
+            )
+
     def test_worker_canonicalizes_descending_heatmap_axes_and_grid(self):
         worker = loader.__new__(loader)
         worker.axis_data = {

@@ -1270,9 +1270,21 @@ class loader(QtCore.QRunnable):
         valid = np.isfinite(param_data) & np.isfinite(expected)
         if not np.any(valid):
             return True
+
+        # Compare positions relative to the sweep itself.  Using a relative
+        # tolerance on the raw coordinates makes the tolerance grow with an
+        # arbitrary offset (for example, a GHz carrier), and can therefore
+        # hide a genuine sub-Hz serpentine reversal.
+        finite_values = values[np.isfinite(values)]
+        origin = finite_values[0]
+        centred_values = finite_values - origin
+        span = float(np.max(np.abs(centred_values)))
+        if not np.isfinite(span) or span == 0:
+            span = 1.0
+
         return bool(np.all(np.isclose(
-            param_data[valid],
-            expected[valid],
+            (param_data[valid] - origin) / span,
+            (expected[valid] - origin) / span,
             rtol=1e-10,
             atol=1e-12,
             )))

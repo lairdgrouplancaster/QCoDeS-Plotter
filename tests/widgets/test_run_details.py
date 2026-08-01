@@ -1,6 +1,9 @@
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +15,7 @@ from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
     PREVIEW_BACKGROUND_COLOR,
+    PREVIEW_SELECTED_PRIORITY,
     PREVIEW_SELECTED_PROPERTY,
     PREVIEW_SIZE,
     DraggablePreviewImageLabel,
@@ -709,6 +713,70 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
         self.assertEqual(preview.queue, {})
         self.assertEqual(generation_changes, [])
+
+    def test_preview_tab_shutdown_cancels_workers_without_waiting(self):
+        preview = PreviewTab(preview_size=100)
+
+        class Worker:
+            cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        worker = Worker()
+        preview.queue = {"queued-guid": PREVIEW_SELECTED_PRIORITY}
+        preview.active = {(preview.generation, "active-guid")}
+        preview._workers = {
+            (preview.generation, "active-guid"): worker,
+            }
+
+        preview.shutdown()
+
+        self.assertTrue(preview._shutting_down)
+        self.assertTrue(worker.cancelled)
+        self.assertEqual(preview.queue, {})
+        self.assertEqual(preview.active, set())
+
+    def test_deleting_preview_does_not_wait_for_python_worker(self):
+        script = textwrap.dedent("""
+            import threading
+            import time
+
+            from PyQt6 import QtCore, QtWidgets, sip
+
+            from qplot.windows._widgets.preview import PreviewTab
+
+            app = QtWidgets.QApplication([])
+            started = threading.Event()
+
+            class Worker(QtCore.QRunnable):
+                def run(self):
+                    started.set()
+                    time.sleep(0.2)
+
+            preview = PreviewTab(preview_size=100)
+            worker = Worker()
+            preview.thread_pool.start(worker)
+            if not started.wait(2):
+                raise RuntimeError("Preview worker did not start")
+
+            sip.delete(preview)
+            if not QtCore.QThreadPool.globalInstance().waitForDone(2000):
+                raise RuntimeError("Preview worker did not finish")
+            """)
+        env = os.environ.copy()
+        env["QT_QPA_PLATFORM"] = "offscreen"
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            env=env,
+            text=True,
+            timeout=5,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_preview_tab_marks_only_active_worker_as_generating(self):
         preview = PreviewTab(preview_size=100)
