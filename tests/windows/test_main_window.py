@@ -1214,6 +1214,13 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             def cancel(self):
                 self.cancelled = True
 
+        class Preview:
+            def __init__(self):
+                self.shut_down = False
+
+            def shutdown(self):
+                self.shut_down = True
+
         class Event:
             def __init__(self):
                 self.accepted = False
@@ -1236,6 +1243,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self._database_load_active = True
                 self._database_load_state = {"loading": True}
                 self.monitor = Timer()
+                self.infoBox = type("InfoBox", (), {"preview": Preview()})()
 
         def fake_confirmation(window, title, message, config_key, *args):
             confirmations.append((title, message, config_key))
@@ -1266,6 +1274,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertFalse(harness._database_load_active)
         self.assertIsNone(harness._database_load_state)
         self.assertIsNone(harness._database_load_worker)
+        self.assertTrue(harness.infoBox.preview.shut_down)
         self.assertTrue(harness.monitor.stopped)
         self.assertEqual(closed_all_windows, [True])
 

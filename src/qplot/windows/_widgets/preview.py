@@ -1,4 +1,5 @@
 import json
+import threading
 from collections import OrderedDict
 
 import numpy as np
@@ -68,11 +69,19 @@ class PreviewTab(qtw.QWidget):
         self.errors = {}
         self.queue = {}
         self.active: set[tuple[int, str]] = set()
+        self._workers = {}
         self.metadata_signatures = {}
         self._start_scheduled = False
+        self._shutting_down = False
 
-        self.thread_pool = QtCore.QThreadPool(self)
-        self.thread_pool.setMaxThreadCount(1)
+        # A widget-owned QThreadPool waits for its runnables in the QObject
+        # destructor.  If a Python QRunnable needs the GIL while SIP is
+        # deleting this widget, both threads can wait forever.  The shared Qt
+        # pool outlives the widget, so deletion never waits on preview work.
+        thread_pool = QtCore.QThreadPool.globalInstance()
+        if thread_pool is None:
+            raise RuntimeError("Qt global thread pool is unavailable")
+        self.thread_pool = thread_pool
 
         self.scroll_area = qtw.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -91,6 +100,25 @@ class PreviewTab(qtw.QWidget):
         self.setLayout(layout)
 
         self._show_message("Select a run")
+
+
+    def shutdown(self):
+        """Stop scheduling preview work without waiting for active queries."""
+        if self._shutting_down:
+            return
+
+        self._shutting_down = True
+        self.generation += 1
+        self.queue = {}
+        self.active = set()
+        self._start_scheduled = False
+        for worker in tuple(self._workers.values()):
+            worker.cancel()
+
+
+    def closeEvent(self, event):
+        self.shutdown()
+        super().closeEvent(event)
 
 
     def preferred_tab_height(self):
@@ -315,6 +343,8 @@ class PreviewTab(qtw.QWidget):
 
 
     def _enqueue(self, guid, priority=0, allow_active=False):
+        if self._shutting_down:
+            return
         if guid in self.cache:
             return
         if guid in self.errors:
@@ -373,7 +403,7 @@ class PreviewTab(qtw.QWidget):
 
 
     def _schedule_start_next(self):
-        if self._start_scheduled:
+        if self._shutting_down or self._start_scheduled:
             return
 
         self._start_scheduled = True
@@ -386,7 +416,7 @@ class PreviewTab(qtw.QWidget):
 
 
     def _start_next(self):
-        if any(
+        if self._shutting_down or any(
                 generation == self.generation
                 for generation, _guid in self.active
                 ) or not self.queue:
@@ -411,14 +441,18 @@ class PreviewTab(qtw.QWidget):
             self.preview_size,
             )
         worker.signals.finished.connect(self._worker_finished)
+        self._workers[(self.generation, guid)] = worker
         self.thread_pool.start(worker)
 
 
     @QtCore.pyqtSlot(int, str, object, object)
     def _worker_finished(self, generation, guid, previews, error):
         active_key = (generation, guid)
+        self._workers.pop(active_key, None)
         was_active = active_key in self.active
         self.active.discard(active_key)
+        if self._shutting_down:
+            return
         if was_active and generation == self.generation:
             self.previewGenerationChanged.emit(guid, False)
 
@@ -705,15 +739,26 @@ class PreviewWorker(QtCore.QRunnable):
         self.guid = guid
         self.metadata = metadata
         self.preview_size = preview_size
+        self._cancelled = threading.Event()
+
+
+    def cancel(self):
+        self._cancelled.set()
 
 
     def run(self):
         try:
-            previews = generate_run_previews(
-                self.database_path,
-                self.metadata,
-                size=self.preview_size,
-            )
+            if self._cancelled.is_set():
+                previews = []
+            else:
+                previews = generate_run_previews(
+                    self.database_path,
+                    self.metadata,
+                    size=self.preview_size,
+                    is_cancelled=self._cancelled.is_set,
+                )
+            if self._cancelled.is_set():
+                previews = []
             self.signals.finished.emit(self.generation, self.guid, previews, None)
         except Exception as error:
             log_exception("Preview generation failed", error, __name__)
@@ -724,7 +769,15 @@ class PreviewSignals(QtCore.QObject):
     finished = QtCore.pyqtSignal(int, str, object, object)
 
 
-def generate_run_previews(database_path, metadata, size=PREVIEW_SIZE):
+def generate_run_previews(
+        database_path,
+        metadata,
+        size=PREVIEW_SIZE,
+        is_cancelled=None,
+        ):
+    if is_cancelled is not None and is_cancelled():
+        return []
+
     table_name = metadata.get("result_table_name")
     if not database_path or not table_name:
         return []
@@ -740,6 +793,8 @@ def generate_run_previews(database_path, metadata, size=PREVIEW_SIZE):
         cursor = conn.cursor()
         available_columns = _table_columns(cursor, table_name)
         for parameter, axes in dependencies.items():
+            if is_cancelled is not None and is_cancelled():
+                break
             if parameter not in available_columns:
                 continue
 

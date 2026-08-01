@@ -409,6 +409,9 @@ class MainWindow(
                 event.ignore()
                 return
 
+        preview = getattr(getattr(self, "infoBox", None), "preview", None)
+        if preview is not None:
+            preview.shutdown()
         self.startupDatabaseTimer.stop()
         worker = getattr(self, "_database_load_worker", None)
         if worker is not None:
