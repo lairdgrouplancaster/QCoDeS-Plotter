@@ -823,14 +823,17 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
                 if self._is_cancelled():
                     return
 
-                batch = self._next_priority_batch(shape_done, batch_size=1)
+                batch = self._next_priority_batch(
+                    shape_done,
+                    batch_size=self.batch_size,
+                    )
                 if not batch:
                     break
 
                 for shapes in iter_run_shape_batches_via_sql(
                         self.database_path,
                         batch,
-                        batch_size=1,
+                        batch_size=self.batch_size,
                         cancelled_callback=self._is_cancelled,
                         ):
                     if self._is_cancelled():

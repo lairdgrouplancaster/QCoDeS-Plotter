@@ -47,6 +47,13 @@ class CommandRegistryTestCase(unittest.TestCase):
         self.assertEqual(spec.resolved_shortcuts()[0].toString(), "Ctrl+Alt+O")
         self.assertEqual(spec.status_tip, "Show or hide the operations dock")
 
+    def test_operations_panel_has_one_canonical_shortcut(self):
+        self.assertEqual(command_spec("plot.toggle_operations").resolved_shortcuts(), [])
+        self.assertEqual(
+            command_spec("toolbar.operations").resolved_shortcuts()[0].toString(),
+            "Ctrl+Alt+O",
+            )
+
     def test_shortcut_help_is_generated_from_registered_commands(self):
         html = shortcut_help_html()
 

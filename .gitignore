@@ -5,6 +5,7 @@
 .DS_Store
 .venv/
 .venv-mac/
+.venv-linux/
 .venv-win/
 .pytest_cache/
 .ruff_cache/

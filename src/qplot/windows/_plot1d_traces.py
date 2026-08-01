@@ -267,11 +267,19 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self.lineScroll = qtw.QScrollArea()
         self.lineScroll.setWidgetResizable(True)
         self.lineScroll.setMinimumSize(1, 1)
-        self.lineScroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.lineScroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.lineScroll.setSizePolicy(
+            qtw.QSizePolicy.Policy.Expanding,
+            qtw.QSizePolicy.Policy.Expanding,
+            )
         self.axes_dock.addWidget(self.lineScroll)
         
         # QScrollArea can only take 1 widget. That widget holds the layout.
         self.scrollWidget = qtw.QWidget()
+        self.scrollWidget.setSizePolicy(
+            qtw.QSizePolicy.Policy.Ignored,
+            qtw.QSizePolicy.Policy.Preferred,
+            )
         self.lineScroll.setWidget(self.scrollWidget)
         
         self.box_layout = qtw.QVBoxLayout()
@@ -301,27 +309,15 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         
     def _resize_scrollArea(self) -> None:
         """
-        Updates the width of the dock widget to match the width of the largest
-        row in the Scroll area so all data is visible
+        Refresh the scroll area's geometry without preventing dock resizing.
 
-        Note. Prevents user from making dock widget any smaller.
-        Adding self.lineScroll.setMinimumWidth(1) should fix this but my attempts
-        have failed.
+        Trace controls provide a useful preferred size, but the containing dock
+        must remain shrinkable on smaller plot windows. A horizontal scrollbar
+        exposes any controls that cannot fit at the user's chosen width.
         """
         self.scrollWidget.adjustSize()
-        # Get scrollArea width
-        vertical_scrollbar = self.lineScroll.verticalScrollBar()
-        scrollbar_width = (
-            vertical_scrollbar.sizeHint().width()
-            if vertical_scrollbar is not None
-            else 0
-            )
-        scrollWidth = (
-            self.scrollWidget.sizeHint().width() +
-            2 *  self.lineScroll.frameWidth() +
-            scrollbar_width
-            )
-        self.lineScroll.setMinimumWidth(scrollWidth)
+        self.lineScroll.setMinimumWidth(1)
+        self.lineScroll.updateGeometry()
         
         
     def add_option_box(self, options: list[str] | None = None) -> None:

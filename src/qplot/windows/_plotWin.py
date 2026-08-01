@@ -1,4 +1,4 @@
-from math import isfinite, log10
+from math import floor, isfinite, log10
 from os import path
 from typing import TYPE_CHECKING
 
@@ -806,7 +806,7 @@ class plotWidget(
         
         self.axes_dock.addWidget(sep)
         
-        if self.__class__.__name__ == "plot2d":
+        if getattr(self, "operation_kind", None) == "plot2d":
             self.axes_dock.content_layout.addStretch()
         
     
@@ -930,14 +930,19 @@ class plotWidget(
             return "-inf" if num < 0 else "inf"
 
         try: # Get number of leading/following zeros
-            log = int(log10(abs(num)))
+            exponent = floor(log10(abs(num)))
         except ValueError:
             return f"{0:.{sf}f}"
-        
-        if log >= sf or log < 0:
-            return f"{num:.{sf}e}"
-        else:
-            return f"{num:.{sf - log}f}"
+
+        precision = max(sf - 1, 0)
+        if exponent >= sf or exponent < 0:
+            return f"{num:.{precision}e}"
+
+        formatted = f"{num:.{max(sf - exponent - 1, 0)}f}"
+        rounded_exponent = floor(log10(abs(float(formatted))))
+        if rounded_exponent != exponent:
+            return f"{num:.{precision}e}"
+        return formatted
 
 
     def _set_cursor_index_label(self, text: str) -> None:

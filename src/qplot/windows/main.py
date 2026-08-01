@@ -560,7 +560,8 @@ class MainWindow(
         reply = qtw.QMessageBox.question(
             self,
             "Reset All Settings",
-            "Reset all qPlot settings to their defaults?",
+            "Reset all qPlot settings to their defaults? "
+            "This will also close the current database and all plot windows.",
             qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
             qtw.QMessageBox.StandardButton.No,
             )

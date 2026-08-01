@@ -14,6 +14,10 @@ QCoDeS-Plotter requires Python 3.11 or newer.
 Runtime dependencies are declared in `pyproject.toml` and are installed
 automatically when qPlot is installed.
 
+Windows and macOS are the currently supported and GUI-tested desktop
+platforms. A source installation may work on Linux, but Linux is not currently
+part of the GUI test or support matrix.
+
 ## Install
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
@@ -50,12 +54,13 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 If the version check reports Python 3.10 or older, install Python 3.11 or newer
 first and use that launcher instead, for example `python3.12` on macOS.
 
-Virtual environments are not portable between Windows and macOS. If the
-checkout is synced between operating systems, make sure VS Code is using the
-interpreter for the current system:
+Virtual environments are not portable between operating systems. If the
+checkout is synced between systems, make sure VS Code is using the interpreter
+created for the current system:
 
 * Windows: `.\.venv\Scripts\python.exe`
 * macOS: `./.venv-mac/bin/python`
+* Linux development: `./.venv-linux/bin/python`
 
 Check the install:
 

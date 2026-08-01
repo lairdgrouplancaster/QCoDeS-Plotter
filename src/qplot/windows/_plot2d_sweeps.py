@@ -583,10 +583,15 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             return
 
         requested_delta = dragged_index - previous_index
-        group_lines = [
-            line for line in self.sweep_lines.values()
-            if self.line_sweep_axis(line) == axis
-            ]
+        try:
+            group_lines = [
+                line for line in self.sweep_lines.values()
+                if self.line_sweep_axis(line) == axis
+                ]
+        except (AttributeError, RuntimeError):
+            # A drag can arrive while a plot is still being initialised or torn
+            # down.  Treat the active cursor as a one-line group in that case.
+            group_lines = []
         if dragged_line not in group_lines:
             group_lines.append(dragged_line)
 

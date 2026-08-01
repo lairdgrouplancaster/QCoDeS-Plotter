@@ -21,6 +21,7 @@ class sweeper(plotWidget):
     Both plots become linked, any changes to the cursor or sweep will update
     their counterpart.
     """
+    operation_kind = "sweeper"
     sweep_moved = QtCore.pyqtSignal([int, str, str, int, object])
     merge_compatibility_changed = QtCore.pyqtSignal()
     remove_sweep = QtCore.pyqtSignal([int])

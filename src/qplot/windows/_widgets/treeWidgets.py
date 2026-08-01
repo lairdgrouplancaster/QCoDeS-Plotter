@@ -145,6 +145,9 @@ class RunList(qtw.QTreeWidget):
         
         self.watching: list[SortableTreeWidgetItem] = []
         self.preview_cells: dict[str, RunPreviewCell] = {}
+        self._items_by_guid: dict[str, SortableTreeWidgetItem] = {}
+        self._resizing_columns = False
+        self._manual_column_widths = False
         self.maxRunId = 0
         
         self.setColumnCount(len(self.cols))
@@ -152,12 +155,18 @@ class RunList(qtw.QTreeWidget):
         self.setRootIsDecorated(False)
         self.setIndentation(0)
         self.setUniformRowHeights(False)
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setItemDelegateForColumn(
             self.cols.index("Setpoints"),
             EqualsAlignedDelegate(self)
             )
         self._resize_columns()
+
+        header = self.header()
+        if header is not None:
+            header.sectionResized.connect(self._column_resized)
+            header.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+            header.customContextMenuRequested.connect(self._open_header_menu)
         
         # Optional IDE convenience; MainWindow loads databases asynchronously.
         if initalize and isfile(get_DB_location()):
@@ -221,6 +230,7 @@ class RunList(qtw.QTreeWidget):
             item = SortableTreeWidgetItem(arr)
             item.set_guid(metadata["guid"])
             item.run_metadata = dict(metadata)
+            self._items_by_guid[item.guid] = item
             for col_name in ("ID", "Setpoints", "Size"):
                 item.setTextAlignment(
                     self.cols.index(col_name),
@@ -238,6 +248,11 @@ class RunList(qtw.QTreeWidget):
                 self.cols.index("Measurements"),
                 QtCore.Qt.ItemDataRole.UserRole,
                 measurement_count
+                )
+            item.setData(
+                self.cols.index("Measurements"),
+                QtCore.Qt.ItemDataRole.AccessibleTextRole,
+                self._measurement_accessible_text(metadata, measurement_count),
                 )
             item.setSizeHint(
                 self.cols.index("Measurements"),
@@ -281,7 +296,6 @@ class RunList(qtw.QTreeWidget):
                 self.watching.append(item)
             
         self.setSortingEnabled(True)
-        self._resize_columns()
 
 
     def updateRuns(self, runs):
@@ -318,7 +332,6 @@ class RunList(qtw.QTreeWidget):
             updated[run_id] = dict(item.run_metadata)
 
         self.setSortingEnabled(True)
-        self._resize_columns()
         return updated
 
 
@@ -331,6 +344,11 @@ class RunList(qtw.QTreeWidget):
             measurements_col,
             QtCore.Qt.ItemDataRole.UserRole,
             measurement_count,
+            )
+        item.setData(
+            measurements_col,
+            QtCore.Qt.ItemDataRole.AccessibleTextRole,
+            self._measurement_accessible_text(metadata, measurement_count),
             )
         item.setSizeHint(
             measurements_col,
@@ -388,6 +406,7 @@ class RunList(qtw.QTreeWidget):
 
     def clear(self):
         self.preview_cells = {}
+        self._items_by_guid = {}
         super().clear()
 
 
@@ -396,6 +415,14 @@ class RunList(qtw.QTreeWidget):
         cell = RunPreviewCell(item.guid, measurement_count, self)
         cell.plotRequested.connect(self._preview_plot_requested)
         cell.exportRequested.connect(self._preview_export_requested)
+        accessible_text = self._measurement_accessible_text(
+            item.run_metadata,
+            measurement_count,
+            )
+        cell.setAccessibleName(accessible_text)
+        cell.setAccessibleDescription(
+            "Measurement previews. Focus a preview for plot and export actions."
+            )
         self.preview_cells[item.guid] = cell
         self.setItemWidget(item, column, cell)
 
@@ -431,14 +458,48 @@ class RunList(qtw.QTreeWidget):
 
 
     def _item_for_guid(self, guid):
-        for row in range(self.topLevelItemCount()):
-            item = self.topLevelItem(row)
-            if isinstance(item, SortableTreeWidgetItem) and item.guid == guid:
-                return item
-        return None
+        return self._items_by_guid.get(guid)
 
 
-    def _resize_columns(self):
+    @staticmethod
+    def _measurement_accessible_text(metadata, measurement_count):
+        parameters = [
+            str(parameter)
+            for parameter in metadata.get("measure_parameters", [])
+            if parameter
+            ]
+        noun = "measurement" if measurement_count == 1 else "measurements"
+        summary = f"{measurement_count} {noun}"
+        if parameters:
+            summary += f": {', '.join(parameters)}"
+        return summary
+
+
+    def _column_resized(self, _column, old_size, new_size):
+        if not self._resizing_columns and old_size != new_size:
+            self._manual_column_widths = True
+
+
+    def reset_column_widths(self):
+        self._manual_column_widths = False
+        self._resize_columns(force=True)
+
+
+    def _open_header_menu(self, pos):
+        header = self.header()
+        if header is None:
+            return
+        menu = qtw.QMenu(self)
+        reset_action = menu.addAction("Reset column widths")
+        if reset_action is not None:
+            reset_action.triggered.connect(self.reset_column_widths)
+        menu.exec(header.mapToGlobal(pos))
+
+
+    def _resize_columns(self, force=False):
+        if self._manual_column_widths and not force:
+            return
+
         header = self.header()
         if header is not None:
             header.setStretchLastSection(False)
@@ -482,22 +543,20 @@ class RunList(qtw.QTreeWidget):
             widths["Setpoints"] += setpoints_extra
             widths["Started"] += extra_width - setpoints_extra
 
-        for col, name in enumerate(self.cols):
-            width = widths.get(name)
-            if width is not None:
-                self.setColumnWidth(col, width)
+        self._resizing_columns = True
+        try:
+            for col, name in enumerate(self.cols):
+                width = widths.get(name)
+                if width is not None:
+                    self.setColumnWidth(col, width)
+        finally:
+            self._resizing_columns = False
 
 
     def _grow_column_widths(self, base_widths, target_widths, available_width, order):
         widths = dict(base_widths)
         deficit = sum(widths.values()) - available_width
         if deficit > 0:
-            for name in self.compact_shrink_order:
-                shrink_by = min(max(0, widths.get(name, 0) - 32), deficit)
-                widths[name] = widths.get(name, 0) - shrink_by
-                deficit -= shrink_by
-                if deficit <= 0:
-                    break
             return widths
 
         extra_width = max(0, available_width - sum(widths.values()))
@@ -627,12 +686,36 @@ class RunList(qtw.QTreeWidget):
             if status.get("is_completed") is not None:
                 run.run_metadata["is_completed"] = bool(status["is_completed"])
 
+            shape_metadata_changed = False
+            for field in (
+                    "point_shape",
+                    "setpoint_shape",
+                    "setpoint_shape_source",
+                    "setpoint_count",
+                    "setpoint_count_source",
+                    "expected_results",
+                    "expected_results_source",
+                    ):
+                if field not in status:
+                    continue
+                if run.run_metadata.get(field) != status[field]:
+                    shape_metadata_changed = True
+                # None is meaningful here: it clears a stale early inference.
+                run.run_metadata[field] = status[field]
+
             if status.get("result_count") is not None:
                 run.run_metadata["result_count"] = status["result_count"]
-                if not run.run_metadata.get("expected_results"):
-                    points_col = self.cols.index("Setpoints")
-                    run.setText(points_col, format_point_count(run.run_metadata))
-                    run.setData(points_col, QtCore.Qt.ItemDataRole.UserRole, status["result_count"])
+
+            if status.get("result_count") is not None or shape_metadata_changed:
+                points_col = self.cols.index("Setpoints")
+                run.setText(points_col, format_point_count(run.run_metadata))
+                run.setData(
+                    points_col,
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    run.run_metadata.get("setpoint_count")
+                    or run.run_metadata.get("expected_results")
+                    or run.run_metadata.get("result_count"),
+                    )
                 complete_col = self.cols.index("Status")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
                 run.setData(
@@ -962,7 +1045,7 @@ class moreInfo(qtw.QTabWidget):
     def setInfo(self, info, dataset=None, run_metadata=None, database_path=None):
         self.clear()
 
-        self._set_overview(info, dataset)
+        self._set_overview(info, dataset, run_metadata=run_metadata)
         self._set_parameters(info, dataset, run_metadata, database_path)
         self.preview.set_current_run(dataset)
         self.metadata.setInfo(info.get("MetaData", {}))
@@ -984,20 +1067,40 @@ class moreInfo(qtw.QTabWidget):
         self.raw.scrollToTop()
 
 
-    def _set_overview(self, info, dataset):
+    def _set_overview(self, info, dataset, run_metadata=None):
         structure = info.get("Data Structure", {})
         param_info = {
             key: value for key, value in structure.items()
             if isinstance(value, dict)
             }
-        measured = [
-            name for name, details in param_info.items()
-            if details.get("axes")
-            ]
-        setpoints = [
-            name for name, details in param_info.items()
-            if not details.get("axes")
-            ]
+        measured = list((run_metadata or {}).get("measure_parameters") or [])
+        setpoints = list((run_metadata or {}).get("sweep_parameters") or [])
+        if not measured and not setpoints and dataset is not None:
+            params = list(dataset.get_parameters())
+            setpoint_names = {
+                axis
+                for param in params
+                for axis in getattr(param, "depends_on_", ())
+                }
+            measured = [
+                getattr(param, "name", "")
+                for param in params
+                if getattr(param, "name", "") not in setpoint_names
+                ]
+            setpoints = [
+                getattr(param, "name", "")
+                for param in params
+                if getattr(param, "name", "") in setpoint_names
+                ]
+        elif not measured and not setpoints:
+            measured = [
+                name for name, details in param_info.items()
+                if details.get("axes")
+                ]
+            setpoints = [
+                name for name, details in param_info.items()
+                if not details.get("axes")
+                ]
 
         rows = [
             ("Status", self._status_text(dataset)),

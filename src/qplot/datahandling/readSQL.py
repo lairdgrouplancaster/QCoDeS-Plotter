@@ -151,7 +151,11 @@ def iter_run_shape_batches_via_sql(
             rows = {
                 run_id: metadata
                 for run_id, metadata in (rows or {}).items()
-                if metadata.get("setpoint_shape") or metadata.get("point_shape")
+                if (
+                    metadata.get("setpoint_shape")
+                    or metadata.get("point_shape")
+                    or metadata.get("setpoint_count") is not None
+                    )
                 }
             if rows:
                 yield rows
@@ -320,16 +324,18 @@ def _add_run_basic_fields(metadata):
     metadata["sweep_parameters"] = sweep_parameters
     metadata["point_shape"] = _point_shape(run_description, measure_parameters)
     metadata["setpoint_shape"] = metadata["point_shape"]
+    shape_source = "planned" if metadata["setpoint_shape"] else None
+    metadata["setpoint_shape_source"] = shape_source
     expected_results = _expected_results_from_shapes(
         run_description,
         measure_parameters,
         )
-    metadata["expected_results"] = (
-        expected_results
-        if expected_results is not None
-        else _shape_size(metadata["point_shape"])
+    metadata["expected_results"] = expected_results
+    metadata["expected_results_source"] = (
+        "planned" if expected_results is not None else None
         )
     metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
+    metadata["setpoint_count_source"] = shape_source
 
 
 def _add_run_detail_fields(
@@ -345,35 +351,23 @@ def _add_run_detail_fields(
     sweep_parameters = metadata.get("sweep_parameters") or []
 
     metadata["result_count"] = _result_count(cursor, metadata.get("result_table_name"))
-    expected_results = metadata.get("expected_results")
+    observed_setpoints = None
     if infer_missing_shapes and not metadata["point_shape"]:
-        setpoint_shape = _setpoint_shape_from_result_table(
-            cursor,
-            metadata.get("result_table_name"),
-            sweep_parameters,
-            )
-        metadata["setpoint_shape"] = setpoint_shape
-        metadata["point_shape"] = _point_shape_from_setpoint_shape(
-            setpoint_shape,
-            measure_parameters,
-            metadata["result_count"],
-            )
-        expected_results = _shape_size(metadata["point_shape"])
-    metadata["expected_results"] = (
-        expected_results
-        if expected_results is not None
-        else _shape_size(metadata["point_shape"])
-        )
-    metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
+        observed_setpoints = _add_observed_shape_fields(cursor, metadata)
+    _add_completed_observed_result_count(metadata)
     if (
             include_read_setpoint_count
             and _is_keyboard_interrupt(metadata.get("measurement_exception"))
             ):
-        metadata["read_setpoint_count"] = _read_setpoint_count(
-            cursor,
-            metadata.get("result_table_name"),
-            sweep_parameters,
-            )
+        if observed_setpoints is None:
+            observed_setpoints = _run_setpoint_observation(
+                cursor,
+                metadata.get("result_table_name"),
+                _json_dict(metadata.get("run_description")),
+                measure_parameters,
+                sweep_parameters,
+                )
+        metadata["read_setpoint_count"] = observed_setpoints["count"]
     if include_storage_bytes:
         table_name = metadata.get("result_table_name")
         if storage_bytes_by_table is not None:
@@ -395,6 +389,46 @@ def _add_run_detail_fields(
         metadata["storage_bytes_estimated"] = True
 
 
+def _add_observed_shape_fields(cursor, metadata):
+    measure_parameters = metadata.get("measure_parameters") or []
+    sweep_parameters = metadata.get("sweep_parameters") or []
+    observed_setpoints = _run_setpoint_observation(
+        cursor,
+        metadata.get("result_table_name"),
+        _json_dict(metadata.get("run_description")),
+        measure_parameters,
+        sweep_parameters,
+        )
+    setpoint_shape = observed_setpoints["shape"]
+    metadata["setpoint_shape"] = setpoint_shape
+    metadata["point_shape"] = _point_shape_from_setpoint_shape(
+        setpoint_shape,
+        measure_parameters,
+        metadata.get("result_count"),
+        )
+    metadata["setpoint_shape_source"] = (
+        "observed" if setpoint_shape else None
+        )
+    metadata["setpoint_count"] = observed_setpoints["count"]
+    metadata["setpoint_count_source"] = (
+        "observed" if observed_setpoints["count"] is not None else None
+        )
+    metadata["expected_results"] = None
+    metadata["expected_results_source"] = None
+    _add_completed_observed_result_count(metadata)
+    return observed_setpoints
+
+
+def _add_completed_observed_result_count(metadata):
+    if (
+            metadata.get("expected_results") is None
+            and _run_is_complete(metadata)
+            and metadata.get("result_count") is not None
+            ):
+        metadata["expected_results"] = metadata["result_count"]
+        metadata["expected_results_source"] = "observed"
+
+
 def _json_dict(value):
     if not value:
         return {}
@@ -408,13 +442,7 @@ def _json_dict(value):
 
 
 def _parameter_roles(run_description, parameter_text):
-    dependencies = (
-        run_description
-        .get("interdependencies_", {})
-        .get("dependencies", {})
-        )
-    if not dependencies:
-        dependencies = _legacy_dependencies(run_description)
+    dependencies = _parameter_dependencies(run_description)
 
     measure_parameters = list(dependencies.keys())
     sweep_parameters = []
@@ -423,18 +451,35 @@ def _parameter_roles(run_description, parameter_text):
             if name not in sweep_parameters:
                 sweep_parameters.append(name)
 
-    if not measure_parameters:
-        parameters = [
-            parameter.strip()
-            for parameter in (parameter_text or "").split(",")
-            if parameter.strip()
-            ]
-        measure_parameters = [
-            parameter for parameter in parameters
-            if parameter not in sweep_parameters
-            ]
+    parameters = [
+        parameter.strip()
+        for parameter in (parameter_text or "").split(",")
+        if parameter.strip()
+        ]
+    for parameter in parameters:
+        if parameter not in sweep_parameters and parameter not in measure_parameters:
+            measure_parameters.append(parameter)
 
     return measure_parameters, sweep_parameters
+
+
+def _parameter_dependencies(run_description):
+    dependencies = (
+        run_description
+        .get("interdependencies_", {})
+        .get("dependencies", {})
+        )
+    if not isinstance(dependencies, dict) or not dependencies:
+        dependencies = _legacy_dependencies(run_description)
+
+    if not isinstance(dependencies, dict):
+        return {}
+
+    return {
+        parameter: list(setpoints)
+        for parameter, setpoints in dependencies.items()
+        if isinstance(setpoints, (list, tuple)) and setpoints
+        }
 
 
 def _legacy_dependencies(run_description):
@@ -534,6 +579,10 @@ def _is_keyboard_interrupt(value):
     return bool(value and "KeyboardInterrupt" in str(value))
 
 
+def _run_is_complete(metadata):
+    return bool(metadata.get("completed_timestamp") or metadata.get("is_completed"))
+
+
 def _point_shape_from_result_table(
     cursor,
     table_name,
@@ -572,33 +621,17 @@ def _setpoint_shape_from_result_table(cursor, table_name, sweep_parameters):
         return None
 
     quoted_table_name = _sqlite_identifier(table_name)
-    try:
-        cursor.execute(f"PRAGMA table_info({quoted_table_name})")
-        columns = {row[1] for row in cursor.fetchall()}
-    except Exception:
-        return None
-
+    columns = _result_table_columns(cursor, quoted_table_name)
     if not columns or any(parameter not in columns for parameter in sweep_parameters):
         return None
 
-    shape = []
-    for parameter in sweep_parameters:
-        quoted_parameter = _sqlite_identifier(parameter)
-        try:
-            cursor.execute(f"""
-              SELECT COUNT(DISTINCT {quoted_parameter})
-              FROM {quoted_table_name}
-              WHERE {quoted_parameter} IS NOT NULL
-            """)
-            count = int(cursor.fetchone()[0])
-        except Exception:
-            return None
-
-        if count <= 0:
-            return None
-        shape.append(count)
-
-    return shape
+    observation = _setpoint_observation(
+        cursor,
+        quoted_table_name,
+        sweep_parameters,
+        columns,
+        )
+    return observation["shape"]
 
 
 def _read_setpoint_count(cursor, table_name, sweep_parameters):
@@ -606,28 +639,173 @@ def _read_setpoint_count(cursor, table_name, sweep_parameters):
         return None
 
     quoted_table_name = _sqlite_identifier(table_name)
-    try:
-        cursor.execute(f"PRAGMA table_info({quoted_table_name})")
-        columns = {row[1] for row in cursor.fetchall()}
-        if any(parameter not in columns for parameter in sweep_parameters):
-            return None
+    columns = _result_table_columns(cursor, quoted_table_name)
+    if not columns or any(parameter not in columns for parameter in sweep_parameters):
+        return None
 
-        quoted_columns = ", ".join(
-            _sqlite_identifier(parameter)
-            for parameter in sweep_parameters
+    return _distinct_setpoint_count(
+        cursor,
+        quoted_table_name,
+        sweep_parameters,
+        )
+
+
+def _run_setpoint_observation(
+        cursor,
+        table_name,
+        run_description,
+        measure_parameters,
+        sweep_parameters,
+        ):
+    """Return a safe global shape and the largest per-dependent point count."""
+    empty = {"shape": None, "count": None}
+    if not table_name:
+        return empty
+
+    quoted_table_name = _sqlite_identifier(table_name)
+    columns = _result_table_columns(cursor, quoted_table_name)
+    if not columns:
+        return empty
+
+    dependencies = _parameter_dependencies(run_description)
+    observations = []
+    if dependencies:
+        for parameter in measure_parameters:
+            setpoints = dependencies.get(parameter)
+            if (
+                    not setpoints
+                    or parameter not in columns
+                    or any(setpoint not in columns for setpoint in setpoints)
+                    ):
+                continue
+            observation = _setpoint_observation(
+                cursor,
+                quoted_table_name,
+                setpoints,
+                columns,
+                dependent_parameter=parameter,
+                )
+            if observation["count"] is not None:
+                observations.append((tuple(setpoints), observation))
+    elif sweep_parameters and all(parameter in columns for parameter in sweep_parameters):
+        observation = _setpoint_observation(
+            cursor,
+            quoted_table_name,
+            sweep_parameters,
+            columns,
             )
-        not_null = " AND ".join(
-            f"{_sqlite_identifier(parameter)} IS NOT NULL"
-            for parameter in sweep_parameters
+        if observation["count"] is not None:
+            observations.append((tuple(sweep_parameters), observation))
+
+    if not observations:
+        return empty
+
+    observed_count = max(observation["count"] for _, observation in observations)
+    dependency_sets = {setpoints for setpoints, _ in observations}
+    observed_shapes = [observation["shape"] for _, observation in observations]
+    shared_shape = (
+        observed_shapes[0]
+        if (
+            len(dependency_sets) == 1
+            and observed_shapes[0] is not None
+            and all(shape == observed_shapes[0] for shape in observed_shapes)
             )
+        else None
+        )
+    return {"shape": shared_shape, "count": observed_count}
+
+
+def _setpoint_observation(
+        cursor,
+        quoted_table_name,
+        sweep_parameters,
+        columns,
+        dependent_parameter=None,
+        ):
+    empty = {"shape": None, "count": None}
+    required_columns = list(sweep_parameters)
+    if dependent_parameter is not None:
+        required_columns.append(dependent_parameter)
+    if not required_columns or any(column not in columns for column in required_columns):
+        return empty
+
+    observed_count = _distinct_setpoint_count(
+        cursor,
+        quoted_table_name,
+        sweep_parameters,
+        dependent_parameter=dependent_parameter,
+        )
+    if not observed_count:
+        return empty
+
+    conditions = _setpoint_not_null_conditions(
+        sweep_parameters,
+        dependent_parameter=dependent_parameter,
+        )
+    distinct_counts = ", ".join(
+        f"COUNT(DISTINCT {_sqlite_identifier(parameter)})"
+        for parameter in sweep_parameters
+        )
+    try:
         cursor.execute(f"""
-          SELECT DISTINCT {quoted_columns}
+          SELECT {distinct_counts}
           FROM {quoted_table_name}
-          WHERE {not_null}
+          WHERE {conditions}
         """)
-        return len(cursor.fetchall())
+        shape = [int(count) for count in cursor.fetchone()]
+    except Exception:
+        return {"shape": None, "count": observed_count}
+
+    if any(count <= 0 for count in shape) or _shape_size(shape) != observed_count:
+        return {"shape": None, "count": observed_count}
+    return {"shape": shape, "count": observed_count}
+
+
+def _distinct_setpoint_count(
+        cursor,
+        quoted_table_name,
+        sweep_parameters,
+        dependent_parameter=None,
+        ):
+    quoted_columns = ", ".join(
+        _sqlite_identifier(parameter)
+        for parameter in sweep_parameters
+        )
+    conditions = _setpoint_not_null_conditions(
+        sweep_parameters,
+        dependent_parameter=dependent_parameter,
+        )
+    try:
+        cursor.execute(f"""
+          SELECT COUNT(*)
+          FROM (
+              SELECT DISTINCT {quoted_columns}
+              FROM {quoted_table_name}
+              WHERE {conditions}
+          ) AS qplot_distinct_setpoints
+        """)
+        count = int(cursor.fetchone()[0])
     except Exception:
         return None
+    return count if count > 0 else None
+
+
+def _setpoint_not_null_conditions(sweep_parameters, dependent_parameter=None):
+    parameters = list(sweep_parameters)
+    if dependent_parameter is not None:
+        parameters.append(dependent_parameter)
+    return " AND ".join(
+        f"{_sqlite_identifier(parameter)} IS NOT NULL"
+        for parameter in parameters
+        )
+
+
+def _result_table_columns(cursor, quoted_table_name):
+    try:
+        cursor.execute(f"PRAGMA table_info({quoted_table_name})")
+        return {row[1] for row in cursor.fetchall()}
+    except Exception:
+        return set()
 
 
 def _result_count(cursor, table_name):
@@ -814,14 +992,40 @@ def get_run_status(
         for index, column in enumerate(optional_columns, start=5):
             status[column] = value[index]
 
+        shape_metadata = {
+            "completed_timestamp": value[0],
+            "is_completed": value[1],
+            "result_table_name": value[2],
+            "run_description": value[3],
+            "parameters": value[4],
+            "result_count": status["result_count"],
+            }
+        _add_run_basic_fields(shape_metadata)
+        observed_setpoints = None
+        if not shape_metadata["point_shape"]:
+            observed_setpoints = _add_observed_shape_fields(cursor, shape_metadata)
+        _add_completed_observed_result_count(shape_metadata)
+        for field in (
+                "point_shape",
+                "setpoint_shape",
+                "setpoint_shape_source",
+                "setpoint_count",
+                "setpoint_count_source",
+                "expected_results",
+                "expected_results_source",
+                ):
+            status[field] = shape_metadata.get(field)
+
         if _is_keyboard_interrupt(status.get("measurement_exception")):
-            run_description = _json_dict(value[3])
-            _, sweep_parameters = _parameter_roles(run_description, value[4])
-            status["read_setpoint_count"] = _read_setpoint_count(
-                cursor,
-                value[2],
-                sweep_parameters,
-                )
+            if observed_setpoints is None:
+                observed_setpoints = _run_setpoint_observation(
+                    cursor,
+                    value[2],
+                    _json_dict(value[3]),
+                    shape_metadata["measure_parameters"],
+                    shape_metadata["sweep_parameters"],
+                    )
+            status["read_setpoint_count"] = observed_setpoints["count"]
 
         return status
     finally:

@@ -33,12 +33,22 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-macOS/Linux:
+macOS:
 
 ```console
 python3 -m venv .venv-mac
 source .venv-mac/bin/activate
 ```
+
+Linux:
+
+```console
+python3 -m venv .venv-linux
+source .venv-linux/bin/activate
+```
+
+Linux is useful for source-level development, but it is not currently part of
+the supported desktop GUI test matrix.
 
 Install qPlot in editable mode with the development dependencies:
 
@@ -56,10 +66,16 @@ Windows:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-macOS/Linux:
+macOS:
 
 ```console
 ./.venv-mac/bin/python -m pytest
+```
+
+Linux:
+
+```console
+./.venv-linux/bin/python -m pytest
 ```
 
 Some local checkouts keep the virtual environment next to the repository rather
@@ -71,10 +87,16 @@ Windows:
 ..\.venv\Scripts\python.exe -m pytest
 ```
 
-macOS/Linux:
+macOS:
 
 ```console
 ../.venv-mac/bin/python -m pytest
+```
+
+Linux:
+
+```console
+../.venv-linux/bin/python -m pytest
 ```
 
 ## Checks

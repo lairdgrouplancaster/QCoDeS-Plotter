@@ -195,6 +195,12 @@ class TemporaryConfigTestCase(unittest.TestCase):
             "notes.txt",
             )
 
+    def test_database_path_from_arguments_accepts_dash_path_after_separator(self):
+        self.assertEqual(
+            qplot_main._database_path_from_arguments(["-style", "Fusion", "--", "-data.db"]),
+            "-data.db",
+            )
+
     def test_application_identity_uses_qplot_name(self):
         app = qtw.QApplication.instance()
         old_name = app.applicationName()

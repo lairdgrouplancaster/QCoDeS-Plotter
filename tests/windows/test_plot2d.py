@@ -1072,8 +1072,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertEqual(len(opened), 1)
         self.assertIn("2×2 points", opened[0])
-        self.assertIn("X range: 1.000 to 3.000", opened[0])
-        self.assertIn("Y range: 1.000 to 3.000", opened[0])
+        self.assertIn("X range: 1.00 to 3.00", opened[0])
+        self.assertIn("Y range: 1.00 to 3.00", opened[0])
         self.assertEqual(qtw.QApplication.clipboard().text(), "")
         self.assertIsNone(window.marquee)
 

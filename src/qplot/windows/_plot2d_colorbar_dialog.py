@@ -31,8 +31,11 @@ if TYPE_CHECKING:
         colorbar_include_matplotlib_check: qtw.QCheckBox
         colorbar_manual_radio: qtw.QRadioButton
         colorbar_matplotlib_subtype_checks: dict[str, qtw.QCheckBox]
+        colorbar_max_label: qtw.QLabel
         colorbar_max_text: qtw.QLineEdit
+        colorbar_min_label: qtw.QLabel
         colorbar_min_text: qtw.QLineEdit
+        colorbar_scale_action: QtGui.QAction
         colorbar_scale_controls: qtw.QWidget
         colorbar_scale_dialog: qtw.QDialog
         relevel_refresh: qtw.QCheckBox
@@ -107,6 +110,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         self.colorbar_manual_radio = qtw.QRadioButton("Manual")
         self.colorbar_auto_radio = qtw.QRadioButton("Auto")
+        self.colorbar_min_label = qtw.QLabel("Minimum")
+        self.colorbar_max_label = qtw.QLabel("Maximum")
         self.colorbar_min_text = qtw.QLineEdit()
         self.colorbar_max_text = qtw.QLineEdit()
         self.colorbar_colormap_table = qtw.QTableWidget()
@@ -125,6 +130,10 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         validator = QtGui.QDoubleValidator(cast(QtCore.QObject, self))
         self.colorbar_min_text.setValidator(validator)
         self.colorbar_max_text.setValidator(validator)
+        self.colorbar_min_label.setBuddy(self.colorbar_min_text)
+        self.colorbar_max_label.setBuddy(self.colorbar_max_text)
+        self.colorbar_min_text.setAccessibleName("Color scale minimum")
+        self.colorbar_max_text.setAccessibleName("Color scale maximum")
         for line_edit in (self.colorbar_min_text, self.colorbar_max_text):
             line_edit.setMinimumWidth(80)
 
@@ -139,8 +148,10 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         range_layout.setHorizontalSpacing(4)
         range_layout.setVerticalSpacing(4)
         range_layout.addWidget(self.colorbar_manual_radio, 0, 0)
-        range_layout.addWidget(self.colorbar_min_text, 0, 1)
-        range_layout.addWidget(self.colorbar_max_text, 0, 2)
+        range_layout.addWidget(self.colorbar_min_label, 0, 1)
+        range_layout.addWidget(self.colorbar_min_text, 0, 2)
+        range_layout.addWidget(self.colorbar_max_label, 0, 3)
+        range_layout.addWidget(self.colorbar_max_text, 0, 4)
         range_layout.addWidget(self.colorbar_auto_radio, 1, 0)
 
         filter_controls = self._init_colorbar_filter_controls()
@@ -151,6 +162,13 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         layout.addWidget(range_controls)
 
         self.colorbar_scale_controls = controls
+
+        menu = getattr(self, "vbMenu", None)
+        if menu is not None:
+            self.colorbar_scale_action = QtGui.QAction("&Color Scale...", cast(QtCore.QObject, self))
+            self.colorbar_scale_action.triggered.connect(self.open_colorbar_scale_dialog)
+            before = getattr(self, "autoscaleSep", None)
+            menu.insertAction(before, self.colorbar_scale_action)
 
         self.colorbar_colormap_table.itemSelectionChanged.connect(
             self._colorbar_colormap_selection_changed

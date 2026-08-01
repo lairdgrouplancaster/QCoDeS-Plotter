@@ -88,6 +88,7 @@ class RunPreviewCell(qtw.QWidget):
             label.setFixedSize(self.icon_size, self.icon_size)
             label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             label.setToolTip(preview.get("title", ""))
+            label.set_preview_accessibility(preview.get("title"))
             label.setPixmap(
                 QtGui.QPixmap.fromImage(image).scaled(
                     self.icon_size,

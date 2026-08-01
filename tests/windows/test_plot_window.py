@@ -44,6 +44,12 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         def __init__(self, running):
             self.running = running
 
+    def test_format_num_uses_requested_significant_figures(self):
+        self.assertEqual(plotWidget.formatNum(12.345, sf=3), "12.3")
+        self.assertEqual(plotWidget.formatNum(0.012345, sf=3), "1.23e-02")
+        self.assertEqual(plotWidget.formatNum(999.9, sf=3), "1.00e+03")
+        self.assertEqual(plotWidget.formatNum(12345.0, sf=3), "1.23e+04")
+
     def _window(self, *, worker_running):
         window = plotWidget.__new__(plotWidget)
         window.monitor = self.Timer()
@@ -1691,7 +1697,19 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host._init_colorbar_scale_controls()
             action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
 
-            self.assertNotIn("Color Scale...", action_texts)
+            self.assertIn("Color Scale...", action_texts)
+            self.assertEqual(host.colorbar_min_label.text(), "Minimum")
+            self.assertEqual(host.colorbar_max_label.text(), "Maximum")
+            self.assertIs(host.colorbar_min_label.buddy(), host.colorbar_min_text)
+            self.assertIs(host.colorbar_max_label.buddy(), host.colorbar_max_text)
+            self.assertEqual(
+                host.colorbar_min_text.accessibleName(),
+                "Color scale minimum",
+                )
+            self.assertEqual(
+                host.colorbar_max_text.accessibleName(),
+                "Color scale maximum",
+                )
             self.assertGreater(host._colorbar_colormap_row("Greys"), -1)
             self.assertGreater(host._colorbar_colormap_row("Purples"), -1)
             self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)

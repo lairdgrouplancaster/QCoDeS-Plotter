@@ -51,7 +51,7 @@ def _database_path_from_arguments(args):
         if not positional_only and arg in QT_OPTIONS_WITH_VALUES:
             skip_next = True
             continue
-        if arg.startswith("-"):
+        if not positional_only and arg.startswith("-"):
             continue
         return arg
 

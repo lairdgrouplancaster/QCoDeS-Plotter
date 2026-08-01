@@ -258,8 +258,6 @@ COMMANDS: dict[str, CommandSpec] = {
         "plot.toggle_operations",
         "View Operations",
         "Show or hide the operations panel",
-        "Ctrl+Shift+O",
-        help_section="Plot Windows",
     ),
     "toolbar.refresh": CommandSpec(
         "toolbar.refresh",

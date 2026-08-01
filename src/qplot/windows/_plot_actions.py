@@ -183,13 +183,12 @@ class PlotActionsMixin:
                 show=show,
                 **kargs,
             )
-            if win.__class__.__name__ == "sweeper":
-                window_type = "sweeper"
-            elif isinstance(win, plot1d):
-                window_type = "plot1d"
-            elif isinstance(win, plot2d):
-                window_type = "plot2d"
-            else:
+            window_type = getattr(win, "operation_kind", None)
+            if window_type is None:
+                legacy_window_type = win.__class__.__name__
+                if legacy_window_type in {"plot1d", "plot2d", "sweeper"}:
+                    window_type = legacy_window_type
+            if window_type not in {"plot1d", "plot2d", "sweeper"}:
                 raise TypeError(f"Unknown window of type: {win.__class__.__name__}")
         except Exception:
             if loaded_for_construction:
@@ -254,7 +253,8 @@ class PlotActionsMixin:
             return
 
         for item in list(self.windows):
-            if item.__class__.__name__ != "sweeper":
+            window_type = getattr(item, "operation_kind", item.__class__.__name__)
+            if window_type != "sweeper":
                 continue
 
             try:
@@ -1012,7 +1012,10 @@ class PlotActionsMixin:
                 compatible = _subplot_axis_order(
                     win.axis_options,
                     item.axis_options,
-                    source_is_cut=item.__class__.__name__ == "sweeper",
+                    source_is_cut=(
+                        getattr(item, "operation_kind", item.__class__.__name__)
+                        == "sweeper"
+                        ),
                     )
                 if compatible is not None and not _plot_has_trace_window(win, item):
                     wins.append(item)
