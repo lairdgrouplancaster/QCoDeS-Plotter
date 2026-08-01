@@ -12,14 +12,22 @@ from qplot.windows._widgets.preview import (
 
 
 class RunListTooltipTestCase(unittest.TestCase):
-    def test_add_runs_advances_run_id_cursor_past_missing_timestamp(self):
+    def test_add_runs_displays_run_with_missing_timestamp(self):
         old_isfile = treeWidgets.isfile
         treeWidgets.isfile = lambda _: False
 
         try:
             run_list = treeWidgets.RunList()
             run_list.addRuns({
-                2: {"run_timestamp": None},
+                2: {
+                    "run_timestamp": None,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "guid": "guid-2",
+                    "sweep_parameters": [],
+                    "measure_parameters": [],
+                    "result_count": 0,
+                    },
                 3: {
                     "run_timestamp": 100.0,
                     "completed_timestamp": 110.0,
@@ -32,7 +40,16 @@ class RunListTooltipTestCase(unittest.TestCase):
                 })
 
             self.assertEqual(run_list.maxRunId, 3)
-            self.assertEqual(run_list.topLevelItemCount(), 1)
+            self.assertEqual(run_list.topLevelItemCount(), 2)
+            missing_timestamp_item = next(
+                run_list.topLevelItem(index)
+                for index in range(run_list.topLevelItemCount())
+                if run_list.topLevelItem(index).guid == "guid-2"
+                )
+            self.assertEqual(
+                missing_timestamp_item.text(run_list.cols.index("Started")),
+                "unknown",
+                )
         finally:
             treeWidgets.isfile = old_isfile
 

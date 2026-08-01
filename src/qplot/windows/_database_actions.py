@@ -303,13 +303,6 @@ class DatabaseActionsMixin:
 
         if newRuns:
             self.RunList.maxRunId = max(self.RunList.maxRunId, max(newRuns))
-            # Failed initialisations without a timestamp remain hidden, but
-            # still advance the cursor so later valid runs can be discovered.
-            newRuns = {
-                run_id: metadata
-                for run_id, metadata in newRuns.items()
-                if metadata.get("run_timestamp")
-                }
 
         if not newRuns:
             self._sync_empty_state()

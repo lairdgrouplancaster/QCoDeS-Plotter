@@ -205,16 +205,10 @@ class RunList(qtw.QTreeWidget):
             append_to_watching = False
             arr = [str(run_id)] # Run ID
             
-            # Skip values missing 'run_timestamp', this only happens on a run 
-            # which failed to initialise and has no data. Also breaks app...
-            if not metadata["run_timestamp"]:
-                continue
-            # Add data display to array
-
             measurement_count = measured_parameter_count(metadata)
             arr.append("") #measured previews; count remains the hidden sort key
             arr.append(format_point_count(metadata)) #points
-            arr.append(format_timestamp(metadata["run_timestamp"])) #started
+            arr.append(format_timestamp(metadata.get("run_timestamp"))) #started
             arr.append(format_complete_cell(metadata)) #status
             arr.append(format_time_taken_seconds(metadata)) #duration
             arr.append(format_storage_size(metadata.get("storage_bytes"))) #size
