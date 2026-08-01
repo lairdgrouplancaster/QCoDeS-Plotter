@@ -12,8 +12,8 @@ class RunSizeTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = os.path.join(temp_dir, "runs.db")
             conn = sqlite3.connect(database_path)
+            cursor = conn.cursor()
             try:
-                cursor = conn.cursor()
                 cursor.execute(
                     "CREATE TABLE runs (guid TEXT, completed_timestamp REAL)"
                     )
@@ -26,6 +26,7 @@ class RunSizeTestCase(unittest.TestCase):
                     )
                 conn.commit()
             finally:
+                cursor.close()
                 conn.close()
 
             old_connection = readSQL.qcodes_read_only_connection
