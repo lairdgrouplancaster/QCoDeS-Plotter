@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from jsonschema import ValidationError
 from PyQt6 import QtWidgets as qtw
@@ -70,6 +71,26 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(cfg.get("user_preference.theme"), "light")
         self.assertEqual(config().get("user_preference.theme"), "light")
+
+    def test_config_write_failure_preserves_previous_file(self):
+        cfg = config()
+        previous_contents = Path(config.default_file).read_text(encoding="utf-8")
+
+        with (
+            patch(
+                "qplot.configuration.config.json.dump",
+                side_effect=OSError("simulated write failure"),
+                ),
+            self.assertRaisesRegex(OSError, "simulated write failure"),
+            ):
+            cfg.update("user_preference.theme", "dark")
+
+        self.assertEqual(
+            Path(config.default_file).read_text(encoding="utf-8"),
+            previous_contents,
+            )
+        self.assertEqual(cfg.get("user_preference.theme"), "light")
+        self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
 
     def test_config_cli_set_value_converts_values(self):
         with redirect_stdout(io.StringIO()):

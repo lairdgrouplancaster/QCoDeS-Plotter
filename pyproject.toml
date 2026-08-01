@@ -102,6 +102,7 @@ files = [
     "src/qplot/configuration/themes/light.py",
     "src/qplot/datahandling/__init__.py",
     "src/qplot/datahandling/LoadFromDB.py",
+    "src/qplot/datahandling/dimensions.py",
     "src/qplot/datahandling/qcodes_cache.py",
     "src/qplot/datahandling/readSQL.py",
     "src/qplot/datahandling/readonly.py",

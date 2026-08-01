@@ -599,6 +599,37 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertNotIn("run-guid", preview.errors)
         self.assertIn("run-guid", preview.queue)
 
+    def test_preview_signature_tracks_shape_but_not_storage_metadata(self):
+        preview = PreviewTab(preview_size=100)
+        metadata = {
+            "result_table_name": "results",
+            "result_count": 10,
+            "run_description": '{"shapes": {"signal": [2, 5]}}',
+            "measure_parameters": ["signal"],
+            "sweep_parameters": ["x", "y"],
+            "setpoint_shape": [2, 5],
+            "point_shape": [2, 5],
+            "storage_bytes": 100,
+            }
+
+        signature = preview._metadata_signature(metadata)
+
+        self.assertEqual(
+            signature,
+            preview._metadata_signature({**metadata, "storage_bytes": 999}),
+            )
+        self.assertNotEqual(
+            signature,
+            preview._metadata_signature({**metadata, "setpoint_shape": [5, 2]}),
+            )
+        self.assertNotEqual(
+            signature,
+            preview._metadata_signature({
+                **metadata,
+                "run_description": '{"shapes": {"signal": [5, 2]}}',
+                }),
+            )
+
     def test_preview_tab_can_update_metadata_without_queueing_preview(self):
         preview = PreviewTab(preview_size=100)
         preview.database_path = "previews.db"
@@ -1235,6 +1266,36 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             ["x", "y"],
             ])
         self.assertTrue(all(preview["image"].width() == PREVIEW_SIZE for preview in previews))
+
+    def test_generate_run_previews_rejects_three_dimensional_measurement(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "previews.db")
+            conn = sqlite3.connect(database_path)
+            try:
+                conn.execute(
+                    "CREATE TABLE results (x REAL, y REAL, z REAL, signal REAL)"
+                    )
+                conn.execute("INSERT INTO results VALUES (0, 0, 0, 1)")
+                conn.commit()
+            finally:
+                conn.close()
+
+            previews = generate_run_previews(database_path, {
+                "result_table_name": "results",
+                "result_count": 1,
+                "run_description": """
+                {
+                  "interdependencies_": {
+                    "dependencies": {"signal": ["x", "y", "z"]}
+                  }
+                }
+                """,
+                })
+
+        self.assertEqual(len(previews), 1)
+        self.assertTrue(previews[0]["unsupported"])
+        self.assertEqual(previews[0]["dimension_count"], 3)
+        self.assertNotIn("image", previews[0])
 
 
 if __name__ == "__main__":

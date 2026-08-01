@@ -226,8 +226,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
             # Check if new data has been added to the dataset
             if current_ds_len != self.last_ds_len or force:
                 if self.worker.running:  # No need to run if already updating
-                    if not force:
-                        return
+                    self._refresh_pending = True
+                    if force:
+                        self.show_status("Refresh queued after the current load.", 3000)
+                    return
 
                 # The actual refresh line
                 self.load_data()
@@ -267,6 +269,32 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         if running:
                             self.monitorIntervalChanged(self.spinBox.value())
                             break
+
+
+    def _schedule_pending_refresh(self) -> None:
+        state = self.__dict__
+        if not state.get("_refresh_pending", False):
+            return
+        if state.get("_refresh_pending_scheduled", False):
+            return
+
+        self._refresh_pending_scheduled = True
+        QtCore.QTimer.singleShot(0, self._run_pending_refresh)
+
+
+    def _run_pending_refresh(self) -> None:
+        self._refresh_pending_scheduled = False
+        if not self.__dict__.get("_refresh_pending", False):
+            return
+        if not self._can_process_refresh():
+            self._refresh_pending = False
+            return
+        if getattr(getattr(self, "worker", None), "running", False):
+            self._schedule_pending_refresh()
+            return
+
+        self._refresh_pending = False
+        self.refreshWindow(force=True)
 
 
     @QtCore.pyqtSlot(bool)
@@ -391,7 +419,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         finally:  # Allow code to move on from wait_on_thread
             if worker is self.worker:
+                worker.running = False
                 self.end_wait.emit()
+                self._schedule_pending_refresh()
 
 
     @QtCore.pyqtSlot(Exception)

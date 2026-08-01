@@ -5,10 +5,14 @@ import pandas as pd
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.dimensions import (
+    MAX_SUPPORTED_PLOT_DIMENSIONS,
+    unsupported_plot_message,
+)
 from qplot.datahandling.readonly import load_by_guid_read_only, load_by_id_read_only
 from qplot.diagnostics import log_exception
 
-from ._dataset_handle import DatasetHandle, DatasetKey
+from ._dataset_handle import DatasetHandle, DatasetKey, close_dataset_connection
 from .plot1d import plot1d
 from .plot2d import plot2d
 
@@ -46,6 +50,70 @@ class PlotActionsMixin:
     """
 
     _selected_dataset_key: DatasetKey | None
+
+    def _dataset_is_held(self, dataset):
+        return dataset is not None and any(
+            handle.dataset is dataset
+            for handle in self.dataset_holder.values()
+            )
+
+
+    def _close_dataset_if_unowned(self, dataset, context="Dataset cleanup failed"):
+        if dataset is None or dataset is getattr(self, "ds", None):
+            return False
+        if self._dataset_is_held(dataset):
+            return False
+        try:
+            return close_dataset_connection(dataset)
+        except Exception as err:
+            log_exception(context, err, __name__)
+            return False
+
+
+    def _replace_selected_dataset(self, dataset, dataset_key):
+        previous = getattr(self, "ds", None)
+        self.ds = dataset
+        self._selected_dataset_key = dataset_key
+        if previous is not dataset:
+            self._close_dataset_if_unowned(
+                previous,
+                context="Previous selected dataset cleanup failed",
+                )
+
+
+    def _release_selected_dataset(self):
+        previous = getattr(self, "ds", None)
+        self.ds = None
+        self._selected_dataset_key = None
+        return self._close_dataset_if_unowned(
+            previous,
+            context="Selected dataset cleanup failed",
+            )
+
+
+    def _evict_dataset_handle(self, dataset_key):
+        handle = self.dataset_holder.pop(dataset_key, None)
+        if handle is None:
+            return False
+
+        handle.cancel_delete_timer()
+        if handle.dataset is getattr(self, "ds", None):
+            return True
+        try:
+            handle.close()
+        except Exception as err:
+            log_exception("Plot dataset cleanup failed", err, __name__)
+        return True
+
+
+    def _close_all_dataset_handles(self):
+        handles = list(self.dataset_holder.values())
+        self.dataset_holder.clear()
+        for handle in handles:
+            try:
+                handle.close()
+            except Exception as err:
+                log_exception("Plot dataset cleanup failed", err, __name__)
 
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
@@ -207,10 +275,10 @@ class PlotActionsMixin:
             else:
                 handle = self.dataset_holder.get(dataset_key)
                 if handle is None:
-                    self.ds = self._load_dataset(dataset_key)
+                    dataset = self._load_dataset(dataset_key)
                 else:
-                    self.ds = handle.dataset
-                self._selected_dataset_key = dataset_key
+                    dataset = handle.dataset
+                self._replace_selected_dataset(dataset, dataset_key)
         except Exception as err:
             log_exception("Selected run load failed", err, __name__)
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
@@ -304,10 +372,10 @@ class PlotActionsMixin:
 
         params = self._selected_measurement_params(ds)
         if params is None:
+            self._close_dataset_if_unowned(ds)
             return
 
-        self.ds = ds
-        self._selected_dataset_key = self._current_dataset_key(ds.guid)
+        self._replace_selected_dataset(ds, self._current_dataset_key(ds.guid))
         self.openPlot(params=params)
 
 
@@ -333,12 +401,14 @@ class PlotActionsMixin:
         ds = self._dataset_for_plot_target()
         if ds is None:
             return
+        try:
+            params = self._selected_measurement_params(ds)
+            if params is None:
+                return
 
-        params = self._selected_measurement_params(ds)
-        if params is None:
-            return
-
-        self._export_measurement_csv(ds, params)
+            self._export_measurement_csv(ds, params)
+        finally:
+            self._close_dataset_if_unowned(ds, context="CSV dataset cleanup failed")
 
 
     @QtCore.pyqtSlot(str)
@@ -371,7 +441,13 @@ class PlotActionsMixin:
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
             return
 
-        self._export_preview_csv(ds, parameter_name)
+        try:
+            self._export_preview_csv(ds, parameter_name)
+        finally:
+            self._close_dataset_if_unowned(
+                ds,
+                context="Preview CSV dataset cleanup failed",
+                )
 
 
     def _export_preview_csv(self, dataset, parameter_name):
@@ -453,6 +529,7 @@ class PlotActionsMixin:
 
         opened = 0
         skipped = 0
+        unsupported = []
         try:
             if not params:
                 params = ds.get_parameters()
@@ -462,6 +539,11 @@ class PlotActionsMixin:
                     continue
 
                 depends_on = param.depends_on_
+                if len(depends_on) > MAX_SUPPORTED_PLOT_DIMENSIONS:
+                    unsupported.append(
+                        unsupported_plot_message(param.name, depends_on)
+                        )
+                    continue
                 skip = False
 
                 if len(depends_on) == 1:
@@ -514,9 +596,14 @@ class PlotActionsMixin:
 
             if opened:
                 noun = "plot" if opened == 1 else "plots"
-                self.show_status(f"Opened {opened} {noun}.", 5000)
+                message = f"Opened {opened} {noun}."
+                if unsupported:
+                    message += f" Skipped {len(unsupported)} unsupported measurement(s)."
+                self.show_status(message, 8000 if unsupported else 5000)
             elif skipped:
                 self.show_status("Selected plot windows are already open.", 5000)
+            elif unsupported:
+                self.show_status(unsupported[0], 10_000)
             else:
                 self.show_status("No plottable parameters found for this run.", 5000)
 
@@ -528,10 +615,10 @@ class PlotActionsMixin:
                 handle.dataset is ds for handle in self.dataset_holder.values()
             )
             if loaded_by_open_plot and self.ds is not ds and not dataset_is_held:
-                try:
-                    ds.conn.close()
-                except Exception as err:
-                    log_exception("Unused plot dataset cleanup failed", err, __name__)
+                self._close_dataset_if_unowned(
+                    ds,
+                    context="Unused plot dataset cleanup failed",
+                    )
 
 
     def open_param_by_index(self, index: int):
@@ -584,10 +671,10 @@ class PlotActionsMixin:
             try:
                 handle = self.dataset_holder.get(dataset_key)
                 if handle is None:
-                    self.ds = self._load_dataset(dataset_key)
+                    dataset = self._load_dataset(dataset_key)
                 else:
-                    self.ds = handle.dataset
-                self._selected_dataset_key = dataset_key
+                    dataset = handle.dataset
+                self._replace_selected_dataset(dataset, dataset_key)
             except Exception as err:
                 log_exception("Preview plot run load failed", err, __name__)
                 self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
@@ -688,7 +775,13 @@ class PlotActionsMixin:
 
     def _parameter_from_key(self, dataset_key, parameter_name):
         ds = self._dataset_for_key(dataset_key)
-        return self._measurement_param_by_name(ds, parameter_name)
+        try:
+            return self._measurement_param_by_name(ds, parameter_name)
+        finally:
+            self._close_dataset_if_unowned(
+                ds,
+                context="Parameter lookup dataset cleanup failed",
+                )
 
 
     def _measurement_param_by_name(self, dataset, parameter_name):
@@ -860,14 +953,14 @@ class PlotActionsMixin:
             del_time = self.config.get("runtime_settings.del_grace_period")
 
             if del_time == 0:
-                self.dataset_holder.pop(dataset_key)
+                self._evict_dataset_handle(dataset_key)
 
             elif handle.delete_timer is None:
                 del_timer = QtCore.QTimer()
                 del_timer.setSingleShot(True)
                 handle.delete_timer = del_timer
                 del_timer.timeout.connect(
-                    lambda key=dataset_key: self.dataset_holder.pop(key, None)
+                    lambda key=dataset_key: self._evict_dataset_handle(key)
                 )
                 del_timer.start(int(del_time * 1000))
 

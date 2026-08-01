@@ -86,6 +86,21 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
 
 
 class DatasetHandleTestCase(unittest.TestCase):
+    def test_close_is_idempotent_and_closes_backing_connection(self):
+        class Connection:
+            def __init__(self):
+                self.close_count = 0
+
+            def close(self):
+                self.close_count += 1
+
+        dataset = type("Dataset", (), {"conn": Connection()})()
+        handle = DatasetHandle(dataset)
+
+        self.assertTrue(handle.close())
+        self.assertFalse(handle.close())
+        self.assertEqual(dataset.conn.close_count, 1)
+
     def test_retain_cancels_pending_delete_timer(self):
         class Timer:
             def __init__(self):
@@ -138,6 +153,53 @@ class DatasetHandleTestCase(unittest.TestCase):
 
         harness.remove_ds_at(dataset_key)
         self.assertEqual(harness.dataset_holder, {})
+
+    def test_evicting_unselected_handle_closes_connection(self):
+        class Config:
+            def get(self, key):
+                self.assert_key = key
+                return 0
+
+        class Connection:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        dataset = type("Dataset", (), {"guid": "guid", "conn": Connection()})()
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.config = Config()
+        harness.dataset_holder = {}
+        harness.ds = None
+        harness.show_status = lambda *args: None
+        key = DatasetKey("database.db", "guid")
+        harness.dataset_holder[key] = DatasetHandle(dataset)
+
+        harness.remove_ds_at(key)
+
+        self.assertTrue(dataset.conn.closed)
+        self.assertEqual(harness.dataset_holder, {})
+
+    def test_replacing_selected_dataset_closes_only_unheld_previous_dataset(self):
+        class Connection:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        old_dataset = type("Dataset", (), {"conn": Connection()})()
+        new_dataset = type("Dataset", (), {"conn": Connection()})()
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.ds = old_dataset
+        harness.dataset_holder = {}
+
+        harness._replace_selected_dataset(
+            new_dataset,
+            DatasetKey("database.db", "new-guid"),
+            )
+
+        self.assertTrue(old_dataset.conn.closed)
+        self.assertFalse(new_dataset.conn.closed)
 
     def test_failed_plot_construction_preserves_existing_dataset_ownership(self):
         class Connection:
@@ -340,6 +402,22 @@ class OpenPlotDatasetOwnershipTestCase(unittest.TestCase):
         self.assertNotIn(dataset_key, harness.dataset_holder)
         self.assertEqual(harness.load_count, 1)
         self.assertEqual(harness.errors, [])
+
+    def test_three_dimensional_parameter_is_rejected_before_window_creation(self):
+        param = self.Param("volume")
+        param.depends_on = "x, y, z"
+        param.depends_on_ = ("x", "y", "z")
+        dataset = self.Dataset([param])
+        harness = self.Harness(dataset)
+        harness.open_win = lambda *args, **kwargs: self.fail(
+            "Unsupported parameter must not create a plot window"
+            )
+
+        harness.openPlot(harness._current_dataset_key(dataset.guid), show=False)
+
+        self.assertTrue(dataset.conn.closed)
+        self.assertEqual(harness.windows, [])
+        self.assertIn("3 independent axes", harness.status_messages[-1][0])
 
 
 class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
@@ -2235,19 +2313,32 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
 
 class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
+    class ThreadPool:
+        def __init__(self):
+            self.workers = []
+
+        def start(self, worker):
+            self.workers.append(worker)
+
     class RunList:
         def __init__(self):
             self.maxRunId = 0
             self.checked_watching = False
+            self.watching = []
 
-        def checkWatching(self):
+        def checkWatching(self, statuses=None):
             self.checked_watching = True
+            return {}
 
         def topLevelItemCount(self):
             return 0
 
     class Harness:
         refreshMain = main_window.MainWindow.refreshMain
+        database_refresh_finished = main_window.MainWindow.database_refresh_finished
+        _apply_database_refresh_result = (
+            main_window.MainWindow._apply_database_refresh_result
+            )
         _empty_database_refresh_status = (
             main_window.MainWindow._empty_database_refresh_status
             )
@@ -2260,6 +2351,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             self.spinBox = DatabaseLoadUiTestCase.SpinBox(1.5)
             self.status_messages = []
             self.sync_count = 0
+            self.databaseRefreshThreadPool = RefreshMainEmptyDatabaseTestCase.ThreadPool()
 
         def _sync_empty_state(self):
             self.sync_count += 1
@@ -2271,14 +2363,15 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             raise AssertionError((title, message, details))
 
     def test_refresh_empty_database_reports_waiting_state(self):
-        old_find_new_runs = database_actions.find_new_runs
-        database_actions.find_new_runs = lambda last_run_id: {}
-
-        try:
-            harness = self.Harness()
-            harness.refreshMain()
-        finally:
-            database_actions.find_new_runs = old_find_new_runs
+        harness = self.Harness()
+        harness.refreshMain()
+        harness.database_refresh_finished(
+            harness._database_refresh_generation,
+            "empty.db",
+            {},
+            {},
+            None,
+            )
 
         self.assertTrue(harness.RunList.checked_watching)
         self.assertEqual(harness.sync_count, 1)
@@ -2287,7 +2380,21 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             [
                 ("Checking for new runs...", 0),
                 ("No measurements found yet; still waiting for new runs.", 3000),
-                ],
+            ],
+            )
+
+    def test_repeated_refresh_requests_are_coalesced_while_worker_is_active(self):
+        harness = self.Harness()
+
+        harness.refreshMain()
+        harness.refreshMain()
+
+        self.assertEqual(len(harness.databaseRefreshThreadPool.workers), 1)
+        self.assertTrue(harness._database_refresh_active)
+        self.assertTrue(harness._database_refresh_pending)
+        self.assertEqual(
+            harness.status_messages[-1],
+            ("Database refresh queued.", 3000),
             )
 
 
@@ -2296,8 +2403,9 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
         def __init__(self, updated_runs):
             self.maxRunId = 3
             self.updated_runs = updated_runs
+            self.watching = []
 
-        def checkWatching(self):
+        def checkWatching(self, statuses=None):
             return self.updated_runs
 
         def topLevelItemCount(self):
@@ -2316,6 +2424,10 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
 
     class Harness:
         refreshMain = main_window.MainWindow.refreshMain
+        database_refresh_finished = main_window.MainWindow.database_refresh_finished
+        _apply_database_refresh_result = (
+            main_window.MainWindow._apply_database_refresh_result
+            )
 
         def __init__(self, updated_runs):
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
@@ -2323,6 +2435,7 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
             self.infoBox = RefreshMainPreviewUpdateTestCase.InfoBox()
             self.status_messages = []
             self.sync_count = 0
+            self.databaseRefreshThreadPool = RefreshMainEmptyDatabaseTestCase.ThreadPool()
 
         def _sync_empty_state(self):
             self.sync_count += 1
@@ -2341,14 +2454,15 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
                 "is_completed": True,
                 },
             }
-        old_find_new_runs = database_actions.find_new_runs
-        database_actions.find_new_runs = lambda _last_run_id: {}
-
-        try:
-            harness = self.Harness(updated_runs)
-            harness.refreshMain()
-        finally:
-            database_actions.find_new_runs = old_find_new_runs
+        harness = self.Harness(updated_runs)
+        harness.refreshMain()
+        harness.database_refresh_finished(
+            harness._database_refresh_generation,
+            "loaded.db",
+            {},
+            {"guid-4": updated_runs[4]},
+            None,
+            )
 
         self.assertEqual(harness.infoBox.preview.added_runs, [updated_runs])
         self.assertEqual(
@@ -2363,12 +2477,17 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             self.maxRunId = 10
             self.checked_watching = False
             self.added_runs = None
+            self.watching = []
 
-        def checkWatching(self):
+        def checkWatching(self, statuses=None):
             self.checked_watching = True
+            return {}
 
         def addRuns(self, runs):
             self.added_runs = runs
+
+        def topLevelItemCount(self):
+            return 1
 
     class Preview:
         def __init__(self):
@@ -2390,6 +2509,10 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
 
     class Harness:
         refreshMain = main_window.MainWindow.refreshMain
+        database_refresh_finished = main_window.MainWindow.database_refresh_finished
+        _apply_database_refresh_result = (
+            main_window.MainWindow._apply_database_refresh_result
+            )
 
         def __init__(self, auto_plot_checked):
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
@@ -2401,6 +2524,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             self.status_messages = []
             self.plotted_guids = []
             self.sync_count = 0
+            self.databaseRefreshThreadPool = RefreshMainEmptyDatabaseTestCase.ThreadPool()
 
         def _sync_empty_state(self):
             self.sync_count += 1
@@ -2420,21 +2544,17 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             12: {"guid": "guid-12", "run_timestamp": 12.5},
             13: {"guid": "guid-13", "run_timestamp": 12.5},
             }
-        seen_last_run_ids = []
-        old_find_new_runs = database_actions.find_new_runs
-
-        def find_new_runs(last_run_id):
-            seen_last_run_ids.append(last_run_id)
-            return new_runs
-
-        database_actions.find_new_runs = find_new_runs
-        try:
-            harness = self.Harness(auto_plot_checked=True)
-            harness.refreshMain()
-        finally:
-            database_actions.find_new_runs = old_find_new_runs
-
-        self.assertEqual(seen_last_run_ids, [10])
+        harness = self.Harness(auto_plot_checked=True)
+        harness.refreshMain()
+        worker = harness.databaseRefreshThreadPool.workers[0]
+        self.assertEqual(worker.last_run_id, 10)
+        harness.database_refresh_finished(
+            harness._database_refresh_generation,
+            "loaded.db",
+            new_runs,
+            {},
+            None,
+            )
         self.assertTrue(harness.RunList.checked_watching)
         self.assertEqual(harness.RunList.maxRunId, 13)
         expected_runs = new_runs
@@ -2454,15 +2574,18 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             )
 
     def test_refresh_does_not_auto_plot_new_runs_when_disabled(self):
-        old_find_new_runs = database_actions.find_new_runs
-        database_actions.find_new_runs = lambda _last_run_id: {
+        new_runs = {
             11: {"guid": "guid-11", "run_timestamp": 11.0},
             }
-        try:
-            harness = self.Harness(auto_plot_checked=False)
-            harness.refreshMain()
-        finally:
-            database_actions.find_new_runs = old_find_new_runs
+        harness = self.Harness(auto_plot_checked=False)
+        harness.refreshMain()
+        harness.database_refresh_finished(
+            harness._database_refresh_generation,
+            "loaded.db",
+            new_runs,
+            {},
+            None,
+            )
 
         self.assertEqual(harness.plotted_guids, [])
         self.assertEqual(
@@ -2703,6 +2826,56 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
             database_module.subprocess.Popen = old_popen
 
         self.assertEqual(killed, [True])
+
+
+class DatabaseRefreshWorkerTestCase(unittest.TestCase):
+    def test_worker_fetches_new_runs_and_lightweight_live_statuses(self):
+        results = []
+        seen_status_calls = []
+
+        def get_status(guid, **kwargs):
+            seen_status_calls.append((guid, kwargs))
+            return {"result_count": 12}
+
+        worker = database_module.DatabaseRefreshWorker(
+            4,
+            "example.db",
+            10,
+            ["guid-1", "guid-2"],
+            )
+        worker.signals.finished.connect(lambda *args: results.append(args))
+
+        with (
+            patch.object(
+                database_module,
+                "find_new_runs",
+                return_value={11: {"guid": "guid-11"}},
+                ) as find_runs,
+            patch.object(database_module, "get_run_status", side_effect=get_status),
+            ):
+            worker.run()
+
+        find_runs.assert_called_once_with(10, database_path="example.db")
+        self.assertEqual(seen_status_calls, [
+            ("guid-1", {
+                "database_path": "example.db",
+                "include_storage_bytes": False,
+                }),
+            ("guid-2", {
+                "database_path": "example.db",
+                "include_storage_bytes": False,
+                }),
+            ])
+        self.assertEqual(results, [(
+            4,
+            "example.db",
+            {11: {"guid": "guid-11"}},
+            {
+                "guid-1": {"result_count": 12},
+                "guid-2": {"result_count": 12},
+                },
+            None,
+            )])
 
 
 class DatabaseLoadWorkerTestCase(unittest.TestCase):

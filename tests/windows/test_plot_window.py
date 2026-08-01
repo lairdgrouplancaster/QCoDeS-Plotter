@@ -56,6 +56,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window.load_calls = []
         window.restart_intervals = []
         window.load_data = lambda: window.load_calls.append("load")
+        window.show_status = lambda *args: None
         window.monitorIntervalChanged = lambda interval: (
             window.restart_intervals.append(interval)
             )
@@ -69,6 +70,21 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.load_calls, [])
         self.assertEqual(window.last_ds_len, 0)
         self.assertEqual(window.restart_intervals, [0.2])
+
+    def test_forced_refresh_while_busy_is_coalesced(self):
+        window = self._window(worker_running=True)
+
+        plotWidget.refreshWindow(window, force=True)
+        plotWidget.refreshWindow(window, force=True)
+
+        self.assertEqual(window.load_calls, [])
+        self.assertTrue(window._refresh_pending)
+
+        window.worker.running = False
+        plotWidget._run_pending_refresh(window)
+
+        self.assertEqual(window.load_calls, ["load"])
+        self.assertFalse(window._refresh_pending)
 
     def test_refresh_keeps_row_count_pending_until_worker_succeeds(self):
         window = self._window(worker_running=False)
@@ -1484,6 +1500,44 @@ class RunListParentLookupTestCase(unittest.TestCase):
         finally:
             host.deleteLater()
             widget.deleteLater()
+
+    def test_axis_scale_rejects_non_finite_and_reversed_manual_ranges(self):
+        window = plotWidget.__new__(plotWidget)
+        window.vb = pg.ViewBox()
+        minimum = qtw.QLineEdit("nan")
+        maximum = qtw.QLineEdit("1")
+        manual = qtw.QRadioButton()
+        ui = type(
+            "AxisControls",
+            (),
+            {"minText": minimum, "maxText": maximum, "manualRadio": manual},
+            )()
+        window._axis_scale_controls = {"x": ui}
+        window.show_status = lambda *args: window.__dict__.setdefault(
+            "statuses",
+            [],
+            ).append(args)
+        window.vb.setXRange(0, 1, padding=0)
+
+        try:
+            before = list(window.vb.viewRange()[0])
+            plotWidget._axis_scale_range_text_changed(window, "x")
+            self.assertEqual(list(window.vb.viewRange()[0]), before)
+            self.assertTrue(all(value not in {"nan", "inf"} for value in (
+                minimum.text(),
+                maximum.text(),
+                )))
+
+            minimum.setText("2")
+            maximum.setText("1")
+            plotWidget._axis_scale_range_text_changed(window, "x")
+            self.assertEqual(list(window.vb.viewRange()[0]), before)
+            self.assertIn("finite numbers", window.statuses[-1][0])
+        finally:
+            minimum.deleteLater()
+            maximum.deleteLater()
+            manual.deleteLater()
+            window.vb.deleteLater()
 
     def test_colorbar_scale_action_opens_dialog_without_nested_menu(self):
         class Bar:

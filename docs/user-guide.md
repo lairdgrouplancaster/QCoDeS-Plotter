@@ -133,8 +133,11 @@ There are several ways to open plots:
 * Enter `*` as the measurement to open all plottable measurements for the
   selected run.
 
-Parameters with one independent variable open as line plots. Parameters with
-two or more independent variables open as heatmaps.
+Parameters with one independent variable open as line plots, and parameters
+with two independent variables open as heatmaps. Measurements with three or
+more independent variables are not projected or averaged implicitly: qPlot
+shows an `nD` unsupported placeholder in the run table and leaves the data
+available for CSV export. Create an explicit 1D/2D slice before plotting it.
 
 Plot windows may appear before their data has finished loading. Check the plot
 window status bar; unless qPlot stops responding or shows an error, wait for the

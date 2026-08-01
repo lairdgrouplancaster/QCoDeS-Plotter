@@ -986,6 +986,25 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual(export_requested, [("run-guid", "signal")])
             self.assertIs(run_list.currentItem(), item)
+
+            run_list.set_run_previews("run-guid", [{
+                "parameter": "signal",
+                "axes": ["x", "y", "z"],
+                "dimension_count": 3,
+                "title": "signal has 3 independent axes",
+                "unsupported": True,
+                }])
+            unsupported = cell.findChildren(
+                qtw.QLabel,
+                "measurementPreviewUnsupported",
+                )
+            self.assertEqual(len(unsupported), 1)
+            self.assertEqual(unsupported[0].text(), "3D")
+            self.assertEqual(
+                unsupported[0].accessibleName(),
+                "3D measurement unsupported",
+                )
+            self.assertIn("3 independent axes", unsupported[0].toolTip())
         finally:
             treeWidgets.isfile = old_isfile
 

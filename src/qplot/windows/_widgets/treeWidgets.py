@@ -601,7 +601,7 @@ class RunList(qtw.QTreeWidget):
             return text if text else None
 
 
-    def checkWatching(self):
+    def checkWatching(self, statuses=None):
         """
         Check unfinished runs within table and sets finish time if completed.
 
@@ -610,7 +610,11 @@ class RunList(qtw.QTreeWidget):
         updated_runs = {}
         for run in self.watching:
 
-            status = get_run_status(run.guid)
+            status = (
+                get_run_status(run.guid)
+                if statuses is None
+                else statuses.get(run.guid, {})
+                )
             if not status:
                 continue
 

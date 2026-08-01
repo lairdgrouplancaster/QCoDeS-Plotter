@@ -4,6 +4,10 @@ import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.dimensions import (
+    MAX_SUPPORTED_PLOT_DIMENSIONS,
+    unsupported_plot_message,
+)
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.diagnostics import log_exception
 
@@ -216,14 +220,15 @@ class PreviewTab(qtw.QWidget):
 
     def _metadata_signature(self, metadata):
         return tuple(
-            metadata.get(key)
+            _signature_value(metadata.get(key))
             for key in (
                 "result_table_name",
                 "result_count",
-                "completed_timestamp",
-                "is_completed",
-                "database_modified_timestamp",
-                "storage_bytes",
+                "run_description",
+                "measure_parameters",
+                "sweep_parameters",
+                "setpoint_shape",
+                "point_shape",
                 )
             )
 
@@ -432,6 +437,18 @@ class PreviewCard(qtw.QWidget):
         super().__init__(*args)
         self.parameter = preview.get("parameter", "")
 
+        if preview.get("unsupported"):
+            label = unsupported_preview_label(
+                preview,
+                preview_size,
+                "previewUnsupported",
+                )
+            layout = qtw.QHBoxLayout()
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(label)
+            self.setLayout(layout)
+            return
+
         image = DraggablePreviewImageLabel(
             guid,
             self.parameter,
@@ -629,7 +646,12 @@ def generate_run_previews(database_path, metadata, size=PREVIEW_SIZE):
             if parameter not in available_columns:
                 continue
 
-            axes = [axis for axis in axes if axis in available_columns]
+            declared_axes = [str(axis) for axis in axes]
+            if len(declared_axes) > MAX_SUPPORTED_PLOT_DIMENSIONS:
+                previews.append(_unsupported_preview(parameter, declared_axes))
+                continue
+
+            axes = [axis for axis in declared_axes if axis in available_columns]
             if len(axes) == 1:
                 preview = _preview_1d(cursor, table_name, metadata, parameter, axes[0], size)
             elif len(axes) >= 2:
@@ -645,6 +667,32 @@ def generate_run_previews(database_path, metadata, size=PREVIEW_SIZE):
         conn.close()
 
     return previews
+
+
+def _unsupported_preview(parameter, axes):
+    axes = [str(axis) for axis in axes]
+    return {
+        "parameter": str(parameter),
+        "axes": axes,
+        "dimension_count": len(axes),
+        "title": unsupported_plot_message(parameter, axes),
+        "unsupported": True,
+        }
+
+
+def unsupported_preview_label(preview, size, object_name):
+    dimensions = int(preview.get("dimension_count") or len(preview.get("axes") or []))
+    text = f"{dimensions}D" if int(size) <= 32 else f"{dimensions}D\nunsupported"
+    label = qtw.QLabel(text)
+    label.setObjectName(object_name)
+    label.setAccessibleName(f"{dimensions}D measurement unsupported")
+    label.setFixedSize(int(size), int(size))
+    label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    label.setWordWrap(True)
+    label.setToolTip(preview.get("title", "Unsupported measurement dimensionality"))
+    label.setFrameShape(qtw.QFrame.Shape.Box)
+    label.setFrameShadow(qtw.QFrame.Shadow.Plain)
+    return label
 
 
 def _preview_1d(cursor, table_name, metadata, parameter, axis, size):
@@ -1688,6 +1736,19 @@ def _json_dict(value):
         return {}
 
     return decoded if isinstance(decoded, dict) else {}
+
+
+def _signature_value(value):
+    """Freeze nested metadata so in-place mutations cannot hide changes."""
+
+    if isinstance(value, dict):
+        return tuple(
+            (str(key), _signature_value(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            )
+    if isinstance(value, (list, tuple)):
+        return tuple(_signature_value(item) for item in value)
+    return value
 
 
 def _table_columns(cursor, table_name):

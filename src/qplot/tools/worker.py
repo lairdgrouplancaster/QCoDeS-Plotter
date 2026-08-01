@@ -6,6 +6,7 @@ import numpy as np
 from PyQt6 import QtCore
 
 from qplot.datahandling import load_param_data_from_db
+from qplot.datahandling.dimensions import ensure_supported_plot_dimensions
 from qplot.datahandling.qcodes_cache import (
     cache_data,
     cache_database_path,
@@ -114,6 +115,10 @@ class loader(QtCore.QRunnable):
     
     def run(self):
         try:
+            ensure_supported_plot_dimensions(
+                getattr(self.param, "name", "Measurement"),
+                getattr(self.param, "depends_on_", ()),
+                )
             cache = self.cache
 
             if self.read_data and self._should_use_sql_heatmap():

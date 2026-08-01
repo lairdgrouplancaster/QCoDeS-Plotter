@@ -17,6 +17,8 @@ from PyQt6 import QtCore
 
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.datahandling.readSQL import (
+    find_new_runs,
+    get_run_status,
     get_runs_basic_via_sql,
     iter_run_detail_batches_via_sql,
     iter_run_shape_batches_via_sql,
@@ -425,6 +427,73 @@ class DatabaseDetailSignals(QtCore.QObject):
     status = QtCore.pyqtSignal(int, str)
     batch_ready = QtCore.pyqtSignal(int, str, object)
     finished = QtCore.pyqtSignal(int, str, object)
+
+
+class DatabaseRefreshSignals(QtCore.QObject):
+    """Signals emitted by a coalesced main-window refresh worker."""
+
+    finished = QtCore.pyqtSignal(int, str, object, object, object)
+
+
+class DatabaseRefreshWorker(QtCore.QRunnable):
+    """Fetch new runs and live-run status without blocking the GUI thread."""
+
+    def __init__(self, generation, database_path, last_run_id, watched_runs):
+        super().__init__()
+        self.signals = DatabaseRefreshSignals()
+        self.generation = generation
+        self.database_path = database_path
+        self.last_run_id = int(last_run_id or 0)
+        self.watched_runs = list(watched_runs or [])
+        self._cancelled = threading.Event()
+
+
+    def cancel(self):
+        self._cancelled.set()
+
+
+    def run(self):
+        new_runs = {}
+        statuses = {}
+        try:
+            if self._cancelled.is_set():
+                return
+
+            new_runs = find_new_runs(
+                self.last_run_id,
+                database_path=self.database_path,
+                ) or {}
+            for guid in self.watched_runs:
+                if self._cancelled.is_set():
+                    return
+                status = get_run_status(
+                    guid,
+                    database_path=self.database_path,
+                    include_storage_bytes=False,
+                    )
+                if status:
+                    statuses[guid] = status
+        except Exception as err:
+            log_exception("Database refresh worker failed", err, __name__)
+            self._emit_finished(new_runs, statuses, err)
+            return
+
+        self._emit_finished(new_runs, statuses, None)
+
+
+    def _emit_finished(self, new_runs, statuses, error):
+        try:
+            self.signals.finished.emit(
+                self.generation,
+                self.database_path,
+                new_runs,
+                statuses,
+                error,
+                )
+        except RuntimeError as err:
+            message = str(err)
+            if not ("wrapped C/C++ object" in message and "has been deleted" in message):
+                raise
 
 
 class DatabaseLoadWorker(QtCore.QRunnable):

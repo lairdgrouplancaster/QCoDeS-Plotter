@@ -177,7 +177,7 @@ def iter_run_storage_batches_via_sql(database_path, run_ids, batch_size=25):
         conn.close()
 
 
-def find_new_runs(last_run_id):
+def find_new_runs(last_run_id, database_path=None):
     """
     Fetch all runs created after the last seen run ID.
 
@@ -196,7 +196,7 @@ def find_new_runs(last_run_id):
         Has layout: 
             run_id : {column_name: column_data}
     """
-    conn = qcodes_read_only_connection(get_DB_location())
+    conn = qcodes_read_only_connection(database_path or get_DB_location())
 
     try:
         cursor = conn.cursor()
@@ -725,12 +725,12 @@ def _estimated_table_row_bytes(columns):
     return row_bytes
 
 
-def get_run_status(guid):
+def get_run_status(guid, database_path=None, include_storage_bytes=True):
     """
     Returns completion and result count information for one run.
 
     """
-    conn = qcodes_read_only_connection(get_DB_location())
+    conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
         cursor = conn.cursor()
         optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
@@ -755,14 +755,16 @@ def get_run_status(guid):
         if value is None:
             return {}
 
+        is_completed = bool(value[1])
         status = {
             "completed_timestamp": value[0],
             "is_completed": value[1],
             "result_count": _result_count(cursor, value[2]),
-            "storage_bytes": _table_storage_bytes(cursor, value[2]),
-            "storage_bytes_estimated": False,
             "database_modified_timestamp": _database_modified_timestamp(cursor),
             }
+        if include_storage_bytes or is_completed:
+            status["storage_bytes"] = _table_storage_bytes(cursor, value[2])
+            status["storage_bytes_estimated"] = False
         for index, column in enumerate(optional_columns, start=5):
             status[column] = value[index]
 

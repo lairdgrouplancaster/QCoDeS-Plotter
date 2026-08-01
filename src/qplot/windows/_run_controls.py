@@ -449,7 +449,11 @@ class RunControlsMixin:
         self.RunList.blockSignals(True)
         self.RunList.clearSelection()
         self.RunList.blockSignals(False)
-        self.ds = None
+        release_selected = getattr(self, "_release_selected_dataset", None)
+        if callable(release_selected):
+            release_selected()
+        else:
+            self.ds = None
         self.infoBox.clear()
 
         try:
