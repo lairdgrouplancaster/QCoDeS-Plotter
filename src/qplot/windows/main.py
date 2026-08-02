@@ -148,6 +148,7 @@ class MainWindow(
         self._database_load_active = False
         self._database_load_state = None
         self._database_load_worker = None
+        self._loaded_database_identity = None
         self._database_detail_generation = 0
         self._database_detail_active = False
         self._database_detail_worker = None

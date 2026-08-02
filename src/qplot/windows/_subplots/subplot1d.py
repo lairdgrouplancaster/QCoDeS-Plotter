@@ -11,13 +11,12 @@ def _subplot_axis_order(
         ) -> tuple[str, str] | None:
     """Map source data axes onto a host plot, or reject incompatible axes."""
 
-    del source_is_cut
     shared_x = parent_options.get("x")
     if not shared_x:
         return None
     if shared_x == source_options.get("x"):
         return "x", "y"
-    if shared_x == source_options.get("y"):
+    if not source_is_cut and shared_x == source_options.get("y"):
         return "y", "x"
     return None
 

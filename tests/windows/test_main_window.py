@@ -180,6 +180,49 @@ class DatasetHandleTestCase(unittest.TestCase):
         self.assertTrue(dataset.conn.closed)
         self.assertEqual(harness.dataset_holder, {})
 
+    def test_replaced_database_invalidation_closes_only_matching_state(self):
+        class Connection:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Window:
+            def __init__(self, dataset_key):
+                self._dataset_key = dataset_key
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        key_a = DatasetKey("database-a.db", "guid-a")
+        key_b = DatasetKey("database-b.db", "guid-b")
+        dataset_a = type("Dataset", (), {"conn": Connection()})()
+        dataset_b = type("Dataset", (), {"conn": Connection()})()
+        window_a = Window(key_a)
+        window_b = Window(key_b)
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        harness.ds = dataset_a
+        harness._selected_dataset_key = key_a
+        harness.selected_run_id = 1
+        harness.dataset_holder = {
+            key_a: DatasetHandle(dataset_a),
+            key_b: DatasetHandle(dataset_b),
+        }
+        harness.windows = [window_a, window_b]
+
+        harness._invalidate_database_runtime_state("database-a.db")
+
+        self.assertIsNone(harness.ds)
+        self.assertIsNone(harness._selected_dataset_key)
+        self.assertIsNone(harness.selected_run_id)
+        self.assertTrue(window_a.closed)
+        self.assertFalse(window_b.closed)
+        self.assertTrue(dataset_a.conn.closed)
+        self.assertFalse(dataset_b.conn.closed)
+        self.assertEqual(harness.dataset_holder, {key_b: harness.dataset_holder[key_b]})
+
     def test_replacing_selected_dataset_closes_only_unheld_previous_dataset(self):
         class Connection:
             closed = False
@@ -583,6 +626,62 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
             "shared-guid",
             DatasetKey("database-b.db", "x").database_path,
         )
+
+    def test_failed_selection_clears_previous_dataset_and_selected_row(self):
+        class RunList:
+            def __init__(self):
+                self.signals_blocked = False
+                self.selection_cleared = False
+                self.current_item = object()
+
+            def blockSignals(self, blocked):
+                previous = self.signals_blocked
+                self.signals_blocked = blocked
+                return previous
+
+            def clearSelection(self):
+                self.selection_cleared = True
+
+            def setCurrentItem(self, item):
+                self.current_item = item
+
+        class InfoBox:
+            def __init__(self):
+                self.cleared = False
+
+            def clear(self):
+                self.cleared = True
+
+        harness = type("Harness", (PlotActionsMixin,), {})()
+        old_dataset = self.Dataset("database.db", run_id=7)
+        old_key = DatasetKey("database.db", old_dataset.guid)
+        harness.fileTextbox = self.Field("database.db")
+        harness.run_idBox = self.Field("7")
+        harness.RunList = RunList()
+        harness.infoBox = InfoBox()
+        harness.ds = old_dataset
+        harness._selected_dataset_key = old_key
+        harness.selected_run_id = 7
+        harness.dataset_holder = {old_key: DatasetHandle(old_dataset)}
+        harness._load_dataset = lambda _key: (_ for _ in ()).throw(
+            RuntimeError("broken run")
+        )
+        harness.status_messages = []
+        harness.error_messages = []
+        harness.show_status = lambda *args: harness.status_messages.append(args)
+        harness.show_error = lambda *args: harness.error_messages.append(args)
+
+        harness.updateSelected("new-guid")
+
+        self.assertIsNone(harness.ds)
+        self.assertIsNone(harness._selected_dataset_key)
+        self.assertIsNone(harness.selected_run_id)
+        self.assertEqual(harness.run_idBox.text(), "")
+        self.assertTrue(harness.RunList.selection_cleared)
+        self.assertIsNone(harness.RunList.current_item)
+        self.assertTrue(harness.infoBox.cleared)
+        self.assertEqual(harness.error_messages[0][0], "Run Load Failed")
+        self.assertIn(old_key, harness.dataset_holder)
 
     def test_same_guid_and_parameter_plots_in_different_databases_coexist(self):
         class PlotWindow:
@@ -1768,10 +1867,14 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         def __init__(self):
             self.preview = DatabaseLoadUiTestCase.Preview()
             self.cleared = False
+            self.database_cache_cleared = False
             self.scrolled = False
 
         def clear(self):
             self.cleared = True
+
+        def clear_database_cache(self):
+            self.database_cache_cleared = True
 
         def scrollToTop(self):
             self.scrolled = True
@@ -2135,6 +2238,47 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                     started_workers,
                     )
                 self.assertIn("Database is already loaded", harness.status_messages[-1][0])
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_replaced_same_path_database_starts_full_reload_and_invalidation(self):
+        active_database = get_DB_location()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            replacement_path = Path(temp_dir) / "replacement.db"
+            database_path.write_bytes(b"first database")
+            replacement_path.write_bytes(b"replacement database with new identity")
+            try:
+                harness = self.Harness()
+                self.assertTrue(harness.load_database_path(str(database_path)))
+                generation = harness._database_load_generation
+                harness.database_load_finished(
+                    generation,
+                    str(database_path),
+                    {},
+                    None,
+                )
+                started_workers = len(harness.databaseLoadThreadPool.started)
+                invalidated = []
+                harness._invalidate_database_runtime_state = invalidated.append
+
+                os.replace(replacement_path, database_path)
+                self.assertTrue(harness.load_database_path(str(database_path)))
+
+                self.assertEqual(
+                    len(harness.databaseLoadThreadPool.started),
+                    started_workers + 1,
+                )
+                self.assertTrue(harness._database_load_state["reload_same_path"])
+                generation = harness._database_load_generation
+                harness.database_load_finished(
+                    generation,
+                    str(database_path),
+                    {},
+                    None,
+                )
+                self.assertEqual(invalidated, [str(database_path)])
+                self.assertTrue(harness.infoBox.database_cache_cleared)
             finally:
                 set_qcodes_database_location(active_database)
 

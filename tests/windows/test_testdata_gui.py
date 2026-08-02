@@ -155,6 +155,29 @@ def test_generate_database_from_csv_runs_in_worker_pool(tmp_path):
         harness.deleteLater()
 
 
+def test_generation_completion_force_reloads_replaced_current_database(tmp_path):
+    harness = GuiHarness(tmp_path)
+    database_path = tmp_path / "runs.db"
+    harness.fileTextbox = type(
+        "Field",
+        (),
+        {"text": lambda _self: str(database_path)},
+    )()
+    harness.load_file = Mock(return_value=True)
+    specification = Mock(point_count=5)
+
+    try:
+        harness.test_database_generation_finished(
+            str(database_path),
+            [specification],
+            None,
+        )
+
+        harness.load_file.assert_called_once_with(str(database_path), force=True)
+    finally:
+        harness.deleteLater()
+
+
 def test_invalid_csv_is_reported_before_database_destination_prompt(tmp_path):
     harness = GuiHarness(tmp_path)
     csv_path = tmp_path / "invalid.csv"
