@@ -7,10 +7,15 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.5.0-b5 - 2026-08-02
+
 ### Added
 
 - Include ten cumulative CSV instruction files targeting databases from about
   10 MB to 30 GB, with CLI and File-menu actions for exporting the collection.
+- Add **File > Close Database** and **Quit qPlot** commands. Quit uses the
+  platform-standard shortcut, including Command-Q on macOS and Ctrl-Q on
+  Windows and Linux.
 
 ### Changed
 
@@ -19,6 +24,21 @@ installation commands and release validation, see `docs/distribution.md`.
 - Write generated QCoDeS results in bounded array chunks instead of one point
   at a time, substantially reducing large test-database generation time while
   retaining cancellation between chunks.
+- Cancel database work, close plot and preview connections, and wait for
+  background workers before qPlot exits.
+
+### Fixed
+
+- Prevent shutdown tracebacks when an interrupted SQLite worker completes
+  after its Qt signal object has already been deleted.
+- Detect a database file replaced at the same path and discard cached metadata,
+  plots, previews, and connections belonging to the old file.
+- Clear stale run selection and details when loading a selected run fails.
+- Validate generated result columns and stored row counts, and publish generated
+  databases atomically without overwriting a concurrently created file.
+- Reject merging 2D cuts whose fixed-axis values are incompatible.
+- Keep preview scheduling bounded and prevent stale workers from overwriting
+  newer preview state.
 
 ## 1.5.0-b4 - 2026-08-01
 

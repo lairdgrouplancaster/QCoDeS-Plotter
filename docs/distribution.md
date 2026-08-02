@@ -27,13 +27,13 @@ Both commands expose the `qplot` and `qplot-cfg` entry points.
 
 ## Current Beta
 
-The current beta is `1.5.0-b4`. The package metadata uses the PEP 440 normal
-form `1.5.0b4`; the GitHub release tag should be `v1.5.0-b4`.
+The current beta is `1.5.0-b5`. The package metadata uses the PEP 440 normal
+form `1.5.0b5`; the GitHub release tag should be `v1.5.0-b5`.
 
 Beta test install:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0-b4
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0-b5
 ```
 
 ## Package Validation
@@ -59,8 +59,8 @@ or attach them to GitHub releases.
 Before creating a tagged release:
 
 1. Update the version in `pyproject.toml`. For prereleases, use the PEP 440
-   package form, such as `1.5.0b4`, even if the Git tag includes a separator,
-   such as `v1.5.0-b4`.
+   package form, such as `1.5.0b5`, even if the Git tag includes a separator,
+   such as `v1.5.0-b5`.
 2. Move relevant entries from `CHANGELOG.md`'s Unreleased section into the new
    release section.
 3. Run `python -m ruff check .`.
