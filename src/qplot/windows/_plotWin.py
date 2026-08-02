@@ -1124,7 +1124,11 @@ class plotWidget(
 
         for window in app.topLevelWidgets():
             if window.__class__.__name__ == "MainWindow":
-                window.close()
+                quit_application = getattr(window, "quit_application", None)
+                if callable(quit_application):
+                    quit_application()
+                else:
+                    window.close()
                 return
 
         app.closeAllWindows()

@@ -913,14 +913,52 @@ class PreviewWorker(QtCore.QRunnable):
         self.metadata = metadata
         self.preview_size = preview_size
         self._cancelled = threading.Event()
+        self._connection_lock = threading.Lock()
+        self._connection = None
 
 
     def cancel(self):
         self._cancelled.set()
+        with self._connection_lock:
+            connection = self._connection
+        if connection is not None:
+            try:
+                connection.interrupt()
+            except Exception:
+                # The worker may have closed the connection between the lock
+                # release and this cross-thread cancellation request.
+                pass
 
 
     def is_cancelled(self):
         return self._cancelled.is_set()
+
+
+    def _set_connection(self, connection):
+        with self._connection_lock:
+            self._connection = connection
+        if connection is not None and self._cancelled.is_set():
+            try:
+                connection.interrupt()
+            except Exception:
+                pass
+
+
+    def _emit_finished(self, previews, error):
+        try:
+            self.signals.finished.emit(
+                self.generation,
+                self.guid,
+                previews,
+                error,
+            )
+        except RuntimeError as err:
+            message = str(err)
+            if not (
+                    "wrapped C/C++ object" in message
+                    and "has been deleted" in message
+                    ):
+                raise
 
 
     def run(self):
@@ -933,16 +971,17 @@ class PreviewWorker(QtCore.QRunnable):
                     self.metadata,
                     size=self.preview_size,
                     is_cancelled=self._cancelled.is_set,
+                    connection_callback=self._set_connection,
                 )
             if self._cancelled.is_set():
                 previews = []
-            self.signals.finished.emit(self.generation, self.guid, previews, None)
+            self._emit_finished(previews, None)
         except Exception as error:
             if self._cancelled.is_set():
-                self.signals.finished.emit(self.generation, self.guid, [], None)
+                self._emit_finished([], None)
                 return
             log_exception("Preview generation failed", error, __name__)
-            self.signals.finished.emit(self.generation, self.guid, [], error)
+            self._emit_finished([], error)
 
 
 class PreviewSignals(QtCore.QObject):
@@ -954,6 +993,7 @@ def generate_run_previews(
         metadata,
         size=PREVIEW_SIZE,
         is_cancelled=None,
+        connection_callback=None,
         ):
     if is_cancelled is not None and is_cancelled():
         return []
@@ -968,6 +1008,8 @@ def generate_run_previews(
 
     previews = []
     conn = sqlite_read_only_connection(database_path, timeout=10)
+    if connection_callback is not None:
+        connection_callback(conn)
     cursor = None
     try:
         if is_cancelled is not None:
@@ -1009,6 +1051,8 @@ def generate_run_previews(
     finally:
         if cursor is not None:
             cursor.close()
+        if connection_callback is not None:
+            connection_callback(None)
         conn.close()
 
     return previews

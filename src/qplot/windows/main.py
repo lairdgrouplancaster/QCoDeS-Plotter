@@ -161,6 +161,11 @@ class MainWindow(
         self._database_refresh_worker: DatabaseRefreshWorker | None = None
         self._test_database_generation_active = False
         self._test_database_generation_worker: TestDatabaseGenerationWorker | None = None
+        self._shutdown_started = False
+        self._shutdown_ready = False
+        self._shutdown_timer = QtCore.QTimer(self)
+        self._shutdown_timer.setInterval(25)
+        self._shutdown_timer.timeout.connect(self._finish_deferred_shutdown)
         self._next_plot_x = 0
         self._next_plot_y = 0
         self.localLastFile = None
@@ -236,6 +241,10 @@ class MainWindow(
             )
         open_folder_action.triggered.connect(self.open_database_location)
         fileMenu.addAction(open_folder_action)
+
+        self.closeDatabaseAction = create_action("database.close", self)
+        self.closeDatabaseAction.triggered.connect(self.close_current_database)
+        fileMenu.addAction(self.closeDatabaseAction)
         
         # Force update check on database
         refreshAction = create_action("window.refresh", self)
@@ -284,7 +293,7 @@ class MainWindow(
         fileMenu.addAction(closeAction)
 
         quitAction = create_action("app.quit", self)
-        quitAction.triggered.connect(self.close)
+        quitAction.triggered.connect(self.quit_application)
         fileMenu.addAction(quitAction)
 
         add_standard_window_controls(self)
@@ -415,6 +424,32 @@ class MainWindow(
 ###############################################################################
 #Open/Close events
 
+    @QtCore.pyqtSlot()
+    def close_current_database(self):
+        """
+        Closes plot windows before releasing the current database.
+
+        """
+        if not self.fileTextbox.text():
+            self.show_status("No database is loaded.", 3000)
+            return
+
+        if not self.close_plot_windows(confirm=True, status=False):
+            self.show_status("Database close cancelled.", 3000)
+            return
+
+        self.close_database()
+
+
+    @QtCore.pyqtSlot()
+    def quit_application(self):
+        """
+        Routes the Quit command through the main window's shutdown handler.
+
+        """
+        self.close()
+
+
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
         """
@@ -423,6 +458,13 @@ class MainWindow(
         Also handles some closing admin        
 
         """
+        if getattr(self, "_shutdown_ready", False):
+            event.accept()
+            return
+        if getattr(self, "_shutdown_started", False):
+            event.ignore()
+            return
+
         # Confirm exit
         if self.config.get(CONFIRM_QUIT_KEY):
             reply = ask_confirmation_with_dont_ask_again(
@@ -431,9 +473,7 @@ class MainWindow(
                 "Are you sure you want to exit?",
                 CONFIRM_QUIT_KEY,
                 )
-            if reply == qtw.QMessageBox.StandardButton.Yes:
-                event.accept()
-            else:
+            if reply != qtw.QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
 
@@ -483,13 +523,66 @@ class MainWindow(
         self._test_database_generation_active = False
         self._test_database_generation_worker = None
         self.monitor.stop()
+        self.close_plot_windows(confirm=False, status=False)
+        self.close_database(status=False)
+
+        if MainWindow._shutdown_background_work_active(self):
+            self._shutdown_started = True
+            event.ignore()
+            hide = getattr(self, "hide", None)
+            if callable(hide):
+                hide()
+            shutdown_timer = getattr(self, "_shutdown_timer", None)
+            if shutdown_timer is not None:
+                shutdown_timer.start()
+            else:
+                QtCore.QTimer.singleShot(25, self._finish_deferred_shutdown)
+            return
+
+        self._shutdown_ready = True
+        event.accept()
         qtw.QApplication.closeAllWindows()
-        release_selected = getattr(self, "_release_selected_dataset", None)
-        if callable(release_selected):
-            release_selected()
-        close_handles = getattr(self, "_close_all_dataset_handles", None)
-        if callable(close_handles):
-            close_handles()
+
+
+    def _shutdown_background_work_active(self):
+        """
+        Reports whether a qPlot worker still needs the Qt event loop.
+
+        """
+        pool_names = (
+            "threadPool",
+            "databaseLoadThreadPool",
+            "databaseDetailThreadPool",
+            "databaseExpensiveDetailThreadPool",
+            "databaseRefreshThreadPool",
+            "testDatabaseGenerationThreadPool",
+        )
+        for pool_name in pool_names:
+            pool = getattr(self, pool_name, None)
+            if pool is not None and pool.activeThreadCount() > 0:
+                return True
+
+        preview = getattr(getattr(self, "infoBox", None), "preview", None)
+        return bool(getattr(preview, "_workers", {}))
+
+
+    @QtCore.pyqtSlot()
+    def _finish_deferred_shutdown(self):
+        """
+        Finishes Quit after cancelled background workers have returned.
+
+        """
+        if not getattr(self, "_shutdown_started", False):
+            return
+        if MainWindow._shutdown_background_work_active(self):
+            return
+
+        shutdown_timer = getattr(self, "_shutdown_timer", None)
+        if shutdown_timer is not None:
+            shutdown_timer.stop()
+        self._shutdown_started = False
+        self._shutdown_ready = True
+        qtw.QApplication.closeAllWindows()
     
    
     @QtCore.pyqtSlot()

@@ -15,6 +15,7 @@ from qplot.datahandling import database as database_module
 from qplot.datahandling.readonly import set_qcodes_database_location
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
+from qplot.windows._commands import command_spec
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
 from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plotWin import plotWidget
@@ -1079,6 +1080,8 @@ class OptionsMenuTestCase(unittest.TestCase):
             super().__init__()
             self.config = OptionsMenuTestCase.FakeConfig()
             self.preview_size = 200
+            self.close_database_commands = 0
+            self.quit_commands = 0
 
         def refresh_recent_database_menu(self):
             pass
@@ -1088,6 +1091,9 @@ class OptionsMenuTestCase(unittest.TestCase):
 
         def open_database_location(self):
             pass
+
+        def close_current_database(self):
+            self.close_database_commands += 1
 
         def refreshMain(self):
             pass
@@ -1103,6 +1109,9 @@ class OptionsMenuTestCase(unittest.TestCase):
 
         def closeAll(self):
             pass
+
+        def quit_application(self):
+            self.quit_commands += 1
 
         def restore_default_settings(self):
             pass
@@ -1174,8 +1183,96 @@ class OptionsMenuTestCase(unittest.TestCase):
         finally:
             window.deleteLater()
 
+    def test_file_menu_exposes_close_database_and_quit_commands(self):
+        window = self.Harness()
+
+        try:
+            window.initMenu()
+            file_menu = next(
+                action.menu()
+                for action in window.menuBar().actions()
+                if action.text().replace("&", "") == "File"
+            )
+            actions = {
+                action.text().replace("&", ""): action
+                for action in file_menu.actions()
+                if not action.isSeparator()
+            }
+
+            actions["Close Database"].trigger()
+            actions["Quit qPlot"].trigger()
+
+            self.assertEqual(window.close_database_commands, 1)
+            self.assertEqual(window.quit_commands, 1)
+            self.assertEqual(
+                actions["Quit qPlot"].shortcuts(),
+                command_spec("app.quit").resolved_shortcuts(),
+            )
+        finally:
+            window.deleteLater()
+
 
 class CloseAllPlotsTestCase(unittest.TestCase):
+    def test_close_current_database_closes_plots_before_database(self):
+        calls = []
+
+        class Field:
+            def text(self):
+                return "test.db"
+
+        class Harness:
+            close_current_database = main_window.MainWindow.close_current_database
+
+            def __init__(self):
+                self.fileTextbox = Field()
+
+            def close_plot_windows(self, confirm=True, status=True):
+                calls.append(("plots", confirm, status))
+                return True
+
+            def close_database(self, status=True):
+                calls.append(("database", status))
+
+            def show_status(self, message, timeout=5000):
+                calls.append(("status", message, timeout))
+
+        Harness().close_current_database()
+
+        self.assertEqual(calls, [("plots", True, False), ("database", True)])
+
+    def test_close_current_database_can_be_cancelled_with_plots_open(self):
+        calls = []
+
+        class Field:
+            def text(self):
+                return "test.db"
+
+        class Harness:
+            close_current_database = main_window.MainWindow.close_current_database
+
+            def __init__(self):
+                self.fileTextbox = Field()
+
+            def close_plot_windows(self, confirm=True, status=True):
+                calls.append(("plots", confirm, status))
+                return False
+
+            def close_database(self, status=True):
+                raise AssertionError("Database should stay open after cancelling")
+
+            def show_status(self, message, timeout=5000):
+                calls.append(("status", message, timeout))
+
+        Harness().close_current_database()
+
+        self.assertEqual(
+            calls,
+            [
+                ("plots", True, False),
+                ("status", "Database close cancelled.", 3000),
+            ],
+        )
+
     def test_close_all_can_be_cancelled_when_warning_enabled(self):
         old_confirmation = main_window.ask_confirmation_with_dont_ask_again
         confirmation_keys = []
@@ -1352,6 +1449,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         old_close_all_windows = qtw.QApplication.closeAllWindows
         confirmations = []
         closed_all_windows = []
+        shutdown_order = []
         updates = []
 
         class FakeConfig:
@@ -1410,6 +1508,13 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.monitor = Timer()
                 self.infoBox = type("InfoBox", (), {"preview": Preview()})()
 
+            def close_plot_windows(self, confirm=True, status=True):
+                shutdown_order.append(("plots", confirm, status))
+                return True
+
+            def close_database(self, status=True):
+                shutdown_order.append(("database", status))
+
         def fake_confirmation(window, title, message, config_key, *args):
             confirmations.append((title, message, config_key))
             window.config.update(config_key, False)
@@ -1417,7 +1522,11 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         try:
             main_window.ask_confirmation_with_dont_ask_again = fake_confirmation
-            qtw.QApplication.closeAllWindows = lambda: closed_all_windows.append(True)
+            def close_all_windows():
+                shutdown_order.append(("windows",))
+                closed_all_windows.append(True)
+
+            qtw.QApplication.closeAllWindows = close_all_windows
             harness = Harness()
             worker = harness._database_load_worker
             event = Event()
@@ -1442,6 +1551,138 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertTrue(harness.infoBox.preview.shut_down)
         self.assertTrue(harness.monitor.stopped)
         self.assertEqual(closed_all_windows, [True])
+        self.assertEqual(
+            shutdown_order,
+            [
+                ("plots", False, False),
+                ("database", False),
+                ("windows",),
+            ],
+        )
+
+    def test_cancelled_quit_leaves_database_open(self):
+        old_confirmation = main_window.ask_confirmation_with_dont_ask_again
+
+        class FakeConfig:
+            def get(self, key):
+                return True
+
+        class Event:
+            accepted = False
+            ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        class Harness:
+            closeEvent = main_window.MainWindow.closeEvent
+
+            def __init__(self):
+                self.config = FakeConfig()
+
+            def close_plot_windows(self, confirm=True, status=True):
+                raise AssertionError("Plot windows should stay open after cancelling")
+
+            def close_database(self, status=True):
+                raise AssertionError("Database should stay open after cancelling")
+
+        try:
+            main_window.ask_confirmation_with_dont_ask_again = (
+                lambda *args, **kwargs: qtw.QMessageBox.StandardButton.No
+            )
+            event = Event()
+            Harness().closeEvent(event)
+        finally:
+            main_window.ask_confirmation_with_dont_ask_again = old_confirmation
+
+        self.assertFalse(event.accepted)
+        self.assertTrue(event.ignored)
+
+    def test_quit_application_closes_the_main_window(self):
+        calls = []
+
+        class Harness:
+            quit_application = main_window.MainWindow.quit_application
+
+            def close(self):
+                calls.append("close")
+
+        Harness().quit_application()
+
+        self.assertEqual(calls, ["close"])
+
+    def test_shutdown_waits_for_owned_pools_and_preview_workers(self):
+        class Pool:
+            def __init__(self, active):
+                self.active = active
+
+            def activeThreadCount(self):
+                return self.active
+
+        preview = type("Preview", (), {"_workers": {}})()
+        harness = type(
+            "Harness",
+            (),
+            {
+                "threadPool": Pool(1),
+                "infoBox": type("InfoBox", (), {"preview": preview})(),
+            },
+        )()
+
+        self.assertTrue(
+            main_window.MainWindow._shutdown_background_work_active(harness)
+        )
+
+        harness.threadPool.active = 0
+        preview._workers = {("generation", "guid"): object()}
+        self.assertTrue(
+            main_window.MainWindow._shutdown_background_work_active(harness)
+        )
+
+        preview._workers = {}
+        self.assertFalse(
+            main_window.MainWindow._shutdown_background_work_active(harness)
+        )
+
+    def test_deferred_shutdown_finishes_after_workers_return(self):
+        old_close_all_windows = qtw.QApplication.closeAllWindows
+        closed = []
+
+        class Timer:
+            stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        class Harness:
+            _finish_deferred_shutdown = (
+                main_window.MainWindow._finish_deferred_shutdown
+            )
+
+            def __init__(self):
+                self._shutdown_started = True
+                self._shutdown_ready = False
+                self._shutdown_timer = Timer()
+                self.infoBox = type(
+                    "InfoBox",
+                    (),
+                    {"preview": type("Preview", (), {"_workers": {}})()},
+                )()
+
+        try:
+            qtw.QApplication.closeAllWindows = lambda: closed.append(True)
+            harness = Harness()
+            harness._finish_deferred_shutdown()
+        finally:
+            qtw.QApplication.closeAllWindows = old_close_all_windows
+
+        self.assertTrue(harness._shutdown_timer.stopped)
+        self.assertFalse(harness._shutdown_started)
+        self.assertTrue(harness._shutdown_ready)
+        self.assertEqual(closed, [True])
 
     def test_confirmation_options_use_shared_labels_and_config_keys(self):
         updates = []
@@ -3129,17 +3370,20 @@ class DatabaseRefreshWorkerTestCase(unittest.TestCase):
             10,
             database_path="example.db",
             cancelled_callback=ANY,
+            connection_callback=ANY,
             )
         self.assertEqual(seen_status_calls, [
             ("guid-1", {
                 "database_path": "example.db",
                 "include_storage_bytes": False,
                 "cancelled_callback": ANY,
+                "connection_callback": ANY,
                 }),
             ("guid-2", {
                 "database_path": "example.db",
                 "include_storage_bytes": False,
                 "cancelled_callback": ANY,
+                "connection_callback": ANY,
                 }),
             ])
         self.assertEqual(results, [(
@@ -3155,6 +3399,21 @@ class DatabaseRefreshWorkerTestCase(unittest.TestCase):
 
 
 class DatabaseLoadWorkerTestCase(unittest.TestCase):
+    def test_database_worker_cancel_interrupts_active_sql_connection(self):
+        worker = main_window.DatabaseLoadWorker(7, "example.db")
+
+        class Connection:
+            interrupts = 0
+
+            def interrupt(self):
+                self.interrupts += 1
+
+        connection = Connection()
+        worker._set_sql_connection(connection)
+        worker.cancel()
+
+        self.assertEqual(connection.interrupts, 1)
+
     def test_database_load_worker_opens_database_read_only_and_returns_runs(self):
         old_access_error = database_module.database_access_error
         old_get_runs = database_module.get_runs_basic_via_sql
@@ -3164,8 +3423,13 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             calls.append(("access", database_path))
             return None
 
-        def get_runs(database_path, cancelled_callback=None):
+        def get_runs(
+                database_path,
+                cancelled_callback=None,
+                connection_callback=None,
+                ):
             self.assertTrue(callable(cancelled_callback))
+            self.assertTrue(callable(connection_callback))
             calls.append(("basic_runs", database_path))
             return {1: {"guid": "guid-1", "run_timestamp": 123.0}}
 
@@ -3455,8 +3719,10 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 include_storage_estimate=False,
                 include_read_setpoint_count=True,
                 cancelled_callback=None,
+                connection_callback=None,
                 ):
             self.assertTrue(callable(cancelled_callback))
+            self.assertTrue(callable(connection_callback))
             calls.append((
                 database_path,
                 run_ids,
@@ -3523,8 +3789,10 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 run_ids,
                 batch_size=1,
                 cancelled_callback=None,
+                connection_callback=None,
                 ):
             self.assertTrue(callable(cancelled_callback))
+            self.assertTrue(callable(connection_callback))
             calls.append(("shapes", database_path, run_ids, batch_size))
             if 1 in run_ids:
                 yield {1: {"guid": "guid-1", "setpoint_shape": [10], "setpoint_count": 10}}
@@ -3534,8 +3802,10 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 run_ids,
                 batch_size=25,
                 cancelled_callback=None,
+                connection_callback=None,
                 ):
             self.assertTrue(callable(cancelled_callback))
+            self.assertTrue(callable(connection_callback))
             calls.append(("storage", database_path, run_ids, batch_size))
             if 1 in run_ids:
                 yield {1: {"guid": "guid-1", "storage_bytes": 2000}}

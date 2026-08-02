@@ -101,6 +101,12 @@ COMMANDS: dict[str, CommandSpec] = {
         "Ctrl+L",
         help_section="General",
     ),
+    "database.close": CommandSpec(
+        "database.close",
+        "&Close Database",
+        "Close the current database and its plot windows",
+        object_name="closeDatabaseAction",
+    ),
     "window.refresh": CommandSpec(
         "window.refresh",
         "&Refresh",
@@ -119,7 +125,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "app.quit": CommandSpec(
         "app.quit",
         "&Quit qPlot",
-        "Quit qPlot",
+        "Close the database and quit qPlot",
         _standard_shortcuts(QKeySequence.StandardKey.Quit, ["Ctrl+Q"]),
         help_section="General",
         help_shortcut="Ctrl+Q / Cmd+Q",
