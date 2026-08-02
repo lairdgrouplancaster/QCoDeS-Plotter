@@ -27,6 +27,9 @@ PREVIEW_FILL_EMPTY_MIN_COVERAGE = 0.75
 PREVIEW_REMAINING_PRIORITY = 0
 PREVIEW_VISIBLE_PRIORITY = 50
 PREVIEW_SELECTED_PRIORITY = 100
+PREVIEW_PLOTTED_PRIORITY = 125
+PREVIEW_MAX_ACTIVE_WORKERS = 2
+PREVIEW_SQL_PROGRESS_OPCODES = 1_000
 PREVIEW_SELECTED_PROPERTY = "previewSelected"
 PREVIEW_CACHE_MAX_BYTES = 128 * 1024 * 1024
 PREVIEW_CACHE_MAX_ENTRIES = 512
@@ -68,7 +71,9 @@ class PreviewTab(qtw.QWidget):
         self.cache_bytes = 0
         self.errors = {}
         self.queue = {}
+        self._explicit_guids: set[str] = set()
         self.active: set[tuple[int, str]] = set()
+        self._active_priorities: dict[tuple[int, str], int] = {}
         self._workers = {}
         self.metadata_signatures = {}
         self._start_scheduled = False
@@ -110,7 +115,9 @@ class PreviewTab(qtw.QWidget):
         self._shutting_down = True
         self.generation += 1
         self.queue = {}
+        self._explicit_guids = set()
         self.active = set()
+        self._active_priorities = {}
         self._start_scheduled = False
         for worker in tuple(self._workers.values()):
             worker.cancel()
@@ -142,11 +149,14 @@ class PreviewTab(qtw.QWidget):
 
         self.preview_size = preview_size
         self._update_minimum_height()
+        self._cancel_workers()
         self.generation += 1
         self.cache = OrderedDict()
         self.cache_bytes = 0
         self.errors = {}
         self.queue = {}
+        self.active = set()
+        self._active_priorities = {}
         self.metadata_signatures = {
             guid: self._metadata_signature(metadata)
             for guid, metadata in self.run_metadata.items()
@@ -159,10 +169,13 @@ class PreviewTab(qtw.QWidget):
                 priority=PREVIEW_SELECTED_PRIORITY,
                 allow_active=True,
                 )
+        for guid in self._explicit_guids:
+            self._enqueue(guid, priority=PREVIEW_PLOTTED_PRIORITY)
         self._schedule_start_next()
 
 
     def set_database_runs(self, database_path, runs):
+        self._cancel_workers()
         self.generation += 1
         self.database_path = database_path
         self.current_guid = None
@@ -171,7 +184,9 @@ class PreviewTab(qtw.QWidget):
         self.cache_bytes = 0
         self.errors = {}
         self.queue = {}
+        self._explicit_guids = set()
         self.active = set()
+        self._active_priorities = {}
         self.metadata_signatures = {
             guid: self._metadata_signature(metadata)
             for guid, metadata in self.run_metadata.items()
@@ -194,6 +209,9 @@ class PreviewTab(qtw.QWidget):
             if changed:
                 self._drop_cached(guid)
                 self.errors.pop(guid, None)
+                active_worker = self._workers.get((self.generation, guid))
+                if active_worker is not None:
+                    active_worker.cancel()
 
             if queue_previews and guid == self.current_guid:
                 self._enqueue(
@@ -275,15 +293,106 @@ class PreviewTab(qtw.QWidget):
             selected_guids.add(self.current_guid)
             visible_guids.discard(self.current_guid)
 
-        requested_guids = selected_guids | visible_guids
+        requested_priorities = {
+            guid: PREVIEW_VISIBLE_PRIORITY
+            for guid in visible_guids
+            }
+        requested_priorities.update({
+            guid: PREVIEW_SELECTED_PRIORITY
+            for guid in selected_guids
+            })
+        requested_priorities.update({
+            guid: PREVIEW_PLOTTED_PRIORITY
+            for guid in self._explicit_guids
+            })
+        requested_guids = set(requested_priorities)
         for guid in list(self.queue):
             if guid not in requested_guids:
                 self.queue.pop(guid, None)
+
+        for active_key in tuple(self.active):
+            generation, guid = active_key
+            if generation != self.generation:
+                continue
+
+            requested_priority = requested_priorities.get(guid)
+            worker = self._workers.get(active_key)
+            if requested_priority is None:
+                if worker is not None:
+                    worker.cancel()
+                continue
+
+            if (
+                    worker is not None
+                    and getattr(worker, "is_cancelled", lambda: False)()
+                    ):
+                self._active_priorities[active_key] = requested_priority
+                self._enqueue(
+                    guid,
+                    priority=requested_priority,
+                    allow_active=True,
+                    )
+                continue
+
+            active_priority = self._active_priorities.get(
+                active_key,
+                PREVIEW_VISIBLE_PRIORITY,
+                )
+            if requested_priority > active_priority:
+                # A visible job that becomes selected already contains exactly
+                # the work the interactive slot would perform.
+                self._active_priorities[active_key] = requested_priority
+            elif requested_priority < active_priority:
+                # Release the interactive role when selection moves.  Queue
+                # the old run again as background work because cancellation
+                # can interrupt its current SQL statement.
+                if worker is not None:
+                    worker.cancel()
+                self._active_priorities[active_key] = requested_priority
+                self._enqueue(
+                    guid,
+                    priority=requested_priority,
+                    allow_active=True,
+                    )
 
         for guid in visible_guids:
             self._enqueue(guid, priority=PREVIEW_VISIBLE_PRIORITY)
         for guid in selected_guids:
             self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
+        for guid in self._explicit_guids:
+            self._enqueue(guid, priority=PREVIEW_PLOTTED_PRIORITY)
+
+        self._start_next()
+
+
+    def request_guids(self, guids):
+        """Queue plotted runs until their preview generation completes."""
+        if not self.database_path:
+            return
+        if isinstance(guids, (str, bytes)) or not hasattr(guids, "__iter__"):
+            guids = [guids]
+
+        for guid in guids:
+            if not guid or guid not in self.run_metadata or guid in self.cache:
+                continue
+
+            self.errors.pop(guid, None)
+            self._explicit_guids.add(guid)
+            active_key = (self.generation, guid)
+            worker = self._workers.get(active_key)
+            if active_key not in self.active:
+                self._enqueue(guid, priority=PREVIEW_PLOTTED_PRIORITY)
+            elif (
+                    worker is not None
+                    and getattr(worker, "is_cancelled", lambda: False)()
+                    ):
+                self._enqueue(
+                    guid,
+                    priority=PREVIEW_PLOTTED_PRIORITY,
+                    allow_active=True,
+                    )
+            else:
+                self._active_priorities[active_key] = PREVIEW_PLOTTED_PRIORITY
 
         self._start_next()
 
@@ -359,6 +468,11 @@ class PreviewTab(qtw.QWidget):
         self.queue[guid] = max(priority, self.queue.get(guid, priority))
 
 
+    def _cancel_workers(self):
+        for worker in tuple(self._workers.values()):
+            worker.cancel()
+
+
     def _cached_previews(self, guid):
         previews = self.cache.pop(guid)
         self.cache[guid] = previews
@@ -416,21 +530,70 @@ class PreviewTab(qtw.QWidget):
 
 
     def _start_next(self):
-        if self._shutting_down or any(
-                generation == self.generation
-                for generation, _guid in self.active
-                ) or not self.queue:
+        if self._shutting_down or not self.queue:
             return
 
-        guid = max(
-            self.queue,
-            key=lambda item: (
-                self.queue[item],
-                self.run_metadata[item].get("run_id", 0),
+        active_keys = {
+            active_key
+            for active_key in self.active
+            if active_key[0] == self.generation
+            }
+        available_slots = max(0, PREVIEW_MAX_ACTIVE_WORKERS - len(active_keys))
+        if available_slots == 0:
+            return
+        active_guids = {guid for _generation, guid in active_keys}
+        foreground_active = any(
+            self._active_priorities.get(active_key, PREVIEW_VISIBLE_PRIORITY)
+            >= PREVIEW_SELECTED_PRIORITY
+            for active_key in active_keys
+            )
+        background_active = any(
+            self._active_priorities.get(active_key, PREVIEW_VISIBLE_PRIORITY)
+            < PREVIEW_SELECTED_PRIORITY
+            for active_key in active_keys
+            )
+
+        if not foreground_active:
+            guid = self._next_queued_guid(
+                lambda priority: priority >= PREVIEW_SELECTED_PRIORITY,
+                active_guids,
+                )
+            if guid is not None:
+                self._start_worker(guid)
+                active_guids.add(guid)
+                available_slots -= 1
+
+        if available_slots and not background_active:
+            guid = self._next_queued_guid(
+                lambda priority: priority < PREVIEW_SELECTED_PRIORITY,
+                active_guids,
+                )
+            if guid is not None:
+                self._start_worker(guid)
+
+
+    def _next_queued_guid(self, accepts_priority, active_guids):
+        candidates = [
+            guid
+            for guid, priority in self.queue.items()
+            if accepts_priority(priority) and guid not in active_guids
+            ]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda guid: (
+                self.queue[guid],
+                self.run_metadata[guid].get("run_id", 0),
                 ),
-        )
-        self.queue.pop(guid, None)
-        self.active.add((self.generation, guid))
+            )
+
+
+    def _start_worker(self, guid):
+        priority = self.queue.pop(guid)
+        active_key = (self.generation, guid)
+        self.active.add(active_key)
+        self._active_priorities[active_key] = priority
         self.previewGenerationChanged.emit(guid, True)
 
         worker = PreviewWorker(
@@ -441,16 +604,21 @@ class PreviewTab(qtw.QWidget):
             self.preview_size,
             )
         worker.signals.finished.connect(self._worker_finished)
-        self._workers[(self.generation, guid)] = worker
+        self._workers[active_key] = worker
         self.thread_pool.start(worker)
 
 
     @QtCore.pyqtSlot(int, str, object, object)
     def _worker_finished(self, generation, guid, previews, error):
         active_key = (generation, guid)
-        self._workers.pop(active_key, None)
+        worker = self._workers.pop(active_key, None)
+        was_cancelled = bool(
+            worker is not None
+            and getattr(worker, "is_cancelled", lambda: False)()
+            )
         was_active = active_key in self.active
         self.active.discard(active_key)
+        self._active_priorities.pop(active_key, None)
         if self._shutting_down:
             return
         if was_active and generation == self.generation:
@@ -460,6 +628,11 @@ class PreviewTab(qtw.QWidget):
             self._start_next()
             return
 
+        if was_cancelled:
+            self._start_next()
+            return
+
+        self._explicit_guids.discard(guid)
         if error:
             self.errors[guid] = str(error)
         else:
@@ -746,6 +919,10 @@ class PreviewWorker(QtCore.QRunnable):
         self._cancelled.set()
 
 
+    def is_cancelled(self):
+        return self._cancelled.is_set()
+
+
     def run(self):
         try:
             if self._cancelled.is_set():
@@ -761,6 +938,9 @@ class PreviewWorker(QtCore.QRunnable):
                 previews = []
             self.signals.finished.emit(self.generation, self.guid, previews, None)
         except Exception as error:
+            if self._cancelled.is_set():
+                self.signals.finished.emit(self.generation, self.guid, [], None)
+                return
             log_exception("Preview generation failed", error, __name__)
             self.signals.finished.emit(self.generation, self.guid, [], error)
 
@@ -790,6 +970,11 @@ def generate_run_previews(
     conn = sqlite_read_only_connection(database_path, timeout=10)
     cursor = None
     try:
+        if is_cancelled is not None:
+            conn.set_progress_handler(
+                lambda: int(bool(is_cancelled())),
+                PREVIEW_SQL_PROGRESS_OPCODES,
+                )
         cursor = conn.cursor()
         available_columns = _table_columns(cursor, table_name)
         for parameter, axes in dependencies.items():
@@ -807,7 +992,15 @@ def generate_run_previews(
             if len(axes) == 1:
                 preview = _preview_1d(cursor, table_name, metadata, parameter, axes[0], size)
             elif len(axes) >= 2:
-                preview = _preview_2d(cursor, table_name, metadata, parameter, axes[:2], size)
+                preview = _preview_2d(
+                    cursor,
+                    table_name,
+                    metadata,
+                    parameter,
+                    axes[:2],
+                    size,
+                    is_cancelled=is_cancelled,
+                    )
             else:
                 continue
 
@@ -864,7 +1057,16 @@ def _preview_1d(cursor, table_name, metadata, parameter, axis, size):
         }
 
 
-def _preview_2d(cursor, table_name, metadata, parameter, axes, size):
+def _preview_2d(
+        cursor,
+        table_name,
+        metadata,
+        parameter,
+        axes,
+        size,
+        *,
+        is_cancelled=None,
+        ):
     grid_shape = _preview_grid_shape(metadata, parameter)
     grid = _aggregate_large_heatmap_preview(
         cursor,
@@ -874,6 +1076,7 @@ def _preview_2d(cursor, table_name, metadata, parameter, axes, size):
         grid_shape,
         size,
         axes=axes,
+        is_cancelled=is_cancelled,
         )
     if grid is not None:
         image = render_heatmap_grid_preview(grid, size=size)
@@ -1052,6 +1255,7 @@ def _aggregate_large_heatmap_preview(
         size,
         *,
         axes=None,
+        is_cancelled=None,
         ):
     shape = _normalise_grid_shape(grid_shape)
     if not _preview_requires_spatial_aggregation(
@@ -1078,6 +1282,8 @@ def _aggregate_large_heatmap_preview(
             size=size,
             )
     except Exception as error:
+        if is_cancelled is not None and is_cancelled():
+            raise
         log_exception(
             "SQL preview aggregation failed; using streaming spatial means",
             error,

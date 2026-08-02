@@ -63,11 +63,14 @@ was cancelled, or failed. These appear alongside QCoDeS's existing
 `Starting experimental run with id:` messages.
 
 Every nonblank CSV row creates one run, named `run_1`, `run_2`, and so on. A 1D
-row sweeps `V_SD`; a 2D row sweeps both `V_SD` and `V_G`. Each run receives a
-random sinusoid amplitude and phase. The measured parameter name, label, unit,
-sweep ranges, and point counts are set in the CSV. Existing CSV or database
-files are not replaced unless `--overwrite` is supplied. Collection export
-also refuses to replace existing collection files without `--overwrite`.
+row sweeps `V_SD`; a 2D row sweeps both `V_SD` and `V_G`. Each measured signal
+is the sum of two sinusoids with independently randomised amplitudes,
+frequencies, and phases. For 2D runs, each sinusoid also receives independent
+frequencies along the two sweep axes, producing varied plane-wave patterns.
+The measured parameter name, label, unit, sweep ranges, and point counts are set
+in the CSV. Existing CSV or database files are not replaced unless
+`--overwrite` is supplied. Collection export also refuses to replace existing
+collection files without `--overwrite`.
 
 Run `qplot-generate-db --help` for the complete command reference.
 

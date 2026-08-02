@@ -89,6 +89,9 @@ INSTRUCTION_FILE_NAMES = (
 _PARAMETER_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MINIMUM_AMPLITUDE = 0.5
 _MAXIMUM_AMPLITUDE = 1.5
+_MINIMUM_FREQUENCY = 0.5
+_MAXIMUM_FREQUENCY = 4.0
+_SINUSOID_COMPONENT_COUNT = 2
 _RESULT_CHUNK_POINTS = 10_000
 
 
@@ -337,6 +340,44 @@ def _timestamped_message(message):
     print(f"[{timestamp}] {message}", flush=True)
 
 
+def _random_sinusoid_components(random_generator, dimensions):
+    """Return independently randomised sinusoid parameters for one run."""
+    components = []
+    for _ in range(_SINUSOID_COMPONENT_COUNT):
+        amplitude = random_generator.uniform(_MINIMUM_AMPLITUDE, _MAXIMUM_AMPLITUDE)
+        frequencies = tuple(
+            random_generator.uniform(_MINIMUM_FREQUENCY, _MAXIMUM_FREQUENCY)
+            for _ in range(dimensions)
+        )
+        phase = random_generator.uniform(0.0, 2.0 * np.pi)
+        components.append((amplitude, frequencies, phase))
+    return tuple(components)
+
+
+def _sinusoid_sum_1d(normalized_values, components):
+    values = np.zeros_like(normalized_values, dtype=float)
+    for amplitude, frequencies, phase in components:
+        values += amplitude * np.sin(
+            2.0 * np.pi * frequencies[0] * normalized_values + phase
+        )
+    return values
+
+
+def _sinusoid_sum_2d_row(v_sd_normalized, v_g_normalized, components):
+    values = np.zeros_like(v_g_normalized, dtype=float)
+    for amplitude, frequencies, phase in components:
+        values += amplitude * np.sin(
+            2.0
+            * np.pi
+            * (
+                frequencies[0] * v_sd_normalized
+                + frequencies[1] * v_g_normalized
+            )
+            + phase
+        )
+    return values
+
+
 def _write_run(
         experiment,
         run_number,
@@ -360,14 +401,14 @@ def _write_run(
         specification.v_sd_points,
     )
     v_sd_normalized = np.linspace(0.0, 1.0, specification.v_sd_points)
-    amplitude = random_generator.uniform(_MINIMUM_AMPLITUDE, _MAXIMUM_AMPLITUDE)
-    v_sd_phase = random_generator.uniform(0.0, 2.0 * np.pi)
+    components = _random_sinusoid_components(
+        random_generator,
+        specification.dimensions,
+    )
 
     if specification.dimensions == 1:
         measurement.register_parameter(measured, setpoints=(v_sd,))
-        measured_values = amplitude * np.sin(
-            4.0 * np.pi * v_sd_normalized + v_sd_phase
-        )
+        measured_values = _sinusoid_sum_1d(v_sd_normalized, components)
         with measurement.run() as datasaver:
             for result_slice in _result_chunks(specification.v_sd_points):
                 _raise_if_cancelled(cancelled_callback)
@@ -389,17 +430,14 @@ def _write_run(
         specification.v_g_points,
     )
     v_g_normalized = np.linspace(0.0, 1.0, specification.v_g_points)
-    v_g_phase = random_generator.uniform(0.0, 2.0 * np.pi)
-    v_g_component = amplitude * np.cos(
-        4.0 * np.pi * v_g_normalized + v_g_phase
-    )
 
     with measurement.run() as datasaver:
         for v_sd_index, v_sd_value in enumerate(v_sd_values):
-            v_sd_component = amplitude * np.sin(
-                4.0 * np.pi * v_sd_normalized[v_sd_index] + v_sd_phase
+            measured_values = _sinusoid_sum_2d_row(
+                v_sd_normalized[v_sd_index],
+                v_g_normalized,
+                components,
             )
-            measured_values = 0.5 * (v_sd_component + v_g_component)
             for result_slice in _result_chunks(specification.v_g_points):
                 _raise_if_cancelled(cancelled_callback)
                 result_count = result_slice.stop - result_slice.start
@@ -537,7 +575,7 @@ def generate_database_from_csv(
 def _argument_parser():
     parser = argparse.ArgumentParser(
         prog="qplot-generate-db",
-        description="Generate sinusoidal test runs in a QCoDeS database.",
+        description="Generate two-sinusoid test runs in a QCoDeS database.",
     )
     parser.add_argument("specification", nargs="?", help="input CSV specification")
     parser.add_argument("database", nargs="?", help="output QCoDeS .db file")

@@ -1367,6 +1367,27 @@ class RunListTooltipTestCase(unittest.TestCase):
         self.assertEqual(summaries, {"gate": {"steps": 1000}})
         details.deleteLater()
 
+    def test_unknown_selected_run_size_skips_full_table_setpoint_grouping(self):
+        details = treeWidgets.moreInfo(preview_size=100)
+        sql_calls = []
+        details._setpoint_summaries_from_sql = (
+            lambda *args: sql_calls.append(args) or {"gate": {"steps": 5}}
+            )
+
+        summaries = details._setpoint_summaries(
+            None,
+            ["gate"],
+            run_metadata={
+                "result_table_name": "results",
+                "setpoint_shape": [1000],
+                },
+            database_path="large.db",
+            )
+
+        self.assertEqual(sql_calls, [])
+        self.assertEqual(summaries, {"gate": {"steps": 1000}})
+        details.deleteLater()
+
     def test_selected_run_setpoint_summary_query_is_cached(self):
         details = treeWidgets.moreInfo(preview_size=100)
         sql_calls = []

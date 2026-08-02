@@ -148,7 +148,7 @@ def test_invalid_rows_report_the_csv_row(tmp_path, row, message):
         read_specifications(csv_path)
 
 
-def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
+def test_generate_database_creates_named_two_sinusoid_runs(tmp_path):
     csv_path = tmp_path / "runs.csv"
     database_path = tmp_path / "runs.db"
     write_specification(
@@ -201,14 +201,23 @@ def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
         line_data = line_run.get_parameter_data("current")["current"]
         np.testing.assert_allclose(line_data["V_SD"], np.linspace(-2.0, 2.0, 5))
         expected_generator = np.random.default_rng(random_seed)
-        expected_amplitude = expected_generator.uniform(0.5, 1.5)
-        expected_phase = expected_generator.uniform(0.0, 2.0 * np.pi)
+        line_components = [
+            (
+                expected_generator.uniform(0.5, 1.5),
+                expected_generator.uniform(0.5, 4.0),
+                expected_generator.uniform(0.0, 2.0 * np.pi),
+            )
+            for _ in range(2)
+        ]
+        line_normalized = np.linspace(0.0, 1.0, 5)
+        expected_line_values = sum(
+            amplitude
+            * np.sin(2.0 * np.pi * frequency * line_normalized + phase)
+            for amplitude, frequency, phase in line_components
+        )
         np.testing.assert_allclose(
             line_data["current"],
-            expected_amplitude
-            * np.sin(
-                4.0 * np.pi * np.linspace(0.0, 1.0, 5) + expected_phase
-            ),
+            expected_line_values,
             atol=1e-12,
         )
 
@@ -225,27 +234,35 @@ def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
             map_data["V_G"],
             np.tile(np.linspace(-1.0, 1.0, 4), 3),
         )
-        expected_amplitude = expected_generator.uniform(0.5, 1.5)
-        expected_v_sd_phase = expected_generator.uniform(0.0, 2.0 * np.pi)
-        expected_v_g_phase = expected_generator.uniform(0.0, 2.0 * np.pi)
-        expected_v_sd_component = expected_amplitude * np.sin(
-            4.0 * np.pi * np.linspace(0.0, 1.0, 3) + expected_v_sd_phase
-        )
-        expected_v_g_component = expected_amplitude * np.cos(
-            4.0 * np.pi * np.linspace(0.0, 1.0, 4) + expected_v_g_phase
+        map_components = [
+            (
+                expected_generator.uniform(0.5, 1.5),
+                expected_generator.uniform(0.5, 4.0),
+                expected_generator.uniform(0.5, 4.0),
+                expected_generator.uniform(0.0, 2.0 * np.pi),
+            )
+            for _ in range(2)
+        ]
+        normalized_v_sd = np.repeat(np.linspace(0.0, 1.0, 3), 4)
+        normalized_v_g = np.tile(np.linspace(0.0, 1.0, 4), 3)
+        expected_map_values = sum(
+            amplitude
+            * np.sin(
+                2.0
+                * np.pi
+                * (v_sd_frequency * normalized_v_sd + v_g_frequency * normalized_v_g)
+                + phase
+            )
+            for amplitude, v_sd_frequency, v_g_frequency, phase in map_components
         )
         np.testing.assert_allclose(
             map_data["conductance"],
-            0.5
-            * (
-                np.repeat(expected_v_sd_component, 4)
-                + np.tile(expected_v_g_component, 3)
-            ),
+            expected_map_values,
             atol=1e-12,
         )
         assert np.isfinite(map_data["conductance"]).all()
-        assert np.min(map_data["conductance"]) >= -1.5
-        assert np.max(map_data["conductance"]) <= 1.5
+        assert np.min(map_data["conductance"]) >= -3.0
+        assert np.max(map_data["conductance"]) <= 3.0
     finally:
         qc.config["core"]["db_location"] = previous_database_path
 

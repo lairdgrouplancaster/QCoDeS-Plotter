@@ -299,6 +299,13 @@ class OpenPlotDatasetOwnershipTestCase(unittest.TestCase):
             self.open_win = lambda *args, **kwargs: None
             self.errors = []
             self.status_messages = []
+            self.preview_requests = []
+
+            class Preview:
+                def request_guids(_self, guids):
+                    self.preview_requests.append(list(guids))
+
+            self.infoBox = type("InfoBox", (), {"preview": Preview()})()
 
         def _load_dataset(self, dataset_key):
             self.load_count += 1
@@ -331,6 +338,25 @@ class OpenPlotDatasetOwnershipTestCase(unittest.TestCase):
         self.assertFalse(dataset.conn.closed)
         self.assertEqual(harness.load_count, 0)
         self.assertEqual(len(harness.errors), 1)
+        self.assertEqual(harness.preview_requests, [])
+
+    def test_visible_plot_requests_preview_for_its_run(self):
+        param = self.Param("signal")
+        dataset = self.Dataset([param])
+        harness = self.Harness(dataset, selected=True)
+
+        harness.openPlot(params=[param])
+
+        self.assertEqual(harness.preview_requests, [[dataset.guid]])
+
+    def test_hidden_plot_does_not_request_preview(self):
+        param = self.Param("signal")
+        dataset = self.Dataset([param])
+        harness = self.Harness(dataset, selected=True)
+
+        harness.openPlot(params=[param], show=False)
+
+        self.assertEqual(harness.preview_requests, [])
 
     def test_failure_does_not_close_cached_dataset_handle(self):
         param = self.Param("signal")

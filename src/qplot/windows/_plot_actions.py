@@ -610,6 +610,12 @@ class PlotActionsMixin:
 
             self.post_admin()
 
+            if opened and show:
+                preview = getattr(getattr(self, "infoBox", None), "preview", None)
+                request_previews = getattr(preview, "request_guids", None)
+                if callable(request_previews):
+                    request_previews([dataset_key.guid])
+
             if opened:
                 noun = "plot" if opened == 1 else "plots"
                 message = f"Opened {opened} {noun}."
