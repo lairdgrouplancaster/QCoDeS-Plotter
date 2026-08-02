@@ -7,7 +7,12 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
-## 1.5.0-b4 - 2026-08-02
+### Added
+
+- Include ten cumulative CSV instruction files targeting databases from about
+  10 MB to 30 GB, with CLI and File-menu actions for exporting the collection.
+
+## 1.5.0-b4 - 2026-08-01
 
 ### Added
 
@@ -16,8 +21,6 @@ installation commands and release validation, see `docs/distribution.md`.
   specifications, including CLI and File-menu actions for writing a ready-to-use
   example CSV, revealing its folder, and generating the database in the
   background.
-- Include ten cumulative CSV instruction files targeting databases from about
-  10 MB to 30 GB, with CLI and File-menu actions for exporting the collection.
 
 ## 1.5.0-b3 - 2026-08-01
 
