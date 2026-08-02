@@ -321,7 +321,10 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                         },
                     },
                 Dataset(),
-                run_metadata={"result_table_name": "results-1-1"},
+                run_metadata={
+                    "result_table_name": "results-1-1",
+                    "result_count": 9,
+                    },
                 database_path=database_path,
                 )
 
@@ -641,6 +644,45 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertNotIn("run-guid", preview.errors)
         self.assertIn("run-guid", preview.queue)
 
+    def test_preview_tab_cancels_and_requeues_active_preview_when_metadata_changes(self):
+        preview = PreviewTab(preview_size=100)
+        started_workers = []
+
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        preview.set_database_runs("previews.db", {
+            7: {
+                "guid": "run-guid",
+                "result_table_name": "results",
+                "result_count": 1,
+                },
+            })
+        preview.set_current_run(type("Dataset", (), {"guid": "run-guid"})())
+        old_worker = started_workers[0]
+
+        preview.add_runs({
+            7: {
+                "guid": "run-guid",
+                "result_table_name": "results",
+                "result_count": 2,
+                },
+            })
+        preview.prioritize_runs(selected_run_ids=[7])
+
+        self.assertTrue(old_worker.is_cancelled())
+        self.assertEqual(
+            preview.queue["run-guid"],
+            preview_module.PREVIEW_SELECTED_PRIORITY,
+            )
+
+        preview._worker_finished(preview.generation, "run-guid", [], None)
+
+        self.assertEqual(len(started_workers), 2)
+        self.assertFalse(started_workers[1].is_cancelled())
+
     def test_preview_signature_tracks_shape_but_not_storage_metadata(self):
         preview = PreviewTab(preview_size=100)
         metadata = {
@@ -805,6 +847,174 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         preview._worker_finished(preview.generation, "guid-2", [], None)
 
         self.assertIn(("guid-2", False), generation_changes)
+
+    def test_preview_tab_runs_one_selected_and_one_visible_worker(self):
+        preview = PreviewTab(preview_size=100)
+        started_workers = []
+
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1"},
+            2: {"guid": "guid-2"},
+            3: {"guid": "guid-3"},
+            })
+
+        preview.prioritize_runs(
+            selected_run_ids=[2],
+            visible_run_ids=[1, 2, 3],
+            )
+
+        self.assertEqual(
+            [worker.guid for worker in started_workers],
+            ["guid-2", "guid-3"],
+            )
+        self.assertEqual(preview.queue, {"guid-1": preview_module.PREVIEW_VISIBLE_PRIORITY})
+
+        preview._start_next()
+
+        self.assertEqual(len(started_workers), 2)
+
+        preview._worker_finished(preview.generation, "guid-2", [], None)
+
+        self.assertEqual(len(started_workers), 2)
+
+        preview._worker_finished(preview.generation, "guid-3", [], None)
+
+        self.assertEqual(
+            [worker.guid for worker in started_workers],
+            ["guid-2", "guid-3", "guid-1"],
+            )
+
+    def test_selected_preview_starts_while_visible_preview_is_active(self):
+        preview = PreviewTab(preview_size=100)
+        started_workers = []
+
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1"},
+            2: {"guid": "guid-2"},
+            3: {"guid": "guid-3"},
+            })
+        preview.prioritize_runs(visible_run_ids=[1, 2])
+
+        self.assertEqual([worker.guid for worker in started_workers], ["guid-2"])
+
+        preview.prioritize_runs(
+            selected_run_ids=[3],
+            visible_run_ids=[1, 2],
+            )
+
+        self.assertEqual(
+            [worker.guid for worker in started_workers],
+            ["guid-2", "guid-3"],
+            )
+
+    def test_plotted_preview_request_survives_viewport_reprioritisation(self):
+        preview = PreviewTab(preview_size=100)
+        started_workers = []
+
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1"},
+            2: {"guid": "guid-2"},
+            })
+        preview.prioritize_runs(selected_run_ids=[2])
+
+        preview.request_guids(["guid-1"])
+        preview.prioritize_runs(selected_run_ids=[2], visible_run_ids=[2])
+
+        self.assertEqual(
+            preview.queue["guid-1"],
+            preview_module.PREVIEW_PLOTTED_PRIORITY,
+            )
+        self.assertIn("guid-1", preview._explicit_guids)
+
+        preview._worker_finished(preview.generation, "guid-2", [], None)
+
+        self.assertEqual(
+            [worker.guid for worker in started_workers],
+            ["guid-2", "guid-1"],
+            )
+
+        preview._worker_finished(preview.generation, "guid-1", [], None)
+
+        self.assertNotIn("guid-1", preview._explicit_guids)
+
+    def test_obsolete_visible_preview_is_cancelled_before_next_visible_run(self):
+        preview = PreviewTab(preview_size=100)
+        started_workers = []
+        ready = []
+        preview.previewsReady.connect(lambda *args: ready.append(args))
+
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1"},
+            2: {"guid": "guid-2"},
+            })
+        preview.prioritize_runs(visible_run_ids=[2])
+        obsolete_worker = started_workers[0]
+
+        preview.prioritize_runs(visible_run_ids=[1])
+
+        self.assertTrue(obsolete_worker.is_cancelled())
+        self.assertEqual(len(started_workers), 1)
+
+        preview._worker_finished(preview.generation, "guid-2", [], None)
+
+        self.assertEqual([worker.guid for worker in started_workers], ["guid-2", "guid-1"])
+        self.assertNotIn("guid-2", preview.cache)
+        self.assertEqual(ready, [])
+
+    def test_moving_selection_releases_interactive_slot_after_cancellation(self):
+        preview = PreviewTab(preview_size=100)
+        started_workers = []
+
+        class ThreadPool:
+            def start(self, worker):
+                started_workers.append(worker)
+
+        preview.thread_pool = ThreadPool()
+        preview.set_database_runs("previews.db", {
+            1: {"guid": "guid-1"},
+            2: {"guid": "guid-2"},
+            3: {"guid": "guid-3"},
+            })
+        preview.prioritize_runs(
+            selected_run_ids=[3],
+            visible_run_ids=[2, 3],
+            )
+        old_selected_worker = started_workers[0]
+
+        preview.prioritize_runs(
+            selected_run_ids=[1],
+            visible_run_ids=[2, 3],
+            )
+
+        self.assertTrue(old_selected_worker.is_cancelled())
+        self.assertEqual(len(started_workers), 2)
+
+        preview._worker_finished(preview.generation, "guid-3", [], None)
+
+        self.assertEqual(
+            [worker.guid for worker in started_workers],
+            ["guid-3", "guid-2", "guid-1"],
+            )
 
     def test_stale_preview_callback_keeps_current_generation_active(self):
         preview = PreviewTab(preview_size=100)

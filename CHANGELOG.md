@@ -7,6 +7,19 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+### Added
+
+- Include ten cumulative CSV instruction files targeting databases from about
+  10 MB to 30 GB, with CLI and File-menu actions for exporting the collection.
+
+### Changed
+
+- Timestamp test-database generation output and report start, stop, elapsed
+  time, and completion state for the database and each run.
+- Write generated QCoDeS results in bounded array chunks instead of one point
+  at a time, substantially reducing large test-database generation time while
+  retaining cancellation between chunks.
+
 ## 1.5.0-b4 - 2026-08-01
 
 ### Added

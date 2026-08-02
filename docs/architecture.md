@@ -176,8 +176,10 @@ should call helpers such as `cache_data`, `cache_rundescriber`, and
 `set_parameter_complete` instead of reaching into `_data`, `_dataset`, or
 `_complete` directly.
 
-`src/qplot/testdata.py` validates spreadsheet-friendly CSV specifications and
-writes synthetic QCoDeS databases for testing. It backs the
+`src/qplot/testdata.py` validates spreadsheet-friendly CSV specifications,
+exports the cumulative instruction collection packaged under
+`src/qplot/resources/testdata`, and writes synthetic QCoDeS databases for
+testing. It backs the
 `qplot-generate-db` command and remains separate from qPlot's enforced
 read-only database-loading path.
 

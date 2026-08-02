@@ -1,13 +1,18 @@
 import csv
+import re
 
 import numpy as np
 import pytest
 import qcodes as qc
 from qcodes.dataset import initialise_or_create_database_at, load_by_id
+from qcodes.dataset.measurements import DataSaver
 
 from qplot.testdata import (
     CSV_COLUMNS,
+    INSTRUCTION_FILE_NAMES,
+    GenerationCancelled,
     SpecificationError,
+    copy_instruction_collection,
     generate_database_from_csv,
     main,
     read_specifications,
@@ -49,6 +54,71 @@ def test_example_cli_reports_written_path(tmp_path, capsys):
     assert f"Wrote example CSV: {csv_path}" in capsys.readouterr().out
 
 
+def test_instruction_collection_is_cumulative_and_spans_10mb_to_30gb(tmp_path):
+    output_paths = copy_instruction_collection(tmp_path)
+
+    assert tuple(path.name for path in output_paths) == INSTRUCTION_FILE_NAMES
+    specification_sets = [read_specifications(path) for path in output_paths]
+    assert [len(specifications) for specifications in specification_sets] == list(
+        range(7, 35, 3)
+    )
+
+    for predecessor, successor in zip(
+        specification_sets[:-1],
+        specification_sets[1:],
+        strict=True,
+    ):
+        assert successor[: len(predecessor)] == predecessor
+
+    largest_runs = [
+        max(specifications, key=lambda specification: specification.point_count)
+        for specifications in specification_sets
+    ]
+    assert (largest_runs[0].v_sd_points, largest_runs[0].v_g_points) == (201, 301)
+    assert (largest_runs[-1].v_sd_points, largest_runs[-1].v_g_points) == (
+        11001,
+        17001,
+    )
+
+    # Calibrated on a generated QCoDeS database using the first collection file.
+    estimated_bytes_per_point = 35.132
+    estimated_sizes = [
+        sum(specification.point_count for specification in specifications)
+        * estimated_bytes_per_point
+        for specifications in specification_sets
+    ]
+    assert 8_000_000 <= estimated_sizes[0] <= 12_000_000
+    assert 27_000_000_000 <= estimated_sizes[-1] <= 33_000_000_000
+    assert all(
+        successor > predecessor
+        for predecessor, successor in zip(
+            estimated_sizes[:-1],
+            estimated_sizes[1:],
+            strict=True,
+        )
+    )
+
+
+def test_instruction_collection_cli_exports_all_files(tmp_path, capsys):
+    output_directory = tmp_path / "collection"
+
+    assert main(["--write-collection", str(output_directory)]) == 0
+
+    assert tuple(path.name for path in sorted(output_directory.iterdir())) == (
+        INSTRUCTION_FILE_NAMES
+    )
+    assert "Wrote 10 instruction CSV files" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as error:
+        main(["--write-collection", str(output_directory)])
+    assert error.value.code == 2
+
+    assert (
+        main(["--write-collection", str(output_directory), "--overwrite"])
+        == 0
+    )
+
+
 @pytest.mark.parametrize(
     ("row", "message"),
     [
@@ -78,7 +148,7 @@ def test_invalid_rows_report_the_csv_row(tmp_path, row, message):
         read_specifications(csv_path)
 
 
-def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
+def test_generate_database_creates_named_two_sinusoid_runs(tmp_path):
     csv_path = tmp_path / "runs.csv"
     database_path = tmp_path / "runs.db"
     write_specification(
@@ -131,14 +201,23 @@ def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
         line_data = line_run.get_parameter_data("current")["current"]
         np.testing.assert_allclose(line_data["V_SD"], np.linspace(-2.0, 2.0, 5))
         expected_generator = np.random.default_rng(random_seed)
-        expected_amplitude = expected_generator.uniform(0.5, 1.5)
-        expected_phase = expected_generator.uniform(0.0, 2.0 * np.pi)
+        line_components = [
+            (
+                expected_generator.uniform(0.5, 1.5),
+                expected_generator.uniform(0.5, 4.0),
+                expected_generator.uniform(0.0, 2.0 * np.pi),
+            )
+            for _ in range(2)
+        ]
+        line_normalized = np.linspace(0.0, 1.0, 5)
+        expected_line_values = sum(
+            amplitude
+            * np.sin(2.0 * np.pi * frequency * line_normalized + phase)
+            for amplitude, frequency, phase in line_components
+        )
         np.testing.assert_allclose(
             line_data["current"],
-            expected_amplitude
-            * np.sin(
-                4.0 * np.pi * np.linspace(0.0, 1.0, 5) + expected_phase
-            ),
+            expected_line_values,
             atol=1e-12,
         )
 
@@ -147,11 +226,168 @@ def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
         assert map_parameters["conductance"].depends_on_ == ["V_SD", "V_G"]
         map_data = map_run.get_parameter_data("conductance")["conductance"]
         assert map_data["conductance"].size == 12
+        np.testing.assert_allclose(
+            map_data["V_SD"],
+            np.repeat(np.linspace(-0.1, 0.1, 3), 4),
+        )
+        np.testing.assert_allclose(
+            map_data["V_G"],
+            np.tile(np.linspace(-1.0, 1.0, 4), 3),
+        )
+        map_components = [
+            (
+                expected_generator.uniform(0.5, 1.5),
+                expected_generator.uniform(0.5, 4.0),
+                expected_generator.uniform(0.5, 4.0),
+                expected_generator.uniform(0.0, 2.0 * np.pi),
+            )
+            for _ in range(2)
+        ]
+        normalized_v_sd = np.repeat(np.linspace(0.0, 1.0, 3), 4)
+        normalized_v_g = np.tile(np.linspace(0.0, 1.0, 4), 3)
+        expected_map_values = sum(
+            amplitude
+            * np.sin(
+                2.0
+                * np.pi
+                * (v_sd_frequency * normalized_v_sd + v_g_frequency * normalized_v_g)
+                + phase
+            )
+            for amplitude, v_sd_frequency, v_g_frequency, phase in map_components
+        )
+        np.testing.assert_allclose(
+            map_data["conductance"],
+            expected_map_values,
+            atol=1e-12,
+        )
         assert np.isfinite(map_data["conductance"]).all()
-        assert np.min(map_data["conductance"]) >= -1.5
-        assert np.max(map_data["conductance"]) <= 1.5
+        assert np.min(map_data["conductance"]) >= -3.0
+        assert np.max(map_data["conductance"]) <= 3.0
     finally:
         qc.config["core"]["db_location"] = previous_database_path
+
+
+def test_generate_database_writes_bounded_result_chunks(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [
+            ("1", "current", "Current", "nA", "-1", "1", "5", "", "", ""),
+            (
+                "2",
+                "conductance",
+                "Conductance",
+                "uS",
+                "-0.1",
+                "0.1",
+                "2",
+                "-1",
+                "1",
+                "4",
+            ),
+        ],
+    )
+    original_add_result = DataSaver.add_result
+    result_sizes = []
+
+    def record_add_result(datasaver, *result_tuples):
+        sizes = tuple(np.asarray(value).size for _, value in result_tuples)
+        assert len(set(sizes)) == 1
+        result_sizes.append(sizes[0])
+        return original_add_result(datasaver, *result_tuples)
+
+    monkeypatch.setattr("qplot.testdata._RESULT_CHUNK_POINTS", 3)
+    monkeypatch.setattr(DataSaver, "add_result", record_add_result)
+
+    generate_database_from_csv(csv_path, database_path)
+
+    assert result_sizes == [3, 2, 3, 1, 3, 1]
+    output_lines = [line.strip() for line in capsys.readouterr().out.splitlines()]
+    assert "Starting experimental run with id: 1." in output_lines
+    assert "Starting experimental run with id: 2." in output_lines
+    timestamped_lines = [line for line in output_lines if line.startswith("[")]
+    assert len(timestamped_lines) == 6
+    assert all(
+        re.match(
+            r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\] ",
+            line,
+        )
+        for line in timestamped_lines
+    )
+    messages = [line.split("] ", maxsplit=1)[1] for line in timestamped_lines]
+    assert messages[0].startswith("Test database generation started:")
+    assert messages[1].startswith("Run started: run_1")
+    assert messages[2].startswith("Run stopped (completed): run_1")
+    assert messages[3].startswith("Run started: run_2")
+    assert messages[4].startswith("Run stopped (completed): run_2")
+    assert messages[5].startswith("Test database generation stopped (completed)")
+
+
+def test_cancellation_during_batched_run_removes_temporary_database(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [("1", "current", "Current", "nA", "-1", "1", "10", "", "", "")],
+    )
+    cancellation_checks = 0
+
+    def cancelled():
+        nonlocal cancellation_checks
+        cancellation_checks += 1
+        return cancellation_checks == 3
+
+    monkeypatch.setattr("qplot.testdata._RESULT_CHUNK_POINTS", 3)
+
+    with pytest.raises(GenerationCancelled):
+        generate_database_from_csv(
+            csv_path,
+            database_path,
+            cancelled_callback=cancelled,
+        )
+
+    assert not database_path.exists()
+    assert list(tmp_path.glob(".runs-*.db")) == []
+    output = capsys.readouterr().out
+    assert "Run stopped (cancelled): run_1" in output
+    assert "Test database generation stopped (cancelled)" in output
+
+
+def test_generation_failure_reports_timestamped_stop_and_removes_temporary_database(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+    )
+
+    def fail_run(*args, **kwargs):
+        raise RuntimeError("deliberate failure")
+
+    monkeypatch.setattr("qplot.testdata._write_run", fail_run)
+
+    with pytest.raises(RuntimeError, match="deliberate failure"):
+        generate_database_from_csv(csv_path, database_path)
+
+    assert not database_path.exists()
+    assert list(tmp_path.glob(".runs-*.db")) == []
+    output = capsys.readouterr().out
+    assert "Run stopped (failed): run_1" in output
+    assert "RuntimeError: deliberate failure" in output
+    assert "Test database generation stopped (failed)" in output
 
 
 def test_generate_database_requires_explicit_overwrite(tmp_path):

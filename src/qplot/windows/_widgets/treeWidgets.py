@@ -1335,10 +1335,15 @@ class moreInfo(qtw.QTabWidget):
             run_metadata.get("result_table_name")
             or self._dataset_attr(dataset, "table_name")
             )
+        raw_result_count = run_metadata.get("result_count")
         try:
-            result_count = int(run_metadata.get("result_count") or 0)
+            result_count = (
+                int(raw_result_count)
+                if raw_result_count is not None
+                else None
+                )
         except (TypeError, ValueError, OverflowError):
-            result_count = 0
+            result_count = None
 
         cache_key = (
             database_path,
@@ -1349,7 +1354,10 @@ class moreInfo(qtw.QTabWidget):
         cached = self._setpoint_summary_cache.get(cache_key)
         if cached is not None:
             summaries = {name: dict(summary) for name, summary in cached.items()}
-        elif result_count > MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS:
+        elif (
+                result_count is None
+                or result_count > MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS
+                ):
             summaries = {}
         else:
             summaries = self._setpoint_summaries_from_sql(

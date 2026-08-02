@@ -107,6 +107,9 @@ Common actions:
 * `File -> Generate Test Data -> Create Example CSV...` writes a spreadsheet
   template, reveals it in Finder on macOS, or opens its containing folder in
   the platform file manager.
+* `File -> Generate Test Data -> Export CSV Collection...` copies ten installed,
+  cumulative instruction files for generating databases from approximately
+  10 MB to 30 GB, then opens their folder.
 * `File -> Generate Test Data -> Generate Database from CSV...` creates a
   QCoDeS test database from an edited specification without blocking the qPlot
   interface.

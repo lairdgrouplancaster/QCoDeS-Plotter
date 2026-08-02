@@ -62,7 +62,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"qplot" = ["**/*.json"]
+"qplot" = ["**/*.csv", "**/*.json"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml"

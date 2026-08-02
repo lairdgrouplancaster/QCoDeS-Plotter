@@ -10,7 +10,10 @@ import re
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
+from importlib import resources
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 from qcodes.dataset import Measurement, new_experiment
@@ -70,9 +73,26 @@ EXAMPLE_ROWS = (
     ),
 )
 
+INSTRUCTION_FILE_NAMES = (
+    "qplot_test_db_01_10mb.csv",
+    "qplot_test_db_02_25mb.csv",
+    "qplot_test_db_03_50mb.csv",
+    "qplot_test_db_04_100mb.csv",
+    "qplot_test_db_05_250mb.csv",
+    "qplot_test_db_06_500mb.csv",
+    "qplot_test_db_07_1gb.csv",
+    "qplot_test_db_08_5gb.csv",
+    "qplot_test_db_09_10gb.csv",
+    "qplot_test_db_10_30gb.csv",
+)
+
 _PARAMETER_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MINIMUM_AMPLITUDE = 0.5
 _MAXIMUM_AMPLITUDE = 1.5
+_MINIMUM_FREQUENCY = 0.5
+_MAXIMUM_FREQUENCY = 4.0
+_SINUSOID_COMPONENT_COUNT = 2
+_RESULT_CHUNK_POINTS = 10_000
 
 
 class SpecificationError(ValueError):
@@ -267,9 +287,95 @@ def write_example_csv(csv_path, overwrite=False):
     return csv_path
 
 
+def copy_instruction_collection(directory, overwrite=False):
+    """Copy the installed cumulative instruction CSV collection to a directory."""
+    directory = Path(directory)
+    if directory.exists() and not directory.is_dir():
+        raise SpecificationError(f"Collection destination is not a directory: {directory}")
+
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise SpecificationError(f"Could not create {directory}: {error}") from error
+
+    output_paths = tuple(directory / name for name in INSTRUCTION_FILE_NAMES)
+    if not overwrite:
+        existing = [path.name for path in output_paths if path.exists()]
+        if existing:
+            raise SpecificationError(
+                f"{directory} already contains collection files; use --overwrite "
+                f"to replace them: {', '.join(existing)}"
+            )
+
+    resource_directory = resources.files("qplot").joinpath("resources", "testdata")
+    try:
+        contents = tuple(
+            resource_directory.joinpath(name).read_bytes()
+            for name in INSTRUCTION_FILE_NAMES
+        )
+        for output_path, content in zip(output_paths, contents, strict=True):
+            mode = "wb" if overwrite else "xb"
+            with output_path.open(mode) as handle:
+                handle.write(content)
+    except OSError as error:
+        raise SpecificationError(
+            f"Could not copy the instruction CSV collection to {directory}: {error}"
+        ) from error
+
+    return output_paths
+
+
 def _raise_if_cancelled(cancelled_callback):
     if cancelled_callback is not None and cancelled_callback():
         raise GenerationCancelled("Test-database generation was cancelled")
+
+
+def _result_chunks(point_count):
+    for start in range(0, point_count, _RESULT_CHUNK_POINTS):
+        yield slice(start, min(start + _RESULT_CHUNK_POINTS, point_count))
+
+
+def _timestamped_message(message):
+    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    print(f"[{timestamp}] {message}", flush=True)
+
+
+def _random_sinusoid_components(random_generator, dimensions):
+    """Return independently randomised sinusoid parameters for one run."""
+    components = []
+    for _ in range(_SINUSOID_COMPONENT_COUNT):
+        amplitude = random_generator.uniform(_MINIMUM_AMPLITUDE, _MAXIMUM_AMPLITUDE)
+        frequencies = tuple(
+            random_generator.uniform(_MINIMUM_FREQUENCY, _MAXIMUM_FREQUENCY)
+            for _ in range(dimensions)
+        )
+        phase = random_generator.uniform(0.0, 2.0 * np.pi)
+        components.append((amplitude, frequencies, phase))
+    return tuple(components)
+
+
+def _sinusoid_sum_1d(normalized_values, components):
+    values = np.zeros_like(normalized_values, dtype=float)
+    for amplitude, frequencies, phase in components:
+        values += amplitude * np.sin(
+            2.0 * np.pi * frequencies[0] * normalized_values + phase
+        )
+    return values
+
+
+def _sinusoid_sum_2d_row(v_sd_normalized, v_g_normalized, components):
+    values = np.zeros_like(v_g_normalized, dtype=float)
+    for amplitude, frequencies, phase in components:
+        values += amplitude * np.sin(
+            2.0
+            * np.pi
+            * (
+                frequencies[0] * v_sd_normalized
+                + frequencies[1] * v_g_normalized
+            )
+            + phase
+        )
+    return values
 
 
 def _write_run(
@@ -295,22 +401,20 @@ def _write_run(
         specification.v_sd_points,
     )
     v_sd_normalized = np.linspace(0.0, 1.0, specification.v_sd_points)
-    amplitude = random_generator.uniform(_MINIMUM_AMPLITUDE, _MAXIMUM_AMPLITUDE)
-    v_sd_phase = random_generator.uniform(0.0, 2.0 * np.pi)
+    components = _random_sinusoid_components(
+        random_generator,
+        specification.dimensions,
+    )
 
     if specification.dimensions == 1:
         measurement.register_parameter(measured, setpoints=(v_sd,))
-        measured_values = amplitude * np.sin(
-            4.0 * np.pi * v_sd_normalized + v_sd_phase
-        )
+        measured_values = _sinusoid_sum_1d(v_sd_normalized, components)
         with measurement.run() as datasaver:
-            for v_sd_value, measured_value in zip(
-                v_sd_values, measured_values, strict=True
-            ):
+            for result_slice in _result_chunks(specification.v_sd_points):
                 _raise_if_cancelled(cancelled_callback)
                 datasaver.add_result(
-                    (v_sd, float(v_sd_value)),
-                    (measured, float(measured_value)),
+                    (v_sd, v_sd_values[result_slice]),
+                    (measured, measured_values[result_slice]),
                 )
         return
 
@@ -326,26 +430,21 @@ def _write_run(
         specification.v_g_points,
     )
     v_g_normalized = np.linspace(0.0, 1.0, specification.v_g_points)
-    v_g_phase = random_generator.uniform(0.0, 2.0 * np.pi)
 
     with measurement.run() as datasaver:
         for v_sd_index, v_sd_value in enumerate(v_sd_values):
-            for v_g_index, v_g_value in enumerate(v_g_values):
+            measured_values = _sinusoid_sum_2d_row(
+                v_sd_normalized[v_sd_index],
+                v_g_normalized,
+                components,
+            )
+            for result_slice in _result_chunks(specification.v_g_points):
                 _raise_if_cancelled(cancelled_callback)
-                measured_value = 0.5 * (
-                    amplitude
-                    * np.sin(
-                        4.0 * np.pi * v_sd_normalized[v_sd_index] + v_sd_phase
-                    )
-                    + amplitude
-                    * np.cos(
-                        4.0 * np.pi * v_g_normalized[v_g_index] + v_g_phase
-                    )
-                )
+                result_count = result_slice.stop - result_slice.start
                 datasaver.add_result(
-                    (v_sd, float(v_sd_value)),
-                    (v_g, float(v_g_value)),
-                    (measured, float(measured_value)),
+                    (v_sd, np.full(result_count, float(v_sd_value))),
+                    (v_g, v_g_values[result_slice]),
+                    (measured, measured_values[result_slice]),
                 )
 
 
@@ -381,6 +480,13 @@ def generate_database(
     temporary_path.unlink()
 
     random_generator = rng if rng is not None else np.random.default_rng()
+    total_runs = len(specifications)
+    total_points = sum(specification.point_count for specification in specifications)
+    generation_started = perf_counter()
+    _timestamped_message(
+        f"Test database generation started: {database_path} "
+        f"({total_runs} runs, {total_points} points)."
+    )
     try:
         connection = connect(temporary_path)
         try:
@@ -390,21 +496,60 @@ def generate_database(
                 conn=connection,
             )
             for run_number, specification in enumerate(specifications, start=1):
-                _write_run(
-                    experiment,
-                    run_number,
-                    specification,
-                    random_generator,
-                    cancelled_callback=cancelled_callback,
+                run_started = perf_counter()
+                _timestamped_message(
+                    f"Run started: run_{run_number} ({run_number}/{total_runs}, "
+                    f"{specification.dimensions}D, {specification.point_count} points)."
+                )
+                try:
+                    _write_run(
+                        experiment,
+                        run_number,
+                        specification,
+                        random_generator,
+                        cancelled_callback=cancelled_callback,
+                    )
+                except GenerationCancelled:
+                    _timestamped_message(
+                        f"Run stopped (cancelled): run_{run_number} "
+                        f"after {perf_counter() - run_started:.2f} s."
+                    )
+                    raise
+                except Exception as error:
+                    _timestamped_message(
+                        f"Run stopped (failed): run_{run_number} after "
+                        f"{perf_counter() - run_started:.2f} s "
+                        f"({type(error).__name__}: {error})."
+                    )
+                    raise
+                _timestamped_message(
+                    f"Run stopped (completed): run_{run_number} in "
+                    f"{perf_counter() - run_started:.2f} s."
                 )
             _raise_if_cancelled(cancelled_callback)
         finally:
             connection.close()
         os.replace(temporary_path, database_path)
-    except Exception:
+    except GenerationCancelled:
         temporary_path.unlink(missing_ok=True)
+        _timestamped_message(
+            "Test database generation stopped (cancelled) after "
+            f"{perf_counter() - generation_started:.2f} s: {database_path}."
+        )
+        raise
+    except Exception as error:
+        temporary_path.unlink(missing_ok=True)
+        _timestamped_message(
+            "Test database generation stopped (failed) after "
+            f"{perf_counter() - generation_started:.2f} s: {database_path} "
+            f"({type(error).__name__}: {error})."
+        )
         raise
 
+    _timestamped_message(
+        "Test database generation stopped (completed) in "
+        f"{perf_counter() - generation_started:.2f} s: {database_path}."
+    )
     return database_path
 
 
@@ -430,14 +575,20 @@ def generate_database_from_csv(
 def _argument_parser():
     parser = argparse.ArgumentParser(
         prog="qplot-generate-db",
-        description="Generate sinusoidal test runs in a QCoDeS database.",
+        description="Generate two-sinusoid test runs in a QCoDeS database.",
     )
     parser.add_argument("specification", nargs="?", help="input CSV specification")
     parser.add_argument("database", nargs="?", help="output QCoDeS .db file")
-    parser.add_argument(
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
         "--write-example",
         metavar="CSV",
         help="write a ready-to-use example CSV instead of generating a database",
+    )
+    output_group.add_argument(
+        "--write-collection",
+        metavar="DIRECTORY",
+        help="copy the installed cumulative instruction CSV collection",
     )
     parser.add_argument(
         "--overwrite",
@@ -460,9 +611,23 @@ def main(argv: Sequence[str] | None = None):
             print(f"Wrote example CSV: {output_path}")
             return 0
 
+        if args.write_collection:
+            if args.specification or args.database:
+                parser.error("positional arguments cannot be used with --write-collection")
+            output_paths = copy_instruction_collection(
+                args.write_collection,
+                overwrite=args.overwrite,
+            )
+            print(
+                f"Wrote {len(output_paths)} instruction CSV files to "
+                f"{Path(args.write_collection)}"
+            )
+            return 0
+
         if not args.specification or not args.database:
             parser.error(
-                "specification and database are required unless --write-example is used"
+                "specification and database are required unless --write-example or "
+                "--write-collection is used"
             )
         output_path, specifications = generate_database_from_csv(
             args.specification,
@@ -473,7 +638,7 @@ def main(argv: Sequence[str] | None = None):
         parser.exit(2, f"qplot-generate-db: error: {error}\n")
 
     total_points = sum(specification.point_count for specification in specifications)
-    print(
+    _timestamped_message(
         f"Generated {output_path} with {len(specifications)} runs "
         f"and {total_points} points."
     )
