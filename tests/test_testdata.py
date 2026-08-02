@@ -4,10 +4,12 @@ import numpy as np
 import pytest
 import qcodes as qc
 from qcodes.dataset import initialise_or_create_database_at, load_by_id
+from qcodes.dataset.measurements import DataSaver
 
 from qplot.testdata import (
     CSV_COLUMNS,
     INSTRUCTION_FILE_NAMES,
+    GenerationCancelled,
     SpecificationError,
     copy_instruction_collection,
     generate_database_from_csv,
@@ -214,11 +216,105 @@ def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
         assert map_parameters["conductance"].depends_on_ == ["V_SD", "V_G"]
         map_data = map_run.get_parameter_data("conductance")["conductance"]
         assert map_data["conductance"].size == 12
+        np.testing.assert_allclose(
+            map_data["V_SD"],
+            np.repeat(np.linspace(-0.1, 0.1, 3), 4),
+        )
+        np.testing.assert_allclose(
+            map_data["V_G"],
+            np.tile(np.linspace(-1.0, 1.0, 4), 3),
+        )
+        expected_amplitude = expected_generator.uniform(0.5, 1.5)
+        expected_v_sd_phase = expected_generator.uniform(0.0, 2.0 * np.pi)
+        expected_v_g_phase = expected_generator.uniform(0.0, 2.0 * np.pi)
+        expected_v_sd_component = expected_amplitude * np.sin(
+            4.0 * np.pi * np.linspace(0.0, 1.0, 3) + expected_v_sd_phase
+        )
+        expected_v_g_component = expected_amplitude * np.cos(
+            4.0 * np.pi * np.linspace(0.0, 1.0, 4) + expected_v_g_phase
+        )
+        np.testing.assert_allclose(
+            map_data["conductance"],
+            0.5
+            * (
+                np.repeat(expected_v_sd_component, 4)
+                + np.tile(expected_v_g_component, 3)
+            ),
+            atol=1e-12,
+        )
         assert np.isfinite(map_data["conductance"]).all()
         assert np.min(map_data["conductance"]) >= -1.5
         assert np.max(map_data["conductance"]) <= 1.5
     finally:
         qc.config["core"]["db_location"] = previous_database_path
+
+
+def test_generate_database_writes_bounded_result_chunks(tmp_path, monkeypatch):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [
+            ("1", "current", "Current", "nA", "-1", "1", "5", "", "", ""),
+            (
+                "2",
+                "conductance",
+                "Conductance",
+                "uS",
+                "-0.1",
+                "0.1",
+                "2",
+                "-1",
+                "1",
+                "4",
+            ),
+        ],
+    )
+    original_add_result = DataSaver.add_result
+    result_sizes = []
+
+    def record_add_result(datasaver, *result_tuples):
+        sizes = tuple(np.asarray(value).size for _, value in result_tuples)
+        assert len(set(sizes)) == 1
+        result_sizes.append(sizes[0])
+        return original_add_result(datasaver, *result_tuples)
+
+    monkeypatch.setattr("qplot.testdata._RESULT_CHUNK_POINTS", 3)
+    monkeypatch.setattr(DataSaver, "add_result", record_add_result)
+
+    generate_database_from_csv(csv_path, database_path)
+
+    assert result_sizes == [3, 2, 3, 1, 3, 1]
+
+
+def test_cancellation_during_batched_run_removes_temporary_database(
+    tmp_path,
+    monkeypatch,
+):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [("1", "current", "Current", "nA", "-1", "1", "10", "", "", "")],
+    )
+    cancellation_checks = 0
+
+    def cancelled():
+        nonlocal cancellation_checks
+        cancellation_checks += 1
+        return cancellation_checks == 3
+
+    monkeypatch.setattr("qplot.testdata._RESULT_CHUNK_POINTS", 3)
+
+    with pytest.raises(GenerationCancelled):
+        generate_database_from_csv(
+            csv_path,
+            database_path,
+            cancelled_callback=cancelled,
+        )
+
+    assert not database_path.exists()
+    assert list(tmp_path.glob(".runs-*.db")) == []
 
 
 def test_generate_database_requires_explicit_overwrite(tmp_path):

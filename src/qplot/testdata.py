@@ -87,6 +87,7 @@ INSTRUCTION_FILE_NAMES = (
 _PARAMETER_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MINIMUM_AMPLITUDE = 0.5
 _MAXIMUM_AMPLITUDE = 1.5
+_RESULT_CHUNK_POINTS = 10_000
 
 
 class SpecificationError(ValueError):
@@ -324,6 +325,11 @@ def _raise_if_cancelled(cancelled_callback):
         raise GenerationCancelled("Test-database generation was cancelled")
 
 
+def _result_chunks(point_count):
+    for start in range(0, point_count, _RESULT_CHUNK_POINTS):
+        yield slice(start, min(start + _RESULT_CHUNK_POINTS, point_count))
+
+
 def _write_run(
         experiment,
         run_number,
@@ -356,13 +362,11 @@ def _write_run(
             4.0 * np.pi * v_sd_normalized + v_sd_phase
         )
         with measurement.run() as datasaver:
-            for v_sd_value, measured_value in zip(
-                v_sd_values, measured_values, strict=True
-            ):
+            for result_slice in _result_chunks(specification.v_sd_points):
                 _raise_if_cancelled(cancelled_callback)
                 datasaver.add_result(
-                    (v_sd, float(v_sd_value)),
-                    (measured, float(measured_value)),
+                    (v_sd, v_sd_values[result_slice]),
+                    (measured, measured_values[result_slice]),
                 )
         return
 
@@ -379,25 +383,23 @@ def _write_run(
     )
     v_g_normalized = np.linspace(0.0, 1.0, specification.v_g_points)
     v_g_phase = random_generator.uniform(0.0, 2.0 * np.pi)
+    v_g_component = amplitude * np.cos(
+        4.0 * np.pi * v_g_normalized + v_g_phase
+    )
 
     with measurement.run() as datasaver:
         for v_sd_index, v_sd_value in enumerate(v_sd_values):
-            for v_g_index, v_g_value in enumerate(v_g_values):
+            v_sd_component = amplitude * np.sin(
+                4.0 * np.pi * v_sd_normalized[v_sd_index] + v_sd_phase
+            )
+            measured_values = 0.5 * (v_sd_component + v_g_component)
+            for result_slice in _result_chunks(specification.v_g_points):
                 _raise_if_cancelled(cancelled_callback)
-                measured_value = 0.5 * (
-                    amplitude
-                    * np.sin(
-                        4.0 * np.pi * v_sd_normalized[v_sd_index] + v_sd_phase
-                    )
-                    + amplitude
-                    * np.cos(
-                        4.0 * np.pi * v_g_normalized[v_g_index] + v_g_phase
-                    )
-                )
+                result_count = result_slice.stop - result_slice.start
                 datasaver.add_result(
-                    (v_sd, float(v_sd_value)),
-                    (v_g, float(v_g_value)),
-                    (measured, float(measured_value)),
+                    (v_sd, np.full(result_count, float(v_sd_value))),
+                    (v_g, v_g_values[result_slice]),
+                    (measured, measured_values[result_slice]),
                 )
 
 
