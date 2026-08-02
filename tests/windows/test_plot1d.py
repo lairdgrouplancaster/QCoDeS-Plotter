@@ -1113,11 +1113,17 @@ class SnapToTraceTestCase(unittest.TestCase):
                 source_is_cut=True,
             )
         )
-        self.assertEqual(
+        self.assertIsNone(
             _subplot_axis_order(
                 {"x": "gate", "y": "current"},
                 {"x": "field", "y": "gate"},
                 source_is_cut=True,
+            )
+        )
+        self.assertEqual(
+            _subplot_axis_order(
+                {"x": "gate", "y": "current"},
+                {"x": "field", "y": "gate"},
             ),
             ("y", "x"),
         )

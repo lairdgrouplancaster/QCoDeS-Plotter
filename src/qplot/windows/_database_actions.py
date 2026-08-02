@@ -27,11 +27,27 @@ from qplot.testdata import (
     write_example_csv,
 )
 
+from ._dataset_handle import canonical_database_path
 from ._widgets.details_tables import (
     CopyableTableWidget,
     copy_to_clipboard,
     format_value,
 )
+
+
+def _database_file_identity(database_path):
+    """Return a stable identity that changes when a database is replaced."""
+    try:
+        stat_result = os.stat(database_path)
+    except OSError:
+        return None
+    return (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+        stat_result.st_ctime_ns,
+    )
 
 
 class DatabaseInfoDialog(qtw.QDialog):
@@ -431,6 +447,14 @@ class DatabaseActionsMixin:
             f"{run_word} and {point_count} points.",
             7000,
         )
+        file_textbox = getattr(self, "fileTextbox", None)
+        current_database = file_textbox.text() if file_textbox is not None else ""
+        if (
+                current_database
+                and canonical_database_path(current_database)
+                == canonical_database_path(database_path)
+                ):
+            self.load_file(database_path, force=True)
 
 
     @QtCore.pyqtSlot()
@@ -465,6 +489,7 @@ class DatabaseActionsMixin:
         self._database_load_active = False
         self._database_load_state = None
         self._database_load_worker = None
+        self._loaded_database_identity = None
         if hasattr(self, "_set_database_load_controls_enabled"):
             self._set_database_load_controls_enabled(True)
         if hasattr(self, "_hide_database_load_panel"):
@@ -500,6 +525,9 @@ class DatabaseActionsMixin:
         self.RunList.scrollToTop()
 
         self.infoBox.clear()
+        clear_database_cache = getattr(self.infoBox, "clear_database_cache", None)
+        if callable(clear_database_cache):
+            clear_database_cache()
         self.infoBox.preview.set_database_runs("", {})
         self.infoBox.scrollToTop()
         self._sync_empty_state()
@@ -855,7 +883,7 @@ class DatabaseActionsMixin:
             self.recentDatabaseMenu.addAction(action)
 
 
-    def load_file(self, abspath, load_started_at=None):
+    def load_file(self, abspath, load_started_at=None, *, force=False):
         """
         Updates the database for RunList display and loading datasets.
 
@@ -870,7 +898,23 @@ class DatabaseActionsMixin:
 
         DatabaseActionsMixin._cancel_database_refresh(self)
 
-        if abspath == get_DB_location() and self.fileTextbox.text() == abspath:
+        qcodes_database = get_DB_location()
+        displayed_database = self.fileTextbox.text()
+        same_loaded_database = bool(
+            qcodes_database
+            and displayed_database
+            and canonical_database_path(abspath)
+            == canonical_database_path(qcodes_database)
+            == canonical_database_path(displayed_database)
+        )
+        current_identity = _database_file_identity(abspath)
+        loaded_identity = getattr(self, "_loaded_database_identity", None)
+        if (
+                same_loaded_database
+                and not force
+                and loaded_identity is not None
+                and current_identity == loaded_identity
+                ):
             if not self.infoBox.preview.has_database(abspath):
                 self.infoBox.preview.set_database_runs(
                     abspath,
@@ -889,6 +933,7 @@ class DatabaseActionsMixin:
         self._database_load_state = {
             "abspath": abspath,
             "load_started_at": load_started_at,
+            "reload_same_path": force or same_loaded_database,
         }
 
         self._set_database_load_controls_enabled(False)
@@ -929,6 +974,9 @@ class DatabaseActionsMixin:
         self.RunList.scrollToTop()
 
         self.infoBox.clear()
+        clear_database_cache = getattr(self.infoBox, "clear_database_cache", None)
+        if callable(clear_database_cache):
+            clear_database_cache()
         self.infoBox.scrollToTop()
 
         if self.fileTextbox.text() and self.fileTextbox.text() != self.localLastFile:
@@ -1046,7 +1094,16 @@ class DatabaseActionsMixin:
             return
 
         self._cancel_database_detail_load()
+        if state.get("reload_same_path"):
+            invalidate_runtime_state = getattr(
+                self,
+                "_invalidate_database_runtime_state",
+                None,
+            )
+            if callable(invalidate_runtime_state):
+                invalidate_runtime_state(abspath)
         set_qcodes_database_location(abspath)
+        self._loaded_database_identity = _database_file_identity(abspath)
         runs = runs or {}
         run_id_signals_blocked = self.run_idBox.blockSignals(True)
         run_list_signals_blocked = self.RunList.blockSignals(True)

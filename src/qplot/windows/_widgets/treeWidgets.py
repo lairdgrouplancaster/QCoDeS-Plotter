@@ -1121,6 +1121,11 @@ class moreInfo(qtw.QTabWidget):
         self.raw.clear()
 
 
+    def clear_database_cache(self):
+        """Discard summaries tied to the previously loaded database file."""
+        self._setpoint_summary_cache.clear()
+
+
     def scrollToTop(self):
         self.overview.scrollToTop()
         self.parameters.scrollToTop()

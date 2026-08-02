@@ -429,13 +429,38 @@ class DatabaseDetailSignals(QtCore.QObject):
     finished = QtCore.pyqtSignal(int, str, object)
 
 
+class _InterruptibleSqlWorker:
+    """Allows the GUI thread to interrupt an active read-only SQLite query."""
+
+    def _init_sql_interrupt(self):
+        self._sql_connection_lock = threading.Lock()
+        self._sql_connection = None
+
+
+    def _interrupt_sql(self):
+        with self._sql_connection_lock:
+            connection = self._sql_connection
+        if connection is not None:
+            try:
+                connection.interrupt()
+            except Exception:
+                pass
+
+
+    def _set_sql_connection(self, connection):
+        with self._sql_connection_lock:
+            self._sql_connection = connection
+        if connection is not None and self._cancelled.is_set():
+            self._interrupt_sql()
+
+
 class DatabaseRefreshSignals(QtCore.QObject):
     """Signals emitted by a coalesced main-window refresh worker."""
 
     finished = QtCore.pyqtSignal(int, str, object, object, object)
 
 
-class DatabaseRefreshWorker(QtCore.QRunnable):
+class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
     """Fetch new runs and live-run status without blocking the GUI thread."""
 
     def __init__(self, generation, database_path, last_run_id, watched_runs):
@@ -446,10 +471,12 @@ class DatabaseRefreshWorker(QtCore.QRunnable):
         self.last_run_id = int(last_run_id or 0)
         self.watched_runs = list(watched_runs or [])
         self._cancelled = threading.Event()
+        self._init_sql_interrupt()
 
 
     def cancel(self):
         self._cancelled.set()
+        self._interrupt_sql()
 
 
     def run(self):
@@ -463,6 +490,7 @@ class DatabaseRefreshWorker(QtCore.QRunnable):
                 self.last_run_id,
                 database_path=self.database_path,
                 cancelled_callback=self._cancelled.is_set,
+                connection_callback=self._set_sql_connection,
                 ) or {}
             for guid in self.watched_runs:
                 if self._cancelled.is_set():
@@ -472,6 +500,7 @@ class DatabaseRefreshWorker(QtCore.QRunnable):
                     database_path=self.database_path,
                     include_storage_bytes=False,
                     cancelled_callback=self._cancelled.is_set,
+                    connection_callback=self._set_sql_connection,
                     )
                 if status:
                     statuses[guid] = status
@@ -500,7 +529,7 @@ class DatabaseRefreshWorker(QtCore.QRunnable):
                 raise
 
 
-class DatabaseLoadWorker(QtCore.QRunnable):
+class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
     """
     Loads database metadata away from the GUI thread.
 
@@ -522,6 +551,7 @@ class DatabaseLoadWorker(QtCore.QRunnable):
         self.database_path = database_path
         self.cloud_sync_timeout = cloud_sync_timeout
         self._cancelled = threading.Event()
+        self._init_sql_interrupt()
 
 
     def cancel(self):
@@ -530,6 +560,7 @@ class DatabaseLoadWorker(QtCore.QRunnable):
 
         """
         self._cancelled.set()
+        self._interrupt_sql()
 
 
     def run(self):
@@ -568,12 +599,15 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             runs = get_runs_basic_via_sql(
                 self.database_path,
                 cancelled_callback=self._is_cancelled,
+                connection_callback=self._set_sql_connection,
                 ) or {}
             if self._is_cancelled():
                 return
         except InterruptedError:
             return
         except Exception as err:
+            if self._is_cancelled():
+                return
             log_exception("Database load worker failed", err, __name__)
             self._emit_finished({}, err)
             return
@@ -615,7 +649,7 @@ class DatabaseLoadWorker(QtCore.QRunnable):
             )
 
 
-class _PrioritizedRunWorker(QtCore.QRunnable):
+class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
     """
     Base for background workers that need selected/visible run prioritisation.
 
@@ -632,6 +666,7 @@ class _PrioritizedRunWorker(QtCore.QRunnable):
             for index, run_id in enumerate(self.run_ids)
             }
         self._cancelled = threading.Event()
+        self._init_sql_interrupt()
         self._priority_lock = threading.Lock()
         self._priority_epoch = 0
         self._priority_scores = {}
@@ -639,6 +674,7 @@ class _PrioritizedRunWorker(QtCore.QRunnable):
 
     def cancel(self):
         self._cancelled.set()
+        self._interrupt_sql()
 
 
     def prioritize_run_ids(self, run_ids):
@@ -778,6 +814,7 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
                         include_storage_estimate=True,
                         include_read_setpoint_count=False,
                         cancelled_callback=self._is_cancelled,
+                        connection_callback=self._set_sql_connection,
                         ):
                     if self._is_cancelled():
                         return
@@ -835,6 +872,7 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
                         batch,
                         batch_size=self.batch_size,
                         cancelled_callback=self._is_cancelled,
+                        connection_callback=self._set_sql_connection,
                         ):
                     if self._is_cancelled():
                         return
@@ -866,6 +904,7 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
                         batch,
                         batch_size=storage_batch_size,
                         cancelled_callback=self._is_cancelled,
+                        connection_callback=self._set_sql_connection,
                         ):
                     if self._is_cancelled():
                         return

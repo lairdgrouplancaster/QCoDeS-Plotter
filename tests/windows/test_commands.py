@@ -1,6 +1,6 @@
 import unittest
 
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._commands import (
@@ -32,6 +32,22 @@ class CommandRegistryTestCase(unittest.TestCase):
             )
         finally:
             window.deleteLater()
+
+    def test_database_close_and_platform_quit_commands_are_registered(self):
+        close_action = command_spec("database.close")
+        quit_action = command_spec("app.quit")
+
+        self.assertEqual(close_action.text, "&Close Database")
+        self.assertEqual(close_action.object_name, "closeDatabaseAction")
+        self.assertEqual(quit_action.help_shortcut, "Ctrl+Q / Cmd+Q")
+        self.assertTrue(
+            any(
+                shortcut in quit_action.resolved_shortcuts()
+                for shortcut in QtGui.QKeySequence.keyBindings(
+                    QtGui.QKeySequence.StandardKey.Quit
+                )
+            )
+        )
 
     def test_dynamic_measurement_command_uses_expected_number(self):
         spec = plot_measurement_command_spec(2)

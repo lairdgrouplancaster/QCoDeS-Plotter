@@ -12,7 +12,12 @@ from qplot.datahandling.dimensions import (
 from qplot.datahandling.readonly import load_by_guid_read_only, load_by_id_read_only
 from qplot.diagnostics import log_exception
 
-from ._dataset_handle import DatasetHandle, DatasetKey, close_dataset_connection
+from ._dataset_handle import (
+    DatasetHandle,
+    DatasetKey,
+    canonical_database_path,
+    close_dataset_connection,
+)
 from ._subplots.subplot1d import _subplot_axis_order
 from .plot1d import plot1d
 from .plot2d import plot2d
@@ -92,6 +97,35 @@ class PlotActionsMixin:
             )
 
 
+    def _clear_selected_run_state(self):
+        """Clear run actions and UI after a selected dataset cannot be loaded."""
+        self._release_selected_dataset()
+        self.selected_run_id = None
+
+        run_id_box = getattr(self, "run_idBox", None)
+        if run_id_box is not None:
+            signals_blocked = run_id_box.blockSignals(True)
+            try:
+                run_id_box.setText("")
+            finally:
+                run_id_box.blockSignals(signals_blocked)
+
+        run_list = getattr(self, "RunList", None)
+        if run_list is not None:
+            signals_blocked = run_list.blockSignals(True)
+            try:
+                run_list.clearSelection()
+                set_current_item = getattr(run_list, "setCurrentItem", None)
+                if callable(set_current_item):
+                    set_current_item(None)
+            finally:
+                run_list.blockSignals(signals_blocked)
+
+        info_box = getattr(self, "infoBox", None)
+        if info_box is not None:
+            info_box.clear()
+
+
     def _evict_dataset_handle(self, dataset_key):
         handle = self.dataset_holder.pop(dataset_key, None)
         if handle is None:
@@ -115,6 +149,34 @@ class PlotActionsMixin:
                 handle.close()
             except Exception as err:
                 log_exception("Plot dataset cleanup failed", err, __name__)
+
+
+    def _invalidate_database_runtime_state(self, database_path):
+        """Close datasets and plot windows backed by a replaced database."""
+        canonical_path = canonical_database_path(database_path)
+        selected_key = getattr(self, "_selected_dataset_key", None)
+        if (
+                selected_key is not None
+                and selected_key.database_path == canonical_path
+                ):
+            self._release_selected_dataset()
+            self.selected_run_id = None
+
+        for win in list(getattr(self, "windows", [])):
+            dataset_key = getattr(win, "_dataset_key", None)
+            if (
+                    dataset_key is None
+                    or dataset_key.database_path != canonical_path
+                    ):
+                continue
+            try:
+                win.close()
+            except Exception as err:
+                log_exception("Replaced database plot cleanup failed", err, __name__)
+
+        for dataset_key in list(self.dataset_holder):
+            if dataset_key.database_path == canonical_path:
+                self._evict_dataset_handle(dataset_key)
 
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
@@ -287,6 +349,7 @@ class PlotActionsMixin:
                 self._replace_selected_dataset(dataset, dataset_key)
         except Exception as err:
             log_exception("Selected run load failed", err, __name__)
+            self._clear_selected_run_state()
             self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
             return
 

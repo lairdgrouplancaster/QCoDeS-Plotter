@@ -17,10 +17,16 @@ def _install_cancel_progress_handler(conn, cancelled_callback):
         set_progress_handler(lambda: int(bool(cancelled_callback())), 1000)
 
 
+def _notify_connection(connection_callback, connection):
+    if connection_callback is not None:
+        connection_callback(connection)
+
+
 def get_runs_via_sql(
         database_path=None,
         include_details=True,
         cancelled_callback=None,
+        connection_callback=None,
         ):
     """
     Read from the currently initialised QCoDeS database and fetches all data to
@@ -36,6 +42,7 @@ def get_runs_via_sql(
     """
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         return _fetch_run_rows(
@@ -44,10 +51,17 @@ def get_runs_via_sql(
             include_details=include_details,
             )
     finally:
-        conn.close()
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            conn.close()
 
 
-def get_runs_basic_via_sql(database_path=None, cancelled_callback=None):
+def get_runs_basic_via_sql(
+        database_path=None,
+        cancelled_callback=None,
+        connection_callback=None,
+        ):
     """
     Read the run list without scanning result tables.
 
@@ -61,6 +75,7 @@ def get_runs_basic_via_sql(database_path=None, cancelled_callback=None):
         database_path=database_path,
         include_details=False,
         cancelled_callback=cancelled_callback,
+        connection_callback=connection_callback,
         )
 
 
@@ -73,6 +88,7 @@ def iter_run_detail_batches_via_sql(
         include_storage_estimate=False,
         include_read_setpoint_count=True,
         cancelled_callback=None,
+        connection_callback=None,
         ):
     """
     Yield detailed run metadata in small batches.
@@ -88,6 +104,7 @@ def iter_run_detail_batches_via_sql(
     batch_size = max(1, int(batch_size or 1))
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         for offset in range(0, len(run_ids), batch_size):
@@ -108,7 +125,10 @@ def iter_run_detail_batches_via_sql(
                 )
             yield rows or {}
     finally:
-        conn.close()
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            conn.close()
 
 
 def iter_run_shape_batches_via_sql(
@@ -116,6 +136,7 @@ def iter_run_shape_batches_via_sql(
         run_ids,
         batch_size=1,
         cancelled_callback=None,
+        connection_callback=None,
         ):
     """
     Yield setpoint-shape metadata for runs that need result-table inference.
@@ -131,6 +152,7 @@ def iter_run_shape_batches_via_sql(
     batch_size = max(1, int(batch_size or 1))
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         for offset in range(0, len(run_ids), batch_size):
@@ -160,7 +182,10 @@ def iter_run_shape_batches_via_sql(
             if rows:
                 yield rows
     finally:
-        conn.close()
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            conn.close()
 
 
 def iter_run_storage_batches_via_sql(
@@ -168,6 +193,7 @@ def iter_run_storage_batches_via_sql(
         run_ids,
         batch_size=25,
         cancelled_callback=None,
+        connection_callback=None,
         ):
     """
     Yield per-run storage sizes after the cheap detail pass has completed.
@@ -184,6 +210,7 @@ def iter_run_storage_batches_via_sql(
     batch_size = max(1, int(batch_size or 1))
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         run_tables = _run_storage_tables(cursor, run_ids)
@@ -217,10 +244,18 @@ def iter_run_storage_batches_via_sql(
             if rows:
                 yield rows
     finally:
-        conn.close()
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            conn.close()
 
 
-def find_new_runs(last_run_id, database_path=None, cancelled_callback=None):
+def find_new_runs(
+        last_run_id,
+        database_path=None,
+        cancelled_callback=None,
+        connection_callback=None,
+        ):
     """
     Fetch all runs created after the last seen run ID.
 
@@ -242,11 +277,15 @@ def find_new_runs(last_run_id, database_path=None, cancelled_callback=None):
     conn = qcodes_read_only_connection(database_path or get_DB_location())
 
     try:
+        _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         return _fetch_run_rows(cursor, "WHERE runs.run_id > ?", (last_run_id, ))
     finally:
-        conn.close()
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            conn.close()
 
 
 def _fetch_run_rows(
@@ -948,6 +987,7 @@ def get_run_status(
         database_path=None,
         include_storage_bytes=True,
         cancelled_callback=None,
+        connection_callback=None,
         ):
     """
     Returns completion and result count information for one run.
@@ -955,6 +995,7 @@ def get_run_status(
     """
     conn = qcodes_read_only_connection(database_path or get_DB_location())
     try:
+        _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback)
         cursor = conn.cursor()
         optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
@@ -1029,7 +1070,10 @@ def get_run_status(
 
         return status
     finally:
-        conn.close()
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            conn.close()
 
 
 def has_finished(guid) -> float | None:

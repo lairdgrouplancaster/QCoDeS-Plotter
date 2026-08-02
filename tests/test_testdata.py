@@ -7,6 +7,7 @@ import qcodes as qc
 from qcodes.dataset import initialise_or_create_database_at, load_by_id
 from qcodes.dataset.measurements import DataSaver
 
+from qplot import testdata as testdata_module
 from qplot.testdata import (
     CSV_COLUMNS,
     INSTRUCTION_FILE_NAMES,
@@ -129,6 +130,14 @@ def test_instruction_collection_cli_exports_all_files(tmp_path, capsys):
         (
             ("1", "V_SD", "Current", "nA", "-1", "1", "11", "", "", ""),
             "measured_name cannot be V_SD or V_G",
+        ),
+        (
+            ("1", "id", "Current", "nA", "-1", "1", "11", "", "", ""),
+            "measured_name cannot be used as a QCoDeS result column",
+        ),
+        (
+            ("1", "select", "Current", "nA", "-1", "1", "11", "", "", ""),
+            "measured_name cannot be used as a QCoDeS result column",
         ),
         (
             ("1", "current", "Current", "nA", "-1", "1", "11", "-2", "2", "5"),
@@ -390,6 +399,26 @@ def test_generation_failure_reports_timestamped_stop_and_removes_temporary_datab
     assert "Test database generation stopped (failed)" in output
 
 
+def test_generation_rejects_silently_missing_result_rows(
+    tmp_path,
+    monkeypatch,
+):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+    )
+
+    monkeypatch.setattr(DataSaver, "add_result", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="persisted 0 of 5 expected result rows"):
+        generate_database_from_csv(csv_path, database_path)
+
+    assert not database_path.exists()
+    assert list(tmp_path.glob(".runs-*.db")) == []
+
+
 def test_generate_database_requires_explicit_overwrite(tmp_path):
     csv_path = tmp_path / "runs.csv"
     database_path = tmp_path / "runs.db"
@@ -406,3 +435,29 @@ def test_generate_database_requires_explicit_overwrite(tmp_path):
         csv_path, database_path, overwrite=True
     )
     assert generated_path == database_path
+
+
+def test_no_overwrite_publish_does_not_clobber_concurrently_created_file(
+    tmp_path,
+    monkeypatch,
+):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+    )
+    original_write_run = testdata_module._write_run
+
+    def write_run_after_competitor_arrives(*args, **kwargs):
+        points_written = original_write_run(*args, **kwargs)
+        database_path.write_bytes(b"concurrent owner")
+        return points_written
+
+    monkeypatch.setattr(testdata_module, "_write_run", write_run_after_competitor_arrives)
+
+    with pytest.raises(SpecificationError, match="already exists"):
+        generate_database_from_csv(csv_path, database_path)
+
+    assert database_path.read_bytes() == b"concurrent owner"
+    assert list(tmp_path.glob(".runs-*.db")) == []

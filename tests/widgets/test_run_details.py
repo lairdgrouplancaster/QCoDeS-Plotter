@@ -779,6 +779,81 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(preview.queue, {})
         self.assertEqual(preview.active, set())
 
+    def test_cancelled_preview_worker_ignores_deleted_signal_during_shutdown(self):
+        worker = preview_module.PreviewWorker(
+            1,
+            "previews.db",
+            "run-guid",
+            {},
+            100,
+        )
+
+        class DeletedFinishedSignal:
+            def emit(self, *args):
+                raise RuntimeError(
+                    "wrapped C/C++ object of type PreviewSignals has been deleted"
+                )
+
+        worker.signals = type(
+            "DeletedSignals",
+            (),
+            {"finished": DeletedFinishedSignal()},
+        )()
+
+        def interrupt_preview(*args, **kwargs):
+            worker.cancel()
+            raise sqlite3.OperationalError("interrupted")
+
+        with patch.object(
+                preview_module,
+                "generate_run_previews",
+                side_effect=interrupt_preview,
+                ):
+            worker.run()
+
+    def test_preview_worker_cancel_interrupts_its_active_sql_connection(self):
+        worker = preview_module.PreviewWorker(
+            1,
+            "previews.db",
+            "run-guid",
+            {},
+            100,
+        )
+
+        class Connection:
+            interrupts = 0
+
+            def interrupt(self):
+                self.interrupts += 1
+
+        connection = Connection()
+        worker._set_connection(connection)
+        worker.cancel()
+
+        self.assertTrue(worker.is_cancelled())
+        self.assertEqual(connection.interrupts, 1)
+
+    def test_cancelled_preview_worker_interrupts_a_new_sql_connection(self):
+        worker = preview_module.PreviewWorker(
+            1,
+            "previews.db",
+            "run-guid",
+            {},
+            100,
+        )
+        worker.cancel()
+
+        class Connection:
+            interrupts = 0
+
+            def interrupt(self):
+                self.interrupts += 1
+
+        connection = Connection()
+        worker._set_connection(connection)
+
+        self.assertEqual(connection.interrupts, 1)
+
     def test_deleting_preview_does_not_wait_for_python_worker(self):
         script = textwrap.dedent("""
             import threading

@@ -104,6 +104,8 @@ Common actions:
 * `File -> Refresh` checks the current database for new runs.
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
+* `File -> Close Database` closes its plot windows, cancels background database
+  work, and releases the current database.
 * `File -> Generate Test Data -> Create Example CSV...` writes a spreadsheet
   template, reveals it in Finder on macOS, or opens its containing folder in
   the platform file manager.
@@ -124,6 +126,8 @@ Common actions:
 * `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
 * `Help -> Copy Diagnostic Log Path` copies the log file location for support
   or troubleshooting.
+* `File -> Quit qPlot` closes the database and exits. Its shortcut is `Cmd+Q`
+  on macOS and `Ctrl+Q` on Windows and Linux.
 * The refresh interval controls how often qPlot checks for new runs. Set it to
   `0.0 s` to disable automatic checks.
 * `Auto-plot` opens newly detected runs automatically. When enabled while a run

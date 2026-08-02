@@ -7,6 +7,7 @@ import csv
 import math
 import os
 import re
+import sqlite3
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -103,6 +104,23 @@ class GenerationCancelled(RuntimeError):
     """Raised internally when test-database generation is cancelled."""
 
 
+def _result_column_name_is_usable(name):
+    """Return whether SQLite accepts ``name`` as QCoDeS will emit it."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        # Parameter names have already passed _PARAMETER_NAME_PATTERN, so this
+        # parser probe cannot introduce additional SQL tokens. Keeping the
+        # identifier unquoted deliberately mirrors QCoDeS result-table SQL.
+        connection.execute(
+            f"CREATE TABLE qplot_results (id INTEGER PRIMARY KEY, {name} numeric)"
+        )
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        connection.close()
+    return True
+
+
 @dataclass(frozen=True)
 class RunSpecification:
     """Validated settings for one generated QCoDeS run."""
@@ -180,6 +198,11 @@ def _parse_row(row, line_number):
         raise _row_error(
             line_number,
             "measured_name cannot be V_SD or V_G because those names are swept",
+        )
+    if not _result_column_name_is_usable(measured_name):
+        raise _row_error(
+            line_number,
+            "measured_name cannot be used as a QCoDeS result column",
         )
 
     measured_label = _required(row, "measured_label", line_number)
@@ -416,7 +439,13 @@ def _write_run(
                     (v_sd, v_sd_values[result_slice]),
                     (measured, measured_values[result_slice]),
                 )
-        return
+        points_written = int(datasaver.points_written)
+        if points_written != specification.point_count:
+            raise RuntimeError(
+                f"run_{run_number} persisted {points_written} of "
+                f"{specification.point_count} expected result rows"
+            )
+        return points_written
 
     assert specification.v_g_start is not None
     assert specification.v_g_stop is not None
@@ -446,6 +475,35 @@ def _write_run(
                     (v_g, v_g_values[result_slice]),
                     (measured, measured_values[result_slice]),
                 )
+    points_written = int(datasaver.points_written)
+    if points_written != specification.point_count:
+        raise RuntimeError(
+            f"run_{run_number} persisted {points_written} of "
+            f"{specification.point_count} expected result rows"
+        )
+    return points_written
+
+
+def _publish_database(temporary_path, database_path, overwrite):
+    """Publish a generated database atomically with optional no-clobber."""
+    if overwrite:
+        os.replace(temporary_path, database_path)
+        return
+
+    try:
+        # Both paths are in the same directory. Creating the destination hard
+        # link is atomic and fails if another process won the destination race.
+        os.link(temporary_path, database_path)
+    except FileExistsError as error:
+        raise SpecificationError(
+            f"{database_path} already exists; use --overwrite to replace it"
+        ) from error
+    except OSError as error:
+        raise OSError(
+            "Could not atomically publish the generated database without "
+            "overwriting an existing file"
+        ) from error
+    temporary_path.unlink()
 
 
 def generate_database(
@@ -502,13 +560,18 @@ def generate_database(
                     f"{specification.dimensions}D, {specification.point_count} points)."
                 )
                 try:
-                    _write_run(
+                    points_written = _write_run(
                         experiment,
                         run_number,
                         specification,
                         random_generator,
                         cancelled_callback=cancelled_callback,
                     )
+                    if points_written != specification.point_count:
+                        raise RuntimeError(
+                            f"run_{run_number} persisted {points_written} of "
+                            f"{specification.point_count} expected result rows"
+                        )
                 except GenerationCancelled:
                     _timestamped_message(
                         f"Run stopped (cancelled): run_{run_number} "
@@ -529,7 +592,7 @@ def generate_database(
             _raise_if_cancelled(cancelled_callback)
         finally:
             connection.close()
-        os.replace(temporary_path, database_path)
+        _publish_database(temporary_path, database_path, overwrite)
     except GenerationCancelled:
         temporary_path.unlink(missing_ok=True)
         _timestamped_message(
