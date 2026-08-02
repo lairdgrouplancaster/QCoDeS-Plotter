@@ -200,6 +200,12 @@ COMMANDS: dict[str, CommandSpec] = {
         "Create an example CSV specification for generated test databases",
         object_name="createTestDatabaseCsvAction",
     ),
+    "testdata.export_collection": CommandSpec(
+        "testdata.export_collection",
+        "Export CSV &Collection...",
+        "Export the cumulative collection of test-database CSV specifications",
+        object_name="exportTestDatabaseCsvCollectionAction",
+    ),
     "testdata.generate_database": CommandSpec(
         "testdata.generate_database",
         "Generate &Database from CSV...",

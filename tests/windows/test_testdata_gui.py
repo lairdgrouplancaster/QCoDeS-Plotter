@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.testdata import CSV_COLUMNS
+from qplot.testdata import CSV_COLUMNS, INSTRUCTION_FILE_NAMES
 from qplot.windows._database_actions import (
     DatabaseActionsMixin,
     reveal_file_in_file_manager,
@@ -66,6 +66,32 @@ def test_create_example_csv_opens_its_folder(tmp_path):
         assert csv_path.is_file()
         reveal_file.assert_called_once_with(str(csv_path))
         assert "Created example CSV" in harness.status_messages[-1][0]
+        assert harness.errors == []
+    finally:
+        harness.deleteLater()
+
+
+def test_export_csv_collection_opens_its_folder(tmp_path):
+    harness = GuiHarness(tmp_path)
+
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getExistingDirectory",
+                return_value=str(tmp_path),
+            ),
+            patch(
+                "qplot.windows._database_actions.reveal_file_in_file_manager",
+                return_value=True,
+            ) as reveal_file,
+        ):
+            assert harness.export_test_database_csv_collection()
+
+        output_paths = tuple(tmp_path / name for name in INSTRUCTION_FILE_NAMES)
+        assert all(path.is_file() for path in output_paths)
+        reveal_file.assert_called_once_with(output_paths[0])
+        assert "Exported 10 instruction CSV files" in harness.status_messages[-1][0]
         assert harness.errors == []
     finally:
         harness.deleteLater()

@@ -7,7 +7,9 @@ from qcodes.dataset import initialise_or_create_database_at, load_by_id
 
 from qplot.testdata import (
     CSV_COLUMNS,
+    INSTRUCTION_FILE_NAMES,
     SpecificationError,
+    copy_instruction_collection,
     generate_database_from_csv,
     main,
     read_specifications,
@@ -47,6 +49,71 @@ def test_example_cli_reports_written_path(tmp_path, capsys):
 
     assert csv_path.is_file()
     assert f"Wrote example CSV: {csv_path}" in capsys.readouterr().out
+
+
+def test_instruction_collection_is_cumulative_and_spans_10mb_to_30gb(tmp_path):
+    output_paths = copy_instruction_collection(tmp_path)
+
+    assert tuple(path.name for path in output_paths) == INSTRUCTION_FILE_NAMES
+    specification_sets = [read_specifications(path) for path in output_paths]
+    assert [len(specifications) for specifications in specification_sets] == list(
+        range(7, 35, 3)
+    )
+
+    for predecessor, successor in zip(
+        specification_sets[:-1],
+        specification_sets[1:],
+        strict=True,
+    ):
+        assert successor[: len(predecessor)] == predecessor
+
+    largest_runs = [
+        max(specifications, key=lambda specification: specification.point_count)
+        for specifications in specification_sets
+    ]
+    assert (largest_runs[0].v_sd_points, largest_runs[0].v_g_points) == (201, 301)
+    assert (largest_runs[-1].v_sd_points, largest_runs[-1].v_g_points) == (
+        11001,
+        17001,
+    )
+
+    # Calibrated on a generated QCoDeS database using the first collection file.
+    estimated_bytes_per_point = 35.132
+    estimated_sizes = [
+        sum(specification.point_count for specification in specifications)
+        * estimated_bytes_per_point
+        for specifications in specification_sets
+    ]
+    assert 8_000_000 <= estimated_sizes[0] <= 12_000_000
+    assert 27_000_000_000 <= estimated_sizes[-1] <= 33_000_000_000
+    assert all(
+        successor > predecessor
+        for predecessor, successor in zip(
+            estimated_sizes[:-1],
+            estimated_sizes[1:],
+            strict=True,
+        )
+    )
+
+
+def test_instruction_collection_cli_exports_all_files(tmp_path, capsys):
+    output_directory = tmp_path / "collection"
+
+    assert main(["--write-collection", str(output_directory)]) == 0
+
+    assert tuple(path.name for path in sorted(output_directory.iterdir())) == (
+        INSTRUCTION_FILE_NAMES
+    )
+    assert "Wrote 10 instruction CSV files" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as error:
+        main(["--write-collection", str(output_directory)])
+    assert error.value.code == 2
+
+    assert (
+        main(["--write-collection", str(output_directory), "--overwrite"])
+        == 0
+    )
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,7 @@ from qplot.datahandling.readonly import set_qcodes_database_location
 from qplot.diagnostics import log_event, log_exception
 from qplot.testdata import (
     GenerationCancelled,
+    copy_instruction_collection,
     generate_database,
     read_specifications,
     write_example_csv,
@@ -299,6 +300,47 @@ class DatabaseActionsMixin:
             return True
 
         self.show_status(f"Created example CSV and opened its folder: {csv_path}", 5000)
+        return True
+
+
+    @QtCore.pyqtSlot()
+    def export_test_database_csv_collection(self):
+        """Export the installed cumulative CSV collection and open its folder."""
+        directory = qtw.QFileDialog.getExistingDirectory(
+            self,
+            "Export Test Database CSV Collection",
+            self.database_open_directory(),
+        )
+        if not directory:
+            self.show_status("CSV collection export cancelled.", 3000)
+            return False
+
+        directory = os.path.abspath(directory)
+        try:
+            output_paths = copy_instruction_collection(directory)
+        except Exception as err:
+            log_exception("Test-data CSV collection export failed", err, __name__)
+            self.show_error(
+                "CSV Collection Export Failed",
+                "Could not export the test-database CSV collection.",
+                str(err),
+            )
+            return False
+
+        opened = reveal_file_in_file_manager(output_paths[0])
+        if not opened:
+            self.show_error(
+                "Open CSV Folder Failed",
+                "The CSV collection was exported, but its folder could not be opened.",
+                directory,
+            )
+            return True
+
+        self.show_status(
+            f"Exported {len(output_paths)} instruction CSV files and opened their "
+            f"folder: {directory}",
+            5000,
+        )
         return True
 
 

@@ -247,6 +247,14 @@ class MainWindow(
         create_csv_action = create_action("testdata.create_csv", self)
         create_csv_action.triggered.connect(self.create_test_database_csv)
         test_data_menu.addAction(create_csv_action)
+        export_collection_action = create_action(
+            "testdata.export_collection",
+            self,
+        )
+        export_collection_action.triggered.connect(
+            self.export_test_database_csv_collection
+        )
+        test_data_menu.addAction(export_collection_action)
         self.generateTestDatabaseAction = create_action(
             "testdata.generate_database",
             self,

@@ -10,6 +10,7 @@ import re
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +69,19 @@ EXAMPLE_ROWS = (
         "3",
         "101",
     ),
+)
+
+INSTRUCTION_FILE_NAMES = (
+    "qplot_test_db_01_10mb.csv",
+    "qplot_test_db_02_25mb.csv",
+    "qplot_test_db_03_50mb.csv",
+    "qplot_test_db_04_100mb.csv",
+    "qplot_test_db_05_250mb.csv",
+    "qplot_test_db_06_500mb.csv",
+    "qplot_test_db_07_1gb.csv",
+    "qplot_test_db_08_5gb.csv",
+    "qplot_test_db_09_10gb.csv",
+    "qplot_test_db_10_30gb.csv",
 )
 
 _PARAMETER_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -267,6 +281,44 @@ def write_example_csv(csv_path, overwrite=False):
     return csv_path
 
 
+def copy_instruction_collection(directory, overwrite=False):
+    """Copy the installed cumulative instruction CSV collection to a directory."""
+    directory = Path(directory)
+    if directory.exists() and not directory.is_dir():
+        raise SpecificationError(f"Collection destination is not a directory: {directory}")
+
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise SpecificationError(f"Could not create {directory}: {error}") from error
+
+    output_paths = tuple(directory / name for name in INSTRUCTION_FILE_NAMES)
+    if not overwrite:
+        existing = [path.name for path in output_paths if path.exists()]
+        if existing:
+            raise SpecificationError(
+                f"{directory} already contains collection files; use --overwrite "
+                f"to replace them: {', '.join(existing)}"
+            )
+
+    resource_directory = resources.files("qplot").joinpath("resources", "testdata")
+    try:
+        contents = tuple(
+            resource_directory.joinpath(name).read_bytes()
+            for name in INSTRUCTION_FILE_NAMES
+        )
+        for output_path, content in zip(output_paths, contents, strict=True):
+            mode = "wb" if overwrite else "xb"
+            with output_path.open(mode) as handle:
+                handle.write(content)
+    except OSError as error:
+        raise SpecificationError(
+            f"Could not copy the instruction CSV collection to {directory}: {error}"
+        ) from error
+
+    return output_paths
+
+
 def _raise_if_cancelled(cancelled_callback):
     if cancelled_callback is not None and cancelled_callback():
         raise GenerationCancelled("Test-database generation was cancelled")
@@ -434,10 +486,16 @@ def _argument_parser():
     )
     parser.add_argument("specification", nargs="?", help="input CSV specification")
     parser.add_argument("database", nargs="?", help="output QCoDeS .db file")
-    parser.add_argument(
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
         "--write-example",
         metavar="CSV",
         help="write a ready-to-use example CSV instead of generating a database",
+    )
+    output_group.add_argument(
+        "--write-collection",
+        metavar="DIRECTORY",
+        help="copy the installed cumulative instruction CSV collection",
     )
     parser.add_argument(
         "--overwrite",
@@ -460,9 +518,23 @@ def main(argv: Sequence[str] | None = None):
             print(f"Wrote example CSV: {output_path}")
             return 0
 
+        if args.write_collection:
+            if args.specification or args.database:
+                parser.error("positional arguments cannot be used with --write-collection")
+            output_paths = copy_instruction_collection(
+                args.write_collection,
+                overwrite=args.overwrite,
+            )
+            print(
+                f"Wrote {len(output_paths)} instruction CSV files to "
+                f"{Path(args.write_collection)}"
+            )
+            return 0
+
         if not args.specification or not args.database:
             parser.error(
-                "specification and database are required unless --write-example is used"
+                "specification and database are required unless --write-example or "
+                "--write-collection is used"
             )
         output_path, specifications = generate_database_from_csv(
             args.specification,

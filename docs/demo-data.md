@@ -14,11 +14,41 @@ Edit the CSV in a spreadsheet application, then use
 and its output `.db` file. Generation runs in the background so qPlot remains
 responsive.
 
+For performance and scaling tests, use
+`File -> Generate Test Data -> Export CSV Collection...`. The ten installed
+instruction files form a cumulative series: every file contains all the runs
+from its predecessor, followed by three larger 2D runs. The nominal database
+sizes and largest grids are:
+
+| File | Approximate database size | Largest 2D run |
+| --- | ---: | ---: |
+| `qplot_test_db_01_10mb.csv` | 10 MB | 201 x 301 |
+| `qplot_test_db_02_25mb.csv` | 25 MB | 301 x 451 |
+| `qplot_test_db_03_50mb.csv` | 50 MB | 401 x 601 |
+| `qplot_test_db_04_100mb.csv` | 100 MB | 551 x 851 |
+| `qplot_test_db_05_250mb.csv` | 250 MB | 1001 x 1501 |
+| `qplot_test_db_06_500mb.csv` | 500 MB | 1251 x 1901 |
+| `qplot_test_db_07_1gb.csv` | 1 GB | 1801 x 2701 |
+| `qplot_test_db_08_5gb.csv` | 5 GB | 5001 x 7501 |
+| `qplot_test_db_09_10gb.csv` | 10 GB | 5601 x 8401 |
+| `qplot_test_db_10_30gb.csv` | 30 GB | 11001 x 17001 |
+
+Sizes are estimates calibrated against QCoDeS SQLite output and will vary with
+QCoDeS and SQLite versions. Large databases can take a long time to generate.
+Ensure the destination has comfortably more free space than the nominal size;
+overwriting an existing database temporarily requires space for both files.
+
 The installed `qplot-generate-db` command provides the same workflow from a
 terminal. Start by writing an example CSV:
 
 ```console
 qplot-generate-db --write-example test-runs.csv
+```
+
+Export the complete installed collection with:
+
+```console
+qplot-generate-db --write-collection test-db-csv-series
 ```
 
 Edit the CSV in a spreadsheet application, then generate the database:
@@ -31,7 +61,8 @@ Every nonblank CSV row creates one run, named `run_1`, `run_2`, and so on. A 1D
 row sweeps `V_SD`; a 2D row sweeps both `V_SD` and `V_G`. Each run receives a
 random sinusoid amplitude and phase. The measured parameter name, label, unit,
 sweep ranges, and point counts are set in the CSV. Existing CSV or database
-files are not replaced unless `--overwrite` is supplied.
+files are not replaced unless `--overwrite` is supplied. Collection export
+also refuses to replace existing collection files without `--overwrite`.
 
 Run `qplot-generate-db --help` for the complete command reference.
 

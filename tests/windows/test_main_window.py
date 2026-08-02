@@ -970,6 +970,9 @@ class OptionsMenuTestCase(unittest.TestCase):
         def create_test_database_csv(self):
             pass
 
+        def export_test_database_csv_collection(self):
+            pass
+
         def generate_test_database_from_csv(self):
             pass
 
@@ -1039,6 +1042,7 @@ class OptionsMenuTestCase(unittest.TestCase):
                 actions,
                 {
                     "createTestDatabaseCsvAction": "Create Example CSV...",
+                    "exportTestDatabaseCsvCollectionAction": "Export CSV Collection...",
                     "generateTestDatabaseAction": "Generate Database from CSV...",
                 },
                 )
