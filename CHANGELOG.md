@@ -14,6 +14,8 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ### Changed
 
+- Timestamp test-database generation output and report start, stop, elapsed
+  time, and completion state for the database and each run.
 - Write generated QCoDeS results in bounded array chunks instead of one point
   at a time, substantially reducing large test-database generation time while
   retaining cancellation between chunks.

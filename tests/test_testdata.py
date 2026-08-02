@@ -1,4 +1,5 @@
 import csv
+import re
 
 import numpy as np
 import pytest
@@ -249,7 +250,11 @@ def test_generate_database_creates_named_sinusoidal_runs(tmp_path):
         qc.config["core"]["db_location"] = previous_database_path
 
 
-def test_generate_database_writes_bounded_result_chunks(tmp_path, monkeypatch):
+def test_generate_database_writes_bounded_result_chunks(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
     csv_path = tmp_path / "runs.csv"
     database_path = tmp_path / "runs.db"
     write_specification(
@@ -285,11 +290,31 @@ def test_generate_database_writes_bounded_result_chunks(tmp_path, monkeypatch):
     generate_database_from_csv(csv_path, database_path)
 
     assert result_sizes == [3, 2, 3, 1, 3, 1]
+    output_lines = [line.strip() for line in capsys.readouterr().out.splitlines()]
+    assert "Starting experimental run with id: 1." in output_lines
+    assert "Starting experimental run with id: 2." in output_lines
+    timestamped_lines = [line for line in output_lines if line.startswith("[")]
+    assert len(timestamped_lines) == 6
+    assert all(
+        re.match(
+            r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\] ",
+            line,
+        )
+        for line in timestamped_lines
+    )
+    messages = [line.split("] ", maxsplit=1)[1] for line in timestamped_lines]
+    assert messages[0].startswith("Test database generation started:")
+    assert messages[1].startswith("Run started: run_1")
+    assert messages[2].startswith("Run stopped (completed): run_1")
+    assert messages[3].startswith("Run started: run_2")
+    assert messages[4].startswith("Run stopped (completed): run_2")
+    assert messages[5].startswith("Test database generation stopped (completed)")
 
 
 def test_cancellation_during_batched_run_removes_temporary_database(
     tmp_path,
     monkeypatch,
+    capsys,
 ):
     csv_path = tmp_path / "runs.csv"
     database_path = tmp_path / "runs.db"
@@ -315,6 +340,37 @@ def test_cancellation_during_batched_run_removes_temporary_database(
 
     assert not database_path.exists()
     assert list(tmp_path.glob(".runs-*.db")) == []
+    output = capsys.readouterr().out
+    assert "Run stopped (cancelled): run_1" in output
+    assert "Test database generation stopped (cancelled)" in output
+
+
+def test_generation_failure_reports_timestamped_stop_and_removes_temporary_database(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_specification(
+        csv_path,
+        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+    )
+
+    def fail_run(*args, **kwargs):
+        raise RuntimeError("deliberate failure")
+
+    monkeypatch.setattr("qplot.testdata._write_run", fail_run)
+
+    with pytest.raises(RuntimeError, match="deliberate failure"):
+        generate_database_from_csv(csv_path, database_path)
+
+    assert not database_path.exists()
+    assert list(tmp_path.glob(".runs-*.db")) == []
+    output = capsys.readouterr().out
+    assert "Run stopped (failed): run_1" in output
+    assert "RuntimeError: deliberate failure" in output
+    assert "Test database generation stopped (failed)" in output
 
 
 def test_generate_database_requires_explicit_overwrite(tmp_path):

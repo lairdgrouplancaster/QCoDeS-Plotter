@@ -10,8 +10,10 @@ import re
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from importlib import resources
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 from qcodes.dataset import Measurement, new_experiment
@@ -330,6 +332,11 @@ def _result_chunks(point_count):
         yield slice(start, min(start + _RESULT_CHUNK_POINTS, point_count))
 
 
+def _timestamped_message(message):
+    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    print(f"[{timestamp}] {message}", flush=True)
+
+
 def _write_run(
         experiment,
         run_number,
@@ -435,6 +442,13 @@ def generate_database(
     temporary_path.unlink()
 
     random_generator = rng if rng is not None else np.random.default_rng()
+    total_runs = len(specifications)
+    total_points = sum(specification.point_count for specification in specifications)
+    generation_started = perf_counter()
+    _timestamped_message(
+        f"Test database generation started: {database_path} "
+        f"({total_runs} runs, {total_points} points)."
+    )
     try:
         connection = connect(temporary_path)
         try:
@@ -444,21 +458,60 @@ def generate_database(
                 conn=connection,
             )
             for run_number, specification in enumerate(specifications, start=1):
-                _write_run(
-                    experiment,
-                    run_number,
-                    specification,
-                    random_generator,
-                    cancelled_callback=cancelled_callback,
+                run_started = perf_counter()
+                _timestamped_message(
+                    f"Run started: run_{run_number} ({run_number}/{total_runs}, "
+                    f"{specification.dimensions}D, {specification.point_count} points)."
+                )
+                try:
+                    _write_run(
+                        experiment,
+                        run_number,
+                        specification,
+                        random_generator,
+                        cancelled_callback=cancelled_callback,
+                    )
+                except GenerationCancelled:
+                    _timestamped_message(
+                        f"Run stopped (cancelled): run_{run_number} "
+                        f"after {perf_counter() - run_started:.2f} s."
+                    )
+                    raise
+                except Exception as error:
+                    _timestamped_message(
+                        f"Run stopped (failed): run_{run_number} after "
+                        f"{perf_counter() - run_started:.2f} s "
+                        f"({type(error).__name__}: {error})."
+                    )
+                    raise
+                _timestamped_message(
+                    f"Run stopped (completed): run_{run_number} in "
+                    f"{perf_counter() - run_started:.2f} s."
                 )
             _raise_if_cancelled(cancelled_callback)
         finally:
             connection.close()
         os.replace(temporary_path, database_path)
-    except Exception:
+    except GenerationCancelled:
         temporary_path.unlink(missing_ok=True)
+        _timestamped_message(
+            "Test database generation stopped (cancelled) after "
+            f"{perf_counter() - generation_started:.2f} s: {database_path}."
+        )
+        raise
+    except Exception as error:
+        temporary_path.unlink(missing_ok=True)
+        _timestamped_message(
+            "Test database generation stopped (failed) after "
+            f"{perf_counter() - generation_started:.2f} s: {database_path} "
+            f"({type(error).__name__}: {error})."
+        )
         raise
 
+    _timestamped_message(
+        "Test database generation stopped (completed) in "
+        f"{perf_counter() - generation_started:.2f} s: {database_path}."
+    )
     return database_path
 
 
@@ -547,7 +600,7 @@ def main(argv: Sequence[str] | None = None):
         parser.exit(2, f"qplot-generate-db: error: {error}\n")
 
     total_points = sum(specification.point_count for specification in specifications)
-    print(
+    _timestamped_message(
         f"Generated {output_path} with {len(specifications)} runs "
         f"and {total_points} points."
     )

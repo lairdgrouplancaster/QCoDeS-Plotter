@@ -57,6 +57,11 @@ Edit the CSV in a spreadsheet application, then generate the database:
 qplot-generate-db test-runs.csv test-runs.db
 ```
 
+During generation, qPlot prints timestamped start and stop messages for the
+database and each run, including elapsed times and whether generation completed,
+was cancelled, or failed. These appear alongside QCoDeS's existing
+`Starting experimental run with id:` messages.
+
 Every nonblank CSV row creates one run, named `run_1`, `run_2`, and so on. A 1D
 row sweeps `V_SD`; a 2D row sweeps both `V_SD` and `V_G`. Each run receives a
 random sinusoid amplitude and phase. The measured parameter name, label, unit,
