@@ -1628,6 +1628,42 @@ class RunListParentLookupTestCase(unittest.TestCase):
             manual.deleteLater()
             window.vb.deleteLater()
 
+    def test_manual_axis_scale_notifies_programmatic_range_change(self):
+        class ViewBox:
+            def __init__(self):
+                self.x_range = None
+
+            def viewRange(self):
+                return [[0.0, 1.0], [0.0, 1.0]]
+
+            def setXRange(self, low, high, padding=0):
+                self.x_range = (low, high, padding)
+
+        window = plotWidget.__new__(plotWidget)
+        minimum = qtw.QLineEdit("2")
+        maximum = qtw.QLineEdit("4")
+        manual = qtw.QRadioButton()
+        window.vb = ViewBox()
+        window._axis_scale_controls = {
+            "x": type(
+                "AxisControls",
+                (),
+                {"minText": minimum, "maxText": maximum, "manualRadio": manual},
+                )()
+            }
+        range_changes = []
+        window._view_range_changed_programmatically = lambda: range_changes.append(True)
+
+        try:
+            plotWidget._axis_scale_range_text_changed(window, "x")
+
+            self.assertEqual(window.vb.x_range, (2.0, 4.0, 0))
+            self.assertEqual(range_changes, [True])
+        finally:
+            minimum.deleteLater()
+            maximum.deleteLater()
+            manual.deleteLater()
+
     def test_colorbar_scale_action_opens_dialog_without_nested_menu(self):
         class Bar:
             def __init__(self):

@@ -99,6 +99,10 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         self.plot.autoBtn.clicked.connect(
             lambda _button: self._zoom_large_heatmap_to_all()
             )
+
+
+    def _view_range_changed_programmatically(self) -> None:
+        self._schedule_visible_heatmap_reload()
       
 
     def initRefresh(self, refresh: Any) -> None:
@@ -189,6 +193,11 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             plot_worker.running = False
             return
 
+        full_sql_refresh = bool(
+            getattr(plot_worker, "loaded_from_sql_heatmap", False)
+            and getattr(plot_worker, "heatmap_axis_ranges", None) is None
+            )
+
         try:
             self._update_large_heatmap_state(plot_worker)
             if not self._has_plottable_heatmap_data():
@@ -246,11 +255,20 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         finally:
             # Allow new workers after empty live loads or display errors.
             plot_worker.running = False
+            if full_sql_refresh:
+                self._schedule_visible_heatmap_reload()
 
 
     def _update_large_heatmap_state(self, worker: Any) -> None:
         self._update_heatmap_downsample_state(worker)
         if not getattr(worker, "loaded_from_sql_heatmap", False):
+            self._large_heatmap_sql_mode = False
+            self._heatmap_full_axis_ranges = None
+            self._heatmap_full_view_ranges = None
+            self._heatmap_last_view_ranges = None
+            timer = self.__dict__.get("_heatmap_view_reload_timer")
+            if timer is not None:
+                timer.stop()
             return
 
         self._large_heatmap_sql_mode = True
@@ -264,8 +282,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 )
             self._heatmap_full_view_ranges = self._axis_view_ranges_from_data()
 
-        if worker_ranges is not None:
-            self._heatmap_last_view_ranges = self._normalise_axis_ranges(worker_ranges)
+        self._heatmap_last_view_ranges = self._normalise_axis_ranges(worker_ranges)
 
 
     def _init_heatmap_downsample_warning_button(self) -> None:
@@ -928,14 +945,12 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 )
             return False
 
-        self._heatmap_last_view_ranges = None
-        self.load_data(
+        return self.load_data(
             force_sql_heatmap=True,
             heatmap_axis_ranges=None,
             heatmap_full_axis_ranges=full_axis_ranges,
             status_message=f"Loading full heatmap for {self.param.name}...",
             )
-        return True
 
 
     def _schedule_visible_heatmap_reload(self, *_args: Any) -> None:
@@ -963,7 +978,6 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         if self._axis_ranges_match(ranges, self._heatmap_last_view_ranges):
             return
 
-        self._heatmap_last_view_ranges = ranges
         self.load_data(
             force_sql_heatmap=True,
             heatmap_axis_ranges=ranges,

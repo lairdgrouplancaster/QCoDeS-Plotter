@@ -157,6 +157,10 @@ class plotWidget(
     make_ds = QtCore.pyqtSignal([object])
     previewTraceDropRequested = QtCore.pyqtSignal(object, object, str)
     trace_updated = QtCore.pyqtSignal()
+
+    def _view_range_changed_programmatically(self) -> None:
+        """Allow plot types to react to qPlot-driven range changes."""
+
     
     _label_width = 95 #About the size of 3 s.f. scientific
     def __init__(self, 

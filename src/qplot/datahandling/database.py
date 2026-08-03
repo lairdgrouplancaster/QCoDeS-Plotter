@@ -7,6 +7,7 @@ load workers, and diagnostic report generation outside the GUI class.
 
 import os
 import queue
+import stat
 import subprocess
 import sys
 import threading
@@ -36,6 +37,11 @@ CLOUD_PLACEHOLDER_XATTR_MARKERS = (
     "com.apple.fileprovider",
     "com.apple.fileutil.PlaceholderData",
     "com.microsoft.OneDrive",
+    )
+WINDOWS_CLOUD_PLACEHOLDER_ATTRIBUTES = (
+    getattr(stat, "FILE_ATTRIBUTE_OFFLINE", 0x00001000)
+    | getattr(stat, "FILE_ATTRIBUTE_RECALL_ON_OPEN", 0x00040000)
+    | getattr(stat, "FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS", 0x00400000)
     )
 
 
@@ -155,7 +161,15 @@ def database_is_likely_cloud_placeholder(database_path):
         return False
 
     logical_size = getattr(info, "st_size", 0)
-    allocated_size = getattr(info, "st_blocks", 0) * 512
+    file_attributes = getattr(info, "st_file_attributes", None)
+    if file_attributes is not None:
+        return bool(file_attributes & WINDOWS_CLOUD_PLACEHOLDER_ATTRIBUTES)
+
+    blocks = getattr(info, "st_blocks", None)
+    if blocks is None:
+        return False
+
+    allocated_size = blocks * 512
     return logical_size > 0 and allocated_size == 0
 
 

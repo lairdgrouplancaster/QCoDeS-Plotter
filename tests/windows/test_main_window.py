@@ -3207,6 +3207,73 @@ class AutoPlotToggleTestCase(unittest.TestCase):
 
 
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
+    @patch.object(database_module, "database_cloud_storage_label", return_value="OneDrive")
+    @patch.object(database_module.os, "stat")
+    def test_local_windows_cloud_file_is_not_treated_as_placeholder(
+            self,
+            stat_file,
+            _cloud_label,
+            ):
+        stat_file.return_value = type(
+            "FileInfo",
+            (),
+            {"st_size": 4096, "st_file_attributes": 0x20},
+            )()
+
+        self.assertFalse(
+            database_module.database_is_likely_cloud_placeholder("OneDrive/local.db")
+            )
+
+    @patch.object(database_module, "database_cloud_storage_label", return_value="OneDrive")
+    @patch.object(database_module.os, "stat")
+    def test_offline_windows_cloud_file_is_treated_as_placeholder(
+            self,
+            stat_file,
+            _cloud_label,
+            ):
+        stat_file.return_value = type(
+            "FileInfo",
+            (),
+            {
+                "st_size": 4096,
+                "st_file_attributes": database_module.WINDOWS_CLOUD_PLACEHOLDER_ATTRIBUTES,
+                },
+            )()
+
+        self.assertTrue(
+            database_module.database_is_likely_cloud_placeholder("OneDrive/offline.db")
+            )
+
+    @patch.object(database_module, "database_cloud_storage_label", return_value="OneDrive")
+    @patch.object(database_module.os, "stat")
+    def test_cloud_file_without_allocation_metadata_is_not_assumed_placeholder(
+            self,
+            stat_file,
+            _cloud_label,
+            ):
+        stat_file.return_value = type("FileInfo", (), {"st_size": 4096})()
+
+        self.assertFalse(
+            database_module.database_is_likely_cloud_placeholder("OneDrive/unknown.db")
+            )
+
+    @patch.object(database_module, "database_cloud_storage_label", return_value="OneDrive")
+    @patch.object(database_module.os, "stat")
+    def test_sparse_cloud_file_uses_posix_allocation_metadata(
+            self,
+            stat_file,
+            _cloud_label,
+            ):
+        stat_file.return_value = type(
+            "FileInfo",
+            (),
+            {"st_size": 4096, "st_blocks": 0},
+            )()
+
+        self.assertTrue(
+            database_module.database_is_likely_cloud_placeholder("OneDrive/sparse.db")
+            )
+
     def test_prefetch_subprocess_retries_transient_timeout_errors(self):
         class Handle:
             def __init__(self):

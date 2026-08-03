@@ -371,6 +371,90 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker.dataGrid.size,
                 )
 
+    def test_large_heatmap_sql_aggregation_preserves_nonuniform_exact_axes(self):
+        rows = [
+            (x, 0.0, z)
+            for _repeat in range(3)
+            for x, z in ((0.0, 0.0), (1.0, 10.0), (100.0, 100.0))
+            ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = f"{tmpdir}/nonuniform.db"
+            self._create_heatmap_table_from_rows(database_path, rows)
+            worker = self._sql_heatmap_worker(database_path)
+            worker.cache.rundescriber.shapes = None
+
+            old_database_path = worker_module.cache_database_path
+            old_set_complete = worker_module.set_parameter_complete
+            old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
+            old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
+            try:
+                worker_module.cache_database_path = lambda _cache: database_path
+                worker_module.set_parameter_complete = (
+                    lambda param, complete=False: setattr(param, "_complete", complete)
+                    )
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 2
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 3
+
+                loader._load_large_heatmap_from_sql(worker)
+                loader._canonicalize_heatmap(worker)
+            finally:
+                worker_module.cache_database_path = old_database_path
+                worker_module.set_parameter_complete = old_set_complete
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
+
+        np.testing.assert_array_equal(worker.axis_data["x"], [0.0, 1.0, 100.0])
+        np.testing.assert_array_equal(worker.axis_data["y"], [0.0])
+        np.testing.assert_array_equal(worker.dataGrid, [[0.0, 10.0, 100.0]])
+        self.assertTrue(worker.heatmap_downsample_info["source_aggregated"])
+        self.assertFalse(worker.heatmap_downsample_info["grid_binned"])
+
+    def test_large_heatmap_sql_aggregation_can_mix_exact_and_binned_axes(self):
+        rows = [
+            (x, float(y), x + y)
+            for _repeat in range(2)
+            for y in range(4)
+            for x in (0.0, 100.0)
+            ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = f"{tmpdir}/mixed-axes.db"
+            self._create_heatmap_table_from_rows(database_path, rows)
+            worker = self._sql_heatmap_worker(database_path)
+            worker.cache.rundescriber.shapes = None
+
+            old_database_path = worker_module.cache_database_path
+            old_set_complete = worker_module.set_parameter_complete
+            old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
+            old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
+            old_grid_side = worker_module.MAX_SQL_HEATMAP_GRID_SIDE
+            try:
+                worker_module.cache_database_path = lambda _cache: database_path
+                worker_module.set_parameter_complete = (
+                    lambda param, complete=False: setattr(param, "_complete", complete)
+                    )
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 2
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 4
+                worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 2
+
+                loader._load_large_heatmap_from_sql(worker)
+                loader._canonicalize_heatmap(worker)
+            finally:
+                worker_module.cache_database_path = old_database_path
+                worker_module.set_parameter_complete = old_set_complete
+                worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
+                worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
+                worker_module.MAX_SQL_HEATMAP_GRID_SIDE = old_grid_side
+
+        np.testing.assert_array_equal(worker.axis_data["x"], [0.0, 100.0])
+        np.testing.assert_array_equal(worker.axis_data["y"], [0.5, 2.5])
+        np.testing.assert_array_equal(
+            worker.dataGrid,
+            [[0.5, 100.5], [2.5, 102.5]],
+            )
+        self.assertTrue(worker.heatmap_downsample_info["grid_binned"])
+
     def test_large_heatmap_sql_output_is_independent_of_insertion_order(self):
         rows = [
             (float(x), float(y), float(x + y * 100))
