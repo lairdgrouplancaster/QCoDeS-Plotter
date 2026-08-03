@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         vb: Any
 
         def formatNum(self, value: float) -> str: ...
+        def _view_range_changed_programmatically(self) -> None: ...
 else:
     class _PlotMarqueeBase:
         pass
@@ -266,6 +267,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             self.vb.setXRange(rect.left(), rect.right(), padding=0)
         if "y" in axes:
             self.vb.setYRange(rect.top(), rect.bottom(), padding=0)
+        self._view_range_changed_programmatically()
         return True
 
     def _marquee_stats_text(self) -> str | None:

@@ -672,66 +672,91 @@ class loader(QtCore.QRunnable):
             return self._arrays_from_values([], [], [])
 
         x_bins, y_bins = self._bounded_grid_shape(x_count, y_count)
-        x_centres, x_lower_edge, x_scale = self._spatial_axis_bins(
-            float(x_min),
-            float(x_max),
-            x_count,
-            x_bins,
-            )
-        y_centres, y_lower_edge, y_scale = self._spatial_axis_bins(
-            float(y_min),
-            float(y_max),
-            y_count,
-            y_bins,
-            )
-        if x_centres.size == 0 or y_centres.size == 0:
-            self.sampled_heatmap_source = False
-            self.aggregated_heatmap_source = False
-            return self._arrays_from_values([], [], [])
-
         table = _sqlite_identifier(self.table_name)
         x_column = _sqlite_identifier(self.axes_dict["x"])
         y_column = _sqlite_identifier(self.axes_dict["y"])
         z_column = _sqlite_identifier(self.param.name)
-        x_bin_sql = f"MIN(CAST(({x_column} - ?) * ? AS INTEGER), ?)"
-        y_bin_sql = f"MIN(CAST(({y_column} - ?) * ? AS INTEGER), ?)"
+
+        x_exact = x_bins >= x_count
+        y_exact = y_bins >= y_count
+        query_parameters: list[float | int] = []
+        if x_exact:
+            x_centres = np.array([], dtype=float)
+            x_group_sql = x_column
+        else:
+            x_centres, x_lower_edge, x_scale = self._spatial_axis_bins(
+                float(x_min),
+                float(x_max),
+                x_count,
+                x_bins,
+                )
+            x_group_sql = f"MIN(CAST(({x_column} - ?) * ? AS INTEGER), ?)"
+            query_parameters.extend((x_lower_edge, x_scale, x_bins - 1))
+
+        if y_exact:
+            y_centres = np.array([], dtype=float)
+            y_group_sql = y_column
+        else:
+            y_centres, y_lower_edge, y_scale = self._spatial_axis_bins(
+                float(y_min),
+                float(y_max),
+                y_count,
+                y_bins,
+                )
+            y_group_sql = f"MIN(CAST(({y_column} - ?) * ? AS INTEGER), ?)"
+            query_parameters.extend((y_lower_edge, y_scale, y_bins - 1))
+
+        if (
+                (not x_exact and x_centres.size == 0)
+                or (not y_exact and y_centres.size == 0)
+                ):
+            self.sampled_heatmap_source = False
+            self.aggregated_heatmap_source = False
+            return self._arrays_from_values([], [], [])
+
         cursor = conn.execute(
             (
-                "SELECT x_bin, y_bin, AVG(z_value), COUNT(*) FROM ("
-                f"SELECT {x_bin_sql} AS x_bin, {y_bin_sql} AS y_bin, "
+                "SELECT x_group, y_group, AVG(z_value), COUNT(*) FROM ("
+                f"SELECT {x_group_sql} AS x_group, {y_group_sql} AS y_group, "
                 f"{z_column} AS z_value FROM {table} WHERE {where_sql}"
-                ") GROUP BY x_bin, y_bin ORDER BY y_bin, x_bin"
+                ") GROUP BY x_group, y_group ORDER BY y_group, x_group"
                 ),
-            (
-                x_lower_edge,
-                x_scale,
-                x_bins - 1,
-                y_lower_edge,
-                y_scale,
-                y_bins - 1,
-                *parameters,
-                ),
+            (*query_parameters, *parameters),
             )
-        x_indices = []
-        y_indices = []
+        x_groups = []
+        y_groups = []
         z_values = []
         aggregated_source_rows = 0
-        for row_number, (x_index, y_index, z_value, bin_rows) in enumerate(cursor):
+        for row_number, (x_group, y_group, z_value, bin_rows) in enumerate(cursor):
             if row_number % 1024 == 0:
                 self._check_cancelled()
             if z_value is None:
                 continue
-            x_indices.append(int(x_index))
-            y_indices.append(int(y_index))
+            x_groups.append(x_group)
+            y_groups.append(y_group)
             z_values.append(z_value)
             aggregated_source_rows += int(bin_rows)
 
-        x_index_data = np.asarray(x_indices, dtype=np.int64)
-        y_index_data = np.asarray(y_indices, dtype=np.int64)
+        x_group_data = np.asarray(x_groups, dtype=float)
+        y_group_data = np.asarray(y_groups, dtype=float)
         z_data = np.asarray(z_values, dtype=float)
-        finite = np.isfinite(z_data)
-        x_index_data = x_index_data[finite]
-        y_index_data = y_index_data[finite]
+        finite = (
+            np.isfinite(x_group_data)
+            & np.isfinite(y_group_data)
+            & np.isfinite(z_data)
+            )
+
+        if x_exact:
+            x_centres = np.unique(x_group_data[np.isfinite(x_group_data)])
+            x_index_data = np.searchsorted(x_centres, x_group_data[finite])
+        else:
+            x_index_data = x_group_data[finite].astype(np.int64)
+        if y_exact:
+            y_centres = np.unique(y_group_data[np.isfinite(y_group_data)])
+            y_index_data = np.searchsorted(y_centres, y_group_data[finite])
+        else:
+            y_index_data = y_group_data[finite].astype(np.int64)
+
         z_data = z_data[finite]
         self._spatial_heatmap_axes = (x_centres, y_centres)
         self._spatial_heatmap_indices = (x_index_data, y_index_data)

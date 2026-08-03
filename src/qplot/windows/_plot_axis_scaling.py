@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         vbMenu: Any
 
         def _context_menu_action(self, text: str) -> Any | None: ...
+        def _view_range_changed_programmatically(self) -> None: ...
 else:
     class _PlotAxisScalingBase:
         pass
@@ -296,6 +297,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             self.vb.setXRange(*values, padding=0)
         else:
             self.vb.setYRange(*values, padding=0)
+        self._view_range_changed_programmatically()
 
     def _axis_scale_auto_clicked(self, axis: _AxisName) -> None:
         ui = self._axis_scale_controls[axis]

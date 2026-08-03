@@ -1657,10 +1657,13 @@ class SnapToTraceTestCase(unittest.TestCase):
         window = plotWidget.__new__(plotWidget)
         window.vb = ViewBox()
         window.marquee = QtCore.QRectF(1.0, 2.0, 3.0, 4.0)
+        range_changes = []
+        window._view_range_changed_programmatically = lambda: range_changes.append(True)
 
         self.assertTrue(window.zoom_marquee("xy"))
         self.assertEqual(window.vb.x_range, (1.0, 4.0, 0))
         self.assertEqual(window.vb.y_range, (2.0, 6.0, 0))
+        self.assertEqual(range_changes, [True])
 
     def test_escape_clears_marquee(self):
         window = qtw.QMainWindow()
