@@ -521,6 +521,50 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         self.assertIs(handle.delete_timer, delete_timer)
         self.assertEqual(delete_timer.stopped, 0)
 
+    def test_cancelled_worker_cannot_update_a_closed_plot(self):
+        window = self._window()
+        worker = window.worker
+        worker.read_data = False
+        worker.axis_data = {"x": ["cancelled x"], "y": ["cancelled y"]}
+        worker.axis_param = {"x": object(), "y": object()}
+        worker.is_cancelled = lambda: True
+        window.axis_data = {"x": ["old x"], "y": ["old y"]}
+        window._closed = True
+        window._merged_trace_users = 0
+
+        result = plotWidget.refreshPlot(window, True, worker=worker)
+
+        self.assertFalse(result)
+        self.assertEqual(window.axis_data, {"x": ["old x"], "y": ["old y"]})
+        self.assertEqual(window.plot_states, [])
+
+    def test_plot_close_cancels_current_worker_and_drops_pending_refresh(self):
+        class Monitor:
+            stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        class Worker:
+            cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        window = plotWidget.__new__(plotWidget)
+        qtw.QMainWindow.__init__(window)
+        window.monitor = Monitor()
+        window.worker = Worker()
+        window._merged_trace_users = 0
+        window._refresh_pending = True
+
+        plotWidget.closeEvent(window, object())
+
+        self.assertTrue(window.worker.cancelled)
+        self.assertFalse(window._refresh_pending)
+        self.assertTrue(window._closed)
+
+
     def test_closed_hidden_source_can_refresh_while_a_trace_retains_it(self):
         window = self._window()
         dataset_key = DatasetKey("database.db", "guid")

@@ -134,6 +134,8 @@ class MainWindow(
         self.monitor = QtCore.QTimer()
         self.threadPool = QtCore.QThreadPool()
         self.threadPool.setMaxThreadCount(self.config.get("runtime_settings.max_threads"))
+        self._plot_workers: set[object] = set()
+        self.threadPool._qplot_workers = self._plot_workers  # type: ignore[attr-defined]
         self.databaseLoadThreadPool = QtCore.QThreadPool(self)
         self.databaseLoadThreadPool.setMaxThreadCount(1)
         self.databaseDetailThreadPool = QtCore.QThreadPool(self)
@@ -500,6 +502,7 @@ class MainWindow(
         generation_worker = getattr(self, "_test_database_generation_worker", None)
         if generation_worker is not None:
             generation_worker.cancel()
+        MainWindow._cancel_plot_work(self)
         self._database_load_generation += 1
         self._database_load_active = False
         self._database_load_state = None
@@ -542,6 +545,26 @@ class MainWindow(
         self._shutdown_ready = True
         event.accept()
         qtw.QApplication.closeAllWindows()
+
+
+    def _cancel_plot_work(self):
+        """Cancel running plot loads and remove work that has not started."""
+
+        workers = set(getattr(self, "_plot_workers", ()))
+        for window in list(getattr(self, "windows", ())):
+            worker = getattr(window, "worker", None)
+            if worker is not None:
+                workers.add(worker)
+
+        for worker in workers:
+            cancel = getattr(worker, "cancel", None)
+            if callable(cancel):
+                cancel()
+
+        pool = getattr(self, "threadPool", None)
+        clear = getattr(pool, "clear", None)
+        if callable(clear):
+            clear()
 
 
     def _shutdown_background_work_active(self):

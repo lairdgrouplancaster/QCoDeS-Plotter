@@ -1220,6 +1220,11 @@ class plotWidget(
         """
         if self.__dict__.get("_merged_trace_users", 0) <= 0:
             self.monitor.stop()
+            self._refresh_pending = False
+            worker = self.__dict__.get("worker")
+            cancel = getattr(worker, "cancel", None)
+            if callable(cancel):
+                cancel()
         self.visible = False
         self._closed = True
         self.closed.emit(self)

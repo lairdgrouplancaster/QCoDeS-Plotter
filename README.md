@@ -1,7 +1,6 @@
 # QCoDeS-Plotter
 
 [![release](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?label=release)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases/latest)
-[![beta](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?include_prereleases&label=beta&color=orange)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases)
 
 QCoDeS-Plotter, or qPlot, is a PyQt-based data viewer for QCoDeS databases. It
 is designed for inspecting completed and running experiments, with live refresh,
@@ -21,8 +20,7 @@ part of the GUI test or support matrix.
 ## Install
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
-The commands below install the latest full release, `1.4.0`. The current beta
-is `1.5.0-b5`; it is documented below but is not used for the default install.
+The commands below install the latest full release, `1.5.0`.
 
 Windows:
 
@@ -31,7 +29,7 @@ py -3 --version
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
 ```
 
 macOS:
@@ -41,14 +39,7 @@ python3 --version
 python3 -m venv .venv-mac
 source .venv-mac/bin/activate
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.4.0
-```
-
-To test the current beta instead, install its explicit tag in the same virtual
-environment:
-
-```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0-b5
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
 ```
 
 If the version check reports Python 3.10 or older, install Python 3.11 or newer
@@ -115,14 +106,12 @@ qplot.run()
 Plot windows may appear before their data has finished loading. Check the
 status bar at the bottom of the plot window before assuming a load has failed.
 
-For the installed `1.4.0` release, see its
-[versioned user guide](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/blob/v1.4.0/docs/user-guide.md).
-For the current beta, see [docs/user-guide.md](docs/user-guide.md).
+For the installed `1.5.0` release, see its
+[versioned user guide](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/blob/v1.5.0/docs/user-guide.md).
 
 Likewise, use the
-[1.4.0 troubleshooting guide](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/blob/v1.4.0/docs/troubleshooting.md)
-for the full release or [docs/troubleshooting.md](docs/troubleshooting.md) for
-the current beta.
+[1.5.0 troubleshooting guide](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/blob/v1.5.0/docs/troubleshooting.md)
+for this release.
 
 For release history, see [CHANGELOG.md](CHANGELOG.md).
 

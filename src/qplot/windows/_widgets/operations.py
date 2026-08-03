@@ -281,12 +281,17 @@ class operations_options_base(qtw.QWidget):
                 item.label,
                 func,
                 getattr(item, "derivative_axis", None),
+                cooperative=True,
                 ))
         return operations
  
     
 def func_with_input(func: OperationFunc, value: object) -> OperationFunc:
-    return lambda data: func(value, data)
+    return lambda data, cancelled_callback=None: func(
+        value,
+        data,
+        cancelled_callback=cancelled_callback,
+        )
  
 
 class draggableListWidget(qtw.QListWidget):
