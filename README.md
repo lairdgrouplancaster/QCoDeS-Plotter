@@ -23,6 +23,7 @@ Install qPlot inside a Python 3.11 or newer virtual environment:
 The commands below install the latest full release, `1.5.0`.
 
 Windows:
+
 Create the folder where you want qplot to live, right-clock to open it in Terminal, and execute:
 ```console
 py -3 --version
