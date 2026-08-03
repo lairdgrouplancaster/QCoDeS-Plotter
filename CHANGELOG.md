@@ -7,7 +7,7 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
-## 1.5.0-b6 - 2026-08-03
+## 1.5.0 - 2026-08-03
 
 ### Fixed
 
