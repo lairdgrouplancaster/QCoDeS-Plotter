@@ -135,7 +135,7 @@ class MainWindow(
         self.threadPool = QtCore.QThreadPool()
         self.threadPool.setMaxThreadCount(self.config.get("runtime_settings.max_threads"))
         self._plot_workers: set[object] = set()
-        setattr(self.threadPool, "_qplot_workers", self._plot_workers)
+        self.threadPool._qplot_workers = self._plot_workers  # type: ignore[attr-defined]
         self.databaseLoadThreadPool = QtCore.QThreadPool(self)
         self.databaseLoadThreadPool.setMaxThreadCount(1)
         self.databaseDetailThreadPool = QtCore.QThreadPool(self)

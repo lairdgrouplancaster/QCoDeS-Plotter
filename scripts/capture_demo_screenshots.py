@@ -21,8 +21,13 @@ def configure_environment():
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("MPLCONFIGDIR", str(WORK_DIR / "matplotlib"))
-    os.environ["HOME"] = str(WORK_DIR / "home")
-    (WORK_DIR / "home").mkdir(parents=True, exist_ok=True)
+    home_dir = WORK_DIR / "home"
+    os.environ["HOME"] = str(home_dir)
+    if os.name == "nt":
+        # ntpath.expanduser() prefers USERPROFILE over HOME. Keep screenshot
+        # generation isolated from a real qPlot configuration on Windows too.
+        os.environ["USERPROFILE"] = str(home_dir)
+    home_dir.mkdir(parents=True, exist_ok=True)
     (WORK_DIR / "matplotlib").mkdir(parents=True, exist_ok=True)
 
 
