@@ -57,7 +57,7 @@ created for the current system:
 Check the install:
 
 ```console
-qplot-cfg -info
+qplot-cfg -version
 python -c "import qplot; print(qplot.__file__)"
 ```
 
