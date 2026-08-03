@@ -1647,6 +1647,39 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             main_window.MainWindow._shutdown_background_work_active(harness)
         )
 
+    def test_shutdown_cancels_all_plot_workers_and_discards_queued_work(self):
+        class Worker:
+            def __init__(self):
+                self.cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        class Pool:
+            def __init__(self):
+                self.cleared = False
+
+            def clear(self):
+                self.cleared = True
+
+        active_worker = Worker()
+        queued_worker = Worker()
+        harness = type(
+            "Harness",
+            (),
+            {
+                "_plot_workers": {active_worker, queued_worker},
+                "windows": [type("Window", (), {"worker": active_worker})()],
+                "threadPool": Pool(),
+            },
+            )()
+
+        main_window.MainWindow._cancel_plot_work(harness)
+
+        self.assertTrue(active_worker.cancelled)
+        self.assertTrue(queued_worker.cancelled)
+        self.assertTrue(harness.threadPool.cleared)
+
     def test_deferred_shutdown_finishes_after_workers_return(self):
         old_close_all_windows = qtw.QApplication.closeAllWindows
         closed = []

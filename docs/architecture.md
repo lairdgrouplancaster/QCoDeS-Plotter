@@ -185,7 +185,16 @@ read-only database-loading path.
 
 `src/qplot/tools/worker.py` defines the background loader used by plot windows.
 It loads data, reshapes it for the plot type, applies selected operations, and
-emits results back to the GUI thread.
+emits results back to the GUI thread. Plot workers use cooperative cancellation:
+shutdown marks every registered worker as cancelled, interrupts its active
+read-only SQLite connection, clears work that has not started, and keeps the Qt
+event loop alive until running workers unwind. Built-in operations receive a
+cancellation callback and long Python loops check it periodically. Existing
+third-party operation callables remain compatible with the one-argument
+``operation(data_dict)`` contract; a callable that does not cooperate cannot be
+stopped during that individual Python call, so cancellation takes effect as soon
+as it returns. Threads are never terminated forcibly, and cancelled results are
+not applied to plot windows.
 
 `src/qplot/tools/general.py` and `plot_tools.py` contain small data helpers and
 plot operation functions. `src/qplot/tools/operation_registry.py` maps those

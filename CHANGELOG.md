@@ -7,6 +7,22 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.5.0-b6 - 2026-08-03
+
+### Fixed
+
+- Cancel active plot loads and discard queued plot work during shutdown so
+  cooperative database and processing work no longer keeps the command line
+  occupied after qPlot closes.
+- Interrupt active read-only SQLite plot queries where safe, add cancellation
+  checkpoints throughout plot preparation and heatmap processing, and prevent
+  cancelled or partial results from reaching closed plot windows.
+
+### Changed
+
+- Allow qPlot's built-in data operations to cooperate with cancellation while
+  preserving the existing one-argument contract for third-party operations.
+
 ## 1.5.0-b5 - 2026-08-02
 
 ### Added

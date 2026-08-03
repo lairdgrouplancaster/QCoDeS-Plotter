@@ -162,6 +162,14 @@ class PlotRefreshMixin(_PlotRefreshBase):
         worker.emitter.finished.connect(
             lambda finished, worker=worker: self.refreshPlot(finished, worker=worker)
             )
+        worker_registry = getattr(self.threadPool, "_qplot_workers", None)
+        if worker_registry is not None:
+            worker_registry.add(worker)
+            worker.emitter.finished.connect(
+                lambda _finished, worker=worker, registry=worker_registry: (
+                    registry.discard(worker)
+                    )
+                )
         # Error event handling
         worker.emitter.errorOccurred.connect(
             lambda err, worker=worker: self.err_raiser(err, worker=worker)
@@ -321,12 +329,20 @@ class PlotRefreshMixin(_PlotRefreshBase):
             return False
         worker = current_worker
 
+        was_cancelled = bool(
+            getattr(worker, "is_cancelled", lambda: False)()
+            )
+
         if not self._can_process_refresh():
             worker.running = False
             self.end_wait.emit()
             return False
 
         try:
+            if was_cancelled:
+                worker.running = False
+                return False
+
             if not finished:  # error in worker
                 worker.running = False
                 self.show_plot_state(
@@ -431,6 +447,13 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
     @QtCore.pyqtSlot(Exception)
     def err_raiser(self, err: Exception, worker: Any | None = None) -> None:
+        if (
+                worker is not None
+                and getattr(worker, "is_cancelled", lambda: False)()
+                ):
+            worker.running = False
+            return
+
         if not self._can_process_refresh():
             if worker is not None:
                 worker.running = False

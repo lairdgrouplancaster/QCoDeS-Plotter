@@ -1,6 +1,9 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
+from time import perf_counter
+from unittest.mock import patch
 
 import numpy as np
 
@@ -15,12 +18,150 @@ from qplot.tools.plot_tools import (
     pass_filter,
     subtract_mean,
 )
-from qplot.tools.worker import OperationExecutionError, loader
+from qplot.tools.worker import OperationExecutionError, PlotWorkCancelled, loader
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plotWin import plotWidget
 
 
 class ToolFunctionTestCase(unittest.TestCase):
+    def test_cancel_interrupts_plot_worker_while_loading_database(self):
+        started = threading.Event()
+
+        class Connection:
+            def __init__(self):
+                self.interrupted = threading.Event()
+
+            def interrupt(self):
+                self.interrupted.set()
+
+            def close(self):
+                pass
+
+        class Cache:
+            pass
+
+        class Param:
+            name = "signal"
+            depends_on_ = ("x",)
+
+        connection = Connection()
+
+        def blocking_prep(*_args, **_kwargs):
+            started.set()
+            connection.interrupted.wait(2.0)
+            raise sqlite3.OperationalError("interrupted")
+
+        with (
+                patch.object(worker_module, "cache_table_name", return_value="results"),
+                patch.object(worker_module, "cache_database_path", return_value="plot.db"),
+                patch.object(worker_module, "cache_is_live", return_value=False),
+                patch.object(
+                    worker_module,
+                    "qcodes_read_only_connection",
+                    return_value=connection,
+                    ),
+                patch.object(
+                    worker_module,
+                    "load_param_data_from_db_prep",
+                    side_effect=blocking_prep,
+                    ),
+                ):
+            worker = loader(
+                Cache(),
+                Param(),
+                {"x": object(), "signal": object()},
+                {"x": "x"},
+                )
+            thread = threading.Thread(target=worker.run)
+            thread.start()
+            self.assertTrue(started.wait(1.0))
+
+            cancel_started = perf_counter()
+            worker.cancel()
+            thread.join(1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertLess(perf_counter() - cancel_started, 1.0)
+        self.assertTrue(connection.interrupted.is_set())
+        self.assertTrue(worker.is_cancelled())
+
+    def test_cancellation_between_pipeline_operations_skips_remaining_work(self):
+        calls = []
+        worker = loader.__new__(loader)
+        worker.axis_data = {
+            "x": np.array([1.0, 2.0]),
+            "y": np.array([3.0, 4.0]),
+            }
+
+        def cancelling_operation(data):
+            calls.append("first")
+            worker.cancel()
+            return {"y": data["y"] * 2}
+
+        def skipped_operation(data):
+            calls.append("second")
+            return data
+
+        worker.operations = [cancelling_operation, skipped_operation]
+
+        with self.assertRaises(PlotWorkCancelled):
+            loader.do_operations(worker)
+
+        self.assertEqual(calls, ["first"])
+        np.testing.assert_array_equal(worker.axis_data["y"], [3.0, 4.0])
+
+    def test_arbitrary_operation_callable_keeps_one_argument_contract(self):
+        class ThirdPartyOperation:
+            def __call__(self, data):
+                return {"y": data["y"] + 1}
+
+            def execute(self):
+                raise AssertionError("Unrelated execute method must not be used")
+
+        worker = loader.__new__(loader)
+        worker.axis_data = {
+            "x": np.array([1.0, 2.0]),
+            "y": np.array([3.0, 4.0]),
+            }
+        worker.operations = [ThirdPartyOperation()]
+
+        result = loader.do_operations(worker)
+
+        np.testing.assert_array_equal(result[1], [4.0, 5.0])
+
+    def test_cooperative_fill_operation_returns_promptly_after_cancel(self):
+        cancellation = threading.Event()
+        checkpoint_reached = threading.Event()
+        data = np.full((1200, 1200), np.nan)
+        data[:, (0, -1)] = 1.0
+        errors = []
+
+        def cancelled():
+            checkpoint_reached.set()
+            return cancellation.is_set()
+
+        def run_operation():
+            try:
+                fill_heatmap(
+                    "below",
+                    {"z": data},
+                    max_depth=1200,
+                    cancelled_callback=cancelled,
+                    )
+            except InterruptedError:
+                errors.append("cancelled")
+
+        thread = threading.Thread(target=run_operation)
+        thread.start()
+        self.assertTrue(checkpoint_reached.wait(1.0))
+        cancel_started = perf_counter()
+        cancellation.set()
+        thread.join(1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertLess(perf_counter() - cancel_started, 1.0)
+        self.assertEqual(errors, ["cancelled"])
+
     def test_try_as_num_handles_int_float_scientific_and_string(self):
         self.assertEqual(try_as_num("4"), 4)
         self.assertEqual(try_as_num("4.5"), 4.5)

@@ -17,9 +17,15 @@ used to find which properties to update the keyed value.
 import numpy as np
 
 
+def _check_cancelled(cancelled_callback):
+    if cancelled_callback is not None and cancelled_callback():
+        raise InterruptedError("Plot operation cancelled.")
+
+
 def subtract_mean(
         axis : str,
-        data_dict : dict
+        data_dict : dict,
+        cancelled_callback=None,
         ):
     """
     Subtracts the mean from the dataGrid based on the axis.
@@ -43,10 +49,12 @@ def subtract_mean(
     """
     dataGrid = data_dict["z"]
     num_axis = 1 if axis == "x" else 0
-    
+
+    _check_cancelled(cancelled_callback)
     mean = np.nanmean(dataGrid, axis=num_axis, keepdims=True)
-    
+    _check_cancelled(cancelled_callback)
     dataGrid = dataGrid - mean
+    _check_cancelled(cancelled_callback)
     
     return {"z" : dataGrid}
     
@@ -54,7 +62,8 @@ def subtract_mean(
 def pass_filter(
         which : str,
         limit : float,
-        data_dict : dict
+        data_dict : dict,
+        cancelled_callback=None,
         ):
     """
     Filters dependant parameter data to set values outside the limit to the 
@@ -94,14 +103,17 @@ def pass_filter(
     else:
         raise KeyError(f'Invalid value for which: {which}. Must be: "high" or "low"')
     
+    _check_cancelled(cancelled_callback)
     new_data = np.clip(data, *limit_arr)
+    _check_cancelled(cancelled_callback)
     
     return {axis : new_data}
 
 
 def differentiate(
         dx : str,
-        data_dict : dict
+        data_dict : dict,
+        cancelled_callback=None,
         ):
     """
     Differentiates the dependant parameter data with respect to the input dx    
@@ -124,6 +136,7 @@ def differentiate(
             {"y": new_data} for 1d
 
     """
+    _check_cancelled(cancelled_callback)
     if dx not in ["x", "y"]:
         raise KeyError(f'Invalid value for dx: {dx}, must be "x" or "y".')
     
@@ -145,7 +158,9 @@ def differentiate(
     if np.any(np.diff(coordinates) == 0):
         raise ValueError("Differentiation axis coordinates must not repeat.")
 
+    _check_cancelled(cancelled_callback)
     new_data = np.gradient(data, coordinates, axis=axis_num)
+    _check_cancelled(cancelled_callback)
     
     return {key : new_data}
 
@@ -153,8 +168,10 @@ def differentiate(
 def fill_heatmap(
         which : str,
         data_dict : dict,
-        max_depth : int = 10
+        max_depth : int = 10,
+        cancelled_callback=None,
         ):
+    _check_cancelled(cancelled_callback)
     data = data_dict["z"].copy()
     if which == "below":
         lines = (data[:, column] for column in range(data.shape[1]))
@@ -167,6 +184,7 @@ def fill_heatmap(
         return {"z": data}
 
     for line in lines:
+        _check_cancelled(cancelled_callback)
         position = 0
         while position < len(line):
             if not np.isnan(line[position]):
@@ -175,13 +193,16 @@ def fill_heatmap(
 
             gap_start = position
             while position < len(line) and np.isnan(line[position]):
+                if position % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
                 position += 1
 
             gap_length = position - gap_start
             bounded = gap_start > 0 and position < len(line)
             if bounded and gap_length <= max_depth:
                 line[gap_start:position] = line[gap_start - 1]
-        
+
+    _check_cancelled(cancelled_callback)
     return {"z" : data}
         
 
