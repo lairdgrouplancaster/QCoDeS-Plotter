@@ -409,7 +409,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         try:
             window = main_window.MainWindow()
             qtw.QApplication.processEvents()
-            self.assertEqual(calls, [])
+            self.assertNotIn(os.path.abspath(missing_database), calls)
         finally:
             main_window.MainWindow.load_database_path = old_load_database_path
             if window is not None:

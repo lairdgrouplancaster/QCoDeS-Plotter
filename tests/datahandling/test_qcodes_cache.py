@@ -127,6 +127,25 @@ def test_cache_update_rejects_result_older_than_current_parameter_state():
     assert cache._data["signal"] == {"signal": [1, 2]}
 
 
+def test_cache_update_accepts_newer_read_with_reset_unshaped_write_status():
+    cache = Cache()
+    cache._read_status["signal"] = 1
+    cache._write_status["signal"] = 1
+
+    committed = update_cache_parameter_data(
+        cache,
+        "signal",
+        {"signal": 2},
+        {"signal": 0},
+        {"signal": {"signal": [1, 2, 3]}},
+    )
+
+    assert committed
+    assert cache._read_status["signal"] == 2
+    assert cache._write_status["signal"] == 0
+    assert cache._data["signal"] == {"signal": [1, 2, 3]}
+
+
 def test_cache_update_accepts_first_result_after_none_shaped_status():
     cache = Cache()
     cache._read_status["signal"] = None
