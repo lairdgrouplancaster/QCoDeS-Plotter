@@ -7,6 +7,15 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.5.1-b1 - 2026-08-04
+
+### Fixed
+
+- Restore live plot updates for unshaped runs. Valid database reads were
+  incorrectly discarded when QCoDeS reset its in-memory write offset after
+  appending data, leaving plot windows frozen while previews continued to
+  update.
+
 ## 1.5.0 - 2026-08-03
 
 ### Fixed

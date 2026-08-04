@@ -20,7 +20,8 @@ part of the GUI test or support matrix.
 ## Install
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
-The commands below install the latest full release, `1.5.0`.
+The commands below install the latest full release, `1.5.0`. The current beta
+is `1.5.1-b1`; it is documented below but is not used for the default install.
 
 Windows:
 
@@ -31,6 +32,13 @@ py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
+```
+
+To test the current beta instead, install its explicit tag in the same virtual
+environment:
+
+```console
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.1-b1
 ```
 
 macOS:

@@ -106,21 +106,24 @@ def update_cache_parameter_data(
         updated_write_status,
         updated_data,
         ):
-    """Commit a parameter refresh unless a newer worker already won the race."""
+    """Commit a parameter refresh unless a newer worker already won the race.
+
+    ``_read_status`` is QCoDeS' database cursor and is therefore monotonic for
+    data read from SQLite.  ``_write_status`` is instead an in-memory array
+    insertion offset.  In particular, QCoDeS reports ``0`` after appending to
+    an unshaped parameter tree, so it cannot safely be used to order refresh
+    workers.
+    """
 
     with cache_lock(cache):
         next_read_status = updated_read_status[parameter_name]
         next_write_status = updated_write_status[parameter_name]
         current_read_status = cache_read_status(cache).get(parameter_name, -1)
-        current_write_status = cache_write_status(cache).get(parameter_name, -1)
 
         # QCoDeS represents an untouched shaped parameter with ``None``. Treat
         # it as older than any concrete row count when comparing results.
         comparable = lambda status: -1 if status is None else status
-        if (
-                comparable(current_read_status) > comparable(next_read_status)
-                or comparable(current_write_status) > comparable(next_write_status)
-                ):
+        if comparable(current_read_status) > comparable(next_read_status):
             return False
 
         cache_read_status(cache)[parameter_name] = next_read_status
