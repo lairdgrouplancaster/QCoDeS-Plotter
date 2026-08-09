@@ -70,7 +70,17 @@ def cache_dataset_completed(cache):
 
 
 def set_cache_dataset_completed(cache, completed):
-    cache_dataset(cache).completed = completed
+    """Update qPlot's cached QCoDeS completion state without database writes.
+
+    QCoDeS 0.58's public ``DataSet.completed`` setter calls
+    ``mark_run_complete`` after changing ``_completed``. Viewer datasets are
+    loaded from databases that qPlot must never write, and their connections
+    may belong to another thread, so completion observations from SQLite must
+    only update the viewer-owned in-memory flag.
+    """
+
+    with cache_lock(cache):
+        cache_dataset(cache)._completed = bool(completed)
 
 
 def parameter_is_complete(param):
@@ -105,6 +115,7 @@ def update_cache_parameter_data(
         updated_read_status,
         updated_write_status,
         updated_data,
+        dataset_completed=None,
         ):
     """Commit a parameter refresh unless a newer worker already won the race.
 
@@ -112,7 +123,8 @@ def update_cache_parameter_data(
     data read from SQLite.  ``_write_status`` is instead an in-memory array
     insertion offset.  In particular, QCoDeS reports ``0`` after appending to
     an unshaped parameter tree, so it cannot safely be used to order refresh
-    workers.
+    workers. Database completion is monotonic and is published last so an
+    older in-flight refresh cannot revert a successful final commit.
     """
 
     with cache_lock(cache):
@@ -129,6 +141,10 @@ def update_cache_parameter_data(
         cache_read_status(cache)[parameter_name] = next_read_status
         cache_write_status(cache)[parameter_name] = next_write_status
         cache_data(cache)[parameter_name] = updated_data[parameter_name]
+        if dataset_completed is True:
+            # Completion is terminal for monitoring, so publish it only after
+            # every part of the successful cache commit above.
+            set_cache_dataset_completed(cache, dataset_completed)
         return True
 
 
