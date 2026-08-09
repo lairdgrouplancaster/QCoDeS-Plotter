@@ -18,6 +18,7 @@ from ._dataset_handle import (
     canonical_database_path,
     close_dataset_connection,
 )
+from ._plot_refresh import plot_refresh_required
 from ._subplots.subplot1d import _subplot_axis_order
 from .plot1d import plot1d
 from .plot2d import plot2d
@@ -906,7 +907,7 @@ class PlotActionsMixin:
                 continue
             try:
                 if win._dataset_key == source_key and win.param.name == param.name:
-                    if win.ds.running:
+                    if plot_refresh_required(win):
                         target_win.toolbarRef.show()
                     return win
             except AttributeError:

@@ -7,6 +7,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._dragdrop import make_run_preview_mime
+from ._plot_refresh import plot_refresh_required
 from ._subplots import subplot1d
 from ._widgets import picker_1d
 
@@ -417,7 +418,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             from_win = line.from_win
             if (
                 not from_win.visible
-                and from_win.ds.running
+                and plot_refresh_required(from_win)
                 and not from_win.monitor.isActive()
                 ):
                 from_win.monitorIntervalChanged(from_win.spinBox.value())

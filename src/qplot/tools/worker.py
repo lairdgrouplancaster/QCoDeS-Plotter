@@ -10,11 +10,11 @@ from qplot.datahandling import load_param_data_from_db, load_param_data_from_db_
 from qplot.datahandling.dimensions import ensure_supported_plot_dimensions
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
+    cache_dataset_completed,
     cache_is_live,
     cache_parameter_data,
     cache_rundescriber,
     cache_table_name,
-    set_parameter_complete,
     snapshot_cache_parameter_state,
 )
 from qplot.datahandling.readonly import (
@@ -206,6 +206,7 @@ class loader(QtCore.QRunnable):
             # are already authoritative and should never be read via SQLite.
             if self.read_data:
                 if cache_live:
+                    self.dataset_completed = cache_dataset_completed(cache)
                     self.read_data = False
                 else:
                     completion_conn = qcodes_read_only_connection(
@@ -234,7 +235,6 @@ class loader(QtCore.QRunnable):
                 and self._should_use_sql_heatmap()
                 )
             if use_sql_heatmap:
-                set_parameter_complete(self.param, False)
                 self._load_large_heatmap_from_sql()
 
             else:
@@ -500,7 +500,6 @@ class loader(QtCore.QRunnable):
         # The direct SQL path deliberately does not populate QCoDeS' full
         # in-memory cache. Keep future refreshes on the database path.
         self.read_data = False
-        set_parameter_complete(self.param, False)
 
 
     def _rowid_span(self, conn):

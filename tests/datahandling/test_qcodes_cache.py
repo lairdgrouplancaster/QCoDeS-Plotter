@@ -9,10 +9,12 @@ from qplot.datahandling.qcodes_cache import (
     cache_has_no_written_data,
     cache_is_live,
     cache_parameter_data,
+    cache_parameter_is_synchronized,
     cache_table_name,
     parameter_is_complete,
     prepare_cache_if_empty,
     set_cache_dataset_completed,
+    set_cache_parameter_synchronized,
     set_parameter_complete,
     snapshot_cache_parameter_state,
     update_cache_parameter_data,
@@ -47,6 +49,7 @@ class Cache:
 
 class Param:
     def __init__(self):
+        self.name = "signal"
         self._complete = False
 
 
@@ -139,6 +142,7 @@ def test_cache_update_publishes_completion_after_parameter_state():
 
     assert committed
     assert cache_dataset_completed(cache)
+    assert cache_parameter_is_synchronized(cache, "signal")
     assert cache._data["signal"] == {"signal": [3, 4]}
 
 
@@ -178,6 +182,7 @@ def test_cache_update_rejects_result_older_than_current_parameter_state():
     assert cache._write_status["signal"] == 8
     assert cache._data["signal"] == {"signal": [1, 2]}
     assert not cache_dataset_completed(cache)
+    assert not cache_parameter_is_synchronized(cache, "signal")
 
 
 def test_cache_update_accepts_newer_read_with_reset_unshaped_write_status():
@@ -261,13 +266,14 @@ def test_load_param_data_from_db_prep_defers_parameter_completion_until_commit(m
     assert dataset_completed is True
     assert not cache._dataset.completed
     assert not param._complete
+    assert not cache_parameter_is_synchronized(cache, "signal")
     assert cache.prepare_called
 
 
 def test_load_param_data_from_db_prep_skips_completed_param(monkeypatch):
     cache = Cache()
     param = Param()
-    param._complete = True
+    set_cache_parameter_synchronized(cache, "signal", True)
 
     def fail_if_called(conn, run_id):
         raise AssertionError("completed should not be queried for completed params")
@@ -276,6 +282,23 @@ def test_load_param_data_from_db_prep_skips_completed_param(monkeypatch):
 
     assert load_from_db.load_param_data_from_db_prep(cache, param) == (True, False)
     assert not cache.prepare_called
+
+
+def test_parameter_synchronization_is_shared_across_reconstructed_params(monkeypatch):
+    cache = Cache()
+    first_param = Param()
+    reconstructed_param = Param()
+    set_cache_parameter_synchronized(cache, first_param.name, True)
+
+    def fail_if_called(conn, run_id):
+        raise AssertionError("completed should not be queried after cache sync")
+
+    monkeypatch.setattr(load_from_db, "completed", fail_if_called)
+
+    assert load_from_db.load_param_data_from_db_prep(
+        cache,
+        reconstructed_param,
+        ) == (True, False)
 
 
 def test_load_param_data_from_db_prep_rejects_live_cache():

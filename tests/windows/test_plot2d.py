@@ -6,6 +6,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.qcodes_cache import cache_parameter_is_synchronized
 from qplot.tools.heatmap_geometry import HeatmapGeometry
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
@@ -480,6 +481,139 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         self.assertFalse(worker.running)
         self.assertEqual(scheduled_after_release, [True])
+
+    def test_terminal_direct_sql_display_failure_remains_retryable(self):
+        class Cache:
+            live = False
+
+        class Dataset:
+            def __init__(self):
+                self._completed = False
+                self.number_of_results = 4
+                self.cache = Cache()
+                self.cache._dataset = self
+
+            @property
+            def completed(self):
+                return self._completed
+
+            @property
+            def running(self):
+                return not self._completed
+
+        class Monitor:
+            def __init__(self):
+                self.active = False
+
+            def stop(self):
+                self.active = False
+
+            def isActive(self):
+                return self.active
+
+        class SpinBox:
+            def value(self):
+                return 0.2
+
+        class Toggle:
+            def isChecked(self):
+                return False
+
+        class EndWait:
+            def emit(self):
+                pass
+
+        class Worker:
+            def __init__(self):
+                self.read_data = False
+                self.loaded_from_sql_heatmap = True
+                self.heatmap_axis_ranges = {"x": (0.0, 1.0)}
+                self.dataset_completed = True
+                self.dataset_length_at_start = 4
+                self.axis_data = {
+                    "x": np.array([0.0, 1.0]),
+                    "y": np.array([0.0, 1.0]),
+                    }
+                self.axis_param = {"x": object(), "y": object()}
+                self.display_param = object()
+                self.dataGrid = np.array([[1.0, 2.0], [3.0, 4.0]])
+                self.loaded_point_count = 4
+                self.aggregated_heatmap_source = False
+                self.started_at = 0.0
+                self.running = True
+
+            def is_cancelled(self):
+                return False
+
+        window = plot2d.__new__(plot2d)
+        qtw.QMainWindow.__init__(window)
+        dataset = Dataset()
+        dataset_key = DatasetKey("database.db", "guid")
+        window._dataset_key = dataset_key
+        window._dataset_holder = {dataset_key: DatasetHandle(dataset)}
+        window.param = type("Param", (), {"name": "signal"})()
+        window._qplot_display_synchronized = False
+        window._qplot_display_uses_direct_sql = False
+        window._set_param_axis_labels = lambda: None
+        window.show_status = lambda *_args: None
+        window.hide_plot_state = lambda: None
+        window._update_large_heatmap_state = lambda _worker: None
+        window._has_plottable_heatmap_data = lambda: True
+        window._update_heatmap_geometry = lambda: None
+        window.relevel_refresh = Toggle()
+        window.bar = object()
+        window._sync_colorbar_axis_scaling = lambda: None
+        window._restore_heatmap_interactions = lambda: None
+        window._colorbar_manual_levels = None
+        window.monitor = Monitor()
+        window.spinBox = SpinBox()
+        window.end_wait = EndWait()
+        window.last_ds_len = 4
+        loads = []
+        restarts = []
+        window.load_data = lambda: loads.append(True)
+        window.monitorIntervalChanged = lambda interval: (
+            restarts.append(interval),
+            setattr(window.monitor, "active", True),
+            )
+
+        failed_worker = Worker()
+        window.worker = failed_worker
+        window._render_heatmap = lambda: (_ for _ in ()).throw(
+            RuntimeError("injected direct-SQL display failure")
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "direct-SQL display failure"):
+            plot2d.refreshPlot(window, True, worker=failed_worker)
+
+        self.assertTrue(dataset.completed)
+        self.assertFalse(dataset.running)
+        self.assertFalse(window._qplot_display_synchronized)
+        self.assertTrue(window._refresh_monitor_required())
+        self.assertFalse(cache_parameter_is_synchronized(dataset.cache, "signal"))
+        self.assertEqual(restarts, [0.2])
+        self.assertTrue(window.monitor.active)
+
+        plotWidget.refreshWindow(window)
+
+        self.assertEqual(loads, [True])
+        self.assertEqual(restarts, [0.2, 0.2])
+        self.assertTrue(window.monitor.active)
+
+        successful_worker = Worker()
+        window.worker = successful_worker
+        window._render_heatmap = lambda: None
+        plot2d.refreshPlot(window, True, worker=successful_worker)
+
+        self.assertTrue(window._qplot_display_synchronized)
+        self.assertTrue(window._qplot_display_uses_direct_sql)
+        self.assertFalse(window._refresh_monitor_required())
+        self.assertFalse(cache_parameter_is_synchronized(dataset.cache, "signal"))
+
+        plotWidget.refreshWindow(window)
+
+        self.assertEqual(loads, [True])
+        self.assertFalse(window.monitor.active)
 
     def test_zoom_to_all_reloads_full_large_heatmap(self):
         class ViewBox:

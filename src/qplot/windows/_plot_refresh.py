@@ -5,10 +5,11 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.qcodes_cache import (
-    cache_dataset_completed,
     cache_has_no_written_data,
+    cache_is_live,
+    cache_parameter_is_synchronized,
     set_cache_dataset_completed,
-    set_parameter_complete,
+    set_cache_parameter_synchronized,
     update_cache_parameter_data,
 )
 from qplot.diagnostics import log_exception
@@ -61,6 +62,17 @@ else:
         pass
 
 
+def plot_refresh_required(source: Any) -> bool:
+    """Return whether a source plot still needs live/final refresh work."""
+
+    predicate = getattr(source, "_refresh_monitor_required", None)
+    if callable(predicate):
+        return bool(predicate())
+
+    dataset = getattr(source, "ds", None)
+    return bool(getattr(dataset, "running", False))
+
+
 class PlotRefreshMixin(_PlotRefreshBase):
     """
     Worker-backed plot refresh orchestration shared by plot windows.
@@ -84,18 +96,89 @@ class PlotRefreshMixin(_PlotRefreshBase):
         handle = dataset_holder.get(dataset_key)
         return handle is not None and getattr(handle, "users", 0) > 0
 
-    def _sync_dataset_completion(self, dataset: Any) -> None:
-        """Schedule a final worker read so completion and data commit together."""
+    def _refresh_monitor_required(self, dataset: Any | None = None) -> bool:
+        """Keep polling until this plot has committed its terminal display."""
 
-        if not getattr(dataset, "running", False):
+        if dataset is None:
+            dataset = self.ds
+        if getattr(dataset, "running", False):
+            return True
+
+        state = self.__dict__
+        if not state.get("_qplot_display_synchronized", True):
+            return True
+
+        # A direct-SQL heatmap deliberately bypasses the QCoDeS cache. Its
+        # successful display commit is therefore the terminal per-plot state.
+        if state.get("_qplot_display_uses_direct_sql", False):
+            return False
+
+        cache = getattr(dataset, "cache", None)
+        param = state.get("param")
+        if cache is None or param is None:
+            return False
+        return not cache_parameter_is_synchronized(cache, param.name)
+
+    def _sync_dataset_completion(self, dataset: Any) -> None:
+        """Schedule this plot's outstanding final worker read."""
+
+        if not self._refresh_monitor_required(dataset):
             return
 
         worker = getattr(self, "worker", None)
         if worker is not None and getattr(worker, "running", False):
-            self._refresh_pending = True
+            self._queue_pending_refresh()
             return
 
         self.load_data()
+
+    def _ensure_refresh_monitor(self) -> None:
+        """Restart polling when a terminal worker/display remains pending."""
+
+        if not self._can_process_refresh():
+            return
+        try:
+            dataset = self.ds
+        except (AttributeError, KeyError, RuntimeError):
+            return
+        if not self._refresh_monitor_required(dataset):
+            return
+
+        state = self.__dict__
+        monitor = state.get("monitor")
+        spin_box = state.get("spinBox")
+        if monitor is None or spin_box is None:
+            return
+        is_active = getattr(monitor, "isActive", None)
+        if callable(is_active) and is_active():
+            return
+        self.monitorIntervalChanged(spin_box.value())
+
+    def _mark_display_synchronized(self, worker: Any) -> bool:
+        """Publish terminal plot state after the concrete display commit."""
+
+        if worker is None or worker is not self.__dict__.get("worker"):
+            return False
+        if getattr(worker, "is_cancelled", lambda: False)():
+            return False
+        if not getattr(worker, "_qplot_display_commit_ready", False):
+            return False
+        if getattr(worker, "dataset_completed", None) is not True:
+            return False
+
+        loaded_from_sql = bool(
+            getattr(worker, "loaded_from_sql_heatmap", False)
+            )
+        if not loaded_from_sql and not cache_parameter_is_synchronized(
+                self.ds.cache,
+                self.param.name,
+                ):
+            return False
+
+        self._qplot_display_synchronized = True
+        self._qplot_display_uses_direct_sql = loaded_from_sql
+        worker._qplot_display_commit_ready = False
+        return True
 
     def load_data(
             self,
@@ -186,6 +269,11 @@ class PlotRefreshMixin(_PlotRefreshBase):
             hold_up = QtCore.QEventLoop()
             self.end_wait.connect(hold_up.quit)  # Release main thread event
 
+        if not getattr(self.ds, "running", False):
+            # A terminal reload supersedes the previous displayed snapshot.
+            # Keep it retryable until this worker's concrete display commit.
+            self._qplot_display_synchronized = False
+
         # Run worker
         self.worker = worker
         self.threadPool.start(worker)
@@ -230,7 +318,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             # Check if new data has been added to the dataset
             if current_ds_len != self.last_ds_len or force:
                 if self.worker.running:  # No need to run if already updating
-                    self._refresh_pending = True
+                    self._queue_pending_refresh(force=force)
                     if force:
                         self.show_status("Refresh queued after the current load.", 3000)
                     return
@@ -238,10 +326,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 # The actual refresh line
                 self.load_data()
 
-            elif dataset.running:
-                # Completion is a runs-table update and need not add a final
-                # result row. Keep QCoDeS' cached ``running`` flag in sync even
-                # when there is no plot data to reload.
+            elif self._refresh_monitor_required(dataset):
+                # Source completion is global, but this parameter/cache/display
+                # may still need its own successful terminal refresh.
                 self._sync_dataset_completion(dataset)
 
         except Exception:
@@ -251,7 +338,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
         finally:  # Ran after return or otherwise
 
             # restart monitor
-            if retry or (dataset is not None and dataset.running):
+            if retry or (
+                    dataset is not None
+                    and self._refresh_monitor_required(dataset)
+                    ):
                 self.monitorIntervalChanged(self.spinBox.value())
 
             # restard monitor if any subplots are live
@@ -263,11 +353,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         if subplot is main_line:
                             continue
                         source = getattr(subplot, "from_win", None)
-                        source_dataset = getattr(source, "ds", None)
-                        running = getattr(
-                            source_dataset,
-                            "running",
-                            getattr(subplot, "running", False),
+                        running = (
+                            plot_refresh_required(source)
+                            if source is not None
+                            else bool(getattr(subplot, "running", False))
                             )
                         subplot.running = bool(running)
                         if running:
@@ -286,19 +375,35 @@ class PlotRefreshMixin(_PlotRefreshBase):
         QtCore.QTimer.singleShot(0, self._run_pending_refresh)
 
 
+    def _queue_pending_refresh(self, *, force: bool = False) -> None:
+        """Coalesce refreshes while retaining explicit-force provenance."""
+
+        state = self.__dict__
+        if not state.get("_refresh_pending", False):
+            self._refresh_pending_force = False
+        self._refresh_pending = True
+        if force:
+            self._refresh_pending_force = True
+
+
     def _run_pending_refresh(self) -> None:
         self._refresh_pending_scheduled = False
         if not self.__dict__.get("_refresh_pending", False):
             return
         if not self._can_process_refresh():
             self._refresh_pending = False
+            self._refresh_pending_force = False
             return
         if getattr(getattr(self, "worker", None), "running", False):
             self._schedule_pending_refresh()
             return
 
+        force = bool(self.__dict__.get("_refresh_pending_force", False))
         self._refresh_pending = False
-        self.refreshWindow(force=True)
+        self._refresh_pending_force = False
+        if not force and not self._refresh_monitor_required():
+            return
+        self.refreshWindow(force=force)
 
 
     @QtCore.pyqtSlot(bool)
@@ -340,6 +445,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             return False
 
         try:
+            worker._qplot_display_commit_ready = False
             if was_cancelled:
                 worker.running = False
                 return False
@@ -371,18 +477,27 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         ),
                     )
                 if not cache_updated:
-                    self._refresh_pending = True
+                    self._queue_pending_refresh()
                     self.show_status(
                         "A newer refresh finished first; synchronising this plot...",
                         5000,
                         )
                     return False
 
-                if cache_dataset_completed(cache):
-                    set_parameter_complete(self.param, True)
-
                 if not cache_has_no_written_data(cache):
                     self._live = False
+
+            if (
+                    getattr(worker, "dataset_completed", None) is True
+                    and cache_is_live(self.ds.cache)
+                    ):
+                # An in-memory live cache is already authoritative; no database
+                # cache commit is needed before its terminal display refresh.
+                set_cache_parameter_synchronized(
+                    self.ds.cache,
+                    self.param.name,
+                    True,
+                    )
 
             # set data to be called by plot<1/2>d.refreshPlot()
             self.axis_data = {
@@ -438,10 +553,21 @@ class PlotRefreshMixin(_PlotRefreshBase):
             if (
                     getattr(worker, "loaded_from_sql_heatmap", False)
                     and getattr(worker, "dataset_completed", None) is True
-                    ):
+                ):
                 # Direct SQL heatmaps intentionally bypass the QCoDeS cache.
-                # Publish completion only after their final plot data commits.
+                # Publish the global source observation here; the concrete
+                # heatmap publishes its per-plot state only after rendering.
                 set_cache_dataset_completed(self.ds.cache, True)
+            worker._qplot_display_commit_ready = bool(
+                getattr(worker, "dataset_completed", None) is True
+                and (
+                    getattr(worker, "loaded_from_sql_heatmap", False)
+                    or cache_parameter_is_synchronized(
+                        self.ds.cache,
+                        self.param.name,
+                        )
+                    )
+                )
             return True
 
         except AttributeError as err:
@@ -455,6 +581,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
             if worker is self.worker:
                 worker.running = False
                 self.end_wait.emit()
+                if not getattr(worker, "_qplot_display_commit_ready", False):
+                    self._ensure_refresh_monitor()
                 self._schedule_pending_refresh()
 
 

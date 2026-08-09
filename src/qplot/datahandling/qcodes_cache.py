@@ -83,7 +83,40 @@ def set_cache_dataset_completed(cache, completed):
         cache_dataset(cache)._completed = bool(completed)
 
 
+def cache_parameter_is_synchronized(cache, parameter_name):
+    """Return whether qPlot has committed this parameter's final cache rows."""
+
+    with cache_lock(cache):
+        synchronized = getattr(cache, "_qplot_synchronized_parameters", ())
+        return parameter_name in synchronized
+
+
+def set_cache_parameter_synchronized(cache, parameter_name, synchronized=True):
+    """Publish viewer-owned, cache-wide final synchronization state."""
+
+    with cache_lock(cache):
+        completed_parameters = getattr(
+            cache,
+            "_qplot_synchronized_parameters",
+            None,
+            )
+        if completed_parameters is None:
+            completed_parameters = set()
+            cache._qplot_synchronized_parameters = completed_parameters
+
+        if synchronized:
+            completed_parameters.add(parameter_name)
+        else:
+            completed_parameters.discard(parameter_name)
+
+
 def parameter_is_complete(param):
+    """Return the legacy ParamSpec-local completion mirror.
+
+    QCoDeS can reconstruct ParamSpec instances, so this is not authoritative;
+    use :func:`cache_parameter_is_synchronized` for refresh decisions.
+    """
+
     return param._complete is True
 
 
@@ -123,8 +156,10 @@ def update_cache_parameter_data(
     data read from SQLite.  ``_write_status`` is instead an in-memory array
     insertion offset.  In particular, QCoDeS reports ``0`` after appending to
     an unshaped parameter tree, so it cannot safely be used to order refresh
-    workers. Database completion is monotonic and is published last so an
-    older in-flight refresh cannot revert a successful final commit.
+    workers. Parameter synchronization and database completion are monotonic
+    and are published only after the full parameter cache commit, so another
+    plot can distinguish global source completion from its own outstanding
+    final read.
     """
 
     with cache_lock(cache):
@@ -142,8 +177,9 @@ def update_cache_parameter_data(
         cache_write_status(cache)[parameter_name] = next_write_status
         cache_data(cache)[parameter_name] = updated_data[parameter_name]
         if dataset_completed is True:
-            # Completion is terminal for monitoring, so publish it only after
-            # every part of the successful cache commit above.
+            set_cache_parameter_synchronized(cache, parameter_name, True)
+            # Source completion is global, but individual plots still track
+            # whether their final display commit succeeded.
             set_cache_dataset_completed(cache, dataset_completed)
         return True
 

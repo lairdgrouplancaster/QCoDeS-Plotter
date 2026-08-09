@@ -142,6 +142,30 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
 
         self.assertEqual(window.load_calls, ["load"])
 
+    def test_terminal_success_drops_monitor_queued_refresh(self):
+        window = self._window(worker_running=False)
+        window.ds.running = False
+        window.last_ds_len = window.ds.number_of_results
+        window._qplot_display_synchronized = True
+        window._queue_pending_refresh()
+
+        plotWidget._run_pending_refresh(window)
+
+        self.assertFalse(window._refresh_pending)
+        self.assertEqual(window.load_calls, [])
+
+    def test_terminal_success_keeps_explicit_forced_refresh(self):
+        window = self._window(worker_running=False)
+        window.ds.running = False
+        window.last_ds_len = window.ds.number_of_results
+        window._qplot_display_synchronized = True
+        window._queue_pending_refresh(force=True)
+
+        plotWidget._run_pending_refresh(window)
+
+        self.assertFalse(window._refresh_pending)
+        self.assertEqual(window.load_calls, ["load"])
+
     def test_secondary_trace_restart_does_not_depend_on_dictionary_order(self):
         window = self._window(worker_running=False)
         window.ds.running = False
@@ -287,6 +311,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         class Dataset:
             cache = Cache()
             number_of_results = 42
+            running = False
 
         class Param:
             name = "signal"
@@ -319,6 +344,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
         window.param = Param()
+        window._qplot_display_synchronized = True
         window.param_dict = {"x": object(), "y": object(), "signal": object()}
         window.axis_dropdown = {"x": Combo("x"), "y": Combo("y")}
         window.config = Config()
@@ -357,6 +383,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertFalse(worker.force_sql_heatmap)
         self.assertEqual(worker.operations, ["operation"])
         self.assertEqual(window.worker, worker)
+        self.assertFalse(window._qplot_display_synchronized)
         self.assertIn("Loading data for signal", window.show_statuses[-1][0])
 
         error = RuntimeError("failed")
@@ -434,6 +461,35 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         self.assertEqual(cache_updates, [])
         self.assertEqual(window.statuses, [])
         self.assertEqual(window.plot_states, [])
+
+    def test_stale_worker_cannot_publish_display_synchronization(self):
+        window = self._window()
+        window._qplot_display_synchronized = False
+        stale_worker = self.Worker()
+        stale_worker.dataset_completed = True
+        stale_worker._qplot_display_commit_ready = True
+
+        self.assertFalse(window._mark_display_synchronized(stale_worker))
+        self.assertFalse(window._qplot_display_synchronized)
+
+    def test_cancelled_worker_cannot_publish_display_synchronization(self):
+        window = self._window()
+        window._qplot_display_synchronized = False
+        window.worker.dataset_completed = True
+        window.worker._qplot_display_commit_ready = True
+        window.worker.is_cancelled = lambda: True
+
+        self.assertFalse(window._mark_display_synchronized(window.worker))
+        self.assertFalse(window._qplot_display_synchronized)
+
+    def test_failed_worker_cannot_publish_display_synchronization(self):
+        window = self._window()
+        window._qplot_display_synchronized = False
+        window.worker.dataset_completed = True
+        window.worker._qplot_display_commit_ready = True
+
+        self.assertFalse(plotWidget.refreshPlot(window, False, worker=window.worker))
+        self.assertFalse(window._qplot_display_synchronized)
 
     def test_stale_failed_worker_cannot_show_error_overlay(self):
         window = self._window()

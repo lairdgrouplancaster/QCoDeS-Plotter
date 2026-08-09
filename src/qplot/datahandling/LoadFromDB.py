@@ -21,7 +21,7 @@ from qplot.datahandling.qcodes_cache import (
     cache_dataset_run_id,
     cache_is_live,
     cache_lock,
-    parameter_is_complete,
+    cache_parameter_is_synchronized,
     prepare_cache_if_empty,
 )
 
@@ -101,7 +101,7 @@ def load_param_data_from_db_prep(
             "in-memory."
         )
 
-    if parameter_is_complete(param): # Altered to be per param
+    if cache_parameter_is_synchronized(cache, param.name):
         return True, cache_dataset_completed(cache)
 
     with cache_lock(cache):
