@@ -207,7 +207,13 @@ def release_windows_database_locks(window, database_path, *extra_datasets):
         return
 
     source_path = Path(database_path).resolve()
-    datasets = [getattr(window, "ds", None), *extra_datasets]
+    datasets = list(extra_datasets)
+    selected_key = getattr(window, "_selected_dataset_key", None)
+    if (
+            selected_key is not None
+            and Path(selected_key.database_path).resolve() == source_path
+            ):
+        datasets.append(getattr(window, "ds", None))
     for dataset_key, handle in getattr(window, "dataset_holder", {}).items():
         if Path(dataset_key.database_path).resolve() == source_path:
             datasets.append(handle.dataset)
@@ -537,7 +543,11 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
                 "load_by_guid_read_only",
                 record_direct_dataset_read,
             )
-            window.openPlot(params=[old_parameter], show=False)
+            window.openPlot(
+                guid=old_plot._dataset_key,
+                params=[old_parameter],
+                show=False,
+            )
             assert direct_dataset_reads == []
 
         wait_for(
