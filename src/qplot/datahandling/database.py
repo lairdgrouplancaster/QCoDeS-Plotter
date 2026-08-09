@@ -5,6 +5,7 @@ This module keeps blocking database probes, cloud-file hydration, background
 load workers, and diagnostic report generation outside the GUI class.
 """
 
+import json
 import os
 import queue
 import stat
@@ -16,7 +17,11 @@ from time import perf_counter
 
 from PyQt6 import QtCore
 
-from qplot.datahandling.readonly import sqlite_read_only_connection
+from qplot.datahandling.file_identity import database_file_identity
+from qplot.datahandling.readonly import (
+    replacement_wal_is_quarantined,
+    sqlite_read_only_connection,
+)
 from qplot.datahandling.readSQL import (
     find_new_runs,
     get_run_status,
@@ -77,11 +82,24 @@ def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS
     first so a stuck access check can be timed out without freezing qPlot.
 
     """
+    # The child has a fresh replacement registry. Carry the identity observed
+    # before its launch so it cannot combine a later main-file replacement
+    # with a retained WAL sidecar.
+    expected_database_identity = database_file_identity(database_path)
+    ignore_unpaired_wal = replacement_wal_is_quarantined(database_path)
     probe = (
+        "import json\n"
         "import sys\n"
         "from qplot.datahandling.readonly import probe_read_only_database\n"
         "try:\n"
-        "    probe_read_only_database(sys.argv[1])\n"
+        "    expected_database_identity = json.loads(sys.argv[3])\n"
+        "    if expected_database_identity is not None:\n"
+        "        expected_database_identity = tuple(expected_database_identity)\n"
+        "    probe_read_only_database(\n"
+        "        sys.argv[1],\n"
+        "        ignore_unpaired_wal=(sys.argv[2] == '1'),\n"
+        "        expected_database_identity=expected_database_identity,\n"
+        "    )\n"
         "except Exception as err:\n"
         "    print(err, file=sys.stderr)\n"
         "    raise SystemExit(1)\n"
@@ -89,7 +107,14 @@ def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS
 
     try:
         result = subprocess.run(
-            [sys.executable, "-c", probe, database_path],
+            [
+                sys.executable,
+                "-c",
+                probe,
+                database_path,
+                "1" if ignore_unpaired_wal else "0",
+                json.dumps(expected_database_identity),
+            ],
             capture_output=True,
             text=True,
             timeout=timeout,

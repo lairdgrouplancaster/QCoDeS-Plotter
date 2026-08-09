@@ -1,10 +1,13 @@
 import hashlib
+import os
+import sqlite3
 import threading
 import time
 from pathlib import Path
-from time import perf_counter
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import qcodes
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
@@ -18,18 +21,15 @@ from qcodes.parameters import ManualParameter
 
 import qplot.tools.worker as worker_module
 from qplot.configuration.config import config
+from qplot.datahandling import database as database_module
 from qplot.datahandling.qcodes_cache import (
     cache_parameter_data,
     cache_parameter_is_synchronized,
 )
-from qplot.datahandling.readonly import (
-    load_by_id_read_only,
-    set_qcodes_database_location,
-)
-from qplot.tools.worker import loader
+from qplot.testdata import RunSpecification, generate_database
+from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows import main as main_window
-from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
-from qplot.windows._plotWin import plotWidget
+from qplot.windows._dataset_handle import database_file_identity
 
 
 def configure_temp_qplot(monkeypatch, tmp_path):
@@ -88,6 +88,42 @@ def build_synthetic_database(db_path):
     return line_run_id, heatmap_run_id
 
 
+def build_line_database(db_path, point_count, *, guid=None, journal_mode=None):
+    kwargs = {} if journal_mode is None else {"journal_mode": journal_mode}
+    initialise_or_create_database_at(str(db_path), **kwargs)
+    experiment = load_or_create_experiment(
+        f"qplot_replace_{db_path.stem}",
+        sample_name="replacement",
+    )
+    gate = ManualParameter("gate", label="Gate voltage", unit="V")
+    signal = ManualParameter("signal", label="Signal", unit="nA")
+    measurement = Measurement(exp=experiment, name="replaceable_run")
+    measurement.register_parameter(gate)
+    measurement.register_parameter(signal, setpoints=(gate,))
+    with measurement.run(write_in_background=False) as datasaver:
+        for index in range(point_count):
+            datasaver.add_result((gate, float(index)), (signal, float(index + 10)))
+        dataset = datasaver.dataset
+        run_id = dataset.run_id
+        generated_guid = dataset.guid
+        table_name = dataset.table_name
+    dataset.conn.close()
+
+    if guid is not None and guid != generated_guid:
+        connection = sqlite3.connect(db_path)
+        try:
+            connection.execute(
+                "UPDATE runs SET guid = ? WHERE run_id = ?",
+                (guid, run_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        generated_guid = guid
+
+    return run_id, generated_guid, table_name
+
+
 def dependent_parameter(dataset, dimensions):
     for param in dataset.get_parameters():
         if param.depends_on and len(param.depends_on_) == dimensions:
@@ -123,17 +159,6 @@ def database_artifact_state(database_path):
             hashlib.sha256(path.read_bytes()).hexdigest(),
             )
     return state
-
-
-def run_plot_worker_on_thread(worker):
-    errors = []
-    worker.emitter.errorOccurred.connect(errors.append)
-    thread = threading.Thread(target=worker.run)
-    thread.start()
-    thread.join(10)
-    qtw.QApplication.processEvents()
-    assert not thread.is_alive()
-    return errors
 
 
 def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
@@ -217,207 +242,665 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
         close_main_window(window)
 
 
-def test_threaded_live_run_completion_commits_final_rows_before_stopping_monitor(
+def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
     tmp_path,
     monkeypatch,
 ):
-    database_path = Path(tmp_path) / "threaded-live-run.db"
+    configure_temp_qplot(monkeypatch, tmp_path)
     original_database_path = qcodes.config.core.db_location
-    initial_row_written = threading.Event()
-    finish_writer = threading.Event()
-    writer_state = {}
-    writer_errors = []
-    viewer_dataset = None
+    database_path = Path(tmp_path) / "loaded.db"
+    replacement_path = Path(tmp_path) / "replacement.db"
+    _run_id, guid, table_name = build_line_database(database_path, 3)
+    _replacement_run_id, replacement_guid, replacement_table = build_line_database(
+        replacement_path,
+        4,
+        guid=guid,
+    )
+    assert replacement_guid == guid
+    assert replacement_table == table_name
 
-    def write_measurement():
-        try:
-            initialise_or_create_database_at(str(database_path), journal_mode="WAL")
-            experiment = load_or_create_experiment(
-                "threaded_live_run",
-                sample_name="completion_race",
-                )
-            gate = ManualParameter("gate")
-            signal = ManualParameter("signal")
-            measurement = Measurement(exp=experiment, name="completion_race")
-            measurement.register_parameter(gate)
-            measurement.register_parameter(signal, setpoints=(gate,))
-            with measurement.run(write_in_background=False) as datasaver:
-                datasaver.add_result((gate, 0.0), (signal, 10.0))
-                datasaver.flush_data_to_database(block=True)
-                writer_state["run_id"] = datasaver.dataset.run_id
-                initial_row_written.set()
-                if not finish_writer.wait(10):
-                    raise TimeoutError("Test did not release the measurement writer")
-                datasaver.add_result((gate, 1.0), (signal, 11.0))
-                datasaver.add_result((gate, 2.0), (signal, 12.0))
-            datasaver.dataset.conn.close()
-        except BaseException as error:
-            writer_errors.append(error)
-            initial_row_written.set()
+    window = main_window.MainWindow()
+    refresh_sql_finished = threading.Event()
+    release_refresh = threading.Event()
+    status_messages = []
+    original_show_status = window.show_status
+    original_get_run_status = database_module.get_run_status
+    replacement_loads = []
+    original_load_file = window.load_file
 
-    writer_thread = threading.Thread(target=write_measurement)
-    writer_thread.start()
+    def record_status(message, timeout=5000):
+        status_messages.append((message, timeout))
+        return original_show_status(message, timeout)
+
+    def block_completed_status(*args, **kwargs):
+        status = original_get_run_status(*args, **kwargs)
+        refresh_sql_finished.set()
+        if not release_refresh.wait(10):
+            raise TimeoutError("Test did not release the database refresh worker")
+        return status
+
+    def record_load(*args, **kwargs):
+        replacement_loads.append((args, kwargs))
+        return original_load_file(*args, **kwargs)
 
     try:
-        assert initial_row_written.wait(10)
-        assert writer_errors == []
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        window.show_status = record_status
 
-        set_qcodes_database_location(database_path)
-        viewer_dataset = load_by_id_read_only(writer_state["run_id"])
-        assert viewer_dataset.running
-        assert viewer_dataset.number_of_results == 1
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+        assert window.ds is not None
+        assert window.ds.guid == guid
+        assert window.ds.number_of_results == 3
 
-        parameter = dependent_parameter(viewer_dataset, 1)
-        parameter._complete = False
-        parameters = {
-            candidate.name: candidate
-            for candidate in viewer_dataset.get_parameters()
-            }
-        parameters[parameter.name] = parameter
-        axes = {"x": parameter.depends_on_[0]}
+        parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[parameter], show=False)
+        old_plot = window.windows[-1]
+        wait_for(lambda: not getattr(old_plot.worker, "running", False))
+        old_key = old_plot._dataset_key
+        old_handle = window.dataset_holder[old_key]
+        old_dataset = old_handle.dataset
+        assert old_dataset.number_of_results == 3
+        assert old_key.database_identity == database_file_identity(database_path)
 
-        finish_writer.set()
-        writer_thread.join(10)
-        assert not writer_thread.is_alive()
-        assert writer_errors == []
-        assert viewer_dataset.running
-        # The source-preserving viewer connection is intentionally pinned to
-        # the WAL snapshot from when the run was opened. Plot workers must use
-        # fresh read-only snapshots to discover the committed final rows.
-        assert viewer_dataset.number_of_results == 1
-
-        writer_complete_artifacts = database_artifact_state(database_path)
-        assert set(writer_complete_artifacts) == {"", "-wal", "-shm", "-journal"}
-        assert writer_complete_artifacts[""] is not None
-
-        original_load = worker_module.load_param_data_from_db
-
-        def fail_final_load(*_args, **_kwargs):
-            raise RuntimeError("injected final-load failure")
+        stale_preview = [{"stale": True}]
+        window.infoBox.preview.cache[guid] = stale_preview
+        window.infoBox._setpoint_summary_cache["stale"] = "old instance"
+        window.RunList.watching = [SimpleNamespace(guid=guid)]
+        window.load_file = record_load
 
         monkeypatch.setattr(
-            worker_module,
-            "load_param_data_from_db",
-            fail_final_load,
+            database_module,
+            "get_run_status",
+            block_completed_status,
+        )
+        window.refreshMain()
+        assert refresh_sql_finished.wait(10)
+        window.refreshMain()
+        assert window._database_refresh_pending
+
+        os.replace(replacement_path, database_path)
+        replacement_artifacts = database_artifact_state(database_path)
+        release_refresh.set()
+
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_refresh_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+                and window._loaded_database_identity
+                == database_file_identity(database_path)
             )
-        failed_worker = loader(
-            viewer_dataset.cache,
-            parameter,
-            parameters,
-            axes,
-            )
-        failed_errors = run_plot_worker_on_thread(failed_worker)
+        )
+        window.monitor.stop()
 
-        assert len(failed_errors) == 1
-        assert "injected final-load failure" in str(failed_errors[0])
-        assert failed_worker.dataset_completed is True
-        assert viewer_dataset.running
-        assert not viewer_dataset.completed
-        assert not parameter._complete
+        runs = window.RunList.all_run_metadata()
+        replacement_metadata = next(
+            metadata for metadata in runs.values() if metadata["guid"] == guid
+        )
+        assert replacement_metadata["result_count"] == 4
+        assert window.infoBox.preview.run_metadata[guid]["result_count"] == 4
+        assert window.infoBox.preview.cache.get(guid) != stale_preview
+        assert "stale" not in window.infoBox._setpoint_summary_cache
+        assert old_plot not in window.windows
+        assert old_handle.closed
+        assert old_key not in window.dataset_holder
+        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+            old_dataset.conn.cursor()
 
-        class Monitor:
-            def __init__(self):
-                self.active = True
-                self.stop_count = 0
+        new_key = window._current_dataset_key(guid)
+        assert new_key != old_key
+        with pytest.raises(RuntimeError, match="replaced"):
+            window._dataset_for_key(old_key)
 
-            def stop(self):
-                self.active = False
-                self.stop_count += 1
+        assert window.ds is not None
+        assert window.ds.guid == guid
+        assert window.ds.number_of_results == 4
+        new_parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[new_parameter], show=False)
+        new_plot = window.windows[-1]
+        wait_for(lambda: not getattr(new_plot.worker, "running", False))
+        new_handle = window.dataset_holder[new_plot._dataset_key]
+        assert new_handle is not old_handle
+        assert new_handle.database_identity == database_file_identity(database_path)
+        assert new_handle.dataset.number_of_results == 4
+        assert new_plot.axis_data["x"].size == 4
+        assert new_plot.axis_data["y"].size == 4
 
-        class SpinBox:
-            def value(self):
-                return 0.1
-
-        class EndWait:
-            def __init__(self):
-                self.count = 0
-
-            def emit(self):
-                self.count += 1
-
-        dataset_key = DatasetKey(database_path, viewer_dataset.guid)
-        window = plotWidget.__new__(plotWidget)
-        window._dataset_key = dataset_key
-        window._dataset_holder = {
-            dataset_key: DatasetHandle(viewer_dataset),
-            }
-        window._guid = viewer_dataset.guid
-        window.param = parameter
-        window.worker = failed_worker
-        window.monitor = Monitor()
-        window.spinBox = SpinBox()
-        window.end_wait = EndWait()
-        window._last_error_text = None
-        window.show_status = lambda *_args, **_kwargs: None
-        window.show_plot_state = lambda *_args, **_kwargs: None
-        window.hide_plot_state = lambda: None
-        window._set_param_axis_labels = lambda: None
-        monitor_restarts = []
-
-        def restart_monitor(interval):
-            monitor_restarts.append(interval)
-            window.monitor.active = True
-
-        window.monitorIntervalChanged = restart_monitor
-
-        assert plotWidget.refreshPlot(window, False, worker=failed_worker) is False
-        window.last_ds_len = viewer_dataset.number_of_results
-        retry_requests = []
-        window.load_data = lambda: retry_requests.append(True)
-
-        plotWidget.refreshWindow(window)
-
-        assert retry_requests == [True]
-        assert monitor_restarts == [0.1]
-        assert window.monitor.active
-
-        monkeypatch.setattr(
-            worker_module,
-            "load_param_data_from_db",
-            original_load,
-            )
-        successful_worker = loader(
-            viewer_dataset.cache,
-            parameter,
-            parameters,
-            axes,
-            )
-        successful_worker.started_at = perf_counter()
-        successful_worker.dataset_length_at_start = viewer_dataset.number_of_results
-        successful_errors = run_plot_worker_on_thread(successful_worker)
-
-        assert successful_errors == []
-        assert successful_worker.dataset_completed is True
-        assert viewer_dataset.running
-
-        window.worker = successful_worker
-        assert plotWidget.refreshPlot(window, True, worker=successful_worker) is True
-
-        np.testing.assert_array_equal(
-            cache_parameter_data(viewer_dataset.cache, parameter.name)["gate"],
-            [0.0, 1.0, 2.0],
-            )
-        np.testing.assert_array_equal(
-            cache_parameter_data(viewer_dataset.cache, parameter.name)["signal"],
-            [10.0, 11.0, 12.0],
-            )
-        np.testing.assert_array_equal(window.axis_data["x"], [0.0, 1.0, 2.0])
-        np.testing.assert_array_equal(window.axis_data["y"], [10.0, 11.0, 12.0])
-        assert viewer_dataset.completed
-        assert not viewer_dataset.running
-        assert parameter._complete
-
-        previous_restart_count = len(monitor_restarts)
-        plotWidget.refreshWindow(window)
-        assert len(monitor_restarts) == previous_restart_count
-        assert not window.monitor.active
-        assert retry_requests == [True]
-        assert database_artifact_state(database_path) == writer_complete_artifacts
+        qtw.QApplication.processEvents()
+        assert len(replacement_loads) == 1
+        assert replacement_loads[0][1] == {"force": True, "replacement": True}
+        assert any(
+            "Database was replaced and reloaded" in message
+            for message, _timeout in status_messages
+        )
+        assert database_artifact_state(database_path) == replacement_artifacts
     finally:
-        finish_writer.set()
-        writer_thread.join(10)
-        if viewer_dataset is not None:
-            viewer_dataset.conn.close()
+        release_refresh.set()
+        window.load_file = original_load_file
+        close_main_window(window)
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    database_path = Path(tmp_path) / "live-replaced.db"
+    replacement_path = Path(tmp_path) / "replacement.db"
+    experiment = None
+    window = None
+
+    try:
+        initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+        experiment = load_or_create_experiment(
+            "live_replacement",
+            sample_name="stale_sidecar",
+        )
+        gate = ManualParameter("gate")
+        signal = ManualParameter("signal")
+        measurement = Measurement(exp=experiment, name="old_live_run")
+        measurement.register_parameter(gate)
+        measurement.register_parameter(signal, setpoints=(gate,))
+
+        with measurement.run(write_in_background=False) as datasaver:
+            datasaver.add_result((gate, 0.0), (signal, 10.0))
+            datasaver.flush_data_to_database(block=True)
+            assert Path(f"{database_path}-wal").is_file()
+            assert Path(f"{database_path}-shm").is_file()
+
+            window = main_window.MainWindow()
+            window.startupDatabaseTimer.stop()
+            window.monitor.stop()
+            window.config.config["user_preference"]["confirm_close"] = False
+            window.config.config["user_preference"]["confirm_close_all"] = False
+            window.close_database(status=False)
+            assert window.load_file(str(database_path))
+            wait_for(
+                lambda: (
+                    not window._database_load_active
+                    and not window._database_detail_active
+                    and not window._database_expensive_detail_active
+                )
+            )
+            window.monitor.stop()
+            assert window.ds is not None
+            old_parameter = dependent_parameter(window.ds, 1)
+            window.openPlot(params=[old_parameter], show=False)
+            old_plot = window.windows[-1]
+            wait_for(lambda: not getattr(old_plot.worker, "running", False))
+            old_handle = window.dataset_holder[old_plot._dataset_key]
+            assert old_plot.axis_data["y"].size == 1
+            old_wal_identity = database_file_identity(f"{database_path}-wal")
+            assert old_wal_identity is not None
+
+            generate_database(
+                [
+                    RunSpecification(
+                        1,
+                        "replacement_signal",
+                        "Replacement signal",
+                        "V",
+                        -1.0,
+                        1.0,
+                        4,
+                    )
+                ],
+                replacement_path,
+            )
+            os.replace(replacement_path, database_path)
+            replacement_artifacts = database_artifact_state(database_path)
+            assert replacement_artifacts["-wal"] is not None
+            assert replacement_artifacts["-shm"] is not None
+            assert database_file_identity(f"{database_path}-wal") == old_wal_identity
+
+            # Deliberately take a plot action before MainWindow's refresh timer
+            # can observe the replacement. It must start the replacement reload
+            # without opening the new main together with the old WAL.
+            window.show_error = lambda *_args, **_kwargs: None
+            direct_dataset_reads = []
+            original_loader = plot_actions_module.load_by_guid_read_only
+
+            def record_direct_dataset_read(*args, **kwargs):
+                direct_dataset_reads.append((args, kwargs))
+                return original_loader(*args, **kwargs)
+
+            with monkeypatch.context() as scoped_monkeypatch:
+                scoped_monkeypatch.setattr(
+                    plot_actions_module,
+                    "load_by_guid_read_only",
+                    record_direct_dataset_read,
+                )
+                window.openPlot(params=[old_parameter], show=False)
+                assert direct_dataset_reads == []
+
+            wait_for(
+                lambda: (
+                    not window._database_load_active
+                    and not window._database_refresh_active
+                    and not window._database_detail_active
+                    and not window._database_expensive_detail_active
+                )
+            )
+            window.monitor.stop()
+
+            metadata = next(iter(window.RunList.all_run_metadata().values()))
+            assert metadata["result_count"] == 4
+            assert old_plot not in window.windows
+            assert old_handle.closed
+            assert window.ds is not None
+            new_parameter = dependent_parameter(window.ds, 1)
+            window.openPlot(params=[new_parameter], show=False)
+            new_plot = window.windows[-1]
+            wait_for(lambda: not getattr(new_plot.worker, "running", False))
+            assert new_plot.axis_data["x"].size == 4
+            assert new_plot.axis_data["y"].size == 4
+            assert database_artifact_state(database_path) == replacement_artifacts
+    finally:
+        if window is not None:
+            close_main_window(window)
+        if experiment is not None:
+            experiment.conn.close()
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_existing_live_plot_refresh_quarantines_replaced_wal_before_worker_read(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    database_path = Path(tmp_path) / "live-refresh-replaced.db"
+    replacement_path = Path(tmp_path) / "live-refresh-replacement.db"
+    experiment = None
+    window = None
+
+    try:
+        initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+        experiment = load_or_create_experiment(
+            "live_refresh_replacement",
+            sample_name="stale_plot",
+        )
+        gate = ManualParameter("gate")
+        signal = ManualParameter("signal")
+        measurement = Measurement(exp=experiment, name="old_live_run")
+        measurement.register_parameter(gate)
+        measurement.register_parameter(signal, setpoints=(gate,))
+
+        with measurement.run(write_in_background=False) as datasaver:
+            datasaver.add_result((gate, 0.0), (signal, 10.0))
+            datasaver.flush_data_to_database(block=True)
+            assert Path(f"{database_path}-wal").is_file()
+
+            window = main_window.MainWindow()
+            window.startupDatabaseTimer.stop()
+            window.monitor.stop()
+            window.config.config["user_preference"]["confirm_close"] = False
+            window.config.config["user_preference"]["confirm_close_all"] = False
+            window.close_database(status=False)
+            assert window.load_file(str(database_path))
+            wait_for(
+                lambda: (
+                    not window._database_load_active
+                    and not window._database_detail_active
+                    and not window._database_expensive_detail_active
+                )
+            )
+            window.monitor.stop()
+            old_parameter = dependent_parameter(window.ds, 1)
+            window.openPlot(params=[old_parameter], show=False)
+            old_plot = window.windows[-1]
+            wait_for(lambda: not getattr(old_plot.worker, "running", False))
+            old_worker = old_plot.worker
+            old_handle = window.dataset_holder[old_plot._dataset_key]
+
+            generate_database(
+                [
+                    RunSpecification(
+                        1,
+                        "replacement_signal",
+                        "Replacement signal",
+                        "V",
+                        -1.0,
+                        1.0,
+                        4,
+                    )
+                ],
+                replacement_path,
+            )
+            os.replace(replacement_path, database_path)
+            replacement_artifacts = database_artifact_state(database_path)
+            assert replacement_artifacts["-wal"] is not None
+
+            worker_database_reads = []
+            original_prep = worker_module.load_param_data_from_db_prep
+            original_load = worker_module.load_param_data_from_db
+
+            def record_prep(*args, **kwargs):
+                worker_database_reads.append("prep")
+                return original_prep(*args, **kwargs)
+
+            def record_load(*args, **kwargs):
+                worker_database_reads.append("load")
+                return original_load(*args, **kwargs)
+
+            monkeypatch.setattr(worker_module, "load_param_data_from_db_prep", record_prep)
+            monkeypatch.setattr(worker_module, "load_param_data_from_db", record_load)
+            old_plot.refreshWindow(force=True)
+            wait_for(
+                lambda: (
+                    not window._database_load_active
+                    and not window._database_refresh_active
+                    and not window._database_detail_active
+                    and not window._database_expensive_detail_active
+                )
+            )
+            window.monitor.stop()
+
+            assert old_plot.worker is old_worker
+            assert worker_database_reads == []
+            assert old_plot not in window.windows
+            assert old_handle.closed
+            metadata = next(iter(window.RunList.all_run_metadata().values()))
+            assert metadata["result_count"] == 4
+            assert database_artifact_state(database_path) == replacement_artifacts
+    finally:
+        if window is not None:
+            close_main_window(window)
+        if experiment is not None:
+            experiment.conn.close()
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_replaced_background_plot_does_not_switch_current_database(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    database_a = Path(tmp_path) / "source-a.db"
+    replacement_a = Path(tmp_path) / "source-a-replacement.db"
+    database_b = Path(tmp_path) / "source-b.db"
+    _run_a, guid_a, _table_a = build_line_database(database_a, 3)
+    _run_b, guid_b, _table_b = build_line_database(database_b, 2)
+    _replacement_run, replacement_guid, _replacement_table = build_line_database(
+        replacement_a,
+        4,
+        guid=guid_a,
+    )
+    assert replacement_guid == guid_a
+
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.config.config["runtime_settings"]["del_grace_period"] = 0
+        window.close_database(status=False)
+        assert window.load_file(str(database_a))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+        assert window.ds is not None
+        assert window.ds.guid == guid_a
+        source_parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[source_parameter], show=False)
+        source_plot = window.windows[-1]
+        wait_for(lambda: not getattr(source_plot.worker, "running", False))
+
+        assert window.load_file(str(database_b))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+        assert window.fileTextbox.text() == str(database_b)
+        assert window.ds is not None
+        assert window.ds.guid == guid_b
+        assert source_plot in window.windows
+
+        target_parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[target_parameter], show=False)
+        target_plot = window.windows[-1]
+        wait_for(lambda: not getattr(target_plot.worker, "running", False))
+
+        source_key = source_plot._dataset_key
+        source_handle = window.dataset_holder[source_key]
+        source_trace_key = source_plot._trace_key
+        assert window.add_trace_to_plot(
+            target_plot,
+            source_key,
+            source_parameter.name,
+            param=source_parameter,
+        )
+        wait_for(lambda: source_trace_key in target_plot.lines)
+        assert source_plot._closed
+        assert source_plot not in window.windows
+        assert source_plot._merged_trace_users == 1
+        assert source_key in window.dataset_holder
+
+        os.replace(replacement_a, database_a)
+        source_plot.refreshWindow(force=True)
+        wait_for(
+            lambda: (
+                source_trace_key not in target_plot.lines
+                and source_key not in window.dataset_holder
+            )
+        )
+
+        assert source_plot not in window.windows
+        assert source_handle.closed
+        assert source_plot._merged_trace_users == 0
+        assert not source_plot.monitor.isActive()
+        assert target_plot in window.windows
+        np.testing.assert_array_equal(target_plot.line.getData()[1], [10.0, 11.0])
+        assert window.fileTextbox.text() == str(database_b)
+        assert window._loaded_database_identity == database_file_identity(database_b)
+        assert window.ds is not None
+        assert window.ds.guid == guid_b
+    finally:
+        close_main_window(window)
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    database_path = Path(tmp_path) / "live-wal.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+    experiment = load_or_create_experiment("live_wal", sample_name="same_instance")
+    gate = ManualParameter("gate")
+    signal = ManualParameter("signal")
+    measurement = Measurement(exp=experiment, name="live_wal")
+    measurement.register_parameter(gate)
+    measurement.register_parameter(signal, setpoints=(gate,))
+
+    with measurement.run(write_in_background=False) as datasaver:
+        for index in range(3):
+            datasaver.add_result((gate, float(index)), (signal, float(index + 10)))
+        datasaver.flush_data_to_database(block=True)
+        guid = datasaver.dataset.guid
+
+        window = main_window.MainWindow()
+        try:
+            window.startupDatabaseTimer.stop()
+            window.monitor.stop()
+            window.config.config["user_preference"]["confirm_close"] = False
+            window.config.config["user_preference"]["confirm_close_all"] = False
+            window.close_database(status=False)
+            assert window.load_file(str(database_path))
+            wait_for(
+                lambda: (
+                    not window._database_load_active
+                    and not window._database_detail_active
+                    and not window._database_expensive_detail_active
+                )
+            )
+            window.monitor.stop()
+            assert window.RunList.watching
+            assert window.ds is not None
+            assert window.ds.number_of_results == 3
+
+            parameter = dependent_parameter(window.ds, 1)
+            window.openPlot(params=[parameter], show=False)
+            plot = window.windows[-1]
+            wait_for(lambda: not getattr(plot.worker, "running", False))
+            dataset_key = plot._dataset_key
+            handle = window.dataset_holder[dataset_key]
+            loaded_identity = window._loaded_database_identity
+
+            datasaver.add_result((gate, 3.0), (signal, 13.0))
+            datasaver.flush_data_to_database(block=True)
+            writer_artifacts = database_artifact_state(database_path)
+            assert database_file_identity(database_path) == loaded_identity
+
+            replacement_loads = []
+            original_load_file = window.load_file
+
+            def record_load(*args, **kwargs):
+                replacement_loads.append((args, kwargs))
+                return original_load_file(*args, **kwargs)
+
+            window.load_file = record_load
+            window.refreshMain()
+            wait_for(lambda: not window._database_refresh_active)
+            window.monitor.stop()
+
+            metadata = window.RunList.all_run_metadata()
+            run_metadata = next(
+                run for run in metadata.values() if run["guid"] == guid
+            )
+            assert run_metadata["result_count"] == 4
+            assert window._loaded_database_identity == loaded_identity
+            assert window._current_dataset_key(guid) == dataset_key
+            assert window.dataset_holder[dataset_key] is handle
+            assert not handle.closed
+            assert replacement_loads == []
+            assert database_artifact_state(database_path) == writer_artifacts
+        finally:
+            window.load_file = original_load_file
+            close_main_window(window)
+            qcodes.config.core.db_location = original_database_path
+
+
+def test_loaded_path_test_database_generation_uses_replacement_reload(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    database_path = Path(tmp_path) / "generated.db"
+    initial_specification = RunSpecification(
+        1,
+        "current",
+        "Current",
+        "nA",
+        -1.0,
+        1.0,
+        3,
+    )
+    replacement_specification = RunSpecification(
+        1,
+        "current",
+        "Current",
+        "nA",
+        -1.0,
+        1.0,
+        4,
+    )
+    generate_database([initial_specification], database_path)
+
+    window = main_window.MainWindow()
+    status_messages = []
+    original_show_status = window.show_status
+
+    def record_status(message, timeout=5000):
+        status_messages.append((message, timeout))
+        return original_show_status(message, timeout)
+
+    try:
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        window.show_status = record_status
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+        assert window.ds is not None
+        assert window.ds.number_of_results == 3
+        parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[parameter], show=False)
+        old_plot = window.windows[-1]
+        wait_for(lambda: not getattr(old_plot.worker, "running", False))
+        old_handle = window.dataset_holder[old_plot._dataset_key]
+
+        generate_database(
+            [replacement_specification],
+            database_path,
+            overwrite=True,
+        )
+        generated_artifacts = database_artifact_state(database_path)
+        window.test_database_generation_finished(
+            str(database_path),
+            [replacement_specification],
+            None,
+        )
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+
+        assert old_handle.closed
+        assert old_plot not in window.windows
+        assert window.ds is not None
+        assert window.ds.number_of_results == 4
+        metadata = next(iter(window.RunList.all_run_metadata().values()))
+        assert metadata["result_count"] == 4
+        assert any(
+            "Database was replaced and reloaded" in message
+            for message, _timeout in status_messages
+        )
+        assert database_artifact_state(database_path) == generated_artifacts
+    finally:
+        close_main_window(window)
         qcodes.config.core.db_location = original_database_path
 
 

@@ -18,6 +18,7 @@ from qplot.datahandling.qcodes_cache import (
     snapshot_cache_parameter_state,
 )
 from qplot.datahandling.readonly import (
+    DatabaseInstanceChangedError,
     qcodes_read_only_connection,
     sqlite_read_only_connection,
 )
@@ -64,6 +65,7 @@ class loader(QtCore.QRunnable):
                  max_full_heatmap_points: int = MAX_FULL_HEATMAP_POINTS,
                  heatmap_axis_ranges: dict | None = None,
                  heatmap_full_axis_ranges: dict | None = None,
+                 database_identity=None,
                  ):
         """
         Sets up worker with required data for run()
@@ -111,6 +113,8 @@ class loader(QtCore.QRunnable):
         self.max_full_heatmap_points = max(1, int(max_full_heatmap_points))
         self.heatmap_axis_ranges = heatmap_axis_ranges
         self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
+        self.database_identity = database_identity
+        self.database_replaced = False
         self.sampled_heatmap_source = False
         self.aggregated_heatmap_source = False
         self.loaded_from_sql_heatmap = False
@@ -210,7 +214,12 @@ class loader(QtCore.QRunnable):
                     self.read_data = False
                 else:
                     completion_conn = qcodes_read_only_connection(
-                        cache_database_path(cache)
+                        cache_database_path(cache),
+                        expected_database_identity=getattr(
+                            self,
+                            "database_identity",
+                            None,
+                        ),
                         )
                     self._set_sql_connection(completion_conn)
                     try:
@@ -242,7 +251,14 @@ class loader(QtCore.QRunnable):
                     write_status, read_status, existing_data = (
                         snapshot_cache_parameter_state(cache, self.param.name)
                         )
-                    conn = qcodes_read_only_connection(cache_database_path(cache))
+                    conn = qcodes_read_only_connection(
+                        cache_database_path(cache),
+                        expected_database_identity=getattr(
+                            self,
+                            "database_identity",
+                            None,
+                        ),
+                    )
                     self._set_sql_connection(conn)
                     try:
                         self._check_cancelled()
@@ -315,6 +331,14 @@ class loader(QtCore.QRunnable):
 
         except PlotWorkCancelled:
             self._finish_cancelled()
+            return
+        except DatabaseInstanceChangedError as err:
+            self.database_replaced = True
+            if self.is_cancelled():
+                self._finish_cancelled()
+                return
+            self.emitter.errorOccurred.emit(err)
+            self._emit_finished(False)
             return
         except Exception as err: # Raise error in main thread
             if self.is_cancelled():
@@ -424,7 +448,10 @@ class loader(QtCore.QRunnable):
             self.total_point_count_estimate = setpoint_count
             return setpoint_count
 
-        conn = sqlite_read_only_connection(cache_database_path(self.cache))
+        conn = sqlite_read_only_connection(
+            cache_database_path(self.cache),
+            expected_database_identity=getattr(self, "database_identity", None),
+        )
         self._set_sql_connection(conn)
         try:
             self._check_cancelled()
@@ -461,7 +488,10 @@ class loader(QtCore.QRunnable):
 
 
     def _load_large_heatmap_from_sql(self):
-        conn = sqlite_read_only_connection(cache_database_path(self.cache))
+        conn = sqlite_read_only_connection(
+            cache_database_path(self.cache),
+            expected_database_identity=getattr(self, "database_identity", None),
+        )
         self._set_sql_connection(conn)
         try:
             self._check_cancelled()

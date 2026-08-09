@@ -16,7 +16,12 @@ from qplot.datahandling.readonly import set_qcodes_database_location
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
 from qplot.windows._commands import command_spec
-from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
+from qplot.windows._dataset_handle import (
+    DatasetHandle,
+    DatasetKey,
+    TraceKey,
+    database_file_identity,
+)
 from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._run_controls import AUTO_PLOT_KEY
@@ -87,6 +92,28 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
 
 
 class DatasetHandleTestCase(unittest.TestCase):
+    def test_database_identity_changes_on_replacement_but_not_content_updates(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            replacement_path = Path(temp_dir) / "replacement.db"
+            database_path.write_bytes(b"first")
+            replacement_path.write_bytes(b"replacement")
+
+            original_identity = database_file_identity(database_path)
+            database_path.write_bytes(b"ordinary database update")
+
+            self.assertEqual(
+                database_file_identity(database_path),
+                original_identity,
+            )
+
+            os.replace(replacement_path, database_path)
+
+            self.assertNotEqual(
+                database_file_identity(database_path),
+                original_identity,
+            )
+
     def test_close_is_idempotent_and_closes_backing_connection(self):
         class Connection:
             def __init__(self):
@@ -180,6 +207,38 @@ class DatasetHandleTestCase(unittest.TestCase):
 
         self.assertTrue(dataset.conn.closed)
         self.assertEqual(harness.dataset_holder, {})
+
+    def test_new_instance_key_discards_same_path_guid_handle_from_old_instance(self):
+        class Connection:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            replacement_path = Path(temp_dir) / "replacement.db"
+            database_path.write_bytes(b"first")
+            replacement_path.write_bytes(b"replacement")
+            old_key = DatasetKey(database_path, "shared-guid")
+            dataset = type("Dataset", (), {"conn": Connection()})()
+            old_handle = DatasetHandle(
+                dataset,
+                database_identity=old_key.database_identity,
+            )
+            harness = type("Harness", (PlotActionsMixin,), {})()
+            harness.dataset_holder = {old_key: old_handle}
+            harness.ds = None
+
+            os.replace(replacement_path, database_path)
+            new_key = DatasetKey(database_path, "shared-guid")
+
+            self.assertNotEqual(new_key, old_key)
+            self.assertIsNone(harness._dataset_handle_for_key(new_key))
+            self.assertTrue(old_handle.closed)
+            self.assertTrue(dataset.conn.closed)
+            self.assertEqual(harness.dataset_holder, {})
 
     def test_replaced_database_invalidation_closes_only_matching_state(self):
         class Connection:
@@ -2191,6 +2250,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         _prepare_database_load_ui = (
             main_window.MainWindow._prepare_database_load_ui
             )
+        _prepare_replaced_database_reload = (
+            main_window.MainWindow._prepare_replaced_database_reload
+            )
         _set_database_load_controls_enabled = (
             main_window.MainWindow._set_database_load_controls_enabled
             )
@@ -2746,6 +2808,42 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         self.assertEqual(harness.infoBox.preview.added_runs, [(runs, False)])
         self.assertEqual(harness.refreshed_runs, [runs])
 
+    def test_database_detail_batch_drops_results_from_a_replaced_instance(self):
+        class RunList:
+            def __init__(self):
+                self.updated_runs = []
+
+            def updateRuns(self, runs):
+                self.updated_runs.append(runs)
+                return runs
+
+        class Harness:
+            database_detail_batch_ready = main_window.MainWindow.database_detail_batch_ready
+
+            def __init__(self):
+                self._database_detail_generation = 4
+                self._database_detail_active = True
+                self._loaded_database_identity = (1, 1)
+                self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
+                self.RunList = RunList()
+                self.reloads = []
+
+            def _reload_replaced_database(self, database_path):
+                self.reloads.append(database_path)
+
+        harness = Harness()
+        runs = {1: {"guid": "guid-1", "result_count": 10}}
+
+        with patch.object(
+                database_actions,
+                "_database_file_identity",
+                return_value=(1, 2),
+                ):
+            harness.database_detail_batch_ready(4, "loaded.db", runs)
+
+        self.assertEqual(harness.reloads, ["loaded.db"])
+        self.assertEqual(harness.RunList.updated_runs, [])
+
     def test_database_detail_priority_uses_explicit_selected_and_visible_runs(self):
         harness = self.Harness()
         priority = harness._database_detail_priority_run_ids(run_ids=[7, 8])
@@ -2940,6 +3038,48 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
 
         self.assertEqual(len(harness.databaseRefreshThreadPool.workers), 2)
         self.assertTrue(harness._database_refresh_active)
+
+    def test_replacement_during_active_worker_discards_result_and_pending_refresh(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            replacement_path = Path(temp_dir) / "replacement.db"
+            database_path.write_bytes(b"first")
+            replacement_path.write_bytes(b"replacement")
+            harness = self.Harness()
+            harness.fileTextbox.setText(str(database_path))
+            harness._loaded_database_identity = database_file_identity(database_path)
+            reloads = []
+
+            def reload_replacement(path, **_kwargs):
+                reloads.append(path)
+                main_window.MainWindow._cancel_database_refresh(harness)
+                return True
+
+            harness._reload_replaced_database = reload_replacement
+            harness.refreshMain()
+            worker = harness.databaseRefreshThreadPool.workers[0]
+            harness.refreshMain()
+            os.replace(replacement_path, database_path)
+
+            with patch.object(
+                    database_actions.QtCore.QTimer,
+                    "singleShot",
+                    ) as single_shot:
+                harness.database_refresh_finished(
+                    harness._database_refresh_generation,
+                    str(database_path),
+                    {1: {"guid": "stale-guid"}},
+                    {},
+                    None,
+                    )
+
+            self.assertEqual(reloads, [str(database_path)])
+            self.assertTrue(worker._cancelled.is_set())
+            self.assertFalse(harness.RunList.checked_watching)
+            self.assertFalse(harness._database_refresh_active)
+            self.assertFalse(harness._database_refresh_pending)
+            self.assertEqual(len(harness.databaseRefreshThreadPool.workers), 1)
+            single_shot.assert_not_called()
 
 
 class RefreshMainPreviewUpdateTestCase(unittest.TestCase):

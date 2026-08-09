@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.file_identity import database_file_identity
 from qplot.datahandling.qcodes_cache import (
     cache_has_no_written_data,
     cache_is_live,
@@ -12,6 +13,7 @@ from qplot.datahandling.qcodes_cache import (
     set_cache_parameter_synchronized,
     update_cache_parameter_data,
 )
+from qplot.datahandling.readonly import quarantine_wal_for_replaced_database
 from qplot.diagnostics import log_exception
 from qplot.tools import loader
 from qplot.tools.operation_registry import OperationValidationError
@@ -95,6 +97,39 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         handle = dataset_holder.get(dataset_key)
         return handle is not None and getattr(handle, "users", 0) > 0
+
+
+    def _source_database_is_current(self) -> bool:
+        """Stop this plot before a replaced main file can be read as its source."""
+
+        dataset_key = self.__dict__.get("_dataset_key")
+        expected_identity = getattr(dataset_key, "database_identity", None)
+        database_path = getattr(dataset_key, "database_path", None)
+        if expected_identity is None or not database_path:
+            return True
+        if database_file_identity(database_path) == expected_identity:
+            return True
+
+        quarantine_wal_for_replaced_database(database_path)
+        worker = self.__dict__.get("worker")
+        if worker is not None and getattr(worker, "running", False):
+            cancel = getattr(worker, "cancel", None)
+            if callable(cancel):
+                cancel()
+        monitor = self.__dict__.get("monitor")
+        if monitor is not None:
+            monitor.stop()
+        self.show_status("Database was replaced; reloading source data.", 5000)
+        self.show_plot_state(
+            "Database replaced",
+            "qPlot is reloading the replacement before this plot can refresh.",
+            kind="info",
+        )
+        replacement_signal = getattr(self, "database_replaced", None)
+        emit = getattr(replacement_signal, "emit", None)
+        if callable(emit):
+            emit(str(database_path))
+        return False
 
     def _refresh_monitor_required(self, dataset: Any | None = None) -> bool:
         """Keep polling until this plot has committed its terminal display."""
@@ -205,6 +240,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
         """
         if not self._can_process_refresh():
             return False
+        if not self._source_database_is_current():
+            return False
 
         try:
             operations = self.oper_widget.get_data()
@@ -218,19 +255,30 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 )
             return False
 
+        loader_kwargs = {
+            "read_data": True,
+            "operations": operations,
+            "force_sql_heatmap": force_sql_heatmap,
+            "max_full_heatmap_points": self.config.get(
+                "runtime_settings.max_full_heatmap_points"
+                ),
+            "heatmap_axis_ranges": heatmap_axis_ranges,
+            "heatmap_full_axis_ranges": heatmap_full_axis_ranges,
+        }
+        database_identity = getattr(
+            getattr(self, "_dataset_key", None),
+            "database_identity",
+            None,
+        )
+        if database_identity is not None:
+            loader_kwargs["database_identity"] = database_identity
+
         worker: Any = loader(
             self.ds.cache,
             self.param,
             self.param_dict,
             self.axis_options,
-            read_data=True,
-            operations=operations,
-            force_sql_heatmap=force_sql_heatmap,
-            max_full_heatmap_points=self.config.get(
-                "runtime_settings.max_full_heatmap_points"
-                ),
-            heatmap_axis_ranges=heatmap_axis_ranges,
-            heatmap_full_axis_ranges=heatmap_full_axis_ranges,
+            **loader_kwargs,
             )
         worker.dataset_length_at_start = self.ds.number_of_results
 
@@ -300,6 +348,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
         """
         self.monitor.stop()
         if not self._can_process_refresh():
+            return
+        if not self._source_database_is_current():
             return
 
         retry = False
@@ -440,6 +490,13 @@ class PlotRefreshMixin(_PlotRefreshBase):
             )
 
         if not self._can_process_refresh():
+            worker.running = False
+            self.end_wait.emit()
+            return False
+        if not self._source_database_is_current():
+            # A worker can finish from a private snapshot after the source main
+            # file was atomically replaced.  Do not let that stale result reach
+            # the shared cache or the concrete display callback.
             worker.running = False
             self.end_wait.emit()
             return False
@@ -601,6 +658,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
             return
 
         if worker is not None and worker is not self.worker:
+            return
+
+        if worker is not None and getattr(worker, "database_replaced", False):
+            self._source_database_is_current()
             return
 
         message = f"{type(err).__name__}: {err}"

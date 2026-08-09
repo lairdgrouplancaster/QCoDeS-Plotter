@@ -462,6 +462,27 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         self.assertEqual(window.statuses, [])
         self.assertEqual(window.plot_states, [])
 
+    def test_replaced_source_worker_cannot_publish_cache_or_display_state(self):
+        """A completed private snapshot is stale if its main file changed."""
+
+        window = self._window()
+        window._source_database_is_current = lambda: False
+        window.worker.read_data = True
+        cache_updates = []
+        old_update_cache = plot_refresh_module.update_cache_parameter_data
+        plot_refresh_module.update_cache_parameter_data = (
+            lambda *args: cache_updates.append(args)
+            )
+        try:
+            result = plotWidget.refreshPlot(window, True, worker=window.worker)
+        finally:
+            plot_refresh_module.update_cache_parameter_data = old_update_cache
+
+        self.assertFalse(result)
+        self.assertFalse(window.worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertEqual(cache_updates, [])
+
     def test_stale_worker_cannot_publish_display_synchronization(self):
         window = self._window()
         window._qplot_display_synchronized = False

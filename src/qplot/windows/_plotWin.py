@@ -152,6 +152,7 @@ class plotWidget(
     """
     
     closed = QtCore.pyqtSignal([object])
+    database_replaced = QtCore.pyqtSignal(str)
     end_wait = QtCore.pyqtSignal()
     make_ds = QtCore.pyqtSignal([object])
     previewTraceDropRequested = QtCore.pyqtSignal(object, object, str)

@@ -1,7 +1,12 @@
-import os
 from dataclasses import dataclass
 
 from PyQt6 import QtCore
+
+from qplot.datahandling.file_identity import (
+    DatabaseFileIdentity,
+    canonical_database_path,
+    database_file_identity,
+)
 
 
 def close_dataset_connection(dataset: object) -> bool:
@@ -15,21 +20,23 @@ def close_dataset_connection(dataset: object) -> bool:
     return True
 
 
-def canonical_database_path(database_path: str | os.PathLike[str]) -> str:
-    """Return a stable, platform-normalised identity for a database file."""
-    return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(database_path))))
-
-
 @dataclass(frozen=True, slots=True)
 class DatasetKey:
     """Identifies a dataset within one particular database file."""
 
     database_path: str
     guid: str
+    database_identity: DatabaseFileIdentity | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "database_path", canonical_database_path(self.database_path))
         object.__setattr__(self, "guid", str(self.guid))
+        if self.database_identity is None:
+            object.__setattr__(
+                self,
+                "database_identity",
+                database_file_identity(self.database_path),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +64,7 @@ class DatasetHandle:
     users: int = 1
     delete_timer: QtCore.QTimer | None = None
     closed: bool = False
+    database_identity: DatabaseFileIdentity | None = None
 
     def retain(self):
         """
