@@ -163,7 +163,13 @@ diagnostic report generation.
 
 `src/qplot/datahandling/readonly.py` centralises enforced read-only database
 access. Use these helpers for QCoDeS and direct SQLite connections so qPlot does
-not initialise, upgrade, or write to loaded QCoDeS databases.
+not initialise, upgrade, or write to loaded QCoDeS databases. The access policy
+has two paths: databases without a WAL use direct `mode=ro&immutable=1` access;
+databases with a WAL use a consistency-checked database-plus-WAL copy under the
+system temporary directory. Direct SQLite reads, QCoDeS `AtomicConnection`
+reads, dataset loading, refresh workers, metadata inspection, and the
+subprocess access probe all go through this policy. Never open an input database
+with SQLite or QCoDeS directly from viewer code.
 
 `src/qplot/datahandling/LoadFromDB.py` adapts QCoDeS database loading for
 threaded refreshes.

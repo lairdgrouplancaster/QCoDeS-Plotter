@@ -78,15 +78,14 @@ def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS
 
     """
     probe = (
-        "from pathlib import Path\n"
-        "import sqlite3, sys\n"
-        "uri = f'{Path(sys.argv[1]).resolve().as_uri()}?mode=ro'\n"
-        "conn = sqlite3.connect(uri, timeout=1, uri=True)\n"
+        "import sys\n"
+        "from qplot.datahandling.readonly import probe_read_only_database\n"
         "try:\n"
-        "    conn.execute('PRAGMA user_version').fetchone()\n"
-        "finally:\n"
-        "    conn.close()\n"
-    )
+        "    probe_read_only_database(sys.argv[1])\n"
+        "except Exception as err:\n"
+        "    print(err, file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
+        )
 
     try:
         result = subprocess.run(

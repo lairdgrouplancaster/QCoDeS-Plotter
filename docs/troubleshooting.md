@@ -124,6 +124,13 @@ If the database is being written by a running experiment, try again after a
 short wait. For persistent failures, use the `Database Information` button in
 the main window if the file can be opened far enough for diagnostics.
 
+For a live WAL database, qPlot reads a private database-and-WAL snapshot so it
+does not alter the source SQLite sidecars. A writer that commits continuously
+can prevent qPlot from obtaining a consistent copy. In that case qPlot reports
+that the WAL changed during the read-only snapshot; wait for a pause between
+commits and refresh. qPlot deliberately does not show an older immutable view
+when an uncheckpointed WAL is present.
+
 ## A OneDrive Database Waits for Sync
 
 On macOS, OneDrive and other cloud providers can leave a `.db` file as an
