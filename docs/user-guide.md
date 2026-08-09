@@ -17,9 +17,23 @@ You can also open a database directly from the command line:
 qplot path/to/database.db
 ```
 
-qPlot opens QCoDeS databases read-only. It can view runs that are still being
-written by another process, but it does not initialise, upgrade, or modify the
-loaded database file.
+qPlot opens QCoDeS databases without changing the database file or any SQLite
+`-wal`, `-shm`, or `-journal` files beside it. A checkpointed database with no
+WAL is opened directly with SQLite's immutable read-only mode, so it can also
+be viewed when both the file and its directory are read-only.
+
+When a WAL exists, qPlot never applies immutable mode to the source because
+that would hide committed rows which have not yet been checkpointed. Instead,
+it copies the database and WAL to a private system-temporary directory, checks
+that the source did not change while they were copied, and opens that snapshot.
+Every refresh makes a new snapshot, so committed rows added by a running
+QCoDeS measurement become visible. The source `-shm` is not opened by qPlot,
+and snapshot files are removed when their connection closes.
+
+If a busy writer changes the files throughout every snapshot attempt, qPlot
+reports a read-only snapshot error and leaves the source untouched. It does not
+fall back to an immutable view that could silently show stale data. Refresh
+again after the writer has a sufficiently long pause between commits.
 
 ### Opening Databases from the File Manager
 
