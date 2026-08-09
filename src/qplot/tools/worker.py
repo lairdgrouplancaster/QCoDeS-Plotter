@@ -100,6 +100,7 @@ class loader(QtCore.QRunnable):
         self.cache = cache
         self.table_name = cache_table_name(cache)
         self.param = param
+        self.dataset_completed: bool | None = None
         self.display_param = copy(param)
         self.param_dict = param_dict
         
@@ -213,7 +214,10 @@ class loader(QtCore.QRunnable):
                     self._set_sql_connection(completion_conn)
                     try:
                         self._check_cancelled()
-                        complete = load_param_data_from_db_prep(
+                        (
+                            parameter_complete,
+                            self.dataset_completed,
+                        ) = load_param_data_from_db_prep(
                             cache,
                             self.param,
                             connection=completion_conn,
@@ -221,7 +225,7 @@ class loader(QtCore.QRunnable):
                     finally:
                         self._close_sql_connection(completion_conn)
                     self._check_cancelled()
-                    self.read_data = not complete
+                    self.read_data = not parameter_complete
 
             self._check_cancelled()
             use_sql_heatmap = (

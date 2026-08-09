@@ -24,7 +24,11 @@ class Dataset:
     path_to_db = "experiment.db"
     conn = object()
     run_id = 7
-    completed = False
+    _completed = False
+
+    @property
+    def completed(self):
+        return self._completed
 
 
 class Cache:
@@ -82,8 +86,21 @@ def test_cache_parameter_snapshot_copies_state_mappings():
     assert data == {"signal": {"signal": [1, 2]}}
 
 
-def test_dataset_completion_helper_sets_private_flag():
+def test_dataset_completion_helper_sets_private_flag_without_property_setter():
+    class SetterRejectingDataset(Dataset):
+        def __init__(self):
+            self._completed = False
+
+        @property
+        def completed(self):
+            return self._completed
+
+        @completed.setter
+        def completed(self, _value):
+            raise AssertionError("QCoDeS completion setter must not be called")
+
     cache = Cache()
+    cache._dataset = SetterRejectingDataset()
 
     set_cache_dataset_completed(cache, True)
 
@@ -108,6 +125,40 @@ def test_cache_update_writes_single_parameter_state():
     assert committed
 
 
+def test_cache_update_publishes_completion_after_parameter_state():
+    cache = Cache()
+
+    committed = update_cache_parameter_data(
+        cache,
+        "signal",
+        {"signal": 4},
+        {"signal": 4},
+        {"signal": {"signal": [3, 4]}},
+        dataset_completed=True,
+    )
+
+    assert committed
+    assert cache_dataset_completed(cache)
+    assert cache._data["signal"] == {"signal": [3, 4]}
+
+
+def test_cache_update_does_not_revert_published_completion():
+    cache = Cache()
+    set_cache_dataset_completed(cache, True)
+
+    committed = update_cache_parameter_data(
+        cache,
+        "signal",
+        {"signal": 4},
+        {"signal": 4},
+        {"signal": {"signal": [3, 4]}},
+        dataset_completed=False,
+    )
+
+    assert committed
+    assert cache_dataset_completed(cache)
+
+
 def test_cache_update_rejects_result_older_than_current_parameter_state():
     cache = Cache()
     cache._read_status["signal"] = 8
@@ -119,12 +170,14 @@ def test_cache_update_rejects_result_older_than_current_parameter_state():
         {"signal": 4},
         {"signal": 4},
         {"signal": {"signal": [3, 4]}},
+        dataset_completed=True,
     )
 
     assert not committed
     assert cache._read_status["signal"] == 8
     assert cache._write_status["signal"] == 8
     assert cache._data["signal"] == {"signal": [1, 2]}
+    assert not cache_dataset_completed(cache)
 
 
 def test_cache_update_accepts_newer_read_with_reset_unshaped_write_status():
@@ -200,10 +253,13 @@ def test_load_param_data_from_db_prep_defers_parameter_completion_until_commit(m
 
     monkeypatch.setattr(load_from_db, "completed", lambda conn, run_id: True)
 
-    result = load_from_db.load_param_data_from_db_prep(cache, param)
+    parameter_complete, dataset_completed = (
+        load_from_db.load_param_data_from_db_prep(cache, param)
+        )
 
-    assert result is False
-    assert cache._dataset.completed
+    assert parameter_complete is False
+    assert dataset_completed is True
+    assert not cache._dataset.completed
     assert not param._complete
     assert cache.prepare_called
 
@@ -218,7 +274,7 @@ def test_load_param_data_from_db_prep_skips_completed_param(monkeypatch):
 
     monkeypatch.setattr(load_from_db, "completed", fail_if_called)
 
-    assert load_from_db.load_param_data_from_db_prep(cache, param) is True
+    assert load_from_db.load_param_data_from_db_prep(cache, param) == (True, False)
     assert not cache.prepare_called
 
 

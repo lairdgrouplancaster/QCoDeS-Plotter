@@ -23,7 +23,6 @@ from qplot.datahandling.qcodes_cache import (
     cache_lock,
     parameter_is_complete,
     prepare_cache_if_empty,
-    set_cache_dataset_completed,
 )
 
 if TYPE_CHECKING:
@@ -103,19 +102,19 @@ def load_param_data_from_db_prep(
         )
 
     if parameter_is_complete(param): # Altered to be per param
-        return True
+        return True, cache_dataset_completed(cache)
 
     with cache_lock(cache):
         is_completed = completed(
             connection or cache_dataset_connection(cache),
             cache_dataset_run_id(cache),
             )
-        if cache_dataset_completed(cache) != is_completed:
-            set_cache_dataset_completed(cache, is_completed)
         if cache_data(cache) == {}:
             prepare_cache_if_empty(cache)
-    
-    return False
+
+    # The worker must load and process the final rows before publishing this
+    # database completion observation to the viewer dataset.
+    return False, is_completed
 
 
 def load_param_data_from_db(

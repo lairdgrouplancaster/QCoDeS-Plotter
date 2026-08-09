@@ -7,6 +7,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling.qcodes_cache import (
     cache_dataset_completed,
     cache_has_no_written_data,
+    set_cache_dataset_completed,
     set_parameter_complete,
     update_cache_parameter_data,
 )
@@ -363,6 +364,11 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     worker.updated_read_status,
                     worker.updated_write_status,
                     worker.cache_data,
+                    dataset_completed=getattr(
+                        worker,
+                        "dataset_completed",
+                        None,
+                        ),
                     )
                 if not cache_updated:
                     self._refresh_pending = True
@@ -429,6 +435,13 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 dataset_length = self.ds.number_of_results
             self.last_ds_len = dataset_length
             self.hide_plot_state()
+            if (
+                    getattr(worker, "loaded_from_sql_heatmap", False)
+                    and getattr(worker, "dataset_completed", None) is True
+                    ):
+                # Direct SQL heatmaps intentionally bypass the QCoDeS cache.
+                # Publish completion only after their final plot data commits.
+                set_cache_dataset_completed(self.ds.cache, True)
             return True
 
         except AttributeError as err:
