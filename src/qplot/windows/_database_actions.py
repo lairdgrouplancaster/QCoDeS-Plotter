@@ -401,6 +401,25 @@ class DatabaseActionsMixin:
             database_path += ".db"
         database_path = os.path.abspath(database_path)
 
+        file_textbox = getattr(self, "fileTextbox", None)
+        current_database = file_textbox.text() if file_textbox is not None else ""
+        if (
+                current_database
+                and canonical_database_path(current_database)
+                == canonical_database_path(database_path)
+                ):
+            # qPlot deliberately replaces this source. Release its read-only
+            # dataset handles before the worker publishes the temporary file:
+            # Windows otherwise forbids replacing a database that qPlot still
+            # has open. The replacement completion path reloads the same view.
+            prepare_replacement = getattr(
+                self,
+                "_prepare_replaced_database_reload",
+                None,
+            )
+            if callable(prepare_replacement):
+                prepare_replacement(database_path)
+
         self._test_database_generation_active = True
         action = getattr(self, "generateTestDatabaseAction", None)
         if action is not None:

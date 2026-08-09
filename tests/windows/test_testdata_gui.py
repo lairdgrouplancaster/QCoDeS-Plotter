@@ -178,6 +178,42 @@ def test_generation_completion_force_reloads_replaced_current_database(tmp_path)
         harness.deleteLater()
 
 
+def test_generation_releases_current_database_before_replacing_it(tmp_path):
+    harness = GuiHarness(tmp_path)
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_small_specification(csv_path)
+    harness.fileTextbox = type(
+        "Field",
+        (),
+        {"text": lambda _self: str(database_path)},
+    )()
+    harness._prepare_replaced_database_reload = Mock()
+    harness.load_file = Mock(return_value=True)
+
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getOpenFileName",
+                return_value=(str(csv_path), "CSV Files (*.csv)"),
+            ),
+            patch.object(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(database_path), "QCoDeS Database (*.db)"),
+            ),
+        ):
+            assert harness.generate_test_database_from_csv()
+
+        harness._prepare_replaced_database_reload.assert_called_once_with(
+            str(database_path)
+        )
+        harness.load_file.assert_called_once_with(str(database_path), force=True)
+    finally:
+        harness.deleteLater()
+
+
 def test_invalid_csv_is_reported_before_database_destination_prompt(tmp_path):
     harness = GuiHarness(tmp_path)
     csv_path = tmp_path / "invalid.csv"

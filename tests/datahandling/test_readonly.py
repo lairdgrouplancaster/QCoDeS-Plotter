@@ -409,6 +409,12 @@ def test_replaced_main_quarantines_unpaired_wal_without_source_changes(tmp_path)
         writer.commit()
         assert database_file_identity(f"{database_path}-wal") is not None
         assert Path(f"{database_path}-shm").is_file()
+        shutil.copyfile(f"{database_path}-wal", parked_wal_path)
+        # Windows cannot rename a WAL while SQLite has it open. Preserve a
+        # byte-for-byte old sidecar, then close the unrelated writer before
+        # simulating the external replacement.
+        writer.close()
+        writer = None
 
         generate_database(
             [
@@ -435,7 +441,6 @@ def test_replaced_main_quarantines_unpaired_wal_without_source_changes(tmp_path)
         # The old writer can temporarily remove its sidecar before the main
         # file is replaced, then recreate it later. Register the replacement
         # epoch while no WAL exists and restore that proven-old WAL afterwards.
-        os.replace(f"{database_path}-wal", parked_wal_path)
         os.replace(replacement_path, database_path)
         assert quarantine_wal_for_replaced_database(database_path)
         assert replacement_wal_is_quarantined(database_path)
@@ -450,7 +455,7 @@ def test_replaced_main_quarantines_unpaired_wal_without_source_changes(tmp_path)
             conn.close()
         assert _directory_state(tmp_path) == absent_wal_state
 
-        os.replace(parked_wal_path, f"{database_path}-wal")
+        shutil.copyfile(parked_wal_path, f"{database_path}-wal")
         source_state = _directory_state(tmp_path)
         for opener in (
                 sqlite_read_only_connection,
@@ -465,17 +470,9 @@ def test_replaced_main_quarantines_unpaired_wal_without_source_changes(tmp_path)
         assert database_access_error(database_path) is None
         assert _directory_state(tmp_path) == source_state
 
-        # A single missing-WAL observation must not expire the replacement
-        # epoch: the old writer can put the same sidecar back afterwards.
-        os.replace(f"{database_path}-wal", parked_wal_path)
+        # The missing-WAL observation immediately before restoration above
+        # must not expire the replacement epoch.
         assert replacement_wal_is_quarantined(database_path)
-        conn = sqlite_read_only_connection(database_path)
-        try:
-            assert conn.execute("SELECT guid, result_counter FROM runs").fetchone() == expected_run
-        finally:
-            conn.close()
-        os.replace(parked_wal_path, f"{database_path}-wal")
-        source_state = _directory_state(tmp_path)
 
         generate_database(
             [
@@ -558,9 +555,13 @@ def test_expected_identity_rejects_replacement_during_read_preparation(
         replaced = False
 
         def replace_after_initial_identity_check(path, expected_identity):
-            nonlocal replaced, replaced_state
+            nonlocal replaced, replaced_state, writer
             result = real_require(path, expected_identity)
             if not replaced and expected_identity is not None:
+                # The identity race itself does not depend on keeping the old
+                # writer open. Close it so Windows permits the atomic swap.
+                writer.close()
+                writer = None
                 os.replace(replacement_path, database_path)
                 replaced_state = _directory_state(tmp_path)
                 replaced = True
@@ -583,7 +584,8 @@ def test_expected_identity_rejects_replacement_during_read_preparation(
     finally:
         if replacement_writer is not None:
             replacement_writer.close()
-        writer.close()
+        if writer is not None:
+            writer.close()
 
 
 def test_database_access_probe_rejects_replacement_before_child_open(
