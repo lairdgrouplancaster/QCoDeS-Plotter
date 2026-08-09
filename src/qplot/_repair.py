@@ -1,6 +1,8 @@
 from os.path import isfile
 
-from qcodes.dataset.sqlite.database import conn_from_dbpath_or_conn, get_DB_location
+from qcodes.dataset.sqlite.database import get_DB_location
+
+from qplot.datahandling.readonly import qcodes_read_only_connection
 
 
 def repair():
@@ -8,6 +10,5 @@ def repair():
     Attempts to remove SQL lock that can happens on crashes while in IDE
 
     """
-    if isfile(get_DB_location()): #close conn is already open by mistake
-        conn_from_dbpath_or_conn(None, get_DB_location(), read_only=True).close()
-    
+    if isfile(get_DB_location()):  # close conn is already open by mistake
+        qcodes_read_only_connection(get_DB_location()).close()
