@@ -6,6 +6,7 @@ from qplot.datahandling.file_identity import (
     DatabaseFileIdentity,
     canonical_database_path,
     database_file_identity,
+    logical_database_path,
 )
 
 
@@ -27,15 +28,31 @@ class DatasetKey:
     database_path: str
     guid: str
     database_identity: DatabaseFileIdentity | None = None
+    resolved_database_path: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "database_path", canonical_database_path(self.database_path))
+        logical_path = logical_database_path(self.database_path)
+        object.__setattr__(self, "database_path", logical_path)
         object.__setattr__(self, "guid", str(self.guid))
+        if self.resolved_database_path is None:
+            object.__setattr__(
+                self,
+                "resolved_database_path",
+                canonical_database_path(logical_path),
+            )
+        else:
+            object.__setattr__(
+                self,
+                "resolved_database_path",
+                canonical_database_path(self.resolved_database_path),
+            )
         if self.database_identity is None:
+            resolved_path = self.resolved_database_path
+            assert resolved_path is not None
             object.__setattr__(
                 self,
                 "database_identity",
-                database_file_identity(self.database_path),
+                database_file_identity(resolved_path),
             )
 
 

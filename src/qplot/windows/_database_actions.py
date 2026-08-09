@@ -17,6 +17,12 @@ from qplot.datahandling.database import (
     DatabaseRefreshWorker,
     database_info_rows,
 )
+from qplot.datahandling.file_identity import (
+    DatabaseInstance,
+    database_instance,
+    database_instances_differ,
+    logical_database_path,
+)
 from qplot.datahandling.readonly import (
     quarantine_wal_for_replaced_database,
     replacement_wal_is_quarantined,
@@ -47,6 +53,16 @@ _database_file_identity = database_file_identity
 def _database_instances_differ(first, second):
     """Return whether two available identities name different file instances."""
     return first is not None and second is not None and first != second
+
+
+def _database_observations_differ(first, second):
+    """Compare saved observations, retaining compatibility with test harnesses."""
+
+    if isinstance(first, DatabaseInstance) and isinstance(second, DatabaseInstance):
+        return database_instances_differ(first, second)
+    first_identity = getattr(first, "identity", first)
+    second_identity = getattr(second, "identity", second)
+    return _database_instances_differ(first_identity, second_identity)
 
 
 class DatabaseInfoDialog(qtw.QDialog):
@@ -211,6 +227,7 @@ class DatabaseActionsMixin:
     """
 
     _database_refresh_worker: DatabaseRefreshWorker | None
+    _database_refresh_instance: DatabaseInstance | None
     _test_database_generation_worker: TestDatabaseGenerationWorker | None
 
     def load_startup_database(self):
@@ -508,6 +525,7 @@ class DatabaseActionsMixin:
         self._database_load_state = None
         self._database_load_worker = None
         self._loaded_database_identity = None
+        self._loaded_database_instance = None
         if hasattr(self, "_set_database_load_controls_enabled"):
             self._set_database_load_controls_enabled(True)
         if hasattr(self, "_hide_database_load_panel"):
@@ -619,7 +637,8 @@ class DatabaseActionsMixin:
                 ):
             return
 
-        current_identity = _database_file_identity(database_path)
+        current_instance = database_instance(database_path)
+        current_identity = current_instance.identity
 
         if getattr(self, "_database_refresh_active", False):
             self._database_refresh_pending = True
@@ -634,6 +653,7 @@ class DatabaseActionsMixin:
         self._database_refresh_active = True
         self._database_refresh_pending = False
         self._database_refresh_identity = current_identity
+        self._database_refresh_instance = current_instance
         watched_guids = [
             run.guid
             for run in list(self.RunList.watching)
@@ -670,11 +690,19 @@ class DatabaseActionsMixin:
             if database_path != self.fileTextbox.text():
                 return
             refresh_identity = getattr(self, "_database_refresh_identity", None)
-            current_identity = _database_file_identity(database_path)
+            refresh_instance = getattr(self, "_database_refresh_instance", None)
+            current_instance = database_instance(database_path)
             loaded_identity = getattr(self, "_loaded_database_identity", None)
+            loaded_instance = getattr(self, "_loaded_database_instance", None)
             if (
-                    _database_instances_differ(refresh_identity, current_identity)
-                    or _database_instances_differ(loaded_identity, current_identity)
+                    _database_observations_differ(
+                        refresh_instance or refresh_identity,
+                        current_instance,
+                    )
+                    or _database_observations_differ(
+                        loaded_instance or loaded_identity,
+                        current_instance,
+                    )
                     ):
                 self._reload_replaced_database(database_path)
                 return
@@ -692,6 +720,7 @@ class DatabaseActionsMixin:
             self._database_refresh_active = False
             self._database_refresh_worker = None
             self._database_refresh_identity = None
+            self._database_refresh_instance = None
             pending = bool(getattr(self, "_database_refresh_pending", False))
             self._database_refresh_pending = False
             if pending and database_path == self.fileTextbox.text():
@@ -742,6 +771,7 @@ class DatabaseActionsMixin:
         self._database_refresh_pending = False
         self._database_refresh_worker = None
         self._database_refresh_identity = None
+        self._database_refresh_instance = None
 
 
     def _reload_replaced_database(self, database_path):
@@ -753,8 +783,18 @@ class DatabaseActionsMixin:
         """Start replacement reload before any action reads a changed source."""
 
         loaded_identity = getattr(self, "_loaded_database_identity", None)
-        current_identity = _database_file_identity(database_path)
-        if not _database_instances_differ(loaded_identity, current_identity):
+        loaded_instance = getattr(self, "_loaded_database_instance", None)
+        if loaded_instance is None:
+            changed = _database_instances_differ(
+                loaded_identity,
+                _database_file_identity(database_path),
+            )
+        else:
+            changed = database_instances_differ(
+                loaded_instance,
+                database_instance(database_path),
+            )
+        if not changed:
             return False
         self._reload_replaced_database(database_path)
         return True
@@ -981,17 +1021,37 @@ class DatabaseActionsMixin:
         same_loaded_database = bool(
             qcodes_database
             and displayed_database
-            and canonical_database_path(abspath)
-            == canonical_database_path(qcodes_database)
-            == canonical_database_path(displayed_database)
+            and logical_database_path(abspath)
+            == logical_database_path(qcodes_database)
+            == logical_database_path(displayed_database)
         )
-        current_identity = _database_file_identity(abspath)
+        current_instance = database_instance(abspath)
+        current_identity = current_instance.identity
         loaded_identity = getattr(self, "_loaded_database_identity", None)
+        loaded_instance = getattr(self, "_loaded_database_instance", None)
+        if current_identity is None and os.path.isfile(abspath):
+            if same_loaded_database and loaded_instance is not None:
+                self._prepare_replaced_database_reload(abspath)
+                self._loaded_database_identity = None
+                self._loaded_database_instance = None
+            self.show_error(
+                "Database Identity Unavailable",
+                "qPlot cannot safely monitor this database for replacement.",
+                (
+                    "The filesystem did not provide a stable file identity. "
+                    "The database was not loaded because qPlot cannot safely "
+                    "distinguish normal live writes from a replaced file."
+                ),
+            )
+            return False
         replacement = bool(
             replacement
             or (
                 same_loaded_database
-                and _database_instances_differ(loaded_identity, current_identity)
+                and _database_observations_differ(
+                    loaded_instance or loaded_identity,
+                    current_instance,
+                )
             )
         )
 
@@ -1031,6 +1091,7 @@ class DatabaseActionsMixin:
             "load_started_at": load_started_at,
             "reload_same_path": force or same_loaded_database,
             "load_identity": current_identity,
+            "load_instance": current_instance,
             "replacement_reload": replacement,
         }
 
@@ -1052,6 +1113,7 @@ class DatabaseActionsMixin:
 
     def _prepare_replaced_database_reload(self, abspath):
         """Discard every runtime object tied to a replaced file instance."""
+        old_instance = getattr(self, "_loaded_database_instance", None)
         quarantine_wal_for_replaced_database(abspath)
         self.monitor.stop()
         self._cancel_database_detail_load()
@@ -1066,7 +1128,7 @@ class DatabaseActionsMixin:
             None,
         )
         if callable(invalidate_runtime_state):
-            invalidate_runtime_state(abspath)
+            invalidate_runtime_state(old_instance or abspath)
 
         run_id_signals_blocked = self.run_idBox.blockSignals(True)
         run_list_signals_blocked = self.RunList.blockSignals(True)
@@ -1211,9 +1273,13 @@ class DatabaseActionsMixin:
         self._hide_database_load_panel()
         load_started_at = state.get("load_started_at") or perf_counter()
         load_identity = state.get("load_identity")
-        current_identity = _database_file_identity(abspath)
+        load_instance = state.get("load_instance")
+        current_instance = database_instance(abspath)
 
-        if _database_instances_differ(load_identity, current_identity):
+        if _database_observations_differ(
+                load_instance or load_identity,
+                current_instance,
+                ):
             self.show_status("Database changed while loading; retrying...", 0)
             QtCore.QTimer.singleShot(
                 0,
@@ -1243,7 +1309,9 @@ class DatabaseActionsMixin:
                 None,
             )
             if callable(invalidate_runtime_state):
-                invalidate_runtime_state(abspath)
+                invalidate_runtime_state(
+                    getattr(self, "_loaded_database_instance", None) or abspath
+                )
         set_qcodes_database_location(abspath)
         runs = runs or {}
         run_id_signals_blocked = self.run_idBox.blockSignals(True)
@@ -1256,8 +1324,12 @@ class DatabaseActionsMixin:
             self.RunList.blockSignals(run_list_signals_blocked)
             self.run_idBox.blockSignals(run_id_signals_blocked)
 
-        accepted_identity = _database_file_identity(abspath)
-        if _database_instances_differ(load_identity, accepted_identity):
+        accepted_instance = database_instance(abspath)
+        accepted_identity = accepted_instance.identity
+        if _database_observations_differ(
+                load_instance or load_identity,
+                accepted_instance,
+                ):
             self._prepare_replaced_database_reload(abspath)
             self.show_status("Database changed while loading; retrying...", 0)
             QtCore.QTimer.singleShot(
@@ -1272,9 +1344,10 @@ class DatabaseActionsMixin:
             return
 
         self._loaded_database_identity = accepted_identity
+        self._loaded_database_instance = accepted_instance
         self.select_default_run()
-        final_identity = _database_file_identity(abspath)
-        if _database_instances_differ(accepted_identity, final_identity):
+        final_instance = database_instance(abspath)
+        if _database_observations_differ(accepted_instance, final_instance):
             self._reload_replaced_database(abspath)
             return
         prioritize_previews = getattr(self, "_prioritize_preview_runs", None)

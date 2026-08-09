@@ -1,10 +1,14 @@
+import os
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from qplot.datahandling.file_identity import database_file_identity
+from qplot.datahandling.file_identity import (
+    canonical_database_path,
+    database_file_identity,
+)
 from qplot.datahandling.qcodes_cache import (
     cache_has_no_written_data,
     cache_is_live,
@@ -105,9 +109,26 @@ class PlotRefreshMixin(_PlotRefreshBase):
         dataset_key = self.__dict__.get("_dataset_key")
         expected_identity = getattr(dataset_key, "database_identity", None)
         database_path = getattr(dataset_key, "database_path", None)
-        if expected_identity is None or not database_path:
+        expected_resolved_path = getattr(
+            dataset_key,
+            "resolved_database_path",
+            None,
+        )
+        if not database_path:
             return True
-        if database_file_identity(database_path) == expected_identity:
+        current_resolved_path = canonical_database_path(database_path)
+        current_identity = database_file_identity(database_path)
+        if (
+                expected_identity is None
+                and current_identity is None
+                and not os.path.isfile(database_path)
+                ):
+            return True
+        if (
+                expected_identity is not None
+                and current_identity == expected_identity
+                and current_resolved_path == expected_resolved_path
+                ):
             return True
 
         quarantine_wal_for_replaced_database(database_path)

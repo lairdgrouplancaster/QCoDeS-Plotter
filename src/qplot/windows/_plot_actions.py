@@ -9,6 +9,10 @@ from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
     unsupported_plot_message,
 )
+from qplot.datahandling.file_identity import (
+    DatabaseInstance,
+    logical_database_path,
+)
 from qplot.datahandling.readonly import (
     DatabaseInstanceChangedError,
     load_by_guid_read_only,
@@ -66,8 +70,11 @@ class PlotActionsMixin:
     @staticmethod
     def _dataset_key_is_current(dataset_key):
         expected_identity = dataset_key.database_identity
+        current_resolved_path = canonical_database_path(dataset_key.database_path)
+        if current_resolved_path != dataset_key.resolved_database_path:
+            return False
         if expected_identity is None:
-            return True
+            return not os.path.isfile(dataset_key.database_path)
         return database_file_identity(dataset_key.database_path) == expected_identity
 
 
@@ -78,7 +85,7 @@ class PlotActionsMixin:
         current_path = file_textbox.text() if file_textbox is not None else ""
         return bool(
             current_path
-            and canonical_database_path(current_path) == dataset_key.database_path
+            and logical_database_path(current_path) == dataset_key.database_path
         )
 
 
@@ -248,7 +255,31 @@ class PlotActionsMixin:
                 log_exception("Plot dataset cleanup failed", err, __name__)
 
 
-    def _detach_replaced_secondary_traces(self, database_path):
+    @staticmethod
+    def _dataset_key_matches_replaced_instance(dataset_key, database_source):
+        """Match a key against saved old-instance information."""
+
+        if dataset_key is None:
+            return False
+        if isinstance(database_source, DatasetKey):
+            logical_path = database_source.database_path
+            resolved_path = database_source.resolved_database_path
+            identity = database_source.database_identity
+        elif isinstance(database_source, DatabaseInstance):
+            logical_path = database_source.logical_path
+            resolved_path = database_source.resolved_path
+            identity = database_source.identity
+        else:
+            return dataset_key.database_path == logical_database_path(database_source)
+
+        if dataset_key.database_path != logical_path:
+            return False
+        if identity is not None and dataset_key.database_identity is not None:
+            return dataset_key.database_identity == identity
+        return dataset_key.resolved_database_path == resolved_path
+
+
+    def _detach_replaced_secondary_traces(self, database_source):
         """Remove secondary lines whose source belongs to a replaced database.
 
         A merged source can be closed and therefore absent from ``windows``
@@ -256,14 +287,19 @@ class PlotActionsMixin:
         alive. Retire those consumers before evicting the source handle so a
         plot backed by another database cannot retain or refresh stale data.
         """
-        canonical_path = canonical_database_path(database_path)
+        def source_matches(dataset_key):
+            return self._dataset_key_matches_replaced_instance(
+                dataset_key,
+                database_source,
+            )
+
         for host in list(getattr(self, "windows", [])):
             host_key = getattr(host, "_dataset_key", None)
             # Hosts from the replaced database are closed below, and their
             # close event already detaches every secondary line.
             if (
                     host_key is not None
-                    and host_key.database_path == canonical_path
+                    and source_matches(host_key)
                     ):
                 continue
 
@@ -281,8 +317,7 @@ class PlotActionsMixin:
                     and line is not main_line
                     and getattr(getattr(line, "from_win", None), "_dataset_key", None)
                     is not None
-                    and getattr(line.from_win._dataset_key, "database_path", None)
-                    == canonical_path
+                    and source_matches(line.from_win._dataset_key)
                     )
                 ]
             for trace_key, line in stale_traces:
@@ -297,14 +332,16 @@ class PlotActionsMixin:
                     )
 
 
-    def _invalidate_database_runtime_state(self, database_path):
+    def _invalidate_database_runtime_state(self, database_source):
         """Close datasets and plot windows backed by a replaced database."""
-        canonical_path = canonical_database_path(database_path)
-        self._detach_replaced_secondary_traces(canonical_path)
+        self._detach_replaced_secondary_traces(database_source)
         selected_key = getattr(self, "_selected_dataset_key", None)
         if (
                 selected_key is not None
-                and selected_key.database_path == canonical_path
+                and self._dataset_key_matches_replaced_instance(
+                    selected_key,
+                    database_source,
+                )
                 ):
             self._release_selected_dataset()
             self.selected_run_id = None
@@ -313,7 +350,10 @@ class PlotActionsMixin:
             dataset_key = getattr(win, "_dataset_key", None)
             if (
                     dataset_key is None
-                    or dataset_key.database_path != canonical_path
+                    or not self._dataset_key_matches_replaced_instance(
+                        dataset_key,
+                        database_source,
+                    )
                     ):
                 continue
             try:
@@ -322,7 +362,10 @@ class PlotActionsMixin:
                 log_exception("Replaced database plot cleanup failed", err, __name__)
 
         for dataset_key in list(self.dataset_holder):
-            if dataset_key.database_path == canonical_path:
+            if self._dataset_key_matches_replaced_instance(
+                    dataset_key,
+                    database_source,
+                    ):
                 self._evict_dataset_handle(dataset_key)
 
 
@@ -330,17 +373,22 @@ class PlotActionsMixin:
         """Reload the current source, or retire a stale plot from another DB."""
 
         current_path = self.fileTextbox.text()
+        source_key = getattr(source_window, "_dataset_key", None)
+        logical_source_path = (
+            source_key.database_path
+            if source_key is not None
+            else logical_database_path(database_path)
+        )
         if (
                 current_path
-                and canonical_database_path(current_path)
-                == canonical_database_path(database_path)
+                and logical_database_path(current_path) == logical_source_path
                 ):
-            return self._reload_replaced_database(database_path)
+            return self._reload_replaced_database(current_path)
 
         # qPlot may retain plots from a database that is no longer selected in
         # MainWindow. A replacement there must not switch the main UI back to
         # that path; discard only those stale runtime objects instead.
-        self._invalidate_database_runtime_state(database_path)
+        self._invalidate_database_runtime_state(source_key or database_path)
         return False
 
     @QtCore.pyqtSlot(object)
@@ -1276,7 +1324,20 @@ class PlotActionsMixin:
 
 
     def _current_dataset_key(self, guid: str) -> DatasetKey:
-        return DatasetKey(self.fileTextbox.text(), guid)
+        database_path = self.fileTextbox.text()
+        loaded_instance = getattr(self, "_loaded_database_instance", None)
+        if (
+                isinstance(loaded_instance, DatabaseInstance)
+                and loaded_instance.logical_path
+                == logical_database_path(database_path)
+                ):
+            return DatasetKey(
+                loaded_instance.logical_path,
+                guid,
+                loaded_instance.identity,
+                loaded_instance.resolved_path,
+            )
+        return DatasetKey(database_path, guid)
 
 
     def _load_dataset(self, dataset_key: DatasetKey):

@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import qcodes
@@ -16,6 +17,7 @@ from qcodes.dataset.sqlite.connection import AtomicConnection
 from qcodes.parameters import ManualParameter
 
 from qplot._repair import repair
+from qplot.datahandling import file_identity as file_identity_module
 from qplot.datahandling.database import database_access_error, database_info_rows
 from qplot.datahandling.file_identity import database_file_identity
 from qplot.datahandling.readonly import (
@@ -31,6 +33,44 @@ from qplot.datahandling.readonly import (
 )
 from qplot.datahandling.readSQL import get_runs_via_sql
 from qplot.testdata import RunSpecification, generate_database
+
+
+def test_windows_file_index_is_used_when_stat_inode_is_zero(monkeypatch):
+    stat_result = SimpleNamespace(st_ino=0, st_dev=9)
+    windows_identity = ("windows-file-id", 17, 23)
+    monkeypatch.setattr(
+        file_identity_module,
+        "canonical_database_path",
+        lambda _path: "C:/data/view.db",
+    )
+    monkeypatch.setattr(file_identity_module.os, "stat", lambda _path: stat_result)
+    monkeypatch.setattr(file_identity_module.os, "name", "nt")
+    monkeypatch.setattr(
+        file_identity_module,
+        "_windows_file_identity",
+        lambda _path: windows_identity,
+    )
+
+    assert file_identity_module.database_file_identity("view.db") == windows_identity
+
+
+def test_unavailable_identity_does_not_fall_back_to_mutable_metadata(monkeypatch):
+    stat_result = SimpleNamespace(
+        st_ino=0,
+        st_dev=9,
+        st_size=100,
+        st_mtime_ns=200,
+        st_ctime_ns=300,
+    )
+    monkeypatch.setattr(
+        file_identity_module,
+        "canonical_database_path",
+        lambda _path: "/data/view.db",
+    )
+    monkeypatch.setattr(file_identity_module.os, "stat", lambda _path: stat_result)
+    monkeypatch.setattr(file_identity_module.os, "name", "posix")
+
+    assert file_identity_module.database_file_identity("view.db") is None
 
 
 def _directory_state(directory):

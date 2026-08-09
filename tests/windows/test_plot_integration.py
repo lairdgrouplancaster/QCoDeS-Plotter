@@ -24,6 +24,10 @@ from qcodes.parameters import ManualParameter
 import qplot.tools.worker as worker_module
 from qplot.configuration.config import config
 from qplot.datahandling import database as database_module
+from qplot.datahandling.file_identity import (
+    canonical_database_path,
+    logical_database_path,
+)
 from qplot.datahandling.qcodes_cache import (
     cache_parameter_data,
     cache_parameter_is_synchronized,
@@ -194,6 +198,25 @@ def database_artifact_state(database_path):
     return state
 
 
+def symlink_source_artifact_state(view_path, *target_paths):
+    """Record a symlink entry and every possible database target/sidecar."""
+
+    link_stat = view_path.lstat()
+    return {
+        "link": (
+            os.readlink(view_path),
+            link_stat.st_mode,
+            link_stat.st_size,
+            link_stat.st_mtime_ns,
+        ),
+        "targets": {
+            str(path): database_artifact_state(path)
+            for path in target_paths
+            if path.exists()
+        },
+    }
+
+
 def release_windows_database_locks(window, database_path, *extra_datasets):
     """Release test-only SQLite handles before a Windows atomic replacement.
 
@@ -211,11 +234,17 @@ def release_windows_database_locks(window, database_path, *extra_datasets):
     selected_key = getattr(window, "_selected_dataset_key", None)
     if (
             selected_key is not None
-            and Path(selected_key.database_path).resolve() == source_path
+            and (
+                Path(selected_key.database_path).resolve() == source_path
+                or Path(selected_key.resolved_database_path) == source_path
+            )
             ):
         datasets.append(getattr(window, "ds", None))
     for dataset_key, handle in getattr(window, "dataset_holder", {}).items():
-        if Path(dataset_key.database_path).resolve() == source_path:
+        if (
+                Path(dataset_key.database_path).resolve() == source_path
+                or Path(dataset_key.resolved_database_path) == source_path
+                ):
             datasets.append(handle.dataset)
 
     closed_connections = set()
@@ -465,6 +494,132 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         qcodes.config.core.db_location = original_database_path
 
 
+@pytest.mark.parametrize("replacement_kind", ["symlink_entry", "target_file"])
+def test_symlinked_database_replacement_retires_the_accepted_instance(
+    tmp_path,
+    monkeypatch,
+    replacement_kind,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    target_a = Path(tmp_path) / "target-a.db"
+    target_b = Path(tmp_path) / "target-b.db"
+    view_path = Path(tmp_path) / "view.db"
+    next_link = Path(tmp_path) / "next-view.db"
+    _run_id, guid, _table_name = build_line_database(target_a, 3)
+    _new_run_id, new_guid, _new_table_name = build_line_database(
+        target_b,
+        4,
+        guid=guid,
+    )
+    assert new_guid == guid
+    try:
+        view_path.symlink_to(target_a)
+    except OSError as error:
+        pytest.skip(f"This platform cannot create the required symlink: {error}")
+
+    window = main_window.MainWindow()
+    original_load_file = window.load_file
+    replacement_loads = []
+
+    def record_load(*args, **kwargs):
+        replacement_loads.append((args, kwargs))
+        return original_load_file(*args, **kwargs)
+
+    try:
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(view_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+        assert window.ds is not None
+        assert window.ds.number_of_results == 3
+
+        parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[parameter], show=False)
+        old_plot = window.windows[-1]
+        wait_for(lambda: not getattr(old_plot.worker, "running", False))
+        old_key = old_plot._dataset_key
+        old_handle = window.dataset_holder[old_key]
+        old_dataset = old_handle.dataset
+        assert old_key.database_path == logical_database_path(view_path)
+        assert old_key.resolved_database_path == canonical_database_path(target_a)
+        assert old_plot.axis_data["y"].size == 3
+
+        window.infoBox.preview.cache[guid] = [{"stale": True}]
+        window.infoBox._setpoint_summary_cache["stale"] = "old instance"
+        window.load_file = record_load
+
+        if replacement_kind == "symlink_entry":
+            next_link.symlink_to(target_b)
+            os.replace(next_link, view_path)
+            artifact_targets = (target_a, target_b)
+        else:
+            release_windows_database_locks(window, target_a)
+            os.replace(target_b, target_a)
+            artifact_targets = (target_a,)
+        replacement_artifacts = symlink_source_artifact_state(
+            view_path,
+            *artifact_targets,
+        )
+
+        window.refreshMain()
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_refresh_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+
+        metadata = next(iter(window.RunList.all_run_metadata().values()))
+        assert metadata["result_count"] == 4
+        assert window.ds is not None
+        assert window.ds.guid == guid
+        assert window.ds.number_of_results == 4
+        assert old_plot not in window.windows
+        assert old_handle.closed
+        assert old_key not in window.dataset_holder
+        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+            old_dataset.conn.cursor()
+        assert window.infoBox.preview.cache.get(guid) != [{"stale": True}]
+        assert "stale" not in window.infoBox._setpoint_summary_cache
+
+        new_key = window._current_dataset_key(guid)
+        assert new_key.database_path == logical_database_path(view_path)
+        assert new_key.resolved_database_path == canonical_database_path(view_path)
+        assert new_key != old_key
+        new_parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[new_parameter], show=False)
+        new_plot = window.windows[-1]
+        wait_for(lambda: not getattr(new_plot.worker, "running", False))
+        assert new_plot.axis_data["x"].size == 4
+        assert new_plot.axis_data["y"].size == 4
+
+        qtw.QApplication.processEvents()
+        assert len(replacement_loads) == 1
+        assert replacement_loads[0][1] == {"force": True, "replacement": True}
+        assert symlink_source_artifact_state(
+            view_path,
+            *artifact_targets,
+        ) == replacement_artifacts
+    finally:
+        window.load_file = original_load_file
+        close_main_window(window)
+        qcodes.config.core.db_location = original_database_path
+
+
 def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
     tmp_path,
     monkeypatch,
@@ -679,6 +834,8 @@ def test_replaced_background_plot_does_not_switch_current_database(
     original_database_path = qcodes.config.core.db_location
     database_a = Path(tmp_path) / "source-a.db"
     replacement_a = Path(tmp_path) / "source-a-replacement.db"
+    source_view = Path(tmp_path) / "source-view.db"
+    replacement_view = Path(tmp_path) / "source-view-replacement.db"
     database_b = Path(tmp_path) / "source-b.db"
     _run_a, guid_a, _table_a = build_line_database(database_a, 3)
     _run_b, guid_b, _table_b = build_line_database(database_b, 2)
@@ -688,6 +845,10 @@ def test_replaced_background_plot_does_not_switch_current_database(
         guid=guid_a,
     )
     assert replacement_guid == guid_a
+    try:
+        source_view.symlink_to(database_a)
+    except OSError as error:
+        pytest.skip(f"This platform cannot create the required symlink: {error}")
 
     window = main_window.MainWindow()
     try:
@@ -697,7 +858,7 @@ def test_replaced_background_plot_does_not_switch_current_database(
         window.config.config["user_preference"]["confirm_close_all"] = False
         window.config.config["runtime_settings"]["del_grace_period"] = 0
         window.close_database(status=False)
-        assert window.load_file(str(database_a))
+        assert window.load_file(str(source_view))
         wait_for(
             lambda: (
                 not window._database_load_active
@@ -747,8 +908,14 @@ def test_replaced_background_plot_does_not_switch_current_database(
         assert source_plot._merged_trace_users == 1
         assert source_key in window.dataset_holder
 
-        release_windows_database_locks(window, database_a)
-        os.replace(replacement_a, database_a)
+        replacement_view.symlink_to(replacement_a)
+        os.replace(replacement_view, source_view)
+        replacement_artifacts = symlink_source_artifact_state(
+            source_view,
+            database_a,
+            replacement_a,
+            database_b,
+        )
         source_plot.refreshWindow(force=True)
         wait_for(
             lambda: (
@@ -767,6 +934,12 @@ def test_replaced_background_plot_does_not_switch_current_database(
         assert window._loaded_database_identity == database_file_identity(database_b)
         assert window.ds is not None
         assert window.ds.guid == guid_b
+        assert symlink_source_artifact_state(
+            source_view,
+            database_a,
+            replacement_a,
+            database_b,
+        ) == replacement_artifacts
     finally:
         close_main_window(window)
         qcodes.config.core.db_location = original_database_path

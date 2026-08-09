@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -482,6 +483,58 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         self.assertFalse(window.worker.running)
         self.assertEqual(window.end_wait.emitted, 1)
         self.assertEqual(cache_updates, [])
+
+    def test_retargeted_symlink_worker_cannot_publish_cache_or_display_state(self):
+        """A late plot callback must validate the logical source path."""
+
+        class ReplacementSignal:
+            def __init__(self):
+                self.paths = []
+
+            def emit(self, path):
+                self.paths.append(path)
+
+        class Monitor:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target_a = root / "target-a.db"
+            target_b = root / "target-b.db"
+            view_path = root / "view.db"
+            next_link = root / "next-view.db"
+            target_a.write_bytes(b"a")
+            target_b.write_bytes(b"b")
+            try:
+                view_path.symlink_to(target_a)
+                next_link.symlink_to(target_b)
+            except OSError as error:
+                self.skipTest(f"This platform cannot create symlinks: {error}")
+
+            window = self._window()
+            window._dataset_key = DatasetKey(view_path, "guid")
+            window.database_replaced = ReplacementSignal()
+            window.monitor = Monitor()
+            window.worker.read_data = True
+            cache_updates = []
+            os.replace(next_link, view_path)
+
+            with patch.object(
+                    plot_refresh_module,
+                    "update_cache_parameter_data",
+                    side_effect=lambda *args: cache_updates.append(args),
+                    ):
+                result = plotWidget.refreshPlot(window, True, worker=window.worker)
+
+            self.assertFalse(result)
+            self.assertFalse(window.worker.running)
+            self.assertEqual(cache_updates, [])
+            self.assertTrue(window.monitor.stopped)
+            self.assertEqual(window.database_replaced.paths, [str(view_path)])
 
     def test_stale_worker_cannot_publish_display_synchronization(self):
         window = self._window()
