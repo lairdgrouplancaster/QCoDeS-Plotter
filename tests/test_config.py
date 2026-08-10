@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -114,6 +115,120 @@ class TemporaryConfigTestCase(unittest.TestCase):
             )
         self.assertEqual(cfg.get("user_preference.theme"), "light")
         self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
+
+    def test_atomic_write_failures_preserve_memory_and_disk_and_allow_retry(self):
+        cfg = config()
+        real_fdopen = os.fdopen
+
+        class FlushFailure:
+            def __init__(self, file_object):
+                self.file_object = file_object
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.file_object.close()
+
+            def write(self, value):
+                return self.file_object.write(value)
+
+            def flush(self):
+                raise OSError("simulated flush failure")
+
+            def fileno(self):
+                return self.file_object.fileno()
+
+        def failing_fdopen(*args, **kwargs):
+            return FlushFailure(real_fdopen(*args, **kwargs))
+
+        failures = {
+            "temporary-file creation": patch(
+                "qplot.configuration.config.tempfile.mkstemp",
+                side_effect=OSError("simulated temporary-file failure"),
+                ),
+            "writing": patch(
+                "qplot.configuration.config.json.dump",
+                side_effect=OSError("simulated write failure"),
+                ),
+            "flushing": patch(
+                "qplot.configuration.config.os.fdopen",
+                side_effect=failing_fdopen,
+                ),
+            "fsync": patch(
+                "qplot.configuration.config.os.fsync",
+                side_effect=OSError("simulated fsync failure"),
+                ),
+            "chmod": patch(
+                "qplot.configuration.config.os.chmod",
+                side_effect=OSError("simulated chmod failure"),
+                ),
+            "replace": patch(
+                "qplot.configuration.config.os.replace",
+                side_effect=OSError("simulated replace failure"),
+                ),
+            }
+
+        for stage, failure in failures.items():
+            with self.subTest(stage=stage):
+                cfg.update("user_preference.theme", "light")
+                previous_config = deepcopy(cfg.config)
+                previous_contents = Path(config.default_file).read_text(
+                    encoding="utf-8"
+                    )
+
+                with failure, self.assertRaises(OSError):
+                    cfg.update("user_preference.theme", "dark")
+
+                self.assertEqual(cfg.config, previous_config)
+                self.assertEqual(
+                    Path(config.default_file).read_text(encoding="utf-8"),
+                    previous_contents,
+                    )
+                self.assertEqual(
+                    config().get("user_preference.theme"),
+                    "light",
+                    )
+                self.assertEqual(
+                    list(Path(config.default_path).glob(".config.json.*.tmp")),
+                    [],
+                    )
+
+                cfg.update("user_preference.theme", "dark")
+                self.assertEqual(
+                    config().get("user_preference.theme"),
+                    "dark",
+                    )
+
+    def test_reset_to_defaults_failure_restores_complete_previous_config(self):
+        cfg = config()
+        cfg.update_many({
+            "user_preference.theme": "dark",
+            "GUI.preview_size": 350,
+            "file.last_file_path": "/previous/database.db",
+            })
+        previous_config = deepcopy(cfg.config)
+        previous_contents = Path(config.default_file).read_text(encoding="utf-8")
+
+        with (
+            patch(
+                "qplot.configuration.config.os.replace",
+                side_effect=OSError("simulated reset failure"),
+                ),
+            self.assertRaisesRegex(OSError, "simulated reset failure"),
+            ):
+            cfg.reset_to_defaults()
+
+        self.assertEqual(cfg.config, previous_config)
+        self.assertEqual(
+            Path(config.default_file).read_text(encoding="utf-8"),
+            previous_contents,
+            )
+
+        cfg.reset_to_defaults()
+
+        self.assertEqual(cfg.get("user_preference.theme"), "light")
+        self.assertEqual(config().get("GUI.preview_size"), 200)
 
     def test_config_cli_set_value_converts_values(self):
         with redirect_stdout(io.StringIO()):

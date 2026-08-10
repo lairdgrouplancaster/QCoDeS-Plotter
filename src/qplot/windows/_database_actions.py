@@ -37,6 +37,7 @@ from qplot.testdata import (
     write_example_csv,
 )
 
+from ._config_persistence import persist_config_value, persist_config_values
 from ._dataset_handle import (
     canonical_database_path,
     database_file_identity,
@@ -879,10 +880,19 @@ class DatabaseActionsMixin:
         )
 
         if os.path.isdir(foldername):
-            self.config.update("file.default_load_path", foldername)
-            self.show_status(f"Default load folder set to {foldername}", 5000)
+            if persist_config_value(
+                    self,
+                    self.config,
+                    "file.default_load_path",
+                    foldername,
+                    "the default database folder",
+                    ):
+                self.show_status(f"Default load folder set to {foldername}", 5000)
+                return True
+            return False
         else:
             self.show_status("Default load folder unchanged.", 3000)
+            return False
 
 
     @QtCore.pyqtSlot(str)
@@ -960,11 +970,19 @@ class DatabaseActionsMixin:
             current_paths = []
 
         if current_paths == paths:
-            return
+            return True
 
-        self.config.config.setdefault("file", {})["recent_file_paths"] = paths
-        self.config.save_config(self.config.default_file)
+        if not persist_config_value(
+                self,
+                self.config,
+                "file.recent_file_paths",
+                paths,
+                "the recent database list",
+                ):
+            return False
+
         self.refresh_recent_database_menu()
+        return True
 
 
     def remember_loaded_database(self, filename):
@@ -977,13 +995,33 @@ class DatabaseActionsMixin:
             current_last_file = self.config.get("file.last_file_path")
         except KeyError:
             current_last_file = None
-
         try:
-            if current_last_file != abspath:
-                self.config.update("file.last_file_path", abspath)
-            self.remember_recent_database(abspath)
-        except Exception as err:
-            log_exception("Remember database path failed", err, __name__)
+            current_paths = list(self.config.get("file.recent_file_paths"))
+        except KeyError:
+            current_paths = []
+
+        paths = [path for path in self.recent_database_paths() if path != abspath]
+        paths.insert(0, abspath)
+        paths = paths[:10]
+
+        updates = {}
+        if current_last_file != abspath:
+            updates["file.last_file_path"] = abspath
+        if current_paths != paths:
+            updates["file.recent_file_paths"] = paths
+        if not updates:
+            return True
+
+        if not persist_config_values(
+                self,
+                self.config,
+                updates,
+                "the last and recent database paths",
+                ):
+            return False
+
+        self.refresh_recent_database_menu()
+        return True
 
 
     def refresh_recent_database_menu(self):

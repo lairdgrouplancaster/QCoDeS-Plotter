@@ -2,6 +2,10 @@ from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._commands import create_action
+from ._config_persistence import (
+    persist_config_value,
+    set_widget_value_without_signals,
+)
 
 CONFIRM_CLOSE_ALL_KEY = "user_preference.confirm_close_all"
 CONFIRM_QUIT_KEY = "user_preference.confirm_close"
@@ -98,9 +102,23 @@ def add_config_checkbox_action(window, menu, text, key, status_tip):
         action.blockSignals(False)
 
     sync_checked()
-    action.toggled.connect(
-        lambda checked: window.config.update(key, checked)
-        )
+
+    def persist_checked(checked):
+        previous_checked = config_bool(window.config, key, default=True)
+        persist_config_value(
+            window,
+            window.config,
+            key,
+            checked,
+            "the confirmation preference",
+            lambda: set_widget_value_without_signals(
+                action,
+                action.setChecked,
+                previous_checked,
+                ),
+            )
+
+    action.toggled.connect(persist_checked)
     menu.aboutToShow.connect(sync_checked)
     menu.addAction(action)
     return action
@@ -140,7 +158,13 @@ def ask_confirmation_with_dont_ask_again(
 
     reply = box.exec()
     if reply == qtw.QMessageBox.StandardButton.Yes and dont_ask_again.isChecked():
-        window.config.update(config_key, False)
+        persist_config_value(
+            window,
+            window.config,
+            config_key,
+            False,
+            "the close-confirmation preference",
+            )
     return reply
 
 

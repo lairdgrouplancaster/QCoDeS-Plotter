@@ -17,6 +17,7 @@ from ._commands import (
     create_action,
     toolbar_toggle_command_spec,
 )
+from ._config_persistence import persist_config_value
 from ._dataset_handle import DatasetKey, TraceKey
 from ._dragdrop import (
     preview_drop_is_compatible,
@@ -1056,21 +1057,68 @@ class plotWidget(
             return False
 
         main_window = main_window_for(self)
-        target_config = getattr(main_window, "config", self.config)
-        if target_config is not self.config:
-            self.config = target_config
+        main_config = getattr(main_window, "config", None)
+        target_config = self.config
+        if main_config is self.config:
+            target_config = main_config
 
         try:
             current_mode = target_config.get(MOUSE_MODE_KEY)
         except KeyError:
-            current_mode = None
+            current_mode = "pan"
+
+        def rollback():
+            if hasattr(self, "vb"):
+                self.vb.setLeftButtonAction(current_mode)
+
+            mouse_mode_action = self.__dict__.get("mouseModeAction")
+            menu = (
+                mouse_mode_action.menu()
+                if mouse_mode_action is not None
+                else None
+                )
+            if menu is None:
+                return
+            mode_actions = getattr(
+                self.__dict__.get("vbMenu"),
+                "mouseModes",
+                menu.actions(),
+                )
+            blocked_states = [
+                mode_action.blockSignals(True)
+                for mode_action in mode_actions
+                ]
+            try:
+                for mode_action, action_mode in zip(
+                        mode_actions,
+                        ("pan", "rect"),
+                        strict=False,
+                        ):
+                    mode_action.setChecked(action_mode == current_mode)
+            finally:
+                for mode_action, signals_were_blocked in zip(
+                        mode_actions,
+                        blocked_states,
+                        strict=True,
+                        ):
+                    mode_action.blockSignals(signals_were_blocked)
 
         if current_mode != mode:
-            target_config.update(MOUSE_MODE_KEY, mode)
+            error_owner = main_window if main_config is target_config else self
+            if not persist_config_value(
+                    error_owner,
+                    target_config,
+                    MOUSE_MODE_KEY,
+                    mode,
+                    "the mouse mode",
+                    rollback,
+                    ):
+                return False
 
         if (
                 main_window is not None
                 and main_window is not self
+                and main_config is target_config
                 and hasattr(main_window, "apply_current_settings")
                 ):
             main_window.apply_current_settings()
@@ -1084,8 +1132,13 @@ class plotWidget(
         if menu is None:
             return
 
+        mode_actions = getattr(
+            self.__dict__.get("vbMenu"),
+            "mouseModes",
+            menu.actions(),
+            )
         for action, mode in zip(
-                getattr(menu, "mouseModes", ()),
+                mode_actions,
                 ("pan", "rect"),
                 strict=False,
                 ):

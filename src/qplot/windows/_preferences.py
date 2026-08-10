@@ -10,6 +10,7 @@ from PyQt6 import (
 )
 
 from ._commands import create_action
+from ._config_persistence import persist_config_values
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -320,40 +321,63 @@ class PreferencesDialog(qtw.QDialog):
         Loads preference values into the dialog widgets.
 
         """
-        theme_index = self.themeCombo.findData(values["user_preference.theme"])
-        self.themeCombo.setCurrentIndex(max(theme_index, 0))
+        widgets = (
+            self.themeCombo,
+            self.previewSizeSpin,
+            self.mouseModeCombo,
+            self.copyPlotImageResolutionCombo,
+            self.defaultLoadPathEdit,
+            self.refreshRateSpin,
+            self.confirmCloseAllCheck,
+            self.confirmQuitCheck,
+            self.maxThreadsSpin,
+            self.maxFullHeatmapPointsSpin,
+            self.delGracePeriodSpin,
+            self.cloudSyncTimeoutSpin,
+            )
+        blocked_states = [widget.blockSignals(True) for widget in widgets]
+        try:
+            theme_index = self.themeCombo.findData(values["user_preference.theme"])
+            self.themeCombo.setCurrentIndex(max(theme_index, 0))
 
-        self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
-        mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
-        self.mouseModeCombo.setCurrentIndex(max(mouse_mode_index, 0))
-        copy_resolution_index = self.copyPlotImageResolutionCombo.findData(
-            values[COPY_PLOT_IMAGE_RESOLUTION_KEY]
-            )
-        self.copyPlotImageResolutionCombo.setCurrentIndex(
-            max(copy_resolution_index, 0)
-            )
-        self.defaultLoadPathEdit.setText(str(values["file.default_load_path"]))
-        self.refreshRateSpin.setValue(
-            float(values["user_preference.default_refresh_rate"])
-            )
-        self.confirmCloseAllCheck.setChecked(
-            bool(values[CONFIRM_CLOSE_ALL_KEY])
-            )
-        self.confirmQuitCheck.setChecked(
-            bool(values[CONFIRM_QUIT_KEY])
-            )
-        self.maxThreadsSpin.setValue(
-            int(values["runtime_settings.max_threads"])
-            )
-        self.maxFullHeatmapPointsSpin.setValue(
-            int(values["runtime_settings.max_full_heatmap_points"])
-            )
-        self.delGracePeriodSpin.setValue(
-            float(values["runtime_settings.del_grace_period"])
-            )
-        self.cloudSyncTimeoutSpin.setValue(
-            float(values["runtime_settings.cloud_sync_timeout"])
-            )
+            self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
+            mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
+            self.mouseModeCombo.setCurrentIndex(max(mouse_mode_index, 0))
+            copy_resolution_index = self.copyPlotImageResolutionCombo.findData(
+                values[COPY_PLOT_IMAGE_RESOLUTION_KEY]
+                )
+            self.copyPlotImageResolutionCombo.setCurrentIndex(
+                max(copy_resolution_index, 0)
+                )
+            self.defaultLoadPathEdit.setText(str(values["file.default_load_path"]))
+            self.refreshRateSpin.setValue(
+                float(values["user_preference.default_refresh_rate"])
+                )
+            self.confirmCloseAllCheck.setChecked(
+                bool(values[CONFIRM_CLOSE_ALL_KEY])
+                )
+            self.confirmQuitCheck.setChecked(
+                bool(values[CONFIRM_QUIT_KEY])
+                )
+            self.maxThreadsSpin.setValue(
+                int(values["runtime_settings.max_threads"])
+                )
+            self.maxFullHeatmapPointsSpin.setValue(
+                int(values["runtime_settings.max_full_heatmap_points"])
+                )
+            self.delGracePeriodSpin.setValue(
+                float(values["runtime_settings.del_grace_period"])
+                )
+            self.cloudSyncTimeoutSpin.setValue(
+                float(values["runtime_settings.cloud_sync_timeout"])
+                )
+        finally:
+            for widget, signals_were_blocked in zip(
+                    widgets,
+                    blocked_states,
+                    strict=True,
+                    ):
+                widget.blockSignals(signals_were_blocked)
 
     def preference_values(self):
         """
@@ -403,20 +427,18 @@ class PreferencesDialog(qtw.QDialog):
         Persists the dialog values and emits preferencesApplied on success.
 
         """
-        try:
-            changed_values = {
-                key: value
-                for key, value in self.preference_values().items()
-                if self.config.get(key) != value
-                }
-            if changed_values:
-                self.config.update_many(changed_values)
-        except Exception as err:
-            qtw.QMessageBox.critical(
+        changed_values = {
+            key: value
+            for key, value in self.preference_values().items()
+            if self.config.get(key) != value
+            }
+        if changed_values and not persist_config_values(
                 self,
-                "Preferences Not Saved",
-                f"Could not save preferences:\n{err}",
-                )
+                self.config,
+                changed_values,
+                "the preferences",
+                self.load_from_config,
+                ):
             return False
 
         self.preferencesApplied.emit()
