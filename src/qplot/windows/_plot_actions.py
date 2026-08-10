@@ -809,7 +809,12 @@ class PlotActionsMixin:
         Opens plot windows for the selected or requested run.
 
         """
-        if not self.ds and not guid:
+        # ``DataSet`` implements truthiness through ``__len__``, which queries
+        # its SQLite connection.  A Windows replacement test (and a real
+        # replacement race) may have deliberately released that old read-only
+        # connection before this requested DatasetKey is invalidated.  Presence
+        # of a selected dataset is the relevant check here, not its row count.
+        if self.ds is None and not guid:
             self.show_status("Select a run before opening plots.", 5000)
             return
 
@@ -825,7 +830,10 @@ class PlotActionsMixin:
         loaded_by_open_plot = False
         try:
             self._ensure_dataset_key_can_be_read(dataset_key)
-            if not self.ds or getattr(self, "_selected_dataset_key", None) != dataset_key:
+            if (
+                self.ds is None
+                or getattr(self, "_selected_dataset_key", None) != dataset_key
+            ):
                 handle = self._dataset_handle_for_key(dataset_key)
                 if handle is None:
                     ds = self._load_dataset(dataset_key)

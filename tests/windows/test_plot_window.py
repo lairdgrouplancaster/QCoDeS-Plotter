@@ -534,7 +534,10 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
             self.assertFalse(window.worker.running)
             self.assertEqual(cache_updates, [])
             self.assertTrue(window.monitor.stopped)
-            self.assertEqual(window.database_replaced.paths, [str(view_path)])
+            self.assertEqual(
+                [os.path.normcase(path) for path in window.database_replaced.paths],
+                [os.path.normcase(str(view_path))],
+            )
 
     def test_stale_worker_cannot_publish_display_synchronization(self):
         window = self._window()
