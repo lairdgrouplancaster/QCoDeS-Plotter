@@ -211,6 +211,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                     f"{self.param.name} has no finite heatmap data yet.",
                     kind="empty",
                     )
+                self._mark_display_synchronized(plot_worker)
                 return
 
             try:
@@ -252,9 +253,11 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 self._set_colorbar_levels(*self._colorbar_manual_levels)
             
             self._restore_heatmap_interactions()
+            self._mark_display_synchronized(plot_worker)
         finally:
             # Allow new workers after empty live loads or display errors.
             plot_worker.running = False
+            self._ensure_refresh_monitor()
             if full_sql_refresh:
                 self._schedule_visible_heatmap_reload()
 

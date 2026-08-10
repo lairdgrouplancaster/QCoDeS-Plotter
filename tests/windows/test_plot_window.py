@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -140,6 +141,30 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window.worker.running = False
         plotWidget._run_pending_refresh(window)
 
+        self.assertEqual(window.load_calls, ["load"])
+
+    def test_terminal_success_drops_monitor_queued_refresh(self):
+        window = self._window(worker_running=False)
+        window.ds.running = False
+        window.last_ds_len = window.ds.number_of_results
+        window._qplot_display_synchronized = True
+        window._queue_pending_refresh()
+
+        plotWidget._run_pending_refresh(window)
+
+        self.assertFalse(window._refresh_pending)
+        self.assertEqual(window.load_calls, [])
+
+    def test_terminal_success_keeps_explicit_forced_refresh(self):
+        window = self._window(worker_running=False)
+        window.ds.running = False
+        window.last_ds_len = window.ds.number_of_results
+        window._qplot_display_synchronized = True
+        window._queue_pending_refresh(force=True)
+
+        plotWidget._run_pending_refresh(window)
+
+        self.assertFalse(window._refresh_pending)
         self.assertEqual(window.load_calls, ["load"])
 
     def test_secondary_trace_restart_does_not_depend_on_dictionary_order(self):
@@ -287,6 +312,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         class Dataset:
             cache = Cache()
             number_of_results = 42
+            running = False
 
         class Param:
             name = "signal"
@@ -319,6 +345,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
         window.param = Param()
+        window._qplot_display_synchronized = True
         window.param_dict = {"x": object(), "y": object(), "signal": object()}
         window.axis_dropdown = {"x": Combo("x"), "y": Combo("y")}
         window.config = Config()
@@ -357,6 +384,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertFalse(worker.force_sql_heatmap)
         self.assertEqual(worker.operations, ["operation"])
         self.assertEqual(window.worker, worker)
+        self.assertFalse(window._qplot_display_synchronized)
         self.assertIn("Loading data for signal", window.show_statuses[-1][0])
 
         error = RuntimeError("failed")
@@ -434,6 +462,111 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         self.assertEqual(cache_updates, [])
         self.assertEqual(window.statuses, [])
         self.assertEqual(window.plot_states, [])
+
+    def test_replaced_source_worker_cannot_publish_cache_or_display_state(self):
+        """A completed private snapshot is stale if its main file changed."""
+
+        window = self._window()
+        window._source_database_is_current = lambda: False
+        window.worker.read_data = True
+        cache_updates = []
+        old_update_cache = plot_refresh_module.update_cache_parameter_data
+        plot_refresh_module.update_cache_parameter_data = (
+            lambda *args: cache_updates.append(args)
+            )
+        try:
+            result = plotWidget.refreshPlot(window, True, worker=window.worker)
+        finally:
+            plot_refresh_module.update_cache_parameter_data = old_update_cache
+
+        self.assertFalse(result)
+        self.assertFalse(window.worker.running)
+        self.assertEqual(window.end_wait.emitted, 1)
+        self.assertEqual(cache_updates, [])
+
+    def test_retargeted_symlink_worker_cannot_publish_cache_or_display_state(self):
+        """A late plot callback must validate the logical source path."""
+
+        class ReplacementSignal:
+            def __init__(self):
+                self.paths = []
+
+            def emit(self, path):
+                self.paths.append(path)
+
+        class Monitor:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target_a = root / "target-a.db"
+            target_b = root / "target-b.db"
+            view_path = root / "view.db"
+            next_link = root / "next-view.db"
+            target_a.write_bytes(b"a")
+            target_b.write_bytes(b"b")
+            try:
+                view_path.symlink_to(target_a)
+                next_link.symlink_to(target_b)
+            except OSError as error:
+                self.skipTest(f"This platform cannot create symlinks: {error}")
+
+            window = self._window()
+            window._dataset_key = DatasetKey(view_path, "guid")
+            window.database_replaced = ReplacementSignal()
+            window.monitor = Monitor()
+            window.worker.read_data = True
+            cache_updates = []
+            os.replace(next_link, view_path)
+
+            with patch.object(
+                    plot_refresh_module,
+                    "update_cache_parameter_data",
+                    side_effect=lambda *args: cache_updates.append(args),
+                    ):
+                result = plotWidget.refreshPlot(window, True, worker=window.worker)
+
+            self.assertFalse(result)
+            self.assertFalse(window.worker.running)
+            self.assertEqual(cache_updates, [])
+            self.assertTrue(window.monitor.stopped)
+            self.assertEqual(
+                [os.path.normcase(path) for path in window.database_replaced.paths],
+                [os.path.normcase(str(view_path))],
+            )
+
+    def test_stale_worker_cannot_publish_display_synchronization(self):
+        window = self._window()
+        window._qplot_display_synchronized = False
+        stale_worker = self.Worker()
+        stale_worker.dataset_completed = True
+        stale_worker._qplot_display_commit_ready = True
+
+        self.assertFalse(window._mark_display_synchronized(stale_worker))
+        self.assertFalse(window._qplot_display_synchronized)
+
+    def test_cancelled_worker_cannot_publish_display_synchronization(self):
+        window = self._window()
+        window._qplot_display_synchronized = False
+        window.worker.dataset_completed = True
+        window.worker._qplot_display_commit_ready = True
+        window.worker.is_cancelled = lambda: True
+
+        self.assertFalse(window._mark_display_synchronized(window.worker))
+        self.assertFalse(window._qplot_display_synchronized)
+
+    def test_failed_worker_cannot_publish_display_synchronization(self):
+        window = self._window()
+        window._qplot_display_synchronized = False
+        window.worker.dataset_completed = True
+        window.worker._qplot_display_commit_ready = True
+
+        self.assertFalse(plotWidget.refreshPlot(window, False, worker=window.worker))
+        self.assertFalse(window._qplot_display_synchronized)
 
     def test_stale_failed_worker_cannot_show_error_overlay(self):
         window = self._window()

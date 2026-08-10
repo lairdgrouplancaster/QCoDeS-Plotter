@@ -180,6 +180,7 @@ class sweeper(plotWidget):
                     kind="empty",
                     )
                 self.trace_updated.emit()
+                self._mark_display_synchronized(plot_worker)
                 return
 
             row_count = min(fixed_data.size, data_grid.shape[0])
@@ -208,8 +209,10 @@ class sweeper(plotWidget):
 
             else:
                 self.update_sweep()
+            self._mark_display_synchronized(plot_worker)
         finally:
             plot_worker.running = False
+            self._ensure_refresh_monitor()
         
         
     @property

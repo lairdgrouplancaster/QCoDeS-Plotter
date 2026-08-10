@@ -2,6 +2,8 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6.QtGui import QColor
 
+from .._plot_refresh import plot_refresh_required
+
 
 def _subplot_axis_order(
         parent_options: dict[str, str],
@@ -30,7 +32,7 @@ class subplot1d(pg.PlotDataItem):
         
         self.label = from_win.label
         self.param_dict = from_win.param_dict
-        self.running = from_win.ds.running
+        self.running = plot_refresh_required(from_win)
         
         self.parent = parent
         self.from_win = from_win
@@ -70,7 +72,7 @@ class subplot1d(pg.PlotDataItem):
         self._disconnect_pending_update()
 
         # Update live state
-        self.running = from_win.ds.running
+        self.running = plot_refresh_required(from_win)
         
         # Get which data is on which axis
         parent_options = parent.axis_options
@@ -146,7 +148,7 @@ class subplot1d(pg.PlotDataItem):
 
         if (
                 getattr(source, "_closed", False)
-                and getattr(source.ds, "running", False)
+                and plot_refresh_required(source)
                 and not source.monitor.isActive()
                 ):
             source.monitorIntervalChanged(source.spinBox.value())

@@ -9,7 +9,15 @@ from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
     unsupported_plot_message,
 )
-from qplot.datahandling.readonly import load_by_guid_read_only, load_by_id_read_only
+from qplot.datahandling.file_identity import (
+    DatabaseInstance,
+    logical_database_path,
+)
+from qplot.datahandling.readonly import (
+    DatabaseInstanceChangedError,
+    load_by_guid_read_only,
+    load_by_id_read_only,
+)
 from qplot.diagnostics import log_exception
 
 from ._dataset_handle import (
@@ -17,7 +25,9 @@ from ._dataset_handle import (
     DatasetKey,
     canonical_database_path,
     close_dataset_connection,
+    database_file_identity,
 )
+from ._plot_refresh import plot_refresh_required
 from ._subplots.subplot1d import _subplot_axis_order
 from .plot1d import plot1d
 from .plot2d import plot2d
@@ -56,6 +66,100 @@ class PlotActionsMixin:
     """
 
     _selected_dataset_key: DatasetKey | None
+
+    @staticmethod
+    def _dataset_key_is_current(dataset_key):
+        expected_identity = dataset_key.database_identity
+        current_resolved_path = canonical_database_path(dataset_key.database_path)
+        if current_resolved_path != dataset_key.resolved_database_path:
+            return False
+        if expected_identity is None:
+            return not os.path.isfile(dataset_key.database_path)
+        return database_file_identity(dataset_key.database_path) == expected_identity
+
+
+    def _dataset_key_targets_loaded_database(self, dataset_key):
+        """Return whether a key names the database currently shown in the UI."""
+
+        file_textbox = getattr(self, "fileTextbox", None)
+        current_path = file_textbox.text() if file_textbox is not None else ""
+        return bool(
+            current_path
+            and logical_database_path(current_path) == dataset_key.database_path
+        )
+
+
+    def _ensure_dataset_key_can_be_read(self, dataset_key):
+        """Reject a plot read until an atomically replaced source is reloaded."""
+
+        if self._dataset_key_targets_loaded_database(dataset_key):
+            reload_if_changed = getattr(
+                self,
+                "_reload_if_database_instance_changed",
+                None,
+            )
+            if callable(reload_if_changed) and reload_if_changed(
+                    dataset_key.database_path,
+                    ):
+                raise RuntimeError(
+                    "The database was replaced and is being reloaded before "
+                    "its dataset can be opened."
+                )
+
+        if not self._dataset_key_is_current(dataset_key):
+            raise RuntimeError(
+                "The database was replaced before its dataset could be loaded."
+            )
+
+
+    def _discard_dataset_handle(self, dataset_key, handle):
+        """Remove and close one handle that cannot represent its key safely."""
+        if self.dataset_holder.get(dataset_key) is handle:
+            self.dataset_holder.pop(dataset_key, None)
+        if handle.dataset is getattr(self, "ds", None):
+            self.ds = None
+            self._selected_dataset_key = None
+            self.selected_run_id = None
+        try:
+            handle.close()
+        except Exception as err:
+            log_exception("Stale plot dataset cleanup failed", err, __name__)
+
+
+    def _dataset_handle_for_key(self, dataset_key):
+        """Return only a handle opened for the key's current file instance."""
+        key_is_current = self._dataset_key_is_current(dataset_key)
+        if not key_is_current:
+            stale_handle = self.dataset_holder.get(dataset_key)
+            if stale_handle is not None:
+                self._discard_dataset_handle(dataset_key, stale_handle)
+            return None
+
+        for cached_key in list(self.dataset_holder):
+            if (
+                    cached_key != dataset_key
+                    and cached_key.database_path == dataset_key.database_path
+                    and cached_key.guid == dataset_key.guid
+                    ):
+                superseded = self.dataset_holder.get(cached_key)
+                if superseded is not None:
+                    self._discard_dataset_handle(cached_key, superseded)
+
+        handle = self.dataset_holder.get(dataset_key)
+        if handle is None:
+            return None
+        if (
+                handle.closed
+                or (
+                    handle.database_identity is not None
+                    and handle.database_identity != dataset_key.database_identity
+                )
+                ):
+            self._discard_dataset_handle(dataset_key, handle)
+            return None
+        if handle.database_identity is None:
+            handle.database_identity = dataset_key.database_identity
+        return handle
 
     def _dataset_is_held(self, dataset):
         return dataset is not None and any(
@@ -151,13 +255,93 @@ class PlotActionsMixin:
                 log_exception("Plot dataset cleanup failed", err, __name__)
 
 
-    def _invalidate_database_runtime_state(self, database_path):
+    @staticmethod
+    def _dataset_key_matches_replaced_instance(dataset_key, database_source):
+        """Match a key against saved old-instance information."""
+
+        if dataset_key is None:
+            return False
+        if isinstance(database_source, DatasetKey):
+            logical_path = database_source.database_path
+            resolved_path = database_source.resolved_database_path
+            identity = database_source.database_identity
+        elif isinstance(database_source, DatabaseInstance):
+            logical_path = database_source.logical_path
+            resolved_path = database_source.resolved_path
+            identity = database_source.identity
+        else:
+            return dataset_key.database_path == logical_database_path(database_source)
+
+        if dataset_key.database_path != logical_path:
+            return False
+        if identity is not None and dataset_key.database_identity is not None:
+            return dataset_key.database_identity == identity
+        return dataset_key.resolved_database_path == resolved_path
+
+
+    def _detach_replaced_secondary_traces(self, database_source):
+        """Remove secondary lines whose source belongs to a replaced database.
+
+        A merged source can be closed and therefore absent from ``windows``
+        while its subplot still owns a dataset handle and keeps its monitor
+        alive. Retire those consumers before evicting the source handle so a
+        plot backed by another database cannot retain or refresh stale data.
+        """
+        def source_matches(dataset_key):
+            return self._dataset_key_matches_replaced_instance(
+                dataset_key,
+                database_source,
+            )
+
+        for host in list(getattr(self, "windows", [])):
+            host_key = getattr(host, "_dataset_key", None)
+            # Hosts from the replaced database are closed below, and their
+            # close event already detaches every secondary line.
+            if (
+                    host_key is not None
+                    and source_matches(host_key)
+                    ):
+                continue
+
+            lines = getattr(host, "lines", None)
+            remove_line = getattr(host, "remove_line", None)
+            if not isinstance(lines, dict) or not callable(remove_line):
+                continue
+
+            main_line = getattr(host, "line", None)
+            stale_traces = [
+                (trace_key, line)
+                for trace_key, line in list(lines.items())
+                if (
+                    line is not None
+                    and line is not main_line
+                    and getattr(getattr(line, "from_win", None), "_dataset_key", None)
+                    is not None
+                    and source_matches(line.from_win._dataset_key)
+                    )
+                ]
+            for trace_key, line in stale_traces:
+                source = line.from_win
+                try:
+                    remove_line(getattr(source, "label", ""), trace_key=trace_key)
+                except Exception as err:
+                    log_exception(
+                        "Replaced database secondary-trace cleanup failed",
+                        err,
+                        __name__,
+                    )
+
+
+    def _invalidate_database_runtime_state(self, database_source):
         """Close datasets and plot windows backed by a replaced database."""
-        canonical_path = canonical_database_path(database_path)
+        self._detach_replaced_secondary_traces(database_source)
         selected_key = getattr(self, "_selected_dataset_key", None)
         if (
                 selected_key is not None
-                and selected_key.database_path == canonical_path
+                and self._dataset_key_matches_replaced_instance(
+                    selected_key,
+                    database_source,
+                )
                 ):
             self._release_selected_dataset()
             self.selected_run_id = None
@@ -166,7 +350,10 @@ class PlotActionsMixin:
             dataset_key = getattr(win, "_dataset_key", None)
             if (
                     dataset_key is None
-                    or dataset_key.database_path != canonical_path
+                    or not self._dataset_key_matches_replaced_instance(
+                        dataset_key,
+                        database_source,
+                    )
                     ):
                 continue
             try:
@@ -175,8 +362,34 @@ class PlotActionsMixin:
                 log_exception("Replaced database plot cleanup failed", err, __name__)
 
         for dataset_key in list(self.dataset_holder):
-            if dataset_key.database_path == canonical_path:
+            if self._dataset_key_matches_replaced_instance(
+                    dataset_key,
+                    database_source,
+                    ):
                 self._evict_dataset_handle(dataset_key)
+
+
+    def _handle_plot_database_replaced(self, database_path, source_window=None):
+        """Reload the current source, or retire a stale plot from another DB."""
+
+        current_path = self.fileTextbox.text()
+        source_key = getattr(source_window, "_dataset_key", None)
+        logical_source_path = (
+            source_key.database_path
+            if source_key is not None
+            else logical_database_path(database_path)
+        )
+        if (
+                current_path
+                and logical_database_path(current_path) == logical_source_path
+                ):
+            return self._reload_replaced_database(current_path)
+
+        # qPlot may retain plots from a database that is no longer selected in
+        # MainWindow. A replacement there must not switch the main UI back to
+        # that path; discard only those stale runtime objects instead.
+        self._invalidate_database_runtime_state(source_key or database_path)
+        return False
 
     @QtCore.pyqtSlot(object)
     def onClose(self, win):
@@ -219,7 +432,8 @@ class PlotActionsMixin:
                 dataset_key = self._current_dataset_key(ds.guid)
 
         assert dataset_key is not None
-        shared_handle = self.dataset_holder.get(dataset_key)
+        self._ensure_dataset_key_can_be_read(dataset_key)
+        shared_handle = self._dataset_handle_for_key(dataset_key)
         loaded_for_construction = shared_handle is None and ds is None
         if shared_handle is not None:
             construction_ds = shared_handle.dataset
@@ -230,10 +444,17 @@ class PlotActionsMixin:
 
         assert construction_ds.guid == dataset_key.guid
         construction_holder = {
-            held_key: DatasetHandle(dataset=handle.dataset, users=handle.users)
+            held_key: DatasetHandle(
+                dataset=handle.dataset,
+                users=handle.users,
+                database_identity=handle.database_identity,
+            )
             for held_key, handle in self.dataset_holder.items()
         }
-        construction_holder[dataset_key] = DatasetHandle(dataset=construction_ds)
+        construction_holder[dataset_key] = DatasetHandle(
+            dataset=construction_ds,
+            database_identity=dataset_key.database_identity,
+        )
 
         try:
             win = widget(
@@ -266,6 +487,17 @@ class PlotActionsMixin:
         self.windows.append(win)
 
         win.closed.connect(self.onClose)
+        database_replaced = getattr(win, "database_replaced", None)
+        connect_replacement = getattr(database_replaced, "connect", None)
+        if callable(connect_replacement):
+            connect_replacement(
+                lambda database_path, source_window=win: (
+                    self._handle_plot_database_replaced(
+                        database_path,
+                        source_window,
+                    )
+                )
+            )
         win.make_ds.connect(self.add_ds_at)
         win.previewTraceDropRequested.connect(self.add_dropped_preview_to_plot)
         if window_type == "plot1d":
@@ -341,7 +573,7 @@ class PlotActionsMixin:
             if self.ds is not None and getattr(self, "_selected_dataset_key", None) == dataset_key:
                 pass
             else:
-                handle = self.dataset_holder.get(dataset_key)
+                handle = self._dataset_handle_for_key(dataset_key)
                 if handle is None:
                     dataset = self._load_dataset(dataset_key)
                 else:
@@ -577,7 +809,12 @@ class PlotActionsMixin:
         Opens plot windows for the selected or requested run.
 
         """
-        if not self.ds and not guid:
+        # ``DataSet`` implements truthiness through ``__len__``, which queries
+        # its SQLite connection.  A Windows replacement test (and a real
+        # replacement race) may have deliberately released that old read-only
+        # connection before this requested DatasetKey is invalidated.  Presence
+        # of a selected dataset is the relevant check here, not its row count.
+        if self.ds is None and not guid:
             self.show_status("Select a run before opening plots.", 5000)
             return
 
@@ -592,8 +829,12 @@ class PlotActionsMixin:
 
         loaded_by_open_plot = False
         try:
-            if not self.ds or getattr(self, "_selected_dataset_key", None) != dataset_key:
-                handle = self.dataset_holder.get(dataset_key)
+            self._ensure_dataset_key_can_be_read(dataset_key)
+            if (
+                self.ds is None
+                or getattr(self, "_selected_dataset_key", None) != dataset_key
+            ):
+                handle = self._dataset_handle_for_key(dataset_key)
                 if handle is None:
                     ds = self._load_dataset(dataset_key)
                     loaded_by_open_plot = True
@@ -754,7 +995,7 @@ class PlotActionsMixin:
         dataset_key = self._current_dataset_key(guid)
         if not self.ds or getattr(self, "_selected_dataset_key", None) != dataset_key:
             try:
-                handle = self.dataset_holder.get(dataset_key)
+                handle = self._dataset_handle_for_key(dataset_key)
                 if handle is None:
                     dataset = self._load_dataset(dataset_key)
                 else:
@@ -881,7 +1122,7 @@ class PlotActionsMixin:
 
 
     def _dataset_for_key(self, dataset_key):
-        handle = self.dataset_holder.get(dataset_key)
+        handle = self._dataset_handle_for_key(dataset_key)
         if handle is not None:
             return handle.dataset
         return self._load_dataset(dataset_key)
@@ -906,7 +1147,7 @@ class PlotActionsMixin:
                 continue
             try:
                 if win._dataset_key == source_key and win.param.name == param.name:
-                    if win.ds.running:
+                    if plot_refresh_required(win):
                         target_win.toolbarRef.show()
                     return win
             except AttributeError:
@@ -956,8 +1197,36 @@ class PlotActionsMixin:
             self.show_status("Enter a Run ID before plotting or exporting.", 5000)
             return None
 
+        reload_if_changed = getattr(
+            self,
+            "_reload_if_database_instance_changed",
+            None,
+        )
+        if callable(reload_if_changed) and reload_if_changed(self.fileTextbox.text()):
+            self.show_status(
+                "Database was replaced; reloading before opening the run.",
+                5000,
+            )
+            return None
+
+        expected_identity = getattr(self, "_loaded_database_identity", None)
+        load_kwargs = {}
+        if expected_identity is not None:
+            load_kwargs["expected_database_identity"] = expected_identity
         try:
-            return load_by_id_read_only(self.selected_run_id)
+            return load_by_id_read_only(
+                self.selected_run_id,
+                self.fileTextbox.text(),
+                **load_kwargs,
+            )
+        except DatabaseInstanceChangedError:
+            if callable(reload_if_changed):
+                reload_if_changed(self.fileTextbox.text())
+            self.show_status(
+                "Database was replaced; reloading before opening the run.",
+                5000,
+            )
+            return None
         except Exception as error:
             log_exception("Run ID load failed", error, __name__)
             self.show_error(
@@ -1011,12 +1280,24 @@ class PlotActionsMixin:
         Tracks a dataset used by one or more plot windows.
 
         """
-        handle = self.dataset_holder.get(dataset_key)
+        self._ensure_dataset_key_can_be_read(dataset_key)
+        handle = self._dataset_handle_for_key(dataset_key)
         if handle is None:
             ds = self._load_dataset(dataset_key) if ds is None else ds
             assert ds.guid == dataset_key.guid
 
-            self.dataset_holder[dataset_key] = DatasetHandle(dataset=ds)
+            if not self._dataset_key_is_current(dataset_key):
+                self._close_dataset_if_unowned(
+                    ds,
+                    context="Replaced database dataset cleanup failed",
+                )
+                raise RuntimeError(
+                    "The database was replaced while its dataset was being acquired."
+                )
+            self.dataset_holder[dataset_key] = DatasetHandle(
+                dataset=ds,
+                database_identity=dataset_key.database_identity,
+            )
         else:
             handle.retain()
 
@@ -1051,12 +1332,50 @@ class PlotActionsMixin:
 
 
     def _current_dataset_key(self, guid: str) -> DatasetKey:
-        return DatasetKey(self.fileTextbox.text(), guid)
+        database_path = self.fileTextbox.text()
+        loaded_instance = getattr(self, "_loaded_database_instance", None)
+        if (
+                isinstance(loaded_instance, DatabaseInstance)
+                and loaded_instance.logical_path
+                == logical_database_path(database_path)
+                ):
+            return DatasetKey(
+                loaded_instance.logical_path,
+                guid,
+                loaded_instance.identity,
+                loaded_instance.resolved_path,
+            )
+        return DatasetKey(database_path, guid)
 
 
-    @staticmethod
-    def _load_dataset(dataset_key: DatasetKey):
-        return load_by_guid_read_only(dataset_key.guid, dataset_key.database_path)
+    def _load_dataset(self, dataset_key: DatasetKey):
+        self._ensure_dataset_key_can_be_read(dataset_key)
+
+        try:
+            load_kwargs = {}
+            if dataset_key.database_identity is not None:
+                load_kwargs["expected_database_identity"] = (
+                    dataset_key.database_identity
+                )
+            dataset = load_by_guid_read_only(
+                dataset_key.guid,
+                dataset_key.database_path,
+                **load_kwargs,
+            )
+        except Exception:
+            # A replacement can race the check above. The read layer rejects
+            # that identity change without consuming its sidecar; this second
+            # check starts MainWindow's replacement reload when applicable.
+            self._ensure_dataset_key_can_be_read(dataset_key)
+            raise
+        try:
+            self._ensure_dataset_key_can_be_read(dataset_key)
+        except Exception:
+            try:
+                close_dataset_connection(dataset)
+            finally:
+                raise
+        return dataset
 
 
     def post_admin(self):

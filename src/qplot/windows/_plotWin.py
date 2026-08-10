@@ -6,7 +6,6 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.datahandling.qcodes_cache import set_parameter_complete
 from qplot.tools import (
     unpack_param,
 )
@@ -153,6 +152,7 @@ class plotWidget(
     """
     
     closed = QtCore.pyqtSignal([object])
+    database_replaced = QtCore.pyqtSignal(str)
     end_wait = QtCore.pyqtSignal()
     make_ds = QtCore.pyqtSignal([object])
     previewTraceDropRequested = QtCore.pyqtSignal(object, object, str)
@@ -203,8 +203,8 @@ class plotWidget(
         self._dataset_key = dataset_key
         self._guid = dataset_key.guid
         self.param = param
-        if not hasattr(self.param, "_complete"): # Add completed load track
-            set_parameter_complete(self.param, False)
+        self._qplot_display_synchronized = False
+        self._qplot_display_uses_direct_sql = False
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self._trace_key = TraceKey(self._dataset_key, self.param.name)
@@ -272,8 +272,9 @@ class plotWidget(
             w.setLayout(self._window_layout)
             self.setCentralWidget(w)
         
-        #start refresh cycle if live
-        if self.ds.running:
+        # Keep the timer alive through this plot's own terminal display commit,
+        # even if another parameter publishes shared dataset completion first.
+        if self._refresh_monitor_required(self.ds):
             self.monitorIntervalChanged(self.spinBox.value())
 
 
@@ -1225,6 +1226,7 @@ class plotWidget(
         if self.__dict__.get("_merged_trace_users", 0) <= 0:
             self.monitor.stop()
             self._refresh_pending = False
+            self._refresh_pending_force = False
             worker = self.__dict__.get("worker")
             cancel = getattr(worker, "cancel", None)
             if callable(cancel):
@@ -1235,7 +1237,7 @@ class plotWidget(
 
         if (
                 self.__dict__.get("_merged_trace_users", 0) > 0
-                and self.ds.running
+                and self._refresh_monitor_required(self.ds)
                 and not self.monitor.isActive()
                 ):
             self.monitorIntervalChanged(self.spinBox.value())

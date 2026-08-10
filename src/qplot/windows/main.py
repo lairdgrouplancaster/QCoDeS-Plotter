@@ -151,6 +151,7 @@ class MainWindow(
         self._database_load_state = None
         self._database_load_worker = None
         self._loaded_database_identity = None
+        self._loaded_database_instance = None
         self._database_detail_generation = 0
         self._database_detail_active = False
         self._database_detail_worker = None
@@ -161,6 +162,8 @@ class MainWindow(
         self._database_refresh_active = False
         self._database_refresh_pending = False
         self._database_refresh_worker: DatabaseRefreshWorker | None = None
+        self._database_refresh_identity = None
+        self._database_refresh_instance = None
         self._test_database_generation_active = False
         self._test_database_generation_worker: TestDatabaseGenerationWorker | None = None
         self._shutdown_started = False
@@ -523,6 +526,7 @@ class MainWindow(
         self._database_refresh_active = False
         self._database_refresh_pending = False
         self._database_refresh_worker = None
+        self._database_refresh_identity = None
         self._test_database_generation_active = False
         self._test_database_generation_worker = None
         self.monitor.stop()

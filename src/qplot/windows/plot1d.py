@@ -193,6 +193,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
                     kind="empty",
                     )
                 self.trace_updated.emit()
+                self._mark_display_synchronized(plot_worker)
                 return
 
             # Main line
@@ -205,8 +206,10 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
 
             self.trace_updated.emit()
             self.refresh_secondary_lines()
+            self._mark_display_synchronized(plot_worker)
         finally:
             plot_worker.running = False
+            self._ensure_refresh_monitor()
 
 
     def _has_plottable_line_data(self) -> bool:

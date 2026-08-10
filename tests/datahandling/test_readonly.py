@@ -1,7 +1,10 @@
 import hashlib
+import json
 import os
+import shutil
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import qcodes
@@ -14,16 +17,60 @@ from qcodes.dataset.sqlite.connection import AtomicConnection
 from qcodes.parameters import ManualParameter
 
 from qplot._repair import repair
+from qplot.datahandling import file_identity as file_identity_module
 from qplot.datahandling.database import database_access_error, database_info_rows
+from qplot.datahandling.file_identity import database_file_identity
 from qplot.datahandling.readonly import (
+    DatabaseInstanceChangedError,
     ReadOnlyDatabaseAccessError,
     load_by_guid_read_only,
     load_by_id_read_only,
     qcodes_read_only_connection,
+    quarantine_wal_for_replaced_database,
+    replacement_wal_is_quarantined,
     set_qcodes_database_location,
     sqlite_read_only_connection,
 )
 from qplot.datahandling.readSQL import get_runs_via_sql
+from qplot.testdata import RunSpecification, generate_database
+
+
+def test_windows_file_index_is_used_when_stat_inode_is_zero(monkeypatch):
+    stat_result = SimpleNamespace(st_ino=0, st_dev=9)
+    windows_identity = ("windows-file-id", 17, 23)
+    monkeypatch.setattr(
+        file_identity_module,
+        "canonical_database_path",
+        lambda _path: "C:/data/view.db",
+    )
+    monkeypatch.setattr(file_identity_module.os, "stat", lambda _path: stat_result)
+    monkeypatch.setattr(file_identity_module.os, "name", "nt")
+    monkeypatch.setattr(
+        file_identity_module,
+        "_windows_file_identity",
+        lambda _path: windows_identity,
+    )
+
+    assert file_identity_module.database_file_identity("view.db") == windows_identity
+
+
+def test_unavailable_identity_does_not_fall_back_to_mutable_metadata(monkeypatch):
+    stat_result = SimpleNamespace(
+        st_ino=0,
+        st_dev=9,
+        st_size=100,
+        st_mtime_ns=200,
+        st_ctime_ns=300,
+    )
+    monkeypatch.setattr(
+        file_identity_module,
+        "canonical_database_path",
+        lambda _path: "/data/view.db",
+    )
+    monkeypatch.setattr(file_identity_module.os, "stat", lambda _path: stat_result)
+    monkeypatch.setattr(file_identity_module.os, "name", "posix")
+
+    assert file_identity_module.database_file_identity("view.db") is None
 
 
 def _directory_state(directory):
@@ -357,6 +404,291 @@ def test_live_wal_refreshes_see_new_rows_without_source_changes(tmp_path):
         experiment.conn.close()
     finally:
         qcodes.config.core.db_location = original_database_path
+
+
+def test_replaced_main_quarantines_unpaired_wal_without_source_changes(tmp_path):
+    """An unknown WAL must never be paired with an atomically replaced main."""
+
+    database_path = tmp_path / "replace-live.db"
+    replacement_path = tmp_path / "replacement.db"
+    second_replacement_path = tmp_path / "second-replacement.db"
+    parked_wal_path = tmp_path / "parked-old-wal"
+    original_database_path = qcodes.config.core.db_location
+    old_dataset = None
+    experiment = None
+    writer = None
+    try:
+        # qPlot can legitimately have loaded this checkpointed instance before
+        # an external process changes it to WAL mode. No prior WAL identity is
+        # available when the later atomic replacement happens.
+        initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+        experiment = load_or_create_experiment(
+            "stale_wal",
+            sample_name="replacement",
+        )
+        setpoint = ManualParameter("stale_wal_setpoint")
+        signal = ManualParameter("stale_wal_signal")
+        measurement = Measurement(exp=experiment, name="old_live_run")
+        measurement.register_parameter(setpoint)
+        measurement.register_parameter(signal, setpoints=(setpoint,))
+
+        with measurement.run(write_in_background=False) as datasaver:
+            old_dataset = datasaver.dataset
+            datasaver.add_result((setpoint, 1.0), (signal, 2.0))
+        old_dataset.conn.close()
+        old_dataset = None
+        experiment.conn.close()
+        experiment = None
+
+        # An unrelated writer creates a WAL after the static viewer state was
+        # accepted. It remains live while a replacement main file is installed.
+        writer = sqlite3.connect(database_path)
+        writer.execute("PRAGMA journal_mode = WAL")
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("UPDATE runs SET name = ?", ("old_wal_run",))
+        writer.commit()
+        assert database_file_identity(f"{database_path}-wal") is not None
+        assert Path(f"{database_path}-shm").is_file()
+        shutil.copyfile(f"{database_path}-wal", parked_wal_path)
+        # Windows cannot rename a WAL while SQLite has it open. Preserve a
+        # byte-for-byte old sidecar, then close the unrelated writer before
+        # simulating the external replacement.
+        writer.close()
+        writer = None
+
+        generate_database(
+            [
+                RunSpecification(
+                    1,
+                    "replacement_signal",
+                    "Replacement signal",
+                    "V",
+                    -1.0,
+                    1.0,
+                    4,
+                )
+            ],
+            replacement_path,
+        )
+        replacement_conn = sqlite3.connect(replacement_path)
+        try:
+            expected_run = replacement_conn.execute(
+                "SELECT guid, result_counter FROM runs"
+                ).fetchone()
+        finally:
+            replacement_conn.close()
+
+        # The old writer can temporarily remove its sidecar before the main
+        # file is replaced, then recreate it later. Register the replacement
+        # epoch while no WAL exists and restore that proven-old WAL afterwards.
+        os.replace(replacement_path, database_path)
+        assert quarantine_wal_for_replaced_database(database_path)
+        assert replacement_wal_is_quarantined(database_path)
+
+        absent_wal_state = _directory_state(tmp_path)
+        conn = sqlite_read_only_connection(database_path)
+        try:
+            assert conn.execute("SELECT guid, result_counter FROM runs").fetchone() == (
+                expected_run
+            )
+        finally:
+            conn.close()
+        assert _directory_state(tmp_path) == absent_wal_state
+
+        shutil.copyfile(parked_wal_path, f"{database_path}-wal")
+        source_state = _directory_state(tmp_path)
+        for opener in (
+                sqlite_read_only_connection,
+                qcodes_read_only_connection,
+                ):
+            conn = opener(database_path)
+            try:
+                assert conn.execute("SELECT guid, result_counter FROM runs").fetchone() == expected_run
+            finally:
+                conn.close()
+
+        assert database_access_error(database_path) is None
+        assert _directory_state(tmp_path) == source_state
+
+        # The missing-WAL observation immediately before restoration above
+        # must not expire the replacement epoch.
+        assert replacement_wal_is_quarantined(database_path)
+
+        generate_database(
+            [
+                RunSpecification(
+                    1,
+                    "second_replacement_signal",
+                    "Second replacement signal",
+                    "V",
+                    -1.0,
+                    1.0,
+                    5,
+                )
+            ],
+            second_replacement_path,
+        )
+        second_conn = sqlite3.connect(second_replacement_path)
+        try:
+            expected_second_run = second_conn.execute(
+                "SELECT guid, result_counter FROM runs"
+                ).fetchone()
+        finally:
+            second_conn.close()
+
+        # Carry the same quarantine forward across N1 -> N2 while the old WAL
+        # is still beside the path.
+        os.replace(second_replacement_path, database_path)
+        source_state = _directory_state(tmp_path)
+        assert replacement_wal_is_quarantined(database_path)
+        for opener in (
+                sqlite_read_only_connection,
+                qcodes_read_only_connection,
+                ):
+            conn = opener(database_path)
+            try:
+                assert conn.execute("SELECT guid, result_counter FROM runs").fetchone() == expected_second_run
+            finally:
+                conn.close()
+        assert _directory_state(tmp_path) == source_state
+    finally:
+        if writer is not None:
+            writer.close()
+        if old_dataset is not None:
+            old_dataset.conn.close()
+        if experiment is not None:
+            experiment.conn.close()
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_expected_identity_rejects_replacement_during_read_preparation(
+        tmp_path,
+        monkeypatch,
+        ):
+    """A source replacement between UI checks and open cannot form a snapshot."""
+
+    from qplot.datahandling import readonly
+
+    database_path = tmp_path / "identity-race.db"
+    replacement_path = tmp_path / "identity-race-replacement.db"
+    writer = sqlite3.connect(database_path)
+    replacement_writer = None
+    replaced_state = None
+    try:
+        writer.execute("PRAGMA journal_mode = WAL")
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("CREATE TABLE old_rows (value TEXT)")
+        writer.execute("INSERT INTO old_rows VALUES ('old')")
+        writer.commit()
+        expected_identity = database_file_identity(database_path)
+        assert expected_identity is not None
+        assert Path(f"{database_path}-wal").is_file()
+
+        replacement_writer = sqlite3.connect(replacement_path)
+        replacement_writer.execute("CREATE TABLE replacement_rows (value TEXT)")
+        replacement_writer.execute("INSERT INTO replacement_rows VALUES ('new')")
+        replacement_writer.commit()
+        replacement_writer.close()
+        replacement_writer = None
+
+        real_require = readonly._require_expected_database_instance
+        replaced = False
+
+        def replace_after_initial_identity_check(path, expected_identity):
+            nonlocal replaced, replaced_state, writer
+            result = real_require(path, expected_identity)
+            if not replaced and expected_identity is not None:
+                # The identity race itself does not depend on keeping the old
+                # writer open. Close it so Windows permits the atomic swap.
+                writer.close()
+                writer = None
+                os.replace(replacement_path, database_path)
+                replaced_state = _directory_state(tmp_path)
+                replaced = True
+            return result
+
+        monkeypatch.setattr(
+            readonly,
+            "_require_expected_database_instance",
+            replace_after_initial_identity_check,
+        )
+        with pytest.raises(DatabaseInstanceChangedError, match="replaced"):
+            sqlite_read_only_connection(
+                database_path,
+                expected_database_identity=expected_identity,
+            )
+
+        assert replaced
+        assert replacement_wal_is_quarantined(database_path)
+        assert _directory_state(tmp_path) == replaced_state
+    finally:
+        if replacement_writer is not None:
+            replacement_writer.close()
+        if writer is not None:
+            writer.close()
+
+
+def test_database_access_probe_rejects_replacement_before_child_open(
+        tmp_path,
+        monkeypatch,
+        ):
+    """The probe child must reject a main file replaced after parent setup."""
+
+    from qplot.datahandling import database as database_module
+
+    database_path = tmp_path / "probe-identity-race.db"
+    replacement_path = tmp_path / "probe-identity-race-replacement.db"
+    parked_wal_path = tmp_path / "probe-old-wal"
+    writer = sqlite3.connect(database_path)
+    replacement_writer = None
+    replaced_state = None
+    try:
+        writer.execute("PRAGMA journal_mode = WAL")
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("CREATE TABLE stale_rows (value TEXT)")
+        writer.execute("INSERT INTO stale_rows VALUES ('old')")
+        writer.commit()
+        expected_identity = database_file_identity(database_path)
+        assert expected_identity is not None
+        assert Path(f"{database_path}-wal").is_file()
+        shutil.copyfile(f"{database_path}-wal", parked_wal_path)
+        writer.close()
+        writer = None
+
+        replacement_writer = sqlite3.connect(replacement_path)
+        replacement_writer.execute("CREATE TABLE replacement_rows (value TEXT)")
+        replacement_writer.execute("INSERT INTO replacement_rows VALUES ('new')")
+        replacement_writer.commit()
+        replacement_writer.close()
+        replacement_writer = None
+
+        real_run = database_module.subprocess.run
+
+        def replace_before_child_open(command, **kwargs):
+            nonlocal replaced_state
+            assert tuple(json.loads(command[-1])) == expected_identity
+            os.replace(replacement_path, database_path)
+            shutil.copyfile(parked_wal_path, f"{database_path}-wal")
+            replaced_state = _directory_state(tmp_path)
+            return real_run(command, **kwargs)
+
+        monkeypatch.setattr(
+            database_module.subprocess,
+            "run",
+            replace_before_child_open,
+        )
+
+        error = database_module.database_access_error(database_path)
+
+        assert error is not None
+        assert "replaced" in error
+        assert replaced_state is not None
+        assert _directory_state(tmp_path) == replaced_state
+    finally:
+        if replacement_writer is not None:
+            replacement_writer.close()
+        if writer is not None:
+            writer.close()
 
 
 def test_unstable_live_wal_fails_instead_of_using_immutable_data(

@@ -319,15 +319,11 @@ class ToolFunctionTestCase(unittest.TestCase):
             worker = self._sql_heatmap_worker(database_path)
 
             old_database_path = worker_module.cache_database_path
-            old_set_complete = worker_module.set_parameter_complete
             old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
             old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
             old_grid_side = worker_module.MAX_SQL_HEATMAP_GRID_SIDE
             try:
                 worker_module.cache_database_path = lambda _cache: database_path
-                worker_module.set_parameter_complete = (
-                    lambda param, complete=False: setattr(param, "_complete", complete)
-                    )
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 60
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 16
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 4
@@ -335,7 +331,6 @@ class ToolFunctionTestCase(unittest.TestCase):
                 loader._load_large_heatmap_from_sql(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
-                worker_module.set_parameter_complete = old_set_complete
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = old_grid_side
@@ -385,14 +380,10 @@ class ToolFunctionTestCase(unittest.TestCase):
             worker.cache.rundescriber.shapes = None
 
             old_database_path = worker_module.cache_database_path
-            old_set_complete = worker_module.set_parameter_complete
             old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
             old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
             try:
                 worker_module.cache_database_path = lambda _cache: database_path
-                worker_module.set_parameter_complete = (
-                    lambda param, complete=False: setattr(param, "_complete", complete)
-                    )
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 2
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 3
 
@@ -400,7 +391,6 @@ class ToolFunctionTestCase(unittest.TestCase):
                 loader._canonicalize_heatmap(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
-                worker_module.set_parameter_complete = old_set_complete
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
 
@@ -425,15 +415,11 @@ class ToolFunctionTestCase(unittest.TestCase):
             worker.cache.rundescriber.shapes = None
 
             old_database_path = worker_module.cache_database_path
-            old_set_complete = worker_module.set_parameter_complete
             old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
             old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
             old_grid_side = worker_module.MAX_SQL_HEATMAP_GRID_SIDE
             try:
                 worker_module.cache_database_path = lambda _cache: database_path
-                worker_module.set_parameter_complete = (
-                    lambda param, complete=False: setattr(param, "_complete", complete)
-                    )
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 2
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 4
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 2
@@ -442,7 +428,6 @@ class ToolFunctionTestCase(unittest.TestCase):
                 loader._canonicalize_heatmap(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
-                worker_module.set_parameter_complete = old_set_complete
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = old_grid_side
@@ -465,14 +450,10 @@ class ToolFunctionTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             results = []
             old_database_path = worker_module.cache_database_path
-            old_set_complete = worker_module.set_parameter_complete
             old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
             old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
             old_grid_side = worker_module.MAX_SQL_HEATMAP_GRID_SIDE
             try:
-                worker_module.set_parameter_complete = (
-                    lambda param, complete=False: setattr(param, "_complete", complete)
-                    )
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 60
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 16
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 4
@@ -506,7 +487,6 @@ class ToolFunctionTestCase(unittest.TestCase):
                         ))
             finally:
                 worker_module.cache_database_path = old_database_path
-                worker_module.set_parameter_complete = old_set_complete
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = old_grid_side
@@ -558,14 +538,10 @@ class ToolFunctionTestCase(unittest.TestCase):
             worker.cache.rundescriber.shapes = {"signal": (3, 4)}
 
             old_database_path = worker_module.cache_database_path
-            old_set_complete = worker_module.set_parameter_complete
             old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
             old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
             try:
                 worker_module.cache_database_path = lambda _cache: database_path
-                worker_module.set_parameter_complete = (
-                    lambda param, complete=False: setattr(param, "_complete", complete)
-                    )
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 12
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 12
 
@@ -573,7 +549,6 @@ class ToolFunctionTestCase(unittest.TestCase):
                 loader._canonicalize_heatmap(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
-                worker_module.set_parameter_complete = old_set_complete
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
 
@@ -599,24 +574,19 @@ class ToolFunctionTestCase(unittest.TestCase):
             worker.heatmap_full_axis_ranges = {
                 "x": (0.0, 39.0),
                 "y": (0.0, 29.0),
-                }
+            }
 
             old_database_path = worker_module.cache_database_path
-            old_set_complete = worker_module.set_parameter_complete
             old_source_rows = worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS
             old_grid_cells = worker_module.MAX_SQL_HEATMAP_GRID_CELLS
             try:
                 worker_module.cache_database_path = lambda _cache: database_path
-                worker_module.set_parameter_complete = (
-                    lambda param, complete=False: setattr(param, "_complete", complete)
-                    )
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 1_000
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 1_000
 
                 loader._load_large_heatmap_from_sql(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
-                worker_module.set_parameter_complete = old_set_complete
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = old_grid_cells
 
