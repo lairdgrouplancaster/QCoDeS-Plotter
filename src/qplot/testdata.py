@@ -94,6 +94,8 @@ _MINIMUM_FREQUENCY = 0.5
 _MAXIMUM_FREQUENCY = 4.0
 _SINUSOID_COMPONENT_COUNT = 2
 _RESULT_CHUNK_POINTS = 10_000
+_TEMPORARY_DATABASE_PREFIX = ".qplot-testdata-"
+_SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
 class SpecificationError(ValueError):
@@ -353,6 +355,38 @@ def _raise_if_cancelled(cancelled_callback):
         raise GenerationCancelled("Test-database generation was cancelled")
 
 
+def _qcodes_uri_name(database_path):
+    """Return one URI-encoded path layer for QCoDeS' ``file:`` prefix."""
+    database_uri = Path(database_path).absolute().as_uri()
+    return database_uri.removeprefix("file:")
+
+
+def _connect_writable_exact_path(database_path):
+    """Open an exact generator-owned path with QCoDeS' writable connector."""
+    return connect(_qcodes_uri_name(database_path))
+
+
+def _owned_temporary_artifacts(temporary_path):
+    yield temporary_path
+    for suffix in _SQLITE_SIDECAR_SUFFIXES:
+        yield Path(f"{temporary_path}{suffix}")
+
+
+def _remove_owned_temporary_artifacts(temporary_path):
+    """Remove only the generator-owned database and its possible sidecars."""
+    failures = []
+    for artifact_path in _owned_temporary_artifacts(temporary_path):
+        try:
+            artifact_path.unlink(missing_ok=True)
+        except OSError as error:
+            failures.append((artifact_path, error))
+    if failures:
+        failed_paths = ", ".join(str(path) for path, _error in failures)
+        raise OSError(
+            f"Could not remove generator-owned temporary files: {failed_paths}"
+        ) from failures[0][1]
+
+
 def _result_chunks(point_count):
     for start in range(0, point_count, _RESULT_CHUNK_POINTS):
         yield slice(start, min(start + _RESULT_CHUNK_POINTS, point_count))
@@ -503,7 +537,6 @@ def _publish_database(temporary_path, database_path, overwrite):
             "Could not atomically publish the generated database without "
             "overwriting an existing file"
         ) from error
-    temporary_path.unlink()
 
 
 def generate_database(
@@ -527,16 +560,6 @@ def generate_database(
         )
 
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_handle = tempfile.NamedTemporaryFile(
-        prefix=f".{database_path.stem}-",
-        suffix=".db",
-        dir=database_path.parent,
-        delete=False,
-    )
-    temporary_path = Path(temporary_handle.name)
-    temporary_handle.close()
-    temporary_path.unlink()
-
     random_generator = rng if rng is not None else np.random.default_rng()
     total_runs = len(specifications)
     total_points = sum(specification.point_count for specification in specifications)
@@ -545,63 +568,76 @@ def generate_database(
         f"Test database generation started: {database_path} "
         f"({total_runs} runs, {total_points} points)."
     )
+    temporary_path = None
     try:
-        connection = connect(temporary_path)
         try:
-            experiment = new_experiment(
-                "qplot_test_database",
-                sample_name="synthetic",
-                conn=connection,
+            temporary_handle = tempfile.NamedTemporaryFile(
+                prefix=_TEMPORARY_DATABASE_PREFIX,
+                suffix=".db",
+                dir=database_path.parent,
+                delete=False,
             )
-            for run_number, specification in enumerate(specifications, start=1):
-                run_started = perf_counter()
-                _timestamped_message(
-                    f"Run started: run_{run_number} ({run_number}/{total_runs}, "
-                    f"{specification.dimensions}D, {specification.point_count} points)."
-                )
-                try:
-                    points_written = _write_run(
-                        experiment,
-                        run_number,
-                        specification,
-                        random_generator,
-                        cancelled_callback=cancelled_callback,
-                    )
-                    if points_written != specification.point_count:
-                        raise RuntimeError(
-                            f"run_{run_number} persisted {points_written} of "
-                            f"{specification.point_count} expected result rows"
-                        )
-                except GenerationCancelled:
-                    _timestamped_message(
-                        f"Run stopped (cancelled): run_{run_number} "
-                        f"after {perf_counter() - run_started:.2f} s."
-                    )
-                    raise
-                except Exception as error:
-                    _timestamped_message(
-                        f"Run stopped (failed): run_{run_number} after "
-                        f"{perf_counter() - run_started:.2f} s "
-                        f"({type(error).__name__}: {error})."
-                    )
-                    raise
-                _timestamped_message(
-                    f"Run stopped (completed): run_{run_number} in "
-                    f"{perf_counter() - run_started:.2f} s."
-                )
+            temporary_path = Path(temporary_handle.name)
+            temporary_handle.close()
             _raise_if_cancelled(cancelled_callback)
+            connection = _connect_writable_exact_path(temporary_path)
+            try:
+                experiment = new_experiment(
+                    "qplot_test_database",
+                    sample_name="synthetic",
+                    conn=connection,
+                )
+                for run_number, specification in enumerate(specifications, start=1):
+                    run_started = perf_counter()
+                    _timestamped_message(
+                        f"Run started: run_{run_number} ({run_number}/{total_runs}, "
+                        f"{specification.dimensions}D, "
+                        f"{specification.point_count} points)."
+                    )
+                    try:
+                        points_written = _write_run(
+                            experiment,
+                            run_number,
+                            specification,
+                            random_generator,
+                            cancelled_callback=cancelled_callback,
+                        )
+                        if points_written != specification.point_count:
+                            raise RuntimeError(
+                                f"run_{run_number} persisted {points_written} of "
+                                f"{specification.point_count} expected result rows"
+                            )
+                    except GenerationCancelled:
+                        _timestamped_message(
+                            f"Run stopped (cancelled): run_{run_number} "
+                            f"after {perf_counter() - run_started:.2f} s."
+                        )
+                        raise
+                    except Exception as error:
+                        _timestamped_message(
+                            f"Run stopped (failed): run_{run_number} after "
+                            f"{perf_counter() - run_started:.2f} s "
+                            f"({type(error).__name__}: {error})."
+                        )
+                        raise
+                    _timestamped_message(
+                        f"Run stopped (completed): run_{run_number} in "
+                        f"{perf_counter() - run_started:.2f} s."
+                    )
+                _raise_if_cancelled(cancelled_callback)
+            finally:
+                connection.close()
+            _publish_database(temporary_path, database_path, overwrite)
         finally:
-            connection.close()
-        _publish_database(temporary_path, database_path, overwrite)
+            if temporary_path is not None:
+                _remove_owned_temporary_artifacts(temporary_path)
     except GenerationCancelled:
-        temporary_path.unlink(missing_ok=True)
         _timestamped_message(
             "Test database generation stopped (cancelled) after "
             f"{perf_counter() - generation_started:.2f} s: {database_path}."
         )
         raise
     except Exception as error:
-        temporary_path.unlink(missing_ok=True)
         _timestamped_message(
             "Test database generation stopped (failed) after "
             f"{perf_counter() - generation_started:.2f} s: {database_path} "

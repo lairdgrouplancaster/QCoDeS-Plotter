@@ -325,9 +325,19 @@ class config:
         # Confirm reset worked
         self.validate(config)
         
-        # Save reset to file
+        # Save reset to file. Keep the last persisted configuration
+        # authoritative if any part of the atomic write fails.
+        had_previous_config = hasattr(self, "config")
+        previous_config = getattr(self, "config", {})
         self.config = config
-        self.save_config(self.default_file)
+        try:
+            self.save_config(self.default_file)
+        except Exception:
+            if had_previous_config:
+                self.config = previous_config
+            else:
+                del self.config
+            raise
 
 
     def validate(self, candidate):

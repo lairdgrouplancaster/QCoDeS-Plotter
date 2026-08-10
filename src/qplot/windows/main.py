@@ -32,6 +32,11 @@ from qplot.datahandling.database import (
 from qplot.diagnostics import log_user_error
 
 from ._commands import create_action
+from ._config_persistence import (
+    persist_config_action,
+    persist_config_value,
+    set_widget_value_without_signals,
+)
 from ._database_actions import DatabaseActionsMixin, TestDatabaseGenerationWorker
 from ._dataset_handle import DatasetHandle, DatasetKey
 from ._help import add_help_menu
@@ -669,21 +674,49 @@ class MainWindow(
 
         """
         if self.config.get("user_preference.theme") == theme: #already selected
-            action.setChecked(True)
+            set_widget_value_without_signals(action, action.setChecked, True)
             self.show_status(f"{theme.title()} theme already selected.", 3000)
-            return
-        for QActions in getattr(self, "themes", []): # Untick other options
-            if QActions != action:
-                QActions.setChecked(False)
-                
-        # Update config.jon
-        self.config.update("user_preference.theme", theme)
+            return True
+
+        def sync_theme_actions():
+            current_theme = self.config.get("user_preference.theme")
+            actions = list(getattr(self, "themes", []))
+            if action not in actions:
+                actions.append(action)
+            blocked_states = [
+                theme_action.blockSignals(True)
+                for theme_action in actions
+                ]
+            try:
+                for theme_action in actions:
+                    action_theme = theme_action.text().replace("&", "").lower()
+                    theme_action.setChecked(action_theme == current_theme)
+            finally:
+                for theme_action, signals_were_blocked in zip(
+                        actions,
+                        blocked_states,
+                        strict=True,
+                        ):
+                    theme_action.blockSignals(signals_were_blocked)
+
+        if not persist_config_value(
+                self,
+                self.config,
+                "user_preference.theme",
+                theme,
+                "the theme preference",
+                sync_theme_actions,
+                ):
+            return False
+
+        sync_theme_actions()
         
         # Update all windows.
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
         self.show_status(f"Theme changed to {theme}.", 2000)
+        return True
 
 
     def change_preview_size(self, preview_size):
@@ -693,10 +726,12 @@ class MainWindow(
         """
         preview_size = int(preview_size)
         if preview_size == self.preview_size:
-            return
+            return True
+
+        if not self._save_preview_size(preview_size):
+            return False
 
         self.preview_size = preview_size
-        self._save_preview_size(preview_size)
         if hasattr(self, "infoBox"):
             self.infoBox.set_preview_size(preview_size)
             prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
@@ -705,6 +740,7 @@ class MainWindow(
             if hasattr(self, "runInfoSplitter"):
                 self.runInfoSplitter.setSizes([380, self._details_pane_height()])
         self.show_status(f"Preview size set to {preview_size} px.", 3000)
+        return True
 
 
     @QtCore.pyqtSlot()
@@ -725,11 +761,18 @@ class MainWindow(
             self.show_status("Settings reset cancelled.", 3000)
             return
 
+        if not persist_config_action(
+                self,
+                self.config.reset_to_defaults,
+                "the default settings",
+                ):
+            return False
+
         self.close_plot_windows(confirm=False, status=False)
-        self.config.reset_to_defaults()
         self.apply_current_settings()
         self.close_database(status=False)
         self.show_status("Settings reset to defaults.", 5000)
+        return True
 
 
     def show_preferences_dialog(self):
@@ -795,10 +838,30 @@ class MainWindow(
 
 
     def _save_preview_size(self, preview_size):
-        gui_config = self.config.config.setdefault("GUI", {})
-        if "preview_size" not in gui_config:
-            gui_config["preview_size"] = self.preview_size
-        self.config.update("GUI.preview_size", int(preview_size))
+        previous_size = self._configured_preview_size()
+
+        def rollback():
+            actions = list(getattr(self, "previewSizeActions", []))
+            blocked_states = [action.blockSignals(True) for action in actions]
+            try:
+                for action in actions:
+                    action.setChecked(action.data() == previous_size)
+            finally:
+                for action, signals_were_blocked in zip(
+                        actions,
+                        blocked_states,
+                        strict=True,
+                        ):
+                    action.blockSignals(signals_were_blocked)
+
+        return persist_config_value(
+            self,
+            self.config,
+            "GUI.preview_size",
+            int(preview_size),
+            "the preview size",
+            rollback,
+            )
 
 
 ###############################################################################

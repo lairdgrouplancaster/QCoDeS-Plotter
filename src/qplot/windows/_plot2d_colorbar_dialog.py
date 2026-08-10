@@ -15,6 +15,7 @@ from ._colorbar import (
     _ColorbarColormapTableItem,
     _config_value,
 )
+from ._config_persistence import persist_config_value
 
 if TYPE_CHECKING:
     class _ColorbarScaleDialogBase:
@@ -360,10 +361,19 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         """
         config_obj = self.__dict__.get("config")
         if config_obj is not None:
-            config_obj.update(key, bool(enabled))
+            if not persist_config_value(
+                    self,
+                    config_obj,
+                    key,
+                    bool(enabled),
+                    "the color-map filter",
+                    self._sync_colorbar_filter_controls,
+                    ):
+                return False
 
         self._populate_colorbar_colormap_table()
         self._sync_colorbar_scale_controls()
+        return True
 
     def _set_colorbar_subtype_filter_setting(self, group, subtype, enabled):
         """
@@ -595,14 +605,31 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
                 show_status("Unknown color map.", 5000)
             return False
 
+        config_obj = self.__dict__.get("config")
+        if config_obj is not None:
+            previous_name = _config_value(
+                config_obj,
+                "user_preference.bar_colour",
+                self.__dict__.get("_colorbar_colormap_name", "viridis"),
+                )
+
+            def rollback():
+                self._select_colorbar_colormap(previous_name)
+
+            if not persist_config_value(
+                    self,
+                    config_obj,
+                    "user_preference.bar_colour",
+                    name,
+                    "the color map",
+                    rollback,
+                    ):
+                return False
+
         self._colorbar_colormap_name = name
         bar = self.__dict__.get("bar")
         if bar is not None:
             bar.setColorMap(self._colorbar_colormap(name))
-
-        config_obj = self.__dict__.get("config")
-        if config_obj is not None:
-            config_obj.update("user_preference.bar_colour", name)
 
         return True
 

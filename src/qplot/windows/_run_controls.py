@@ -9,6 +9,10 @@ from PyQt6 import (
 from PyQt6.QtGui import QIntValidator
 
 from ._commands import create_action, plot_measurement_command_spec
+from ._config_persistence import (
+    persist_config_value,
+    set_widget_value_without_signals,
+)
 from ._help import show_quick_start
 from ._widgets import (
     RunList,
@@ -380,7 +384,9 @@ class RunControlsMixin:
         Updates the refresh interval for checking for new runs in database.
 
         """
-        self._save_refresh_interval(interval)
+        if not self._save_refresh_interval(interval):
+            self._sync_empty_state()
+            return
         self._apply_refresh_interval(interval)
         self._sync_empty_state()
 
@@ -390,7 +396,29 @@ class RunControlsMixin:
         Persists the Auto-plot checkbox state.
 
         """
-        self.config.update(AUTO_PLOT_KEY, bool(checked))
+        try:
+            previous_checked = bool(self.config.get(AUTO_PLOT_KEY))
+        except (AttributeError, KeyError):
+            previous_checked = not bool(checked)
+
+        def rollback():
+            checkbox = getattr(self, "autoPlotBox", None)
+            if checkbox is not None:
+                set_widget_value_without_signals(
+                    checkbox,
+                    checkbox.setChecked,
+                    previous_checked,
+                    )
+
+        if not persist_config_value(
+                self,
+                self.config,
+                AUTO_PLOT_KEY,
+                bool(checked),
+                "the Auto-plot preference",
+                rollback,
+                ):
+            return
         if checked:
             self._auto_plot_current_running_run()
 
@@ -440,8 +468,26 @@ class RunControlsMixin:
         except (KeyError, TypeError, ValueError):
             current_interval = None
 
-        if current_interval != interval:
-            self.config.update("user_preference.default_refresh_rate", interval)
+        if current_interval == interval:
+            return True
+
+        def rollback():
+            spin_box = getattr(self, "spinBox", None)
+            if spin_box is not None and current_interval is not None:
+                set_widget_value_without_signals(
+                    spin_box,
+                    spin_box.setValue,
+                    current_interval,
+                    )
+
+        return persist_config_value(
+            self,
+            self.config,
+            "user_preference.default_refresh_rate",
+            interval,
+            "the refresh interval",
+            rollback,
+            )
 
     @QtCore.pyqtSlot(str)
     def update_run_id(self, text):

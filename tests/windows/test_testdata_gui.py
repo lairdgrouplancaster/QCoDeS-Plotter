@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot import testdata as testdata_module
 from qplot.testdata import CSV_COLUMNS, INSTRUCTION_FILE_NAMES
 from qplot.windows._database_actions import (
     DatabaseActionsMixin,
@@ -122,7 +123,9 @@ def test_reveal_file_uses_finder_selection_on_macos(tmp_path):
 def test_generate_database_from_csv_runs_in_worker_pool(tmp_path):
     harness = GuiHarness(tmp_path)
     csv_path = tmp_path / "runs.csv"
-    database_path = tmp_path / "runs.db"
+    output_directory = tmp_path / "GUI # %3f space 測定"
+    output_directory.mkdir()
+    database_path = output_directory / "out#%23 space 測定.db"
     write_small_specification(csv_path)
 
     try:
@@ -181,7 +184,10 @@ def test_generation_completion_force_reloads_replaced_current_database(tmp_path)
 def test_generation_releases_current_database_before_replacing_it(tmp_path):
     harness = GuiHarness(tmp_path)
     csv_path = tmp_path / "runs.csv"
-    database_path = tmp_path / "runs.db"
+    output_directory = tmp_path / "loaded # %23 測定"
+    output_directory.mkdir()
+    database_path = output_directory / "runs#%3f 測定.db"
+    database_path.write_bytes(b"old database")
     write_small_specification(csv_path)
     harness.fileTextbox = type(
         "Field",
@@ -203,6 +209,11 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
                 "getSaveFileName",
                 return_value=(str(database_path), "QCoDeS Database (*.db)"),
             ),
+            patch.object(
+                qtw.QMessageBox,
+                "question",
+                return_value=qtw.QMessageBox.StandardButton.Yes,
+            ),
         ):
             assert harness.generate_test_database_from_csv()
 
@@ -210,6 +221,13 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
             str(database_path)
         )
         harness.load_file.assert_called_once_with(str(database_path), force=True)
+        connection = sqlite3.connect(database_path)
+        try:
+            assert connection.execute("SELECT name FROM runs").fetchall() == [
+                ("run_1",)
+            ]
+        finally:
+            connection.close()
     finally:
         harness.deleteLater()
 
@@ -265,6 +283,83 @@ def test_generation_cancelled_before_first_run_removes_temporary_database(tmp_pa
             assert harness.generate_test_database_from_csv()
 
         assert not database_path.exists()
-        assert list(tmp_path.glob(".runs-*.db")) == []
+        assert not any(
+            path.name.startswith(testdata_module._TEMPORARY_DATABASE_PREFIX)
+            for path in tmp_path.iterdir()
+        )
+    finally:
+        harness.deleteLater()
+
+
+def test_generation_declined_overwrite_leaves_existing_output_unchanged(tmp_path):
+    harness = GuiHarness(tmp_path)
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    database_path.write_bytes(b"existing owner")
+    write_small_specification(csv_path)
+
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getOpenFileName",
+                return_value=(str(csv_path), "CSV Files (*.csv)"),
+            ),
+            patch.object(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(database_path), "QCoDeS Database (*.db)"),
+            ),
+            patch.object(
+                qtw.QMessageBox,
+                "question",
+                return_value=qtw.QMessageBox.StandardButton.No,
+            ) as question,
+        ):
+            assert not harness.generate_test_database_from_csv()
+
+        question.assert_called_once()
+        assert database_path.read_bytes() == b"existing owner"
+        assert harness._test_database_generation_worker is None
+        assert "cancelled" in harness.status_messages[-1][0].lower()
+    finally:
+        harness.deleteLater()
+
+
+def test_new_gui_output_does_not_clobber_publication_race(tmp_path):
+    harness = GuiHarness(tmp_path)
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_small_specification(csv_path)
+
+    class RacingThreadPool:
+        def start(self, worker):
+            assert not worker.overwrite
+            database_path.write_bytes(b"concurrent owner")
+            worker.run()
+
+    harness.testDatabaseGenerationThreadPool = RacingThreadPool()
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getOpenFileName",
+                return_value=(str(csv_path), "CSV Files (*.csv)"),
+            ),
+            patch.object(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(database_path), "QCoDeS Database (*.db)"),
+            ),
+        ):
+            assert harness.generate_test_database_from_csv()
+
+        assert database_path.read_bytes() == b"concurrent owner"
+        assert harness.errors[0][0] == "Test Database Generation Failed"
+        assert "already exists" in harness.errors[0][2]
+        assert not any(
+            path.name.startswith(testdata_module._TEMPORARY_DATABASE_PREFIX)
+            for path in tmp_path.iterdir()
+        )
     finally:
         harness.deleteLater()
