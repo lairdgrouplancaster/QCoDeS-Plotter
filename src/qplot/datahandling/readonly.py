@@ -13,6 +13,7 @@ from qplot.datahandling.file_identity import (
     DatabaseFileIdentity,
     database_file_identity,
 )
+from qplot.datahandling.qcodes_compat import result_owns_supplied_connection
 
 SQLITE_READ_ONLY_CACHE_KIB = 16 * 1024
 WAL_SNAPSHOT_ATTEMPTS = 5
@@ -209,11 +210,14 @@ def load_by_guid_read_only(
         database_path,
         expected_database_identity=expected_database_identity,
     )
+    connection_transferred = False
     try:
-        return load_by_guid(guid, conn=conn)
-    except Exception:
-        conn.close()
-        raise
+        result = load_by_guid(guid, conn=conn)
+        connection_transferred = result_owns_supplied_connection(result)
+        return result
+    finally:
+        if not connection_transferred:
+            conn.close()
 
 
 def load_by_id_read_only(
@@ -229,11 +233,14 @@ def load_by_id_read_only(
         database_path,
         expected_database_identity=expected_database_identity,
     )
+    connection_transferred = False
     try:
-        return load_by_id(run_id, conn=conn)
-    except Exception:
-        conn.close()
-        raise
+        result = load_by_id(run_id, conn=conn)
+        connection_transferred = result_owns_supplied_connection(result)
+        return result
+    finally:
+        if not connection_transferred:
+            conn.close()
 
 
 def _resolved_database_path(database_path):

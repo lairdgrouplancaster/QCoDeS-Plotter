@@ -13,11 +13,13 @@ from qcodes.dataset import (
     initialise_or_create_database_at,
     load_or_create_experiment,
 )
+from qcodes.dataset.data_set_in_memory import DataSetInMem
 from qcodes.dataset.sqlite.connection import AtomicConnection
 from qcodes.parameters import ManualParameter
 
 from qplot._repair import repair
 from qplot.datahandling import file_identity as file_identity_module
+from qplot.datahandling import readonly as readonly_module
 from qplot.datahandling.database import database_access_error, database_info_rows
 from qplot.datahandling.file_identity import database_file_identity
 from qplot.datahandling.readonly import (
@@ -33,6 +35,7 @@ from qplot.datahandling.readonly import (
 )
 from qplot.datahandling.readSQL import get_runs_via_sql
 from qplot.testdata import RunSpecification, generate_database
+from qplot.windows._dataset_handle import DatasetHandle
 
 
 def test_windows_file_index_is_used_when_stat_inode_is_zero(monkeypatch):
@@ -125,6 +128,65 @@ def _create_default_wal_run(database_path):
     return run_id, guid, table_name
 
 
+def _open_active_wal(database_path):
+    writer = sqlite3.connect(database_path)
+    assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+    writer.execute("PRAGMA wal_autocheckpoint = 0")
+    writer.execute("CREATE TABLE qplot_wal_marker (value INTEGER)")
+    writer.execute("INSERT INTO qplot_wal_marker VALUES (1)")
+    writer.commit()
+    assert Path(f"{database_path}-wal").is_file()
+    assert Path(f"{database_path}-shm").is_file()
+    return writer
+
+
+def _load_read_only(loader_kind, run_id, guid, database_path):
+    if loader_kind == "guid":
+        return load_by_guid_read_only(guid, database_path)
+    if loader_kind == "run_id":
+        return load_by_id_read_only(run_id, database_path)
+    raise AssertionError(f"Unexpected loader kind: {loader_kind}")
+
+
+def _track_explicit_qcodes_connections(monkeypatch):
+    real_open = readonly_module.qcodes_read_only_connection
+    records = []
+
+    def tracked_open(*args, **kwargs):
+        conn = real_open(*args, **kwargs)
+        opened_path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+        source_path = Path(conn.path_to_dbfile).resolve()
+        snapshot_directory = (
+            opened_path.parent if opened_path != source_path else None
+        )
+        record = SimpleNamespace(
+            connection=conn,
+            close_count=0,
+            snapshot_directory=snapshot_directory,
+        )
+        original_close = conn.close
+
+        def tracked_close():
+            record.close_count += 1
+            return original_close()
+
+        conn.close = tracked_close
+        records.append(record)
+        return conn
+
+    monkeypatch.setattr(
+        readonly_module,
+        "qcodes_read_only_connection",
+        tracked_open,
+    )
+    return records
+
+
+def _assert_connection_closed(conn):
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
+
+
 def test_sqlite_read_only_connection_rejects_writes(tmp_path):
     database_path = tmp_path / "plain.db"
     writable = sqlite3.connect(database_path)
@@ -156,6 +218,193 @@ def test_qcodes_read_only_connection_rejects_writes(tmp_path):
             conn.execute("CREATE TABLE qplot_read_only_probe (value INTEGER)")
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize("loader_kind", ["guid", "run_id"])
+def test_database_dataset_owns_connection_until_dataset_handle_closes(
+    tmp_path,
+    monkeypatch,
+    loader_kind,
+):
+    database_path = tmp_path / "owned-active-wal.db"
+    original_database_path = qcodes.config.core.db_location
+    writer = None
+    try:
+        run_id, guid, _table_name = _create_default_wal_run(database_path)
+        writer = _open_active_wal(database_path)
+        source_state = _directory_state(tmp_path)
+        records = _track_explicit_qcodes_connections(monkeypatch)
+
+        dataset = _load_read_only(loader_kind, run_id, guid, database_path)
+
+        assert len(records) == 1
+        record = records[0]
+        assert dataset.conn is record.connection
+        assert record.close_count == 0
+        assert record.connection.execute("SELECT COUNT(*) FROM runs").fetchone() == (1,)
+        assert record.snapshot_directory is not None
+        assert record.snapshot_directory.is_dir()
+
+        handle = DatasetHandle(dataset)
+        assert handle.close()
+        assert record.close_count == 1
+        _assert_connection_closed(record.connection)
+        assert not record.snapshot_directory.exists()
+        assert _directory_state(tmp_path) == source_state
+    finally:
+        if writer is not None:
+            writer.close()
+        qcodes.config.core.db_location = original_database_path
+
+
+@pytest.mark.parametrize("loader_kind", ["guid", "run_id"])
+def test_missing_result_table_closes_non_owning_dataset_connection(
+    tmp_path,
+    monkeypatch,
+    loader_kind,
+):
+    database_path = tmp_path / "missing-table-active-wal.db"
+    original_database_path = qcodes.config.core.db_location
+    writer = None
+    try:
+        run_id, guid, table_name = _create_default_wal_run(database_path)
+        writer = _open_active_wal(database_path)
+        escaped_table_name = table_name.replace('"', '""')
+        writer.execute(f'DROP TABLE "{escaped_table_name}"')
+        writer.commit()
+        source_state = _directory_state(tmp_path)
+        records = _track_explicit_qcodes_connections(monkeypatch)
+
+        dataset = _load_read_only(loader_kind, run_id, guid, database_path)
+
+        assert isinstance(dataset, DataSetInMem)
+        assert len(records) == 1
+        record = records[0]
+        assert record.close_count == 1
+        _assert_connection_closed(record.connection)
+        assert record.snapshot_directory is not None
+        assert not record.snapshot_directory.exists()
+        assert _directory_state(tmp_path) == source_state
+    finally:
+        if writer is not None:
+            writer.close()
+        qcodes.config.core.db_location = original_database_path
+
+
+@pytest.mark.parametrize("loader_kind", ["guid", "run_id"])
+def test_exported_netcdf_closes_non_owning_dataset_connection(
+    tmp_path,
+    monkeypatch,
+    loader_kind,
+):
+    pytest.importorskip("xarray")
+    pytest.importorskip("h5netcdf")
+    database_path = tmp_path / "exported.db"
+    original_database_path = qcodes.config.core.db_location
+    writable_dataset = None
+    try:
+        run_id, guid = _create_qcodes_run(database_path)
+        writable_dataset = qcodes.dataset.load_by_id(run_id)
+        writable_dataset.export(export_type="netcdf", path=tmp_path)
+        writable_dataset.conn.close()
+        writable_dataset = None
+        monkeypatch.setattr(
+            qcodes.config.dataset,
+            "load_from_exported_file",
+            True,
+        )
+        source_state = _directory_state(tmp_path)
+        records = _track_explicit_qcodes_connections(monkeypatch)
+
+        dataset = _load_read_only(loader_kind, run_id, guid, database_path)
+
+        assert isinstance(dataset, DataSetInMem)
+        assert dataset.guid == guid
+        assert len(records) == 1
+        record = records[0]
+        assert record.close_count == 1
+        _assert_connection_closed(record.connection)
+        assert record.snapshot_directory is None
+        assert _directory_state(tmp_path) == source_state
+    finally:
+        if writable_dataset is not None:
+            writable_dataset.conn.close()
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_repeated_in_memory_loads_release_connections_and_wal_snapshots(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "repeated-in-memory-active-wal.db"
+    original_database_path = qcodes.config.core.db_location
+    writer = None
+    try:
+        run_id, guid, table_name = _create_default_wal_run(database_path)
+        writer = _open_active_wal(database_path)
+        escaped_table_name = table_name.replace('"', '""')
+        writer.execute(f'DROP TABLE "{escaped_table_name}"')
+        writer.commit()
+        source_state = _directory_state(tmp_path)
+        records = _track_explicit_qcodes_connections(monkeypatch)
+
+        for index in range(30):
+            loader_kind = "guid" if index % 2 == 0 else "run_id"
+            dataset = _load_read_only(loader_kind, run_id, guid, database_path)
+            assert isinstance(dataset, DataSetInMem)
+            assert len(records) == index + 1
+            record = records[-1]
+            assert record.close_count == 1
+            _assert_connection_closed(record.connection)
+            assert record.snapshot_directory is not None
+            assert not record.snapshot_directory.exists()
+            assert all(item.close_count == 1 for item in records)
+
+        assert _directory_state(tmp_path) == source_state
+    finally:
+        if writer is not None:
+            writer.close()
+        qcodes.config.core.db_location = original_database_path
+
+
+@pytest.mark.parametrize(
+    ("loader_kind", "qcodes_loader_name"),
+    [("guid", "load_by_guid"), ("run_id", "load_by_id")],
+)
+def test_loader_exception_closes_connection_and_wal_snapshot(
+    tmp_path,
+    monkeypatch,
+    loader_kind,
+    qcodes_loader_name,
+):
+    database_path = tmp_path / "loader-error-active-wal.db"
+    original_database_path = qcodes.config.core.db_location
+    writer = None
+    try:
+        run_id, guid, _table_name = _create_default_wal_run(database_path)
+        writer = _open_active_wal(database_path)
+        source_state = _directory_state(tmp_path)
+        records = _track_explicit_qcodes_connections(monkeypatch)
+
+        def fail_loader(*_args, **_kwargs):
+            raise RuntimeError("loader failed")
+
+        monkeypatch.setattr(readonly_module, qcodes_loader_name, fail_loader)
+
+        with pytest.raises(RuntimeError, match="loader failed"):
+            _load_read_only(loader_kind, run_id, guid, database_path)
+
+        assert len(records) == 1
+        record = records[0]
+        assert record.close_count == 1
+        _assert_connection_closed(record.connection)
+        assert record.snapshot_directory is not None
+        assert not record.snapshot_directory.exists()
+        assert _directory_state(tmp_path) == source_state
+    finally:
+        if writer is not None:
+            writer.close()
+        qcodes.config.core.db_location = original_database_path
 
 
 @pytest.mark.parametrize(
@@ -272,14 +521,23 @@ def test_completed_default_wal_database_opens_from_read_only_directory(
             )
         assert list(runs) == [run_id]
 
-        def load_dataset():
-            dataset = load_by_guid_read_only(guid, database_path)
+        def load_dataset(loader_kind):
+            dataset = _load_read_only(
+                loader_kind,
+                run_id,
+                guid,
+                database_path,
+            )
             try:
                 return dataset.run_id
             finally:
                 dataset.conn.close()
 
-        assert _run_without_source_changes(tmp_path, load_dataset) == run_id
+        for loader_kind in ("guid", "run_id"):
+            assert _run_without_source_changes(
+                tmp_path,
+                lambda loader_kind=loader_kind: load_dataset(loader_kind),
+            ) == run_id
         assert _run_without_source_changes(tmp_path, repair) is None
         assert _run_without_source_changes(
             tmp_path,
