@@ -50,8 +50,11 @@ jobs:
         run: python -m pytest
 
   package:
-    name: Package build
+    name: Package artifacts
     runs-on: ubuntu-latest
+
+    env:
+      QT_QPA_PLATFORM: offscreen
 
     steps:
       - name: Check out repository
@@ -63,13 +66,21 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install package
+      - name: Install packaging tools
         run: |
           python -m pip install -U pip
-          python -m pip install -e ".[dev]"
+          python -m pip install build twine
+
+      - name: Verify clean source tree
+        run: python scripts/validate_distribution.py --check-clean
 
       - name: Build source and wheel distributions
         run: python -m build
+
+      - name: Validate artifact contents and testability
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: python scripts/validate_distribution.py dist
 
       - name: Check package metadata
         run: python -m twine check dist/*
