@@ -48,21 +48,33 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 
 ## Package Validation
 
-Build local release artifacts with:
+Build local release artifacts from a clean source tree with:
 
 ```console
+python scripts/validate_distribution.py --check-clean
 python -m build
 ```
 
-Validate the built source distribution and wheel metadata with:
+Validate the contents and testability of the built artifacts, then validate
+their metadata with:
 
 ```console
+python scripts/validate_distribution.py dist
 python -m twine check dist/*
 ```
 
-The CI workflow builds and checks these artifacts once per commit on Python
-3.12, then uploads them as workflow artifacts. It does not publish them to PyPI
-or attach them to GitHub releases.
+The source distribution deliberately contains all tracked tests and fixtures,
+shared `tests/conftest.py`, project metadata, documentation, developer scripts,
+package source, schemas, and CSV resources. Virtual environments, build output,
+caches, coverage output, bytecode, `.DS_Store`, and other generated files are
+excluded by `MANIFEST.in`.
+
+The CI workflow builds from a clean checkout and checks these artifacts once per
+commit on Python 3.12. It compares their file lists with tracked source and test
+files, runs the extracted sdist's complete test suite in an isolated virtual
+environment, installs and smoke-tests the wheel in another isolated environment,
+runs `twine check`, and then uploads both artifacts. It does not publish them to
+PyPI or attach them to GitHub releases.
 
 ## Release Checklist
 
@@ -76,13 +88,14 @@ Before creating a tagged release:
 3. Run `python -m ruff check .`.
 4. Run `python -m mypy`.
 5. Run `python -m pytest`.
-6. Run `python -m build`.
-7. Run `python -m twine check dist/*`.
-8. Create a fresh virtual environment, install only the built wheel, and check
-   `qplot-cfg -version` plus `python -c "import qplot; print(qplot.__version__)"`.
-9. Run the manual GUI check from `CONTRIBUTING.md`.
-10. Confirm README install and compatibility notes still match the release.
-11. Create a GitHub release from the tag and include user-facing changes.
+6. Run `python scripts/validate_distribution.py --check-clean`.
+7. Run `python -m build`.
+8. Run `python scripts/validate_distribution.py dist`.
+9. Run `python -m twine check dist/*`.
+10. Confirm the validator ran the extracted sdist tests and wheel smoke checks.
+11. Run the manual GUI check from `CONTRIBUTING.md`.
+12. Confirm README install and compatibility notes still match the release.
+13. Create a GitHub release from the tag and include user-facing changes.
 
 ## Future Options
 

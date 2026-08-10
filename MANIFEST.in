@@ -1,0 +1,29 @@
+include Agents.md
+include CHANGELOG.md
+include CONTRIBUTING.md
+include LICENSE
+include README.md
+include pyproject.toml
+
+graft docs
+graft scripts
+graft src
+graft tests
+
+prune .mypy_cache
+prune .pytest_cache
+prune .ruff_cache
+prune .venv
+prune .venv-mac
+prune .venv-linux
+prune .venv-win
+prune build
+prune dist
+prune htmlcov
+prune other
+prune src/qplot.egg-info
+
+global-exclude .DS_Store
+global-exclude *.py[cod]
+global-exclude .coverage
+global-exclude coverage.xml

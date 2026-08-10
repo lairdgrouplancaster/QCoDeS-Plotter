@@ -122,13 +122,22 @@ python -m pytest
 Pytest prints branch coverage for the `qplot` package and writes `coverage.xml`
 for CI or editor integrations.
 
-For release or packaging changes, build the source distribution and wheel and
-validate their metadata:
+For release or packaging changes, start from a clean source tree, build the
+source distribution and wheel, validate both artifacts, and check their
+metadata:
 
 ```console
+python scripts/validate_distribution.py --check-clean
 python -m build
+python scripts/validate_distribution.py dist
 python -m twine check dist/*
 ```
+
+The artifact validator checks the sdist against the tracked test suite and
+source-distribution policy, rejects ignored or stale build files, runs all tests
+from an extracted sdist in a fresh virtual environment, and installs the wheel
+into another fresh environment for import, version, resource, and console-script
+smoke checks.
 
 The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `tests/conftest.py`; do not add per-test `QT_QPA_PLATFORM` setup or one-off
@@ -181,8 +190,8 @@ Before committing:
 2. Run `python -m mypy`.
 3. Run `python -m pytest`.
 4. Run `python scripts/manual_run.py` for application or GUI changes.
-5. Run `python -m build` and `python -m twine check dist/*` for packaging or
-   release changes.
+5. Run `python -m build`, `python scripts/validate_distribution.py dist`, and
+   `python -m twine check dist/*` for packaging or release changes.
 6. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or
    `docs/configuration.md` when the setup, workflow, module boundaries, or
    config surface change.
