@@ -3737,7 +3737,7 @@ class DatabaseRefreshWorkerTestCase(unittest.TestCase):
 
         def get_status(guid, **kwargs):
             seen_status_calls.append((guid, kwargs))
-            return {"result_count": 12}
+            return {"is_completed": True, "result_count": 12}
 
         worker = database_module.DatabaseRefreshWorker(
             4,
@@ -3782,8 +3782,8 @@ class DatabaseRefreshWorkerTestCase(unittest.TestCase):
             "example.db",
             {11: {"guid": "guid-11"}},
             {
-                "guid-1": {"result_count": 12},
-                "guid-2": {"result_count": 12},
+                "guid-1": {"is_completed": True, "result_count": 12},
+                "guid-2": {"is_completed": True, "result_count": 12},
                 },
             None,
             )])
@@ -4130,6 +4130,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                             "guid": "guid-2",
                             "result_count": 20,
                             "storage_bytes": 1000,
+                            "storage_bytes_estimated": True,
                             }
                         }
                 elif run_id == 1:
@@ -4161,7 +4162,14 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             ])
         self.assertEqual(batches, [
             (11, "details.db", {1: {"guid": "guid-1", "result_count": 10}}),
-            (11, "details.db", {2: {"guid": "guid-2", "result_count": 20, "storage_bytes": 1000}}),
+            (11, "details.db", {
+                2: {
+                    "guid": "guid-2",
+                    "result_count": 20,
+                    "storage_bytes": 1000,
+                    "storage_bytes_estimated": True,
+                    },
+                }),
             ])
         self.assertEqual(statuses, [
             (11, "Loading run details... 0/2"),
@@ -4199,7 +4207,11 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             self.assertTrue(callable(connection_callback))
             calls.append(("storage", database_path, run_ids, batch_size))
             if 1 in run_ids:
-                yield {1: {"guid": "guid-1", "storage_bytes": 2000}}
+                yield {1: {
+                    "guid": "guid-1",
+                    "storage_bytes": 2000,
+                    "storage_bytes_estimated": False,
+                    }}
 
         database_module.iter_run_shape_batches_via_sql = iter_shapes
         database_module.iter_run_storage_batches_via_sql = iter_storage
@@ -4229,7 +4241,13 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             ])
         self.assertEqual(batches, [
             (12, "details.db", {1: {"guid": "guid-1", "setpoint_shape": [10], "setpoint_count": 10}}),
-            (12, "details.db", {1: {"guid": "guid-1", "storage_bytes": 2000}}),
+            (12, "details.db", {
+                1: {
+                    "guid": "guid-1",
+                    "storage_bytes": 2000,
+                    "storage_bytes_estimated": False,
+                    },
+                }),
             ])
         self.assertEqual(statuses, [
             (12, "Loading setpoint shapes... 0/2"),

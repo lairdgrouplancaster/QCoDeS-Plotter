@@ -3,11 +3,49 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 from qplot.datahandling import readSQL
 
 
 class RunSizeTestCase(unittest.TestCase):
+    def _read_only_sqlite_connection(self, database_path):
+        return sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+
+    def _create_completed_status_database(self, database_path, row_count=4):
+        conn = sqlite3.connect(database_path)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE runs (
+                    guid TEXT,
+                    completed_timestamp REAL,
+                    is_completed INTEGER,
+                    result_table_name TEXT,
+                    run_description TEXT,
+                    parameters TEXT
+                )
+                """
+                )
+            conn.execute("CREATE TABLE results_1 (x REAL, signal REAL)")
+            conn.executemany(
+                "INSERT INTO results_1 VALUES (?, ?)",
+                ((index, index + 1) for index in range(row_count)),
+                )
+            run_description = json.dumps({
+                "interdependencies_": {
+                    "dependencies": {"signal": ["x"]},
+                    },
+                "shapes": {"signal": [row_count]},
+                })
+            conn.execute(
+                "INSERT INTO runs VALUES (?, 123, 1, ?, ?, ?)",
+                ("completed-guid", "results_1", run_description, "x,signal"),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_cancel_progress_handler_interrupts_a_running_sql_statement(self):
         conn = sqlite3.connect(":memory:")
         callback_count = 0
@@ -37,6 +75,179 @@ class RunSizeTestCase(unittest.TestCase):
                 readSQL._install_cancel_progress_handler(conn, lambda: True)
         finally:
             conn.close()
+
+    def test_completed_status_excludes_every_storage_query_when_requested(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "completed.db")
+            self._create_completed_status_database(database_path)
+            statements = []
+
+            def trace_connection(connection):
+                if connection is not None:
+                    connection.set_trace_callback(statements.append)
+
+            with (
+                patch.object(
+                    readSQL,
+                    "qcodes_read_only_connection",
+                    side_effect=self._read_only_sqlite_connection,
+                    ),
+                patch.object(
+                    readSQL,
+                    "_table_storage_bytes",
+                    side_effect=AssertionError("storage helper must not run"),
+                    ) as storage_size,
+                ):
+                status = readSQL.get_run_status(
+                    "completed-guid",
+                    database_path=database_path,
+                    include_storage_bytes=False,
+                    connection_callback=trace_connection,
+                    )
+
+        storage_size.assert_not_called()
+        self.assertTrue(status["is_completed"])
+        self.assertNotIn("storage_bytes", status)
+        self.assertNotIn("storage_bytes_estimated", status)
+        self.assertFalse(any("DBSTAT" in sql.upper() for sql in statements))
+        self.assertFalse(any(
+            "TABLE_INFO(\"RESULTS_1\")" in sql.upper()
+            for sql in statements
+            ))
+
+    def test_status_includes_storage_calculation_when_requested(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "completed.db")
+            self._create_completed_status_database(database_path)
+            expected = readSQL._StorageSize(4096, "exact")
+            with (
+                patch.object(
+                    readSQL,
+                    "qcodes_read_only_connection",
+                    side_effect=self._read_only_sqlite_connection,
+                    ),
+                patch.object(
+                    readSQL,
+                    "_table_storage_bytes",
+                    return_value=expected,
+                    ) as storage_size,
+                ):
+                status = readSQL.get_run_status(
+                    "completed-guid",
+                    database_path=database_path,
+                    include_storage_bytes=True,
+                    )
+
+        storage_size.assert_called_once()
+        self.assertEqual(storage_size.call_args.args[1], "results_1")
+        self.assertEqual(storage_size.call_args.kwargs["result_count"], 4)
+        self.assertEqual(status["storage_bytes"], 4096)
+        self.assertFalse(status["storage_bytes_estimated"])
+
+    def test_successful_dbstat_storage_size_is_exact(self):
+        cursor = Mock()
+        cursor.fetchone.return_value = (8192, )
+
+        storage_size = readSQL._table_storage_bytes(cursor, "results_1")
+        metadata = {}
+        readSQL._add_storage_size_fields(metadata, storage_size)
+
+        self.assertEqual(storage_size, readSQL._StorageSize(8192, "exact"))
+        self.assertEqual(metadata, {
+            "storage_bytes": 8192,
+            "storage_bytes_estimated": False,
+            })
+        cursor.execute.assert_called_once_with(
+            "SELECT SUM(pgsize) FROM dbstat WHERE name = ?",
+            ("results_1", ),
+            )
+
+    def test_missing_and_failing_dbstat_storage_sizes_are_estimated(self):
+        for dbstat_failure in (None, sqlite3.OperationalError("no such table: dbstat")):
+            with self.subTest(dbstat_failure=dbstat_failure):
+                cursor = Mock()
+                if dbstat_failure is None:
+                    cursor.fetchone.return_value = (None, )
+                else:
+                    cursor.execute.side_effect = [dbstat_failure, None]
+                cursor.fetchall.return_value = [
+                    (0, "signal", "REAL", 0, None, 0),
+                    ]
+
+                storage_size = readSQL._table_storage_bytes(
+                    cursor,
+                    "results_1",
+                    result_count=10,
+                    )
+                metadata = {}
+                readSQL._add_storage_size_fields(metadata, storage_size)
+
+                self.assertEqual(
+                    storage_size,
+                    readSQL._StorageSize(110, "estimated"),
+                    )
+                self.assertEqual(metadata, {
+                    "storage_bytes": 110,
+                    "storage_bytes_estimated": True,
+                    })
+
+    def test_unavailable_storage_sizes_have_consistent_metadata(self):
+        cursor = Mock()
+        cursor.execute.side_effect = [
+            sqlite3.OperationalError("no such table: dbstat"),
+            None,
+            ]
+        cursor.fetchall.return_value = []
+
+        storage_size = readSQL._table_storage_bytes(
+            cursor,
+            "missing_results",
+            result_count=10,
+            )
+        metadata = {}
+        readSQL._add_storage_size_fields(metadata, storage_size)
+
+        self.assertEqual(storage_size, readSQL._StorageSize(None, "unavailable"))
+        self.assertEqual(metadata, {
+            "storage_bytes": None,
+            "storage_bytes_estimated": None,
+            })
+
+    def test_interrupted_exact_storage_query_is_not_converted_to_an_estimate(self):
+        cursor = Mock()
+        cursor.execute.side_effect = sqlite3.OperationalError("interrupted")
+
+        with self.assertRaisesRegex(sqlite3.OperationalError, "interrupted"):
+            readSQL._table_storage_bytes(cursor, "results_1", result_count=10)
+
+    def test_large_completed_status_does_not_scan_storage(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "large.db")
+            self._create_completed_status_database(database_path, row_count=50_000)
+            statements = []
+
+            def trace_connection(connection):
+                if connection is not None:
+                    connection.set_trace_callback(statements.append)
+
+            with patch.object(
+                    readSQL,
+                    "qcodes_read_only_connection",
+                    side_effect=self._read_only_sqlite_connection,
+                    ):
+                status = readSQL.get_run_status(
+                    "completed-guid",
+                    database_path=database_path,
+                    include_storage_bytes=False,
+                    connection_callback=trace_connection,
+                    )
+
+        self.assertEqual(status["result_count"], 50_000)
+        self.assertFalse(any("DBSTAT" in sql.upper() for sql in statements))
+        self.assertFalse(any(
+            "TABLE_INFO(\"RESULTS_1\")" in sql.upper()
+            for sql in statements
+            ))
 
     def test_has_finished_returns_optional_timestamp_scalar(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -341,6 +552,7 @@ class RunSizeTestCase(unittest.TestCase):
 
             self.assertEqual(runs[1]["result_count"], 4)
             self.assertEqual(runs[1]["storage_bytes"], 116)
+            self.assertTrue(runs[1]["storage_bytes_estimated"])
             self.assertFalse(any("DBSTAT" in statement.upper() for statement in statements))
             self.assertFalse(any("SUM(" in statement.upper() for statement in statements))
         finally:

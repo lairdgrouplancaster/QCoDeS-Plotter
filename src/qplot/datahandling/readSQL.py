@@ -1,10 +1,16 @@
 import json
 import math
 import os
+from typing import Literal, NamedTuple
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling.readonly import qcodes_read_only_connection
+
+
+class _StorageSize(NamedTuple):
+    bytes: int | None
+    accuracy: Literal["exact", "estimated", "unavailable"]
 
 
 def _install_cancel_progress_handler(conn, cancelled_callback):
@@ -410,22 +416,40 @@ def _add_run_detail_fields(
     if include_storage_bytes:
         table_name = metadata.get("result_table_name")
         if storage_bytes_by_table is not None:
-            metadata["storage_bytes"] = storage_bytes_by_table.get(table_name)
-            metadata["storage_bytes_estimated"] = False
+            storage_bytes = storage_bytes_by_table.get(table_name)
+            storage_size = _StorageSize(
+                storage_bytes,
+                "exact" if storage_bytes is not None else "unavailable",
+                )
         else:
-            metadata["storage_bytes"] = _table_storage_bytes(
+            storage_size = _table_storage_bytes(
                 cursor,
                 table_name,
                 result_count=metadata.get("result_count"),
                 )
-            metadata["storage_bytes_estimated"] = False
+        _add_storage_size_fields(metadata, storage_size)
     elif include_storage_estimate:
-        metadata["storage_bytes"] = _estimated_table_storage_bytes(
+        storage_bytes = _estimated_table_storage_bytes(
             cursor,
             metadata.get("result_table_name"),
             result_count=metadata.get("result_count"),
             )
-        metadata["storage_bytes_estimated"] = True
+        _add_storage_size_fields(
+            metadata,
+            _StorageSize(
+                storage_bytes,
+                "estimated" if storage_bytes is not None else "unavailable",
+                ),
+            )
+
+
+def _add_storage_size_fields(metadata, storage_size):
+    metadata["storage_bytes"] = storage_size.bytes
+    metadata["storage_bytes_estimated"] = {
+        "exact": False,
+        "estimated": True,
+        "unavailable": None,
+        }[storage_size.accuracy]
 
 
 def _add_observed_shape_fields(cursor, metadata):
@@ -864,25 +888,30 @@ def _sqlite_identifier(name):
 
 def _table_storage_bytes(cursor, table_name, result_count=None):
     if not table_name:
-        return None
+        return _StorageSize(None, "unavailable")
 
     try:
         cursor.execute("SELECT SUM(pgsize) FROM dbstat WHERE name = ?", (table_name, ))
-        value = cursor.fetchone()[0]
-    except Exception:
-        return _estimated_table_storage_bytes(
-            cursor,
-            table_name,
-            result_count=result_count,
-            )
+        row = cursor.fetchone()
+        value = row[0] if row else None
+        if value is not None:
+            return _StorageSize(int(value), "exact")
+    except Exception as err:
+        if _sql_was_interrupted(err):
+            raise
 
-    if value is None:
-        return _estimated_table_storage_bytes(
-            cursor,
-            table_name,
-            result_count=result_count,
-            )
-    return int(value)
+    estimated_bytes = _estimated_table_storage_bytes(
+        cursor,
+        table_name,
+        result_count=result_count,
+        )
+    if estimated_bytes is None:
+        return _StorageSize(None, "unavailable")
+    return _StorageSize(estimated_bytes, "estimated")
+
+
+def _sql_was_interrupted(error):
+    return "interrupted" in str(error).lower()
 
 
 def _run_storage_tables(cursor, run_ids):
@@ -928,7 +957,9 @@ def _table_storage_bytes_by_name(cursor, table_names):
             """,
             tuple(table_names),
             )
-    except Exception:
+    except Exception as err:
+        if _sql_was_interrupted(err):
+            raise
         return {}
 
     sizes = {}
@@ -1020,16 +1051,21 @@ def get_run_status(
         if value is None:
             return {}
 
-        is_completed = bool(value[1])
         status = {
             "completed_timestamp": value[0],
             "is_completed": value[1],
             "result_count": _result_count(cursor, value[2]),
             "database_modified_timestamp": _database_modified_timestamp(cursor),
             }
-        if include_storage_bytes or is_completed:
-            status["storage_bytes"] = _table_storage_bytes(cursor, value[2])
-            status["storage_bytes_estimated"] = False
+        if include_storage_bytes:
+            _add_storage_size_fields(
+                status,
+                _table_storage_bytes(
+                    cursor,
+                    value[2],
+                    result_count=status["result_count"],
+                    ),
+                )
         for index, column in enumerate(optional_columns, start=5):
             status[column] = value[index]
 
