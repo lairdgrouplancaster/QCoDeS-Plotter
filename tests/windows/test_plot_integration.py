@@ -1034,7 +1034,9 @@ def test_loaded_path_test_database_generation_uses_replacement_reload(
 ):
     configure_temp_qplot(monkeypatch, tmp_path)
     original_database_path = qcodes.config.core.db_location
-    database_path = Path(tmp_path) / "generated.db"
+    output_directory = Path(tmp_path) / "loaded # %23 space 測定"
+    output_directory.mkdir()
+    database_path = output_directory / "generated#%3f 測定.db"
     initial_specification = RunSpecification(
         1,
         "current",

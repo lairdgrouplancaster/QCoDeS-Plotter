@@ -181,11 +181,12 @@ class TestDatabaseGenerationSignals(QtCore.QObject):
 class TestDatabaseGenerationWorker(QtCore.QRunnable):
     """Generate a test database without blocking the GUI thread."""
 
-    def __init__(self, specifications, database_path):
+    def __init__(self, specifications, database_path, overwrite=False):
         super().__init__()
         self.signals = TestDatabaseGenerationSignals()
         self.specifications = list(specifications)
         self.database_path = str(database_path)
+        self.overwrite = overwrite
         self._cancelled = threading.Event()
 
     def cancel(self):
@@ -198,7 +199,7 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
             generate_database(
                 self.specifications,
                 self.database_path,
-                overwrite=True,
+                overwrite=self.overwrite,
                 cancelled_callback=self._cancelled.is_set,
             )
         except GenerationCancelled:
@@ -410,6 +411,7 @@ class DatabaseActionsMixin:
             "Save Test Database",
             suggested_path,
             "QCoDeS Database (*.db)",
+            options=qtw.QFileDialog.Option.DontConfirmOverwrite,
         )[0]
         if not database_path:
             self.show_status("Test database generation cancelled.", 3000)
@@ -417,6 +419,20 @@ class DatabaseActionsMixin:
         if not database_path.lower().endswith(".db"):
             database_path += ".db"
         database_path = os.path.abspath(database_path)
+        overwrite = os.path.exists(database_path)
+        if overwrite:
+            reply = qtw.QMessageBox.question(
+                self,
+                "Replace Test Database?",
+                f"{database_path} already exists.\n\nReplace it with the "
+                "generated test database?",
+                qtw.QMessageBox.StandardButton.Yes
+                | qtw.QMessageBox.StandardButton.No,
+                qtw.QMessageBox.StandardButton.No,
+            )
+            if reply != qtw.QMessageBox.StandardButton.Yes:
+                self.show_status("Test database generation cancelled.", 3000)
+                return False
 
         file_textbox = getattr(self, "fileTextbox", None)
         current_database = file_textbox.text() if file_textbox is not None else ""
@@ -441,7 +457,11 @@ class DatabaseActionsMixin:
         action = getattr(self, "generateTestDatabaseAction", None)
         if action is not None:
             action.setEnabled(False)
-        worker = TestDatabaseGenerationWorker(specifications, database_path)
+        worker = TestDatabaseGenerationWorker(
+            specifications,
+            database_path,
+            overwrite=overwrite,
+        )
         self._test_database_generation_worker = worker
         worker.signals.finished.connect(self.test_database_generation_finished)
         self.show_status(
