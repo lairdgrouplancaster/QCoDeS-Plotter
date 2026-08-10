@@ -71,6 +71,11 @@ jobs:
           python -m pip install -U pip
           python -m pip install build twine
 
+      - name: Install Qt system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libegl1
+
       - name: Verify clean source tree
         run: python scripts/validate_distribution.py --check-clean
 
