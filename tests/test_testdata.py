@@ -1318,10 +1318,11 @@ def test_post_replace_sidecar_restore_failure_retains_recovery_artifacts(
     assert restore_attempts
     backup_path = backup_paths[0]
     message = str(error_info.value)
+    normalized_message = os.path.normcase(message)
     assert "database active or SQLite sidecars present" in message
-    assert str(database_path) in message
-    assert str(guard_path) in message
-    assert str(backup_path) in message or ".backup" in message
+    assert os.path.normcase(str(database_path)) in normalized_message
+    assert os.path.normcase(str(guard_path)) in normalized_message
+    assert os.path.normcase(str(backup_path)) in normalized_message
     assert "selected path may contain the replacement" in message.lower()
 
     artifacts = artifact_bytes_and_mtimes(database_path)
