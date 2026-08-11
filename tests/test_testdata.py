@@ -24,6 +24,7 @@ from qplot.datahandling.file_identity import (
 from qplot.datahandling.readonly import (
     DatabaseInstanceChangedError,
     ReadOnlyDatabaseAccessError,
+    UnverifiableDatabaseWalError,
     qcodes_read_only_connection,
 )
 from qplot.testdata import (
@@ -90,6 +91,29 @@ def artifact_bytes_and_mtimes(database_path):
         if artifact_path.exists():
             contents = artifact_path.read_bytes()
             artifacts[suffix] = (contents, artifact_path.stat().st_mtime_ns)
+    return artifacts
+
+
+def complete_artifact_state(database_path):
+    artifacts = {}
+    for suffix in ("", *testdata_module._SQLITE_SIDECAR_SUFFIXES):
+        artifact_path = Path(f"{database_path}{suffix}")
+        try:
+            contents = artifact_path.read_bytes()
+            status = artifact_path.stat()
+        except FileNotFoundError:
+            artifacts[suffix] = None
+            continue
+        artifacts[suffix] = (
+            status.st_dev,
+            status.st_ino,
+            status.st_mode,
+            status.st_size,
+            status.st_atime_ns,
+            status.st_mtime_ns,
+            status.st_ctime_ns,
+            contents,
+        )
     return artifacts
 
 
@@ -947,8 +971,9 @@ def test_overwrite_rejects_active_wal_without_changing_destination(tmp_path):
     database_path = tmp_path / "active-wal.db"
     testdata_module.generate_database([small_specification()], database_path)
 
-    writer = sqlite3.connect(database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
     try:
+        assert isinstance(writer, AtomicConnection)
         assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
         writer.execute("PRAGMA wal_autocheckpoint = 0")
         writer.execute("UPDATE runs SET name = 'OLD_WAL'")
@@ -971,9 +996,9 @@ def test_overwrite_rejects_active_wal_without_changing_destination(tmp_path):
         assert artifact_bytes_and_mtimes(database_path) == before
         assert owned_temporary_artifacts(tmp_path) == []
 
-        # A private ordinary SQLite copy proves the preserved WAL still carries
-        # OLD_WAL. qPlot deliberately reads every generated main immutable, so
-        # its first load cannot combine that main with any unproven WAL.
+        # A private ordinary SQLite copy proves the preserved WAL carries the
+        # later commit. Its generation token and advanced write epoch let qPlot
+        # safely expose that same committed value.
         probe_directory = tmp_path / "active-wal-probe"
         probe_directory.mkdir()
         probe_path = probe_directory / "probe.db"
@@ -984,7 +1009,7 @@ def test_overwrite_rejects_active_wal_without_changing_destination(tmp_path):
             assert probe.execute("SELECT name FROM runs").fetchone()[0] == "OLD_WAL"
         finally:
             probe.close()
-        assert qplot_run_name(database_path) == "run_1"
+        assert qplot_run_name(database_path) == "OLD_WAL"
         assert artifact_bytes_and_mtimes(database_path) == before
     finally:
         writer.close()
@@ -1428,6 +1453,13 @@ def test_overwrite_succeeds_for_quiescent_database(tmp_path):
     database_path = tmp_path / "quiescent.db"
     testdata_module.generate_database([small_specification()], database_path)
     original_contents = database_path.read_bytes()
+    original_connection = sqlite3.connect(database_path)
+    try:
+        original_token = original_connection.execute(
+            "SELECT generation_token FROM qplot_generation_provenance"
+        ).fetchone()[0]
+    finally:
+        original_connection.close()
     assert artifact_bytes_and_mtimes(database_path).keys() == {""}
     replacement = testdata_module.RunSpecification(
         1,
@@ -1453,13 +1485,121 @@ def test_overwrite_succeeds_for_quiescent_database(tmp_path):
         assert connection.execute(
             "SELECT parameter FROM layouts ORDER BY layout_id"
         ).fetchall() == [("V_SD",), ("replacement",)]
+        replacement_token = connection.execute(
+            "SELECT generation_token FROM qplot_generation_provenance"
+        ).fetchone()[0]
     finally:
         connection.close()
+    assert replacement_token != original_token
     assert artifact_bytes_and_mtimes(database_path).keys() == {""}
     assert owned_temporary_artifacts(tmp_path) == []
 
 
-def test_first_load_quarantines_valid_wal_created_after_final_check(
+@pytest.mark.parametrize("overwrite_before_write", [False, True])
+def test_later_legitimate_wal_commit_is_visible_without_source_changes(
+    tmp_path,
+    overwrite_before_write,
+):
+    database_path = tmp_path / "later-legitimate-wal.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    if overwrite_before_write:
+        testdata_module.generate_database(
+            [small_specification()],
+            database_path,
+            overwrite=True,
+        )
+
+    assert qplot_run_name(database_path) == "run_1"
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        assert isinstance(writer, AtomicConnection)
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("UPDATE runs SET name = 'LEGITIMATE_LATER_COMMIT'")
+        writer.commit()
+        assert writer.execute("SELECT name FROM runs").fetchone()[0] == (
+            "LEGITIMATE_LATER_COMMIT"
+        )
+
+        source_before = complete_artifact_state(database_path)
+        assert source_before[""] is not None
+        assert source_before["-wal"] is not None
+        assert source_before["-shm"] is not None
+        assert source_before["-journal"] is None
+        assert qplot_run_name(database_path) == "LEGITIMATE_LATER_COMMIT"
+        assert complete_artifact_state(database_path) == source_before
+
+        child_script = "\n".join(
+            (
+                "import sys",
+                "from qplot.datahandling.readonly import qcodes_read_only_connection",
+                "connection = qcodes_read_only_connection(sys.argv[1])",
+                "try:",
+                "    print(connection.execute(",
+                "        'SELECT name FROM runs'",
+                "    ).fetchone()[0])",
+                "finally:",
+                "    connection.close()",
+            )
+        )
+        child = subprocess.run(
+            [sys.executable, "-c", child_script, str(database_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        assert child.stdout.strip() == "LEGITIMATE_LATER_COMMIT"
+        assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_generated_wal_provenance_survives_rename_copy_and_recreation(tmp_path):
+    original_path = tmp_path / "original-generated.db"
+    renamed_path = tmp_path / "renamed-generated.db"
+    copied_path = tmp_path / "copied-generated.db"
+    testdata_module.generate_database([small_specification()], original_path)
+    original_path.rename(renamed_path)
+
+    writer = sqlite3.connect(renamed_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("UPDATE runs SET name = 'RENAMED_WAL'")
+        writer.commit()
+        renamed_state = complete_artifact_state(renamed_path)
+        assert qplot_run_name(renamed_path) == "RENAMED_WAL"
+        assert complete_artifact_state(renamed_path) == renamed_state
+
+        shutil.copyfile(renamed_path, copied_path)
+        shutil.copyfile(f"{renamed_path}-wal", f"{copied_path}-wal")
+        shutil.copyfile(f"{renamed_path}-shm", f"{copied_path}-shm")
+        copied_state = complete_artifact_state(copied_path)
+        assert qplot_run_name(copied_path) == "RENAMED_WAL"
+        assert complete_artifact_state(copied_path) == copied_state
+    finally:
+        writer.close()
+
+    assert not Path(f"{renamed_path}-wal").exists()
+    checkpointed_state = complete_artifact_state(renamed_path)
+    assert qplot_run_name(renamed_path) == "RENAMED_WAL"
+    assert complete_artifact_state(renamed_path) == checkpointed_state
+
+    recreated_writer = sqlite3.connect(renamed_path)
+    try:
+        recreated_writer.execute("PRAGMA wal_autocheckpoint = 0")
+        recreated_writer.execute("UPDATE runs SET name = 'RECREATED_WAL'")
+        recreated_writer.commit()
+        recreated_state = complete_artifact_state(renamed_path)
+        assert recreated_state["-wal"] is not None
+        assert qplot_run_name(renamed_path) == "RECREATED_WAL"
+        assert complete_artifact_state(renamed_path) == recreated_state
+    finally:
+        recreated_writer.close()
+
+
+def test_first_load_rejects_valid_wal_created_after_final_check(
     tmp_path,
     monkeypatch,
 ):
@@ -1505,7 +1645,7 @@ def test_first_load_quarantines_valid_wal_created_after_final_check(
     assert injected == [True]
     assert database_has_qplot_generation_marker(database_path)
     assert not guard_path.exists()
-    sidecars_before = artifact_bytes_and_mtimes(database_path)
+    sidecars_before = complete_artifact_state(database_path)
     probe_directory = tmp_path / "unsafe-probe"
     probe_directory.mkdir()
     probe_path = probe_directory / "probe.db"
@@ -1518,11 +1658,15 @@ def test_first_load_quarantines_valid_wal_created_after_final_check(
         probe.close()
 
     assert immutable_run_name(database_path) == "run_1"
-    assert qplot_run_name(database_path) == "run_1"
-    assert artifact_bytes_and_mtimes(database_path) == sidecars_before
+    with pytest.raises(
+        UnverifiableDatabaseWalError,
+        match="different generation token",
+    ):
+        qplot_run_name(database_path)
+    assert complete_artifact_state(database_path) == sidecars_before
 
 
-def test_new_output_first_load_quarantines_wal_after_final_link_check(
+def test_new_output_first_load_rejects_wal_after_final_link_check(
     tmp_path,
     monkeypatch,
 ):
@@ -1566,9 +1710,13 @@ def test_new_output_first_load_quarantines_wal_after_final_link_check(
     assert injected == [True]
     assert database_has_qplot_generation_marker(database_path)
     assert immutable_run_name(database_path) == "run_1"
-    sidecars_before = artifact_bytes_and_mtimes(database_path)
-    assert qplot_run_name(database_path) == "run_1"
-    assert artifact_bytes_and_mtimes(database_path) == sidecars_before
+    sidecars_before = complete_artifact_state(database_path)
+    with pytest.raises(
+        UnverifiableDatabaseWalError,
+        match="different generation token",
+    ):
+        qplot_run_name(database_path)
+    assert complete_artifact_state(database_path) == sidecars_before
 
 
 def test_first_load_rejects_identity_changed_during_marker_read(

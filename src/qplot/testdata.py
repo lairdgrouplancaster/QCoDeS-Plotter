@@ -8,6 +8,7 @@ import errno
 import math
 import os
 import re
+import secrets
 import sqlite3
 import stat
 import tempfile
@@ -25,6 +26,8 @@ from qcodes.parameters import ManualParameter
 
 from qplot.datahandling.file_identity import (
     QPLOT_GENERATED_DATABASE_APPLICATION_ID,
+    QPLOT_GENERATION_PROVENANCE_TABLE,
+    QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES,
     database_publication_guard_path,
 )
 
@@ -383,6 +386,48 @@ def _qcodes_uri_name(database_path):
 def _connect_writable_exact_path(database_path):
     """Open an exact generator-owned path with QCoDeS' writable connector."""
     return connect(_qcodes_uri_name(database_path))
+
+
+def _quote_sqlite_identifier(identifier):
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _install_generation_provenance(connection):
+    """Make later WAL writes prove that they descend from this main file."""
+    token = secrets.token_hex(QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES)
+    provenance_table = _quote_sqlite_identifier(QPLOT_GENERATION_PROVENANCE_TABLE)
+    connection.execute(
+        f"CREATE TABLE {provenance_table} ("
+        "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+        "generation_token TEXT NOT NULL, "
+        "write_epoch INTEGER NOT NULL CHECK (write_epoch >= 0))"
+    )
+    connection.execute(
+        f"INSERT INTO {provenance_table} VALUES (1, ?, 0)",
+        (token,),
+    )
+
+    table_names = [
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema "
+            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+            "AND name != ? ORDER BY name",
+            (QPLOT_GENERATION_PROVENANCE_TABLE,),
+        )
+    ]
+    for table_number, table_name in enumerate(table_names):
+        quoted_table_name = _quote_sqlite_identifier(table_name)
+        for operation in ("INSERT", "UPDATE", "DELETE"):
+            trigger_name = _quote_sqlite_identifier(
+                f"qplot_provenance_{table_number}_{operation.lower()}"
+            )
+            connection.execute(
+                f"CREATE TRIGGER {trigger_name} AFTER {operation} "
+                f"ON {quoted_table_name} BEGIN "
+                f"UPDATE {provenance_table} "
+                "SET write_epoch = write_epoch + 1 WHERE singleton = 1; END"
+            )
 
 
 def _owned_temporary_artifacts(temporary_path, *, include_database=True):
@@ -1119,14 +1164,17 @@ def generate_database(
                         f"Run stopped (completed): run_{run_number} in "
                         f"{perf_counter() - run_started:.2f} s."
                     )
-                # This marker lives in the generator-owned main before either
-                # publication path. A fresh qPlot process can therefore ignore
-                # any WAL that appears after the final sidecar check instead of
-                # trusting that it belongs to this new main.
+                # The marker identifies the provenance format; the unique token
+                # and write epoch let a fresh qPlot process distinguish a WAL
+                # written from this main from an unrelated sidecar. Triggers are
+                # installed only after generation so they do not penalise bulk
+                # creation of the synthetic runs.
                 connection.execute(
                     "PRAGMA application_id = "
                     f"{QPLOT_GENERATED_DATABASE_APPLICATION_ID}"
                 )
+                _install_generation_provenance(connection)
+                connection.commit()
                 _raise_if_cancelled(cancelled_callback)
             finally:
                 connection.close()

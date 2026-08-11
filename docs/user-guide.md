@@ -30,6 +30,12 @@ Every refresh makes a new snapshot, so committed rows added by a running
 QCoDeS measurement become visible. The source `-shm` is not opened by qPlot,
 and snapshot files are removed when their connection closes.
 
+Generated test databases also carry a unique lineage token. qPlot validates
+that token and its later write epoch before accepting a WAL beside a generated
+main file. If the WAL cannot be paired safely, qPlot refuses the read and asks
+for the owning SQLite/QCoDeS writer to checkpoint it; it never substitutes an
+older immutable value for an unverified committed WAL value.
+
 If a busy writer changes the files throughout every snapshot attempt, qPlot
 reports a read-only snapshot error and leaves the source untouched. It does not
 fall back to an immutable view that could silently show stale data. Refresh

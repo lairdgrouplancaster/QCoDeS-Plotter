@@ -75,11 +75,14 @@ generation refuses publication if the destination changed while generation was
 running or if a `-wal`, `-shm`, or `-journal` sidecar is present. Close the
 application using that database, or choose another output path; qPlot never
 removes or modifies those destination sidecars. Every generated test database
-carries an internal publication marker, so a fresh qPlot process also treats
-any later WAL as unpaired and reads the generated main immutably. If a
-sidecar is detected after the atomic swap, qPlot restores the old main and
-retains an explicit `.qplot-publishing` safety guard until the owning SQLite
-application has resolved the sidecars.
+carries a unique internal generation token and write epoch. Later writes to
+its existing tables advance that epoch, allowing a fresh qPlot process to prove
+that a WAL belongs to the published main and show its committed values. A WAL
+with a different or unadvanced lineage is refused with recovery instructions
+instead of being silently ignored. If a sidecar is detected before the atomic
+swap completes, qPlot restores the old main and retains an explicit
+`.qplot-publishing` safety guard until the owning SQLite application has
+resolved the sidecars.
 
 Run `qplot-generate-db --help` for the complete command reference.
 
