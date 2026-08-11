@@ -19,6 +19,7 @@ class RunSizeTestCase(unittest.TestCase):
                 """
                 CREATE TABLE runs (
                     guid TEXT,
+                    run_timestamp REAL,
                     completed_timestamp REAL,
                     is_completed INTEGER,
                     result_table_name TEXT,
@@ -39,7 +40,7 @@ class RunSizeTestCase(unittest.TestCase):
                 "shapes": {"signal": [row_count]},
                 })
             conn.execute(
-                "INSERT INTO runs VALUES (?, 123, 1, ?, ?, ?)",
+                "INSERT INTO runs VALUES (?, 100, 123, 1, ?, ?, ?)",
                 ("completed-guid", "results_1", run_description, "x,signal"),
                 )
             conn.commit()
@@ -702,6 +703,7 @@ class RunSizeTestCase(unittest.TestCase):
                     """
                     CREATE TABLE runs (
                         guid TEXT,
+                        run_timestamp REAL,
                         completed_timestamp REAL,
                         is_completed INTEGER,
                         result_table_name TEXT,
@@ -717,7 +719,7 @@ class RunSizeTestCase(unittest.TestCase):
                         },
                     })
                 cursor.execute(
-                    "INSERT INTO runs VALUES (?, NULL, 0, ?, ?, ?)",
+                    "INSERT INTO runs VALUES (?, 100, NULL, 0, ?, ?, ?)",
                     ("guid", "results_1", run_description, "x,signal"),
                     )
                 cursor.execute("INSERT INTO results_1 VALUES (0, 1)")
@@ -744,6 +746,7 @@ class RunSizeTestCase(unittest.TestCase):
                     readSQL.qcodes_read_only_connection = old_connection
 
                 self.assertEqual(first_status["setpoint_shape"], [1])
+                self.assertEqual(first_status["run_timestamp"], 100)
                 self.assertEqual(first_status["setpoint_count"], 1)
                 self.assertEqual(first_status["setpoint_count_source"], "observed")
                 self.assertIsNone(first_status["expected_results"])

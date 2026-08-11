@@ -1037,6 +1037,7 @@ def get_run_status(
 
         cursor.execute(f"""
           SELECT
+              run_timestamp,
               completed_timestamp,
               is_completed,
               result_table_name,
@@ -1052,9 +1053,10 @@ def get_run_status(
             return {}
 
         status = {
-            "completed_timestamp": value[0],
-            "is_completed": value[1],
-            "result_count": _result_count(cursor, value[2]),
+            "run_timestamp": value[0],
+            "completed_timestamp": value[1],
+            "is_completed": value[2],
+            "result_count": _result_count(cursor, value[3]),
             "database_modified_timestamp": _database_modified_timestamp(cursor),
             }
         if include_storage_bytes:
@@ -1062,19 +1064,19 @@ def get_run_status(
                 status,
                 _table_storage_bytes(
                     cursor,
-                    value[2],
+                    value[3],
                     result_count=status["result_count"],
                     ),
                 )
-        for index, column in enumerate(optional_columns, start=5):
+        for index, column in enumerate(optional_columns, start=6):
             status[column] = value[index]
 
         shape_metadata = {
-            "completed_timestamp": value[0],
-            "is_completed": value[1],
-            "result_table_name": value[2],
-            "run_description": value[3],
-            "parameters": value[4],
+            "completed_timestamp": value[1],
+            "is_completed": value[2],
+            "result_table_name": value[3],
+            "run_description": value[4],
+            "parameters": value[5],
             "result_count": status["result_count"],
             }
         _add_run_basic_fields(shape_metadata)

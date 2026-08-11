@@ -867,6 +867,7 @@ class DatabaseActionsMixin:
             prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
             if callable(prioritize_previews):
                 prioritize_previews()
+            self._refresh_selected_run_details(updated_runs, live_only=True)
 
         if new_runs:
             self.RunList.maxRunId = max(self.RunList.maxRunId, max(new_runs))
@@ -1944,14 +1945,26 @@ class DatabaseActionsMixin:
             self.show_status("Run details loaded.", 5000)
 
 
-    def _refresh_selected_run_details(self, runs):
-        guid = getattr(getattr(self, "ds", None), "guid", None)
+    def _refresh_selected_run_details(self, runs, *, live_only=False):
+        selected_key = getattr(self, "_selected_dataset_key", None)
+        guid = getattr(selected_key, "guid", None)
+        if not guid:
+            guid = getattr(getattr(self, "ds", None), "guid", None)
         if not guid:
             return
 
         for metadata in runs.values():
             if metadata.get("guid") == guid:
-                self.updateSelected(guid)
+                if live_only:
+                    update_live = getattr(
+                        self.infoBox,
+                        "update_live_run_details",
+                        None,
+                        )
+                    if callable(update_live):
+                        update_live(metadata)
+                else:
+                    self.updateSelected(guid)
                 return
 
 

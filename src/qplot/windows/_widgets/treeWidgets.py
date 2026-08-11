@@ -743,6 +743,9 @@ class RunList(qtw.QTreeWidget):
                     "database_modified_timestamp"
                     ]
 
+            if status.get("run_timestamp") is not None:
+                run.run_metadata["run_timestamp"] = status["run_timestamp"]
+
             if status.get("is_completed") is not None:
                 run.run_metadata["is_completed"] = bool(status["is_completed"])
 
@@ -1113,6 +1116,43 @@ class moreInfo(qtw.QTabWidget):
         self.raw.setInfo(info)
 
 
+    def update_live_run_details(self, run_metadata):
+        """Patch authoritative live fields without rebuilding run details."""
+        if not self._has_authoritative_run_state(run_metadata):
+            return
+
+        is_completed = run_metadata.get("is_completed")
+        updates = {
+            "Status": self._status_text(None, run_metadata),
+            "Duration": self._time_taken_from_metadata(run_metadata),
+            "Started": self._run_timestamp(None, run_metadata, "run_timestamp"),
+            }
+        if run_metadata.get("result_count") is not None:
+            updates["Data points"] = run_metadata["result_count"]
+        if bool(is_completed):
+            updates["Completed"] = self._run_timestamp(
+                None,
+                run_metadata,
+                "completed_timestamp",
+                )
+
+        vertical_scroll_bar = cast(
+            qtw.QScrollBar,
+            self.overview.verticalScrollBar(),
+            )
+        horizontal_scroll_bar = cast(
+            qtw.QScrollBar,
+            self.overview.horizontalScrollBar(),
+            )
+        vertical_scroll = vertical_scroll_bar.value()
+        horizontal_scroll = horizontal_scroll_bar.value()
+        for field, value in updates.items():
+            if self._has_value(value):
+                self._set_overview_value(field, value)
+        vertical_scroll_bar.setValue(vertical_scroll)
+        horizontal_scroll_bar.setValue(horizontal_scroll)
+
+
     def clear(self):
         self.overview.setRowCount(0)
         self.parameters.setRowCount(0)
@@ -1169,13 +1209,16 @@ class moreInfo(qtw.QTabWidget):
                 ]
 
         rows = [
-            ("Status", self._status_text(dataset)),
+            ("Status", self._status_text(dataset, run_metadata)),
             ("Data points", structure.get("Data points")),
-            ("Duration", self._time_taken_value(dataset, info)),
+            ("Duration", self._time_taken_value(dataset, info, run_metadata)),
             ("Measured parameters", ", ".join(measured)),
             ("Setpoints", ", ".join(setpoints)),
-            ("Started", self._dataset_timestamp(dataset, "run_timestamp")),
-            ("Completed", self._dataset_timestamp(dataset, "completed_timestamp")),
+            ("Started", self._run_timestamp(dataset, run_metadata, "run_timestamp")),
+            (
+                "Completed",
+                self._run_timestamp(dataset, run_metadata, "completed_timestamp"),
+                ),
             ("Experiment", self._dataset_attr(dataset, "exp_name")),
             ("Sample", self._dataset_attr(dataset, "sample_name")),
             ("Name", self._dataset_attr(dataset, "name")),
@@ -1276,7 +1319,10 @@ class moreInfo(qtw.QTabWidget):
         return ""
 
 
-    def _time_taken_value(self, dataset, info):
+    def _time_taken_value(self, dataset, info, run_metadata=None):
+        if self._has_authoritative_run_state(run_metadata):
+            return self._time_taken_from_metadata(run_metadata)
+
         started = self._dataset_attr(dataset, "run_timestamp_raw")
         completed = self._dataset_attr(dataset, "completed_timestamp_raw")
         if not self._has_value(started):
@@ -1293,6 +1339,37 @@ class moreInfo(qtw.QTabWidget):
             return ""
 
         per_point = self._time_per_point(seconds, info, dataset)
+        if self._has_value(per_point):
+            return f"{seconds:.2f} s\t({format_duration_dhms(seconds)}; {per_point} s/point)"
+        return f"{seconds:.2f} s\t({format_duration_dhms(seconds)})"
+
+
+    def _time_taken_from_metadata(self, run_metadata):
+        started = run_metadata.get("run_timestamp")
+        if not self._has_value(started):
+            return ""
+
+        completed = run_metadata.get("is_completed")
+        if completed is None:
+            return ""
+        if bool(completed):
+            end = run_metadata.get("completed_timestamp")
+            if not self._has_value(end):
+                return ""
+        else:
+            end = datetime.now().timestamp()
+
+        try:
+            seconds = max(0, self._timestamp_seconds(end) - self._timestamp_seconds(started))
+        except (TypeError, ValueError):
+            return ""
+
+        points = run_metadata.get("result_count")
+        per_point = self._time_per_point(
+            seconds,
+            {"Data Structure": {"Data points": points}},
+            None,
+            )
         if self._has_value(per_point):
             return f"{seconds:.2f} s\t({format_duration_dhms(seconds)}; {per_point} s/point)"
         return f"{seconds:.2f} s\t({format_duration_dhms(seconds)})"
@@ -1535,20 +1612,86 @@ class moreInfo(qtw.QTabWidget):
         return value() if callable(value) else value
 
 
-    def _dataset_timestamp(self, dataset, name):
-        value = self._dataset_attr(dataset, name)
+    def _run_timestamp(self, dataset, run_metadata, name):
+        if self._has_authoritative_run_state(run_metadata):
+            if (
+                    name == "completed_timestamp"
+                    and not bool(run_metadata.get("is_completed"))
+                    ):
+                return ""
+            value = run_metadata.get(name)
+        else:
+            value = self._dataset_attr(dataset, name)
         if isinstance(value, (int, float)):
             return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
         return value
 
 
-    def _status_text(self, dataset):
+    def _status_text(self, dataset, run_metadata=None):
+        if self._has_authoritative_run_state(run_metadata):
+            completed = run_metadata.get("is_completed")
+            if completed is None:
+                return ""
+            if bool(completed):
+                return "Completed"
+            return "Running"
+
         running = self._dataset_attr(dataset, "running")
         if running is True:
             return "Running"
         if running is False:
             return "Completed"
         return ""
+
+
+    def _has_authoritative_run_state(self, run_metadata):
+        return run_metadata is not None and "is_completed" in run_metadata
+
+
+    def _set_overview_value(self, field, value):
+        row = self._overview_row(field)
+        if row is None:
+            row = self._overview_insert_row(field)
+            self.overview.insertRow(row)
+            self.overview.setItem(row, 0, self._table_item(field))
+        self.overview.setItem(row, 1, self._table_item(value))
+        self.overview.setRowHeight(row, 20)
+
+
+    def _overview_row(self, field):
+        for row in range(self.overview.rowCount()):
+            item = self.overview.item(row, 0)
+            if item is not None and item.text() == field:
+                return row
+        return None
+
+
+    def _overview_insert_row(self, field):
+        field_order = (
+            "Status",
+            "Data points",
+            "Duration",
+            "Measured parameters",
+            "Setpoints",
+            "Started",
+            "Completed",
+            "Experiment",
+            "Sample",
+            "Name",
+            "GUID",
+            )
+        target_order = field_order.index(field)
+        for row in range(self.overview.rowCount()):
+            item = self.overview.item(row, 0)
+            if item is None:
+                continue
+            try:
+                current_order = field_order.index(item.text())
+            except ValueError:
+                continue
+            if current_order > target_order:
+                return row
+        return self.overview.rowCount()
 
 
     def _has_value(self, value):

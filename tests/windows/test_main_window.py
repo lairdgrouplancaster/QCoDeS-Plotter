@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
 from PyQt6 import QtCore, QtGui
@@ -30,6 +31,7 @@ from qplot.windows._dataset_handle import (
 from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._run_controls import AUTO_PLOT_KEY
+from qplot.windows._widgets import treeWidgets
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -3453,6 +3455,9 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
         _apply_database_refresh_result = (
             main_window.MainWindow._apply_database_refresh_result
             )
+        _refresh_selected_run_details = (
+            main_window.MainWindow._refresh_selected_run_details
+            )
 
         def __init__(self, updated_runs):
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
@@ -3494,6 +3499,236 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
             harness.status_messages[-1],
             ("No new runs found.", 3000),
             )
+
+
+class RefreshMainLiveDetailsTestCase(unittest.TestCase):
+    class Param:
+        name = "signal"
+        label = "Signal"
+        unit = "V"
+        depends_on = ""
+        depends_on_ = ()
+
+    class StaleDataset:
+        guid = "selected-guid"
+        run_id = 7
+        name = "static-name"
+        exp_name = "static-experiment"
+        sample_name = "static-sample"
+        running = True
+        completed = False
+        number_of_results = 1
+        metadata = {"static": "metadata"}
+        snapshot = {"station": {"static": "snapshot"}}
+
+        def __init__(self):
+            self.parameter_reads = 0
+
+        def get_parameters(self):
+            self.parameter_reads += 1
+            return [RefreshMainLiveDetailsTestCase.Param()]
+
+    class RunList:
+        def __init__(self):
+            self.maxRunId = 7
+            self.watching = []
+            self.updated_runs = {}
+
+        def checkWatching(self, statuses=None):
+            return self.updated_runs
+
+        def topLevelItemCount(self):
+            return 1
+
+    class Preview:
+        def __init__(self):
+            self.added_runs = []
+
+        def add_runs(self, runs):
+            self.added_runs.append(runs)
+
+    class InfoBox:
+        def __init__(self):
+            self.details = treeWidgets.moreInfo()
+            self.preview = RefreshMainLiveDetailsTestCase.Preview()
+            self.live_updates = []
+
+        def update_live_run_details(self, metadata):
+            self.live_updates.append(dict(metadata))
+            self.details.update_live_run_details(metadata)
+
+    class Harness:
+        database_refresh_finished = main_window.MainWindow.database_refresh_finished
+        _apply_database_refresh_result = (
+            main_window.MainWindow._apply_database_refresh_result
+            )
+        _refresh_selected_run_details = (
+            main_window.MainWindow._refresh_selected_run_details
+            )
+
+        def __init__(self):
+            self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
+            self.RunList = RefreshMainLiveDetailsTestCase.RunList()
+            self.infoBox = RefreshMainLiveDetailsTestCase.InfoBox()
+            self.ds = RefreshMainLiveDetailsTestCase.StaleDataset()
+            self._selected_dataset_key = SimpleNamespace(guid=self.ds.guid)
+            self.status_messages = []
+            self.sync_count = 0
+            self._database_refresh_generation = 4
+            self._database_refresh_active = True
+
+            initial_metadata = {
+                "guid": self.ds.guid,
+                "is_completed": False,
+                "result_count": 1,
+                "run_timestamp": 100.0,
+                "completed_timestamp": None,
+                "measure_parameters": ["signal"],
+                "sweep_parameters": [],
+                }
+            self.infoBox.details.setInfo(
+                {
+                    "Data Structure": {
+                        "Data points": 1,
+                        "signal": {"label": "Signal", "unit": "V"},
+                        },
+                    "MetaData": self.ds.metadata,
+                    "Snapshot": self.ds.snapshot,
+                    },
+                self.ds,
+                run_metadata=initial_metadata,
+                database_path="loaded.db",
+                )
+
+        def _sync_empty_state(self):
+            self.sync_count += 1
+
+        def show_status(self, message, timeout=5000):
+            self.status_messages.append((message, timeout))
+
+        def updateSelected(self, guid):
+            raise AssertionError(f"Periodic refresh reselected {guid}")
+
+        @staticmethod
+        def overview_values(details):
+            return {
+                details.overview.item(row, 0).text():
+                details.overview.item(row, 1).text()
+                for row in range(details.overview.rowCount())
+                }
+
+    def test_running_count_and_completion_patch_only_live_overview_fields(self):
+        harness = self.Harness()
+        details = harness.infoBox.details
+        details.setCurrentIndex(details.indexOf(details.metadata))
+        details.parameters.selectRow(1)
+        static_parameter_item = details.parameters.item(1, 0)
+        static_metadata_item = details.metadata.topLevelItem(0)
+        static_raw_item = details.raw.topLevelItem(0)
+        initial_parameter_reads = harness.ds.parameter_reads
+
+        running_metadata = {
+            "guid": "selected-guid",
+            "is_completed": False,
+            "result_count": 2,
+            "run_timestamp": 100.0,
+            "completed_timestamp": None,
+            }
+        harness.RunList.updated_runs = {7: running_metadata}
+        harness._apply_database_refresh_result({}, {"selected-guid": running_metadata})
+
+        running_overview = harness.overview_values(details)
+        self.assertEqual(running_overview["Status"], "Running")
+        self.assertEqual(running_overview["Data points"], "2")
+        self.assertEqual(harness.ds.number_of_results, 1)
+        self.assertTrue(harness.ds.running)
+
+        completed_metadata = {
+            "guid": "selected-guid",
+            "is_completed": True,
+            "result_count": 3,
+            "run_timestamp": 100.0,
+            "completed_timestamp": 130.0,
+            }
+        harness.RunList.updated_runs = {7: completed_metadata}
+        harness._apply_database_refresh_result({}, {"selected-guid": completed_metadata})
+
+        completed_overview = harness.overview_values(details)
+        self.assertEqual(completed_overview["Status"], "Completed")
+        self.assertEqual(completed_overview["Data points"], "3")
+        self.assertTrue(completed_overview["Duration"].startswith("30.00 s"))
+        self.assertEqual(
+            completed_overview["Completed"],
+            details._run_timestamp(None, completed_metadata, "completed_timestamp"),
+            )
+        self.assertTrue(harness.ds.running)
+        self.assertFalse(harness.ds.completed)
+        self.assertEqual(harness.ds.number_of_results, 1)
+        self.assertEqual(harness.ds.parameter_reads, initial_parameter_reads)
+        self.assertEqual(details.currentWidget(), details.metadata)
+        self.assertTrue(details.parameters.item(1, 0).isSelected())
+        self.assertIs(details.parameters.item(1, 0), static_parameter_item)
+        self.assertIs(details.metadata.topLevelItem(0), static_metadata_item)
+        self.assertIs(details.raw.topLevelItem(0), static_raw_item)
+        self.assertFalse(any(
+            message.startswith("Selected run")
+            for message, _timeout in harness.status_messages
+            ))
+
+    def test_unrelated_disappeared_and_unselected_runs_do_not_change_details(self):
+        harness = self.Harness()
+        before = harness.overview_values(harness.infoBox.details)
+
+        unrelated = {
+            "guid": "other-guid",
+            "is_completed": True,
+            "result_count": 99,
+            "run_timestamp": 100.0,
+            "completed_timestamp": 200.0,
+            }
+        harness.RunList.updated_runs = {8: unrelated}
+        harness._apply_database_refresh_result({}, {"other-guid": unrelated})
+        self.assertEqual(harness.overview_values(harness.infoBox.details), before)
+        self.assertEqual(harness.infoBox.live_updates, [])
+
+        harness.RunList.updated_runs = {}
+        harness._apply_database_refresh_result({}, {})
+        self.assertEqual(harness.overview_values(harness.infoBox.details), before)
+
+        harness._selected_dataset_key = None
+        harness.ds = None
+        harness.RunList.updated_runs = {7: {
+            "guid": "selected-guid",
+            "is_completed": True,
+            "result_count": 3,
+            "run_timestamp": 100.0,
+            "completed_timestamp": 130.0,
+            }}
+        harness._apply_database_refresh_result({}, {})
+        self.assertEqual(harness.overview_values(harness.infoBox.details), before)
+
+    def test_refresh_result_from_previous_database_path_is_ignored(self):
+        harness = self.Harness()
+        before = harness.overview_values(harness.infoBox.details)
+        stale = {
+            "guid": "selected-guid",
+            "is_completed": True,
+            "result_count": 100,
+            "run_timestamp": 1.0,
+            "completed_timestamp": 2.0,
+            }
+        harness.fileTextbox.setText("replacement.db")
+
+        harness.database_refresh_finished(
+            harness._database_refresh_generation,
+            "loaded.db",
+            {},
+            {"selected-guid": stale},
+            None,
+            )
+
+        self.assertEqual(harness.overview_values(harness.infoBox.details), before)
+        self.assertEqual(harness.infoBox.live_updates, [])
 
 
 class RefreshMainAutoPlotTestCase(unittest.TestCase):

@@ -2045,6 +2045,24 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         assert writer_complete_artifacts["-wal"] is not None
         assert writer_complete_artifacts["-shm"] is not None
 
+        plot_dataset_handle = window.dataset_holder[plot_a._dataset_key]
+        window.refreshMain()
+        wait_for(lambda: not window._database_refresh_active)
+        live_overview = {
+            window.infoBox.overview.item(row, 0).text():
+            window.infoBox.overview.item(row, 1).text()
+            for row in range(window.infoBox.overview.rowCount())
+            }
+        assert live_overview["Status"] == "Completed"
+        assert live_overview["Data points"] == "6"
+        assert live_overview["Completed"]
+        assert viewer_dataset.running
+        assert viewer_dataset.number_of_results == 2
+        assert window.dataset_holder[plot_a._dataset_key] is plot_dataset_handle
+        assert not plot_dataset_handle.closed
+        plot_dataset_handle.dataset.conn.cursor().close()
+        assert database_artifact_state(database_path) == writer_complete_artifacts
+
         original_load = worker_module.load_param_data_from_db
         final_loads = []
         failed_b_load = False
