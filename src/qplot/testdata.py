@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import errno
 import math
 import os
 import re
 import sqlite3
+import stat
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -20,6 +22,11 @@ import numpy as np
 from qcodes.dataset import Measurement, new_experiment
 from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
+
+from qplot.datahandling.file_identity import (
+    QPLOT_GENERATED_DATABASE_APPLICATION_ID,
+    database_publication_guard_path,
+)
 
 CSV_COLUMNS = (
     "dimensions",
@@ -96,6 +103,18 @@ _SINUSOID_COMPONENT_COUNT = 2
 _RESULT_CHUNK_POINTS = 10_000
 _TEMPORARY_DATABASE_PREFIX = ".qplot-testdata-"
 _SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_SQLITE_HEADER = b"SQLite format 3\x00"
+_SQLITE_ROLLBACK_JOURNAL_VERSIONS = b"\x01\x01"
+_REPLACEMENT_BUSY_ERRNOS = frozenset(
+    value
+    for value in (
+        errno.EACCES,
+        errno.EBUSY,
+        errno.EPERM,
+        getattr(errno, "ETXTBSY", None),
+    )
+    if value is not None
+)
 
 
 class SpecificationError(ValueError):
@@ -366,16 +385,20 @@ def _connect_writable_exact_path(database_path):
     return connect(_qcodes_uri_name(database_path))
 
 
-def _owned_temporary_artifacts(temporary_path):
-    yield temporary_path
+def _owned_temporary_artifacts(temporary_path, *, include_database=True):
+    if include_database:
+        yield temporary_path
     for suffix in _SQLITE_SIDECAR_SUFFIXES:
         yield Path(f"{temporary_path}{suffix}")
 
 
-def _remove_owned_temporary_artifacts(temporary_path):
+def _remove_owned_temporary_artifacts(temporary_path, *, include_database=True):
     """Remove only the generator-owned database and its possible sidecars."""
     failures = []
-    for artifact_path in _owned_temporary_artifacts(temporary_path):
+    for artifact_path in _owned_temporary_artifacts(
+            temporary_path,
+            include_database=include_database,
+            ):
         try:
             artifact_path.unlink(missing_ok=True)
         except OSError as error:
@@ -385,6 +408,82 @@ def _remove_owned_temporary_artifacts(temporary_path):
         raise OSError(
             f"Could not remove generator-owned temporary files: {failed_paths}"
         ) from failures[0][1]
+
+
+def _destination_entry_state(database_path):
+    """Return a race-sensitive identity for the selected directory entry."""
+    try:
+        status = database_path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise _unsafe_publication_error(database_path) from error
+    return (
+        status.st_dev,
+        status.st_ino,
+        status.st_mode,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+    )
+
+
+def _destination_sidecars(database_path):
+    """Return every existing sidecar entry without following symlinks."""
+    sidecars = []
+    for suffix in _SQLITE_SIDECAR_SUFFIXES:
+        sidecar_path = Path(f"{database_path}{suffix}")
+        try:
+            sidecar_path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            # An inspection failure is not evidence that the entry is absent.
+            # Publication must therefore fail closed without touching it.
+            raise _unsafe_publication_error(database_path) from error
+        sidecars.append(sidecar_path)
+    return tuple(sidecars)
+
+
+def _unsafe_publication_error(database_path, sidecars=()):
+    details = ""
+    if sidecars:
+        details = " Detected: " + ", ".join(path.name for path in sidecars) + "."
+    return SpecificationError(
+        f"Cannot publish {database_path}: database active or SQLite sidecars "
+        "present. Close every application using this database and have the "
+        "owning SQLite/QCoDeS application resolve any -wal, -shm, or -journal "
+        f"files, then retry or choose another output path.{details} qPlot did "
+        "not change the destination database or its SQLite sidecars."
+    )
+
+
+def _ambiguous_sidecar_race_error(database_path, guard_path, sidecars):
+    if sidecars:
+        details = " Detected after replacement: " + ", ".join(
+            path.name for path in sidecars
+        ) + "."
+    else:
+        details = (
+            " A post-install safety check failed; a transient sidecar cannot "
+            "be ruled out."
+        )
+    return SpecificationError(
+        f"Cannot publish {database_path}: database active or SQLite sidecars "
+        f"present.{details} qPlot restored the "
+        "previous database main and did not change the sidecars, but cannot "
+        "prove which main they belong to. To prevent a stale main/WAL pairing, "
+        f"qPlot left the safety guard {guard_path}. Close every application "
+        "using the database, have the owning SQLite/QCoDeS application resolve "
+        "the sidecars, then remove only that .qplot-publishing guard and retry "
+        "or choose another output path."
+    )
+
+
+def _require_safe_destination_sidecars(database_path):
+    sidecars = _destination_sidecars(database_path)
+    if sidecars:
+        raise _unsafe_publication_error(database_path, sidecars)
 
 
 def _result_chunks(point_count):
@@ -518,25 +617,412 @@ def _write_run(
     return points_written
 
 
-def _publish_database(temporary_path, database_path, overwrite):
-    """Publish a generated database atomically with optional no-clobber."""
-    if overwrite:
-        os.replace(temporary_path, database_path)
-        return
+def _require_rollback_journal_database(database_path):
+    """Reject destinations that cannot be locked without creating sidecars."""
+    try:
+        status = database_path.lstat()
+        with database_path.open("rb") as handle:
+            header = handle.read(20)
+    except OSError as error:
+        raise _unsafe_publication_error(database_path) from error
+    if (
+            not stat.S_ISREG(status.st_mode)
+            or not header.startswith(_SQLITE_HEADER)
+            or header[18:20] != _SQLITE_ROLLBACK_JOURNAL_VERSIONS
+            ):
+        # A persistent WAL-mode main can have no sidecars while quiescent, but
+        # BEGIN EXCLUSIVE would create its WAL/SHM. Rejecting it is the only
+        # source-preserving choice; the user can choose a new output path.
+        raise _unsafe_publication_error(database_path)
+
+
+def _open_quiescent_destination(
+        database_path,
+        expected_destination_state,
+        lock_path,
+        ):
+    """Hold SQLite's own exclusive inode lock through a private alias."""
+    _require_safe_destination_sidecars(database_path)
+    if _destination_entry_state(database_path) != expected_destination_state:
+        raise _unsafe_publication_error(database_path)
+    _require_rollback_journal_database(lock_path)
+    connection = None
+    try:
+        connection = sqlite3.connect(
+            f"file:{_qcodes_uri_name(lock_path)}?mode=rw",
+            uri=True,
+            isolation_level=None,
+            timeout=0,
+        )
+        # The alias is a hardlink to the destination inode, so SQLite's
+        # VFS-specific EXCLUSIVE lock conflicts with real readers/writers. Its
+        # recovery and journal lookup, however, uses the private alias name.
+        # A destination -journal racing into this call is therefore never
+        # opened, recovered, modified, or deleted by qPlot; the recheck below
+        # observes it and rejects publication.
+        connection.execute("BEGIN EXCLUSIVE")
+    except sqlite3.Error as error:
+        if connection is not None:
+            connection.close()
+        raise _unsafe_publication_error(database_path) from error
 
     try:
-        # Both paths are in the same directory. Creating the destination hard
-        # link is atomic and fails if another process won the destination race.
-        os.link(temporary_path, database_path)
-    except FileExistsError as error:
-        raise SpecificationError(
-            f"{database_path} already exists; use --overwrite to replace it"
-        ) from error
+        _require_safe_destination_sidecars(database_path)
+        if _destination_entry_state(database_path) != expected_destination_state:
+            raise _unsafe_publication_error(database_path)
+    except Exception:
+        connection.close()
+        raise
+    return connection
+
+
+def _close_publication_connection(connection):
+    if connection is None:
+        return
+    try:
+        connection.rollback()
+    except sqlite3.Error:
+        pass
+    try:
+        connection.close()
+    except sqlite3.Error:
+        pass
+
+
+def _create_publication_guard(database_path):
+    """Create the qPlot-visible guard for the short replacement transaction."""
+    guard_path = database_publication_guard_path(database_path)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(guard_path, flags, 0o600)
     except OSError as error:
+        raise _unsafe_publication_error(database_path) from error
+    try:
+        os.close(descriptor)
+    except OSError as error:
+        # Ownership starts at os.open, not when this helper returns. Otherwise
+        # a reported close failure could strand an untracked guard and block
+        # every later read/retry.
+        try:
+            guard_path.unlink()
+        except OSError:
+            pass
+        raise _unsafe_publication_error(database_path) from error
+    return guard_path
+
+
+def _create_database_backup_link(database_path):
+    """Keep the old main inode available for a sidecar-race rollback."""
+    handle = tempfile.NamedTemporaryFile(
+        prefix=_TEMPORARY_DATABASE_PREFIX,
+        suffix=".backup",
+        dir=database_path.parent,
+        delete=False,
+    )
+    backup_path = Path(handle.name)
+    handle.close()
+    backup_path.unlink()
+    try:
+        # This private alias lets SQLite lock the old inode without consulting
+        # destination-named journals, and lets the publisher atomically restore
+        # that exact inode if a post-install safety check fails.
+        os.link(database_path, backup_path)
+    except OSError as error:
+        backup_path.unlink(missing_ok=True)
+        raise _unsafe_publication_error(database_path) from error
+    return backup_path
+
+
+def _restore_database_backup(backup_path, database_path):
+    """Atomically restore the old main without touching any sidecar."""
+    try:
+        os.replace(backup_path, database_path)
+    except OSError as error:
+        guard_path = database_publication_guard_path(database_path)
         raise OSError(
-            "Could not atomically publish the generated database without "
-            "overwriting an existing file"
+            f"Cannot publish {database_path}: database active or SQLite "
+            "sidecars present. qPlot could not restore the previous database "
+            "main because the replacement path is still active. The selected "
+            f"path may contain the replacement; the prior main is retained at "
+            f"{backup_path} unless qPlot's final retry restored it. The safety "
+            f"guard {guard_path} remains. Close every application using the "
+            "database and have the owning SQLite/QCoDeS application resolve "
+            "all -wal, -shm, and -journal files before recovering the prior "
+            "main or removing only that guard. qPlot did not modify or remove "
+            "the SQLite sidecars."
         ) from error
+
+
+def _replace_database_file(
+        temporary_path,
+        database_path,
+        expected_destination_state,
+        ):
+    """Replace a proven-quiescent main and roll back any sidecar race."""
+    guard_path = _create_publication_guard(database_path)
+    backup_path = None
+    connection = None
+    replacement_installed = False
+    guard_must_remain = False
+    ambiguous_sidecars = ()
+    try:
+        _require_safe_destination_sidecars(database_path)
+        if _destination_entry_state(database_path) != expected_destination_state:
+            raise _unsafe_publication_error(database_path)
+        _require_rollback_journal_database(database_path)
+        backup_path = _create_database_backup_link(database_path)
+        backup_state = _destination_entry_state(backup_path)
+        locked_destination_state = _destination_entry_state(database_path)
+        if (
+                backup_state is None
+                or locked_destination_state is None
+                or backup_state[:5] != expected_destination_state[:5]
+                or locked_destination_state != backup_state
+                or not os.path.samefile(database_path, backup_path)
+                ):
+            raise _unsafe_publication_error(database_path)
+
+        connection = _open_quiescent_destination(
+            database_path,
+            locked_destination_state,
+            backup_path,
+        )
+        # Windows does not permit replacing the main while this connection is
+        # open. Closing it is safe there because any competing SQLite handle
+        # likewise prevents os.replace. POSIX keeps the VFS lock across replace.
+        if os.name == "nt":
+            _close_publication_connection(connection)
+            connection = None
+
+        _require_safe_destination_sidecars(database_path)
+        if not os.path.samefile(database_path, backup_path):
+            raise _unsafe_publication_error(database_path)
+
+        try:
+            os.replace(temporary_path, database_path)
+        except OSError as error:
+            if error.errno in _REPLACEMENT_BUSY_ERRNOS:
+                raise _unsafe_publication_error(database_path) from error
+            raise
+        replacement_installed = True
+
+        try:
+            # This postcondition is essential: a non-cooperating filesystem
+            # actor can create a sidecar in the final check/replace syscall gap.
+            # qPlot readers see the guard throughout this interval. If a
+            # sidecar appeared, restore the byte-identical old inode and leave
+            # that externally owned sidecar exactly as it was created.
+            ambiguous_sidecars = _destination_sidecars(database_path)
+            if ambiguous_sidecars:
+                raise _unsafe_publication_error(
+                    database_path,
+                    ambiguous_sidecars,
+                )
+            backup_after_replace = _destination_entry_state(backup_path)
+            if (
+                    backup_after_replace is None
+                    or backup_after_replace[:5] != backup_state[:5]
+                    ):
+                raise _unsafe_publication_error(database_path)
+            ambiguous_sidecars = _destination_sidecars(database_path)
+            if ambiguous_sidecars:
+                raise _unsafe_publication_error(
+                    database_path,
+                    ambiguous_sidecars,
+                )
+        except Exception as error:
+            # Once a post-install postcondition fails, absence observed later
+            # cannot prove that a transient sidecar did not belong to the new
+            # main. Keep the guard even if rollback itself needs a retry.
+            guard_must_remain = True
+            _restore_database_backup(backup_path, database_path)
+            backup_path = None
+            replacement_installed = False
+            if not ambiguous_sidecars:
+                try:
+                    ambiguous_sidecars = _destination_sidecars(database_path)
+                except SpecificationError as inspection_error:
+                    # Inspection itself is unsafe, so retain the guard exactly
+                    # as for an observed sidecar. A fresh process must not guess.
+                    guard_must_remain = True
+                    raise _ambiguous_sidecar_race_error(
+                        database_path,
+                        guard_path,
+                        (),
+                    ) from inspection_error
+            # A sidecar observed after the swap could belong to either the old
+            # or new main. Even if none is visible now, a failed postcondition
+            # cannot rule out a transient one. The guard is therefore
+            # persistent recovery state, not a disposable generator temporary.
+            guard_must_remain = True
+            raise _ambiguous_sidecar_race_error(
+                database_path,
+                guard_path,
+                ambiguous_sidecars,
+            ) from error
+
+        # Keep SQLite's old-inode EXCLUSIVE lock through commit on POSIX. A
+        # cooperating old SQLite connection cannot create a stale sidecar in
+        # the check/unlink gap; on Windows, a handle overlapping os.replace
+        # makes that syscall fail. No portable filesystem syscall atomically
+        # conditions a main-file replace on three sibling paths, so the main's
+        # embedded replacement marker is the cross-process backstop: qPlot
+        # permanently quarantines WAL access for this identity even if a raw
+        # filesystem actor bypasses SQLite's lock after the last check.
+        try:
+            guard_path.unlink()
+        except OSError as error:
+            guard_must_remain = True
+            _restore_database_backup(backup_path, database_path)
+            backup_path = None
+            replacement_installed = False
+            try:
+                ambiguous_sidecars = _destination_sidecars(database_path)
+            except SpecificationError as inspection_error:
+                guard_must_remain = True
+                raise _ambiguous_sidecar_race_error(
+                    database_path,
+                    guard_path,
+                    (),
+                ) from inspection_error
+            raise _ambiguous_sidecar_race_error(
+                database_path,
+                guard_path,
+                ambiguous_sidecars,
+            ) from error
+        guard_path = None
+        _close_publication_connection(connection)
+        connection = None
+        replacement_installed = False
+
+        # Publication is now committed. Failure to remove this private name
+        # must not turn a completed replacement into a reported rejection.
+        try:
+            backup_path.unlink()
+        except OSError:
+            pass
+        else:
+            backup_path = None
+    finally:
+        _close_publication_connection(connection)
+        if replacement_installed and backup_path is not None:
+            guard_must_remain = True
+            try:
+                _restore_database_backup(backup_path, database_path)
+            except OSError:
+                # Keep both the backup and publication guard for manual recovery.
+                guard_must_remain = True
+            else:
+                backup_path = None
+                replacement_installed = False
+                try:
+                    guard_must_remain = (
+                        guard_must_remain
+                        or bool(_destination_sidecars(database_path))
+                    )
+                except SpecificationError:
+                    guard_must_remain = True
+        if backup_path is not None and not replacement_installed:
+            try:
+                backup_path.unlink()
+            except OSError:
+                pass
+        if (
+                guard_path is not None
+                and not guard_must_remain
+                and not replacement_installed
+                ):
+            try:
+                guard_path.unlink()
+            except OSError:
+                pass
+
+
+def _link_database_file(temporary_path, database_path):
+    """Publish a previously absent output with a guarded postcondition."""
+    guard_path = _create_publication_guard(database_path)
+    destination_linked = False
+    try:
+        _require_safe_destination_sidecars(database_path)
+        if _destination_entry_state(database_path) is not None:
+            raise SpecificationError(
+                f"{database_path} already exists; use --overwrite to replace it"
+            )
+        try:
+            # The hard link is an atomic no-clobber publish because the
+            # generator temporary lives in the destination directory.
+            os.link(temporary_path, database_path)
+        except FileExistsError as error:
+            raise SpecificationError(
+                f"{database_path} already exists; use --overwrite to replace it"
+            ) from error
+        except OSError as error:
+            raise OSError(
+                "Could not atomically publish the generated database without "
+                "overwriting an existing file"
+            ) from error
+        destination_linked = True
+
+        # An orphan sidecar can be copied into place in the link syscall gap.
+        # Since the old state was absence, rolling back only our own hard link
+        # restores it without touching the externally owned sidecar.
+        _require_safe_destination_sidecars(database_path)
+        guard_path.unlink()
+        guard_path = None
+        destination_linked = False
+    finally:
+        if destination_linked:
+            try:
+                owns_destination = os.path.samefile(
+                    temporary_path,
+                    database_path,
+                )
+            except OSError:
+                owns_destination = False
+            if owns_destination:
+                try:
+                    database_path.unlink()
+                except OSError as error:
+                    # Keep the guard: qPlot must not open a main whose rollback
+                    # could not be proved after a sidecar publication race.
+                    raise OSError(
+                        "Could not roll back an unsafe new database publication; "
+                        "the qPlot publication guard was left in place"
+                    ) from error
+                destination_linked = False
+        if guard_path is not None and not destination_linked:
+            try:
+                guard_path.unlink()
+            except OSError:
+                pass
+
+
+def _publish_database(
+        temporary_path,
+        database_path,
+        overwrite,
+        expected_destination_state=None,
+        ):
+    """Publish a generated database atomically with optional no-clobber."""
+    _require_safe_destination_sidecars(database_path)
+    if overwrite:
+        # A changed directory entry means the user's overwrite decision no
+        # longer describes the file now at this path. Reject rather than
+        # replacing an unexamined concurrent owner. The replacement helper then
+        # obtains SQLite's own exclusive lock and enforces a rollback-capable
+        # postcondition across the final filesystem operation.
+        if _destination_entry_state(database_path) != expected_destination_state:
+            raise _unsafe_publication_error(database_path)
+        if expected_destination_state is not None:
+            _replace_database_file(
+                temporary_path,
+                database_path,
+                expected_destination_state,
+            )
+            return
+
+    _link_database_file(temporary_path, database_path)
 
 
 def generate_database(
@@ -554,10 +1040,12 @@ def generate_database(
     database_path = Path(database_path)
     if database_path.suffix.lower() != ".db":
         raise SpecificationError("Database output path must end in .db")
-    if database_path.exists() and not overwrite:
+    expected_destination_state = _destination_entry_state(database_path)
+    if expected_destination_state is not None and not overwrite:
         raise SpecificationError(
             f"{database_path} already exists; use --overwrite to replace it"
         )
+    _require_safe_destination_sidecars(database_path)
 
     database_path.parent.mkdir(parents=True, exist_ok=True)
     random_generator = rng if rng is not None else np.random.default_rng()
@@ -569,6 +1057,7 @@ def generate_database(
         f"({total_runs} runs, {total_points} points)."
     )
     temporary_path = None
+    publication_completed = False
     try:
         try:
             temporary_handle = tempfile.NamedTemporaryFile(
@@ -624,13 +1113,45 @@ def generate_database(
                         f"Run stopped (completed): run_{run_number} in "
                         f"{perf_counter() - run_started:.2f} s."
                     )
+                # This marker lives in the generator-owned main before either
+                # publication path. A fresh qPlot process can therefore ignore
+                # any WAL that appears after the final sidecar check instead of
+                # trusting that it belongs to this new main.
+                connection.execute(
+                    "PRAGMA application_id = "
+                    f"{QPLOT_GENERATED_DATABASE_APPLICATION_ID}"
+                )
                 _raise_if_cancelled(cancelled_callback)
             finally:
                 connection.close()
-            _publish_database(temporary_path, database_path, overwrite)
+            # Sidecar cleanup is fallible, so complete it before the atomic
+            # publication boundary. No cleanup failure may be reported as a
+            # rejected publication after the destination has already changed.
+            _remove_owned_temporary_artifacts(
+                temporary_path,
+                include_database=False,
+            )
+            _publish_database(
+                temporary_path,
+                database_path,
+                overwrite,
+                expected_destination_state,
+            )
+            publication_completed = True
         finally:
             if temporary_path is not None:
-                _remove_owned_temporary_artifacts(temporary_path)
+                try:
+                    _remove_owned_temporary_artifacts(temporary_path)
+                except Exception:
+                    if not publication_completed:
+                        raise
+                    # Publication is committed and must still be reported as
+                    # success, but retry once so a transient unlink failure
+                    # does not strand a generator-owned hardlink/sidecar.
+                    try:
+                        _remove_owned_temporary_artifacts(temporary_path)
+                    except Exception:
+                        pass
     except GenerationCancelled:
         _timestamped_message(
             "Test database generation stopped (cancelled) after "
@@ -645,10 +1166,15 @@ def generate_database(
         )
         raise
 
-    _timestamped_message(
-        "Test database generation stopped (completed) in "
-        f"{perf_counter() - generation_started:.2f} s: {database_path}."
-    )
+    try:
+        _timestamped_message(
+            "Test database generation stopped (completed) in "
+            f"{perf_counter() - generation_started:.2f} s: {database_path}."
+        )
+    except Exception:
+        # Publication is already committed; a closed output stream must not
+        # turn success into an apparent failure after replacing the database.
+        pass
     return database_path
 
 

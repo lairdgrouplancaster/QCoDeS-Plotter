@@ -70,7 +70,16 @@ frequencies along the two sweep axes, producing varied plane-wave patterns.
 The measured parameter name, label, unit, sweep ranges, and point counts are set
 in the CSV. Existing CSV or database files are not replaced unless
 `--overwrite` is supplied. Collection export also refuses to replace existing
-collection files without `--overwrite`.
+collection files without `--overwrite`. Even with `--overwrite`, database
+generation refuses publication if the destination changed while generation was
+running or if a `-wal`, `-shm`, or `-journal` sidecar is present. Close the
+application using that database, or choose another output path; qPlot never
+removes or modifies those destination sidecars. Every generated test database
+carries an internal publication marker, so a fresh qPlot process also treats
+any later WAL as unpaired and reads the generated main immutably. If a
+sidecar is detected after the atomic swap, qPlot restores the old main and
+retains an explicit `.qplot-publishing` safety guard until the owning SQLite
+application has resolved the sidecars.
 
 Run `qplot-generate-db --help` for the complete command reference.
 

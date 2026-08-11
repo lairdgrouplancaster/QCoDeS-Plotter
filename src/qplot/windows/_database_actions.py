@@ -21,6 +21,7 @@ from qplot.datahandling.file_identity import (
     DatabaseInstance,
     database_instance,
     database_instances_differ,
+    database_publication_guard_path,
     logical_database_path,
 )
 from qplot.datahandling.readonly import (
@@ -64,6 +65,17 @@ def _database_observations_differ(first, second):
     first_identity = getattr(first, "identity", first)
     second_identity = getattr(second, "identity", second)
     return _database_instances_differ(first_identity, second_identity)
+
+
+def _database_publication_is_guarded(database_path):
+    """Fail closed if publication is in flight or its guard cannot be inspected."""
+    try:
+        database_publication_guard_path(database_path).lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 class DatabaseInfoDialog(qtw.QDialog):
@@ -445,14 +457,17 @@ class DatabaseActionsMixin:
             # qPlot deliberately replaces this source. Release its read-only
             # dataset handles before the worker publishes the temporary file:
             # Windows otherwise forbids replacing a database that qPlot still
-            # has open. The replacement completion path reloads the same view.
+            # has open. Publication can still be rejected, so this preparation
+            # must not mark the unchanged database as replaced or quarantine
+            # its WAL. The completion path decides which kind of reload is
+            # required after publication has either succeeded or failed.
             prepare_replacement = getattr(
                 self,
                 "_prepare_replaced_database_reload",
                 None,
             )
             if callable(prepare_replacement):
-                prepare_replacement(database_path)
+                prepare_replacement(database_path, quarantine=False)
 
         self._test_database_generation_active = True
         action = getattr(self, "generateTestDatabaseAction", None)
@@ -493,6 +508,19 @@ class DatabaseActionsMixin:
                 "Could not generate the test database.",
                 str(error),
             )
+            file_textbox = getattr(self, "fileTextbox", None)
+            current_database = file_textbox.text() if file_textbox is not None else ""
+            if (
+                    current_database
+                    and canonical_database_path(current_database)
+                    == canonical_database_path(database_path)
+                    and not _database_publication_is_guarded(database_path)
+                    ):
+                # The publication protocol preserves the old main file and all
+                # pre-existing sidecars on rejection. Restore the view whose
+                # handles were released before generation unless the publisher
+                # retained its guard after an ambiguous sidecar race.
+                self.load_file(database_path, force=True)
             return
 
         run_count = len(specifications)
@@ -510,6 +538,11 @@ class DatabaseActionsMixin:
                 and canonical_database_path(current_database)
                 == canonical_database_path(database_path)
                 ):
+            # Publication succeeded, so the identity really did change. Mark
+            # the replacement before the first reload read; this retains the
+            # read-side defence against an unpaired WAL if an external actor
+            # manages to recreate one after publication.
+            quarantine_wal_for_replaced_database(database_path)
             self.load_file(database_path, force=True)
 
 
@@ -1169,10 +1202,17 @@ class DatabaseActionsMixin:
         return True
 
 
-    def _prepare_replaced_database_reload(self, abspath):
-        """Discard every runtime object tied to a replaced file instance."""
+    def _prepare_replaced_database_reload(self, abspath, *, quarantine=True):
+        """Discard runtime objects before a database is deliberately replaced.
+
+        Test-data generation calls this with ``quarantine=False`` before its
+        worker starts. At that point publication has not happened and may be
+        rejected, so marking the existing instance as replaced would make
+        later reads incorrectly ignore its valid WAL.
+        """
         old_instance = getattr(self, "_loaded_database_instance", None)
-        quarantine_wal_for_replaced_database(abspath)
+        if quarantine:
+            quarantine_wal_for_replaced_database(abspath)
         self.monitor.stop()
         self._cancel_database_detail_load()
 
