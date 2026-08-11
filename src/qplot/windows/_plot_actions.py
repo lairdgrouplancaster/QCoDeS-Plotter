@@ -971,7 +971,7 @@ class PlotActionsMixin:
         Open the indexed dependent parameter for the selected run.
 
         """
-        if not self.ds:
+        if self.ds is None:
             self.show_status("Select a run before opening a parameter.", 5000)
             return
 
@@ -989,7 +989,7 @@ class PlotActionsMixin:
         Open the plot represented by a double-clicked preview image.
 
         """
-        if not self.ds:
+        if self.ds is None:
             self.show_status("Select a run before opening a preview plot.", 5000)
             return
 
@@ -1012,7 +1012,10 @@ class PlotActionsMixin:
             return
 
         dataset_key = self._current_dataset_key(guid)
-        if not self.ds or getattr(self, "_selected_dataset_key", None) != dataset_key:
+        if (
+            self.ds is None
+            or getattr(self, "_selected_dataset_key", None) != dataset_key
+        ):
             try:
                 handle = self._dataset_handle_for_key(dataset_key)
                 if handle is None:
