@@ -1,4 +1,5 @@
 import os
+import tempfile
 
 import numpy as np
 import pandas as pd
@@ -802,14 +803,33 @@ class PlotActionsMixin:
 
     def _export_preview_csv(self, dataset_key, parameter_name):
         """Export one preview through a fresh, action-owned dataset view."""
+        default_name = self._default_preview_export_filename(
+            dataset_key,
+            parameter_name,
+        )
+        filename = self._choose_csv_export_filename(default_name)
+        if filename is None:
+            return
+
         dataset = None
         try:
             # Preview and plot datasets intentionally remain frozen at their
             # original read-only WAL snapshots.  Export needs the newest
-            # committed rows, so it must bypass DatasetHandle caching and bind
-            # the requested parameter on this fresh dataset instance.
-            dataset = self._load_dataset(dataset_key)
-            param = self._measurement_param_by_name(dataset, parameter_name)
+            # committed rows, so choose the destination first and only then
+            # bypass DatasetHandle caching.  No action-owned snapshot waits
+            # behind the modal save dialog.
+            try:
+                dataset = self._load_dataset(dataset_key)
+                param = self._measurement_param_by_name(dataset, parameter_name)
+            except Exception as err:
+                log_exception("Preview CSV run load failed", err, __name__)
+                self.show_error(
+                    "Run Load Failed",
+                    f"Could not load run with GUID {dataset_key.guid}.",
+                    str(err),
+                )
+                return
+
             if param is None:
                 self.show_status(
                     f"No preview export found for {parameter_name}.",
@@ -817,15 +837,23 @@ class PlotActionsMixin:
                 )
                 return
 
-            self._export_measurement_csv(dataset, [param])
-        except Exception as err:
-            log_exception("Preview CSV run load failed", err, __name__)
-            self.show_error(
-                "Run Load Failed",
-                f"Could not load run with GUID {dataset_key.guid}.",
-                str(err),
-            )
-            return
+            try:
+                frame = self._measurement_dataframe(dataset, [param])
+                # The read-only connection intentionally keeps its original
+                # SQLite snapshot readable if the path is replaced.  Reject
+                # that obsolete frame before it reaches the destination.
+                self._ensure_dataset_key_can_be_read(dataset_key)
+                self._publish_preview_csv(frame, filename, dataset_key)
+            except Exception as err:
+                log_exception("Preview CSV export failed", err, __name__)
+                self.show_error(
+                    "CSV Export Failed",
+                    "Could not export the selected measurement data.",
+                    str(err),
+                )
+                return
+
+            self.show_status(f"Exported CSV: {filename}", 5000)
         finally:
             if dataset is not None:
                 try:
@@ -844,17 +872,9 @@ class PlotActionsMixin:
             return
 
         default_name = self._default_export_filename(ds, params)
-        filename = qtw.QFileDialog.getSaveFileName(
-            self,
-            "Export CSV",
-            default_name,
-            "CSV files (*.csv)",
-        )[0]
-        if not filename:
-            self.show_status("CSV export cancelled.", 3000)
+        filename = self._choose_csv_export_filename(default_name)
+        if filename is None:
             return
-        if not filename.lower().endswith(".csv"):
-            filename = f"{filename}.csv"
 
         try:
             frame = self._measurement_dataframe(ds, params)
@@ -869,6 +889,56 @@ class PlotActionsMixin:
             return
 
         self.show_status(f"Exported CSV: {filename}", 5000)
+
+
+    def _choose_csv_export_filename(self, default_name):
+        filename = qtw.QFileDialog.getSaveFileName(
+            self,
+            "Export CSV",
+            default_name,
+            "CSV files (*.csv)",
+        )[0]
+        if not filename:
+            self.show_status("CSV export cancelled.", 3000)
+            return None
+        if not filename.lower().endswith(".csv"):
+            filename = f"{filename}.csv"
+        return filename
+
+
+    def _publish_preview_csv(self, frame, filename, dataset_key):
+        """Stage a preview CSV and publish it only for the requested source."""
+        destination = os.path.abspath(filename)
+        directory = os.path.dirname(destination)
+        temporary_path = None
+        try:
+            temporary = tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="",
+                prefix=f".{os.path.basename(destination)}.",
+                suffix=".tmp",
+                dir=directory,
+                delete=False,
+            )
+            temporary_path = temporary.name
+            with temporary:
+                frame.to_csv(temporary, index=False)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+
+            # This is the export's linearization point: the source must still
+            # be the captured database instance immediately before the staged
+            # file atomically replaces the requested destination.
+            self._ensure_dataset_key_can_be_read(dataset_key)
+            os.replace(temporary_path, destination)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
 
 
     @QtCore.pyqtSlot(str)
@@ -1373,6 +1443,27 @@ class PlotActionsMixin:
         database_folder = os.path.dirname(self.fileTextbox.text())
         measurement = "all" if len(params) != 1 else params[0].name
         filename = self._safe_filename(f"run_{dataset.run_id}_{measurement}.csv")
+        return os.path.join(database_folder or os.getcwd(), filename)
+
+
+    def _default_preview_export_filename(self, dataset_key, parameter_name):
+        """Return a preview destination suggestion without opening its dataset."""
+        run_id = None
+        run_list = getattr(self, "RunList", None)
+        run_id_for_guid = getattr(run_list, "run_id_for_guid", None)
+        if callable(run_id_for_guid):
+            run_id = run_id_for_guid(dataset_key.guid)
+
+        selected_key = getattr(self, "_selected_dataset_key", None)
+        selected_dataset = getattr(self, "ds", None)
+        if run_id is None and selected_key == dataset_key and selected_dataset is not None:
+            run_id = getattr(selected_dataset, "run_id", None)
+
+        run_identifier = dataset_key.guid if run_id is None else run_id
+        filename = self._safe_filename(
+            f"run_{run_identifier}_{parameter_name}.csv",
+        )
+        database_folder = os.path.dirname(dataset_key.database_path)
         return os.path.join(database_folder or os.getcwd(), filename)
 
 

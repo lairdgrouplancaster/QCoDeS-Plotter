@@ -168,7 +168,7 @@ class PreviewExportLifecycleTestCase(unittest.TestCase):
         def show_error(self, *args):
             self.error_messages.append(args)
 
-    def test_selected_preview_cancel_closes_only_fresh_dataset(self):
+    def test_selected_preview_cancel_does_not_acquire_a_fresh_dataset(self):
         local_dataset = self.Dataset()
         harness = self.Harness(local_dataset)
 
@@ -179,8 +179,8 @@ class PreviewExportLifecycleTestCase(unittest.TestCase):
         ):
             harness.export_preview_csv("signal")
 
-        self.assertEqual(harness.loaded_keys, [harness._selected_dataset_key])
-        self.assertTrue(local_dataset.conn.closed)
+        self.assertEqual(harness.loaded_keys, [])
+        self.assertFalse(local_dataset.conn.closed)
         self.assertEqual(local_dataset.requested_parameters, [])
         self.assertFalse(harness.held_handle.closed)
         self.assertFalse(harness.ds.conn.closed)
