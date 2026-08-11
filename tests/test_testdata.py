@@ -1196,20 +1196,35 @@ def test_post_replace_wal_restores_old_main_and_retains_safety_guard(
     monkeypatch,
 ):
     database_path = tmp_path / "post-replace-wal.db"
+    wal_path = Path(f"{database_path}-wal")
     testdata_module.generate_database([small_specification()], database_path)
     old_main = artifact_bytes_and_mtimes(database_path)[""]
     original_replace = os.replace
-    replacement_writers = []
+    replacement_wals = []
 
     def replace_then_commit_new_wal(source_path, destination_path):
         result = original_replace(source_path, destination_path)
-        if Path(destination_path) == database_path and not replacement_writers:
+        if Path(destination_path) == database_path and not replacement_wals:
             writer = sqlite3.connect(database_path)
-            assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
-            writer.execute("PRAGMA wal_autocheckpoint = 0")
-            writer.execute("UPDATE runs SET name = 'NEW_WAL'")
-            writer.commit()
-            replacement_writers.append(writer)
+            try:
+                assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+                writer.execute("PRAGMA wal_autocheckpoint = 0")
+                writer.execute("UPDATE runs SET name = 'NEW_WAL'")
+                writer.commit()
+                wal_contents = wal_path.read_bytes()
+            finally:
+                writer.close()
+
+            # Windows cannot atomically restore the old main while this writer
+            # holds the replacement open. Re-create its captured WAL only after
+            # closing it: the sidecar is still genuinely from the replacement,
+            # and pairing it with the restored old main remains ambiguous.
+            wal_path.write_bytes(wal_contents)
+            controlled_mtime_ns = 1_700_000_000_000_000_000
+            os.utime(wal_path, ns=(controlled_mtime_ns, controlled_mtime_ns))
+            replacement_wals.append(
+                (wal_path.read_bytes(), wal_path.stat().st_mtime_ns)
+            )
         return result
 
     monkeypatch.setattr(
@@ -1218,31 +1233,114 @@ def test_post_replace_wal_restores_old_main_and_retains_safety_guard(
         replace_then_commit_new_wal,
     )
 
-    try:
-        with pytest.raises(
-            SpecificationError,
-            match="database active or SQLite sidecars present",
-        ) as error_info:
-            testdata_module.generate_database(
-                [small_specification()],
-                database_path,
-                overwrite=True,
-            )
-
-        guard_path = Path(f"{database_path}{DATABASE_PUBLICATION_GUARD_SUFFIX}")
-        assert "cannot prove which main they belong to" in str(error_info.value)
-        assert artifact_bytes_and_mtimes(database_path)[""] == old_main
-        assert immutable_run_name(database_path) == "run_1"
-        assert guard_path.is_file()
-        with pytest.raises(ReadOnlyDatabaseAccessError):
-            qplot_run_name(database_path)
-        assert not any(
-            path.name.startswith(testdata_module._TEMPORARY_DATABASE_PREFIX)
-            for path in tmp_path.iterdir()
+    with pytest.raises(
+        SpecificationError,
+        match="database active or SQLite sidecars present",
+    ) as error_info:
+        testdata_module.generate_database(
+            [small_specification()],
+            database_path,
+            overwrite=True,
         )
-    finally:
-        for writer in replacement_writers:
-            writer.close()
+
+    guard_path = Path(f"{database_path}{DATABASE_PUBLICATION_GUARD_SUFFIX}")
+    assert "cannot prove which main they belong to" in str(error_info.value)
+    assert len(replacement_wals) == 1
+    artifacts = artifact_bytes_and_mtimes(database_path)
+    assert artifacts[""] == old_main
+    assert artifacts["-wal"] == replacement_wals[0]
+    assert immutable_run_name(database_path) == "run_1"
+    assert guard_path.is_file()
+    with pytest.raises(ReadOnlyDatabaseAccessError):
+        qplot_run_name(database_path)
+    assert not any(
+        path.name.startswith(testdata_module._TEMPORARY_DATABASE_PREFIX)
+        for path in tmp_path.iterdir()
+    )
+
+
+def test_post_replace_sidecar_restore_failure_retains_recovery_artifacts(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "failed-restore.db"
+    sidecar_path = Path(f"{database_path}-wal")
+    guard_path = Path(f"{database_path}{DATABASE_PUBLICATION_GUARD_SUFFIX}")
+    testdata_module.generate_database([small_specification()], database_path)
+    old_main = artifact_bytes_and_mtimes(database_path)[""]
+    original_replace = os.replace
+    replacement_main = []
+    injected_sidecar = []
+    backup_paths = []
+    backup_states = []
+    restore_attempts = []
+
+    def install_then_fail_backup_restore(source_path, destination_path):
+        source_path = Path(source_path)
+        destination_path = Path(destination_path)
+        if destination_path == database_path and source_path.suffix == ".backup":
+            if not backup_paths:
+                backup_paths.append(source_path)
+                backup_states.append(
+                    (source_path.read_bytes(), source_path.stat().st_mtime_ns)
+                )
+            restore_attempts.append(source_path)
+            raise OSError("injected backup restore failure")
+
+        result = original_replace(source_path, destination_path)
+        if destination_path == database_path and not replacement_main:
+            replacement_main.append(artifact_bytes_and_mtimes(database_path)[""])
+            sidecar_path.write_bytes(b"ambiguous WAL from replacement main")
+            controlled_mtime_ns = 1_700_000_000_000_000_000
+            os.utime(sidecar_path, ns=(controlled_mtime_ns, controlled_mtime_ns))
+            injected_sidecar.append(
+                (sidecar_path.read_bytes(), sidecar_path.stat().st_mtime_ns)
+            )
+        return result
+
+    monkeypatch.setattr(
+        testdata_module.os,
+        "replace",
+        install_then_fail_backup_restore,
+    )
+
+    with pytest.raises(OSError) as error_info:
+        testdata_module.generate_database(
+            [small_specification()],
+            database_path,
+            overwrite=True,
+        )
+
+    assert len(replacement_main) == 1
+    assert replacement_main[0] != old_main
+    assert len(injected_sidecar) == 1
+    assert len(backup_paths) == 1
+    assert restore_attempts
+    backup_path = backup_paths[0]
+    message = str(error_info.value)
+    assert "database active or SQLite sidecars present" in message
+    assert str(database_path) in message
+    assert str(guard_path) in message
+    assert str(backup_path) in message or ".backup" in message
+    assert "selected path may contain the replacement" in message.lower()
+
+    artifacts = artifact_bytes_and_mtimes(database_path)
+    assert artifacts[""] == replacement_main[0]
+    assert artifacts["-wal"] == injected_sidecar[0]
+    assert guard_path.is_file()
+    assert backup_path.is_file()
+    assert (backup_path.read_bytes(), backup_path.stat().st_mtime_ns) == (
+        backup_states[0]
+    )
+    assert backup_states[0] == old_main
+    with pytest.raises(ReadOnlyDatabaseAccessError):
+        qplot_run_name(database_path)
+    assert set(tmp_path.iterdir()) == {
+        database_path,
+        sidecar_path,
+        guard_path,
+        backup_path,
+    }
 
 
 def test_overwrite_succeeds_for_quiescent_database(tmp_path):

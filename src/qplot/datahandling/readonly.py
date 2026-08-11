@@ -282,7 +282,8 @@ def _require_publication_complete(database_path):
         ) from error
     raise ReadOnlyDatabaseAccessError(
         "Test-database publication is still in progress or needs recovery. "
-        "Retry after generation finishes; qPlot did not open the database or "
+        "If generation has stopped, follow its recovery instructions before "
+        "removing the publication guard. qPlot did not open the database or "
         "its SQLite sidecars."
     )
 

@@ -739,9 +739,18 @@ def _restore_database_backup(backup_path, database_path):
     try:
         os.replace(backup_path, database_path)
     except OSError as error:
+        guard_path = database_publication_guard_path(database_path)
         raise OSError(
-            "Could not restore the previous database after an unsafe "
-            "publication race; the qPlot publication guard was left in place"
+            f"Cannot publish {database_path}: database active or SQLite "
+            "sidecars present. qPlot could not restore the previous database "
+            "main because the replacement path is still active. The selected "
+            f"path may contain the replacement; the prior main is retained at "
+            f"{backup_path} unless qPlot's final retry restored it. The safety "
+            f"guard {guard_path} remains. Close every application using the "
+            "database and have the owning SQLite/QCoDeS application resolve "
+            "all -wal, -shm, and -journal files before recovering the prior "
+            "main or removing only that guard. qPlot did not modify or remove "
+            "the SQLite sidecars."
         ) from error
 
 
