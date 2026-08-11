@@ -6,6 +6,7 @@ from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot import testdata as testdata_module
+from qplot.datahandling.file_identity import database_publication_guard_path
 from qplot.testdata import CSV_COLUMNS, INSTRUCTION_FILE_NAMES
 from qplot.windows._database_actions import (
     DatabaseActionsMixin,
@@ -170,12 +171,16 @@ def test_generation_completion_force_reloads_replaced_current_database(tmp_path)
     specification = Mock(point_count=5)
 
     try:
-        harness.test_database_generation_finished(
-            str(database_path),
-            [specification],
-            None,
-        )
+        with patch(
+            "qplot.windows._database_actions.quarantine_wal_for_replaced_database"
+        ) as quarantine:
+            harness.test_database_generation_finished(
+                str(database_path),
+                [specification],
+                None,
+            )
 
+        quarantine.assert_called_once_with(str(database_path))
         harness.load_file.assert_called_once_with(str(database_path), force=True)
     finally:
         harness.deleteLater()
@@ -187,7 +192,20 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
     output_directory = tmp_path / "loaded # %23 測定"
     output_directory.mkdir()
     database_path = output_directory / "runs#%3f 測定.db"
-    database_path.write_bytes(b"old database")
+    testdata_module.generate_database(
+        [
+            testdata_module.RunSpecification(
+                1,
+                "old_current",
+                "Old current",
+                "nA",
+                -1.0,
+                1.0,
+                3,
+            )
+        ],
+        database_path,
+    )
     write_small_specification(csv_path)
     harness.fileTextbox = type(
         "Field",
@@ -214,12 +232,18 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
                 "question",
                 return_value=qtw.QMessageBox.StandardButton.Yes,
             ),
+            patch(
+                "qplot.windows._database_actions."
+                "quarantine_wal_for_replaced_database"
+            ) as quarantine,
         ):
             assert harness.generate_test_database_from_csv()
 
         harness._prepare_replaced_database_reload.assert_called_once_with(
-            str(database_path)
+            str(database_path),
+            quarantine=False,
         )
+        quarantine.assert_called_once_with(str(database_path))
         harness.load_file.assert_called_once_with(str(database_path), force=True)
         connection = sqlite3.connect(database_path)
         try:
@@ -228,6 +252,109 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
             ]
         finally:
             connection.close()
+    finally:
+        harness.deleteLater()
+
+
+def test_failed_current_database_replacement_reloads_without_quarantine(tmp_path):
+    harness = GuiHarness(tmp_path)
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    database_path.write_bytes(b"unchanged database")
+    write_small_specification(csv_path)
+    harness.fileTextbox = type(
+        "Field",
+        (),
+        {"text": lambda _self: str(database_path)},
+    )()
+    harness._prepare_replaced_database_reload = Mock()
+
+    def reload_after_error(*args, **kwargs):
+        assert harness.errors
+        return True
+
+    harness.load_file = Mock(side_effect=reload_after_error)
+    publication_error = RuntimeError(
+        "database active or SQLite sidecars present; close database users and retry"
+    )
+
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getOpenFileName",
+                return_value=(str(csv_path), "CSV Files (*.csv)"),
+            ),
+            patch.object(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(database_path), "QCoDeS Database (*.db)"),
+            ),
+            patch.object(
+                qtw.QMessageBox,
+                "question",
+                return_value=qtw.QMessageBox.StandardButton.Yes,
+            ),
+            patch(
+                "qplot.windows._database_actions.generate_database",
+                side_effect=publication_error,
+            ),
+            patch(
+                "qplot.windows._database_actions."
+                "quarantine_wal_for_replaced_database"
+            ) as quarantine,
+        ):
+            assert harness.generate_test_database_from_csv()
+
+        harness._prepare_replaced_database_reload.assert_called_once_with(
+            str(database_path),
+            quarantine=False,
+        )
+        quarantine.assert_not_called()
+        harness.load_file.assert_called_once_with(str(database_path), force=True)
+        assert harness.errors == [
+            (
+                "Test Database Generation Failed",
+                "Could not generate the test database.",
+                str(publication_error),
+            )
+        ]
+        assert database_path.read_bytes() == b"unchanged database"
+    finally:
+        harness.deleteLater()
+
+
+def test_ambiguous_sidecar_failure_keeps_guarded_database_unloaded(tmp_path):
+    harness = GuiHarness(tmp_path)
+    database_path = tmp_path / "guarded.db"
+    database_path.write_bytes(b"restored database")
+    database_publication_guard_path(database_path).write_text(
+        "ambiguous sidecar race",
+        encoding="utf-8",
+    )
+    harness.fileTextbox = type(
+        "Field",
+        (),
+        {"text": lambda _self: str(database_path)},
+    )()
+    harness.load_file = Mock(return_value=True)
+    publication_error = RuntimeError(
+        "database active or SQLite sidecars present; safety guard retained"
+    )
+
+    try:
+        with patch(
+            "qplot.windows._database_actions.quarantine_wal_for_replaced_database"
+        ) as quarantine:
+            harness.test_database_generation_finished(
+                str(database_path),
+                [Mock(point_count=5)],
+                publication_error,
+            )
+
+        quarantine.assert_not_called()
+        harness.load_file.assert_not_called()
+        assert harness.errors[-1][2] == str(publication_error)
     finally:
         harness.deleteLater()
 

@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TypeAlias
 
 DatabaseFileIdentity: TypeAlias = (
@@ -9,6 +10,9 @@ DatabaseFileIdentity: TypeAlias = (
     | tuple[str, int, int]
     | tuple[str, str, int]
 )
+DATABASE_PUBLICATION_GUARD_SUFFIX = ".qplot-publishing"
+QPLOT_GENERATED_DATABASE_APPLICATION_ID = 0x51504C54
+_SQLITE_APPLICATION_ID_OFFSET = 68
 
 
 def logical_database_path(database_path: str | os.PathLike[str]) -> str:
@@ -20,6 +24,27 @@ def logical_database_path(database_path: str | os.PathLike[str]) -> str:
 def canonical_database_path(database_path: str | os.PathLike[str]) -> str:
     """Return the currently resolved, platform-normalised database path."""
     return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(database_path))))
+
+
+def database_publication_guard_path(
+        database_path: str | os.PathLike[str],
+        ) -> Path:
+    """Return qPlot's path-local guard for an in-flight main-file replacement."""
+
+    return Path(f"{logical_database_path(database_path)}{DATABASE_PUBLICATION_GUARD_SUFFIX}")
+
+
+def database_has_qplot_generation_marker(
+        database_path: str | os.PathLike[str],
+        ) -> bool:
+    """Return whether the main header marks a qPlot-generated database."""
+    with open(database_path, "rb") as database_file:
+        database_file.seek(_SQLITE_APPLICATION_ID_OFFSET)
+        application_id = database_file.read(4)
+    return application_id == QPLOT_GENERATED_DATABASE_APPLICATION_ID.to_bytes(
+        4,
+        "big",
+    )
 
 
 @dataclass(frozen=True, slots=True)

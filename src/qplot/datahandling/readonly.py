@@ -12,6 +12,8 @@ from qcodes.dataset.sqlite.database import connect, get_DB_debug, get_DB_locatio
 from qplot.datahandling.file_identity import (
     DatabaseFileIdentity,
     database_file_identity,
+    database_has_qplot_generation_marker,
+    database_publication_guard_path,
 )
 from qplot.datahandling.qcodes_compat import result_owns_supplied_connection
 
@@ -119,6 +121,17 @@ def _require_expected_database_instance(database_path, expected_database_identit
     )
 
 
+def _require_prepared_database_instance(database_path, prepared_database_identity):
+    """Bind publication-marker and WAL decisions to one main-file identity."""
+    if database_file_identity(database_path) == prepared_database_identity:
+        return
+    quarantine_wal_for_replaced_database(database_path)
+    raise DatabaseInstanceChangedError(
+        "The database was replaced while qPlot was selecting a read-only view. "
+        "Refresh to retry; qPlot did not combine the replacement with a prior WAL."
+    )
+
+
 def configure_read_only_sqlite_connection(conn):
     """Keep read-only SQLite scans from growing qPlot's memory footprint."""
     pragmas = (
@@ -156,11 +169,13 @@ def qcodes_read_only_connection(
         )
         conn = None
         try:
+            _require_publication_complete(source_path)
             conn = connect(
                 _qcodes_uri_path(target_path, immutable=immutable),
                 get_DB_debug(),
                 read_only=True,
                 )
+            _require_publication_complete(source_path)
             _require_expected_database_instance(
                 source_path,
                 expected_database_identity,
@@ -186,6 +201,13 @@ def qcodes_read_only_connection(
             conn.close()
             continue
 
+        try:
+            _require_publication_complete(source_path)
+        except Exception:
+            conn.close()
+            if snapshot is not None:
+                snapshot.cleanup()
+            raise
         conn.path_to_dbfile = str(source_path)
         if snapshot is not None:
             _attach_snapshot_cleanup(conn, snapshot)
@@ -247,6 +269,24 @@ def _resolved_database_path(database_path):
     return Path(database_path).resolve()
 
 
+def _require_publication_complete(database_path):
+    """Reject a view while qPlot is replacing the database main file."""
+    guard_path = database_publication_guard_path(database_path)
+    try:
+        guard_path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            f"Could not prove that database publication is complete: {error}"
+        ) from error
+    raise ReadOnlyDatabaseAccessError(
+        "Test-database publication is still in progress or needs recovery. "
+        "Retry after generation finishes; qPlot did not open the database or "
+        "its SQLite sidecars."
+    )
+
+
 def _sqlite_uri_path(database_path):
     """Return an absolute, URI-escaped SQLite path without the ``file:`` prefix."""
     return _resolved_database_path(database_path).as_uri().removeprefix("file:")
@@ -285,12 +325,14 @@ def sqlite_read_only_connection(
         )
         conn = None
         try:
+            _require_publication_complete(source_path)
             conn = sqlite3.connect(
                 sqlite_read_only_uri(target_path, immutable=immutable),
                 timeout=timeout,
                 uri=True,
                 **kwargs,
                 )
+            _require_publication_complete(source_path)
             _require_expected_database_instance(
                 source_path,
                 expected_database_identity,
@@ -316,6 +358,13 @@ def sqlite_read_only_connection(
             conn.close()
             continue
 
+        try:
+            _require_publication_complete(source_path)
+        except Exception:
+            conn.close()
+            if snapshot is not None:
+                snapshot.cleanup()
+            raise
         if snapshot is not None:
             attach_snapshot = getattr(conn, "attach_snapshot", None)
             if not callable(attach_snapshot):
@@ -324,7 +373,7 @@ def sqlite_read_only_connection(
                 raise TypeError(
                     "A custom SQLite connection factory used for a live WAL "
                     "database must provide attach_snapshot()."
-                    )
+                )
             attach_snapshot(snapshot)
         return configure_read_only_sqlite_connection(conn)
 
@@ -408,8 +457,9 @@ def _prepare_read_target(
         *,
         ignore_unpaired_wal=False,
         expected_database_identity=None,
-        ):
+    ):
     """Select immutable static access or make a stable private WAL snapshot."""
+    _require_publication_complete(database_path)
     if not database_path.is_file():
         raise FileNotFoundError(database_path)
 
@@ -417,14 +467,41 @@ def _prepare_read_target(
         database_path,
         expected_database_identity,
     )
+    prepared_database_identity = database_file_identity(database_path)
+    if prepared_database_identity is None:
+        raise FileNotFoundError(database_path)
+
+    try:
+        generation_marker = database_has_qplot_generation_marker(database_path)
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            f"Could not inspect the database publication marker: {error}"
+        ) from error
+    if generation_marker:
+        # The marker is embedded before qPlot publishes a generated main, so it
+        # survives CLI/API process boundaries. Quarantine the whole logical
+        # path before looking for a WAL: a stale WAL can appear, disappear, or
+        # be copied into a private snapshot between any two pathname checks.
+        # Immutable access to the marked main is the only source-preserving
+        # way to ensure no later first load combines it with an old WAL.
+        quarantine_wal_for_replaced_database(database_path)
+        ignore_unpaired_wal = True
 
     wal_path = _wal_path(database_path)
     if ignore_unpaired_wal or replacement_wal_is_quarantined(database_path):
+        _require_prepared_database_instance(
+            database_path,
+            prepared_database_identity,
+        )
         return database_path, True, None, True
     if not wal_path.exists():
         _require_expected_database_instance(
             database_path,
             expected_database_identity,
+        )
+        _require_prepared_database_instance(
+            database_path,
+            prepared_database_identity,
         )
         return database_path, True, None, False
 
@@ -440,6 +517,10 @@ def _prepare_read_target(
             _require_expected_database_instance(
                 database_path,
                 expected_database_identity,
+            )
+            _require_prepared_database_instance(
+                database_path,
+                prepared_database_identity,
             )
             return (
                 database_path,
@@ -467,6 +548,10 @@ def _prepare_read_target(
                 _require_expected_database_instance(
                     database_path,
                     expected_database_identity,
+                )
+                _require_prepared_database_instance(
+                    database_path,
+                    prepared_database_identity,
                 )
             except Exception:
                 snapshot.cleanup()
