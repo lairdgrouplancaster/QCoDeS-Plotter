@@ -96,6 +96,126 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
         self.assertEqual(Path(filename).parent, Path("C:/data"))
 
 
+class PreviewExportLifecycleTestCase(unittest.TestCase):
+    class Connection:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class Param:
+        name = "signal"
+
+    class Dataset:
+        guid = "preview-guid"
+        run_id = 3
+
+        def __init__(self, *, data_error=None):
+            self.conn = PreviewExportLifecycleTestCase.Connection()
+            self.param = PreviewExportLifecycleTestCase.Param()
+            self.data_error = data_error
+            self.requested_parameters = []
+
+        def get_parameters(self):
+            return [self.param]
+
+        def get_parameter_data(self, name):
+            self.requested_parameters.append(name)
+            if self.data_error is not None:
+                raise self.data_error
+            return {name: {"gate": [1.0], name: [2.0]}}
+
+    class HeldDataset:
+        guid = "preview-guid"
+
+        def __init__(self):
+            self.conn = PreviewExportLifecycleTestCase.Connection()
+
+        def __bool__(self):
+            raise AssertionError("Dataset presence must not query row count")
+
+    class Field:
+        def text(self):
+            return "preview.db"
+
+    class Harness(PlotActionsMixin):
+        def __init__(self, local_dataset):
+            self.fileTextbox = PreviewExportLifecycleTestCase.Field()
+            self.ds = PreviewExportLifecycleTestCase.HeldDataset()
+            self._selected_dataset_key = DatasetKey(
+                self.fileTextbox.text(),
+                self.ds.guid,
+            )
+            self.held_handle = DatasetHandle(self.ds)
+            self.dataset_holder = {
+                self._selected_dataset_key: self.held_handle,
+            }
+            self.local_dataset = local_dataset
+            self.loaded_keys = []
+            self.status_messages = []
+            self.error_messages = []
+
+        def _load_dataset(self, dataset_key):
+            self.loaded_keys.append(dataset_key)
+            return self.local_dataset
+
+        def show_status(self, *args):
+            self.status_messages.append(args)
+
+        def show_error(self, *args):
+            self.error_messages.append(args)
+
+    def test_selected_preview_cancel_closes_only_fresh_dataset(self):
+        local_dataset = self.Dataset()
+        harness = self.Harness(local_dataset)
+
+        with patch.object(
+            qtw.QFileDialog,
+            "getSaveFileName",
+            return_value=("", "CSV files (*.csv)"),
+        ):
+            harness.export_preview_csv("signal")
+
+        self.assertEqual(harness.loaded_keys, [harness._selected_dataset_key])
+        self.assertTrue(local_dataset.conn.closed)
+        self.assertEqual(local_dataset.requested_parameters, [])
+        self.assertFalse(harness.held_handle.closed)
+        self.assertFalse(harness.ds.conn.closed)
+        self.assertIs(
+            harness.dataset_holder[harness._selected_dataset_key],
+            harness.held_handle,
+        )
+        self.assertEqual(harness.error_messages, [])
+        self.assertIn("cancelled", harness.status_messages[-1][0].lower())
+
+    def test_run_preview_data_error_closes_fresh_dataset_and_preserves_handle(self):
+        local_dataset = self.Dataset(data_error=RuntimeError("broken export"))
+        harness = self.Harness(local_dataset)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            export_path = Path(temp_dir) / "preview.csv"
+            with patch.object(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(export_path), "CSV files (*.csv)"),
+            ):
+                harness.export_run_preview_csv("preview-guid", "signal")
+
+            self.assertFalse(export_path.exists())
+
+        self.assertEqual(harness.loaded_keys, [harness._selected_dataset_key])
+        self.assertTrue(local_dataset.conn.closed)
+        self.assertEqual(local_dataset.requested_parameters, ["signal"])
+        self.assertFalse(harness.held_handle.closed)
+        self.assertFalse(harness.ds.conn.closed)
+        self.assertIs(
+            harness.dataset_holder[harness._selected_dataset_key],
+            harness.held_handle,
+        )
+        self.assertEqual(harness.error_messages[0][0], "CSV Export Failed")
+
+
 class DatasetHandleTestCase(unittest.TestCase):
     def test_database_identity_changes_on_replacement_but_not_content_updates(self):
         with tempfile.TemporaryDirectory() as temp_dir:

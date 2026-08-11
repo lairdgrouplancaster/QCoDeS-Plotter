@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 import qcodes
 from PyQt6 import QtCore
@@ -24,6 +25,7 @@ from qcodes.parameters import ManualParameter
 import qplot.tools.worker as worker_module
 from qplot.configuration.config import config
 from qplot.datahandling import database as database_module
+from qplot.datahandling import readonly as readonly_module
 from qplot.datahandling.file_identity import (
     canonical_database_path,
     logical_database_path,
@@ -139,7 +141,7 @@ def build_line_database_with_replayed_stale_wal(db_path):
     that SQLite has open.
     """
 
-    build_line_database(db_path, 1, journal_mode="WAL")
+    database_run = build_line_database(db_path, 1, journal_mode="WAL")
     parked = {}
     writer = sqlite3.connect(db_path)
     try:
@@ -159,6 +161,8 @@ def build_line_database_with_replayed_stale_wal(db_path):
     for suffix, parked_path in parked.items():
         shutil.copyfile(parked_path, f"{db_path}{suffix}")
         parked_path.unlink()
+
+    return database_run
 
 
 def dependent_parameter(dataset, dimensions):
@@ -1026,6 +1030,274 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             window.load_file = original_load_file
             close_main_window(window)
             qcodes.config.core.db_location = original_database_path
+
+
+def test_live_wal_preview_exports_use_fresh_action_local_datasets(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    source_directory = tmp_path / "source"
+    export_directory = tmp_path / "exports"
+    source_directory.mkdir()
+    export_directory.mkdir()
+    database_path = source_directory / "live-preview.db"
+    selected_export_path = export_directory / "selected-preview.csv"
+    run_export_path = export_directory / "run-preview.csv"
+    initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+    experiment = load_or_create_experiment(
+        "live_preview_export",
+        sample_name="same_instance",
+    )
+    gate = ManualParameter("gate")
+    signal = ManualParameter("signal")
+    measurement = Measurement(exp=experiment, name="live_preview_export")
+    measurement.register_parameter(gate)
+    measurement.register_parameter(signal, setpoints=(gate,))
+    window = None
+
+    try:
+        with measurement.run(write_in_background=False) as datasaver:
+            datasaver.add_result((gate, 1.0), (signal, 11.0))
+            datasaver.flush_data_to_database(block=True)
+            guid = datasaver.dataset.guid
+
+            window = main_window.MainWindow()
+            window.startupDatabaseTimer.stop()
+            window.monitor.stop()
+            window.config.config["user_preference"]["confirm_close"] = False
+            window.config.config["user_preference"]["confirm_close_all"] = False
+            window.close_database(status=False)
+            assert window.load_file(str(database_path))
+            wait_for(
+                lambda: (
+                    not window._database_load_active
+                    and not window._database_detail_active
+                    and not window._database_expensive_detail_active
+                )
+            )
+            window.monitor.stop()
+            assert window.ds is not None
+            assert window.ds.guid == guid
+
+            parameter = dependent_parameter(window.ds, 1)
+            window.openPlot(params=[parameter], show=False)
+            plot = window.windows[-1]
+            wait_for(lambda: not getattr(plot.worker, "running", False))
+            dataset_key = plot._dataset_key
+            held_handle = window.dataset_holder[dataset_key]
+            held_dataset = held_handle.dataset
+            assert len(
+                held_dataset.get_parameter_data("signal")["signal"]["signal"]
+            ) == 1
+
+            datasaver.add_result((gate, 2.0), (signal, 12.0))
+            datasaver.flush_data_to_database(block=True)
+            source_artifacts = database_artifact_state(database_path)
+            source_entries = set(source_directory.iterdir())
+
+            action_datasets = []
+            action_snapshot_directories = []
+            load_calls = []
+            real_loader = plot_actions_module.load_by_guid_read_only
+
+            def record_action_dataset(*args, **kwargs):
+                dataset = real_loader(*args, **kwargs)
+                snapshot_path = Path(
+                    dataset.conn.execute("PRAGMA database_list").fetchone()[2]
+                )
+                action_datasets.append(dataset)
+                action_snapshot_directories.append(snapshot_path.parent)
+                load_calls.append((args, kwargs))
+                return dataset
+
+            export_paths = iter((selected_export_path, run_export_path))
+
+            def choose_export_path(*_args, **_kwargs):
+                return str(next(export_paths)), "CSV files (*.csv)"
+
+            with monkeypatch.context() as scoped_monkeypatch:
+                scoped_monkeypatch.setattr(
+                    plot_actions_module,
+                    "load_by_guid_read_only",
+                    record_action_dataset,
+                )
+                scoped_monkeypatch.setattr(
+                    qtw.QFileDialog,
+                    "getSaveFileName",
+                    choose_export_path,
+                )
+                window.export_preview_csv("signal")
+                window.export_run_preview_csv(guid, "signal")
+
+            for export_path in (selected_export_path, run_export_path):
+                frame = pd.read_csv(export_path)
+                assert frame["gate"].tolist() == [1.0, 2.0]
+                assert frame["signal"].tolist() == [11.0, 12.0]
+
+            assert len(load_calls) == 2
+            for args, kwargs in load_calls:
+                assert args == (guid, dataset_key.database_path)
+                assert kwargs == {
+                    "expected_database_identity": dataset_key.database_identity,
+                }
+            assert all(dataset is not held_dataset for dataset in action_datasets)
+            for dataset in action_datasets:
+                with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+                    dataset.conn.cursor()
+            assert all(
+                not snapshot_directory.exists()
+                for snapshot_directory in action_snapshot_directories
+            )
+
+            # Selection and plot ownership remain on their original frozen
+            # snapshot; exporting must neither refresh nor evict that handle.
+            assert window.dataset_holder[dataset_key] is held_handle
+            assert not held_handle.closed
+            assert len(
+                held_dataset.get_parameter_data("signal")["signal"]["signal"]
+            ) == 1
+            assert database_artifact_state(database_path) == source_artifacts
+            assert set(source_directory.iterdir()) == source_entries
+    finally:
+        if window is not None:
+            close_main_window(window)
+        experiment.conn.close()
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_preview_export_rejects_database_replacement_during_fresh_load(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    source_directory = tmp_path / "source"
+    replacement_directory = tmp_path / "replacement"
+    export_directory = tmp_path / "exports"
+    source_directory.mkdir()
+    replacement_directory.mkdir()
+    export_directory.mkdir()
+    database_path = source_directory / "racing-preview.db"
+    replacement_path = replacement_directory / "racing-preview.db"
+    export_path = export_directory / "wrong-instance.csv"
+    _run_id, guid, _table_name = build_line_database_with_replayed_stale_wal(
+        database_path
+    )
+    build_line_database(replacement_path, 2, guid=guid)
+    window = main_window.MainWindow()
+
+    try:
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+        assert window.ds is not None
+        parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[parameter], show=False)
+        plot = window.windows[-1]
+        wait_for(lambda: not getattr(plot.worker, "running", False))
+        dataset_key = plot._dataset_key
+        held_handle = window.dataset_holder[dataset_key]
+        held_dataset = held_handle.dataset
+
+        real_require = readonly_module._require_expected_database_instance
+        real_connect = readonly_module.connect
+        replacement_state = None
+        replacement_entries = None
+        replacement_happened = False
+        opened_connections = []
+        errors = []
+        dialog_opened = False
+
+        def replace_after_initial_identity_check(path, expected_identity):
+            nonlocal replacement_entries
+            nonlocal replacement_happened
+            nonlocal replacement_state
+            result = real_require(path, expected_identity)
+            if (
+                not replacement_happened
+                and Path(path) == database_path.resolve()
+                and expected_identity == dataset_key.database_identity
+            ):
+                os.replace(replacement_path, database_path)
+                replacement_state = database_artifact_state(database_path)
+                replacement_entries = set(source_directory.iterdir())
+                replacement_happened = True
+            return result
+
+        def record_connection(*args, **kwargs):
+            connection = real_connect(*args, **kwargs)
+            opened_connections.append(connection)
+            return connection
+
+        def unexpected_save_dialog(*_args, **_kwargs):
+            nonlocal dialog_opened
+            dialog_opened = True
+            return str(export_path), "CSV files (*.csv)"
+
+        with monkeypatch.context() as scoped_monkeypatch:
+            scoped_monkeypatch.setattr(
+                readonly_module,
+                "_require_expected_database_instance",
+                replace_after_initial_identity_check,
+            )
+            scoped_monkeypatch.setattr(
+                readonly_module,
+                "connect",
+                record_connection,
+            )
+            scoped_monkeypatch.setattr(
+                window,
+                "_reload_if_database_instance_changed",
+                lambda _path: False,
+            )
+            scoped_monkeypatch.setattr(
+                window,
+                "show_error",
+                lambda *args: errors.append(args),
+            )
+            scoped_monkeypatch.setattr(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                unexpected_save_dialog,
+            )
+            window.export_run_preview_csv(guid, "signal")
+
+        assert replacement_happened
+        assert not dialog_opened
+        assert not export_path.exists()
+        assert errors
+        assert errors[-1][0] == "Run Load Failed"
+        assert "replaced" in errors[-1][2].lower()
+        assert opened_connections
+        for connection in opened_connections:
+            with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+                connection.cursor()
+
+        # The failed action neither exported the replacement nor disposed of
+        # the plot-owned snapshot from the original database instance.
+        assert window.dataset_holder[dataset_key] is held_handle
+        assert not held_handle.closed
+        assert len(
+            held_dataset.get_parameter_data("signal")["signal"]["signal"]
+        ) == 1
+        assert database_artifact_state(database_path) == replacement_state
+        assert set(source_directory.iterdir()) == replacement_entries
+    finally:
+        close_main_window(window)
+        qcodes.config.core.db_location = original_database_path
 
 
 def test_loaded_path_test_database_generation_uses_replacement_reload(

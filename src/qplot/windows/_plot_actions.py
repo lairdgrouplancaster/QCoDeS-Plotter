@@ -728,11 +728,14 @@ class PlotActionsMixin:
         Exports the measurement represented by a selected-run preview image.
 
         """
-        if not self.ds:
+        if self.ds is None:
             self.show_status("Select a run before exporting a preview.", 5000)
             return
 
-        self._export_preview_csv(self.ds, parameter_name)
+        dataset_key = getattr(self, "_selected_dataset_key", None)
+        if dataset_key is None:
+            dataset_key = self._current_dataset_key(self.ds.guid)
+        self._export_preview_csv(dataset_key, parameter_name)
 
 
     @QtCore.pyqtSlot(str, str)
@@ -745,29 +748,45 @@ class PlotActionsMixin:
             self.show_status("Select a run before exporting a preview.", 5000)
             return
 
+        self._export_preview_csv(self._current_dataset_key(guid), parameter_name)
+
+
+    def _export_preview_csv(self, dataset_key, parameter_name):
+        """Export one preview through a fresh, action-owned dataset view."""
+        dataset = None
         try:
-            ds = self._dataset_for_guid(guid)
+            # Preview and plot datasets intentionally remain frozen at their
+            # original read-only WAL snapshots.  Export needs the newest
+            # committed rows, so it must bypass DatasetHandle caching and bind
+            # the requested parameter on this fresh dataset instance.
+            dataset = self._load_dataset(dataset_key)
+            param = self._measurement_param_by_name(dataset, parameter_name)
+            if param is None:
+                self.show_status(
+                    f"No preview export found for {parameter_name}.",
+                    5000,
+                )
+                return
+
+            self._export_measurement_csv(dataset, [param])
         except Exception as err:
             log_exception("Preview CSV run load failed", err, __name__)
-            self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+            self.show_error(
+                "Run Load Failed",
+                f"Could not load run with GUID {dataset_key.guid}.",
+                str(err),
+            )
             return
-
-        try:
-            self._export_preview_csv(ds, parameter_name)
         finally:
-            self._close_dataset_if_unowned(
-                ds,
-                context="Preview CSV dataset cleanup failed",
-                )
-
-
-    def _export_preview_csv(self, dataset, parameter_name):
-        param = self._measurement_param_by_name(dataset, parameter_name)
-        if param is None:
-            self.show_status(f"No preview export found for {parameter_name}.", 5000)
-            return
-
-        self._export_measurement_csv(dataset, [param])
+            if dataset is not None:
+                try:
+                    close_dataset_connection(dataset)
+                except Exception as err:
+                    log_exception(
+                        "Preview CSV dataset cleanup failed",
+                        err,
+                        __name__,
+                    )
 
 
     def _export_measurement_csv(self, ds, params):
