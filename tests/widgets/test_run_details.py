@@ -27,6 +27,40 @@ from qplot.windows._widgets.preview import (
 
 
 class RunDetailsTabsTestCase(unittest.TestCase):
+    def test_overview_status_matches_the_run_table_label(self):
+        widget = treeWidgets.moreInfo()
+        states = [
+            ("Running (25.00%)", {
+                "is_completed": False,
+                "setpoint_count": 100,
+                "read_setpoint_count": 25,
+                }),
+            ("Running (25.00%)", {
+                "is_completed": 0,
+                "setpoint_count": 100,
+                "read_setpoint_count": 25,
+                }),
+            ("Completed", {"is_completed": True}),
+            ("Interrupted (25.00%)", {
+                "is_completed": True,
+                "measurement_exception": "KeyboardInterrupt",
+                "setpoint_count": 100,
+                "read_setpoint_count": 25,
+                }),
+            ("Failed", {
+                "is_completed": True,
+                "measurement_exception": "ValueError: bad value",
+                }),
+            ]
+
+        for expected, metadata in states:
+            with self.subTest(expected=expected, metadata=metadata):
+                self.assertEqual(
+                    treeWidgets.format_complete_cell(metadata),
+                    expected,
+                    )
+                self.assertEqual(widget._status_text(None, metadata), expected)
+
     def test_axisless_standalone_parameter_is_reported_as_measured(self):
         class Param:
             def __init__(self, name, axes=()):

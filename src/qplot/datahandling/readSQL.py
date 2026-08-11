@@ -400,9 +400,9 @@ def _add_run_detail_fields(
     if infer_missing_shapes and not metadata["point_shape"]:
         observed_setpoints = _add_observed_shape_fields(cursor, metadata)
     _add_completed_observed_result_count(metadata)
-    if (
-            include_read_setpoint_count
-            and _is_keyboard_interrupt(metadata.get("measurement_exception"))
+    if include_read_setpoint_count and (
+            not bool(metadata.get("is_completed"))
+            or _is_keyboard_interrupt(metadata.get("measurement_exception"))
             ):
         if observed_setpoints is None:
             observed_setpoints = _run_setpoint_observation(
@@ -1095,12 +1095,15 @@ def get_run_status(
                 ):
             status[field] = shape_metadata.get(field)
 
-        if _is_keyboard_interrupt(status.get("measurement_exception")):
+        if (
+                not bool(value[2])
+                or _is_keyboard_interrupt(status.get("measurement_exception"))
+                ):
             if observed_setpoints is None:
                 observed_setpoints = _run_setpoint_observation(
                     cursor,
-                    value[2],
-                    _json_dict(value[3]),
+                    value[3],
+                    _json_dict(value[4]),
                     shape_metadata["measure_parameters"],
                     shape_metadata["sweep_parameters"],
                     )

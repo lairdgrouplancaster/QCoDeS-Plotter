@@ -12,7 +12,12 @@ class RunSizeTestCase(unittest.TestCase):
     def _read_only_sqlite_connection(self, database_path):
         return sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
 
-    def _create_completed_status_database(self, database_path, row_count=4):
+    def _create_completed_status_database(
+            self,
+            database_path,
+            row_count=4,
+            is_completed=True,
+            ):
         conn = sqlite3.connect(database_path)
         try:
             conn.execute(
@@ -40,8 +45,15 @@ class RunSizeTestCase(unittest.TestCase):
                 "shapes": {"signal": [row_count]},
                 })
             conn.execute(
-                "INSERT INTO runs VALUES (?, 100, 123, 1, ?, ?, ?)",
-                ("completed-guid", "results_1", run_description, "x,signal"),
+                "INSERT INTO runs VALUES (?, 100, ?, ?, ?, ?, ?)",
+                (
+                    "completed-guid",
+                    123 if is_completed else None,
+                    int(is_completed),
+                    "results_1",
+                    run_description,
+                    "x,signal",
+                    ),
                 )
             conn.commit()
         finally:
@@ -115,6 +127,30 @@ class RunSizeTestCase(unittest.TestCase):
             "TABLE_INFO(\"RESULTS_1\")" in sql.upper()
             for sql in statements
             ))
+
+    def test_running_status_counts_measured_setpoints(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "running.db")
+            self._create_completed_status_database(
+                database_path,
+                row_count=4,
+                is_completed=False,
+                )
+
+            with patch.object(
+                    readSQL,
+                    "qcodes_read_only_connection",
+                    side_effect=self._read_only_sqlite_connection,
+                    ):
+                status = readSQL.get_run_status(
+                    "completed-guid",
+                    database_path=database_path,
+                    include_storage_bytes=False,
+                    )
+
+        self.assertFalse(status["is_completed"])
+        self.assertEqual(status["setpoint_count"], 4)
+        self.assertEqual(status["read_setpoint_count"], 4)
 
     def test_status_includes_storage_calculation_when_requested(self):
         with tempfile.TemporaryDirectory() as temp_dir:

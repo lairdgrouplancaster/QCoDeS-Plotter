@@ -4582,8 +4582,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             database_module.iter_run_detail_batches_via_sql = old_iter_details
 
         self.assertEqual(calls, [
-            ("details.db", [1], 1, False, False, True, False),
-            ("details.db", [2], 1, False, False, True, False),
+            ("details.db", [1], 1, False, False, True, True),
+            ("details.db", [2], 1, False, False, True, True),
             ])
         self.assertEqual(batches, [
             (11, "details.db", {1: {"guid": "guid-1", "result_count": 10}}),

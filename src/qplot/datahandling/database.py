@@ -850,7 +850,7 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
                         infer_missing_shapes=False,
                         include_storage_bytes=False,
                         include_storage_estimate=True,
-                        include_read_setpoint_count=False,
+                        include_read_setpoint_count=True,
                         cancelled_callback=self._is_cancelled,
                         connection_callback=self._set_sql_connection,
                         ):

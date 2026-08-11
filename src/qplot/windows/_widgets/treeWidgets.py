@@ -33,6 +33,7 @@ from ._run_formatting import (  # noqa: F401
     format_progress,
     format_progress_percent,
     format_run_duration,
+    format_run_state,
     format_run_status,
     format_storage_size,
     format_time_taken_seconds,
@@ -1629,18 +1630,13 @@ class moreInfo(qtw.QTabWidget):
 
     def _status_text(self, dataset, run_metadata=None):
         if self._has_authoritative_run_state(run_metadata):
-            completed = run_metadata.get("is_completed")
-            if completed is None:
-                return ""
-            if bool(completed):
-                return "Completed"
-            return "Running"
+            return format_run_state(run_metadata)
 
         running = self._dataset_attr(dataset, "running")
         if running is True:
-            return "Running"
+            return format_run_state({"is_completed": False})
         if running is False:
-            return "Completed"
+            return format_run_state({"is_completed": True})
         return ""
 
 
