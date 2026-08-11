@@ -264,6 +264,161 @@ class DatabaseActionsMixin:
     _database_refresh_instance: DatabaseInstance | None
     _test_database_generation_worker: TestDatabaseGenerationWorker | None
 
+    def _database_generation_transaction_blocks_path(self, database_path=None):
+        """Return whether same-path generation owns ``database_path``.
+
+        The transaction remains owned while the released view is being
+        recovered, and while an ambiguous publication guard prevents safe
+        recovery.  Comparing both the selected logical path and the accepted
+        resolved source keeps aliases of the owned database behind the same
+        gate without touching SQLite.
+        """
+        state = getattr(self, "_test_database_replacement_state", None)
+        if state is None:
+            return False
+
+        if database_path is None:
+            file_textbox = getattr(self, "fileTextbox", None)
+            database_path = file_textbox.text() if file_textbox is not None else ""
+        if not database_path:
+            return False
+
+        owned_path = getattr(state, "database_path", "")
+        if not owned_path:
+            return False
+        if logical_database_path(database_path) == logical_database_path(owned_path):
+            return True
+
+        candidate_resolved = canonical_database_path(database_path)
+        original_instance = getattr(state, "original_instance", None)
+        original_resolved = getattr(original_instance, "resolved_path", None)
+        return bool(
+            candidate_resolved == canonical_database_path(owned_path)
+            or (
+                original_resolved
+                and candidate_resolved == canonical_database_path(original_resolved)
+            )
+        )
+
+
+    def _database_generation_read_allowed(
+            self,
+            database_path=None,
+            *,
+            operation="accessing the database",
+            notify=True,
+            ):
+        """Central gate for actions that could acquire a database consumer."""
+        blocked = DatabaseActionsMixin._database_generation_transaction_blocks_path(
+            self,
+            database_path,
+        )
+        if blocked and notify:
+            self.show_status(
+                f"Wait for test-database generation to finish before {operation}.",
+                5000,
+            )
+        return not blocked
+
+
+    def _sync_database_generation_controls(self):
+        """Keep read-producing controls aligned with the path transaction."""
+        blocked = DatabaseActionsMixin._database_generation_transaction_blocks_path(self)
+        load_active = bool(getattr(self, "_database_load_active", False))
+        enabled = not blocked and not load_active
+        for attr in (
+            "refreshDatabaseButton",
+            "databaseInfoButton",
+            "emptyStateRefreshButton",
+            "plotRunButton",
+            "exportCsvButton",
+            "run_idBox",
+            "measurementBox",
+            "RunList",
+            "infoBox",
+            "autoPlotBox",
+        ):
+            widget = getattr(self, attr, None)
+            set_enabled = getattr(widget, "setEnabled", None)
+            if callable(set_enabled):
+                set_enabled(enabled)
+
+        generation_action = getattr(self, "generateTestDatabaseAction", None)
+        set_generation_enabled = getattr(generation_action, "setEnabled", None)
+        if callable(set_generation_enabled):
+            set_generation_enabled(
+                not getattr(self, "_test_database_generation_active", False)
+                and getattr(self, "_test_database_replacement_state", None) is None
+                and not load_active
+            )
+
+
+    def _clear_test_database_generation_transaction(self):
+        """Release the path gate after recovery or a newer view takes over."""
+        self._test_database_replacement_state = None
+        self._database_view_released_for_generation = False
+        DatabaseActionsMixin._sync_database_generation_controls(self)
+
+
+    def _pending_database_load_targets_another_path(self, database_path):
+        if not getattr(self, "_database_load_active", False):
+            return False
+        state = getattr(self, "_database_load_state", None) or {}
+        pending_path = state.get("abspath")
+        return bool(
+            pending_path
+            and logical_database_path(pending_path)
+            != logical_database_path(database_path)
+        )
+
+
+    def _resume_test_database_generation_recovery(self):
+        """Resume a deferred terminal recovery after an unrelated load ends."""
+        state = getattr(self, "_test_database_replacement_state", None)
+        if state is None or getattr(self, "_test_database_generation_active", False):
+            return False
+        database_path = getattr(state, "database_path", "")
+        if not database_path or not (
+                DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                    self,
+                    database_path,
+                )
+                ):
+            return False
+
+        file_textbox = getattr(self, "fileTextbox", None)
+        current_path = file_textbox.text() if file_textbox is not None else ""
+        if (
+                current_path
+                and not (
+                    DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                        self,
+                        current_path,
+                    )
+                )
+                ):
+            DatabaseActionsMixin._clear_test_database_generation_transaction(self)
+            return False
+        if DatabaseActionsMixin._pending_database_load_targets_another_path(
+                self,
+                database_path,
+                ):
+            return False
+
+        outcome = getattr(state, "outcome", None)
+        if outcome == "replacement":
+            return self._reload_replaced_database(
+                database_path,
+                generation_recovery=True,
+            )
+        if outcome == "recovering-original":
+            return self.load_file(
+                database_path,
+                force=True,
+                generation_recovery=True,
+            )
+        return False
+
     def load_startup_database(self):
         """
         Load the highest-priority available startup database.
@@ -495,9 +650,7 @@ class DatabaseActionsMixin:
                 prepare_replacement(database_path)
 
         self._test_database_generation_active = True
-        action = getattr(self, "generateTestDatabaseAction", None)
-        if action is not None:
-            action.setEnabled(False)
+        DatabaseActionsMixin._sync_database_generation_controls(self)
         worker = TestDatabaseGenerationWorker(
             specifications,
             database_path,
@@ -524,17 +677,13 @@ class DatabaseActionsMixin:
         """Apply the result of background test-database generation."""
         self._test_database_generation_active = False
         self._test_database_generation_worker = None
-        action = getattr(self, "generateTestDatabaseAction", None)
-        if action is not None:
-            action.setEnabled(True)
 
         shutting_down = bool(
             getattr(self, "_shutdown_started", False)
             or getattr(self, "_shutdown_ready", False)
         )
         if shutting_down:
-            self._test_database_replacement_state = None
-            self._database_view_released_for_generation = False
+            DatabaseActionsMixin._clear_test_database_generation_transaction(self)
             return
 
         cancelled = isinstance(error, GenerationCancelled)
@@ -559,8 +708,6 @@ class DatabaseActionsMixin:
                 7000,
             )
 
-        file_textbox = getattr(self, "fileTextbox", None)
-        current_database = file_textbox.text() if file_textbox is not None else ""
         replacement_state = getattr(
             self,
             "_test_database_replacement_state",
@@ -571,18 +718,28 @@ class DatabaseActionsMixin:
             and logical_database_path(replacement_state.database_path)
             == logical_database_path(database_path)
         )
+        file_textbox = getattr(self, "fileTextbox", None)
+        current_database = file_textbox.text() if file_textbox is not None else ""
         current_matches = bool(
             current_database
-            and canonical_database_path(current_database)
-            == canonical_database_path(database_path)
+            and (
+                DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                    self,
+                    current_database,
+                )
+                if state_matches
+                else canonical_database_path(current_database)
+                == canonical_database_path(database_path)
+            )
         )
-        if state_matches and not current_matches:
-            # The user moved to another database while generation was running.
-            # The old transaction must not take control of that newer view.
-            self._test_database_replacement_state = None
-            self._database_view_released_for_generation = False
-            return
+        pending_unrelated_load = (
+            DatabaseActionsMixin._pending_database_load_targets_another_path(
+                self,
+                database_path,
+            )
+        )
         if not state_matches and not current_matches:
+            DatabaseActionsMixin._sync_database_generation_controls(self)
             return
 
         instance_changed = False
@@ -603,8 +760,29 @@ class DatabaseActionsMixin:
             quarantine_wal_for_replaced_database(database_path)
             if state_matches:
                 replacement_state.outcome = "replacement"
-            if not guarded:
-                self._reload_replaced_database(database_path)
+            if guarded:
+                if state_matches:
+                    replacement_state.outcome = "ambiguous"
+                DatabaseActionsMixin._sync_database_generation_controls(self)
+                return
+            if state_matches and (not current_matches or pending_unrelated_load):
+                if not current_matches and not pending_unrelated_load:
+                    DatabaseActionsMixin._clear_test_database_generation_transaction(
+                        self
+                    )
+                else:
+                    DatabaseActionsMixin._sync_database_generation_controls(self)
+                return
+            if current_matches:
+                if state_matches:
+                    self._reload_replaced_database(
+                        database_path,
+                        generation_recovery=True,
+                    )
+                else:
+                    self._reload_replaced_database(database_path)
+            else:
+                DatabaseActionsMixin._sync_database_generation_controls(self)
             return
 
         if guarded:
@@ -613,14 +791,28 @@ class DatabaseActionsMixin:
             # main any sidecar belongs to.
             if state_matches:
                 replacement_state.outcome = "ambiguous"
+            DatabaseActionsMixin._sync_database_generation_controls(self)
             return
 
         if state_matches:
             replacement_state.outcome = "recovering-original"
+            if not current_matches and not pending_unrelated_load:
+                DatabaseActionsMixin._clear_test_database_generation_transaction(self)
+                return
+            if pending_unrelated_load:
+                DatabaseActionsMixin._sync_database_generation_controls(self)
+                return
         # A rejected/cancelled publication left the accepted instance in
         # place. Force bypasses the ordinary same-file shortcut while the
         # released controller session is rebuilt from its read-only view.
-        self.load_file(database_path, force=True)
+        if state_matches:
+            self.load_file(
+                database_path,
+                force=True,
+                generation_recovery=True,
+            )
+        else:
+            self.load_file(database_path, force=True)
 
 
     @QtCore.pyqtSlot()
@@ -657,8 +849,8 @@ class DatabaseActionsMixin:
         self._database_load_worker = None
         self._loaded_database_identity = None
         self._loaded_database_instance = None
-        self._test_database_replacement_state = None
-        self._database_view_released_for_generation = False
+        if getattr(self, "_test_database_replacement_state", None) is None:
+            self._database_view_released_for_generation = False
         if hasattr(self, "_set_database_load_controls_enabled"):
             self._set_database_load_controls_enabled(True)
         if hasattr(self, "_hide_database_load_panel"):
@@ -699,6 +891,7 @@ class DatabaseActionsMixin:
             clear_database_cache()
         self.infoBox.preview.set_database_runs("", {})
         self.infoBox.scrollToTop()
+        DatabaseActionsMixin._sync_database_generation_controls(self)
         self._sync_empty_state()
 
         if status:
@@ -714,6 +907,12 @@ class DatabaseActionsMixin:
         database_path = self.fileTextbox.text()
         if not database_path:
             self.show_status("No database is loaded.", 5000)
+            return
+        if not DatabaseActionsMixin._database_generation_read_allowed(
+                self,
+                database_path,
+                operation="showing database information",
+                ):
             return
         if DatabaseActionsMixin._reload_if_database_instance_changed(
                 self,
@@ -759,11 +958,18 @@ class DatabaseActionsMixin:
             self.show_status("Load a database before refreshing.", 5000)
             return
 
+        database_path = self.fileTextbox.text()
+        if not DatabaseActionsMixin._database_generation_read_allowed(
+                self,
+                database_path,
+                operation="refreshing it",
+                ):
+            return
+
         if getattr(self, "_database_load_active", False):
             self.show_status("Database reload already in progress.", 3000)
             return
 
-        database_path = self.fileTextbox.text()
         if DatabaseActionsMixin._reload_if_database_instance_changed(
                 self,
                 database_path,
@@ -818,6 +1024,12 @@ class DatabaseActionsMixin:
             return
         if not getattr(self, "_database_refresh_active", False):
             return
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                self,
+                database_path,
+                ):
+            DatabaseActionsMixin._cancel_database_refresh(self)
+            return
 
         try:
             if database_path != self.fileTextbox.text():
@@ -861,6 +1073,8 @@ class DatabaseActionsMixin:
 
 
     def _apply_database_refresh_result(self, new_runs, statuses):
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(self):
+            return
         updated_runs = self.RunList.checkWatching(statuses)
         if updated_runs:
             self.infoBox.preview.add_runs(updated_runs)
@@ -908,13 +1122,35 @@ class DatabaseActionsMixin:
         self._database_refresh_instance = None
 
 
-    def _reload_replaced_database(self, database_path):
+    def _reload_replaced_database(
+            self,
+            database_path,
+            *,
+            generation_recovery=False,
+            ):
         """Invalidate one replaced database instance and force a safe reload."""
-        return self.load_file(database_path, force=True, replacement=True)
+        if not generation_recovery:
+            return self.load_file(
+                database_path,
+                force=True,
+                replacement=True,
+            )
+        return self.load_file(
+            database_path,
+            force=True,
+            replacement=True,
+            generation_recovery=True,
+        )
 
 
     def _reload_if_database_instance_changed(self, database_path):
         """Start replacement reload before any action reads a changed source."""
+
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                self,
+                database_path,
+                ):
+            return True
 
         loaded_identity = getattr(self, "_loaded_database_identity", None)
         loaded_instance = getattr(self, "_loaded_database_instance", None)
@@ -1016,6 +1252,13 @@ class DatabaseActionsMixin:
         """
         load_started_at = perf_counter()
         log_event("Database load requested: %s", filename, logger_name=__name__)
+
+        if not DatabaseActionsMixin._database_generation_read_allowed(
+                self,
+                filename,
+                operation="reloading that path",
+                ):
+            return False
 
         if not os.path.isfile(filename):
             self.show_error(
@@ -1174,6 +1417,7 @@ class DatabaseActionsMixin:
             *,
             force=False,
             replacement=False,
+            generation_recovery=False,
             ):
         """
         Updates the database for RunList display and loading datasets.
@@ -1182,6 +1426,22 @@ class DatabaseActionsMixin:
         if load_started_at is None:
             load_started_at = perf_counter()
         log_event("Loading database file: %s", abspath, logger_name=__name__)
+
+        transaction_blocks = (
+            DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                self,
+                abspath,
+            )
+        )
+        if transaction_blocks and not generation_recovery:
+            DatabaseActionsMixin._database_generation_read_allowed(
+                self,
+                abspath,
+                operation="reloading that path",
+            )
+            return False
+        if generation_recovery and not transaction_blocks:
+            return False
 
         if self._database_load_active:
             self.show_status("Wait for the current database load to finish.", 5000)
@@ -1269,6 +1529,7 @@ class DatabaseActionsMixin:
             "load_identity": current_identity,
             "load_instance": current_instance,
             "replacement_reload": replacement,
+            "generation_recovery": generation_recovery,
         }
 
         self._set_database_load_controls_enabled(False)
@@ -1342,6 +1603,7 @@ class DatabaseActionsMixin:
         self._test_database_replacement_state = state
         self._database_view_released_for_generation = True
         self._release_database_runtime_state(abspath)
+        DatabaseActionsMixin._sync_database_generation_controls(self)
         return state
 
 
@@ -1421,13 +1683,12 @@ class DatabaseActionsMixin:
         """
         for attr in (
             "loadDatabaseButton",
-            "refreshDatabaseButton",
-            "databaseInfoButton",
             "openDatabaseFolderButton",
         ):
             widget = getattr(self, attr, None)
             if widget is not None:
                 widget.setEnabled(enabled)
+        DatabaseActionsMixin._sync_database_generation_controls(self)
 
 
     def _show_database_load_panel(self, message):
@@ -1477,6 +1738,7 @@ class DatabaseActionsMixin:
 
         self._hide_database_load_panel()
         self.show_status("Database load cancelled.", 3000)
+        DatabaseActionsMixin._resume_test_database_generation_recovery(self)
 
 
     @QtCore.pyqtSlot(int, str)
@@ -1521,6 +1783,7 @@ class DatabaseActionsMixin:
                 current_instance,
                 ):
             self.show_status("Database changed while loading; retrying...", 0)
+            generation_recovery = bool(state.get("generation_recovery"))
             QtCore.QTimer.singleShot(
                 0,
                 lambda: self.load_file(
@@ -1528,6 +1791,7 @@ class DatabaseActionsMixin:
                     load_started_at,
                     force=True,
                     replacement=True,
+                    generation_recovery=generation_recovery,
                 ),
             )
             return
@@ -1539,6 +1803,7 @@ class DatabaseActionsMixin:
                 f"Could not load database {abspath}.",
                 str(error),
             )
+            DatabaseActionsMixin._resume_test_database_generation_recovery(self)
             return
 
         self._cancel_database_detail_load()
@@ -1572,6 +1837,7 @@ class DatabaseActionsMixin:
                 ):
             self._prepare_replaced_database_reload(abspath)
             self.show_status("Database changed while loading; retrying...", 0)
+            generation_recovery = bool(state.get("generation_recovery"))
             QtCore.QTimer.singleShot(
                 0,
                 lambda: self.load_file(
@@ -1579,6 +1845,7 @@ class DatabaseActionsMixin:
                     load_started_at,
                     force=True,
                     replacement=True,
+                    generation_recovery=generation_recovery,
                 ),
             )
             return
@@ -1603,14 +1870,26 @@ class DatabaseActionsMixin:
                 accepted_instance,
             )
         )
-        self._database_view_released_for_generation = False
+        detached_terminal_transaction = bool(
+            replacement_state is not None
+            and not transaction_matches
+            and not getattr(self, "_test_database_generation_active", False)
+            and getattr(replacement_state, "outcome", None) is not None
+        )
+        if transaction_matches or detached_terminal_transaction:
+            DatabaseActionsMixin._clear_test_database_generation_transaction(self)
+        else:
+            DatabaseActionsMixin._sync_database_generation_controls(self)
         if recovering_original:
             self._restore_test_database_replacement_selection(replacement_state)
         else:
             self.select_default_run()
         final_instance = database_instance(abspath)
         if _database_observations_differ(accepted_instance, final_instance):
-            self._reload_replaced_database(abspath)
+            self._reload_replaced_database(
+                abspath,
+                generation_recovery=bool(state.get("generation_recovery")),
+            )
             return
         prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
         if callable(prioritize_previews):
@@ -1652,8 +1931,6 @@ class DatabaseActionsMixin:
             logger_name=__name__,
         )
         self._start_database_detail_load(abspath, runs)
-        if transaction_matches:
-            self._test_database_replacement_state = None
 
 
     def _restore_test_database_replacement_selection(self, state):
@@ -1715,6 +1992,11 @@ class DatabaseActionsMixin:
 
 
     def _start_database_detail_load(self, abspath, runs):
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                self,
+                abspath,
+                ):
+            return
         run_ids = self._database_detail_run_order(runs)
         if not run_ids:
             return
@@ -1855,6 +2137,11 @@ class DatabaseActionsMixin:
             return
         if not getattr(self, "_database_detail_active", False):
             return
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                self,
+                abspath,
+                ):
+            return
         if abspath != self.fileTextbox.text():
             return
         if DatabaseActionsMixin._reload_if_database_instance_changed(
@@ -1882,6 +2169,11 @@ class DatabaseActionsMixin:
             return
         if not getattr(self, "_database_expensive_detail_active", False):
             return
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(
+                self,
+                abspath,
+                ):
+            return
         if abspath != self.fileTextbox.text():
             return
         if DatabaseActionsMixin._reload_if_database_instance_changed(
@@ -1894,6 +2186,8 @@ class DatabaseActionsMixin:
 
 
     def _apply_database_detail_batch(self, runs):
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(self):
+            return
         updated_runs = self.RunList.updateRuns(runs)
         if not updated_runs:
             return
@@ -1973,6 +2267,8 @@ class DatabaseActionsMixin:
         Select the first visible run so the details pane is not left empty.
 
         """
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(self):
+            return
         if self.RunList.topLevelItemCount() == 0:
             return
 

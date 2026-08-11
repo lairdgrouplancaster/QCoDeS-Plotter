@@ -67,6 +67,15 @@ class PlotActionsMixin:
 
     _selected_dataset_key: DatasetKey | None
 
+    def _generation_gate_allows_action(self, database_path=None, operation=None):
+        gate = getattr(self, "_database_generation_read_allowed", None)
+        if not callable(gate):
+            return True
+        return gate(
+            database_path,
+            operation=operation or "using run data",
+        )
+
     @staticmethod
     def _dataset_key_is_current(dataset_key):
         expected_identity = dataset_key.database_identity
@@ -91,6 +100,16 @@ class PlotActionsMixin:
 
     def _ensure_dataset_key_can_be_read(self, dataset_key):
         """Reject a plot read until an atomically replaced source is reloaded."""
+
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                dataset_key.database_path,
+                "using run data",
+                ):
+            raise RuntimeError(
+                "Test-database generation owns this database path until its "
+                "released view has recovered."
+            )
 
         if self._dataset_key_targets_loaded_database(dataset_key):
             reload_if_changed = getattr(
@@ -567,6 +586,11 @@ class PlotActionsMixin:
         Loads the selected run into memory and updates the details pane.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="selecting a run",
+                ):
+            return
         self.show_status("Loading selected run...", 0)
         dataset_key = self._current_dataset_key(guid)
         try:
@@ -667,6 +691,11 @@ class PlotActionsMixin:
         Plots the requested measurement for the requested run.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening a plot",
+                ):
+            return
         ds = self._dataset_for_plot_target()
         if ds is None:
             return
@@ -696,6 +725,11 @@ class PlotActionsMixin:
         Opens every plottable measurement in the currently selected table row.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening plots",
+                ):
+            return
         if self.ds is None:
             self.show_status("Select a run before plotting all measurements.", 5000)
             return
@@ -709,6 +743,11 @@ class PlotActionsMixin:
         Exports the requested run and measurement data to a CSV file.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="exporting run data",
+                ):
+            return
         ds = self._dataset_for_plot_target()
         if ds is None:
             return
@@ -728,6 +767,11 @@ class PlotActionsMixin:
         Exports the measurement represented by a selected-run preview image.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="exporting preview data",
+                ):
+            return
         if self.ds is None:
             self.show_status("Select a run before exporting a preview.", 5000)
             return
@@ -744,6 +788,11 @@ class PlotActionsMixin:
         Exports the measurement represented by a run-table preview image.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="exporting preview data",
+                ):
+            return
         if not guid:
             self.show_status("Select a run before exporting a preview.", 5000)
             return
@@ -828,6 +877,14 @@ class PlotActionsMixin:
         Opens plot windows for the selected or requested run.
 
         """
+        target_path = guid.database_path if isinstance(guid, DatasetKey) else None
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                target_path,
+                "opening plots",
+                ):
+            return
+
         # ``DataSet`` implements truthiness through ``__len__``, which queries
         # its SQLite connection.  A Windows replacement test (and a real
         # replacement race) may have deliberately released that old read-only
@@ -971,6 +1028,11 @@ class PlotActionsMixin:
         Open the indexed dependent parameter for the selected run.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening a plot",
+                ):
+            return
         if self.ds is None:
             self.show_status("Select a run before opening a parameter.", 5000)
             return
@@ -989,6 +1051,11 @@ class PlotActionsMixin:
         Open the plot represented by a double-clicked preview image.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening a preview plot",
+                ):
+            return
         if self.ds is None:
             self.show_status("Select a run before opening a preview plot.", 5000)
             return
@@ -1007,6 +1074,11 @@ class PlotActionsMixin:
         Open the plot represented by a double-clicked run-table preview image.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening a preview plot",
+                ):
+            return
         if not guid:
             self.show_status("Select a run before opening a preview plot.", 5000)
             return
@@ -1045,6 +1117,17 @@ class PlotActionsMixin:
         Adds a plottable 1D parameter to an existing compatible 1D plot.
 
         """
+        source_path = (
+            source_identity.database_path
+            if isinstance(source_identity, DatasetKey)
+            else None
+        )
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                source_path,
+                "adding a preview trace",
+                ):
+            return False
         if target_win is None or not hasattr(target_win, "option_boxes"):
             self.show_status("Drop traces onto a compatible line plot.", 5000)
             return False
@@ -1211,6 +1294,11 @@ class PlotActionsMixin:
         Loads the dataset requested by the Run field.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="loading the selected run",
+                ):
+            return None
         if not self.fileTextbox.text():
             self.show_status("Load a database before plotting or exporting.", 5000)
             return None

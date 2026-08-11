@@ -40,7 +40,12 @@ from qplot.datahandling.readonly import (
     replacement_wal_is_quarantined,
     sqlite_read_only_connection,
 )
-from qplot.testdata import CSV_COLUMNS, RunSpecification, generate_database
+from qplot.testdata import (
+    CSV_COLUMNS,
+    GenerationCancelled,
+    RunSpecification,
+    generate_database,
+)
 from qplot.windows import _database_actions as database_actions_module
 from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows import main as main_window
@@ -444,6 +449,31 @@ def release_windows_database_locks(window, database_path, *extra_datasets):
 
     qtw.QApplication.processEvents()
     gc.collect()
+
+
+def assert_same_path_generation_consumers_released(window):
+    """Assert that no database-reading GUI consumer survived the release."""
+    assert window.databaseLoadThreadPool.activeThreadCount() == 0
+    assert window.databaseDetailThreadPool.activeThreadCount() == 0
+    assert window.databaseExpensiveDetailThreadPool.activeThreadCount() == 0
+    assert window.databaseRefreshThreadPool.activeThreadCount() == 0
+    assert window.threadPool.activeThreadCount() == 0
+    assert window._database_load_worker is None
+    assert window._database_detail_worker is None
+    assert window._database_expensive_detail_worker is None
+    assert window._database_refresh_worker is None
+    assert not window._plot_workers
+    assert window.dataset_holder == {}
+    assert window.ds is None
+    assert window._selected_dataset_key is None
+    assert window.selected_run_id is None
+    assert window.windows == []
+    assert window.RunList.topLevelItemCount() == 0
+    preview = window.infoBox.preview
+    assert preview._workers == {}
+    assert preview.queue == {}
+    assert preview.active == set()
+    assert not window.monitor.isActive()
 
 
 def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
@@ -1480,6 +1510,295 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
     finally:
         close_main_window(window)
         qcodes.config.core.db_location = original_database_path
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancellation"])
+def test_same_path_generation_gate_blocks_every_database_consumer(
+    tmp_path,
+    monkeypatch,
+    outcome,
+):
+    """A paused publisher owns its path until terminal recovery completes."""
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_qcodes_database = qcodes.config.core.db_location
+    database_path = Path(tmp_path) / f"blocked-generation-{outcome}.db"
+    csv_path = Path(tmp_path) / f"blocked-generation-{outcome}.csv"
+    _run_id, guid, _table_name = build_line_database(
+        database_path,
+        2,
+        journal_mode="DELETE",
+    )
+    write_small_generation_specification(csv_path, point_count=5)
+    original_generate_database = database_actions_module.generate_database
+    worker_entered = threading.Event()
+    release_worker = threading.Event()
+    injected_error = RuntimeError("injected prepublication generation failure")
+    window = None
+    errors = []
+
+    def blocked_generate_database(*args, **kwargs):
+        worker_entered.set()
+        assert release_worker.wait(12)
+        if outcome == "failure":
+            raise injected_error
+        if outcome == "cancellation":
+            assert kwargs["cancelled_callback"]()
+            raise GenerationCancelled("Test-database generation was cancelled")
+        return original_generate_database(*args, **kwargs)
+
+    try:
+        window = main_window.MainWindow()
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        window.show_error = (
+            lambda title, message, details=None: errors.append(
+                (title, message, details)
+            )
+        )
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+                and not window.infoBox.preview._workers
+                and not window._plot_workers
+            )
+        )
+        parameter = dependent_parameter(window.ds, 1)
+        window.openPlot(params=[parameter], show=False)
+        old_plot = window.windows[-1]
+        wait_for(
+            lambda: (
+                not getattr(old_plot.worker, "running", False)
+                and not window._plot_workers
+            )
+        )
+        original_instance = database_instance(database_path)
+
+        configure_generation_dialogs(monkeypatch, csv_path, database_path)
+        monkeypatch.setattr(
+            database_actions_module,
+            "generate_database",
+            blocked_generate_database,
+        )
+        assert window.generate_test_database_from_csv()
+        wait_for(worker_entered.is_set)
+        assert window._database_generation_transaction_blocks_path(database_path)
+        assert window.testDatabaseGenerationThreadPool.activeThreadCount() == 1
+        assert_same_path_generation_consumers_released(window)
+
+        def database_info_must_not_run(_database_path):
+            raise AssertionError("database information bypassed generation gate")
+
+        monkeypatch.setattr(
+            database_actions_module,
+            "database_info_rows",
+            database_info_must_not_run,
+        )
+        window.refreshMain()
+        window.monitor.timeout.emit()
+        window.show_database_info()
+        assert not window.load_database_path(str(database_path))
+        assert not window.load_file(str(database_path), force=True, replacement=True)
+        window.updateSelected(guid)
+        window.openRun()
+        window.open_selected_run_all()
+        window.openPlot(guid)
+        window.open_param_by_index(0)
+        window.open_preview_plot("signal")
+        window.open_run_preview_plot(guid, "signal")
+        window.exportRunCsv()
+        window.export_preview_csv("signal")
+        window.export_run_preview_csv(guid, "signal")
+        window._start_database_detail_load(
+            str(database_path),
+            {1: {"guid": guid}},
+        )
+        window.database_refresh_finished(
+            window._database_refresh_generation,
+            str(database_path),
+            {99: {"guid": "stale-refresh-guid"}},
+            {},
+            None,
+        )
+        window.database_detail_batch_ready(
+            window._database_detail_generation,
+            str(database_path),
+            {99: {"guid": "stale-detail-guid"}},
+        )
+        window.database_expensive_detail_batch_ready(
+            window._database_expensive_detail_generation,
+            str(database_path),
+            {99: {"guid": "stale-expensive-detail-guid"}},
+        )
+        preview = window.infoBox.preview
+        preview._worker_finished(
+            preview.generation - 1,
+            "stale-preview-guid",
+            ["stale preview"],
+            None,
+        )
+        window.spinBox.setValue(4.125)
+        assert_same_path_generation_consumers_released(window)
+        assert window.testDatabaseGenerationThreadPool.activeThreadCount() == 1
+        assert window.loadDatabaseButton.isEnabled()
+        assert window.spinBox.isEnabled()
+        for control in (
+            window.refreshDatabaseButton,
+            window.databaseInfoButton,
+            window.plotRunButton,
+            window.exportCsvButton,
+            window.RunList,
+            window.infoBox,
+        ):
+            assert not control.isEnabled()
+
+        if outcome == "cancellation":
+            window._test_database_generation_worker.cancel()
+        release_worker.set()
+        wait_for(lambda: not window._test_database_generation_active)
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+
+        assert not window._database_view_released_for_generation
+        assert window._test_database_replacement_state is None
+        assert window.generateTestDatabaseAction.isEnabled()
+        assert window.monitor.isActive()
+        assert window.monitor.interval() == 4125
+        assert window.ds is not None
+        if outcome == "success":
+            assert database_instance(database_path) != original_instance
+            assert window.ds.number_of_results == 5
+            assert replacement_wal_is_quarantined(database_path)
+            assert errors == []
+        else:
+            assert database_instance(database_path) == original_instance
+            assert window.ds.number_of_results == 2
+            assert not replacement_wal_is_quarantined(database_path)
+            if outcome == "failure":
+                assert errors == [
+                    (
+                        "Test Database Generation Failed",
+                        "Could not generate the test database.",
+                        str(injected_error),
+                    )
+                ]
+            else:
+                assert errors == []
+    finally:
+        release_worker.set()
+        if window is not None:
+            close_main_window(window)
+        qcodes.config.core.db_location = original_qcodes_database
+
+
+def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_qcodes_database = qcodes.config.core.db_location
+    owned_path = Path(tmp_path) / "owned-generation.db"
+    unrelated_path = Path(tmp_path) / "unrelated-session.db"
+    csv_path = Path(tmp_path) / "owned-generation.csv"
+    build_line_database(owned_path, 2, journal_mode="DELETE")
+    build_line_database(unrelated_path, 3, journal_mode="DELETE")
+    write_small_generation_specification(csv_path, point_count=5)
+    original_generate_database = database_actions_module.generate_database
+    worker_entered = threading.Event()
+    release_worker = threading.Event()
+    load_pool_blocked = threading.Event()
+    release_load_pool = threading.Event()
+    window = None
+
+    class LoadPoolBlocker(QtCore.QRunnable):
+        def run(self):
+            load_pool_blocked.set()
+            assert release_load_pool.wait(12)
+
+    def blocked_generate_database(*args, **kwargs):
+        worker_entered.set()
+        assert release_worker.wait(12)
+        return original_generate_database(*args, **kwargs)
+
+    try:
+        window = main_window.MainWindow()
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(owned_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+
+        configure_generation_dialogs(monkeypatch, csv_path, owned_path)
+        monkeypatch.setattr(
+            database_actions_module,
+            "generate_database",
+            blocked_generate_database,
+        )
+        assert window.generate_test_database_from_csv()
+        wait_for(worker_entered.is_set)
+        window.databaseLoadThreadPool.start(LoadPoolBlocker())
+        wait_for(load_pool_blocked.is_set)
+        assert window.load_file(str(unrelated_path))
+        assert window._database_load_active
+        release_worker.set()
+        wait_for(lambda: not window._test_database_generation_active)
+        assert window.fileTextbox.text() == str(owned_path)
+        assert window._test_database_replacement_state.outcome == "replacement"
+        assert window._database_view_released_for_generation
+        assert window._database_generation_transaction_blocks_path(owned_path)
+        assert not window._database_generation_transaction_blocks_path(
+            unrelated_path
+        )
+
+        release_load_pool.set()
+        wait_for(
+            lambda: (
+                window.fileTextbox.text() == str(unrelated_path)
+                and not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        unrelated_instance = database_instance(unrelated_path)
+        assert window._loaded_database_instance == unrelated_instance
+        assert window.ds.number_of_results == 3
+        assert not window._database_generation_transaction_blocks_path(owned_path)
+        assert not window._database_generation_transaction_blocks_path(unrelated_path)
+        assert window.refreshDatabaseButton.isEnabled()
+        assert window.databaseInfoButton.isEnabled()
+        assert window.RunList.isEnabled()
+        assert window.infoBox.isEnabled()
+
+        qtw.QApplication.processEvents()
+        assert window.fileTextbox.text() == str(unrelated_path)
+        assert window._loaded_database_instance == unrelated_instance
+        assert window.ds.number_of_results == 3
+        assert window._test_database_replacement_state is None
+        assert not window._database_view_released_for_generation
+    finally:
+        release_worker.set()
+        release_load_pool.set()
+        if window is not None:
+            close_main_window(window)
+        qcodes.config.core.db_location = original_qcodes_database
 
 
 def test_same_path_generation_prepublication_failure_restores_static_view(

@@ -324,7 +324,11 @@ def test_failed_current_database_replacement_reloads_without_quarantine(tmp_path
             str(database_path)
         )
         quarantine.assert_not_called()
-        harness.load_file.assert_called_once_with(str(database_path), force=True)
+        harness.load_file.assert_called_once_with(
+            str(database_path),
+            force=True,
+            generation_recovery=True,
+        )
         assert harness.errors == [
             (
                 "Test Database Generation Failed",
@@ -350,6 +354,12 @@ def test_ambiguous_sidecar_failure_keeps_guarded_database_unloaded(tmp_path):
         (),
         {"text": lambda _self: str(database_path)},
     )()
+    harness._test_database_replacement_state = SimpleNamespace(
+        database_path=str(database_path),
+        original_instance=database_instance(database_path),
+        outcome=None,
+    )
+    harness._database_view_released_for_generation = True
     harness.load_file = Mock(return_value=True)
     publication_error = RuntimeError(
         "database active or SQLite sidecars present; safety guard retained"
@@ -368,6 +378,13 @@ def test_ambiguous_sidecar_failure_keeps_guarded_database_unloaded(tmp_path):
         quarantine.assert_not_called()
         harness.load_file.assert_not_called()
         assert harness.errors[-1][2] == str(publication_error)
+        assert harness._test_database_replacement_state.outcome == "ambiguous"
+        assert harness._database_view_released_for_generation
+        assert not harness.generateTestDatabaseAction.isEnabled()
+        assert not harness._database_generation_read_allowed(
+            str(database_path),
+            notify=False,
+        )
     finally:
         harness.deleteLater()
 
@@ -498,9 +515,13 @@ def test_exception_after_publication_is_reloaded_as_replacement(tmp_path):
         assert database_path.read_bytes() == b"published replacement instance"
         assert not harness._test_database_generation_active
         assert harness._test_database_generation_worker is None
-        assert harness.generateTestDatabaseAction.isEnabled()
+        assert not harness.generateTestDatabaseAction.isEnabled()
+        assert harness._database_view_released_for_generation
         quarantine.assert_called_once_with(str(database_path))
-        harness._reload_replaced_database.assert_called_once_with(str(database_path))
+        harness._reload_replaced_database.assert_called_once_with(
+            str(database_path),
+            generation_recovery=True,
+        )
         assert harness.errors == [
             (
                 "Test Database Generation Failed",

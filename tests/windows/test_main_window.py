@@ -2804,7 +2804,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             finally:
                 set_qcodes_database_location(active_database)
 
-    def test_generation_released_same_file_bypasses_already_loaded_shortcut(self):
+    def test_generation_gate_blocks_released_same_file_reload(self):
         active_database = get_DB_location()
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
             database_path = os.path.abspath(database.name)
@@ -2824,15 +2824,15 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 harness._prepare_test_database_replacement(database_path)
                 self.assertEqual(harness.RunList.runs, {})
 
-                self.assertTrue(harness.load_file(database_path))
+                self.assertFalse(harness.load_file(database_path))
 
-                self.assertTrue(harness._database_load_active)
+                self.assertFalse(harness._database_load_active)
                 self.assertEqual(
                     len(harness.databaseLoadThreadPool.started),
-                    started_workers + 1,
+                    started_workers,
                 )
-                self.assertNotIn(
-                    "Database is already loaded",
+                self.assertIn(
+                    "test-database generation",
                     harness.status_messages[-1][0],
                 )
             finally:

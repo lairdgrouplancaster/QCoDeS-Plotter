@@ -427,6 +427,13 @@ class RunControlsMixin:
         Opens the newest incomplete run already present in the run list.
 
         """
+        generation_gate = getattr(
+            self,
+            "_database_generation_transaction_blocks_path",
+            None,
+        )
+        if callable(generation_gate) and generation_gate():
+            return None
         run_list = getattr(self, "RunList", None)
         if run_list is None or not hasattr(run_list, "all_run_metadata"):
             return None
@@ -452,6 +459,17 @@ class RunControlsMixin:
 
         """
         self.monitor.stop()
+        generation_gate = getattr(
+            self,
+            "_database_generation_transaction_blocks_path",
+            None,
+        )
+        if callable(generation_gate) and generation_gate():
+            state = getattr(self, "_test_database_replacement_state", None)
+            if state is not None:
+                state.monitor_was_active = interval > 0
+                state.monitor_interval_ms = max(1, round(interval * 1000))
+            return
         if interval > 0:
             self.monitor.start(max(1, round(interval * 1000)))
 
@@ -533,6 +551,13 @@ class RunControlsMixin:
 
 
     def _run_table_view_changed(self):
+        generation_gate = getattr(
+            self,
+            "_database_generation_transaction_blocks_path",
+            None,
+        )
+        if callable(generation_gate) and generation_gate():
+            return
         prioritize_details = getattr(self, "_prioritize_database_detail_runs", None)
         if callable(prioritize_details):
             prioritize_details()
@@ -540,6 +565,13 @@ class RunControlsMixin:
 
 
     def _prioritize_preview_runs(self, run_ids=None):
+        generation_gate = getattr(
+            self,
+            "_database_generation_transaction_blocks_path",
+            None,
+        )
+        if callable(generation_gate) and generation_gate():
+            return
         preview = getattr(getattr(self, "infoBox", None), "preview", None)
         prioritize = getattr(preview, "prioritize_runs", None)
         if not callable(prioritize):
