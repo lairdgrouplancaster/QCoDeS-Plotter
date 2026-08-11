@@ -1003,8 +1003,9 @@ def _publish_database(
         database_path,
         overwrite,
         expected_destination_state=None,
+        publication_callback=None,
         ):
-    """Publish a generated database atomically with optional no-clobber."""
+    """Publish atomically and notify once the destination is committed."""
     _require_safe_destination_sidecars(database_path)
     if overwrite:
         # A changed directory entry means the user's overwrite decision no
@@ -1020,9 +1021,13 @@ def _publish_database(
                 database_path,
                 expected_destination_state,
             )
+            if publication_callback is not None:
+                publication_callback()
             return
 
     _link_database_file(temporary_path, database_path)
+    if publication_callback is not None:
+        publication_callback()
 
 
 def generate_database(
@@ -1031,8 +1036,9 @@ def generate_database(
         overwrite=False,
         rng=None,
         cancelled_callback=None,
+        publication_callback=None,
         ):
-    """Generate a complete QCoDeS database from validated specifications."""
+    """Generate a database and optionally observe its publication boundary."""
     specifications = list(specifications)
     if not specifications:
         raise SpecificationError("At least one run specification is required")
@@ -1131,12 +1137,23 @@ def generate_database(
                 temporary_path,
                 include_database=False,
             )
-            _publish_database(
-                temporary_path,
-                database_path,
-                overwrite,
-                expected_destination_state,
-            )
+            if publication_callback is None:
+                # Preserve the established four-argument call for test doubles
+                # and internal callers that do not need publication tracking.
+                _publish_database(
+                    temporary_path,
+                    database_path,
+                    overwrite,
+                    expected_destination_state,
+                )
+            else:
+                _publish_database(
+                    temporary_path,
+                    database_path,
+                    overwrite,
+                    expected_destination_state,
+                    publication_callback=publication_callback,
+                )
             publication_completed = True
         finally:
             if temporary_path is not None:

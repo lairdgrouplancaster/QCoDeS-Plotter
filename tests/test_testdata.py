@@ -18,6 +18,7 @@ from qplot import testdata as testdata_module
 from qplot.datahandling import readonly as readonly_module
 from qplot.datahandling.file_identity import (
     DATABASE_PUBLICATION_GUARD_SUFFIX,
+    database_file_identity,
     database_has_qplot_generation_marker,
 )
 from qplot.datahandling.readonly import (
@@ -617,6 +618,30 @@ def test_generate_database_publishes_exact_reserved_path(
     assert owned_temporary_artifacts(database_path.parent) == []
 
 
+@pytest.mark.parametrize("overwrite", [False, True], ids=["new", "replacement"])
+def test_publication_callback_observes_committed_database(tmp_path, overwrite):
+    database_path = tmp_path / "publication-callback.db"
+    if overwrite:
+        testdata_module.generate_database([small_specification()], database_path)
+    original_identity = database_file_identity(database_path)
+    published_identities = []
+
+    generated_path = testdata_module.generate_database(
+        [small_specification()],
+        database_path,
+        overwrite=overwrite,
+        publication_callback=lambda: published_identities.append(
+            database_file_identity(database_path)
+        ),
+    )
+
+    assert generated_path == database_path
+    assert published_identities == [database_file_identity(database_path)]
+    assert published_identities[0] is not None
+    assert published_identities[0] != original_identity
+    assert_generated_database(database_path)
+
+
 def test_qcodes_uri_name_has_exactly_one_encoding_layer(tmp_path):
     database_path = (
         tmp_path
@@ -762,6 +787,61 @@ def test_generation_failure_removes_all_owned_temporary_sidecars(
         testdata_module.generate_database([small_specification()], database_path)
 
     assert not database_path.exists()
+    assert owned_temporary_artifacts(tmp_path) == []
+
+
+def test_prepublication_failure_does_not_call_publication_callback(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "prepublication-failure.db"
+    publication_callbacks = []
+
+    def fail_generation(*_args, **_kwargs):
+        raise RuntimeError("injected prepublication failure")
+
+    monkeypatch.setattr(testdata_module, "_write_run", fail_generation)
+
+    with pytest.raises(RuntimeError, match="injected prepublication failure"):
+        testdata_module.generate_database(
+            [small_specification()],
+            database_path,
+            publication_callback=lambda: publication_callbacks.append(True),
+        )
+
+    assert publication_callbacks == []
+    assert not database_path.exists()
+    assert owned_temporary_artifacts(tmp_path) == []
+
+
+def test_publication_callback_precedes_error_after_real_publisher_returns(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "post-publication-error.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    original_identity = database_file_identity(database_path)
+    original_publish = testdata_module._publish_database
+    events = []
+
+    def publish_then_fail(*args, **kwargs):
+        original_publish(*args, **kwargs)
+        events.append("publisher returned")
+        raise RuntimeError("injected post-publication failure")
+
+    monkeypatch.setattr(testdata_module, "_publish_database", publish_then_fail)
+
+    with pytest.raises(RuntimeError, match="injected post-publication failure"):
+        testdata_module.generate_database(
+            [small_specification()],
+            database_path,
+            overwrite=True,
+            publication_callback=lambda: events.append("published"),
+        )
+
+    assert events == ["published", "publisher returned"]
+    assert database_file_identity(database_path) != original_identity
+    assert_generated_database(database_path)
     assert owned_temporary_artifacts(tmp_path) == []
 
 

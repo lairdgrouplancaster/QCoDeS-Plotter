@@ -1,12 +1,16 @@
 import csv
 import sqlite3
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot import testdata as testdata_module
-from qplot.datahandling.file_identity import database_publication_guard_path
+from qplot.datahandling.file_identity import (
+    database_instance,
+    database_publication_guard_path,
+)
 from qplot.testdata import CSV_COLUMNS, INSTRUCTION_FILE_NAMES
 from qplot.windows._database_actions import (
     DatabaseActionsMixin,
@@ -167,7 +171,7 @@ def test_generation_completion_force_reloads_replaced_current_database(tmp_path)
         (),
         {"text": lambda _self: str(database_path)},
     )()
-    harness.load_file = Mock(return_value=True)
+    harness._reload_replaced_database = Mock(return_value=True)
     specification = Mock(point_count=5)
 
     try:
@@ -178,10 +182,11 @@ def test_generation_completion_force_reloads_replaced_current_database(tmp_path)
                 str(database_path),
                 [specification],
                 None,
+                True,
             )
 
         quarantine.assert_called_once_with(str(database_path))
-        harness.load_file.assert_called_once_with(str(database_path), force=True)
+        harness._reload_replaced_database.assert_called_once_with(str(database_path))
     finally:
         harness.deleteLater()
 
@@ -212,8 +217,8 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
         (),
         {"text": lambda _self: str(database_path)},
     )()
-    harness._prepare_replaced_database_reload = Mock()
-    harness.load_file = Mock(return_value=True)
+    harness._prepare_test_database_replacement = Mock()
+    harness._reload_replaced_database = Mock(return_value=True)
 
     try:
         with (
@@ -239,12 +244,11 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
         ):
             assert harness.generate_test_database_from_csv()
 
-        harness._prepare_replaced_database_reload.assert_called_once_with(
-            str(database_path),
-            quarantine=False,
+        harness._prepare_test_database_replacement.assert_called_once_with(
+            str(database_path)
         )
         quarantine.assert_called_once_with(str(database_path))
-        harness.load_file.assert_called_once_with(str(database_path), force=True)
+        harness._reload_replaced_database.assert_called_once_with(str(database_path))
         connection = sqlite3.connect(database_path)
         try:
             assert connection.execute("SELECT name FROM runs").fetchall() == [
@@ -267,7 +271,17 @@ def test_failed_current_database_replacement_reloads_without_quarantine(tmp_path
         (),
         {"text": lambda _self: str(database_path)},
     )()
-    harness._prepare_replaced_database_reload = Mock()
+    def capture_original_instance(path):
+        harness._test_database_replacement_state = SimpleNamespace(
+            database_path=str(path),
+            original_instance=database_instance(path),
+            outcome=None,
+        )
+        harness._database_view_released_for_generation = True
+
+    harness._prepare_test_database_replacement = Mock(
+        side_effect=capture_original_instance
+    )
 
     def reload_after_error(*args, **kwargs):
         assert harness.errors
@@ -306,9 +320,8 @@ def test_failed_current_database_replacement_reloads_without_quarantine(tmp_path
         ):
             assert harness.generate_test_database_from_csv()
 
-        harness._prepare_replaced_database_reload.assert_called_once_with(
-            str(database_path),
-            quarantine=False,
+        harness._prepare_test_database_replacement.assert_called_once_with(
+            str(database_path)
         )
         quarantine.assert_not_called()
         harness.load_file.assert_called_once_with(str(database_path), force=True)
@@ -414,6 +427,87 @@ def test_generation_cancelled_before_first_run_removes_temporary_database(tmp_pa
             path.name.startswith(testdata_module._TEMPORARY_DATABASE_PREFIX)
             for path in tmp_path.iterdir()
         )
+        assert not harness._test_database_generation_active
+        assert harness._test_database_generation_worker is None
+        assert harness.generateTestDatabaseAction.isEnabled()
+        assert "cancelled" in harness.status_messages[-1][0].lower()
+    finally:
+        harness.deleteLater()
+
+
+def test_exception_after_publication_is_reloaded_as_replacement(tmp_path):
+    harness = GuiHarness(tmp_path)
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    replacement_path = tmp_path / "replacement.db"
+    database_path.write_bytes(b"original database instance")
+    replacement_path.write_bytes(b"published replacement instance")
+    write_small_specification(csv_path)
+    harness.fileTextbox = type(
+        "Field",
+        (),
+        {"text": lambda _self: str(database_path)},
+    )()
+    def capture_original_instance(path):
+        harness._test_database_replacement_state = SimpleNamespace(
+            database_path=str(path),
+            original_instance=database_instance(path),
+            outcome=None,
+        )
+        harness._database_view_released_for_generation = True
+
+    harness._prepare_test_database_replacement = Mock(
+        side_effect=capture_original_instance
+    )
+    harness._reload_replaced_database = Mock(return_value=True)
+
+    publication_error = RuntimeError("injected failure after publication")
+
+    def publish_then_fail(*_args, **_kwargs):
+        replacement_path.replace(database_path)
+        raise publication_error
+
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getOpenFileName",
+                return_value=(str(csv_path), "CSV Files (*.csv)"),
+            ),
+            patch.object(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(database_path), "QCoDeS Database (*.db)"),
+            ),
+            patch.object(
+                qtw.QMessageBox,
+                "question",
+                return_value=qtw.QMessageBox.StandardButton.Yes,
+            ),
+            patch(
+                "qplot.windows._database_actions.generate_database",
+                side_effect=publish_then_fail,
+            ),
+            patch(
+                "qplot.windows._database_actions."
+                "quarantine_wal_for_replaced_database"
+            ) as quarantine,
+        ):
+            assert harness.generate_test_database_from_csv()
+
+        assert database_path.read_bytes() == b"published replacement instance"
+        assert not harness._test_database_generation_active
+        assert harness._test_database_generation_worker is None
+        assert harness.generateTestDatabaseAction.isEnabled()
+        quarantine.assert_called_once_with(str(database_path))
+        harness._reload_replaced_database.assert_called_once_with(str(database_path))
+        assert harness.errors == [
+            (
+                "Test Database Generation Failed",
+                "Could not generate the test database.",
+                str(publication_error),
+            )
+        ]
     finally:
         harness.deleteLater()
 

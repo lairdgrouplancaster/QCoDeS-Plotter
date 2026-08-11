@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass
 from time import perf_counter
 
 from PyQt6 import QtCore, QtGui
@@ -188,7 +189,23 @@ def reveal_file_in_file_manager(file_path):
 class TestDatabaseGenerationSignals(QtCore.QObject):
     """Signals emitted by background test-database generation."""
 
-    finished = QtCore.pyqtSignal(str, object, object)
+    finished = QtCore.pyqtSignal(str, object, object, bool)
+
+
+@dataclass(slots=True)
+class _TestDatabaseReplacementState:
+    """Controller state retained while a loaded database may be replaced."""
+
+    database_path: str
+    original_instance: DatabaseInstance
+    selected_guid: str | None
+    selected_run_id: int | str | None
+    run_id_text: str
+    measurement_text: str
+    details_tab_index: int | None
+    monitor_was_active: bool
+    monitor_interval_ms: int
+    outcome: str | None = None
 
 
 class TestDatabaseGenerationWorker(QtCore.QRunnable):
@@ -201,6 +218,7 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
         self.database_path = str(database_path)
         self.overwrite = overwrite
         self._cancelled = threading.Event()
+        self._publication_completed = threading.Event()
 
     def cancel(self):
         """Request cooperative cancellation and temporary-file cleanup."""
@@ -214,9 +232,10 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
                 self.database_path,
                 overwrite=self.overwrite,
                 cancelled_callback=self._cancelled.is_set,
+                publication_callback=self._publication_completed.set,
             )
-        except GenerationCancelled:
-            return
+        except GenerationCancelled as err:
+            error = err
         except Exception as err:
             error = err
             log_exception("Test database generation failed", err, __name__)
@@ -226,6 +245,7 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
                 self.database_path,
                 self.specifications,
                 error,
+                self._publication_completed.is_set(),
             )
         except RuntimeError as err:
             if "wrapped C/C++ object" not in str(err):
@@ -396,6 +416,15 @@ class DatabaseActionsMixin:
         if getattr(self, "_test_database_generation_active", False):
             self.show_status("A test database is already being generated.", 5000)
             return False
+        if (
+                getattr(self, "_database_load_active", False)
+                or getattr(self, "_database_view_released_for_generation", False)
+                ):
+            self.show_status(
+                "Wait for the current database recovery to finish.",
+                5000,
+            )
+            return False
 
         csv_path = qtw.QFileDialog.getOpenFileName(
             self,
@@ -454,20 +483,16 @@ class DatabaseActionsMixin:
                 and canonical_database_path(current_database)
                 == canonical_database_path(database_path)
                 ):
-            # qPlot deliberately replaces this source. Release its read-only
-            # dataset handles before the worker publishes the temporary file:
-            # Windows otherwise forbids replacing a database that qPlot still
-            # has open. Publication can still be rejected, so this preparation
-            # must not mark the unchanged database as replaced or quarantine
-            # its WAL. The completion path decides which kind of reload is
-            # required after publication has either succeeded or failed.
+            # Capture the accepted source before releasing its handles. The
+            # worker stages elsewhere, so this is only a reversible release:
+            # the terminal callback alone may confirm replacement/quarantine.
             prepare_replacement = getattr(
                 self,
-                "_prepare_replaced_database_reload",
+                "_prepare_test_database_replacement",
                 None,
             )
             if callable(prepare_replacement):
-                prepare_replacement(database_path, quarantine=False)
+                prepare_replacement(database_path)
 
         self._test_database_generation_active = True
         action = getattr(self, "generateTestDatabaseAction", None)
@@ -488,12 +513,13 @@ class DatabaseActionsMixin:
         return True
 
 
-    @QtCore.pyqtSlot(str, object, object)
+    @QtCore.pyqtSlot(str, object, object, bool)
     def test_database_generation_finished(
             self,
             database_path,
             specifications,
             error,
+            publication_completed=False,
             ):
         """Apply the result of background test-database generation."""
         self._test_database_generation_active = False
@@ -502,48 +528,99 @@ class DatabaseActionsMixin:
         if action is not None:
             action.setEnabled(True)
 
-        if error is not None:
+        shutting_down = bool(
+            getattr(self, "_shutdown_started", False)
+            or getattr(self, "_shutdown_ready", False)
+        )
+        if shutting_down:
+            self._test_database_replacement_state = None
+            self._database_view_released_for_generation = False
+            return
+
+        cancelled = isinstance(error, GenerationCancelled)
+        if cancelled:
+            self.show_status("Test database generation cancelled.", 3000)
+        elif error is not None:
             self.show_error(
                 "Test Database Generation Failed",
                 "Could not generate the test database.",
                 str(error),
             )
-            file_textbox = getattr(self, "fileTextbox", None)
-            current_database = file_textbox.text() if file_textbox is not None else ""
-            if (
-                    current_database
-                    and canonical_database_path(current_database)
-                    == canonical_database_path(database_path)
-                    and not _database_publication_is_guarded(database_path)
-                    ):
-                # The publication protocol preserves the old main file and all
-                # pre-existing sidecars on rejection. Restore the view whose
-                # handles were released before generation unless the publisher
-                # retained its guard after an ambiguous sidecar race.
-                self.load_file(database_path, force=True)
-            return
 
-        run_count = len(specifications)
-        point_count = sum(specification.point_count for specification in specifications)
-        run_word = "run" if run_count == 1 else "runs"
-        self.show_status(
-            f"Generated {os.path.basename(database_path)} with {run_count} "
-            f"{run_word} and {point_count} points.",
-            7000,
-        )
+        if error is None:
+            run_count = len(specifications)
+            point_count = sum(
+                specification.point_count for specification in specifications
+            )
+            run_word = "run" if run_count == 1 else "runs"
+            self.show_status(
+                f"Generated {os.path.basename(database_path)} with {run_count} "
+                f"{run_word} and {point_count} points.",
+                7000,
+            )
+
         file_textbox = getattr(self, "fileTextbox", None)
         current_database = file_textbox.text() if file_textbox is not None else ""
-        if (
-                current_database
-                and canonical_database_path(current_database)
-                == canonical_database_path(database_path)
-                ):
-            # Publication succeeded, so the identity really did change. Mark
-            # the replacement before the first reload read; this retains the
-            # read-side defence against an unpaired WAL if an external actor
-            # manages to recreate one after publication.
+        replacement_state = getattr(
+            self,
+            "_test_database_replacement_state",
+            None,
+        )
+        state_matches = bool(
+            replacement_state is not None
+            and logical_database_path(replacement_state.database_path)
+            == logical_database_path(database_path)
+        )
+        current_matches = bool(
+            current_database
+            and canonical_database_path(current_database)
+            == canonical_database_path(database_path)
+        )
+        if state_matches and not current_matches:
+            # The user moved to another database while generation was running.
+            # The old transaction must not take control of that newer view.
+            self._test_database_replacement_state = None
+            self._database_view_released_for_generation = False
+            return
+        if not state_matches and not current_matches:
+            return
+
+        instance_changed = False
+        if state_matches:
+            current_instance = database_instance(database_path)
+            instance_changed = _database_observations_differ(
+                replacement_state.original_instance,
+                current_instance,
+            )
+
+        replacement_confirmed = bool(
+            error is None or publication_completed or instance_changed
+        )
+        guarded = _database_publication_is_guarded(database_path)
+        if replacement_confirmed:
+            # This transition is intentionally the first quarantine point.
+            # It covers success as well as an exception raised after commit.
             quarantine_wal_for_replaced_database(database_path)
-            self.load_file(database_path, force=True)
+            if state_matches:
+                replacement_state.outcome = "replacement"
+            if not guarded:
+                self._reload_replaced_database(database_path)
+            return
+
+        if guarded:
+            # The publisher retained a guard because it could not prove a safe
+            # rollback. Keep the released view invalid and do not guess which
+            # main any sidecar belongs to.
+            if state_matches:
+                replacement_state.outcome = "ambiguous"
+            return
+
+        if state_matches:
+            replacement_state.outcome = "recovering-original"
+        # A rejected/cancelled publication left the accepted instance in
+        # place. Force bypasses the ordinary same-file shortcut while the
+        # released controller session is rebuilt from its read-only view.
+        self.load_file(database_path, force=True)
 
 
     @QtCore.pyqtSlot()
@@ -580,6 +657,8 @@ class DatabaseActionsMixin:
         self._database_load_worker = None
         self._loaded_database_identity = None
         self._loaded_database_instance = None
+        self._test_database_replacement_state = None
+        self._database_view_released_for_generation = False
         if hasattr(self, "_set_database_load_controls_enabled"):
             self._set_database_load_controls_enabled(True)
         if hasattr(self, "_hide_database_load_panel"):
@@ -1154,6 +1233,11 @@ class DatabaseActionsMixin:
                 same_loaded_database
                 and not replacement
                 and not force
+                and not getattr(
+                    self,
+                    "_database_view_released_for_generation",
+                    False,
+                )
                 and loaded_identity is not None
                 and current_identity == loaded_identity
                 ):
@@ -1202,18 +1286,75 @@ class DatabaseActionsMixin:
         return True
 
 
-    def _prepare_replaced_database_reload(self, abspath, *, quarantine=True):
-        """Discard runtime objects before a database is deliberately replaced.
+    def _prepare_test_database_replacement(self, abspath):
+        """Capture and release a loaded source before tentative publication."""
+        monitor = getattr(self, "monitor", None)
+        monitor_is_active = getattr(monitor, "isActive", None)
+        if callable(monitor_is_active):
+            monitor_was_active = bool(monitor_is_active())
+        else:
+            monitor_was_active = self._main_refresh_interval() > 0
+        monitor_interval = getattr(monitor, "interval", None)
+        if callable(monitor_interval):
+            monitor_interval_ms = int(monitor_interval())
+        else:
+            monitor_interval_ms = max(
+                1,
+                round(self._main_refresh_interval() * 1000),
+            )
 
-        Test-data generation calls this with ``quarantine=False`` before its
-        worker starts. At that point publication has not happened and may be
-        rejected, so marking the existing instance as replaced would make
-        later reads incorrectly ignore its valid WAL.
-        """
+        selected_dataset = getattr(self, "ds", None)
+        selected_guid = getattr(selected_dataset, "guid", None)
+        if selected_guid is None:
+            selected_items = getattr(self.RunList, "selectedItems", None)
+            if callable(selected_items):
+                items = selected_items()
+                if len(items) == 1:
+                    selected_guid = getattr(items[0], "guid", None)
+
+        run_id_box = getattr(self, "run_idBox", None)
+        measurement_box = getattr(self, "measurementBox", None)
+        details_tab = getattr(self, "infoBox", None)
+        current_tab_index = getattr(details_tab, "currentIndex", None)
+        loaded_instance = getattr(self, "_loaded_database_instance", None)
+        if (
+                not isinstance(loaded_instance, DatabaseInstance)
+                or loaded_instance.logical_path != logical_database_path(abspath)
+                ):
+            loaded_instance = database_instance(abspath)
+
+        state = _TestDatabaseReplacementState(
+            database_path=str(abspath),
+            original_instance=loaded_instance,
+            selected_guid=selected_guid,
+            selected_run_id=getattr(self, "selected_run_id", None),
+            run_id_text=run_id_box.text() if run_id_box is not None else "",
+            measurement_text=(
+                measurement_box.text() if measurement_box is not None else "*"
+            ),
+            details_tab_index=(
+                int(current_tab_index()) if callable(current_tab_index) else None
+            ),
+            monitor_was_active=monitor_was_active,
+            monitor_interval_ms=monitor_interval_ms,
+        )
+        self._test_database_replacement_state = state
+        self._database_view_released_for_generation = True
+        self._release_database_runtime_state(abspath)
+        return state
+
+
+    def _prepare_replaced_database_reload(self, abspath):
+        """Quarantine and discard objects after replacement is confirmed."""
+        quarantine_wal_for_replaced_database(abspath)
+        self._release_database_runtime_state(abspath)
+
+
+    def _release_database_runtime_state(self, abspath):
+        """Release database consumers without asserting that publication won."""
         old_instance = getattr(self, "_loaded_database_instance", None)
-        if quarantine:
-            quarantine_wal_for_replaced_database(abspath)
         self.monitor.stop()
+        DatabaseActionsMixin._cancel_database_refresh(self)
         self._cancel_database_detail_load()
 
         cancel_plot_work = getattr(self, "_cancel_plot_work", None)
@@ -1443,7 +1584,29 @@ class DatabaseActionsMixin:
 
         self._loaded_database_identity = accepted_identity
         self._loaded_database_instance = accepted_instance
-        self.select_default_run()
+        replacement_state = getattr(
+            self,
+            "_test_database_replacement_state",
+            None,
+        )
+        transaction_matches = bool(
+            replacement_state is not None
+            and logical_database_path(replacement_state.database_path)
+            == logical_database_path(abspath)
+        )
+        recovering_original = bool(
+            transaction_matches
+            and replacement_state.outcome == "recovering-original"
+            and not _database_observations_differ(
+                replacement_state.original_instance,
+                accepted_instance,
+            )
+        )
+        self._database_view_released_for_generation = False
+        if recovering_original:
+            self._restore_test_database_replacement_selection(replacement_state)
+        else:
+            self.select_default_run()
         final_instance = database_instance(abspath)
         if _database_observations_differ(accepted_instance, final_instance):
             self._reload_replaced_database(abspath)
@@ -1452,9 +1615,14 @@ class DatabaseActionsMixin:
         if callable(prioritize_previews):
             prioritize_previews()
         self._sync_empty_state()
-        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
-        if callable(apply_refresh_interval):
-            apply_refresh_interval(self._current_refresh_interval())
+        if transaction_matches:
+            self.monitor.stop()
+            if replacement_state.monitor_was_active:
+                self.monitor.start(max(1, replacement_state.monitor_interval_ms))
+        else:
+            apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+            if callable(apply_refresh_interval):
+                apply_refresh_interval(self._current_refresh_interval())
 
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)
@@ -1483,6 +1651,46 @@ class DatabaseActionsMixin:
             logger_name=__name__,
         )
         self._start_database_detail_load(abspath, runs)
+        if transaction_matches:
+            self._test_database_replacement_state = None
+
+
+    def _restore_test_database_replacement_selection(self, state):
+        """Restore the unchanged source's selected run and controller fields."""
+        measurement_box = getattr(self, "measurementBox", None)
+        if measurement_box is not None:
+            measurement_box.setText(state.measurement_text)
+
+        item = None
+        item_for_guid = getattr(self.RunList, "_item_for_guid", None)
+        if state.selected_guid and callable(item_for_guid):
+            item = item_for_guid(state.selected_guid)
+        if item is None and state.selected_run_id is not None:
+            find_items = getattr(self.RunList, "findItems", None)
+            if callable(find_items):
+                matches = find_items(
+                    str(state.selected_run_id),
+                    QtCore.Qt.MatchFlag.MatchExactly,
+                    0,
+                )
+                if matches:
+                    item = matches[0]
+
+        if item is not None:
+            self.RunList.setCurrentItem(item)
+            self.RunList.scrollToItem(
+                item,
+                qtw.QAbstractItemView.ScrollHint.PositionAtCenter,
+            )
+        elif state.run_id_text:
+            self.run_idBox.setText(state.run_id_text)
+        else:
+            self.select_default_run()
+
+        if state.details_tab_index is not None:
+            set_current_index = getattr(self.infoBox, "setCurrentIndex", None)
+            if callable(set_current_index):
+                set_current_index(state.details_tab_index)
 
 
     def _cancel_database_detail_load(self):

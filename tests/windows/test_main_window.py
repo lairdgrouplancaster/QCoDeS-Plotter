@@ -2407,6 +2407,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         _prepare_replaced_database_reload = (
             main_window.MainWindow._prepare_replaced_database_reload
             )
+        _prepare_test_database_replacement = (
+            main_window.MainWindow._prepare_test_database_replacement
+            )
+        _release_database_runtime_state = (
+            main_window.MainWindow._release_database_runtime_state
+            )
         _set_database_load_controls_enabled = (
             main_window.MainWindow._set_database_load_controls_enabled
             )
@@ -2793,6 +2799,70 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                     started_workers,
                     )
                 self.assertIn("Database is already loaded", harness.status_messages[-1][0])
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_generation_released_same_file_bypasses_already_loaded_shortcut(self):
+        active_database = get_DB_location()
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database_path = os.path.abspath(database.name)
+            runs = {5: {"guid": "guid-5", "run_timestamp": 123.0}}
+            try:
+                harness = self.Harness()
+                self.assertTrue(harness.load_database_path(database_path))
+                generation = harness._database_load_generation
+                harness.database_load_finished(
+                    generation,
+                    database_path,
+                    runs,
+                    None,
+                )
+                started_workers = len(harness.databaseLoadThreadPool.started)
+
+                harness._prepare_test_database_replacement(database_path)
+                self.assertEqual(harness.RunList.runs, {})
+
+                self.assertTrue(harness.load_file(database_path))
+
+                self.assertTrue(harness._database_load_active)
+                self.assertEqual(
+                    len(harness.databaseLoadThreadPool.started),
+                    started_workers + 1,
+                )
+                self.assertNotIn(
+                    "Database is already loaded",
+                    harness.status_messages[-1][0],
+                )
+            finally:
+                set_qcodes_database_location(active_database)
+
+    def test_generation_release_records_the_accepted_database_instance(self):
+        active_database = get_DB_location()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            replacement_path = Path(temp_dir) / "replacement.db"
+            database_path.write_bytes(b"accepted database instance")
+            replacement_path.write_bytes(b"concurrent replacement instance")
+            try:
+                harness = self.Harness()
+                self.assertTrue(harness.load_database_path(str(database_path)))
+                generation = harness._database_load_generation
+                harness.database_load_finished(
+                    generation,
+                    str(database_path),
+                    {},
+                    None,
+                )
+                accepted_instance = harness._loaded_database_instance
+
+                os.replace(replacement_path, database_path)
+                state = harness._prepare_test_database_replacement(database_path)
+
+                self.assertEqual(state.original_instance, accepted_instance)
+                self.assertNotEqual(
+                    state.original_instance,
+                    database_actions.database_instance(database_path),
+                )
             finally:
                 set_qcodes_database_location(active_database)
 
