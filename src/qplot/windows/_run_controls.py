@@ -153,7 +153,7 @@ class RunControlsMixin:
         self.l.addWidget(self.databaseLoadFrame)
         self.l.addLayout(sublayout)
 
-        self.RunList = RunList()
+        self.RunList = RunList(config=self.config)
         self.RunList.selected.connect(self.updateSelected)
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)

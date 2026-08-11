@@ -28,6 +28,16 @@
                     "minimum": 50,
                     "maximum": 1000,
                     "default": 200
+                },
+                "run_table_column_widths": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 32,
+                        "maximum": 16777215
+                    },
+                    "maxItems": 7,
+                    "default": []
                 }
             },
             "required": ["plot_frame_fraction", "main_frame_size"],

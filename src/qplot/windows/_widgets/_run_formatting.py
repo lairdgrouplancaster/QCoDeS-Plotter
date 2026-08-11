@@ -122,8 +122,6 @@ def format_run_state(metadata):
 
 def _format_state_with_setpoint_progress(state, metadata):
     progress = format_setpoint_progress_percent(metadata)
-    if progress == "unknown":
-        return state
     return f"{state} ({progress})"
 
 
@@ -152,13 +150,23 @@ def progress_percent_value(metadata):
 
 
 def setpoint_progress_percent_value(metadata):
-    """Return the percentage of planned setpoints that have been measured."""
-    if metadata.get("setpoint_count_source") == "observed":
-        return None
-    return _progress_percent_value(
+    """Return the percentage of known setpoints that have been measured."""
+    percent = _progress_percent_value(
         metadata,
         metadata.get("read_setpoint_count"),
         metadata.get("setpoint_count"),
+        maximum=100,
+        )
+    if percent is not None:
+        return percent
+
+    # The cheap detail pass exposes result-row progress before the distinct
+    # setpoint query completes. Both counts include the same measurement
+    # multiplicity, so their ratio is a valid early setpoint-progress value.
+    return _progress_percent_value(
+        metadata,
+        metadata.get("result_count"),
+        metadata.get("expected_results"),
         maximum=100,
         )
 
@@ -167,7 +175,7 @@ def format_setpoint_progress_percent(metadata):
     percent = setpoint_progress_percent_value(metadata)
     if percent is None:
         return "unknown"
-    return f"{percent:.2f}%"
+    return f"{percent:.1f}%"
 
 
 def interrupted_progress_percent_value(metadata):
@@ -201,11 +209,13 @@ def format_interrupted_progress_percent(metadata):
     percent = interrupted_progress_percent_value(metadata)
     if percent is None:
         return "unknown"
-    return f"{percent:.2f}%"
+    return f"{percent:.1f}%"
 
 
 def complete_cell_sort_value(metadata):
-    if run_was_interrupted(metadata) or run_failed(metadata):
+    if run_was_interrupted(metadata):
+        return setpoint_progress_percent_value(metadata)
+    if run_failed(metadata):
         return interrupted_progress_percent_value(metadata)
     if run_is_complete(metadata):
         return 100

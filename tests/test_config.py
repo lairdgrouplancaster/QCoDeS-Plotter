@@ -48,6 +48,14 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(config().get("user_preference.theme"), "dark")
         self.assertIs(config().theme, dark)
 
+    def test_run_table_column_widths_write_and_reload(self):
+        cfg = config()
+        widths = [44, 96, 170, 142, 140, 96, 62]
+
+        cfg.update("GUI.run_table_column_widths", widths)
+
+        self.assertEqual(config().get("GUI.run_table_column_widths"), widths)
+
     def test_config_accepts_extra_color_map_preferences(self):
         cfg = config()
 
@@ -264,6 +272,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
     def test_config_load_adds_new_defaults_to_existing_file(self):
         cfg = config()
         stored_config = cfg.config
+        del stored_config["GUI"]["run_table_column_widths"]
         del stored_config["user_preference"]["confirm_close_all"]
         del stored_config["user_preference"]["auto_plot"]
         del stored_config["user_preference"]["mouse_mode"]
@@ -274,6 +283,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         reloaded = config()
 
+        self.assertEqual(reloaded.get("GUI.run_table_column_widths"), [])
         self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
         self.assertFalse(reloaded.get(AUTO_PLOT_KEY))
         self.assertEqual(reloaded.get("user_preference.mouse_mode"), "pan")

@@ -30,18 +30,24 @@ class RunDetailsTabsTestCase(unittest.TestCase):
     def test_overview_status_matches_the_run_table_label(self):
         widget = treeWidgets.moreInfo()
         states = [
-            ("Running (25.00%)", {
+            ("Running (25.0%)", {
                 "is_completed": False,
                 "setpoint_count": 100,
                 "read_setpoint_count": 25,
                 }),
-            ("Running (25.00%)", {
+            ("Running (25.0%)", {
                 "is_completed": 0,
                 "setpoint_count": 100,
                 "read_setpoint_count": 25,
                 }),
+            ("Running (100.0%)", {
+                "is_completed": False,
+                "setpoint_count": 25,
+                "setpoint_count_source": "observed",
+                "read_setpoint_count": 25,
+                }),
             ("Completed", {"is_completed": True}),
-            ("Interrupted (25.00%)", {
+            ("Interrupted (25.0%)", {
                 "is_completed": True,
                 "measurement_exception": "KeyboardInterrupt",
                 "setpoint_count": 100,

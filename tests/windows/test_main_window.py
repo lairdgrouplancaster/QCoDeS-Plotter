@@ -3638,7 +3638,7 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
         harness._apply_database_refresh_result({}, {"selected-guid": running_metadata})
 
         running_overview = harness.overview_values(details)
-        self.assertEqual(running_overview["Status"], "Running")
+        self.assertEqual(running_overview["Status"], "Running (unknown)")
         self.assertEqual(running_overview["Data points"], "2")
         self.assertEqual(harness.ds.number_of_results, 1)
         self.assertTrue(harness.ds.running)

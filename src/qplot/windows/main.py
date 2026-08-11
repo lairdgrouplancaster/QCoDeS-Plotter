@@ -801,6 +801,9 @@ class MainWindow(
         self._sync_preview_size_actions()
         self._sync_refresh_interval()
         self._sync_thread_pool_settings()
+        run_list = getattr(self, "RunList", None)
+        if run_list is not None and hasattr(run_list, "apply_configured_column_widths"):
+            run_list.apply_configured_column_widths()
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
