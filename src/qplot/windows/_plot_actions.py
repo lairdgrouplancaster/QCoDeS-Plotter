@@ -1,10 +1,8 @@
 import os
-import tempfile
 
 import numpy as np
 import pandas as pd
 from PyQt6 import QtCore
-from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
@@ -28,6 +26,7 @@ from ._dataset_handle import (
     close_dataset_connection,
     database_file_identity,
 )
+from ._export_paths import choose_export_path, write_export_atomically
 from ._plot_refresh import plot_refresh_required
 from ._subplots.subplot1d import _subplot_axis_order
 from .plot1d import plot1d
@@ -878,7 +877,10 @@ class PlotActionsMixin:
 
         try:
             frame = self._measurement_dataframe(ds, params)
-            frame.to_csv(filename, index=False)
+            write_export_atomically(
+                filename,
+                lambda temporary: frame.to_csv(temporary, index=False),
+            )
         except Exception as err:
             log_exception("CSV export failed", err, __name__)
             self.show_error(
@@ -892,53 +894,30 @@ class PlotActionsMixin:
 
 
     def _choose_csv_export_filename(self, default_name):
-        filename = qtw.QFileDialog.getSaveFileName(
+        filename = choose_export_path(
             self,
-            "Export CSV",
-            default_name,
-            "CSV files (*.csv)",
-        )[0]
+            caption="Export CSV",
+            suggested_path=default_name,
+            name_filter="CSV files (*.csv)",
+            required_suffix=".csv",
+            replace_title="Replace CSV File?",
+            file_description="CSV file",
+        )
         if not filename:
             self.show_status("CSV export cancelled.", 3000)
             return None
-        if not filename.lower().endswith(".csv"):
-            filename = f"{filename}.csv"
         return filename
 
 
     def _publish_preview_csv(self, frame, filename, dataset_key):
         """Stage a preview CSV and publish it only for the requested source."""
-        destination = os.path.abspath(filename)
-        directory = os.path.dirname(destination)
-        temporary_path = None
-        try:
-            temporary = tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                newline="",
-                prefix=f".{os.path.basename(destination)}.",
-                suffix=".tmp",
-                dir=directory,
-                delete=False,
-            )
-            temporary_path = temporary.name
-            with temporary:
-                frame.to_csv(temporary, index=False)
-                temporary.flush()
-                os.fsync(temporary.fileno())
-
-            # This is the export's linearization point: the source must still
-            # be the captured database instance immediately before the staged
-            # file atomically replaces the requested destination.
-            self._ensure_dataset_key_can_be_read(dataset_key)
-            os.replace(temporary_path, destination)
-            temporary_path = None
-        finally:
-            if temporary_path is not None:
-                try:
-                    os.unlink(temporary_path)
-                except FileNotFoundError:
-                    pass
+        # The source must still be the captured database instance immediately
+        # before the staged file atomically replaces the requested destination.
+        write_export_atomically(
+            filename,
+            lambda temporary: frame.to_csv(temporary, index=False),
+            before_publish=lambda: self._ensure_dataset_key_can_be_read(dataset_key),
+        )
 
 
     @QtCore.pyqtSlot(str)

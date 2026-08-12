@@ -1606,6 +1606,11 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
                     "CSV files (*.csv)",
                 ),
             )
+            scoped_monkeypatch.setattr(
+                qtw.QMessageBox,
+                "question",
+                lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
+            )
             window.export_run_preview_csv(guid, "signal")
 
         wait_for(

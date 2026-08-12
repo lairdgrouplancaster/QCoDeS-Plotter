@@ -77,6 +77,40 @@ def test_create_example_csv_opens_its_folder(tmp_path):
         harness.deleteLater()
 
 
+def test_create_example_csv_confirms_normalized_existing_path(tmp_path):
+    harness = GuiHarness(tmp_path)
+    selected_path = tmp_path / "example"
+    csv_path = tmp_path / "example.csv"
+    sentinel = b"existing example sentinel"
+    csv_path.write_bytes(sentinel)
+
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(selected_path), "CSV Files (*.csv)"),
+            ),
+            patch.object(
+                qtw.QMessageBox,
+                "question",
+                return_value=qtw.QMessageBox.StandardButton.No,
+            ) as question,
+            patch(
+                "qplot.windows._database_actions.reveal_file_in_file_manager",
+            ) as reveal_file,
+        ):
+            assert not harness.create_test_database_csv()
+
+        assert csv_path.read_bytes() == sentinel
+        assert not selected_path.exists()
+        assert set(tmp_path.iterdir()) == {csv_path}
+        assert str(csv_path) in question.call_args.args[2]
+        reveal_file.assert_not_called()
+    finally:
+        harness.deleteLater()
+
+
 def test_export_csv_collection_opens_its_folder(tmp_path):
     harness = GuiHarness(tmp_path)
 

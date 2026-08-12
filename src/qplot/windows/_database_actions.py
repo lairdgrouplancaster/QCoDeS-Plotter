@@ -44,6 +44,7 @@ from ._dataset_handle import (
     canonical_database_path,
     database_file_identity,
 )
+from ._export_paths import choose_export_path, write_export_atomically
 from ._widgets.details_tables import (
     CopyableTableWidget,
     copy_to_clipboard,
@@ -487,21 +488,24 @@ class DatabaseActionsMixin:
             self.database_open_directory(),
             "qplot-test-runs.csv",
         )
-        csv_path = qtw.QFileDialog.getSaveFileName(
+        csv_path = choose_export_path(
             self,
-            "Create Test Database CSV",
-            suggested_path,
-            "CSV Files (*.csv)",
-        )[0]
+            caption="Create Test Database CSV",
+            suggested_path=suggested_path,
+            name_filter="CSV Files (*.csv)",
+            required_suffix=".csv",
+            replace_title="Replace Example CSV?",
+            file_description="example CSV file",
+        )
         if not csv_path:
             self.show_status("Example CSV creation cancelled.", 3000)
             return False
-        if not csv_path.lower().endswith(".csv"):
-            csv_path += ".csv"
-        csv_path = os.path.abspath(csv_path)
 
         try:
-            write_example_csv(csv_path, overwrite=True)
+            write_export_atomically(
+                csv_path,
+                lambda temporary: write_example_csv(temporary, overwrite=True),
+            )
         except Exception as err:
             log_exception("Example test-data CSV creation failed", err, __name__)
             self.show_error(
