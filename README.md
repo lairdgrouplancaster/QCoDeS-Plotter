@@ -42,7 +42,6 @@ python3 --version
 python3 -m venv .venv-mac
 source .venv-mac/bin/activate
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
 ```
 ### Installing your chosen version
 
@@ -59,7 +58,7 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 
 To test the latest beta, execute:
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.1-b1
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.1-b2
 ```
 
 ### Troubleshooting
