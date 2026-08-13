@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qplot"
-version = "1.5.1b1"
+version = "1.5.1b2"
 description = "PyQt-based viewer for completed and running QCoDeS database experiments"
 readme = "README.md"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"},{name="Edward Laird", email="e.a.laird@lancaster.ac.uk"}]

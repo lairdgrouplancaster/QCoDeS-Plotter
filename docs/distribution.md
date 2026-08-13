@@ -26,13 +26,13 @@ Both commands expose the `qplot` and `qplot-cfg` entry points.
 
 ## Current Beta
 
-The current beta is `1.5.1-b1`. The package metadata uses the PEP 440 normal
-form `1.5.1b1`; the GitHub release tag should be `v1.5.1-b1`.
+The current beta is `1.5.1-b2`. The package metadata uses the PEP 440 normal
+form `1.5.1b2`; the GitHub release tag should be `v1.5.1-b2`.
 
 Beta test install:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.1-b1
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.1-b2
 ```
 
 ## Current Release

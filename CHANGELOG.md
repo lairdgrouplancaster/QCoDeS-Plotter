@@ -7,6 +7,40 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.5.1-b2 - 2026-08-13
+
+### Changed
+
+- Show percentage progress and clearer per-run status while generating test
+  databases, including interrupted and failed runs.
+- Preserve the selected run and its details while database refreshes are
+  staged, updating the view only after the refreshed state is ready.
+- Validate source distributions by running their full test suite in an
+  isolated environment, and smoke-test installed wheels during package CI.
+
+### Fixed
+
+- Keep every input QCoDeS database strictly read-only, including when reading
+  live WAL-backed data, so viewing cannot create, modify, publish, or remove
+  SQLite `-wal`, `-shm`, or `-journal` sidecar files.
+- Publish generated test databases atomically without exposing stale SQLite
+  sidecars, and restore the original database and sidecars if replacement
+  fails.
+- Safely replace a generated database that is already loaded, including
+  through a symlink, while preserving unrelated open datasets and refreshing
+  plots against the replacement.
+- Prevent preview CSV exports and overwrite confirmations from acting on a
+  database that was replaced while the export was being prepared.
+- Prevent database reads from racing with same-path test-database generation.
+- Synchronize completion across plots sharing a live run, including runs that
+  finish without appending another data row.
+- Treat zero-row datasets as valid selections and avoid showing stale selected
+  run details after refreshes.
+- Resolve generated-database URI paths consistently and close temporary QCoDeS
+  loader connections without taking ownership of shared connections.
+- Save GUI configuration changes transactionally so a failed write does not
+  leave partial settings behind.
+
 ## 1.5.1-b1 - 2026-08-04
 
 ### Fixed

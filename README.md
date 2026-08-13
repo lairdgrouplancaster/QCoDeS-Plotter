@@ -22,7 +22,7 @@ part of the GUI test or support matrix.
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
 The commands below install the latest full release, `1.5.0`. The current beta
-is `1.5.1-b1`; it is documented below but is not used for the default install.
+is `1.5.1-b2`; it is documented below but is not used for the default install.
 
 ### Prelude
 #### Windows
