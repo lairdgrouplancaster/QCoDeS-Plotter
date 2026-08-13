@@ -24,7 +24,8 @@ Install qPlot inside a Python 3.11 or newer virtual environment:
 The commands below install the latest full release, `1.5.0`. The current beta
 is `1.5.1-b1`; it is documented below but is not used for the default install.
 
-Windows:
+### Prelude
+#### Windows
 
 Create the folder where you want qplot to live, right-clock to open it in Terminal, and execute:
 ```console
@@ -32,18 +33,10 @@ py -3 --version
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
 ```
+#### MacOS
 
-To test the current beta instead, install its explicit tag in the same virtual
-environment:
-
-```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.1-b1
-```
-
-macOS:
-
+Create the folder where you want qplot to live. Then open Terminal, navigate tp that folder, and execute:
 ```console
 python3 --version
 python3 -m venv .venv-mac
@@ -51,8 +44,27 @@ source .venv-mac/bin/activate
 python -m pip install -U pip
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
 ```
+### Installing your chosen version
 
-If the version check reports Python 3.10 or older, install Python 3.11 or newer
+Next, install qplot. Usually, you want to install the current release, which you do by executing:
+
+```console
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
+```
+
+Alternatively, you can install other releases by changing the tag. To install Ben's original version, execute:
+```console
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.2.0
+```
+
+To test the latest beta, execute:
+```console
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.1-b1
+```
+
+### Troubleshooting
+
+If the version check above reports Python 3.10 or older, install Python 3.11 or newer
 first and use that launcher instead, for example `python3.12` on macOS.
 
 Virtual environments are not portable between operating systems. If the
@@ -63,14 +75,12 @@ created for the current system:
 * macOS: `./.venv-mac/bin/python`
 * Linux development: `./.venv-linux/bin/python`
 
-Check the install:
+### Check the install
 
 ```console
 qplot-cfg -version
 python -c "import qplot; print(qplot.__file__)"
 ```
-
-For editable development installs, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Run
 
