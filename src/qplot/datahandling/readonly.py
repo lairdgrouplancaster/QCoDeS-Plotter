@@ -10,6 +10,9 @@ from qcodes.dataset import load_by_guid, load_by_id
 from qcodes.dataset.sqlite.database import connect, get_DB_debug, get_DB_location
 
 from qplot.datahandling.file_identity import (
+    QPLOT_GENERATED_DATABASE_APPLICATION_ID,
+    QPLOT_GENERATION_PROVENANCE_TABLE,
+    QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES,
     DatabaseFileIdentity,
     database_file_identity,
     database_has_qplot_generation_marker,
@@ -32,6 +35,10 @@ class ReadOnlyDatabaseAccessError(RuntimeError):
 
 class DatabaseInstanceChangedError(ReadOnlyDatabaseAccessError):
     """Raised when a database was atomically replaced during a requested read."""
+
+
+class UnverifiableDatabaseWalError(ReadOnlyDatabaseAccessError):
+    """Raised when a WAL cannot be proven to descend from its marked main."""
 
 
 class _ManagedSQLiteConnection(sqlite3.Connection):
@@ -62,16 +69,18 @@ def quarantine_wal_for_replaced_database(database_path):
     Atomic replacement changes the main database file but can leave an old
     writer's ``-wal`` sidecar behind. SQLite can otherwise combine those two
     unrelated files and expose the old database. Once a replacement is
-    detected, qPlot deliberately opens the new main file immutable for as
-    long as qPlot is viewing that path. A sidecar can vanish and later be
-    recreated by the old writer, so a transient absence is not enough to prove
-    a later WAL belongs to the replacement. qPlot never changes the source
-    database or any sidecar to make that happen.
+    detected, qPlot deliberately opens the new main file immutable while the
+    retained sidecar is unpaired. A sidecar can vanish and later be recreated
+    by the old writer, so a transient absence is not enough to prove a later
+    WAL belongs to the replacement. A generated database's matching lineage
+    token and advanced write epoch can establish that a later WAL was written
+    from the replacement and release this quarantine. qPlot never changes the
+    source database or any sidecar to make that happen.
 
     A changed WAL identity is not enough to prove it belongs to the replacement
     main file: an old writer can rotate or recreate its WAL after the main file
     has been atomically replaced. Therefore the whole sidecar lifetime is
-    treated conservatively as ambiguous.
+    treated conservatively as ambiguous unless embedded lineage proves it.
     """
 
     source_path = _resolved_database_path(database_path)
@@ -79,6 +88,17 @@ def quarantine_wal_for_replaced_database(database_path):
     with _DATABASE_INSTANCE_REGISTRY_LOCK:
         _DATABASE_INSTANCE_REGISTRY[source_path] = (database_identity, True)
     return database_identity is not None
+
+
+def _release_wal_quarantine(database_path, expected_database_identity):
+    """Trust a WAL whose embedded lineage proves it belongs to this main."""
+    source_path = _resolved_database_path(database_path)
+    with _DATABASE_INSTANCE_REGISTRY_LOCK:
+        database_identity = database_file_identity(source_path)
+        if database_identity != expected_database_identity:
+            return False
+        _DATABASE_INSTANCE_REGISTRY[source_path] = (database_identity, False)
+    return True
 
 
 def _observe_database_instance(database_path):
@@ -190,13 +210,7 @@ def qcodes_read_only_connection(
         if (
                 immutable
                 and _wal_path(source_path).exists()
-                and not (
-                    ignore_wal
-                    and (
-                        ignore_unpaired_wal
-                        or replacement_wal_is_quarantined(source_path)
-                    )
-                )
+                and not ignore_wal
                 ):
             conn.close()
             continue
@@ -348,13 +362,7 @@ def sqlite_read_only_connection(
         if (
                 immutable
                 and _wal_path(source_path).exists()
-                and not (
-                    ignore_wal
-                    and (
-                        ignore_unpaired_wal
-                        or replacement_wal_is_quarantined(source_path)
-                    )
-                )
+                and not ignore_wal
                 ):
             conn.close()
             continue
@@ -453,6 +461,84 @@ def _source_signature(database_path):
         )
 
 
+def _generation_provenance(connection):
+    application_id = connection.execute("PRAGMA application_id").fetchone()
+    row = connection.execute(
+        f"SELECT generation_token, write_epoch "
+        f"FROM {QPLOT_GENERATION_PROVENANCE_TABLE} WHERE singleton = 1"
+    ).fetchone()
+    extra_row = connection.execute(
+        f"SELECT 1 FROM {QPLOT_GENERATION_PROVENANCE_TABLE} "
+        "WHERE singleton != 1 LIMIT 1"
+    ).fetchone()
+    try:
+        token_bytes = (
+            bytes.fromhex(row[0])
+            if row is not None and isinstance(row[0], str)
+            else b""
+        )
+    except ValueError:
+        token_bytes = b""
+    if (
+            application_id != (QPLOT_GENERATED_DATABASE_APPLICATION_ID,)
+            or row is None
+            or extra_row is not None
+            or len(token_bytes) != QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES
+            or not isinstance(row[1], int)
+            or row[1] < 0
+            ):
+        raise ValueError("invalid qPlot generation provenance")
+    return row
+
+
+def _unverifiable_generated_wal_error(database_path, reason):
+    return UnverifiableDatabaseWalError(
+        f"qPlot cannot prove that {database_path}-wal belongs to the current "
+        "generated database main file, so it refused to show a possibly stale "
+        f"view ({reason}). Close the QCoDeS/SQLite writer cleanly so it can "
+        "checkpoint and remove the WAL, then refresh. If the database is being "
+        "moved or copied, stop the writer and keep the main, -wal, and -shm "
+        "files together. qPlot did not modify the database or its sidecars."
+    )
+
+
+def _require_matching_generated_wal_provenance(database_path, snapshot_path):
+    """Require a private WAL view to carry this generated main's lineage."""
+    main_connection = None
+    snapshot_connection = None
+    try:
+        main_connection = sqlite3.connect(
+            sqlite_read_only_uri(database_path, immutable=True),
+            uri=True,
+        )
+        main_provenance = _generation_provenance(main_connection)
+        snapshot_connection = sqlite3.connect(snapshot_path)
+        snapshot_provenance = _generation_provenance(snapshot_connection)
+    except (sqlite3.Error, ValueError) as error:
+        raise _unverifiable_generated_wal_error(
+            database_path,
+            "the lineage record is missing, invalid, or from an older qPlot",
+        ) from error
+    finally:
+        if snapshot_connection is not None:
+            snapshot_connection.close()
+        if main_connection is not None:
+            main_connection.close()
+
+    main_token, main_epoch = main_provenance
+    snapshot_token, snapshot_epoch = snapshot_provenance
+    if snapshot_token != main_token:
+        raise _unverifiable_generated_wal_error(
+            database_path,
+            "the WAL carries a different generation token",
+        )
+    if snapshot_epoch <= main_epoch:
+        raise _unverifiable_generated_wal_error(
+            database_path,
+            "the WAL does not carry a later verified write epoch",
+        )
+
+
 def _prepare_read_target(
         database_path,
         *,
@@ -478,23 +564,8 @@ def _prepare_read_target(
         raise ReadOnlyDatabaseAccessError(
             f"Could not inspect the database publication marker: {error}"
         ) from error
-    if generation_marker:
-        # The marker is embedded before qPlot publishes a generated main, so it
-        # survives CLI/API process boundaries. Quarantine the whole logical
-        # path before looking for a WAL: a stale WAL can appear, disappear, or
-        # be copied into a private snapshot between any two pathname checks.
-        # Immutable access to the marked main is the only source-preserving
-        # way to ensure no later first load combines it with an old WAL.
-        quarantine_wal_for_replaced_database(database_path)
-        ignore_unpaired_wal = True
 
     wal_path = _wal_path(database_path)
-    if ignore_unpaired_wal or replacement_wal_is_quarantined(database_path):
-        _require_prepared_database_instance(
-            database_path,
-            prepared_database_identity,
-        )
-        return database_path, True, None, True
     if not wal_path.exists():
         _require_expected_database_instance(
             database_path,
@@ -505,6 +576,15 @@ def _prepare_read_target(
             prepared_database_identity,
         )
         return database_path, True, None, False
+    if not generation_marker and (
+            ignore_unpaired_wal
+            or replacement_wal_is_quarantined(database_path)
+            ):
+        _require_prepared_database_instance(
+            database_path,
+            prepared_database_identity,
+        )
+        return database_path, True, None, True
 
     for _attempt in range(WAL_SNAPSHOT_ATTEMPTS):
         _require_expected_database_instance(
@@ -527,7 +607,7 @@ def _prepare_read_target(
                 database_path,
                 True,
                 None,
-                replacement_wal_is_quarantined(database_path),
+                False,
             )
 
         snapshot = tempfile.TemporaryDirectory(prefix="qplot-readonly-")
@@ -557,7 +637,38 @@ def _prepare_read_target(
             except Exception:
                 snapshot.cleanup()
                 raise
-            if replacement_wal_is_quarantined(database_path):
+            if generation_marker:
+                try:
+                    _require_matching_generated_wal_provenance(
+                        database_path,
+                        snapshot_path,
+                    )
+                except UnverifiableDatabaseWalError:
+                    if not (
+                        ignore_unpaired_wal
+                        or replacement_wal_is_quarantined(database_path)
+                        ):
+                        snapshot.cleanup()
+                        raise
+                    snapshot.cleanup()
+                    return database_path, True, None, True
+            if _source_signature(database_path) != before:
+                snapshot.cleanup()
+                continue
+            if generation_marker:
+                if not _release_wal_quarantine(
+                        database_path,
+                        prepared_database_identity,
+                        ):
+                    snapshot.cleanup()
+                    raise DatabaseInstanceChangedError(
+                        "The database was replaced while qPlot was validating "
+                        "its WAL provenance."
+                    )
+            elif (
+                    ignore_unpaired_wal
+                    or replacement_wal_is_quarantined(database_path)
+                    ):
                 snapshot.cleanup()
                 return database_path, True, None, True
             return snapshot_path, False, snapshot, False

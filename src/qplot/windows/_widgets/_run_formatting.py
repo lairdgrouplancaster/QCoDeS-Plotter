@@ -95,13 +95,34 @@ def measurement_exception_summary(metadata, maximum_length=200):
 
 
 def format_run_status(metadata):
+    """Return the detailed status used in a run's tooltip."""
+    state = format_run_state(metadata)
     if run_was_interrupted(metadata):
-        return f"Interrupted ({format_interrupted_progress_percent(metadata)})"
+        return f"Interrupted ({format_setpoint_progress_percent(metadata)})"
+    if state == "Failed":
+        return f"{state} ({format_interrupted_progress_percent(metadata)})"
+    return state
+
+
+def format_run_state(metadata):
+    """Return the canonical, concise label for a run's current state."""
+    if run_was_interrupted(metadata):
+        return _format_state_with_setpoint_progress("Interrupted", metadata)
     if run_failed(metadata):
-        return f"Failed ({format_interrupted_progress_percent(metadata)})"
+        return "Failed"
     if run_is_complete(metadata):
-        return "Complete"
-    return f"Incomplete ({format_progress_percent(metadata)})"
+        return "Completed"
+    if (
+            metadata.get("is_completed") is not None
+            and not bool(metadata["is_completed"])
+            ):
+        return _format_state_with_setpoint_progress("Running", metadata)
+    return "unknown"
+
+
+def _format_state_with_setpoint_progress(state, metadata):
+    progress = format_setpoint_progress_percent(metadata)
+    return f"{state} ({progress})"
 
 
 def format_progress(metadata):
@@ -126,6 +147,35 @@ def progress_percent_value(metadata):
     expected = metadata.get("expected_results")
     count = metadata.get("result_count")
     return _progress_percent_value(metadata, count, expected)
+
+
+def setpoint_progress_percent_value(metadata):
+    """Return the percentage of known setpoints that have been measured."""
+    percent = _progress_percent_value(
+        metadata,
+        metadata.get("read_setpoint_count"),
+        metadata.get("setpoint_count"),
+        maximum=100,
+        )
+    if percent is not None:
+        return percent
+
+    # The cheap detail pass exposes result-row progress before the distinct
+    # setpoint query completes. Both counts include the same measurement
+    # multiplicity, so their ratio is a valid early setpoint-progress value.
+    return _progress_percent_value(
+        metadata,
+        metadata.get("result_count"),
+        metadata.get("expected_results"),
+        maximum=100,
+        )
+
+
+def format_setpoint_progress_percent(metadata):
+    percent = setpoint_progress_percent_value(metadata)
+    if percent is None:
+        return "unknown"
+    return f"{percent:.1f}%"
 
 
 def interrupted_progress_percent_value(metadata):
@@ -159,31 +209,26 @@ def format_interrupted_progress_percent(metadata):
     percent = interrupted_progress_percent_value(metadata)
     if percent is None:
         return "unknown"
-    return f"{percent:.2f}%"
+    return f"{percent:.1f}%"
 
 
 def complete_cell_sort_value(metadata):
-    if run_was_interrupted(metadata) or run_failed(metadata):
+    if run_was_interrupted(metadata):
+        return setpoint_progress_percent_value(metadata)
+    if run_failed(metadata):
         return interrupted_progress_percent_value(metadata)
     if run_is_complete(metadata):
         return 100
-    return progress_percent_value(metadata)
+    return setpoint_progress_percent_value(metadata)
 
 
 def format_complete_cell(metadata):
-    if run_was_interrupted(metadata):
-        return "Interrupted"
+    """Return the run-table status label.
 
-    if run_failed(metadata):
-        return "Failed"
-
-    if run_is_complete(metadata):
-        return "✓"
-
-    progress = format_progress_percent(metadata)
-    if progress == "unknown":
-        return "unknown"
-    return progress
+    Kept under its historic name for callers, but deliberately shares the
+    Overview's canonical status wording.
+    """
+    return format_run_state(metadata)
 
 
 def format_timestamp(timestamp):

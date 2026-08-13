@@ -171,6 +171,8 @@ class MainWindow(
         self._database_refresh_instance = None
         self._test_database_generation_active = False
         self._test_database_generation_worker: TestDatabaseGenerationWorker | None = None
+        self._test_database_replacement_state = None
+        self._database_view_released_for_generation = False
         self._shutdown_started = False
         self._shutdown_ready = False
         self._shutdown_timer = QtCore.QTimer(self)
@@ -534,6 +536,8 @@ class MainWindow(
         self._database_refresh_identity = None
         self._test_database_generation_active = False
         self._test_database_generation_worker = None
+        self._test_database_replacement_state = None
+        self._database_view_released_for_generation = False
         self.monitor.stop()
         self.close_plot_windows(confirm=False, status=False)
         self.close_database(status=False)
@@ -797,6 +801,9 @@ class MainWindow(
         self._sync_preview_size_actions()
         self._sync_refresh_interval()
         self._sync_thread_pool_settings()
+        run_list = getattr(self, "RunList", None)
+        if run_list is not None and hasattr(run_list, "apply_configured_column_widths"):
+            run_list.apply_configured_column_widths()
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)

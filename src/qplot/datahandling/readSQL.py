@@ -400,9 +400,9 @@ def _add_run_detail_fields(
     if infer_missing_shapes and not metadata["point_shape"]:
         observed_setpoints = _add_observed_shape_fields(cursor, metadata)
     _add_completed_observed_result_count(metadata)
-    if (
-            include_read_setpoint_count
-            and _is_keyboard_interrupt(metadata.get("measurement_exception"))
+    if include_read_setpoint_count and (
+            not bool(metadata.get("is_completed"))
+            or _is_keyboard_interrupt(metadata.get("measurement_exception"))
             ):
         if observed_setpoints is None:
             observed_setpoints = _run_setpoint_observation(
@@ -1037,6 +1037,7 @@ def get_run_status(
 
         cursor.execute(f"""
           SELECT
+              run_timestamp,
               completed_timestamp,
               is_completed,
               result_table_name,
@@ -1052,9 +1053,10 @@ def get_run_status(
             return {}
 
         status = {
-            "completed_timestamp": value[0],
-            "is_completed": value[1],
-            "result_count": _result_count(cursor, value[2]),
+            "run_timestamp": value[0],
+            "completed_timestamp": value[1],
+            "is_completed": value[2],
+            "result_count": _result_count(cursor, value[3]),
             "database_modified_timestamp": _database_modified_timestamp(cursor),
             }
         if include_storage_bytes:
@@ -1062,19 +1064,19 @@ def get_run_status(
                 status,
                 _table_storage_bytes(
                     cursor,
-                    value[2],
+                    value[3],
                     result_count=status["result_count"],
                     ),
                 )
-        for index, column in enumerate(optional_columns, start=5):
+        for index, column in enumerate(optional_columns, start=6):
             status[column] = value[index]
 
         shape_metadata = {
-            "completed_timestamp": value[0],
-            "is_completed": value[1],
-            "result_table_name": value[2],
-            "run_description": value[3],
-            "parameters": value[4],
+            "completed_timestamp": value[1],
+            "is_completed": value[2],
+            "result_table_name": value[3],
+            "run_description": value[4],
+            "parameters": value[5],
             "result_count": status["result_count"],
             }
         _add_run_basic_fields(shape_metadata)
@@ -1093,12 +1095,15 @@ def get_run_status(
                 ):
             status[field] = shape_metadata.get(field)
 
-        if _is_keyboard_interrupt(status.get("measurement_exception")):
+        if (
+                not bool(value[2])
+                or _is_keyboard_interrupt(status.get("measurement_exception"))
+                ):
             if observed_setpoints is None:
                 observed_setpoints = _run_setpoint_observation(
                     cursor,
-                    value[2],
-                    _json_dict(value[3]),
+                    value[3],
+                    _json_dict(value[4]),
                     shape_metadata["measure_parameters"],
                     shape_metadata["sweep_parameters"],
                     )

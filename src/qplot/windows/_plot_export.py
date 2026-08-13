@@ -7,6 +7,11 @@ from pyqtgraph.exporters import ImageExporter
 
 from qplot.diagnostics import log_exception
 
+from ._export_paths import (
+    choose_export_path,
+    normalize_export_path,
+    write_export_atomically,
+)
 from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
@@ -65,12 +70,15 @@ class PlotExportMixin(_PlotExportBase):
         Prompts for a filename and saves the visible plot area as a PDF.
 
         """
-        filename = qtw.QFileDialog.getSaveFileName(
+        filename = choose_export_path(
             self,
-            "Save Plot as PDF",
-            self._default_plot_pdf_filename(),
-            "PDF files (*.pdf)",
-        )[0]
+            caption="Save Plot as PDF",
+            suggested_path=self._default_plot_pdf_filename(),
+            name_filter="PDF files (*.pdf)",
+            required_suffix=".pdf",
+            replace_title="Replace PDF File?",
+            file_description="PDF file",
+        )
         if not filename:
             self.show_status("PDF export cancelled.", 3000)
             return False
@@ -87,11 +95,10 @@ class PlotExportMixin(_PlotExportBase):
             self.show_status("PDF export cancelled.", 3000)
             return False
 
-        if not filename.lower().endswith(".pdf"):
-            filename = f"{filename}.pdf"
+        filename = normalize_export_path(filename, ".pdf")
 
         try:
-            saved = self._write_plot_pdf(filename)
+            saved = write_export_atomically(filename, self._write_plot_pdf)
         except Exception as err:
             log_exception("Plot PDF export failed", err, __name__)
             self.show_status("Could not save plot PDF.", 5000)

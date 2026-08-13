@@ -3,7 +3,6 @@ import os
 import numpy as np
 import pandas as pd
 from PyQt6 import QtCore
-from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
@@ -27,6 +26,7 @@ from ._dataset_handle import (
     close_dataset_connection,
     database_file_identity,
 )
+from ._export_paths import choose_export_path, write_export_atomically
 from ._plot_refresh import plot_refresh_required
 from ._subplots.subplot1d import _subplot_axis_order
 from .plot1d import plot1d
@@ -67,6 +67,15 @@ class PlotActionsMixin:
 
     _selected_dataset_key: DatasetKey | None
 
+    def _generation_gate_allows_action(self, database_path=None, operation=None):
+        gate = getattr(self, "_database_generation_read_allowed", None)
+        if not callable(gate):
+            return True
+        return gate(
+            database_path,
+            operation=operation or "using run data",
+        )
+
     @staticmethod
     def _dataset_key_is_current(dataset_key):
         expected_identity = dataset_key.database_identity
@@ -91,6 +100,16 @@ class PlotActionsMixin:
 
     def _ensure_dataset_key_can_be_read(self, dataset_key):
         """Reject a plot read until an atomically replaced source is reloaded."""
+
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                dataset_key.database_path,
+                "using run data",
+                ):
+            raise RuntimeError(
+                "Test-database generation owns this database path until its "
+                "released view has recovered."
+            )
 
         if self._dataset_key_targets_loaded_database(dataset_key):
             reload_if_changed = getattr(
@@ -567,6 +586,11 @@ class PlotActionsMixin:
         Loads the selected run into memory and updates the details pane.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="selecting a run",
+                ):
+            return
         self.show_status("Loading selected run...", 0)
         dataset_key = self._current_dataset_key(guid)
         try:
@@ -667,6 +691,11 @@ class PlotActionsMixin:
         Plots the requested measurement for the requested run.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening a plot",
+                ):
+            return
         ds = self._dataset_for_plot_target()
         if ds is None:
             return
@@ -696,6 +725,11 @@ class PlotActionsMixin:
         Opens every plottable measurement in the currently selected table row.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening plots",
+                ):
+            return
         if self.ds is None:
             self.show_status("Select a run before plotting all measurements.", 5000)
             return
@@ -709,6 +743,11 @@ class PlotActionsMixin:
         Exports the requested run and measurement data to a CSV file.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="exporting run data",
+                ):
+            return
         ds = self._dataset_for_plot_target()
         if ds is None:
             return
@@ -728,11 +767,19 @@ class PlotActionsMixin:
         Exports the measurement represented by a selected-run preview image.
 
         """
-        if not self.ds:
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="exporting preview data",
+                ):
+            return
+        if self.ds is None:
             self.show_status("Select a run before exporting a preview.", 5000)
             return
 
-        self._export_preview_csv(self.ds, parameter_name)
+        dataset_key = getattr(self, "_selected_dataset_key", None)
+        if dataset_key is None:
+            dataset_key = self._current_dataset_key(self.ds.guid)
+        self._export_preview_csv(dataset_key, parameter_name)
 
 
     @QtCore.pyqtSlot(str, str)
@@ -741,33 +788,81 @@ class PlotActionsMixin:
         Exports the measurement represented by a run-table preview image.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="exporting preview data",
+                ):
+            return
         if not guid:
             self.show_status("Select a run before exporting a preview.", 5000)
             return
 
-        try:
-            ds = self._dataset_for_guid(guid)
-        except Exception as err:
-            log_exception("Preview CSV run load failed", err, __name__)
-            self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+        self._export_preview_csv(self._current_dataset_key(guid), parameter_name)
+
+
+    def _export_preview_csv(self, dataset_key, parameter_name):
+        """Export one preview through a fresh, action-owned dataset view."""
+        default_name = self._default_preview_export_filename(
+            dataset_key,
+            parameter_name,
+        )
+        filename = self._choose_csv_export_filename(default_name)
+        if filename is None:
             return
 
+        dataset = None
         try:
-            self._export_preview_csv(ds, parameter_name)
-        finally:
-            self._close_dataset_if_unowned(
-                ds,
-                context="Preview CSV dataset cleanup failed",
+            # Preview and plot datasets intentionally remain frozen at their
+            # original read-only WAL snapshots.  Export needs the newest
+            # committed rows, so choose the destination first and only then
+            # bypass DatasetHandle caching.  No action-owned snapshot waits
+            # behind the modal save dialog.
+            try:
+                dataset = self._load_dataset(dataset_key)
+                param = self._measurement_param_by_name(dataset, parameter_name)
+            except Exception as err:
+                log_exception("Preview CSV run load failed", err, __name__)
+                self.show_error(
+                    "Run Load Failed",
+                    f"Could not load run with GUID {dataset_key.guid}.",
+                    str(err),
                 )
+                return
 
+            if param is None:
+                self.show_status(
+                    f"No preview export found for {parameter_name}.",
+                    5000,
+                )
+                return
 
-    def _export_preview_csv(self, dataset, parameter_name):
-        param = self._measurement_param_by_name(dataset, parameter_name)
-        if param is None:
-            self.show_status(f"No preview export found for {parameter_name}.", 5000)
-            return
+            try:
+                frame = self._measurement_dataframe(dataset, [param])
+                # The read-only connection intentionally keeps its original
+                # SQLite snapshot readable if the path is replaced.  Reject
+                # that obsolete frame before it reaches the destination.
+                self._ensure_dataset_key_can_be_read(dataset_key)
+                self._publish_preview_csv(frame, filename, dataset_key)
+            except Exception as err:
+                log_exception("Preview CSV export failed", err, __name__)
+                self.show_error(
+                    "CSV Export Failed",
+                    "Could not export the selected measurement data.",
+                    str(err),
+                )
+                return
 
-        self._export_measurement_csv(dataset, [param])
+            self.show_status(f"Exported CSV: {filename}", 5000)
+        finally:
+            if dataset is not None:
+                try:
+                    close_dataset_connection(dataset)
+                except Exception as err:
+                    log_exception(
+                        "Preview CSV dataset cleanup failed",
+                        err,
+                        __name__,
+                    )
 
 
     def _export_measurement_csv(self, ds, params):
@@ -776,21 +871,16 @@ class PlotActionsMixin:
             return
 
         default_name = self._default_export_filename(ds, params)
-        filename = qtw.QFileDialog.getSaveFileName(
-            self,
-            "Export CSV",
-            default_name,
-            "CSV files (*.csv)",
-        )[0]
-        if not filename:
-            self.show_status("CSV export cancelled.", 3000)
+        filename = self._choose_csv_export_filename(default_name)
+        if filename is None:
             return
-        if not filename.lower().endswith(".csv"):
-            filename = f"{filename}.csv"
 
         try:
             frame = self._measurement_dataframe(ds, params)
-            frame.to_csv(filename, index=False)
+            write_export_atomically(
+                filename,
+                lambda temporary: frame.to_csv(temporary, index=False),
+            )
         except Exception as err:
             log_exception("CSV export failed", err, __name__)
             self.show_error(
@@ -803,12 +893,47 @@ class PlotActionsMixin:
         self.show_status(f"Exported CSV: {filename}", 5000)
 
 
+    def _choose_csv_export_filename(self, default_name):
+        filename = choose_export_path(
+            self,
+            caption="Export CSV",
+            suggested_path=default_name,
+            name_filter="CSV files (*.csv)",
+            required_suffix=".csv",
+            replace_title="Replace CSV File?",
+            file_description="CSV file",
+        )
+        if not filename:
+            self.show_status("CSV export cancelled.", 3000)
+            return None
+        return filename
+
+
+    def _publish_preview_csv(self, frame, filename, dataset_key):
+        """Stage a preview CSV and publish it only for the requested source."""
+        # The source must still be the captured database instance immediately
+        # before the staged file atomically replaces the requested destination.
+        write_export_atomically(
+            filename,
+            lambda temporary: frame.to_csv(temporary, index=False),
+            before_publish=lambda: self._ensure_dataset_key_can_be_read(dataset_key),
+        )
+
+
     @QtCore.pyqtSlot(str)
     def openPlot(self, guid: str | DatasetKey = None, params: list = None, show: bool = True):
         """
         Opens plot windows for the selected or requested run.
 
         """
+        target_path = guid.database_path if isinstance(guid, DatasetKey) else None
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                target_path,
+                "opening plots",
+                ):
+            return
+
         # ``DataSet`` implements truthiness through ``__len__``, which queries
         # its SQLite connection.  A Windows replacement test (and a real
         # replacement race) may have deliberately released that old read-only
@@ -952,7 +1077,12 @@ class PlotActionsMixin:
         Open the indexed dependent parameter for the selected run.
 
         """
-        if not self.ds:
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening a plot",
+                ):
+            return
+        if self.ds is None:
             self.show_status("Select a run before opening a parameter.", 5000)
             return
 
@@ -970,7 +1100,12 @@ class PlotActionsMixin:
         Open the plot represented by a double-clicked preview image.
 
         """
-        if not self.ds:
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening a preview plot",
+                ):
+            return
+        if self.ds is None:
             self.show_status("Select a run before opening a preview plot.", 5000)
             return
 
@@ -988,12 +1123,20 @@ class PlotActionsMixin:
         Open the plot represented by a double-clicked run-table preview image.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="opening a preview plot",
+                ):
+            return
         if not guid:
             self.show_status("Select a run before opening a preview plot.", 5000)
             return
 
         dataset_key = self._current_dataset_key(guid)
-        if not self.ds or getattr(self, "_selected_dataset_key", None) != dataset_key:
+        if (
+            self.ds is None
+            or getattr(self, "_selected_dataset_key", None) != dataset_key
+        ):
             try:
                 handle = self._dataset_handle_for_key(dataset_key)
                 if handle is None:
@@ -1023,6 +1166,17 @@ class PlotActionsMixin:
         Adds a plottable 1D parameter to an existing compatible 1D plot.
 
         """
+        source_path = (
+            source_identity.database_path
+            if isinstance(source_identity, DatasetKey)
+            else None
+        )
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                source_path,
+                "adding a preview trace",
+                ):
+            return False
         if target_win is None or not hasattr(target_win, "option_boxes"):
             self.show_status("Drop traces onto a compatible line plot.", 5000)
             return False
@@ -1189,6 +1343,11 @@ class PlotActionsMixin:
         Loads the dataset requested by the Run field.
 
         """
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                operation="loading the selected run",
+                ):
+            return None
         if not self.fileTextbox.text():
             self.show_status("Load a database before plotting or exporting.", 5000)
             return None
@@ -1263,6 +1422,27 @@ class PlotActionsMixin:
         database_folder = os.path.dirname(self.fileTextbox.text())
         measurement = "all" if len(params) != 1 else params[0].name
         filename = self._safe_filename(f"run_{dataset.run_id}_{measurement}.csv")
+        return os.path.join(database_folder or os.getcwd(), filename)
+
+
+    def _default_preview_export_filename(self, dataset_key, parameter_name):
+        """Return a preview destination suggestion without opening its dataset."""
+        run_id = None
+        run_list = getattr(self, "RunList", None)
+        run_id_for_guid = getattr(run_list, "run_id_for_guid", None)
+        if callable(run_id_for_guid):
+            run_id = run_id_for_guid(dataset_key.guid)
+
+        selected_key = getattr(self, "_selected_dataset_key", None)
+        selected_dataset = getattr(self, "ds", None)
+        if run_id is None and selected_key == dataset_key and selected_dataset is not None:
+            run_id = getattr(selected_dataset, "run_id", None)
+
+        run_identifier = dataset_key.guid if run_id is None else run_id
+        filename = self._safe_filename(
+            f"run_{run_identifier}_{parameter_name}.csv",
+        )
+        database_folder = os.path.dirname(dataset_key.database_path)
         return os.path.join(database_folder or os.getcwd(), filename)
 
 

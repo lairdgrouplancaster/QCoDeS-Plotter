@@ -23,6 +23,7 @@ from .._commands import (
     create_action,
     plot_measurement_command_spec,
 )
+from .._config_persistence import persist_config_value
 from ._run_formatting import (  # noqa: F401
     complete_cell_sort_value,
     format_complete_cell,
@@ -33,6 +34,7 @@ from ._run_formatting import (  # noqa: F401
     format_progress,
     format_progress_percent,
     format_run_duration,
+    format_run_state,
     format_run_status,
     format_storage_size,
     format_time_taken_seconds,
@@ -65,6 +67,7 @@ from .run_list_items import (
 
 MAX_RUN_PREVIEW_WIDGETS = 500
 MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS = 100_000
+RUN_TABLE_COLUMN_WIDTHS_KEY = "GUI.run_table_column_widths"
 
 
 class RunList(qtw.QTreeWidget):
@@ -79,24 +82,32 @@ class RunList(qtw.QTreeWidget):
     
     cols = ['ID', 'Measurements', 'Setpoints', 'Started', 'Status', 'Duration', 'Size']
     column_widths = {
-        "ID": 40,
-        "Measurements": 104,
-        "Status": 86,
+        "ID": 44,
+        "Measurements": 96,
+        "Status": 140,
         "Duration": 96,
-        "Size": 72,
+        "Size": 62,
         }
     elastic_column_widths = {
-        "Setpoints": 180,
-        "Started": 150,
+        "Setpoints": 170,
+        "Started": 142,
+        }
+    representative_column_values = {
+        "ID": "9999",
+        "Setpoints": "1,200,120 = 10,001 × 60",
+        "Started": "2026-05-04 13:05:16",
+        "Status": "Interrupted (100.0%)",
+        "Duration": "57,116.6 s",
+        "Size": "116 MB",
         }
     readable_column_widths = {
         "ID": 37,
-        "Measurements": 96,
+        "Measurements": 92,
         "Setpoints": 100,
         "Started": 128,
-        "Status": 78,
+        "Status": 132,
         "Duration": 84,
-        "Size": 58,
+        "Size": 54,
         }
     minimum_column_widths = {
         "ID": 34,
@@ -141,7 +152,14 @@ class RunList(qtw.QTreeWidget):
     previewExportRequested = QtCore.pyqtSignal(str, str)
     _shortcut_keys = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     
-    def __init__(self, *args, initalize=False, initialize=None, **kargs):
+    def __init__(
+            self,
+            *args,
+            initalize=False,
+            initialize=None,
+            config=None,
+            **kargs,
+            ):
         super().__init__(*args, **kargs)
         if initialize is not None:
             initalize = initialize
@@ -151,6 +169,12 @@ class RunList(qtw.QTreeWidget):
         self._items_by_guid: dict[str, SortableTreeWidgetItem] = {}
         self._resizing_columns = False
         self._manual_column_widths = False
+        self._config = config
+        self._saved_column_widths = None
+        self._column_width_save_timer = QtCore.QTimer(self)
+        self._column_width_save_timer.setSingleShot(True)
+        self._column_width_save_timer.setInterval(250)
+        self._column_width_save_timer.timeout.connect(self._persist_column_widths)
         self._preview_widgets_enabled = True
         self.maxRunId = 0
         
@@ -166,6 +190,7 @@ class RunList(qtw.QTreeWidget):
             self._setpoints_delegate,
             )
         self._resize_columns()
+        self.apply_configured_column_widths()
 
         header = self.header()
         if header is not None:
@@ -538,11 +563,96 @@ class RunList(qtw.QTreeWidget):
     def _column_resized(self, _column, old_size, new_size):
         if not self._resizing_columns and old_size != new_size:
             self._manual_column_widths = True
+            if self._config is not None:
+                self._column_width_save_timer.start()
 
 
     def reset_column_widths(self):
+        self._column_width_save_timer.stop()
+        if self._config is not None and not persist_config_value(
+                self,
+                self._config,
+                RUN_TABLE_COLUMN_WIDTHS_KEY,
+                [],
+                "the run-table column widths",
+                ):
+            return False
+
+        self._saved_column_widths = None
         self._manual_column_widths = False
         self._resize_columns(force=True)
+        return True
+
+
+    def apply_configured_column_widths(self):
+        """Apply saved widths, or restore responsive defaults when none exist."""
+        widths = self._configured_column_widths()
+        self._column_width_save_timer.stop()
+        if widths is None:
+            self._saved_column_widths = None
+            self._manual_column_widths = False
+            self._resize_columns(force=True)
+            return
+
+        self._apply_column_widths(widths)
+        self._saved_column_widths = widths
+        self._manual_column_widths = True
+
+
+    def _configured_column_widths(self):
+        if self._config is None:
+            return None
+        try:
+            widths = self._config.get(RUN_TABLE_COLUMN_WIDTHS_KEY)
+        except (KeyError, TypeError):
+            return None
+        if (
+                not isinstance(widths, (list, tuple))
+                or len(widths) != len(self.cols)
+                or any(
+                    isinstance(width, bool)
+                    or not isinstance(width, int)
+                    or width < 32
+                    for width in widths
+                    )
+                ):
+            return None
+        return list(widths)
+
+
+    def _apply_column_widths(self, widths):
+        self._resizing_columns = True
+        try:
+            for column, width in enumerate(widths):
+                self.setColumnWidth(column, width)
+        finally:
+            self._resizing_columns = False
+
+
+    def _persist_column_widths(self):
+        if self._config is None or not self._manual_column_widths:
+            return
+
+        widths = [self.columnWidth(column) for column in range(len(self.cols))]
+        previous_widths = self._saved_column_widths
+
+        def rollback():
+            if previous_widths is None:
+                self._manual_column_widths = False
+                self._resize_columns(force=True)
+            else:
+                self._apply_column_widths(previous_widths)
+                self._manual_column_widths = True
+
+        if persist_config_value(
+                self,
+                self._config,
+                RUN_TABLE_COLUMN_WIDTHS_KEY,
+                widths,
+                "the run-table column widths",
+                rollback,
+                ):
+            self._saved_column_widths = widths
 
 
     def _open_header_menu(self, pos):
@@ -568,15 +678,10 @@ class RunList(qtw.QTreeWidget):
             for col in range(len(self.cols)):
                 header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
 
-        preferred_fixed_width = sum(self.column_widths.values())
-        preferred_elastic_width = sum(self.elastic_column_widths.values())
         viewport = self.viewport()
         available_width = viewport.width() if viewport is not None else 0
-        preferred_widths = {
-            **self.elastic_column_widths,
-            **self.column_widths,
-            }
-        preferred_width = preferred_fixed_width + preferred_elastic_width
+        preferred_widths = self._preferred_column_widths()
+        preferred_width = sum(preferred_widths.values())
         if available_width <= 0:
             available_width = preferred_width
 
@@ -611,6 +716,18 @@ class RunList(qtw.QTreeWidget):
                     self.setColumnWidth(col, width)
         finally:
             self._resizing_columns = False
+
+
+    def _preferred_column_widths(self):
+        """Return roomy widths adjusted for the active platform font."""
+        widths = {
+            **self.elastic_column_widths,
+            **self.column_widths,
+            }
+        metrics = QtGui.QFontMetrics(self.font())
+        for name, value in self.representative_column_values.items():
+            widths[name] = max(widths[name], metrics.horizontalAdvance(value) + 12)
+        return widths
 
 
     def _grow_column_widths(self, base_widths, target_widths, available_width, order):
@@ -742,6 +859,9 @@ class RunList(qtw.QTreeWidget):
                 run.run_metadata["database_modified_timestamp"] = status[
                     "database_modified_timestamp"
                     ]
+
+            if status.get("run_timestamp") is not None:
+                run.run_metadata["run_timestamp"] = status["run_timestamp"]
 
             if status.get("is_completed") is not None:
                 run.run_metadata["is_completed"] = bool(status["is_completed"])
@@ -1113,6 +1233,43 @@ class moreInfo(qtw.QTabWidget):
         self.raw.setInfo(info)
 
 
+    def update_live_run_details(self, run_metadata):
+        """Patch authoritative live fields without rebuilding run details."""
+        if not self._has_authoritative_run_state(run_metadata):
+            return
+
+        is_completed = run_metadata.get("is_completed")
+        updates = {
+            "Status": self._status_text(None, run_metadata),
+            "Duration": self._time_taken_from_metadata(run_metadata),
+            "Started": self._run_timestamp(None, run_metadata, "run_timestamp"),
+            }
+        if run_metadata.get("result_count") is not None:
+            updates["Data points"] = run_metadata["result_count"]
+        if bool(is_completed):
+            updates["Completed"] = self._run_timestamp(
+                None,
+                run_metadata,
+                "completed_timestamp",
+                )
+
+        vertical_scroll_bar = cast(
+            qtw.QScrollBar,
+            self.overview.verticalScrollBar(),
+            )
+        horizontal_scroll_bar = cast(
+            qtw.QScrollBar,
+            self.overview.horizontalScrollBar(),
+            )
+        vertical_scroll = vertical_scroll_bar.value()
+        horizontal_scroll = horizontal_scroll_bar.value()
+        for field, value in updates.items():
+            if self._has_value(value):
+                self._set_overview_value(field, value)
+        vertical_scroll_bar.setValue(vertical_scroll)
+        horizontal_scroll_bar.setValue(horizontal_scroll)
+
+
     def clear(self):
         self.overview.setRowCount(0)
         self.parameters.setRowCount(0)
@@ -1169,13 +1326,16 @@ class moreInfo(qtw.QTabWidget):
                 ]
 
         rows = [
-            ("Status", self._status_text(dataset)),
+            ("Status", self._status_text(dataset, run_metadata)),
             ("Data points", structure.get("Data points")),
-            ("Duration", self._time_taken_value(dataset, info)),
+            ("Duration", self._time_taken_value(dataset, info, run_metadata)),
             ("Measured parameters", ", ".join(measured)),
             ("Setpoints", ", ".join(setpoints)),
-            ("Started", self._dataset_timestamp(dataset, "run_timestamp")),
-            ("Completed", self._dataset_timestamp(dataset, "completed_timestamp")),
+            ("Started", self._run_timestamp(dataset, run_metadata, "run_timestamp")),
+            (
+                "Completed",
+                self._run_timestamp(dataset, run_metadata, "completed_timestamp"),
+                ),
             ("Experiment", self._dataset_attr(dataset, "exp_name")),
             ("Sample", self._dataset_attr(dataset, "sample_name")),
             ("Name", self._dataset_attr(dataset, "name")),
@@ -1276,7 +1436,10 @@ class moreInfo(qtw.QTabWidget):
         return ""
 
 
-    def _time_taken_value(self, dataset, info):
+    def _time_taken_value(self, dataset, info, run_metadata=None):
+        if self._has_authoritative_run_state(run_metadata):
+            return self._time_taken_from_metadata(run_metadata)
+
         started = self._dataset_attr(dataset, "run_timestamp_raw")
         completed = self._dataset_attr(dataset, "completed_timestamp_raw")
         if not self._has_value(started):
@@ -1293,6 +1456,37 @@ class moreInfo(qtw.QTabWidget):
             return ""
 
         per_point = self._time_per_point(seconds, info, dataset)
+        if self._has_value(per_point):
+            return f"{seconds:.2f} s\t({format_duration_dhms(seconds)}; {per_point} s/point)"
+        return f"{seconds:.2f} s\t({format_duration_dhms(seconds)})"
+
+
+    def _time_taken_from_metadata(self, run_metadata):
+        started = run_metadata.get("run_timestamp")
+        if not self._has_value(started):
+            return ""
+
+        completed = run_metadata.get("is_completed")
+        if completed is None:
+            return ""
+        if bool(completed):
+            end = run_metadata.get("completed_timestamp")
+            if not self._has_value(end):
+                return ""
+        else:
+            end = datetime.now().timestamp()
+
+        try:
+            seconds = max(0, self._timestamp_seconds(end) - self._timestamp_seconds(started))
+        except (TypeError, ValueError):
+            return ""
+
+        points = run_metadata.get("result_count")
+        per_point = self._time_per_point(
+            seconds,
+            {"Data Structure": {"Data points": points}},
+            None,
+            )
         if self._has_value(per_point):
             return f"{seconds:.2f} s\t({format_duration_dhms(seconds)}; {per_point} s/point)"
         return f"{seconds:.2f} s\t({format_duration_dhms(seconds)})"
@@ -1535,20 +1729,81 @@ class moreInfo(qtw.QTabWidget):
         return value() if callable(value) else value
 
 
-    def _dataset_timestamp(self, dataset, name):
-        value = self._dataset_attr(dataset, name)
+    def _run_timestamp(self, dataset, run_metadata, name):
+        if self._has_authoritative_run_state(run_metadata):
+            if (
+                    name == "completed_timestamp"
+                    and not bool(run_metadata.get("is_completed"))
+                    ):
+                return ""
+            value = run_metadata.get(name)
+        else:
+            value = self._dataset_attr(dataset, name)
         if isinstance(value, (int, float)):
             return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
         return value
 
 
-    def _status_text(self, dataset):
+    def _status_text(self, dataset, run_metadata=None):
+        if self._has_authoritative_run_state(run_metadata):
+            return format_run_state(run_metadata)
+
         running = self._dataset_attr(dataset, "running")
         if running is True:
-            return "Running"
+            return format_run_state({"is_completed": False})
         if running is False:
-            return "Completed"
+            return format_run_state({"is_completed": True})
         return ""
+
+
+    def _has_authoritative_run_state(self, run_metadata):
+        return run_metadata is not None and "is_completed" in run_metadata
+
+
+    def _set_overview_value(self, field, value):
+        row = self._overview_row(field)
+        if row is None:
+            row = self._overview_insert_row(field)
+            self.overview.insertRow(row)
+            self.overview.setItem(row, 0, self._table_item(field))
+        self.overview.setItem(row, 1, self._table_item(value))
+        self.overview.setRowHeight(row, 20)
+
+
+    def _overview_row(self, field):
+        for row in range(self.overview.rowCount()):
+            item = self.overview.item(row, 0)
+            if item is not None and item.text() == field:
+                return row
+        return None
+
+
+    def _overview_insert_row(self, field):
+        field_order = (
+            "Status",
+            "Data points",
+            "Duration",
+            "Measured parameters",
+            "Setpoints",
+            "Started",
+            "Completed",
+            "Experiment",
+            "Sample",
+            "Name",
+            "GUID",
+            )
+        target_order = field_order.index(field)
+        for row in range(self.overview.rowCount()):
+            item = self.overview.item(row, 0)
+            if item is None:
+                continue
+            try:
+                current_order = field_order.index(item.text())
+            except ValueError:
+                continue
+            if current_order > target_order:
+                return row
+        return self.overview.rowCount()
 
 
     def _has_value(self, value):

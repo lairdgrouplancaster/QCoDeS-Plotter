@@ -67,6 +67,9 @@ class RunListTooltipTestCase(unittest.TestCase):
             "is_completed": False,
             "result_count": 25,
             "expected_results": 100,
+            "setpoint_count": 100,
+            "setpoint_count_source": "planned",
+            "read_setpoint_count": 25,
             })
 
         self.assertTrue(tooltip.startswith("<table"))
@@ -84,7 +87,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             tooltip
             )
         self.assertIn("Status</td>", tooltip)
-        self.assertIn("Incomplete (25.0%)</td>", tooltip)
+        self.assertIn("Running (25.0%)</td>", tooltip)
         self.assertNotIn("Duration", tooltip)
 
     def test_format_point_count_summarises_multidimensional_sweeps(self):
@@ -127,27 +130,43 @@ class RunListTooltipTestCase(unittest.TestCase):
             "92,988 = 108 × 861"
             )
 
-    def test_progress_uses_measured_row_count_while_setpoints_use_setpoint_count(self):
+    def test_running_status_uses_measured_setpoints_not_result_rows(self):
         metadata = {
             "setpoint_shape": [10, 100],
             "setpoint_count": 1000,
             "point_shape": [10, 100],
             "expected_results": 2000,
             "result_count": 1000,
+            "read_setpoint_count": 600,
             "is_completed": False,
             }
 
         self.assertEqual(treeWidgets.format_point_count(metadata), "1,000 = 10 × 100")
-        self.assertEqual(treeWidgets.format_complete_cell(metadata), "50.0%")
+        self.assertEqual(
+            treeWidgets.format_complete_cell(metadata),
+            "Running (60.0%)",
+            )
 
-    def test_incomplete_progress_never_formats_as_one_hundred_percent(self):
+    def test_running_status_can_report_all_planned_setpoints_as_measured(self):
         self.assertEqual(
             treeWidgets.format_complete_cell({
                 "expected_results": 100,
                 "result_count": 100,
+                "setpoint_count": 100,
+                "read_setpoint_count": 100,
                 "is_completed": False,
                 }),
-            "99.9%"
+            "Running (100.0%)"
+            )
+
+    def test_running_status_uses_result_progress_while_setpoints_load(self):
+        self.assertEqual(
+            treeWidgets.format_complete_cell({
+                "expected_results": 185_976,
+                "result_count": 185_976,
+                "is_completed": False,
+                }),
+            "Running (100.0%)",
             )
 
     def test_interrupted_completed_run_reports_setpoint_progress(self):
@@ -163,15 +182,15 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         self.assertEqual(
             treeWidgets.format_complete_cell(metadata),
-            "Interrupted"
+            "Interrupted (40.0%)"
             )
         self.assertEqual(
             treeWidgets.format_run_status(metadata),
-            "Interrupted (40.00%)"
+            "Interrupted (40.0%)"
             )
         self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40.0)
 
-    def test_unshaped_interrupted_run_does_not_report_observed_count_as_plan(self):
+    def test_interrupted_run_can_use_observed_setpoint_total(self):
         metadata = {
             "is_completed": True,
             "measurement_exception": "KeyboardInterrupt",
@@ -185,9 +204,9 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         self.assertEqual(
             treeWidgets.format_run_status(metadata),
-            "Interrupted (unknown)",
+            "Interrupted (100.0%)",
             )
-        self.assertIsNone(treeWidgets.complete_cell_sort_value(metadata))
+        self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 100.0)
 
     def test_completed_non_keyboard_measurement_exception_is_failed(self):
         metadata = {
@@ -199,16 +218,16 @@ class RunListTooltipTestCase(unittest.TestCase):
             }
 
         self.assertEqual(treeWidgets.format_complete_cell(metadata), "Failed")
-        self.assertEqual(treeWidgets.format_run_status(metadata), "Failed (40.00%)")
+        self.assertEqual(treeWidgets.format_run_status(metadata), "Failed (40.0%)")
         self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40.0)
 
-    def test_completed_run_without_exception_still_uses_tick(self):
+    def test_completed_run_without_exception_uses_completed_label(self):
         self.assertEqual(
             treeWidgets.format_complete_cell({
                 "completed_timestamp": 12_345.6,
                 "is_completed": True,
                 }),
-            "✓",
+            "Completed",
             )
 
     def test_empty_measurement_exceptions_are_not_failures(self):
@@ -220,7 +239,10 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "measurement_exception": exception,
                     }
                 self.assertFalse(treeWidgets.run_failed(metadata))
-                self.assertEqual(treeWidgets.format_complete_cell(metadata), "✓")
+                self.assertEqual(
+                    treeWidgets.format_complete_cell(metadata),
+                    "Completed",
+                    )
 
     def test_exception_state_takes_precedence_over_completed_state(self):
         base_metadata = {
@@ -233,7 +255,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 **base_metadata,
                 "measurement_exception": "KeyboardInterrupt",
                 }),
-            "Interrupted",
+            "Interrupted (unknown)",
             )
         self.assertEqual(
             treeWidgets.format_complete_cell({
@@ -257,12 +279,12 @@ class RunListTooltipTestCase(unittest.TestCase):
             }
 
         tooltip = treeWidgets.run_tooltip_text(metadata)
-        self.assertIn("Failed (40.00%)", tooltip)
+        self.assertIn("Failed (40.0%)", tooltip)
         self.assertIn("ValueError: x &lt; 2 &amp; y &gt; 1", tooltip)
         self.assertNotIn("internal implementation detail", tooltip)
 
         plain_text = treeWidgets.run_tooltip_plain_text(metadata)
-        self.assertIn("Status  Failed (40.00%)", plain_text)
+        self.assertIn("Status  Failed (40.0%)", plain_text)
         self.assertIn("Exception ValueError: x < 2 & y > 1", plain_text)
         self.assertNotIn("internal implementation detail", plain_text)
 
@@ -503,6 +525,10 @@ class RunListTooltipTestCase(unittest.TestCase):
             run_list.resize(780, 300)
             run_list.show()
             qtw.QApplication.processEvents()
+            preferred_widths = run_list._preferred_column_widths()
+            frame_width = run_list.width() - run_list.viewport().width()
+            run_list.resize(sum(preferred_widths.values()) + frame_width, 300)
+            qtw.QApplication.processEvents()
             run_list._resize_columns()
 
             widths = {
@@ -515,7 +541,56 @@ class RunListTooltipTestCase(unittest.TestCase):
             for name, width in treeWidgets.RunList.elastic_column_widths.items():
                 self.assertGreaterEqual(widths[name], width)
             self.assertGreater(widths["Setpoints"], widths["Started"])
+
+            metrics = QtGui.QFontMetrics(run_list.font())
+            for name, value in run_list.representative_column_values.items():
+                self.assertGreaterEqual(
+                    widths[name],
+                    metrics.horizontalAdvance(value) + 12,
+                    )
             run_list.hide()
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_manual_column_widths_persist_until_reset(self):
+        class MemoryConfig:
+            def __init__(self):
+                self.values = {treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: []}
+
+            def get(self, key):
+                return self.values[key]
+
+            def update(self, key, value):
+                self.values[key] = value
+
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            cfg = MemoryConfig()
+            first = treeWidgets.RunList(config=cfg)
+            saved_widths = [48, 112, 205, 154, 146, 104, 68]
+            for column, width in enumerate(saved_widths):
+                first.setColumnWidth(column, width)
+            first._persist_column_widths()
+
+            restored = treeWidgets.RunList(config=cfg)
+            self.assertTrue(restored._manual_column_widths)
+            self.assertEqual(
+                [restored.columnWidth(column) for column in range(len(restored.cols))],
+                saved_widths,
+                )
+
+            self.assertTrue(restored.reset_column_widths())
+            self.assertEqual(cfg.values[treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY], [])
+            self.assertFalse(restored._manual_column_widths)
+
+            defaults = treeWidgets.RunList(config=cfg)
+            self.assertFalse(defaults._manual_column_widths)
+            self.assertNotEqual(
+                [defaults.columnWidth(column) for column in range(len(defaults.cols))],
+                saved_widths,
+                )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -627,7 +702,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "result_count": 25,
                 "expected_results": 100,
                 }),
-            "25.0%"
+            "Running (25.0%)"
             )
         self.assertEqual(
             treeWidgets.format_time_taken_seconds({
@@ -660,9 +735,12 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "sweep_parameters": ["x"],
                     "measure_parameters": ["y"],
                     "result_count": 1,
-                    "expected_results": 10,
-                    "point_shape": [10],
-                    "storage_bytes": 102_400,
+                "expected_results": 10,
+                "point_shape": [10],
+                "setpoint_count": 10,
+                "setpoint_count_source": "planned",
+                "read_setpoint_count": 1,
+                "storage_bytes": 102_400,
                     },
                 2: {
                     "run_timestamp": 100.0,
@@ -734,7 +812,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 1
                 )
             self.assertEqual(items["unfinished-guid"].text(2), "10")
-            self.assertEqual(items["unfinished-guid"].text(4), "10.0%")
+            self.assertEqual(items["unfinished-guid"].text(4), "Running (10.0%)")
             self.assertRegex(items["unfinished-guid"].text(5), r"^[\d,]+\.\d s$")
             self.assertEqual(items["unfinished-guid"].text(6), "100 KB")
             self.assertEqual(items["finished-guid"].text(1), "")
@@ -755,7 +833,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 2
                 )
             self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 × 100")
-            self.assertEqual(items["finished-guid"].text(4), "✓")
+            self.assertEqual(items["finished-guid"].text(4), "Completed")
             self.assertEqual(items["finished-guid"].text(5), "10.0 s")
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(0)),
@@ -780,7 +858,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIn("Measure</td>", items["unfinished-guid"].toolTip(0))
             self.assertIn("(y)</td>", items["unfinished-guid"].toolTip(0))
             self.assertIn("Status</td>", items["finished-guid"].toolTip(0))
-            self.assertIn("Complete</td>", items["finished-guid"].toolTip(0))
+            self.assertIn("Completed</td>", items["finished-guid"].toolTip(0))
 
             run_list.sortItems(1, QtCore.Qt.SortOrder.DescendingOrder)
             self.assertEqual(
@@ -827,7 +905,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIs(run_list.topLevelItem(0), item)
             self.assertEqual(updated[1]["result_count"], 10)
             self.assertEqual(item.text(run_list.cols.index("Setpoints")), "10")
-            self.assertEqual(item.text(run_list.cols.index("Status")), "✓")
+            self.assertEqual(item.text(run_list.cols.index("Status")), "Completed")
             self.assertEqual(item.text(run_list.cols.index("Duration")), "10.0 s")
             self.assertEqual(item.text(run_list.cols.index("Size")), "2.0 KB")
             self.assertEqual(run_list.watching, [])
@@ -957,7 +1035,7 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual(
                 item.text(run_list.cols.index("Status")),
-                "Interrupted"
+                "Interrupted (40.0%)"
                 )
             self.assertEqual(
                 item.data(run_list.cols.index("Status"), QtCore.Qt.ItemDataRole.UserRole),
@@ -1002,6 +1080,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "growing-guid": {
                     "is_completed": False,
                     "result_count": 5,
+                    "read_setpoint_count": 5,
                     "point_shape": [5],
                     "setpoint_shape": [5],
                     "setpoint_shape_source": "observed",
@@ -1013,7 +1092,10 @@ class RunListTooltipTestCase(unittest.TestCase):
                 })
 
             self.assertEqual(item.text(run_list.cols.index("Setpoints")), "5")
-            self.assertEqual(item.text(run_list.cols.index("Status")), "unknown")
+            self.assertEqual(
+                item.text(run_list.cols.index("Status")),
+                "Running (100.0%)",
+                )
             self.assertIsNone(item.run_metadata["expected_results"])
 
             run_list.checkWatching({
@@ -1032,7 +1114,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 })
 
             self.assertEqual(item.text(run_list.cols.index("Setpoints")), "5")
-            self.assertEqual(item.text(run_list.cols.index("Status")), "✓")
+            self.assertEqual(item.text(run_list.cols.index("Status")), "Completed")
             self.assertEqual(item.run_metadata["expected_results"], 5)
             self.assertEqual(run_list.watching, [])
         finally:
@@ -1082,7 +1164,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "Traceback...\nValueError: bad <value>\n",
                 )
             self.assertIn("Status</td>", item.toolTip(0))
-            self.assertIn("Failed (40.00%)", item.toolTip(0))
+            self.assertIn("Failed (40.0%)", item.toolTip(0))
             self.assertIn("ValueError: bad &lt;value&gt;", item.toolTip(0))
         finally:
             treeWidgets.isfile = old_isfile
@@ -1124,13 +1206,13 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIsNone(updated_runs[1]["completed_timestamp"])
             self.assertEqual(
                 item.text(run_list.cols.index("Status")),
-                "✓",
+                "Completed",
                 )
             self.assertEqual(
                 item.text(run_list.cols.index("Duration")),
                 "unknown",
                 )
-            self.assertIn("Complete</td>", item.toolTip(0))
+            self.assertIn("Completed</td>", item.toolTip(0))
         finally:
             treeWidgets.isfile = old_isfile
             treeWidgets.get_run_status = old_get_run_status
