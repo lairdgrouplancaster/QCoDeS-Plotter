@@ -92,6 +92,14 @@ class RunList(qtw.QTreeWidget):
         "Setpoints": 170,
         "Started": 142,
         }
+    representative_column_values = {
+        "ID": "9999",
+        "Setpoints": "1,200,120 = 10,001 × 60",
+        "Started": "2026-05-04 13:05:16",
+        "Status": "Interrupted (100.0%)",
+        "Duration": "57,116.6 s",
+        "Size": "116 MB",
+        }
     readable_column_widths = {
         "ID": 37,
         "Measurements": 92,
@@ -670,15 +678,10 @@ class RunList(qtw.QTreeWidget):
             for col in range(len(self.cols)):
                 header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Interactive)
 
-        preferred_fixed_width = sum(self.column_widths.values())
-        preferred_elastic_width = sum(self.elastic_column_widths.values())
         viewport = self.viewport()
         available_width = viewport.width() if viewport is not None else 0
-        preferred_widths = {
-            **self.elastic_column_widths,
-            **self.column_widths,
-            }
-        preferred_width = preferred_fixed_width + preferred_elastic_width
+        preferred_widths = self._preferred_column_widths()
+        preferred_width = sum(preferred_widths.values())
         if available_width <= 0:
             available_width = preferred_width
 
@@ -713,6 +716,18 @@ class RunList(qtw.QTreeWidget):
                     self.setColumnWidth(col, width)
         finally:
             self._resizing_columns = False
+
+
+    def _preferred_column_widths(self):
+        """Return roomy widths adjusted for the active platform font."""
+        widths = {
+            **self.elastic_column_widths,
+            **self.column_widths,
+            }
+        metrics = QtGui.QFontMetrics(self.font())
+        for name, value in self.representative_column_values.items():
+            widths[name] = max(widths[name], metrics.horizontalAdvance(value) + 12)
+        return widths
 
 
     def _grow_column_widths(self, base_widths, target_widths, available_width, order):

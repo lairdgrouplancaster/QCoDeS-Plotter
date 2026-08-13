@@ -1,3 +1,4 @@
+import builtins
 from pathlib import Path
 from unittest.mock import patch
 
@@ -216,6 +217,7 @@ def test_unsuffixed_export_creates_final_target_when_absent(tmp_path, kind):
             return_value=(str(selected_path), ""),
         ),
         patch.object(qtw.QMessageBox, "question") as question,
+        patch("builtins.open", wraps=builtins.open) as open_file,
     ):
         harness = _invoke_export(kind, selected_path)
 
@@ -225,3 +227,4 @@ def test_unsuffixed_export_creates_final_target_when_absent(tmp_path, kind):
     assert str(final_path) in harness.status_messages[-1][0]
     assert harness.errors == []
     question.assert_not_called()
+    assert any(call.args[1] == "r+b" for call in open_file.call_args_list)

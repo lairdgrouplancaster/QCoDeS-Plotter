@@ -81,7 +81,10 @@ def write_export_atomically(
         if writer(temporary_path) is False:
             return False
 
-        with open(temporary_path, "rb") as temporary:
+        # Windows rejects ``fsync`` on a read-only descriptor with EBADF even
+        # though POSIX accepts it.  Reopen the completed staging file writable
+        # so the durability step has the same semantics on every platform.
+        with open(temporary_path, "r+b") as temporary:
             os.fsync(temporary.fileno())
 
         if before_publish is not None:

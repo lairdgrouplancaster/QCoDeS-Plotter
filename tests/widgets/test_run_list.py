@@ -525,6 +525,10 @@ class RunListTooltipTestCase(unittest.TestCase):
             run_list.resize(780, 300)
             run_list.show()
             qtw.QApplication.processEvents()
+            preferred_widths = run_list._preferred_column_widths()
+            frame_width = run_list.width() - run_list.viewport().width()
+            run_list.resize(sum(preferred_widths.values()) + frame_width, 300)
+            qtw.QApplication.processEvents()
             run_list._resize_columns()
 
             widths = {
@@ -539,15 +543,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertGreater(widths["Setpoints"], widths["Started"])
 
             metrics = QtGui.QFontMetrics(run_list.font())
-            representative_values = {
-                "ID": "9999",
-                "Setpoints": "1,200,120 = 10,001 × 60",
-                "Started": "2026-05-04 13:05:16",
-                "Status": "Interrupted (100.0%)",
-                "Duration": "57,116.6 s",
-                "Size": "116 MB",
-                }
-            for name, value in representative_values.items():
+            for name, value in run_list.representative_column_values.items():
                 self.assertGreaterEqual(
                     widths[name],
                     metrics.horizontalAdvance(value) + 12,
