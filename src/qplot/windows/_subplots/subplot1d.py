@@ -287,11 +287,49 @@ class custom_viewbox(pg.ViewBox):
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
         self._marquee_owner = None
+        self._shift_pan_axis_constraint = False
+        self._shift_pan_axis = None
         self.setAcceptHoverEvents(True)
 
 
     def set_marquee_owner(self, owner):
         self._marquee_owner = owner
+
+
+    def set_shift_pan_axis_constraint(self, enabled):
+        """Enable Shift-drag axis locking for panning in this view box."""
+
+        self._shift_pan_axis_constraint = bool(enabled)
+        self._shift_pan_axis = None
+
+
+    def _shift_pan_axis_for_event(self, ev):
+        """Return the axis selected by a Shift-pan drag, if applicable."""
+
+        if (
+                not self._shift_pan_axis_constraint
+                or self.state["mouseMode"] != self.PanMode
+                or ev.button() not in {
+                    QtCore.Qt.MouseButton.LeftButton,
+                    QtCore.Qt.MouseButton.MiddleButton,
+                    }
+                ):
+            return None
+
+        if not ev.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
+            self._shift_pan_axis = None
+            return None
+
+        if ev.isStart():
+            self._shift_pan_axis = None
+
+        if self._shift_pan_axis is None:
+            drag = ev.pos() - ev.buttonDownPos(ev.button())
+            if drag.x() == 0 and drag.y() == 0:
+                return None
+            self._shift_pan_axis = 0 if abs(drag.x()) >= abs(drag.y()) else 1
+
+        return self._shift_pan_axis
 
 
     def _handle_marquee_mouse_drag(self, ev):
@@ -395,7 +433,14 @@ class custom_viewbox(pg.ViewBox):
         if axis is None and self._handle_marquee_mouse_drag(ev):
             return
 
-        super().mouseDragEvent(ev, axis=axis)
+        constrained_axis = axis
+        if axis is None:
+            constrained_axis = self._shift_pan_axis_for_event(ev)
+
+        super().mouseDragEvent(ev, axis=constrained_axis)
+
+        if ev.isFinish():
+            self._shift_pan_axis = None
         
         if axis is None:
             self.main_moved.emit(ev)

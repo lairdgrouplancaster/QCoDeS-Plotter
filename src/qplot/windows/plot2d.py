@@ -56,6 +56,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         Sets up the initial plot and starting data.
 
         """
+        self.vb.set_shift_pan_axis_constraint(True)
         self._large_heatmap_sql_mode = False
         self._heatmap_full_axis_ranges: dict[str, tuple[float, float]] | None = None
         self._heatmap_full_view_ranges: dict[str, tuple[float, float]] | None = None

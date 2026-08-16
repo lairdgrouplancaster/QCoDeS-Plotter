@@ -1620,6 +1620,68 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertTrue(event.accepted)
         self.assertEqual(calls, [(QtCore.QPointF(1.0, 2.0), QtCore.QPoint(20, 30))])
 
+    def test_shift_pan_locks_to_the_initial_dominant_axis(self):
+        class Event:
+            def __init__(self, position, *, start=False, finish=False):
+                self._position = QtCore.QPointF(*position)
+                self._start = start
+                self._finish = finish
+
+            def button(self):
+                return QtCore.Qt.MouseButton.LeftButton
+
+            def modifiers(self):
+                return QtCore.Qt.KeyboardModifier.ShiftModifier
+
+            def isStart(self):
+                return self._start
+
+            def isFinish(self):
+                return self._finish
+
+            def pos(self):
+                return self._position
+
+            def buttonDownPos(self, _button):
+                return QtCore.QPointF(0.0, 0.0)
+
+        viewbox = custom_viewbox()
+        viewbox.set_shift_pan_axis_constraint(True)
+        start_event = Event((0.0, 0.0), start=True)
+        first_event = Event((2.0, 12.0))
+        finish_event = Event((40.0, 13.0), finish=True)
+
+        with patch.object(pg.ViewBox, "mouseDragEvent") as mouse_drag:
+            viewbox.mouseDragEvent(start_event)
+            viewbox.mouseDragEvent(first_event)
+            viewbox.mouseDragEvent(finish_event)
+
+        self.assertEqual(
+            mouse_drag.call_args_list,
+            [
+                ((start_event,), {"axis": None}),
+                ((first_event,), {"axis": 1}),
+                ((finish_event,), {"axis": 1}),
+                ],
+            )
+        self.assertIsNone(viewbox._shift_pan_axis)
+
+    def test_shift_pan_constraint_is_disabled_by_default(self):
+        class Event:
+            def button(self):
+                return QtCore.Qt.MouseButton.LeftButton
+
+            def isFinish(self):
+                return False
+
+        event = Event()
+        viewbox = custom_viewbox()
+
+        with patch.object(pg.ViewBox, "mouseDragEvent") as mouse_drag:
+            viewbox.mouseDragEvent(event)
+
+        mouse_drag.assert_called_once_with(event, axis=None)
+
     def test_marquee_menu_omits_zoom_color_for_1d_plots(self):
         window = plot1d.__new__(plot1d)
         window.marquee = QtCore.QRectF(0.0, 0.0, 10.0, 8.0)

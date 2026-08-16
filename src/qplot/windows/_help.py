@@ -20,6 +20,7 @@ QUICK_START_HTML = """
   <li><b>Open a plot.</b> Double-click a preview, right-click a run, or enter
       a run ID and measurement number at the top of the main window.</li>
   <li><b>Inspect the plot.</b> Use the mouse wheel to zoom, left-drag to pan,
+  and Shift-drag in a heatmap to pan along one axis,
       right-click for plot actions, and double-click axes for scale controls.</li>
   <li><b>Export data or plots.</b> Use the CSV button or preview context menu
       for measurement data, and <b>File -&gt; Export Plot...</b> or
