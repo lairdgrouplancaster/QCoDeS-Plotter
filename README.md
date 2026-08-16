@@ -53,7 +53,7 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 
 Alternatively, you can install other releases by changing the tag. To install Ben's original version, execute:
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.2.0
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@Wordsworth-version
 ```
 
 To test the latest beta, execute:
