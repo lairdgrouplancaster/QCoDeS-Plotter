@@ -36,8 +36,39 @@
                         "minimum": 32,
                         "maximum": 16777215
                     },
-                    "maxItems": 7,
+                    "maxItems": 12,
                     "default": []
+                },
+                "run_table_visible_columns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "run_id",
+                            "experiment",
+                            "sample",
+                            "measurements",
+                            "setpoints",
+                            "name",
+                            "started",
+                            "completed",
+                            "status",
+                            "duration",
+                            "size",
+                            "guid"
+                        ]
+                    },
+                    "uniqueItems": true,
+                    "maxItems": 12,
+                    "default": [
+                        "run_id",
+                        "measurements",
+                        "setpoints",
+                        "started",
+                        "status",
+                        "duration",
+                        "size"
+                    ]
                 }
             },
             "required": ["plot_frame_fraction", "main_frame_size"],

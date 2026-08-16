@@ -86,7 +86,8 @@ class config:
                         "config.json root must be a JSON object"
                     )
 
-                changed = self.add_missing_defaults(loaded_config)
+                changed = self.migrate_removed_run_id_column(loaded_config)
+                changed = self.add_missing_defaults(loaded_config) or changed
                 self.validate(loaded_config)
                 self.config = loaded_config
                 if changed:
@@ -410,6 +411,36 @@ class config:
                 if key not in target_config[section]:
                     target_config[section][key] = deepcopy(key_schema["default"])
                     changed = True
+
+        return changed
+
+
+    @staticmethod
+    def migrate_removed_run_id_column(target_config):
+        """Remove the short-lived duplicate Run ID run-table column."""
+        gui_config = target_config.get("GUI")
+        if not isinstance(gui_config, dict):
+            return False
+
+        changed = False
+        visible_columns = gui_config.get("run_table_visible_columns")
+        if (
+                isinstance(visible_columns, list)
+                and "legacy_run_id" in visible_columns
+                ):
+            gui_config["run_table_visible_columns"] = [
+                column_id
+                for column_id in visible_columns
+                if column_id != "legacy_run_id"
+                ]
+            changed = True
+
+        column_widths = gui_config.get("run_table_column_widths")
+        if isinstance(column_widths, list) and len(column_widths) == 13:
+            gui_config["run_table_column_widths"] = (
+                column_widths[:3] + column_widths[4:]
+                )
+            changed = True
 
         return changed
         

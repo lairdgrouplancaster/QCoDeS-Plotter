@@ -68,6 +68,7 @@ from .run_list_items import (
 MAX_RUN_PREVIEW_WIDGETS = 500
 MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS = 100_000
 RUN_TABLE_COLUMN_WIDTHS_KEY = "GUI.run_table_column_widths"
+RUN_TABLE_VISIBLE_COLUMNS_KEY = "GUI.run_table_visible_columns"
 
 
 class RunList(qtw.QTreeWidget):
@@ -80,13 +81,91 @@ class RunList(qtw.QTreeWidget):
     
     """
     
-    cols = ['ID', 'Measurements', 'Setpoints', 'Started', 'Status', 'Duration', 'Size']
+    column_ids = (
+        "run_id",
+        "experiment",
+        "sample",
+        "measurements",
+        "setpoints",
+        "name",
+        "started",
+        "completed",
+        "status",
+        "duration",
+        "size",
+        "guid",
+        )
+    column_labels = {
+        "run_id": "ID",
+        "experiment": "Experiment",
+        "sample": "Sample",
+        "measurements": "Measurements",
+        "setpoints": "Setpoints",
+        "name": "Name",
+        "started": "Started",
+        "completed": "Completed",
+        "status": "Status",
+        "duration": "Duration",
+        "size": "Size",
+        "guid": "GUID",
+        }
+    cols = [
+        "ID",
+        "Experiment",
+        "Sample",
+        "Measurements",
+        "Setpoints",
+        "Name",
+        "Started",
+        "Completed",
+        "Status",
+        "Duration",
+        "Size",
+        "GUID",
+        ]
+    default_visible_column_ids = (
+        "run_id",
+        "measurements",
+        "setpoints",
+        "started",
+        "status",
+        "duration",
+        "size",
+        )
+    default_visible_columns = (
+        "ID",
+        "Measurements",
+        "Setpoints",
+        "Started",
+        "Status",
+        "Duration",
+        "Size",
+        )
+    column_width_storage_order = (
+        "ID",
+        "Measurements",
+        "Setpoints",
+        "Experiment",
+        "Sample",
+        "Name",
+        "Started",
+        "Status",
+        "Duration",
+        "Size",
+        "Completed",
+        "GUID",
+        )
     column_widths = {
         "ID": 44,
         "Measurements": 96,
+        "Experiment": 120,
+        "Sample": 112,
+        "Name": 150,
         "Status": 140,
         "Duration": 96,
         "Size": 62,
+        "Completed": 142,
+        "GUID": 286,
         }
     elastic_column_widths = {
         "Setpoints": 170,
@@ -94,51 +173,81 @@ class RunList(qtw.QTreeWidget):
         }
     representative_column_values = {
         "ID": "9999",
+        "Experiment": "experiment-name",
+        "Sample": "sample-name",
+        "Name": "run-name",
         "Setpoints": "1,200,120 = 10,001 × 60",
         "Started": "2026-05-04 13:05:16",
         "Status": "Interrupted (100.0%)",
         "Duration": "57,116.6 s",
         "Size": "116 MB",
+        "Completed": "2026-05-04 13:05:16",
+        "GUID": "00000000-0000-0000-0000-000000000000",
         }
     readable_column_widths = {
         "ID": 37,
         "Measurements": 92,
+        "Experiment": 96,
+        "Sample": 88,
+        "Name": 112,
         "Setpoints": 100,
         "Started": 128,
         "Status": 132,
         "Duration": 84,
         "Size": 54,
+        "Completed": 128,
+        "GUID": 220,
         }
     minimum_column_widths = {
         "ID": 34,
         "Measurements": 84,
+        "Experiment": 80,
+        "Sample": 72,
+        "Name": 80,
         "Setpoints": 80,
         "Started": 84,
         "Status": 72,
         "Duration": 68,
         "Size": 50,
+        "Completed": 84,
+        "GUID": 120,
         }
     compact_growth_order = (
         "Measurements",
+        "Experiment",
+        "Sample",
+        "Name",
         "Started",
+        "Completed",
         "Duration",
         "Size",
         "Status",
+        "GUID",
         "Setpoints",
         "ID",
         )
     preferred_growth_order = (
         "Setpoints",
+        "Name",
+        "Experiment",
+        "Sample",
         "Started",
+        "Completed",
         "Duration",
         "Size",
         "Measurements",
         "Status",
+        "GUID",
         "ID",
         )
     compact_shrink_order = (
         "Setpoints",
+        "GUID",
+        "Name",
+        "Experiment",
+        "Sample",
         "Started",
+        "Completed",
         "Measurements",
         "Duration",
         "Status",
@@ -171,6 +280,7 @@ class RunList(qtw.QTreeWidget):
         self._manual_column_widths = False
         self._config = config
         self._saved_column_widths = None
+        self._column_width_cache: dict[str, int] = {}
         self._column_width_save_timer = QtCore.QTimer(self)
         self._column_width_save_timer.setSingleShot(True)
         self._column_width_save_timer.setInterval(250)
@@ -180,19 +290,36 @@ class RunList(qtw.QTreeWidget):
         
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
+        header = self.header()
+        if header is not None:
+            header.setStretchLastSection(False)
+            header.setMinimumSectionSize(32)
+            header.setMinimumHeight(
+                max(header.sizeHint().height(), self.fontMetrics().height() + 8)
+                )
+            for column in range(len(self.cols)):
+                header.setSectionResizeMode(
+                    column,
+                    qtw.QHeaderView.ResizeMode.Interactive,
+                    )
         self.setRootIsDecorated(False)
         self.setIndentation(0)
         self.setUniformRowHeights(False)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollMode(qtw.QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._setpoints_delegate = EqualsAlignedDelegate(self)
         self.setItemDelegateForColumn(
             self.cols.index("Setpoints"),
             self._setpoints_delegate,
             )
-        self._resize_columns()
+        self._column_width_cache = self._preferred_column_widths()
+        self._apply_column_widths([
+            self._column_width_cache[name]
+            for name in self.cols
+            ])
         self.apply_configured_column_widths()
+        self.apply_configured_column_visibility()
 
-        header = self.header()
         if header is not None:
             header.sectionResized.connect(self._column_resized)
             header.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
@@ -249,22 +376,15 @@ class RunList(qtw.QTreeWidget):
         
         for run_id, metadata in runs.items():
             append_to_watching = False
-            arr = [str(run_id)] # Run ID
-            
             measurement_count = measured_parameter_count(metadata)
-            arr.append("") #measured previews; count remains the hidden sort key
-            arr.append(format_point_count(metadata)) #points
-            arr.append(format_timestamp(metadata.get("run_timestamp"))) #started
-            arr.append(format_complete_cell(metadata)) #status
-            arr.append(format_time_taken_seconds(metadata)) #duration
-            arr.append(format_storage_size(metadata.get("storage_bytes"))) #size
+            arr = self._run_column_texts(run_id, metadata)
 
             if not run_is_complete(metadata):
                 append_to_watching = True
 
             # Convert arr to easy to sort QTreeWidgetItem
             item = SortableTreeWidgetItem(arr)
-            item.set_guid(metadata["guid"])
+            item.set_guid(str(metadata.get("guid") or ""))
             item.run_metadata = dict(metadata)
             self._items_by_guid[item.guid] = item
             for col_name in ("ID", "Setpoints", "Size"):
@@ -305,6 +425,11 @@ class RunList(qtw.QTreeWidget):
                 self.cols.index("Started"),
                 QtCore.Qt.ItemDataRole.UserRole,
                 metadata.get("run_timestamp")
+                )
+            item.setData(
+                self.cols.index("Completed"),
+                QtCore.Qt.ItemDataRole.UserRole,
+                metadata.get("completed_timestamp")
                 )
             item.setData(
                 self.cols.index("Status"),
@@ -354,7 +479,19 @@ class RunList(qtw.QTreeWidget):
         sort_column = self.sortColumn()
         mutable_columns = {
             self.cols.index(name)
-            for name in ("Measurements", "Setpoints", "Status", "Duration", "Size")
+            for name in (
+                "Measurements",
+                "Setpoints",
+                "Experiment",
+                "Sample",
+                "Name",
+                "Started",
+                "Status",
+                "Duration",
+                "Size",
+                "Completed",
+                "GUID",
+                )
             }
         suspend_sorting = sorting_enabled and sort_column in mutable_columns
         if suspend_sorting:
@@ -388,6 +525,8 @@ class RunList(qtw.QTreeWidget):
     def _refresh_run_item(self, item):
         metadata = item.run_metadata
         measurement_count = measured_parameter_count(metadata)
+
+        self._refresh_metadata_columns(item)
 
         measurements_col = self.cols.index("Measurements")
         item.setData(
@@ -448,6 +587,65 @@ class RunList(qtw.QTreeWidget):
             )
 
         item.update_tooltip()
+
+
+    @classmethod
+    def _run_column_texts(cls, run_id, metadata):
+        values = {
+            "ID": str(run_id),
+            "Measurements": "",
+            "Setpoints": format_point_count(metadata),
+            "Experiment": cls._metadata_cell_text(metadata.get("exp_name")),
+            "Sample": cls._metadata_cell_text(metadata.get("sample_name")),
+            "Name": cls._metadata_cell_text(metadata.get("name")),
+            "Started": format_timestamp(metadata.get("run_timestamp")),
+            "Status": format_complete_cell(metadata),
+            "Duration": format_time_taken_seconds(metadata),
+            "Size": format_storage_size(metadata.get("storage_bytes")),
+            "Completed": cls._format_completed_timestamp(metadata),
+            "GUID": cls._metadata_cell_text(metadata.get("guid")),
+            }
+        return [values[name] for name in cls.cols]
+
+
+    @staticmethod
+    def _metadata_cell_text(value):
+        return "" if value is None else str(value)
+
+
+    @staticmethod
+    def _format_completed_timestamp(metadata):
+        completed_timestamp = metadata.get("completed_timestamp")
+        if completed_timestamp:
+            return format_timestamp(completed_timestamp)
+        if run_is_complete(metadata):
+            return "unknown"
+        return "Ongoing"
+
+
+    def _refresh_metadata_columns(self, item):
+        metadata = item.run_metadata
+        values = {
+            "Experiment": self._metadata_cell_text(metadata.get("exp_name")),
+            "Sample": self._metadata_cell_text(metadata.get("sample_name")),
+            "Name": self._metadata_cell_text(metadata.get("name")),
+            "Started": format_timestamp(metadata.get("run_timestamp")),
+            "Completed": self._format_completed_timestamp(metadata),
+            "GUID": self._metadata_cell_text(metadata.get("guid") or item.guid),
+            }
+        for name, value in values.items():
+            item.setText(self.cols.index(name), value)
+
+        item.setData(
+            self.cols.index("Started"),
+            QtCore.Qt.ItemDataRole.UserRole,
+            metadata.get("run_timestamp"),
+            )
+        item.setData(
+            self.cols.index("Completed"),
+            QtCore.Qt.ItemDataRole.UserRole,
+            metadata.get("completed_timestamp"),
+            )
 
 
     def _sync_watching_item(self, item):
@@ -560,11 +758,15 @@ class RunList(qtw.QTreeWidget):
         return summary
 
 
-    def _column_resized(self, _column, old_size, new_size):
-        if not self._resizing_columns and old_size != new_size:
-            self._manual_column_widths = True
-            if self._config is not None:
-                self._column_width_save_timer.start()
+    def _column_resized(self, column, old_size, new_size):
+        if self._resizing_columns or old_size == new_size:
+            return
+
+        if 0 <= column < len(self.cols) and new_size >= 32:
+            self._column_width_cache[self.cols[column]] = new_size
+        self._manual_column_widths = True
+        if self._config is not None:
+            self._column_width_save_timer.start()
 
 
     def reset_column_widths(self):
@@ -580,6 +782,7 @@ class RunList(qtw.QTreeWidget):
 
         self._saved_column_widths = None
         self._manual_column_widths = False
+        self._column_width_cache = self._preferred_column_widths()
         self._resize_columns(force=True)
         return True
 
@@ -591,6 +794,7 @@ class RunList(qtw.QTreeWidget):
         if widths is None:
             self._saved_column_widths = None
             self._manual_column_widths = False
+            self._column_width_cache = self._preferred_column_widths()
             self._resize_columns(force=True)
             return
 
@@ -606,24 +810,35 @@ class RunList(qtw.QTreeWidget):
             widths = self._config.get(RUN_TABLE_COLUMN_WIDTHS_KEY)
         except (KeyError, TypeError):
             return None
-        if (
-                not isinstance(widths, (list, tuple))
-                or len(widths) != len(self.cols)
-                or any(
-                    isinstance(width, bool)
-                    or not isinstance(width, int)
-                    or width < 32
-                    for width in widths
-                    )
+        if not isinstance(widths, (list, tuple)) or any(
+                isinstance(width, bool)
+                or not isinstance(width, int)
+                or width < 32
+                for width in widths
                 ):
             return None
-        return list(widths)
+
+        if not widths:
+            return None
+        if len(widths) <= len(self.default_visible_columns):
+            width_names = self.default_visible_columns[:len(widths)]
+        elif len(widths) <= len(self.column_width_storage_order):
+            width_names = self.column_width_storage_order[:len(widths)]
+        else:
+            return None
+
+        by_name = self._preferred_column_widths()
+        by_name.update(dict(zip(width_names, widths, strict=True)))
+        return [by_name[name] for name in self.cols]
 
 
     def _apply_column_widths(self, widths):
         self._resizing_columns = True
         try:
-            for column, width in enumerate(widths):
+            for column, (name, width) in enumerate(
+                    zip(self.cols, widths, strict=True)
+                    ):
+                self._column_width_cache[name] = width
                 self.setColumnWidth(column, width)
         finally:
             self._resizing_columns = False
@@ -633,7 +848,13 @@ class RunList(qtw.QTreeWidget):
         if self._config is None or not self._manual_column_widths:
             return
 
-        widths = [self.columnWidth(column) for column in range(len(self.cols))]
+        for column, name in enumerate(self.cols):
+            if not self.isColumnHidden(column) and self.columnWidth(column) >= 32:
+                self._column_width_cache[name] = self.columnWidth(column)
+        persisted_widths = [
+            max(32, self._column_width_cache.get(name, 32))
+            for name in self.column_width_storage_order
+            ]
         previous_widths = self._saved_column_widths
 
         def rollback():
@@ -648,21 +869,201 @@ class RunList(qtw.QTreeWidget):
                 self,
                 self._config,
                 RUN_TABLE_COLUMN_WIDTHS_KEY,
-                widths,
+                persisted_widths,
                 "the run-table column widths",
                 rollback,
                 ):
-            self._saved_column_widths = widths
+            self._saved_column_widths = [
+                max(32, self._column_width_cache.get(name, 32))
+                for name in self.cols
+                ]
+
+
+    def visible_column_ids(self):
+        return [
+            column_id
+            for column, column_id in enumerate(self.column_ids)
+            if not self.isColumnHidden(column)
+            ]
+
+
+    def visible_columns(self):
+        return [
+            self.column_labels[column_id]
+            for column_id in self.visible_column_ids()
+            ]
+
+
+    def apply_configured_column_visibility(self):
+        """Show the configured columns, falling back to the v1.5 layout."""
+        self._apply_visible_column_ids(self._configured_visible_column_ids())
+
+
+    def _configured_visible_column_ids(self):
+        if self._config is None:
+            return list(self.default_visible_column_ids)
+        try:
+            configured = self._config.get(RUN_TABLE_VISIBLE_COLUMNS_KEY)
+        except (KeyError, TypeError):
+            return list(self.default_visible_column_ids)
+
+        if (
+                not isinstance(configured, (list, tuple))
+                or isinstance(configured, (str, bytes))
+                or any(not isinstance(column_id, str) for column_id in configured)
+                or len(set(configured)) != len(configured)
+                or any(column_id not in self.column_ids for column_id in configured)
+                ):
+            return list(self.default_visible_column_ids)
+        configured_set = set(configured)
+        return [
+            column_id
+            for column_id in self.column_ids
+            if column_id in configured_set
+            ]
+
+
+    def set_column_visible(self, column, visible):
+        """Show or hide one column and persist the complete visible set."""
+        column_id = self._resolve_column_id(column)
+        visible_ids = self.visible_column_ids()
+        currently_visible = column_id in visible_ids
+        if bool(visible) == currently_visible:
+            return True
+
+        if visible:
+            visible_ids.append(column_id)
+        else:
+            visible_ids.remove(column_id)
+        visible_set = set(visible_ids)
+        visible_ids = [
+            candidate
+            for candidate in self.column_ids
+            if candidate in visible_set
+            ]
+
+        if self._config is not None and not persist_config_value(
+                self,
+                self._config,
+                RUN_TABLE_VISIBLE_COLUMNS_KEY,
+                visible_ids,
+                "the run-table columns",
+                ):
+            return False
+
+        self._apply_visible_column_ids(visible_ids)
+        return True
+
+
+    def reset_column_visibility(self):
+        visible_ids = list(self.default_visible_column_ids)
+        if self._config is not None and not persist_config_value(
+                self,
+                self._config,
+                RUN_TABLE_VISIBLE_COLUMNS_KEY,
+                visible_ids,
+                "the run-table columns",
+                ):
+            return False
+
+        self._apply_visible_column_ids(visible_ids)
+        return True
+
+
+    def _resolve_column_id(self, column):
+        if column in self.column_ids:
+            return column
+        for column_id, label in self.column_labels.items():
+            if column == label:
+                return column_id
+        raise ValueError(f"Unknown run-table column: {column!r}")
+
+
+    def _apply_visible_column_ids(self, visible_ids):
+        visible_set = set(visible_ids)
+        for column, name in enumerate(self.cols):
+            width = self.columnWidth(column)
+            if not self.isColumnHidden(column) and width >= 32:
+                self._column_width_cache[name] = width
+
+        self._resizing_columns = True
+        try:
+            for column, (column_id, name) in enumerate(
+                    zip(self.column_ids, self.cols, strict=True)
+                    ):
+                is_visible = column_id in visible_set
+                self.setColumnHidden(column, not is_visible)
+                if is_visible:
+                    self.setColumnWidth(
+                        column,
+                        max(32, self._column_width_cache.get(name, 32)),
+                        )
+        finally:
+            self._resizing_columns = False
+
+        sort_column = self.sortColumn()
+        if (
+                self.isSortingEnabled()
+                and 0 <= sort_column < len(self.cols)
+                and self.isColumnHidden(sort_column)
+                and visible_set
+                ):
+            first_visible_column = next(
+                column
+                for column, column_id in enumerate(self.column_ids)
+                if column_id in visible_set
+                )
+            header = self.header()
+            sort_order = (
+                header.sortIndicatorOrder()
+                if header is not None
+                else QtCore.Qt.SortOrder.AscendingOrder
+                )
+            self.sortItems(first_visible_column, sort_order)
+
+        if not self._manual_column_widths:
+            self._resize_columns(force=True)
+
+
+    def _build_header_menu(self):
+        menu = qtw.QMenu(self)
+        columns_menu = menu.addMenu("Columns")
+        visible_ids = set(self.visible_column_ids())
+        for column_id in self.column_ids:
+            label = self.column_labels[column_id]
+            action = columns_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(column_id in visible_ids)
+            action.setProperty("runTableColumnId", column_id)
+            action.triggered.connect(
+                lambda checked, selected=column_id, source=action:
+                self._toggle_column_from_action(
+                    selected,
+                    checked,
+                    source,
+                    )
+                )
+
+        columns_menu.addSeparator()
+        defaults_action = columns_menu.addAction("Restore defaults")
+        defaults_action.triggered.connect(self.reset_column_visibility)
+
+        menu.addSeparator()
+        reset_action = menu.addAction("Reset column widths")
+        reset_action.triggered.connect(self.reset_column_widths)
+        return menu
+
+
+    def _toggle_column_from_action(self, column_id, visible, action):
+        if not self.set_column_visible(column_id, visible):
+            action.setChecked(column_id in self.visible_column_ids())
 
 
     def _open_header_menu(self, pos):
         header = self.header()
         if header is None:
             return
-        menu = qtw.QMenu(self)
-        reset_action = menu.addAction("Reset column widths")
-        if reset_action is not None:
-            reset_action.triggered.connect(self.reset_column_widths)
+        menu = self._build_header_menu()
         menu.exec(header.mapToGlobal(pos))
 
 
@@ -680,40 +1081,83 @@ class RunList(qtw.QTreeWidget):
 
         viewport = self.viewport()
         available_width = viewport.width() if viewport is not None else 0
-        preferred_widths = self._preferred_column_widths()
+        visible_names = self.visible_columns()
+        if not visible_names:
+            return
+
+        preferred_widths = {
+            name: width
+            for name, width in self._preferred_column_widths().items()
+            if name in visible_names
+            }
         preferred_width = sum(preferred_widths.values())
         if available_width <= 0:
             available_width = preferred_width
 
         if available_width < preferred_width:
-            readable_width = sum(self.readable_column_widths.values())
+            readable_widths = {
+                name: width
+                for name, width in self.readable_column_widths.items()
+                if name in visible_names
+                }
+            minimum_widths = {
+                name: width
+                for name, width in self.minimum_column_widths.items()
+                if name in visible_names
+                }
+            readable_width = sum(readable_widths.values())
             if available_width < readable_width:
                 widths = self._grow_column_widths(
-                    self.minimum_column_widths,
-                    self.readable_column_widths,
+                    minimum_widths,
+                    readable_widths,
                     available_width,
-                    self.compact_growth_order,
+                    [
+                        name
+                        for name in self.compact_growth_order
+                        if name in visible_names
+                        ],
                     )
             else:
                 widths = self._grow_column_widths(
-                    self.readable_column_widths,
+                    readable_widths,
                     preferred_widths,
                     available_width,
-                    self.preferred_growth_order,
+                    [
+                        name
+                        for name in self.preferred_growth_order
+                        if name in visible_names
+                        ],
                     )
         else:
             extra_width = max(0, available_width - preferred_width)
             widths = dict(preferred_widths)
-            setpoints_extra = (extra_width * 2) // 3
-            widths["Setpoints"] += setpoints_extra
-            widths["Started"] += extra_width - setpoints_extra
+            if "Setpoints" in widths and "Started" in widths:
+                setpoints_extra = (extra_width * 2) // 3
+                widths["Setpoints"] += setpoints_extra
+                widths["Started"] += extra_width - setpoints_extra
+            else:
+                elastic_name = next(
+                    (
+                        name
+                        for name in (
+                            "Setpoints",
+                            "Name",
+                            "Started",
+                            "Experiment",
+                            "Sample",
+                            "GUID",
+                            )
+                        if name in widths
+                        ),
+                    visible_names[-1],
+                    )
+                widths[elastic_name] += extra_width
 
         self._resizing_columns = True
         try:
-            for col, name in enumerate(self.cols):
-                width = widths.get(name)
-                if width is not None:
-                    self.setColumnWidth(col, width)
+            for name, width in widths.items():
+                self._column_width_cache[name] = width
+                self.setColumnWidth(self.cols.index(name), width)
         finally:
             self._resizing_columns = False
 
@@ -956,6 +1400,7 @@ class RunList(qtw.QTreeWidget):
                     )
                 to_remove.append(run)
 
+            self._refresh_metadata_columns(run)
             run.update_tooltip()
             run_id: int | str
             try:
@@ -1182,6 +1627,7 @@ class moreInfo(qtw.QTabWidget):
         self.preview = PreviewTab(preview_size=preview_size)
         self._update_preview_minimum_height()
         self.metadata = infoTree(expand_all=True, truncate_values=True)
+        self.snapshot = infoTree(expand_all=True, truncate_values=False)
         self.raw = infoTree(expand_all=False, truncate_values=False)
 
         self._setup_table(self.overview, ["Field", "Value"])
@@ -1194,6 +1640,7 @@ class moreInfo(qtw.QTabWidget):
         self.addTab(self.parameters, "Sweep parameters")
         self.addTab(self.preview, "Preview")
         self.addTab(self.metadata, "Metadata")
+        self.addTab(self.snapshot, "Snapshot")
         self.addTab(self.raw, "Raw key-value")
 
 
@@ -1230,6 +1677,7 @@ class moreInfo(qtw.QTabWidget):
         self._set_parameters(info, dataset, run_metadata, database_path)
         self.preview.set_current_run(dataset)
         self.metadata.setInfo(info.get("MetaData", {}))
+        self.snapshot.setInfo(info.get("Snapshot", {}))
         self.raw.setInfo(info)
 
 
@@ -1275,6 +1723,7 @@ class moreInfo(qtw.QTabWidget):
         self.parameters.setRowCount(0)
         self.preview.clear_current_run()
         self.metadata.clear()
+        self.snapshot.clear()
         self.raw.clear()
 
 
@@ -1287,6 +1736,7 @@ class moreInfo(qtw.QTabWidget):
         self.overview.scrollToTop()
         self.parameters.scrollToTop()
         self.metadata.scrollToTop()
+        self.snapshot.scrollToTop()
         self.raw.scrollToTop()
 
 

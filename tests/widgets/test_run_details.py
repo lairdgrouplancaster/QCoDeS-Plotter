@@ -169,7 +169,14 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             )
 
         self.assertEqual([widget.tabText(i) for i in range(widget.count())],
-                         ["Overview", "Sweep parameters", "Preview", "Metadata", "Raw key-value"])
+                         [
+                             "Overview",
+                             "Sweep parameters",
+                             "Preview",
+                             "Metadata",
+                             "Snapshot",
+                             "Raw key-value",
+                             ])
         self.assertEqual(
             [
                 widget.overview.item(row, 0).text()
@@ -242,6 +249,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             widget.raw.header().sectionResizeMode(1),
             qtw.QHeaderView.ResizeMode.Stretch
             )
+        snapshot_station = widget.snapshot.topLevelItem(0)
+        self.assertEqual(snapshot_station.text(0), "station")
+        self.assertTrue(snapshot_station.isExpanded())
+        self.assertTrue(snapshot_station.child(0).isExpanded())
+        self.assertTrue(snapshot_station.child(0).child(0).isExpanded())
         self.assertEqual(
             widget.parameters.horizontalHeader().sectionResizeMode(7),
             qtw.QHeaderView.ResizeMode.Stretch

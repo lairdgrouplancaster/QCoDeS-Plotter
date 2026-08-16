@@ -7,6 +7,12 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+### Added
+
+- Make every run-table column optional and persistent from the header menu,
+  including the Experiment, Sample, Name, Completed, and GUID fields shown in
+  qPlot 1.2, with horizontal scrolling for wider layouts.
+
 ## 1.5.1-b2 - 2026-08-13
 
 ### Changed

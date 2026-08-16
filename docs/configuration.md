@@ -91,6 +91,8 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `GUI.plot_frame_fraction` | number | `0.47` | `0 < value < 1` | Fraction of a plot window used for the plot frame. |
 | `GUI.main_frame_size` | integer array | `[780, 700]` | exactly 2 items | Initial main-window width and height. |
 | `GUI.preview_size` | integer | `200` | `50 <= value <= 1000` | Preview thumbnail size in pixels. |
+| `GUI.run_table_column_widths` | integer array | `[]` | up to 12 items, each at least 32 | Saved run-table column widths; an empty array uses responsive widths. |
+| `GUI.run_table_visible_columns` | string array | `["run_id", "measurements", "setpoints", "started", "status", "duration", "size"]` | unique run-table column IDs | Columns shown in the run table, in the table's fixed display order. |
 | `file.default_load_path` | string | `""` | any string | Default folder for selecting database files. |
 | `file.last_file_path` | string | `""` | any string | Last database file opened by the application. |
 | `file.recent_file_paths` | string array | `[]` | any strings | Recent database files shown by the application. |

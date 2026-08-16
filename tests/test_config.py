@@ -24,6 +24,7 @@ from qplot.windows._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
 )
 from qplot.windows._run_controls import AUTO_PLOT_KEY
+from qplot.windows._widgets.treeWidgets import RunList
 
 
 class TemporaryConfigTestCase(unittest.TestCase):
@@ -50,11 +51,51 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
     def test_run_table_column_widths_write_and_reload(self):
         cfg = config()
-        widths = [44, 96, 170, 142, 140, 96, 62]
+        widths = [44, 96, 170, 120, 112, 150, 142, 140, 96, 62, 142, 286]
 
         cfg.update("GUI.run_table_column_widths", widths)
 
         self.assertEqual(config().get("GUI.run_table_column_widths"), widths)
+
+    def test_run_table_visible_columns_write_and_reload(self):
+        cfg = config()
+        visible_columns = [
+            "run_id",
+            "experiment",
+            "sample",
+            "name",
+            "started",
+            "completed",
+            "guid",
+            ]
+
+        cfg.update("GUI.run_table_visible_columns", visible_columns)
+
+        self.assertEqual(
+            config().get("GUI.run_table_visible_columns"),
+            visible_columns,
+            )
+
+    def test_run_table_visible_columns_reject_unknowns_and_duplicates(self):
+        cfg = config()
+
+        for visible_columns in (["run_id", "missing"], ["run_id", "run_id"]):
+            with self.subTest(visible_columns=visible_columns):
+                with self.assertRaises(ValidationError):
+                    cfg.update("GUI.run_table_visible_columns", visible_columns)
+
+    def test_run_table_visibility_schema_matches_widget_columns(self):
+        cfg = config()
+        visible_schema = cfg.schema_for("GUI.run_table_visible_columns")
+
+        self.assertEqual(
+            tuple(visible_schema["items"]["enum"]),
+            RunList.column_ids,
+            )
+        self.assertEqual(
+            tuple(visible_schema["default"]),
+            RunList.default_visible_column_ids,
+            )
 
     def test_config_accepts_extra_color_map_preferences(self):
         cfg = config()
@@ -273,6 +314,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg = config()
         stored_config = cfg.config
         del stored_config["GUI"]["run_table_column_widths"]
+        del stored_config["GUI"]["run_table_visible_columns"]
         del stored_config["user_preference"]["confirm_close_all"]
         del stored_config["user_preference"]["auto_plot"]
         del stored_config["user_preference"]["mouse_mode"]
@@ -284,6 +326,18 @@ class TemporaryConfigTestCase(unittest.TestCase):
         reloaded = config()
 
         self.assertEqual(reloaded.get("GUI.run_table_column_widths"), [])
+        self.assertEqual(
+            reloaded.get("GUI.run_table_visible_columns"),
+            [
+                "run_id",
+                "measurements",
+                "setpoints",
+                "started",
+                "status",
+                "duration",
+                "size",
+                ],
+            )
         self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
         self.assertFalse(reloaded.get(AUTO_PLOT_KEY))
         self.assertEqual(reloaded.get("user_preference.mouse_mode"), "pan")
@@ -294,6 +348,79 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(
             reloaded.get("runtime_settings.max_full_heatmap_points"),
             2_000_000,
+            )
+
+    def test_visibility_upgrade_preserves_existing_seven_column_widths(self):
+        cfg = config()
+        saved_widths = [44, 96, 170, 142, 140, 96, 62]
+        cfg.update("GUI.run_table_column_widths", saved_widths)
+        stored_config = deepcopy(cfg.config)
+        del stored_config["GUI"]["run_table_visible_columns"]
+        with open(config.default_file, "w") as fp:
+            json.dump(stored_config, fp)
+
+        reloaded = config()
+
+        self.assertEqual(
+            reloaded.get("GUI.run_table_column_widths"),
+            saved_widths,
+            )
+        self.assertEqual(
+            reloaded.get("GUI.run_table_visible_columns"),
+            [
+                "run_id",
+                "measurements",
+                "setpoints",
+                "started",
+                "status",
+                "duration",
+                "size",
+                ],
+            )
+        self.assertEqual(
+            list(Path(config.default_path).glob("config.invalid*.json")),
+            [],
+            )
+
+    def test_config_migrates_removed_duplicate_run_id_column(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["GUI"]["run_table_visible_columns"] = [
+            "run_id",
+            "legacy_run_id",
+            "experiment",
+            ]
+        stored_config["GUI"]["run_table_column_widths"] = [
+            44,
+            96,
+            170,
+            64,
+            120,
+            112,
+            150,
+            142,
+            140,
+            96,
+            62,
+            142,
+            286,
+            ]
+        with open(config.default_file, "w") as fp:
+            json.dump(stored_config, fp)
+
+        reloaded = config()
+
+        self.assertEqual(
+            reloaded.get("GUI.run_table_visible_columns"),
+            ["run_id", "experiment"],
+            )
+        self.assertEqual(
+            reloaded.get("GUI.run_table_column_widths"),
+            [44, 96, 170, 120, 112, 150, 142, 140, 96, 62, 142, 286],
+            )
+        self.assertEqual(
+            list(Path(config.default_path).glob("config.invalid*.json")),
+            [],
             )
 
     def test_config_repr_returns_readable_json(self):

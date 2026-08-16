@@ -501,6 +501,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             widths = {
                 name: run_list.columnWidth(col)
                 for col, name in enumerate(run_list.cols)
+                if not run_list.isColumnHidden(col)
                 }
 
             self.assertLessEqual(sum(widths.values()), run_list.viewport().width())
@@ -525,7 +526,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             run_list.resize(780, 300)
             run_list.show()
             qtw.QApplication.processEvents()
-            preferred_widths = run_list._preferred_column_widths()
+            preferred_widths = {
+                name: width
+                for name, width in run_list._preferred_column_widths().items()
+                if name in run_list.visible_columns()
+                }
             frame_width = run_list.width() - run_list.viewport().width()
             run_list.resize(sum(preferred_widths.values()) + frame_width, 300)
             qtw.QApplication.processEvents()
@@ -534,20 +539,24 @@ class RunListTooltipTestCase(unittest.TestCase):
             widths = {
                 name: run_list.columnWidth(col)
                 for col, name in enumerate(run_list.cols)
+                if not run_list.isColumnHidden(col)
                 }
 
             for name, width in treeWidgets.RunList.column_widths.items():
-                self.assertGreaterEqual(widths[name], width)
+                if name in widths:
+                    self.assertGreaterEqual(widths[name], width)
             for name, width in treeWidgets.RunList.elastic_column_widths.items():
-                self.assertGreaterEqual(widths[name], width)
+                if name in widths:
+                    self.assertGreaterEqual(widths[name], width)
             self.assertGreater(widths["Setpoints"], widths["Started"])
 
             metrics = QtGui.QFontMetrics(run_list.font())
             for name, value in run_list.representative_column_values.items():
-                self.assertGreaterEqual(
-                    widths[name],
-                    metrics.horizontalAdvance(value) + 12,
-                    )
+                if name in widths:
+                    self.assertGreaterEqual(
+                        widths[name],
+                        metrics.horizontalAdvance(value) + 12,
+                        )
             run_list.hide()
         finally:
             treeWidgets.isfile = old_isfile
@@ -555,7 +564,12 @@ class RunListTooltipTestCase(unittest.TestCase):
     def test_manual_column_widths_persist_until_reset(self):
         class MemoryConfig:
             def __init__(self):
-                self.values = {treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: []}
+                self.values = {
+                    treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: [],
+                    treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY: list(
+                        treeWidgets.RunList.default_visible_column_ids
+                        ),
+                    }
 
             def get(self, key):
                 return self.values[key]
@@ -570,15 +584,30 @@ class RunListTooltipTestCase(unittest.TestCase):
             cfg = MemoryConfig()
             first = treeWidgets.RunList(config=cfg)
             saved_widths = [48, 112, 205, 154, 146, 104, 68]
-            for column, width in enumerate(saved_widths):
-                first.setColumnWidth(column, width)
+            for name, width in zip(
+                    first.default_visible_columns,
+                    saved_widths,
+                    strict=True,
+                    ):
+                first.setColumnWidth(first.cols.index(name), width)
             first._persist_column_widths()
+
+            self.assertEqual(
+                len(cfg.values[treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY]),
+                len(first.cols),
+                )
 
             restored = treeWidgets.RunList(config=cfg)
             self.assertTrue(restored._manual_column_widths)
             self.assertEqual(
-                [restored.columnWidth(column) for column in range(len(restored.cols))],
+                [
+                    restored.columnWidth(restored.cols.index(name))
+                    for name in restored.default_visible_columns
+                    ],
                 saved_widths,
+                )
+            self.assertTrue(
+                all(width >= 32 for width in restored._column_width_cache.values())
                 )
 
             self.assertTrue(restored.reset_column_widths())
@@ -588,7 +617,10 @@ class RunListTooltipTestCase(unittest.TestCase):
             defaults = treeWidgets.RunList(config=cfg)
             self.assertFalse(defaults._manual_column_widths)
             self.assertNotEqual(
-                [defaults.columnWidth(column) for column in range(len(defaults.cols))],
+                [
+                    defaults.columnWidth(defaults.cols.index(name))
+                    for name in defaults.default_visible_columns
+                    ],
                 saved_widths,
                 )
         finally:
@@ -638,6 +670,246 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(
                 run_list.horizontalScrollBarPolicy(),
                 QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_legacy_seven_column_widths_are_mapped_by_column_name(self):
+        class MemoryConfig:
+            def __init__(self):
+                self.values = {
+                    treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: [
+                        48,
+                        112,
+                        205,
+                        154,
+                        146,
+                        104,
+                        68,
+                        ],
+                    treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY: list(
+                        treeWidgets.RunList.default_visible_column_ids
+                        ),
+                    }
+
+            def get(self, key):
+                return self.values[key]
+
+            def update(self, key, value):
+                self.values[key] = value
+
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList(config=MemoryConfig())
+
+            self.assertEqual(
+                [
+                    run_list.columnWidth(run_list.cols.index(name))
+                    for name in run_list.default_visible_columns
+                    ],
+                [48, 112, 205, 154, 146, 104, 68],
+                )
+            self.assertGreaterEqual(run_list._column_width_cache["Experiment"], 32)
+            self.assertGreaterEqual(run_list._column_width_cache["GUID"], 32)
+            self.assertEqual(run_list.header().minimumSectionSize(), 32)
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_full_saved_widths_are_independent_of_display_order(self):
+        saved_widths = [41, 82, 123, 164, 205, 246, 287, 328, 369, 410, 451, 492]
+
+        class MemoryConfig:
+            def __init__(self):
+                self.values = {
+                    treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: saved_widths,
+                    treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY: list(
+                        treeWidgets.RunList.default_visible_column_ids
+                        ),
+                    }
+
+            def get(self, key):
+                return self.values[key]
+
+            def update(self, key, value):
+                self.values[key] = value
+
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList(config=MemoryConfig())
+
+            self.assertEqual(
+                {
+                    name: run_list._column_width_cache[name]
+                    for name in run_list.column_width_storage_order
+                    },
+                dict(zip(
+                    run_list.column_width_storage_order,
+                    saved_widths,
+                    strict=True,
+                    )),
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_column_visibility_persists_and_restores_v15_defaults(self):
+        class MemoryConfig:
+            def __init__(self):
+                self.values = {
+                    treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: [],
+                    treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY: list(
+                        treeWidgets.RunList.default_visible_column_ids
+                        ),
+                    }
+
+            def get(self, key):
+                return self.values[key]
+
+            def update(self, key, value):
+                self.values[key] = value
+
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            cfg = MemoryConfig()
+            first = treeWidgets.RunList(config=cfg)
+
+            self.assertTrue(first.set_column_visible("experiment", True))
+            self.assertTrue(first.set_column_visible("size", False))
+
+            restored = treeWidgets.RunList(config=cfg)
+            self.assertEqual(
+                restored.visible_columns(),
+                [
+                    "ID",
+                    "Experiment",
+                    "Measurements",
+                    "Setpoints",
+                    "Started",
+                    "Status",
+                    "Duration",
+                    ],
+                )
+
+            menu = restored._build_header_menu()
+            columns_menu = menu.actions()[0].menu()
+            actions_by_id = {
+                action.property("runTableColumnId"): action
+                for action in columns_menu.actions()
+                if action.property("runTableColumnId") is not None
+                }
+            self.assertEqual(set(actions_by_id), set(restored.column_ids))
+            self.assertTrue(actions_by_id["experiment"].isChecked())
+            self.assertFalse(actions_by_id["size"].isChecked())
+
+            old_persist_config_value = treeWidgets.persist_config_value
+            treeWidgets.persist_config_value = lambda *args, **kwargs: False
+            try:
+                actions_by_id["sample"].trigger()
+            finally:
+                treeWidgets.persist_config_value = old_persist_config_value
+            self.assertFalse(actions_by_id["sample"].isChecked())
+            self.assertNotIn("Sample", restored.visible_columns())
+            self.assertNotIn(
+                "sample",
+                cfg.values[treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY],
+                )
+
+            self.assertTrue(restored.reset_column_visibility())
+            self.assertEqual(
+                restored.visible_column_ids(),
+                list(restored.default_visible_column_ids),
+                )
+            self.assertEqual(
+                cfg.values[treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY],
+                list(restored.default_visible_column_ids),
+                )
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_all_optional_columns_can_scroll_horizontally(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            for column_id in run_list.column_ids:
+                run_list.set_column_visible(column_id, True)
+            run_list.resize(420, 260)
+            run_list.show()
+            qtw.QApplication.processEvents()
+            run_list._resize_columns(force=True)
+            qtw.QApplication.processEvents()
+
+            visible_width = sum(
+                run_list.columnWidth(column)
+                for column in range(run_list.columnCount())
+                if not run_list.isColumnHidden(column)
+                )
+            self.assertGreater(visible_width, run_list.viewport().width())
+            self.assertGreater(run_list.horizontalScrollBar().maximum(), 0)
+
+            for column_id in tuple(run_list.visible_column_ids()):
+                run_list.set_column_visible(column_id, False)
+            self.assertEqual(run_list.visible_columns(), [])
+            qtw.QApplication.processEvents()
+            self.assertGreater(run_list.header().height(), 0)
+
+            menu = run_list._build_header_menu()
+            columns_menu = menu.actions()[0].menu()
+            restore_action = next(
+                action
+                for action in columns_menu.actions()
+                if action.text() == "Restore defaults"
+                )
+            restore_action.trigger()
+            self.assertEqual(
+                run_list.visible_columns(),
+                list(run_list.default_visible_columns),
+                )
+            run_list.hide()
+        finally:
+            treeWidgets.isfile = old_isfile
+
+    def test_legacy_metadata_columns_are_available_without_run_id_alias(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+
+        try:
+            run_list = treeWidgets.RunList()
+            legacy_ids = {
+                "run_id",
+                "experiment",
+                "sample",
+                "name",
+                "started",
+                "completed",
+                "guid",
+                }
+            for column_id in run_list.column_ids:
+                run_list.set_column_visible(column_id, column_id in legacy_ids)
+
+            self.assertEqual(
+                run_list.visible_columns(),
+                [
+                    "ID",
+                    "Experiment",
+                    "Sample",
+                    "Name",
+                    "Started",
+                    "Completed",
+                    "GUID",
+                    ],
+                )
+            menu = run_list._build_header_menu()
+            columns_menu = menu.actions()[0].menu()
+            self.assertNotIn(
+                "Run ID",
+                [action.text() for action in columns_menu.actions()],
                 )
         finally:
             treeWidgets.isfile = old_isfile
@@ -762,10 +1034,27 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             self.assertEqual(
                 [run_list.headerItem().text(col) for col in range(run_list.columnCount())],
-                ["ID", "Measurements", "Setpoints", "Started", "Status", "Duration", "Size"]
+                [
+                    "ID",
+                    "Experiment",
+                    "Sample",
+                    "Measurements",
+                    "Setpoints",
+                    "Name",
+                    "Started",
+                    "Completed",
+                    "Status",
+                    "Duration",
+                    "Size",
+                    "GUID",
+                    ],
+                )
+            self.assertEqual(
+                run_list.visible_columns(),
+                ["ID", "Measurements", "Setpoints", "Started", "Status", "Duration", "Size"],
                 )
             self.assertIsInstance(
-                run_list.itemDelegateForColumn(2),
+                run_list.itemDelegateForColumn(run_list.cols.index("Setpoints")),
                 treeWidgets.EqualsAlignedDelegate
                 )
             self.assertFalse(run_list.rootIsDecorated())
@@ -784,42 +1073,68 @@ class RunListTooltipTestCase(unittest.TestCase):
                 run_list.topLevelItem(row).guid: run_list.topLevelItem(row)
                 for row in range(run_list.topLevelItemCount())
                 }
+            column = run_list.cols.index
+            measurements_col = column("Measurements")
+            setpoints_col = column("Setpoints")
+            status_col = column("Status")
+            duration_col = column("Duration")
+            size_col = column("Size")
 
             self.assertEqual([item.guid for item in run_list.watching], ["unfinished-guid"])
-            self.assertEqual(items["unfinished-guid"].text(1), "")
-            self.assertEqual(items["unfinished-guid"].data(1, QtCore.Qt.ItemDataRole.UserRole), 1)
+            self.assertEqual(items["unfinished-guid"].text(measurements_col), "")
             self.assertEqual(
                 items["unfinished-guid"].data(
-                    1,
+                    measurements_col,
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    ),
+                1,
+                )
+            self.assertEqual(
+                items["unfinished-guid"].data(
+                    measurements_col,
                     QtCore.Qt.ItemDataRole.AccessibleTextRole,
                     ),
                 "1 measurement: y",
                 )
             self.assertIsInstance(
-                run_list.itemWidget(items["unfinished-guid"], 1),
+                run_list.itemWidget(items["unfinished-guid"], measurements_col),
                 treeWidgets.RunPreviewCell
                 )
             self.assertEqual(
-                run_list.itemWidget(items["unfinished-guid"], 1).accessibleName(),
+                run_list.itemWidget(
+                    items["unfinished-guid"],
+                    measurements_col,
+                    ).accessibleName(),
                 "1 measurement: y",
                 )
             self.assertEqual(
                 len(
                     run_list.itemWidget(
-                        items["unfinished-guid"], 1
+                        items["unfinished-guid"], measurements_col
                         ).findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
                     ),
                 1
                 )
-            self.assertEqual(items["unfinished-guid"].text(2), "10")
-            self.assertEqual(items["unfinished-guid"].text(4), "Running (10.0%)")
-            self.assertRegex(items["unfinished-guid"].text(5), r"^[\d,]+\.\d s$")
-            self.assertEqual(items["unfinished-guid"].text(6), "100 KB")
-            self.assertEqual(items["finished-guid"].text(1), "")
-            self.assertEqual(items["finished-guid"].data(1, QtCore.Qt.ItemDataRole.UserRole), 2)
+            self.assertEqual(items["unfinished-guid"].text(setpoints_col), "10")
+            self.assertEqual(items["unfinished-guid"].text(status_col), "Running (10.0%)")
+            self.assertRegex(items["unfinished-guid"].text(duration_col), r"^[\d,]+\.\d s$")
+            self.assertEqual(items["unfinished-guid"].text(size_col), "100 KB")
+            self.assertEqual(items["unfinished-guid"].text(column("Experiment")), "exp")
+            self.assertEqual(items["unfinished-guid"].text(column("Sample")), "sample")
+            self.assertEqual(items["unfinished-guid"].text(column("Name")), "unfinished")
+            self.assertEqual(items["unfinished-guid"].text(column("Completed")), "Ongoing")
+            self.assertEqual(items["unfinished-guid"].text(column("GUID")), "unfinished-guid")
+            self.assertEqual(items["finished-guid"].text(measurements_col), "")
             self.assertEqual(
                 items["finished-guid"].data(
-                    1,
+                    measurements_col,
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    ),
+                2,
+                )
+            self.assertEqual(
+                items["finished-guid"].data(
+                    measurements_col,
                     QtCore.Qt.ItemDataRole.AccessibleTextRole,
                     ),
                 "2 measurements: z, w",
@@ -827,32 +1142,36 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(
                 len(
                     run_list.itemWidget(
-                        items["finished-guid"], 1
+                        items["finished-guid"], measurements_col
                         ).findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
                     ),
                 2
                 )
-            self.assertEqual(items["finished-guid"].text(2), "1,000 = 10 × 100")
-            self.assertEqual(items["finished-guid"].text(4), "Completed")
-            self.assertEqual(items["finished-guid"].text(5), "10.0 s")
+            self.assertEqual(items["finished-guid"].text(setpoints_col), "1,000 = 10 × 100")
+            self.assertEqual(items["finished-guid"].text(status_col), "Completed")
+            self.assertEqual(items["finished-guid"].text(duration_col), "10.0 s")
             self.assertEqual(
-                int(items["finished-guid"].textAlignment(0)),
+                items["finished-guid"].text(column("Completed")),
+                treeWidgets.format_timestamp(110.0),
+                )
+            self.assertEqual(
+                int(items["finished-guid"].textAlignment(column("ID"))),
                 (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
-                int(items["finished-guid"].textAlignment(2)),
+                int(items["finished-guid"].textAlignment(setpoints_col)),
                 (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
-                int(items["finished-guid"].textAlignment(4)),
+                int(items["finished-guid"].textAlignment(status_col)),
                 QtCore.Qt.AlignmentFlag.AlignCenter.value
                 )
             self.assertEqual(
-                int(items["finished-guid"].textAlignment(5)),
+                int(items["finished-guid"].textAlignment(duration_col)),
                 (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertEqual(
-                int(items["finished-guid"].textAlignment(6)),
+                int(items["finished-guid"].textAlignment(size_col)),
                 (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
                 )
             self.assertIn("Measure</td>", items["unfinished-guid"].toolTip(0))
@@ -860,7 +1179,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIn("Status</td>", items["finished-guid"].toolTip(0))
             self.assertIn("Completed</td>", items["finished-guid"].toolTip(0))
 
-            run_list.sortItems(1, QtCore.Qt.SortOrder.DescendingOrder)
+            run_list.sortItems(measurements_col, QtCore.Qt.SortOrder.DescendingOrder)
             self.assertEqual(
                 [run_list.topLevelItem(row).guid for row in range(run_list.topLevelItemCount())],
                 ["finished-guid", "unfinished-guid"]
@@ -908,6 +1227,17 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(item.text(run_list.cols.index("Status")), "Completed")
             self.assertEqual(item.text(run_list.cols.index("Duration")), "10.0 s")
             self.assertEqual(item.text(run_list.cols.index("Size")), "2.0 KB")
+            self.assertEqual(
+                item.text(run_list.cols.index("Completed")),
+                treeWidgets.format_timestamp(110.0),
+                )
+            self.assertEqual(
+                item.data(
+                    run_list.cols.index("Completed"),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    ),
+                110.0,
+                )
             self.assertEqual(run_list.watching, [])
         finally:
             treeWidgets.isfile = old_isfile
@@ -1045,6 +1375,10 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(
                 updated_runs[1]["measurement_exception"],
                 "Traceback...\nKeyboardInterrupt\n"
+                )
+            self.assertEqual(
+                item.text(run_list.cols.index("Completed")),
+                treeWidgets.format_timestamp(120.0),
                 )
         finally:
             treeWidgets.isfile = old_isfile
@@ -1243,7 +1577,10 @@ class RunListTooltipTestCase(unittest.TestCase):
                 })
 
             item = run_list.topLevelItem(0)
-            cell = run_list.itemWidget(item, 1)
+            cell = run_list.itemWidget(
+                item,
+                run_list.cols.index("Measurements"),
+                )
             self.assertEqual(
                 len(cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")),
                 2
@@ -1336,7 +1673,10 @@ class RunListTooltipTestCase(unittest.TestCase):
                 })
 
             item = run_list.topLevelItem(0)
-            cell = run_list.itemWidget(item, 1)
+            cell = run_list.itemWidget(
+                item,
+                run_list.cols.index("Measurements"),
+                )
 
             run_list.set_run_preview_generating("run-guid", True)
             placeholders = cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
@@ -1381,10 +1721,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertFalse(run_list._preview_widgets_enabled)
             self.assertEqual(run_list.preview_cells, {})
             self.assertTrue(run_list.uniformRowHeights())
+            measurements_col = run_list.cols.index("Measurements")
             for row in range(run_list.topLevelItemCount()):
                 item = run_list.topLevelItem(row)
-                self.assertIsNone(run_list.itemWidget(item, 1))
-                self.assertEqual(item.text(1), "1")
+                self.assertIsNone(run_list.itemWidget(item, measurements_col))
+                self.assertEqual(item.text(measurements_col), "1")
         finally:
             treeWidgets.MAX_RUN_PREVIEW_WIDGETS = old_limit
             treeWidgets.isfile = old_isfile

@@ -113,6 +113,12 @@ setpoints, start time, completion state, duration, and estimated size. The
 details pane shows the selected run's overview, parameters, preview images, and
 raw metadata.
 
+Right-click the run-table header and open **Columns** to show or hide any
+column. Experiment, Sample, Name, Completed, and GUID from the v1.2 table are
+available alongside the v1.5 columns. Column choices and manually adjusted
+widths persist between sessions. When the enabled columns need more room, use
+the horizontal scroll bar below the table.
+
 ## Main Window
 
 The main window is the database and run-selection hub.

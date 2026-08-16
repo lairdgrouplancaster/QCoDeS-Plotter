@@ -802,8 +802,11 @@ class MainWindow(
         self._sync_refresh_interval()
         self._sync_thread_pool_settings()
         run_list = getattr(self, "RunList", None)
-        if run_list is not None and hasattr(run_list, "apply_configured_column_widths"):
-            run_list.apply_configured_column_widths()
+        if run_list is not None:
+            if hasattr(run_list, "apply_configured_column_widths"):
+                run_list.apply_configured_column_widths()
+            if hasattr(run_list, "apply_configured_column_visibility"):
+                run_list.apply_configured_column_visibility()
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
