@@ -335,7 +335,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
                     ),
                 ):
             widget.blockSignals(True)
-            widget.setChecked(bool(_config_value(config_obj, key, True)))
+            widget.setChecked(_config_value(config_obj, key, True))
             widget.blockSignals(False)
 
         include_cet = self.colorbar_include_cet_check.isChecked()
@@ -343,14 +343,14 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         for subtype, widget in self.colorbar_cet_subtype_checks.items():
             key = _colorbar_subtype_config_key("cet", subtype)
             widget.blockSignals(True)
-            widget.setChecked(bool(_config_value(config_obj, key, True)))
+            widget.setChecked(_config_value(config_obj, key, True))
             widget.setEnabled(include_cet)
             widget.blockSignals(False)
 
         for subtype, widget in self.colorbar_matplotlib_subtype_checks.items():
             key = _colorbar_subtype_config_key("matplotlib", subtype)
             widget.blockSignals(True)
-            widget.setChecked(bool(_config_value(config_obj, key, True)))
+            widget.setChecked(_config_value(config_obj, key, True))
             widget.setEnabled(include_matplotlib)
             widget.blockSignals(False)
 
@@ -607,11 +607,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         config_obj = self.__dict__.get("config")
         if config_obj is not None:
-            previous_name = _config_value(
-                config_obj,
-                "user_preference.bar_colour",
-                self.__dict__.get("_colorbar_colormap_name", "viridis"),
-                )
+            previous_name = config_obj.get("user_preference.bar_colour")
 
             def rollback():
                 self._select_colorbar_colormap(previous_name)

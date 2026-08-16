@@ -10,6 +10,11 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.operation_registry import OperationValidationError
 from qplot.windows import _plot_refresh as plot_refresh_module
+from qplot.windows._colorbar import (
+    _CET_COLORBAR_SUBTYPES,
+    _MATPLOTLIB_COLORBAR_SUBTYPES,
+    _colorbar_subtype_config_key,
+)
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plotWin import plotWidget
@@ -21,6 +26,27 @@ from qplot.windows._preferences import (
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
+
+
+def _colorbar_config_values():
+    values = {
+        "user_preference.bar_colour": "viridis",
+        "user_preference.bar_colour_include_cet": True,
+        "user_preference.bar_colour_include_matplotlib": True,
+        "user_preference.bar_colour_include_local": True,
+        "user_preference.bar_colour_include_custom": True,
+        "user_preference.bar_colour_excluded": [],
+        "user_preference.bar_colour_excluded_prefixes": [],
+        }
+    for group, subtypes in (
+            ("cet", _CET_COLORBAR_SUBTYPES),
+            ("matplotlib", _MATPLOTLIB_COLORBAR_SUBTYPES),
+            ):
+        values.update({
+            _colorbar_subtype_config_key(group, subtype): True
+            for subtype, _label in subtypes
+            })
+    return values
 
 
 class PlotWindowRefreshTestCase(unittest.TestCase):
@@ -1810,15 +1836,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
         class Config:
             def __init__(self):
-                self.values = {
-                "user_preference.bar_colour": "viridis",
-                "user_preference.bar_colour_include_cet": True,
-                "user_preference.bar_colour_include_matplotlib": True,
-                "user_preference.bar_colour_include_local": True,
-                "user_preference.bar_colour_include_custom": True,
-                "user_preference.bar_colour_excluded": [],
-                "user_preference.bar_colour_excluded_prefixes": [],
-                }
+                self.values = _colorbar_config_values()
                 self.updates = []
 
             def get(self, key):

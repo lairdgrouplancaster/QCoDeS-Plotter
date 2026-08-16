@@ -597,20 +597,12 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
     def _full_resolution_heatmap_limit(self, worker: Any) -> int:
         try:
-            return max(1, int(worker.max_full_heatmap_points))
-        except (AttributeError, TypeError, ValueError):
-            pass
-
-        try:
-            configured_limit = self.config.get("runtime_settings.max_full_heatmap_points")
-            if configured_limit is None:
-                return 1
-            return max(
-                1,
-                int(configured_limit),
+            configured_limit = worker.max_full_heatmap_points
+        except AttributeError:
+            configured_limit = self.config.get(
+                "runtime_settings.max_full_heatmap_points"
                 )
-        except (AttributeError, KeyError, TypeError, ValueError):
-            return 1
+        return max(1, int(configured_limit))
 
 
     def _update_heatmap_downsample_button(self) -> None:

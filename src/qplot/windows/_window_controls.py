@@ -98,13 +98,13 @@ def add_config_checkbox_action(window, menu, text, key, status_tip):
 
     def sync_checked():
         action.blockSignals(True)
-        action.setChecked(config_bool(window.config, key, default=True))
+        action.setChecked(window.config.get(key))
         action.blockSignals(False)
 
     sync_checked()
 
     def persist_checked(checked):
-        previous_checked = config_bool(window.config, key, default=True)
+        previous_checked = window.config.get(key)
         persist_config_value(
             window,
             window.config,
@@ -129,7 +129,7 @@ def close_all_warning_enabled(config):
     Returns whether closing all plot windows should ask first.
 
     """
-    return config_bool(config, CONFIRM_CLOSE_ALL_KEY, default=True)
+    return config.get(CONFIRM_CLOSE_ALL_KEY)
 
 
 def ask_confirmation_with_dont_ask_again(
@@ -166,17 +166,6 @@ def ask_confirmation_with_dont_ask_again(
             "the close-confirmation preference",
             )
     return reply
-
-
-def config_bool(config, key, default):
-    """
-    Returns a boolean config value, falling back for older config files.
-
-    """
-    try:
-        return config.get(key)
-    except KeyError:
-        return default
 
 
 def main_window_for(window):

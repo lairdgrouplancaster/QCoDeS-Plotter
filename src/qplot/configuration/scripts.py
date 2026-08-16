@@ -30,9 +30,15 @@ class sysHandle:
             key = f"Command: ({command}), not found. Valid options: {self.valid_args}"
             raise KeyError(key)
         
-        # Create config to interact with
-        self.config = config()
+        self._config = None
         func(*args) # Pass other arguments to func
+
+    @property
+    def config(self):
+        """Create the configuration only for commands that access it."""
+        if self._config is None:
+            self._config = config()
+        return self._config
 
     def dump(self):
         """

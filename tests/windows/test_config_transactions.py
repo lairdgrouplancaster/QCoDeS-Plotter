@@ -485,11 +485,10 @@ class TransactionalGuiTestCase(unittest.TestCase):
         finally:
             plot.deleteLater()
 
-    def test_default_recent_and_last_database_paths_are_atomic(self):
+    def test_default_and_recent_database_paths_are_atomic(self):
         class Harness:
             change_default_file = DatabaseActionsMixin.change_default_file
             recent_database_paths = DatabaseActionsMixin.recent_database_paths
-            remember_recent_database = DatabaseActionsMixin.remember_recent_database
             remember_loaded_database = DatabaseActionsMixin.remember_loaded_database
 
             def __init__(self, config_object):
@@ -524,49 +523,44 @@ class TransactionalGuiTestCase(unittest.TestCase):
             self.assertTrue(harness.change_default_file())
         self.assertEqual(self.disk_value("file.default_load_path"), folder)
 
+        previous_path = os.path.abspath("previous.db")
         recent_path = os.path.abspath("recent.db")
-        with self.failing_save(self.config):
-            self.assertFalse(harness.remember_recent_database(recent_path))
-        self.assertEqual(self.config.get("file.recent_file_paths"), [])
-        self.assertEqual(self.disk_value("file.recent_file_paths"), [])
-        self.assertEqual(harness.menu_refreshes, 0)
-        self.assertEqual(len(harness.errors), 2)
-
-        self.assertTrue(harness.remember_recent_database(recent_path))
-        self.assertEqual(self.disk_value("file.recent_file_paths"), [recent_path])
-        self.assertEqual(harness.menu_refreshes, 1)
-
-        previous_last = os.path.abspath("previous.db")
-        self.config.update_many({
-            "file.last_file_path": previous_last,
-            "file.recent_file_paths": [previous_last, recent_path],
-            })
+        self.config.update(
+            "file.recent_file_paths",
+            [previous_path, recent_path],
+            )
         new_path = os.path.abspath("new.db")
         with (
-            patch.object(self.config, "update_many", wraps=self.config.update_many) as update,
+            patch.object(self.config, "update", wraps=self.config.update) as update,
             self.failing_save(self.config),
             ):
             self.assertFalse(harness.remember_loaded_database(new_path))
             self.assertEqual(update.call_count, 1)
             self.assertEqual(
-                set(update.call_args.args[0]),
-                {"file.last_file_path", "file.recent_file_paths"},
+                update.call_args.args,
+                (
+                    "file.recent_file_paths",
+                    [new_path, previous_path, recent_path],
+                    ),
                 )
 
-        self.assertEqual(self.config.get("file.last_file_path"), previous_last)
         self.assertEqual(
             self.config.get("file.recent_file_paths"),
-            [previous_last, recent_path],
+            [previous_path, recent_path],
             )
-        self.assertEqual(self.disk_value("file.last_file_path"), previous_last)
-        self.assertEqual(len(harness.errors), 3)
-
-        self.assertTrue(harness.remember_loaded_database(new_path))
-        self.assertEqual(self.disk_value("file.last_file_path"), new_path)
         self.assertEqual(
             self.disk_value("file.recent_file_paths"),
-            [new_path, previous_last, recent_path],
+            [previous_path, recent_path],
             )
+        self.assertEqual(harness.menu_refreshes, 0)
+        self.assertEqual(len(harness.errors), 2)
+
+        self.assertTrue(harness.remember_loaded_database(new_path))
+        self.assertEqual(
+            self.disk_value("file.recent_file_paths"),
+            [new_path, previous_path, recent_path],
+            )
+        self.assertEqual(harness.menu_refreshes, 1)
 
     def test_gui_reset_waits_for_persistence_and_can_retry(self):
         self.config.update("user_preference.theme", "dark")

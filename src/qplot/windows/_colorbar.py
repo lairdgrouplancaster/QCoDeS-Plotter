@@ -216,32 +216,12 @@ def _list_pyqtgraph_colormaps(source=None):
 
 def _config_value(config_obj, key, default):
     """
-    Read a config value, falling back when running against older configs.
+    Read a config value, or use a default for a standalone widget.
 
     """
     if config_obj is None:
         return default
-
-    try:
-        return config_obj.get(key)
-    except (AttributeError, KeyError):
-        return default
-
-
-def _string_list(value):
-    """
-    Normalise config list values used by color-map filters.
-
-    """
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value]
-
-    try:
-        return [str(item) for item in value if str(item)]
-    except TypeError:
-        return []
+    return config_obj.get(key)
 
 
 def _colorbar_subtype_config_key(group, subtype):

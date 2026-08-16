@@ -593,8 +593,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             first._persist_column_widths()
 
             self.assertEqual(
-                len(cfg.values[treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY]),
-                len(first.cols),
+                cfg.values[treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY],
+                [
+                    first._column_width_cache[name]
+                    for name in first.cols
+                    ],
                 )
 
             restored = treeWidgets.RunList(config=cfg)
@@ -674,50 +677,7 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
-    def test_legacy_seven_column_widths_are_mapped_by_column_name(self):
-        class MemoryConfig:
-            def __init__(self):
-                self.values = {
-                    treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: [
-                        48,
-                        112,
-                        205,
-                        154,
-                        146,
-                        104,
-                        68,
-                        ],
-                    treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY: list(
-                        treeWidgets.RunList.default_visible_column_ids
-                        ),
-                    }
-
-            def get(self, key):
-                return self.values[key]
-
-            def update(self, key, value):
-                self.values[key] = value
-
-        old_isfile = treeWidgets.isfile
-        treeWidgets.isfile = lambda _: False
-
-        try:
-            run_list = treeWidgets.RunList(config=MemoryConfig())
-
-            self.assertEqual(
-                [
-                    run_list.columnWidth(run_list.cols.index(name))
-                    for name in run_list.default_visible_columns
-                    ],
-                [48, 112, 205, 154, 146, 104, 68],
-                )
-            self.assertGreaterEqual(run_list._column_width_cache["Experiment"], 32)
-            self.assertGreaterEqual(run_list._column_width_cache["GUID"], 32)
-            self.assertEqual(run_list.header().minimumSectionSize(), 32)
-        finally:
-            treeWidgets.isfile = old_isfile
-
-    def test_full_saved_widths_are_independent_of_display_order(self):
+    def test_full_saved_widths_follow_display_order(self):
         saved_widths = [41, 82, 123, 164, 205, 246, 287, 328, 369, 410, 451, 492]
 
         class MemoryConfig:
@@ -744,10 +704,10 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(
                 {
                     name: run_list._column_width_cache[name]
-                    for name in run_list.column_width_storage_order
+                    for name in run_list.cols
                     },
                 dict(zip(
-                    run_list.column_width_storage_order,
+                    run_list.cols,
                     saved_widths,
                     strict=True,
                     )),
@@ -755,7 +715,7 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
-    def test_column_visibility_persists_and_restores_v15_defaults(self):
+    def test_column_visibility_persists_and_restores_defaults(self):
         class MemoryConfig:
             def __init__(self):
                 self.values = {
@@ -875,13 +835,13 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
-    def test_legacy_metadata_columns_are_available_without_run_id_alias(self):
+    def test_optional_metadata_columns_are_available_without_run_id_alias(self):
         old_isfile = treeWidgets.isfile
         treeWidgets.isfile = lambda _: False
 
         try:
             run_list = treeWidgets.RunList()
-            legacy_ids = {
+            metadata_ids = {
                 "run_id",
                 "experiment",
                 "sample",
@@ -889,9 +849,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "started",
                 "completed",
                 "guid",
-                }
+            }
             for column_id in run_list.column_ids:
-                run_list.set_column_visible(column_id, column_id in legacy_ids)
+                run_list.set_column_visible(column_id, column_id in metadata_ids)
 
             self.assertEqual(
                 run_list.visible_columns(),

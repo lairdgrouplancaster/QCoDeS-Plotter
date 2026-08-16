@@ -141,20 +141,6 @@ class RunList(qtw.QTreeWidget):
         "Duration",
         "Size",
         )
-    column_width_storage_order = (
-        "ID",
-        "Measurements",
-        "Setpoints",
-        "Experiment",
-        "Sample",
-        "Name",
-        "Started",
-        "Status",
-        "Duration",
-        "Size",
-        "Completed",
-        "GUID",
-        )
     column_widths = {
         "ID": 44,
         "Measurements": 96,
@@ -806,30 +792,10 @@ class RunList(qtw.QTreeWidget):
     def _configured_column_widths(self):
         if self._config is None:
             return None
-        try:
-            widths = self._config.get(RUN_TABLE_COLUMN_WIDTHS_KEY)
-        except (KeyError, TypeError):
-            return None
-        if not isinstance(widths, (list, tuple)) or any(
-                isinstance(width, bool)
-                or not isinstance(width, int)
-                or width < 32
-                for width in widths
-                ):
-            return None
-
+        widths = self._config.get(RUN_TABLE_COLUMN_WIDTHS_KEY)
         if not widths:
             return None
-        if len(widths) <= len(self.default_visible_columns):
-            width_names = self.default_visible_columns[:len(widths)]
-        elif len(widths) <= len(self.column_width_storage_order):
-            width_names = self.column_width_storage_order[:len(widths)]
-        else:
-            return None
-
-        by_name = self._preferred_column_widths()
-        by_name.update(dict(zip(width_names, widths, strict=True)))
-        return [by_name[name] for name in self.cols]
+        return list(widths)
 
 
     def _apply_column_widths(self, widths):
@@ -853,7 +819,7 @@ class RunList(qtw.QTreeWidget):
                 self._column_width_cache[name] = self.columnWidth(column)
         persisted_widths = [
             max(32, self._column_width_cache.get(name, 32))
-            for name in self.column_width_storage_order
+            for name in self.cols
             ]
         previous_widths = self._saved_column_widths
 
@@ -895,26 +861,14 @@ class RunList(qtw.QTreeWidget):
 
 
     def apply_configured_column_visibility(self):
-        """Show the configured columns, falling back to the v1.5 layout."""
+        """Show the columns selected in the current configuration."""
         self._apply_visible_column_ids(self._configured_visible_column_ids())
 
 
     def _configured_visible_column_ids(self):
         if self._config is None:
             return list(self.default_visible_column_ids)
-        try:
-            configured = self._config.get(RUN_TABLE_VISIBLE_COLUMNS_KEY)
-        except (KeyError, TypeError):
-            return list(self.default_visible_column_ids)
-
-        if (
-                not isinstance(configured, (list, tuple))
-                or isinstance(configured, (str, bytes))
-                or any(not isinstance(column_id, str) for column_id in configured)
-                or len(set(configured)) != len(configured)
-                or any(column_id not in self.column_ids for column_id in configured)
-                ):
-            return list(self.default_visible_column_ids)
+        configured = self._config.get(RUN_TABLE_VISIBLE_COLUMNS_KEY)
         configured_set = set(configured)
         return [
             column_id

@@ -11,7 +11,6 @@ from PyQt6.QtGui import QDesktopServices
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling.database import (
-    DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
     DatabaseDetailWorker,
     DatabaseExpensiveDetailWorker,
     DatabaseLoadWorker,
@@ -39,7 +38,7 @@ from qplot.testdata import (
     write_example_csv,
 )
 
-from ._config_persistence import persist_config_value, persist_config_values
+from ._config_persistence import persist_config_value
 from ._dataset_handle import (
     canonical_database_path,
     database_file_identity,
@@ -433,15 +432,11 @@ class DatabaseActionsMixin:
         if startup_database_path:
             return self.load_database_path(startup_database_path)
 
-        try:
-            last_file = self.config.get("file.last_file_path")
-        except KeyError:
-            last_file = None
-
-        if last_file:
-            last_file = os.path.abspath(last_file)
-            if os.path.isfile(last_file):
-                return self.load_database_path(last_file)
+        recent_files = self.config.get("file.recent_file_paths")
+        if recent_files:
+            recent_file = os.path.abspath(recent_files[0])
+            if os.path.isfile(recent_file):
+                return self.load_database_path(recent_file)
 
         qcodes_database = get_DB_location()
         if qcodes_database and os.path.isfile(qcodes_database):
@@ -1204,10 +1199,7 @@ class DatabaseActionsMixin:
             if os.path.isdir(current_directory):
                 return current_directory
 
-        try:
-            default_load_path = self.config.get("file.default_load_path")
-        except KeyError:
-            default_load_path = ""
+        default_load_path = self.config.get("file.default_load_path")
 
         if os.path.isdir(default_load_path):
             return default_load_path
@@ -1289,18 +1281,7 @@ class DatabaseActionsMixin:
         Returns recent database paths, newest first.
 
         """
-        try:
-            paths = list(self.config.get("file.recent_file_paths"))
-        except KeyError:
-            paths = []
-
-        try:
-            last_file = self.config.get("file.last_file_path")
-        except KeyError:
-            last_file = ""
-
-        if last_file:
-            paths.insert(0, last_file)
+        paths = list(self.config.get("file.recent_file_paths"))
 
         deduped = []
         seen = set()
@@ -1314,20 +1295,17 @@ class DatabaseActionsMixin:
         return deduped[:10]
 
 
-    def remember_recent_database(self, filename):
+    def remember_loaded_database(self, filename):
         """
-        Stores a database path in the recent database list.
+        Persists the successfully loaded database path.
 
         """
         abspath = os.path.abspath(filename)
+        current_paths = list(self.config.get("file.recent_file_paths"))
+
         paths = [path for path in self.recent_database_paths() if path != abspath]
         paths.insert(0, abspath)
         paths = paths[:10]
-
-        try:
-            current_paths = list(self.config.get("file.recent_file_paths"))
-        except KeyError:
-            current_paths = []
 
         if current_paths == paths:
             return True
@@ -1338,45 +1316,6 @@ class DatabaseActionsMixin:
                 "file.recent_file_paths",
                 paths,
                 "the recent database list",
-                ):
-            return False
-
-        self.refresh_recent_database_menu()
-        return True
-
-
-    def remember_loaded_database(self, filename):
-        """
-        Persists the successfully loaded database path.
-
-        """
-        abspath = os.path.abspath(filename)
-        try:
-            current_last_file = self.config.get("file.last_file_path")
-        except KeyError:
-            current_last_file = None
-        try:
-            current_paths = list(self.config.get("file.recent_file_paths"))
-        except KeyError:
-            current_paths = []
-
-        paths = [path for path in self.recent_database_paths() if path != abspath]
-        paths.insert(0, abspath)
-        paths = paths[:10]
-
-        updates = {}
-        if current_last_file != abspath:
-            updates["file.last_file_path"] = abspath
-        if current_paths != paths:
-            updates["file.recent_file_paths"] = paths
-        if not updates:
-            return True
-
-        if not persist_config_values(
-                self,
-                self.config,
-                updates,
-                "the last and recent database paths",
                 ):
             return False
 
@@ -1539,10 +1478,9 @@ class DatabaseActionsMixin:
         self._set_database_load_controls_enabled(False)
         self._show_database_load_panel(load_message)
 
-        try:
-            cloud_sync_timeout = self.config.get("runtime_settings.cloud_sync_timeout")
-        except KeyError:
-            cloud_sync_timeout = DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS
+        cloud_sync_timeout = self.config.get(
+            "runtime_settings.cloud_sync_timeout"
+            )
 
         worker = DatabaseLoadWorker(generation, abspath, cloud_sync_timeout)
         self._database_load_worker = worker

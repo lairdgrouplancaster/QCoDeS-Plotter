@@ -18,7 +18,6 @@ from ._colorbar import (
     _colorbar_subtype_config_key,
     _config_value,
     _matplotlib_colorbar_colormap_subtype,
-    _string_list,
 )
 from ._plot2d_colorbar_dialog import ColorbarScaleDialogMixin
 from ._plot_axis_scaling import _axis_scale_power_text
@@ -884,52 +883,52 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
 
         """
         config_obj = self.__dict__.get("config")
-        include_cet = bool(_config_value(
+        include_cet = _config_value(
             config_obj,
             "user_preference.bar_colour_include_cet",
             True,
-        ))
-        include_matplotlib = bool(_config_value(
+        )
+        include_matplotlib = _config_value(
             config_obj,
             "user_preference.bar_colour_include_matplotlib",
             True,
-        ))
-        include_local = bool(_config_value(
+        )
+        include_local = _config_value(
             config_obj,
             "user_preference.bar_colour_include_local",
             True,
-        ))
-        include_custom = bool(_config_value(
+        )
+        include_custom = _config_value(
             config_obj,
             "user_preference.bar_colour_include_custom",
             True,
-        ))
+        )
         include_cet_subtypes = {
-            subtype: bool(_config_value(
+            subtype: _config_value(
                 config_obj,
                 _colorbar_subtype_config_key("cet", subtype),
                 True,
-            ))
+            )
             for subtype, _label in _CET_COLORBAR_SUBTYPES
         }
         include_matplotlib_subtypes = {
-            subtype: bool(_config_value(
+            subtype: _config_value(
                 config_obj,
                 _colorbar_subtype_config_key("matplotlib", subtype),
                 True,
-            ))
+            )
             for subtype, _label in _MATPLOTLIB_COLORBAR_SUBTYPES
         }
-        excluded_names = set(_string_list(_config_value(
+        excluded_names = set(_config_value(
             config_obj,
             "user_preference.bar_colour_excluded",
             [],
-        )))
-        excluded_prefixes = tuple(_string_list(_config_value(
+        ))
+        excluded_prefixes = tuple(_config_value(
             config_obj,
             "user_preference.bar_colour_excluded_prefixes",
             [],
-        )))
+        ))
 
         available = []
         for name in _COLORBAR_COLORMAPS:

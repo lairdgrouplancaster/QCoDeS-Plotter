@@ -51,11 +51,30 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
     def test_run_table_column_widths_write_and_reload(self):
         cfg = config()
-        widths = [44, 96, 170, 120, 112, 150, 142, 140, 96, 62, 142, 286]
+        widths = [44, 120, 112, 96, 170, 150, 142, 142, 140, 96, 62, 286]
 
         cfg.update("GUI.run_table_column_widths", widths)
 
         self.assertEqual(config().get("GUI.run_table_column_widths"), widths)
+
+    def test_run_table_column_widths_accept_only_empty_or_twelve_values(self):
+        cfg = config()
+
+        cfg.update("GUI.run_table_column_widths", [])
+        for count in (1, 7, 11, 13):
+            with self.subTest(count=count), self.assertRaises(ValidationError):
+                cfg.update("GUI.run_table_column_widths", [44] * count)
+
+    def test_recent_file_paths_are_unique_and_limited_to_ten(self):
+        cfg = config()
+
+        for recent_paths in (
+                ["duplicate.db", "duplicate.db"],
+                [f"database-{index}.db" for index in range(11)],
+                ):
+            with self.subTest(recent_paths=recent_paths):
+                with self.assertRaises(ValidationError):
+                    cfg.update("file.recent_file_paths", recent_paths)
 
     def test_run_table_visible_columns_write_and_reload(self):
         cfg = config()
@@ -96,6 +115,23 @@ class TemporaryConfigTestCase(unittest.TestCase):
             tuple(visible_schema["default"]),
             RunList.default_visible_column_ids,
             )
+
+    def test_every_declared_config_property_is_required(self):
+        cfg = config()
+
+        for section, section_schema in cfg.schema["properties"].items():
+            with self.subTest(section=section):
+                self.assertEqual(
+                    set(section_schema["required"]),
+                    set(section_schema["properties"]),
+                    )
+
+    def test_removed_last_file_path_is_not_part_of_the_current_schema(self):
+        cfg = config()
+
+        self.assertNotIn("last_file_path", cfg.config["file"])
+        with self.assertRaises(KeyError):
+            cfg.get("file.last_file_path")
 
     def test_config_accepts_extra_color_map_preferences(self):
         cfg = config()
@@ -254,7 +290,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         cfg.update_many({
             "user_preference.theme": "dark",
             "GUI.preview_size": 350,
-            "file.last_file_path": "/previous/database.db",
+            "file.recent_file_paths": ["/previous/database.db"],
             })
         previous_config = deepcopy(cfg.config)
         previous_contents = Path(config.default_file).read_text(encoding="utf-8")
@@ -278,6 +314,18 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(cfg.get("user_preference.theme"), "light")
         self.assertEqual(config().get("GUI.preview_size"), 200)
+
+    def test_reset_to_defaults_copies_mutable_schema_defaults(self):
+        cfg = config()
+        cfg.get("file.recent_file_paths").append("contaminated.db")
+
+        cfg.reset_to_defaults()
+
+        self.assertEqual(cfg.get("file.recent_file_paths"), [])
+        self.assertEqual(
+            cfg.schema_for("file.recent_file_paths")["default"],
+            [],
+            )
 
     def test_config_cli_set_value_converts_values(self):
         with redirect_stdout(io.StringIO()):
@@ -310,118 +358,38 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(config().get("file.default_load_path"), "123")
 
-    def test_config_load_adds_new_defaults_to_existing_file(self):
-        cfg = config()
-        stored_config = cfg.config
-        del stored_config["GUI"]["run_table_column_widths"]
-        del stored_config["GUI"]["run_table_visible_columns"]
-        del stored_config["user_preference"]["confirm_close_all"]
-        del stored_config["user_preference"]["auto_plot"]
-        del stored_config["user_preference"]["mouse_mode"]
-        del stored_config["user_preference"]["copy_plot_image_resolution"]
-        del stored_config["runtime_settings"]["max_full_heatmap_points"]
-        with open(config.default_file, "w") as fp:
-            json.dump(stored_config, fp)
-
-        reloaded = config()
-
-        self.assertEqual(reloaded.get("GUI.run_table_column_widths"), [])
-        self.assertEqual(
-            reloaded.get("GUI.run_table_visible_columns"),
-            [
-                "run_id",
-                "measurements",
-                "setpoints",
-                "started",
-                "status",
-                "duration",
-                "size",
-                ],
-            )
-        self.assertTrue(reloaded.get("user_preference.confirm_close_all"))
-        self.assertFalse(reloaded.get(AUTO_PLOT_KEY))
-        self.assertEqual(reloaded.get("user_preference.mouse_mode"), "pan")
-        self.assertEqual(
-            reloaded.get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
-            COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
-            )
-        self.assertEqual(
-            reloaded.get("runtime_settings.max_full_heatmap_points"),
-            2_000_000,
-            )
-
-    def test_visibility_upgrade_preserves_existing_seven_column_widths(self):
-        cfg = config()
-        saved_widths = [44, 96, 170, 142, 140, 96, 62]
-        cfg.update("GUI.run_table_column_widths", saved_widths)
-        stored_config = deepcopy(cfg.config)
-        del stored_config["GUI"]["run_table_visible_columns"]
-        with open(config.default_file, "w") as fp:
-            json.dump(stored_config, fp)
-
-        reloaded = config()
-
-        self.assertEqual(
-            reloaded.get("GUI.run_table_column_widths"),
-            saved_widths,
-            )
-        self.assertEqual(
-            reloaded.get("GUI.run_table_visible_columns"),
-            [
-                "run_id",
-                "measurements",
-                "setpoints",
-                "started",
-                "status",
-                "duration",
-                "size",
-                ],
-            )
-        self.assertEqual(
-            list(Path(config.default_path).glob("config.invalid*.json")),
-            [],
-            )
-
-    def test_config_migrates_removed_duplicate_run_id_column(self):
+    def test_incomplete_config_is_backed_up_and_reset_to_current_defaults(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)
-        stored_config["GUI"]["run_table_visible_columns"] = [
-            "run_id",
-            "legacy_run_id",
-            "experiment",
-            ]
-        stored_config["GUI"]["run_table_column_widths"] = [
-            44,
-            96,
-            170,
-            64,
-            120,
-            112,
-            150,
-            142,
-            140,
-            96,
-            62,
-            142,
-            286,
-            ]
+        stored_config["user_preference"]["theme"] = "dark"
+        del stored_config["GUI"]["preview_size"]
         with open(config.default_file, "w") as fp:
             json.dump(stored_config, fp)
 
         reloaded = config()
 
-        self.assertEqual(
-            reloaded.get("GUI.run_table_visible_columns"),
-            ["run_id", "experiment"],
-            )
-        self.assertEqual(
-            reloaded.get("GUI.run_table_column_widths"),
-            [44, 96, 170, 120, 112, 150, 142, 140, 96, 62, 142, 286],
-            )
-        self.assertEqual(
-            list(Path(config.default_path).glob("config.invalid*.json")),
-            [],
-            )
+        self.assertEqual(reloaded.get("GUI.preview_size"), 200)
+        self.assertEqual(reloaded.get("user_preference.theme"), "light")
+        with open(reloaded.invalid_config_backup_file) as fp:
+            backup = json.load(fp)
+        self.assertNotIn("preview_size", backup["GUI"])
+        self.assertEqual(backup["user_preference"]["theme"], "dark")
+
+    def test_config_with_removed_setting_is_backed_up_and_reset(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["file"]["last_file_path"] = "/old/database.db"
+        stored_config["user_preference"]["theme"] = "dark"
+        with open(config.default_file, "w") as fp:
+            json.dump(stored_config, fp)
+
+        reloaded = config()
+
+        self.assertEqual(reloaded.get("user_preference.theme"), "light")
+        self.assertNotIn("last_file_path", reloaded.config["file"])
+        with open(reloaded.invalid_config_backup_file) as fp:
+            backup = json.load(fp)
+        self.assertEqual(backup["file"]["last_file_path"], "/old/database.db")
 
     def test_config_repr_returns_readable_json(self):
         cfg = config()
@@ -480,6 +448,27 @@ class TemporaryConfigTestCase(unittest.TestCase):
             sysHandle("-version")
 
         self.assertEqual(output.getvalue().strip(), __version__)
+
+    def test_config_cli_info_commands_do_not_load_or_replace_settings(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["file"]["last_file_path"] = "/old/database.db"
+        with open(config.default_file, "w") as fp:
+            json.dump(stored_config, fp)
+        original_contents = Path(config.default_file).read_text(encoding="utf-8")
+
+        for command in ("-info", "-version"):
+            with self.subTest(command=command), redirect_stdout(io.StringIO()):
+                sysHandle(command)
+
+        self.assertEqual(
+            Path(config.default_file).read_text(encoding="utf-8"),
+            original_contents,
+            )
+        self.assertEqual(
+            list(Path(config.default_path).glob("config.invalid*.json")),
+            [],
+            )
 
     def test_database_path_from_arguments_finds_database_file_argument(self):
         self.assertEqual(
@@ -590,13 +579,13 @@ class TemporaryConfigTestCase(unittest.TestCase):
             window.monitor.stop()
             window.deleteLater()
 
-    def test_main_window_loads_last_database_on_startup_when_available(self):
+    def test_main_window_loads_most_recent_database_on_startup_when_available(self):
         cfg = config()
         calls = []
         old_load_database_path = main_window.MainWindow.load_database_path
 
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
-            cfg.update("file.last_file_path", database.name)
+            cfg.update("file.recent_file_paths", [database.name])
 
             def load_database_path(window, filename):
                 calls.append(filename)
@@ -615,16 +604,16 @@ class TemporaryConfigTestCase(unittest.TestCase):
                     window.monitor.stop()
                     window.deleteLater()
 
-    def test_main_window_loads_startup_database_argument_before_last_database(self):
+    def test_main_window_loads_startup_database_argument_before_recent_database(self):
         cfg = config()
         calls = []
         old_load_database_path = main_window.MainWindow.load_database_path
 
         with (
             tempfile.NamedTemporaryFile(suffix=".db") as startup_database,
-            tempfile.NamedTemporaryFile(suffix=".db") as last_database,
+            tempfile.NamedTemporaryFile(suffix=".db") as recent_database,
         ):
-            cfg.update("file.last_file_path", last_database.name)
+            cfg.update("file.recent_file_paths", [recent_database.name])
 
             def load_database_path(window, filename):
                 calls.append(filename)
@@ -645,10 +634,10 @@ class TemporaryConfigTestCase(unittest.TestCase):
                     window.monitor.stop()
                     window.deleteLater()
 
-    def test_main_window_ignores_missing_last_database_on_startup(self):
+    def test_main_window_ignores_missing_recent_database_on_startup(self):
         cfg = config()
         missing_database = str(Path(self.temp_dir.name) / "missing.db")
-        cfg.update("file.last_file_path", missing_database)
+        cfg.update("file.recent_file_paths", [missing_database])
         calls = []
         old_load_database_path = main_window.MainWindow.load_database_path
 

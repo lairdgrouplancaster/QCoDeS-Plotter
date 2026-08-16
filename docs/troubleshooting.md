@@ -108,8 +108,9 @@ expect, activate the right environment and reinstall qPlot.
 Load a database with `File -> Load Database...`, use `File -> Load Recent
 Database`, or drag a QCoDeS `.db` file onto the database path field.
 
-qPlot remembers the last database path. If that file has been moved or deleted,
-startup continues with an empty main window.
+qPlot tries the newest path in its recent-database list at startup. If that file
+has been moved or deleted, qPlot tries QCoDeS' configured database and otherwise
+continues with an empty main window.
 
 ## A Database Does Not Load
 
@@ -190,9 +191,10 @@ Reset all settings to defaults:
 qplot-cfg -reset
 ```
 
-If `config.json` is invalid JSON or fails validation, qPlot backs it up in
-`~/.qplot` with a name such as `config.invalid.json` and creates a fresh config
-from defaults.
+If `config.json` is invalid JSON, incomplete, or from an unsupported settings
+format, qPlot backs it up in `~/.qplot` with a name such as
+`config.invalid.json` and creates a fresh config from defaults. This can happen
+after a major-version upgrade.
 
 ## Diagnostic Logs
 

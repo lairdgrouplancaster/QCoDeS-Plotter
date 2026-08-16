@@ -36,7 +36,10 @@
                         "minimum": 32,
                         "maximum": 16777215
                     },
-                    "maxItems": 12,
+                    "oneOf": [
+                        { "maxItems": 0 },
+                        { "minItems": 12, "maxItems": 12 }
+                    ],
                     "default": []
                 },
                 "run_table_visible_columns": {
@@ -71,7 +74,13 @@
                     ]
                 }
             },
-            "required": ["plot_frame_fraction", "main_frame_size"],
+            "required": [
+                "plot_frame_fraction",
+                "main_frame_size",
+                "preview_size",
+                "run_table_column_widths",
+                "run_table_visible_columns"
+            ],
             "additionalProperties": false
         },
         
@@ -82,17 +91,15 @@
                     "type": "string",
                     "default": ""
                 },
-                "last_file_path": {
-                    "type": "string",
-                    "default": ""
-                },
                 "recent_file_paths": {
                     "type": "array",
                     "items": { "type": "string" },
+                    "uniqueItems": true,
+                    "maxItems": 10,
                     "default": []
                 }
             },
-            "required": ["default_load_path", "last_file_path"],
+            "required": ["default_load_path", "recent_file_paths"],
             "additionalProperties": false
         },
         
@@ -211,7 +218,34 @@
                     "default": 1
                 }
             },
-            "required": ["theme", "bar_colour", "confirm_close", "default_refresh_rate"],
+            "required": [
+                "theme",
+                "bar_colour",
+                "bar_colour_include_cet",
+                "bar_colour_include_matplotlib",
+                "bar_colour_include_local",
+                "bar_colour_include_custom",
+                "bar_colour_include_cet_linear",
+                "bar_colour_include_cet_divergent",
+                "bar_colour_include_cet_cyclic",
+                "bar_colour_include_cet_rainbow",
+                "bar_colour_include_cet_isoluminant",
+                "bar_colour_include_cet_other",
+                "bar_colour_include_matplotlib_perceptual",
+                "bar_colour_include_matplotlib_sequential",
+                "bar_colour_include_matplotlib_divergent",
+                "bar_colour_include_matplotlib_cyclic",
+                "bar_colour_include_matplotlib_qualitative",
+                "bar_colour_include_matplotlib_other",
+                "bar_colour_excluded",
+                "bar_colour_excluded_prefixes",
+                "confirm_close",
+                "confirm_close_all",
+                "mouse_mode",
+                "copy_plot_image_resolution",
+                "auto_plot",
+                "default_refresh_rate"
+            ],
             "additionalProperties": false
         },
         

@@ -240,18 +240,7 @@ class PlotExportMixin(_PlotExportBase):
         config = self.__dict__.get("config")
         if config is None:
             return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
-
-        try:
-            value = config.get(COPY_PLOT_IMAGE_RESOLUTION_KEY)
-        except Exception:
-            return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
-
-        if value in (
-            COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
-            COPY_PLOT_IMAGE_RESOLUTION_SVG,
-            ):
-            return value
-        return COPY_PLOT_IMAGE_RESOLUTION_SCREEN
+        return config.get(COPY_PLOT_IMAGE_RESOLUTION_KEY)
 
 
     def _plot_image_pixmap(self) -> QtGui.QPixmap:

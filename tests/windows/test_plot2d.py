@@ -8,11 +8,39 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.qcodes_cache import cache_parameter_is_synchronized
 from qplot.tools.heatmap_geometry import HeatmapGeometry
+from qplot.windows._colorbar import (
+    _CET_COLORBAR_SUBTYPES,
+    _MATPLOTLIB_COLORBAR_SUBTYPES,
+    _colorbar_subtype_config_key,
+)
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
+
+
+def _colorbar_config_values(overrides=None):
+    values = {
+        "user_preference.bar_colour": "viridis",
+        "user_preference.bar_colour_include_cet": True,
+        "user_preference.bar_colour_include_matplotlib": True,
+        "user_preference.bar_colour_include_local": True,
+        "user_preference.bar_colour_include_custom": True,
+        "user_preference.bar_colour_excluded": [],
+        "user_preference.bar_colour_excluded_prefixes": [],
+        }
+    for group, subtypes in (
+            ("cet", _CET_COLORBAR_SUBTYPES),
+            ("matplotlib", _MATPLOTLIB_COLORBAR_SUBTYPES),
+            ):
+        values.update({
+            _colorbar_subtype_config_key(group, subtype): True
+            for subtype, _label in subtypes
+            })
+    if overrides is not None:
+        values.update(overrides)
+    return values
 
 
 class Plot2dLiveRefreshTestCase(unittest.TestCase):
@@ -779,6 +807,17 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
 
 class HeatmapHoverOutlineTestCase(unittest.TestCase):
+    def test_heatmap_limit_requires_current_config_when_worker_has_no_limit(self):
+        class MissingConfig:
+            def get(self, key):
+                raise KeyError(key)
+
+        host = plot2d.__new__(plot2d)
+        host.config = MissingConfig()
+
+        with self.assertRaises(KeyError):
+            host._full_resolution_heatmap_limit(object())
+
     def configure_geometry(self, window, x_centres, y_centres, data_grid=None):
         window.__dict__["axis_data"] = {
             "x": np.asarray(x_centres, dtype=float),
@@ -2356,9 +2395,14 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
     def test_colorbar_colormap_updates_bar_and_preference(self):
         class Config:
             def __init__(self):
+                self.values = _colorbar_config_values()
                 self.updates = []
 
+            def get(self, key):
+                return self.values[key]
+
             def update(self, key, value):
+                self.values[key] = value
                 self.updates.append((key, value))
 
         window = plot2d.__new__(plot2d)
@@ -2388,14 +2432,14 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_colorbar_colormap_config_filters_names_prefixes_and_groups(self):
         class Config:
-            values = {
+            values = _colorbar_config_values({
                 "user_preference.bar_colour_include_cet": True,
                 "user_preference.bar_colour_include_matplotlib": False,
                 "user_preference.bar_colour_include_local": False,
                 "user_preference.bar_colour_include_custom": False,
                 "user_preference.bar_colour_excluded": ["Purples"],
                 "user_preference.bar_colour_excluded_prefixes": ["CET-D"],
-                }
+                })
 
             def get(self, key):
                 return self.values[key]
@@ -2419,12 +2463,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_colorbar_colormap_can_hide_every_source(self):
         class Config:
-            values = {
+            values = _colorbar_config_values({
                 "user_preference.bar_colour_include_cet": False,
                 "user_preference.bar_colour_include_matplotlib": False,
                 "user_preference.bar_colour_include_local": False,
                 "user_preference.bar_colour_include_custom": False,
-                }
+                })
 
             def get(self, key):
                 return self.values[key]
@@ -2437,12 +2481,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_colorbar_colormap_config_filters_subtypes(self):
         class Config:
-            values = {
+            values = _colorbar_config_values({
                 "user_preference.bar_colour_include_cet": True,
                 "user_preference.bar_colour_include_matplotlib": True,
                 "user_preference.bar_colour_include_cet_linear": False,
                 "user_preference.bar_colour_include_matplotlib_qualitative": False,
-                }
+                })
 
             def get(self, key):
                 return self.values[key]

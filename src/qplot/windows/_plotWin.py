@@ -1029,14 +1029,7 @@ class plotWidget(
 
 
     def _configured_mouse_mode(self):
-        try:
-            mode = self.config.get(MOUSE_MODE_KEY)
-        except KeyError:
-            mode = "pan"
-
-        if mode not in {"pan", "rect"}:
-            return "pan"
-        return mode
+        return self.config.get(MOUSE_MODE_KEY)
 
 
     def apply_mouse_mode_preference(self):
@@ -1062,10 +1055,7 @@ class plotWidget(
         if main_config is self.config:
             target_config = main_config
 
-        try:
-            current_mode = target_config.get(MOUSE_MODE_KEY)
-        except KeyError:
-            current_mode = "pan"
+        current_mode = target_config.get(MOUSE_MODE_KEY)
 
         def rollback():
             if hasattr(self, "vb"):

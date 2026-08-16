@@ -73,12 +73,14 @@ cfg.dump()
 On startup, QCoDeS-Plotter creates `~/.qplot/config.json` if it does not exist.
 Existing config files are validated against `config_schema.json`.
 
-When new keys are added to the schema, they are added to existing config files
-with their default values.
+Every section and setting declared by the current schema is required, and extra
+sections or settings are rejected. QCoDeS-Plotter does not migrate older or
+incomplete settings files to the current format.
 
-If the config file is invalid JSON or fails schema validation, it is copied to
-`config.invalid.json` in `~/.qplot` and replaced with defaults. If that backup
-already exists, QCoDeS-Plotter uses the next available numbered backup, such as
+If the config file is old, incomplete, invalid JSON, or otherwise fails schema
+validation, it is copied to `config.invalid.json` in `~/.qplot` and replaced
+with the exact current schema defaults. If that backup already exists,
+QCoDeS-Plotter uses the next available numbered backup, such as
 `config.invalid.1.json`.
 
 Config keys use dotted paths in code and in `qplot-cfg`, for example
@@ -91,11 +93,10 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `GUI.plot_frame_fraction` | number | `0.47` | `0 < value < 1` | Fraction of a plot window used for the plot frame. |
 | `GUI.main_frame_size` | integer array | `[780, 700]` | exactly 2 items | Initial main-window width and height. |
 | `GUI.preview_size` | integer | `200` | `50 <= value <= 1000` | Preview thumbnail size in pixels. |
-| `GUI.run_table_column_widths` | integer array | `[]` | up to 12 items, each at least 32 | Saved run-table column widths; an empty array uses responsive widths. |
+| `GUI.run_table_column_widths` | integer array | `[]` | empty or exactly 12 items, each at least 32 | Saved run-table column widths in display order; an empty array uses responsive widths. |
 | `GUI.run_table_visible_columns` | string array | `["run_id", "measurements", "setpoints", "started", "status", "duration", "size"]` | unique run-table column IDs | Columns shown in the run table, in the table's fixed display order. |
 | `file.default_load_path` | string | `""` | any string | Default folder for selecting database files. |
-| `file.last_file_path` | string | `""` | any string | Last database file opened by the application. |
-| `file.recent_file_paths` | string array | `[]` | any strings | Recent database files shown by the application. |
+| `file.recent_file_paths` | string array | `[]` | at most 10 unique strings | Recent database files shown by the application, newest first. |
 | `user_preference.theme` | string | `"light"` | `light`, `dark`, or `pyqt` | Active application theme. |
 | `user_preference.bar_colour` | string | `"viridis"` | any string | Default 2D colour map name. |
 | `user_preference.bar_colour_include_cet` | boolean | `true` | `true` or `false` | Show colour maps from `colorcet`. |
@@ -126,6 +127,10 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `runtime_settings.max_full_heatmap_points` | integer | `2000000` | `1 <= value <= 2000000000` | Maximum estimated points loaded at full resolution before 2D plot windows use SQL spatial aggregation. |
 | `runtime_settings.del_grace_period` | number | `10` | `0 <= value <= 300` | Seconds to retain an unused plot dataset connection for quick reopening. |
 | `runtime_settings.cloud_sync_timeout` | number | `120` | `1 <= value <= 3600` | Seconds to wait for cloud storage to hydrate a database before failing. |
+
+The 12 stored run-table widths follow the table's display order: ID,
+Experiment, Sample, Measurements, Setpoints, Name, Started, Completed, Status,
+Duration, Size, and GUID.
 
 ## Adding Config Keys
 

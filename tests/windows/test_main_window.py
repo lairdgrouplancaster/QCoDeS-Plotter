@@ -2384,7 +2384,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
     class Config:
         def __init__(self, values=None):
-            self.values = values or {}
+            self.values = {"file.recent_file_paths": []}
+            self.values.update(values or {})
 
         def get(self, key):
             if key == "runtime_settings.cloud_sync_timeout":
@@ -2654,14 +2655,16 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 harness.deleteLater()
                 set_qcodes_database_location(active_database)
 
-    def test_startup_last_file_equal_to_qcodes_database_starts_worker(self):
+    def test_startup_first_recent_file_equal_to_qcodes_database_starts_worker(self):
         active_database = get_DB_location()
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
             database_path = os.path.abspath(database.name)
             set_qcodes_database_location(database_path)
             try:
                 harness = self.Harness()
-                harness.config = self.Config({"file.last_file_path": database_path})
+                harness.config = self.Config({
+                    "file.recent_file_paths": [database_path],
+                    })
 
                 self.assertTrue(harness.load_startup_database())
 
@@ -2672,7 +2675,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             finally:
                 set_qcodes_database_location(active_database)
 
-    def test_startup_uses_existing_qcodes_database_without_last_file(self):
+    def test_startup_uses_existing_qcodes_database_without_recent_files(self):
         active_database = get_DB_location()
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
             database_path = os.path.abspath(database.name)
@@ -2687,7 +2690,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             finally:
                 set_qcodes_database_location(active_database)
 
-    def test_startup_missing_last_file_falls_back_to_qcodes_database(self):
+    def test_startup_missing_first_recent_file_falls_back_to_qcodes_database(self):
         active_database = get_DB_location()
         with tempfile.TemporaryDirectory() as temp_dir:
             qcodes_database = Path(temp_dir) / "qcodes.db"
@@ -2697,7 +2700,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             try:
                 harness = self.Harness()
                 harness.config = self.Config(
-                    {"file.last_file_path": str(missing_database)}
+                    {"file.recent_file_paths": [str(missing_database)]}
                     )
 
                 self.assertTrue(harness.load_startup_database())
@@ -2713,16 +2716,16 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         active_database = get_DB_location()
         with tempfile.TemporaryDirectory() as temp_dir:
             startup_database = Path(temp_dir) / "startup.db"
-            last_database = Path(temp_dir) / "last.db"
+            recent_database = Path(temp_dir) / "recent.db"
             qcodes_database = Path(temp_dir) / "qcodes.db"
-            for database in (startup_database, last_database, qcodes_database):
+            for database in (startup_database, recent_database, qcodes_database):
                 database.touch()
             set_qcodes_database_location(str(qcodes_database))
             try:
                 harness = self.Harness()
                 harness.startup_database_path = str(startup_database)
                 harness.config = self.Config(
-                    {"file.last_file_path": str(last_database)}
+                    {"file.recent_file_paths": [str(recent_database)]}
                     )
 
                 self.assertTrue(harness.load_startup_database())
@@ -2761,7 +2764,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             set_qcodes_database_location(database_path)
             try:
                 harness = self.Harness()
-                harness.config = self.Config({"file.last_file_path": database_path})
+                harness.config = self.Config({
+                    "file.recent_file_paths": [database_path],
+                    })
 
                 self.assertTrue(harness.load_startup_database())
                 generation = harness._database_load_generation
@@ -3856,10 +3861,15 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
 
 class AutoPlotToggleTestCase(unittest.TestCase):
     class Config:
-        def __init__(self):
+        def __init__(self, auto_plot):
+            self.values = {AUTO_PLOT_KEY: auto_plot}
             self.updates = []
 
+        def get(self, key):
+            return self.values[key]
+
         def update(self, key, value):
+            self.values[key] = value
             self.updates.append((key, value))
 
     class RunList:
@@ -3875,8 +3885,8 @@ class AutoPlotToggleTestCase(unittest.TestCase):
             main_window.MainWindow._auto_plot_current_running_run
             )
 
-        def __init__(self, metadata):
-            self.config = AutoPlotToggleTestCase.Config()
+        def __init__(self, metadata, auto_plot=False):
+            self.config = AutoPlotToggleTestCase.Config(auto_plot)
             self.RunList = AutoPlotToggleTestCase.RunList(metadata)
             self.plotted_guids = []
 
@@ -3908,13 +3918,16 @@ class AutoPlotToggleTestCase(unittest.TestCase):
         self.assertEqual(harness.plotted_guids, ["newer-running"])
 
     def test_disabling_auto_plot_does_not_open_running_run(self):
-        harness = self.Harness({
-            1: {
-                "guid": "running",
-                "run_timestamp": 10.0,
-                "is_completed": False,
+        harness = self.Harness(
+            {
+                1: {
+                    "guid": "running",
+                    "run_timestamp": 10.0,
+                    "is_completed": False,
+                    },
                 },
-            })
+            auto_plot=True,
+            )
 
         harness._auto_plot_changed(False)
 

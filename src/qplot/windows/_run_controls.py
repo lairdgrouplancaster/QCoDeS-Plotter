@@ -19,7 +19,6 @@ from ._widgets import (
     moreInfo,
 )
 from ._widgets._run_formatting import run_is_complete
-from ._widgets.preview import PREVIEW_SIZE
 
 AUTO_PLOT_KEY = "user_preference.auto_plot"
 
@@ -396,10 +395,7 @@ class RunControlsMixin:
         Persists the Auto-plot checkbox state.
 
         """
-        try:
-            previous_checked = bool(self.config.get(AUTO_PLOT_KEY))
-        except (AttributeError, KeyError):
-            previous_checked = not bool(checked)
+        previous_checked = self.config.get(AUTO_PLOT_KEY)
 
         def rollback():
             checkbox = getattr(self, "autoPlotBox", None)
@@ -479,19 +475,16 @@ class RunControlsMixin:
 
         """
         interval = float(interval)
-        try:
-            current_interval = float(
-                self.config.get("user_preference.default_refresh_rate")
-                )
-        except (KeyError, TypeError, ValueError):
-            current_interval = None
+        current_interval = float(
+            self.config.get("user_preference.default_refresh_rate")
+            )
 
         if current_interval == interval:
             return True
 
         def rollback():
             spin_box = getattr(self, "spinBox", None)
-            if spin_box is not None and current_interval is not None:
+            if spin_box is not None:
                 set_widget_value_without_signals(
                     spin_box,
                     spin_box.setValue,
@@ -632,10 +625,7 @@ class RunControlsMixin:
         self._apply_refresh_interval(self.spinBox.value())
 
     def _configured_preview_size(self):
-        try:
-            return int(self.config.get("GUI.preview_size"))
-        except (KeyError, TypeError, ValueError):
-            return PREVIEW_SIZE
+        return int(self.config.get("GUI.preview_size"))
 
     def _details_pane_height(self):
         return max(260, int(self.preview_size) + 84)
