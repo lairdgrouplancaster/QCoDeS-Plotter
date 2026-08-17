@@ -1,3 +1,5 @@
+from collections import Counter
+
 from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
@@ -10,6 +12,14 @@ from ._config_persistence import (
 CONFIRM_CLOSE_ALL_KEY = "user_preference.confirm_close_all"
 CONFIRM_QUIT_KEY = "user_preference.confirm_close"
 DO_NOT_ASK_AGAIN_LABEL = "Don't ask again"
+
+_WINDOW_LIST_ACTIONS_ATTRIBUTE = "_qplot_window_list_actions"
+_WINDOW_LIST_ENTRY_PROPERTY = "qplotWindowListEntry"
+_WINDOW_KIND_LABELS = {
+    "plot1d": "1D",
+    "plot2d": "2D",
+    "sweeper": "Cut",
+}
 
 def add_standard_window_controls(window):
     """
@@ -36,7 +46,88 @@ def add_standard_window_controls(window):
     fullscreen_action.triggered.connect(lambda: toggle_fullscreen(window))
     window_menu.addAction(fullscreen_action)
 
+    # Plot windows are registered by the main window only after they have been
+    # constructed. Rebuild this section immediately before display so every
+    # Window menu reflects the currently open qPlot windows.
+    window_menu.aboutToShow.connect(
+        lambda: populate_available_window_actions(window, window_menu)
+        )
+
     return window_menu
+
+
+def populate_available_window_actions(window, window_menu):
+    """Add the current qPlot windows to the bottom of a Window menu."""
+
+    _remove_available_window_actions(window_menu)
+
+    main_window = main_window_for(window)
+    if main_window is None:
+        return
+
+    plot_windows = tuple(getattr(main_window, "windows", ()) or ())
+    labels = [_plot_window_menu_label(plot_window) for plot_window in plot_windows]
+    label_counts = Counter(labels)
+    label_indexes = Counter()
+
+    actions = [window_menu.addSeparator()]
+    actions.append(_add_window_menu_action(window_menu, main_window, "qPlot"))
+    for plot_window, label in zip(plot_windows, labels, strict=True):
+        label_indexes[label] += 1
+        if label_counts[label] > 1:
+            label = f"{label} ({label_indexes[label]})"
+        actions.append(_add_window_menu_action(window_menu, plot_window, label))
+
+    setattr(window_menu, _WINDOW_LIST_ACTIONS_ATTRIBUTE, actions)
+
+
+def _remove_available_window_actions(window_menu):
+    """Remove actions generated during the previous Window-menu opening."""
+
+    for action in getattr(window_menu, _WINDOW_LIST_ACTIONS_ATTRIBUTE, ()):
+        window_menu.removeAction(action)
+        action.deleteLater()
+    setattr(window_menu, _WINDOW_LIST_ACTIONS_ATTRIBUTE, ())
+
+
+def _plot_window_menu_label(plot_window):
+    """Return a concise, recognisable label for a qPlot graph window."""
+
+    operation_kind = getattr(plot_window, "operation_kind", None)
+    kind_label = _WINDOW_KIND_LABELS.get(operation_kind)
+    label = str(getattr(plot_window, "label", "")).strip()
+    if not label:
+        window_title = getattr(plot_window, "windowTitle", None)
+        label = str(window_title()).strip() if callable(window_title) else "Plot"
+
+    return f"{kind_label} — {label}" if kind_label is not None else label
+
+
+def _add_window_menu_action(menu, target_window, text):
+    """Create a checked-as-active menu action that focuses ``target_window``."""
+
+    action = QtGui.QAction(text, menu)
+    action.setCheckable(True)
+    action.setChecked(target_window.isActiveWindow())
+    action.setProperty(_WINDOW_LIST_ENTRY_PROPERTY, True)
+    action.setStatusTip(f"Show {text}")
+    action.triggered.connect(
+        lambda _checked=False: focus_qplot_window(target_window)
+        )
+    menu.addAction(action)
+    return action
+
+
+def focus_qplot_window(target_window):
+    """Restore, raise, and activate a qPlot window selected from the menu."""
+
+    if target_window.isMinimized():
+        target_window.showNormal()
+    elif not target_window.isVisible():
+        target_window.show()
+
+    target_window.raise_()
+    target_window.activateWindow()
 
 
 def add_confirmation_options(window, menu):

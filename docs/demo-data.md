@@ -17,8 +17,11 @@ responsive.
 For performance and scaling tests, use
 `File -> Generate Test Data -> Export CSV Collection...`. The ten installed
 instruction files form a cumulative series: every file contains all the runs
-from its predecessor, followed by three larger 2D runs. The nominal database
-sizes and largest grids are:
+from its predecessor, followed by three larger 2D runs. Each file starts with
+five 1D traces (current, conductance, resistance, transconductance, and charge
+sensor) with the same `V_SD` range and sampling, so trace addition, removal,
+reordering, and secondary axes can be tested even with the smallest database.
+The nominal database sizes and largest grids are:
 
 | File | Approximate database size | Largest 2D run |
 | --- | ---: | ---: |

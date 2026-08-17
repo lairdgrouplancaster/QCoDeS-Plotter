@@ -805,6 +805,19 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         self.assertEqual(len(loads), 1)
         self.assertIsNone(loads[0]["heatmap_axis_ranges"])
 
+    def test_small_primary_still_synchronizes_large_secondary_viewports(self):
+        window = plot2d.__new__(plot2d)
+        window._large_heatmap_sql_mode = False
+        synchronizations = []
+        window._sync_secondary_heatmap_view_ranges = (
+            lambda: synchronizations.append(True)
+        )
+
+        window._schedule_visible_heatmap_reload()
+        window._zoom_large_heatmap_to_all()
+
+        self.assertEqual(synchronizations, [True, True])
+
 
 class HeatmapHoverOutlineTestCase(unittest.TestCase):
     def test_heatmap_limit_requires_current_config_when_worker_has_no_limit(self):

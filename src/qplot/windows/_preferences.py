@@ -140,7 +140,7 @@ class PreferencesDialog(qtw.QDialog):
         self.refreshRateSpin.setAccessibleName("Default refresh interval")
         self.refreshRateSpin.setRange(0.0, 86_400.0)
         self.refreshRateSpin.setSingleStep(0.1)
-        self.refreshRateSpin.setDecimals(3)
+        self.refreshRateSpin.setDecimals(1)
         self.refreshRateSpin.setSuffix(" s")
         self._add_row(form, "&Default refresh interval:", self.refreshRateSpin)
 

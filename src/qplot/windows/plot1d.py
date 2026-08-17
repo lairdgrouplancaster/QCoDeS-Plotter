@@ -38,6 +38,8 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         self.mergable = None
         self.line = None
         self.right_vb = None
+        self.top_vb = None
+        self.top_right_vb = None
         self.snap_to_trace_action = None
         self.trace_label = None
         self.snap_marker = None

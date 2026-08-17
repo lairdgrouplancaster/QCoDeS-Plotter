@@ -104,6 +104,11 @@ synchronization, and cleanup of hidden trace windows.
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
 owns heatmap rendering, hover pixel display, and marquee color scaling.
 
+`src/qplot/windows/_plot2d_layers.py` owns secondary heatmap layers added by
+preview drag-and-drop, including per-layer renderers and opacity controls,
+hidden source-window refresh ownership, shared-colorbar membership, and layer
+cleanup.
+
 `src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
 owns color autoscaling, colorbar interaction handlers, and color-map selection
 state used by `plot2d.py`.

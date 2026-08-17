@@ -1680,6 +1680,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
         class Host(qtw.QMainWindow):
             initContextMenu = plotWidget.initContextMenu
             _init_axis_scale_dialogs = plotWidget._init_axis_scale_dialogs
+            _install_axis_scale_viewbox_range_handlers = (
+                plotWidget._install_axis_scale_viewbox_range_handlers
+            )
+            _axis_scale_range_changed = plotWidget._axis_scale_range_changed
+            force_all_axes_autoscale = plotWidget.force_all_axes_autoscale
             _menu_control_widget = plotWidget._menu_control_widget
             _connect_mouse_mode_menu_to_preferences = (
                 plotWidget._connect_mouse_mode_menu_to_preferences
@@ -1688,20 +1693,34 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 plotWidget._install_axis_scale_double_click_handlers
                 )
             _axis_scale_dialog_title = plotWidget._axis_scale_dialog_title
+            _axis_scale_dimension = plotWidget._axis_scale_dimension
+            _axis_scale_viewbox = plotWidget._axis_scale_viewbox
             _axis_scale_axis_number = plotWidget._axis_scale_axis_number
             _axis_scale_axis_constant = plotWidget._axis_scale_axis_constant
             _new_axis_scale_controls = plotWidget._new_axis_scale_controls
             _sync_axis_scale_controls = plotWidget._sync_axis_scale_controls
             _sync_axis_scale_link_combo = plotWidget._sync_axis_scale_link_combo
+            _axis_scale_bound_item_groups = plotWidget._axis_scale_bound_item_groups
+            _axis_scale_auto_limits = plotWidget._axis_scale_auto_limits
+            _update_axis_scale_auto_limits_tooltip = (
+                plotWidget._update_axis_scale_auto_limits_tooltip
+                )
+            _axis_scale_copy_auto_limits = plotWidget._axis_scale_copy_auto_limits
             _axis_scale_mouse_toggled = plotWidget._axis_scale_mouse_toggled
             _axis_scale_manual_clicked = plotWidget._axis_scale_manual_clicked
             _axis_scale_range_text_changed = plotWidget._axis_scale_range_text_changed
+            _axis_scale_uses_filtered_auto = plotWidget._axis_scale_uses_filtered_auto
+            _apply_axis_scale_filtered_auto = plotWidget._apply_axis_scale_filtered_auto
             _axis_scale_auto_clicked = plotWidget._axis_scale_auto_clicked
             _axis_scale_auto_spin_changed = plotWidget._axis_scale_auto_spin_changed
             _axis_scale_link_changed = plotWidget._axis_scale_link_changed
             _axis_scale_auto_pan_toggled = plotWidget._axis_scale_auto_pan_toggled
             _axis_scale_visible_only_toggled = plotWidget._axis_scale_visible_only_toggled
             _axis_scale_invert_toggled = plotWidget._axis_scale_invert_toggled
+            _axis_scale_axis_is_used = plotWidget._axis_scale_axis_is_used
+            _create_axis_scale_dialog = plotWidget._create_axis_scale_dialog
+            _axis_scale_current_tab_changed = plotWidget._axis_scale_current_tab_changed
+            _sync_axis_scale_tab_states = plotWidget._sync_axis_scale_tab_states
             open_axis_scale_dialog = plotWidget.open_axis_scale_dialog
             _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
             _context_menu_action = plotWidget._context_menu_action
@@ -1721,6 +1740,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             def copy_plot_image(self):
                 pass
 
+            def _view_range_changed_programmatically(self):
+                pass
+
         widget = pg.GraphicsLayoutWidget()
         host = Host()
         host.widget = widget
@@ -1737,14 +1759,143 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(host.plot.ctrlMenu.title(), "Options")
             self.assertEqual(host.plot.ctrlMenu.menuAction().text(), "Options")
 
+            main_line = host.plot.plot(x=[200.0, 400.0], y=[10.0, 20.0])
+            host.vb.setXRange(-100.0, 100.0, padding=0)
             host.open_axis_scale_dialog("x")
 
-            dialog = host._axis_scale_dialogs["x"]
-            self.assertEqual(dialog.windowTitle(), "X axis scaling")
-            self.assertIn("x", host._axis_scale_controls)
-            self.assertEqual(host._axis_scale_controls["x"].manualRadio.text(), "Manual")
-            self.assertEqual(host._axis_scale_controls["x"].autoRadio.text(), "Auto")
-            self.assertEqual(host._axis_scale_controls["x"].invertCheck.text(), "Invert Axis")
+            dialog = host._axis_scale_dialog
+            self.assertEqual(dialog.windowTitle(), "Axis scaling")
+            self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
+            self.assertEqual(
+                [host._axis_scale_tabs.tabText(index) for index in range(4)],
+                ["X", "Y", "X2", "Y2"],
+                )
+            self.assertTrue(host._axis_scale_tabs.isTabEnabled(0))
+            self.assertTrue(host._axis_scale_tabs.isTabEnabled(1))
+            self.assertFalse(host._axis_scale_tabs.isTabEnabled(2))
+            self.assertFalse(host._axis_scale_tabs.isTabEnabled(3))
+            self.assertEqual(host._axis_scale_tabs.width(), 300)
+            x_controls = host._axis_scale_controls["x"]
+            self.assertEqual(x_controls.manualRadio.text(), "Manual")
+            self.assertEqual(x_controls.autoRadio.text(), "Auto")
+            self.assertEqual(x_controls.minimumLabel.text(), "Minimum")
+            self.assertEqual(x_controls.maximumLabel.text(), "Maximum")
+            self.assertEqual(x_controls.invertCheck.text(), "Reverse Axis")
+            self.assertEqual(x_controls.mouseCheck.text(), "Allow Zoom/Pan")
+            self.assertEqual(
+                x_controls.visibleOnlyCheck.text(),
+                "Autoscale from Visible Data",
+                )
+            self.assertEqual(
+                x_controls.autoPanCheck.text(),
+                "Follow New Data, Keep Span",
+                )
+            self.assertEqual(x_controls.label.text(), "Link Axis:")
+            self.assertIsInstance(x_controls.linkCombo, qtw.QComboBox)
+            self.assertEqual(x_controls.manualRadio.parentWidget().width(), 280)
+            tab_bar = host._axis_scale_tabs.tabBar()
+            self.assertIn("QTabBar::tab:selected", host._axis_scale_tabs.styleSheet())
+            self.assertIn("palette(highlight)", host._axis_scale_tabs.styleSheet())
+            self.assertGreaterEqual(tab_bar.tabRect(0).left(), 0)
+            self.assertLess(tab_bar.tabRect(3).right(), tab_bar.width())
+            self.assertGreaterEqual(
+                tab_bar.tabRect(3).right() - tab_bar.tabRect(0).left(),
+                280,
+                )
+            invert_index = x_controls.gridLayout.indexOf(x_controls.invertCheck)
+            mouse_index = x_controls.gridLayout.indexOf(x_controls.mouseCheck)
+            self.assertEqual(
+                x_controls.gridLayout.getItemPosition(invert_index)[0],
+                x_controls.gridLayout.getItemPosition(mouse_index)[0],
+                )
+            self.assertGreaterEqual(
+                x_controls.mouseCheck.width(),
+                x_controls.mouseCheck.sizeHint().width(),
+                )
+            self.assertGreaterEqual(
+                x_controls.invertCheck.width(),
+                x_controls.invertCheck.sizeHint().width(),
+                )
+            self.assertEqual(
+                host._axis_scale_tabs.tabToolTip(2),
+                "Top horizontal axis",
+                )
+            auto_limits = host._axis_scale_auto_limits("x")
+            self.assertIsNotNone(auto_limits)
+            copy_button = x_controls.copyAutoLimitsButton
+            self.assertEqual(
+                copy_button.toolTip(),
+                f"Set manual limits to {auto_limits[0]:.5g} and {auto_limits[1]:.5g}.",
+                )
+
+            host._axis_scale_custom_auto_axes.add("x")
+            host.vb.setXRange(-3.0, 4.0, padding=0)
+            self.assertNotIn("x", host._axis_scale_custom_auto_axes)
+            self.assertTrue(host._axis_scale_controls["x"].manualRadio.isChecked())
+            self.assertEqual(host._axis_scale_controls["x"].minText.text(), "-3")
+            self.assertEqual(host._axis_scale_controls["x"].maxText.text(), "4")
+
+            copy_button.click()
+            applied_limits = (
+                float(x_controls.minText.text()),
+                float(x_controls.maxText.text()),
+                )
+            self.assertTrue(x_controls.manualRadio.isChecked())
+            self.assertAlmostEqual(host.vb.viewRange()[0][0], applied_limits[0])
+            self.assertAlmostEqual(host.vb.viewRange()[0][1], applied_limits[1])
+
+            host.open_axis_scale_dialog("y")
+            self.assertIs(host._axis_scale_dialog, dialog)
+            self.assertEqual(host._axis_scale_tabs.currentIndex(), 1)
+
+            host.right_vb = pg.ViewBox()
+            host.plot.scene().addItem(host.right_vb)
+            host.right_vb.setGeometry(host.vb.sceneBoundingRect())
+            top_line = pg.PlotDataItem(x=[10.0, 20.0], y=[-1.0, 1.0])
+            host.right_vb.addItem(top_line)
+            host.lines = {"main": main_line, "secondary": top_line}
+            host._trace_styles = {
+                "main": type(
+                    "Style",
+                    (),
+                    {"x_axis": "Bottom", "y_axis": "Left"},
+                    )(),
+                "secondary": type(
+                    "Style",
+                    (),
+                    {"x_axis": "Top", "y_axis": "Right"},
+                    )(),
+                }
+            host._sync_axis_scale_tab_states()
+            self.assertTrue(host._axis_scale_tabs.isTabEnabled(2))
+            self.assertTrue(host._axis_scale_tabs.isTabEnabled(3))
+
+            host.open_axis_scale_dialog("top")
+            top_limits = host._axis_scale_auto_limits("x2")
+            self.assertIsNotNone(top_limits)
+            self.assertLess(top_limits[0], 10.0)
+            self.assertGreater(top_limits[1], 20.0)
+            self.assertLess(top_limits[1], 100.0)
+            host._axis_scale_controls["x2"].autoRadio.click()
+            self.assertAlmostEqual(host.vb.viewRange()[0][0], top_limits[0])
+            self.assertAlmostEqual(host.vb.viewRange()[0][1], top_limits[1])
+
+            host.open_axis_scale_dialog("right")
+            self.assertIs(host._axis_scale_dialog, dialog)
+            self.assertEqual(host._axis_scale_tabs.currentIndex(), 3)
+            self.assertIs(host._axis_scale_viewbox("y2"), host.right_vb)
+
+            event = type(
+                "MouseEvent",
+                (),
+                {
+                    "button": lambda self: QtCore.Qt.MouseButton.LeftButton,
+                    "accept": lambda self: setattr(self, "accepted", True),
+                    },
+                )()
+            host.plot.getAxis("top").mouseDoubleClickEvent(event)
+            self.assertTrue(event.accepted)
+            self.assertEqual(host._axis_scale_tabs.currentIndex(), 2)
         finally:
             host.deleteLater()
             widget.deleteLater()

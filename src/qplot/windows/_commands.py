@@ -256,7 +256,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "plot.autoscale": CommandSpec(
         "plot.autoscale",
         "Autoscale",
-        "Autoscale the plot view",
+        "Return all plot axes to autoscale mode",
         "Ctrl+0",
         help_section="Plot Windows",
     ),

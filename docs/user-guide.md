@@ -222,7 +222,25 @@ When multiple traces use different Y axes:
 
 ### Heatmaps
 
-Heatmaps add color-scale controls and 1D cut extraction.
+Heatmaps support multiple compatible maps in one window. Drag a heatmap preview
+thumbnail from the run table onto an existing heatmap to add it as a layer.
+Layers must use the same two independent variables with matching axis units and
+the same currently displayed dependent-value unit; their coordinate ranges and
+grid sizes may differ. If the two axes are in the opposite order, qPlot
+transposes the added layer automatically. An operation that temporarily makes
+units incompatible hides that layer until its units match again.
+
+The left panel lists the heatmap layers. Added layers are translucent so that
+overlapping maps remain visible; use each layer's opacity control or remove
+button to adjust the composition. All layers share one colormap and color
+range, which is autoscaled across their combined finite values. A hidden source
+plot remains live while its layer is present, just as it does for an added line
+trace. Large hidden heatmap sources also follow the visible window's viewport
+when qPlot reloads zoomed data.
+
+Cursor readout, marquee statistics, color zoom, and 1D cut extraction continue
+to use the original heatmap in the window. Heatmaps also add the following
+color-scale and cut controls.
 
 Color-scale controls:
 
@@ -335,7 +353,7 @@ Plot-window shortcuts:
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+0` | Autoscale the plot view |
+| `Ctrl+0` | Return all plot axes to autoscale mode |
 | `Ctrl+C` / `Cmd+C` | Copy the plot image to the clipboard using the selected copy format/resolution |
 | `Ctrl+E` | Export the plot |
 | `Ctrl+Alt+R` | Show or hide the refresh toolbar |

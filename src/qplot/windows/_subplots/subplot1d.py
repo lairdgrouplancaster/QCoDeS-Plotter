@@ -287,8 +287,9 @@ class custom_viewbox(pg.ViewBox):
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
         self._marquee_owner = None
-        self._shift_pan_axis_constraint = False
+        self._shift_pan_axis_constraint = True
         self._shift_pan_axis = None
+        self._main_moved_axis = None
         self.setAcceptHoverEvents(True)
 
 
@@ -439,11 +440,15 @@ class custom_viewbox(pg.ViewBox):
 
         super().mouseDragEvent(ev, axis=constrained_axis)
 
+        if axis is None:
+            self._main_moved_axis = constrained_axis
+            try:
+                self.main_moved.emit(ev)
+            finally:
+                self._main_moved_axis = None
+
         if ev.isFinish():
             self._shift_pan_axis = None
-        
-        if axis is None:
-            self.main_moved.emit(ev)
          
     def wheelEvent(self, ev, axis=None):
         super().wheelEvent(ev, axis=axis)

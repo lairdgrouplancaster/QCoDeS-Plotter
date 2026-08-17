@@ -385,6 +385,11 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         Returns the viewbox that owns a plotted line.
 
         """
+        get_viewbox = getattr(line, "getViewBox", None)
+        if callable(get_viewbox):
+            viewbox = get_viewbox()
+            if viewbox is not None:
+                return viewbox
         if getattr(line, "side", "left") == "right" and self.right_vb is not None:
             return self.right_vb
 

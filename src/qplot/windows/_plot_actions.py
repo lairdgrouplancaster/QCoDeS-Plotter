@@ -22,11 +22,13 @@ from qplot.diagnostics import log_exception
 from ._dataset_handle import (
     DatasetHandle,
     DatasetKey,
+    TraceKey,
     canonical_database_path,
     close_dataset_connection,
     database_file_identity,
 )
 from ._export_paths import choose_export_path, write_export_atomically
+from ._plot2d_layers import _heatmap_layer_compatibility
 from ._plot_refresh import plot_refresh_required
 from ._subplots.subplot1d import _subplot_axis_order
 from .plot1d import plot1d
@@ -34,7 +36,7 @@ from .plot2d import plot2d
 
 
 def _plot_has_trace_window(target, candidate):
-    """Return whether a source window is already represented on a 1D plot."""
+    """Return whether a source window is already represented on a plot."""
 
     checker = getattr(target, "_has_trace_window", None)
     if callable(checker):
@@ -299,10 +301,10 @@ class PlotActionsMixin:
 
 
     def _detach_replaced_secondary_traces(self, database_source):
-        """Remove secondary lines whose source belongs to a replaced database.
+        """Remove secondary plots whose source belongs to a replaced database.
 
         A merged source can be closed and therefore absent from ``windows``
-        while its subplot still owns a dataset handle and keeps its monitor
+        while its layer still owns a dataset handle and keeps its monitor
         alive. Retire those consumers before evicting the source handle so a
         plot backed by another database cannot retain or refresh stale data.
         """
@@ -322,33 +324,47 @@ class PlotActionsMixin:
                     ):
                 continue
 
-            lines = getattr(host, "lines", None)
-            remove_line = getattr(host, "remove_line", None)
-            if not isinstance(lines, dict) or not callable(remove_line):
-                continue
+            for registry_name, main_item_name, remove_name in (
+                    ("lines", "line", "remove_line"),
+                    ("heatmaps", None, "remove_heatmap"),
+                    ):
+                registry = getattr(host, registry_name, None)
+                remover = getattr(host, remove_name, None)
+                if not isinstance(registry, dict) or not callable(remover):
+                    continue
 
-            main_line = getattr(host, "line", None)
-            stale_traces = [
-                (trace_key, line)
-                for trace_key, line in list(lines.items())
-                if (
-                    line is not None
-                    and line is not main_line
-                    and getattr(getattr(line, "from_win", None), "_dataset_key", None)
-                    is not None
-                    and source_matches(line.from_win._dataset_key)
+                main_item = host if main_item_name is None else getattr(
+                    host,
+                    main_item_name,
+                    None,
                     )
-                ]
-            for trace_key, line in stale_traces:
-                source = line.from_win
-                try:
-                    remove_line(getattr(source, "label", ""), trace_key=trace_key)
-                except Exception as err:
-                    log_exception(
-                        "Replaced database secondary-trace cleanup failed",
-                        err,
-                        __name__,
-                    )
+                stale_layers = [
+                    (trace_key, layer)
+                    for trace_key, layer in list(registry.items())
+                    if (
+                        layer is not None
+                        and layer is not main_item
+                        and getattr(
+                            getattr(layer, "from_win", None),
+                            "_dataset_key",
+                            None,
+                            ) is not None
+                        and source_matches(layer.from_win._dataset_key)
+                        )
+                    ]
+                for trace_key, layer in stale_layers:
+                    source = layer.from_win
+                    try:
+                        remover(
+                            getattr(source, "label", ""),
+                            trace_key=trace_key,
+                            )
+                    except Exception as err:
+                        log_exception(
+                            "Replaced database secondary-plot cleanup failed",
+                            err,
+                            __name__,
+                        )
 
 
     def _invalidate_database_runtime_state(self, database_source):
@@ -522,10 +538,20 @@ class PlotActionsMixin:
         if window_type == "plot1d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
             win.remove_dataset.connect(self.remove_ds_at)
+            win._trace_candidate_provider = (
+                lambda target_window=win: self._trace_candidates_for_plot(target_window)
+            )
+            win._trace_add_request = (
+                lambda source_key, parameter_name, target_window=win:
+                self.add_trace_to_plot(target_window, source_key, parameter_name)
+            )
 
         elif window_type == "plot2d":
             win.open_subplot.connect(self.openWin)
             win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
+            remove_dataset = getattr(win, "remove_dataset", None)
+            if remove_dataset is not None:
+                remove_dataset.connect(self.remove_ds_at)
 
         elif window_type == "sweeper":
             win.merge_compatibility_changed.connect(self.post_admin)
@@ -1155,17 +1181,29 @@ class PlotActionsMixin:
     @QtCore.pyqtSlot(object, object, str)
     def add_dropped_preview_to_plot(self, target_win, source_identity, parameter_name):
         """
-        Add a run-table preview trace to the plot it was dropped onto.
+        Add a run-table preview to the plot it was dropped onto.
 
         """
-        self.add_trace_to_plot(target_win, source_identity, parameter_name)
+        return self.add_trace_to_plot(target_win, source_identity, parameter_name)
 
 
     def add_trace_to_plot(self, target_win, source_identity, parameter_name, param=None):
         """
-        Adds a plottable 1D parameter to an existing compatible 1D plot.
+        Add a compatible parameter to an existing plot.
+
+        The historical method name remains the entry point used by run-table
+        menus and preview drops. Heatmap targets dispatch to the corresponding
+        layer workflow; line targets retain the existing secondary-trace path.
 
         """
+        if getattr(target_win, "operation_kind", None) == "plot2d":
+            return self.add_heatmap_to_plot(
+                target_win,
+                source_identity,
+                parameter_name,
+                param=param,
+                )
+
         source_path = (
             source_identity.database_path
             if isinstance(source_identity, DatasetKey)
@@ -1249,6 +1287,182 @@ class PlotActionsMixin:
         return True
 
 
+    def _trace_candidates_for_plot(self, target_win):
+        """Return loaded-database 1D measurements compatible with a plot."""
+
+        target_axes = tuple(
+            getattr(getattr(target_win, "param", None), "depends_on_", ())
+        )
+        if len(target_axes) != 1:
+            return []
+
+        run_list = getattr(self, "RunList", None)
+        all_run_metadata = getattr(run_list, "all_run_metadata", None)
+        if not callable(all_run_metadata):
+            return []
+
+        candidates = []
+        primary_trace_key = TraceKey(target_win._dataset_key, target_win.param.name)
+        for run_id, metadata in all_run_metadata().items():
+            if tuple(metadata.get("sweep_parameters") or ()) != target_axes:
+                continue
+            guid = metadata.get("guid")
+            if not guid:
+                continue
+            source_key = self._current_dataset_key(guid)
+            for parameter_name in metadata.get("measure_parameters") or ():
+                trace_key = TraceKey(source_key, parameter_name)
+                if (
+                    trace_key == primary_trace_key
+                    or trace_key in getattr(target_win, "lines", {})
+                ):
+                    continue
+                candidates.append((f"ID:{run_id} {parameter_name}", trace_key))
+        return candidates
+
+
+    def add_heatmap_to_plot(
+            self,
+            target_win,
+            source_identity,
+            parameter_name,
+            param=None,
+            ):
+        """Add a compatible 2D parameter as a layer on an existing heatmap."""
+
+        source_path = (
+            source_identity.database_path
+            if isinstance(source_identity, DatasetKey)
+            else None
+        )
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                source_path,
+                "adding a preview heatmap",
+                ):
+            return False
+
+        add_heatmap = getattr(target_win, "add_heatmap", None)
+        if (
+                target_win is None
+                or getattr(target_win, "operation_kind", None) != "plot2d"
+                or not callable(add_heatmap)
+                ):
+            self.show_status("Drop heatmaps onto a compatible heatmap plot.", 5000)
+            return False
+
+        if isinstance(source_identity, DatasetKey):
+            source_key = source_identity
+        else:
+            source_key = self._current_dataset_key(source_identity)
+        source_guid = source_key.guid
+
+        if param is None:
+            try:
+                param = self._parameter_from_key(source_key, parameter_name)
+            except Exception as err:
+                log_exception("Heatmap source run load failed", err, __name__)
+                self.show_error(
+                    "Run Load Failed",
+                    f"Could not load run with GUID {source_guid}.",
+                    str(err),
+                )
+                return False
+
+        if param is None or not getattr(param, "depends_on", ""):
+            self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+            return False
+
+        source_axes = tuple(getattr(param, "depends_on_", ()))
+        target_axes = tuple(getattr(target_win.param, "depends_on_", ()))
+        if len(source_axes) != 2:
+            self.show_status("Only 2D measurements can be added as heatmaps.", 5000)
+            return False
+        if len(target_axes) != 2 or set(source_axes) != set(target_axes):
+            self.show_status(
+                f"Cannot add {parameter_name}; the heatmap axes do not match.",
+                5000,
+            )
+            return False
+
+        source_trace_key = TraceKey(source_key, param.name)
+        heatmaps = getattr(target_win, "heatmaps", {})
+        if source_trace_key in heatmaps:
+            self.show_status(
+                f"Skipped {parameter_name}; that heatmap is already shown.",
+                5000,
+            )
+            return False
+        if source_trace_key == getattr(target_win, "_trace_key", None):
+            self.show_status(
+                f"Skipped {target_win.label}; source and target are the same.",
+                5000,
+            )
+            return False
+
+        from_win = self._plot_window_for_param(
+            source_key,
+            param,
+            operation_kind="plot2d",
+            )
+        if from_win == target_win:
+            self.show_status(
+                f"Skipped {target_win.label}; source and target are the same.",
+                5000,
+            )
+            return False
+
+        if from_win is None:
+            from_win = self._open_hidden_trace_window(source_key, param, target_win)
+            if from_win is None:
+                return False
+
+        _axis_order, compatibility_error = _heatmap_layer_compatibility(
+            target_win,
+            from_win,
+        )
+        if compatibility_error is not None:
+            self.show_status(
+                f"Cannot add {parameter_name}; {compatibility_error}.",
+                5000,
+            )
+            if not getattr(from_win, "visible", False):
+                from_win.close()
+            return False
+
+        try:
+            added = bool(add_heatmap(from_win))
+        except Exception as err:
+            log_exception("Heatmap layer construction failed", err, __name__)
+            self.show_error(
+                "Heatmap Add Failed",
+                f"Could not add {parameter_name} to the heatmap.",
+                str(err),
+            )
+            added = False
+
+        if not getattr(from_win, "visible", False):
+            from_win.close()
+
+        if not added:
+            self.show_status(
+                f"Cannot add {parameter_name}; it is already shown or incompatible.",
+                5000,
+            )
+            return False
+
+        sync_layer_views = getattr(
+            target_win,
+            "_sync_secondary_heatmap_view_ranges",
+            None,
+        )
+        if callable(sync_layer_views):
+            sync_layer_views()
+
+        self.show_status(f"Added {from_win.label} to {target_win.label}.", 3000)
+        return True
+
+
     def _parameter_from_guid(self, guid, parameter_name):
         return self._parameter_from_key(self._current_dataset_key(guid), parameter_name)
 
@@ -1282,10 +1496,22 @@ class PlotActionsMixin:
         return self._load_dataset(dataset_key)
 
 
-    def _plot_window_for_param(self, dataset_key, param):
+    def _plot_window_for_param(self, dataset_key, param, operation_kind=None):
         for win in self.windows:
             try:
-                if win._dataset_key == dataset_key and win.param.name == param.name:
+                window_kind = getattr(
+                    win,
+                    "operation_kind",
+                    win.__class__.__name__,
+                    )
+                if (
+                        win._dataset_key == dataset_key
+                        and win.param.name == param.name
+                        and (
+                            operation_kind is None
+                            or window_kind == operation_kind
+                            )
+                        ):
                     return win
             except AttributeError:
                 continue

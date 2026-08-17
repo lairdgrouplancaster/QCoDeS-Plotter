@@ -98,18 +98,30 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         return None
 
     def _finite_data_colorbar_range(self):
-        """Return the finite data range without reducing an empty array."""
+        """Return the finite range across every heatmap sharing the colorbar."""
 
-        data = getattr(self, "dataGrid", None)
-        if data is None:
+        data_provider = getattr(self, "_heatmap_colorbar_data_arrays", None)
+        if callable(data_provider):
+            arrays = data_provider()
+        else:
+            data = getattr(self, "dataGrid", None)
+            arrays = () if data is None else (data,)
+
+        lower = None
+        upper = None
+        for data in arrays:
+            values = np.asarray(data)
+            finite_values = values[np.isfinite(values)]
+            if finite_values.size == 0:
+                continue
+            data_lower = float(np.min(finite_values))
+            data_upper = float(np.max(finite_values))
+            lower = data_lower if lower is None else min(lower, data_lower)
+            upper = data_upper if upper is None else max(upper, data_upper)
+
+        if lower is None or upper is None:
             return None
-
-        values = np.asarray(data)
-        finite_values = values[np.isfinite(values)]
-        if finite_values.size == 0:
-            return None
-
-        return float(np.min(finite_values)), float(np.max(finite_values))
+        return lower, upper
 
     def _data_colorbar_rounding(self):
         """Return a finite, positive colorbar interaction step."""

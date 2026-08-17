@@ -235,6 +235,8 @@ class plotWidget(
             axisItems={
                 "bottom": _PowerScaledAxisItem("bottom"),
                 "left": _PowerScaledAxisItem("left"),
+                "top": _PowerScaledAxisItem("top"),
+                "right": _PowerScaledAxisItem("right"),
                 },
             )
         self.vb.setParent(self.plot)
@@ -359,13 +361,12 @@ class plotWidget(
 
 
     def accepts_preview_trace_drop(self, payload):
-        if not hasattr(self, "option_boxes"):
+        operation_kind = getattr(self, "operation_kind", None)
+        if operation_kind not in {"plot1d", "plot2d"}:
             return False
 
-        return preview_drop_is_compatible(
-            getattr(self.param, "depends_on_", ()),
-            payload
-            )
+        target_axes = tuple(getattr(self.param, "depends_on_", ()))
+        return preview_drop_is_compatible(target_axes, payload)
 
 
 
@@ -423,7 +424,7 @@ class plotWidget(
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setRange(0.0, 86_400.0)
         self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(3)
+        self.spinBox.setDecimals(1)
 
         self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
@@ -516,6 +517,9 @@ class plotWidget(
             if action.text() == "View All":
                 self.register_shortcut(action, command_spec("plot.autoscale"))
                 action.setText(command_spec("plot.autoscale").text)
+                action.triggered.connect(
+                    lambda _checked=False: self.force_all_axes_autoscale()
+                )
                 break
         
         x_action = actions[1]

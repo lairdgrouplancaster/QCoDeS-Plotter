@@ -54,5 +54,8 @@ def run_preview_payload_from_mime(mime_data):
 
 
 def preview_drop_is_compatible(target_axes, payload):
-    axes = payload.get("axes") or []
-    return len(axes) == 1 and tuple(axes) == tuple(str(axis) for axis in target_axes)
+    axes = tuple(str(axis) for axis in (payload.get("axes") or []))
+    target_axes = tuple(str(axis) for axis in target_axes)
+    if len(axes) == len(target_axes) == 2:
+        return len(set(axes)) == 2 and set(axes) == set(target_axes)
+    return bool(axes) and axes == target_axes

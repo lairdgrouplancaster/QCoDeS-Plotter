@@ -49,7 +49,7 @@ class RunControlsMixin:
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setRange(0.0, 86_400.0)
         self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(3)
+        self.spinBox.setDecimals(1)
         self.spinBox.setSuffix(" s")
         self.spinBox.setFixedWidth(84)
         self.spinBox.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)

@@ -176,9 +176,23 @@ def test_example_csv_is_ready_to_generate(tmp_path):
     specifications = read_specifications(csv_path)
 
     assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")
-    assert [specification.dimensions for specification in specifications] == [1, 1, 2, 2]
+    dimensions = [
+        specification.dimensions for specification in specifications
+    ]
+    assert dimensions == [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+    ]
     assert [specification.point_count for specification in specifications] == [
-        101,
+        501,
+        501,
+        501,
+        501,
         501,
         121 * 81,
         201 * 101,
@@ -202,8 +216,29 @@ def test_instruction_collection_is_cumulative_and_spans_10mb_to_30gb(tmp_path):
     assert tuple(path.name for path in output_paths) == INSTRUCTION_FILE_NAMES
     specification_sets = [read_specifications(path) for path in output_paths]
     assert [len(specifications) for specifications in specification_sets] == list(
-        range(7, 35, 3)
+        range(10, 38, 3)
     )
+
+    one_dimensional = [
+        specification
+        for specification in specification_sets[0]
+        if specification.dimensions == 1
+    ]
+    assert [specification.measured_name for specification in one_dimensional] == [
+        "current",
+        "conductance",
+        "resistance",
+        "transconductance",
+        "charge_sensor",
+    ]
+    assert {
+        (
+            specification.v_sd_start,
+            specification.v_sd_stop,
+            specification.v_sd_points,
+        )
+        for specification in one_dimensional
+    } == {(-0.1, 0.1, 1001)}
 
     for predecessor, successor in zip(
         specification_sets[:-1],

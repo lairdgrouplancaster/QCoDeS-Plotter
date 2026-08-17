@@ -98,6 +98,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
                 )
             self.assertEqual(dialog.defaultLoadPathEdit.text(), "C:/qcodes")
             self.assertEqual(dialog.refreshRateSpin.value(), 2.5)
+            self.assertEqual(dialog.refreshRateSpin.decimals(), 1)
             self.assertFalse(dialog.confirmCloseAllCheck.isChecked())
             self.assertFalse(dialog.confirmQuitCheck.isChecked())
             self.assertEqual(dialog.maxThreadsSpin.value(), 8)
