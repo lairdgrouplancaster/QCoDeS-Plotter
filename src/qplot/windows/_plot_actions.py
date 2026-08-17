@@ -30,7 +30,10 @@ from ._dataset_handle import (
 from ._export_paths import choose_export_path, write_export_atomically
 from ._plot2d_layers import _heatmap_layer_compatibility
 from ._plot_refresh import plot_refresh_required
-from ._subplots.subplot1d import _subplot_axis_order
+from ._subplots.subplot1d import (
+    _subplot_axis_order,
+    _subplot_shared_parameter,
+)
 from .plot1d import plot1d
 from .plot2d import plot2d
 
@@ -1810,6 +1813,7 @@ class PlotActionsMixin:
                         getattr(item, "operation_kind", item.__class__.__name__)
                         == "sweeper"
                         ),
+                    shared_parameter=_subplot_shared_parameter(win),
                     )
                 if compatible is not None and not _plot_has_trace_window(win, item):
                     wins.append(item)

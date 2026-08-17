@@ -305,47 +305,90 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
         self._refresh_trace_axis_auto_ranges()
 
-    def _sync_right_axis_visibility(self) -> None:
-        """Synchronise right-axis values and label with its active trace."""
+    def _trace_axis_parameter(self, trace: Any, display_axis: str) -> Any:
+        """Return the parameter plotted on one display axis for ``trace``."""
+
+        host_axis_param = self.__dict__.get("axis_param", {})
+        if trace is self.__dict__.get("line"):
+            return host_axis_param.get(display_axis) or getattr(self, "param", None)
+
+        source = getattr(trace, "from_win", None)
+        if source is None:
+            return host_axis_param.get(display_axis)
+
+        source_axis = display_axis
+        choose_from = getattr(trace, "choose_from", None)
+        if choose_from is not None and len(choose_from) == 2:
+            source_axis = choose_from[0 if display_axis == "x" else 1]
+
+        source_axis_param = getattr(source, "axis_param", {})
+        if isinstance(source_axis_param, dict):
+            param = source_axis_param.get(source_axis)
+            if param is not None:
+                return param
+
+        try:
+            source_options = source.axis_options
+        except (AttributeError, RuntimeError):
+            source_options = {}
+        source_name = source_options.get(source_axis)
+        source_params = getattr(source, "param_dict", {})
+        param = source_params.get(source_name) if source_name is not None else None
+        if param is not None:
+            return param
+
+        # A regular 1D source's y parameter is its dependent measurement. If
+        # metadata is incomplete, a shared display axis is still described by
+        # the host parameter rather than by the wrong source measurement.
+        if source_axis == "y":
+            param = getattr(source, "param", None)
+            if param is not None:
+                return param
+        return host_axis_param.get(display_axis) or getattr(source, "param", None)
+
+    def _sync_vertical_axis_visibility(self, side: str) -> None:
+        """Synchronise one vertical axis with the traces assigned to it."""
 
         plot = self.__dict__.get("plot")
         if plot is None:
             return
 
-        main_line = self.__dict__.get("line")
+        axis_name = side.lower()
+        style_side = "Right" if axis_name == "right" else "Left"
         styles = self._ensure_trace_styles()
-        right_traces = [
+        traces = [
             (key, line)
             for key, line in self.__dict__.get("lines", {}).items()
             if line is not None
-            and line is not main_line
-            and styles.get(key, self._initial_trace_style()).y_axis == "Right"
-            ]
-        right_axis = plot.getAxis("right")
-        right_axis.setStyle(showValues=bool(right_traces))
-        if not right_traces:
-            right_axis.setLabel(text="", units="")
-            sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
-            if callable(sync_tabs):
-                sync_tabs()
-            return
+            and styles.get(key, self._initial_trace_style()).y_axis == style_side
+        ]
+        axis = plot.getAxis(axis_name)
+        axis.setStyle(showValues=bool(traces))
+        if not traces:
+            axis.setLabel(text="", units="")
+        else:
+            trace_key, trace = traces[0]
+            param = self._trace_axis_parameter(trace, "y")
+            label = getattr(param, "label", None) or self._trace_measurement_name(
+                trace_key,
+                trace,
+            )
+            unit = getattr(param, "unit", "") or ""
+            axis.setLabel(text=str(label), units=str(unit))
 
-        trace_key, trace = right_traces[0]
-        source = (
-            self
-            if trace is main_line
-            else getattr(trace, "from_win", None)
-            )
-        param = getattr(source, "param", None)
-        label = getattr(param, "label", None) or self._trace_measurement_name(
-            trace_key,
-            trace,
-            )
-        unit = getattr(param, "unit", "") or ""
-        right_axis.setLabel(text=str(label), units=str(unit))
         sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
         if callable(sync_tabs):
             sync_tabs()
+
+    def _sync_right_axis_visibility(self) -> None:
+        """Synchronise right-axis values and label with its active trace."""
+
+        self._sync_vertical_axis_visibility("right")
+
+    def _sync_left_axis_visibility(self) -> None:
+        """Synchronise left-axis values and label with its active trace."""
+
+        self._sync_vertical_axis_visibility("left")
 
     def _sync_top_axis_visibility(self) -> None:
         """Synchronise the linked top x-axis with traces assigned to it."""
@@ -355,14 +398,15 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             return
 
         styles = self._ensure_trace_styles()
-        has_top_trace = any(
-            line is not None
-            and styles.get(key, self._initial_trace_style()).x_axis == "Top"
+        top_traces = [
+            (key, line)
             for key, line in self.__dict__.get("lines", {}).items()
-        )
+            if line is not None
+            and styles.get(key, self._initial_trace_style()).x_axis == "Top"
+        ]
         top_axis = plot.getAxis("top")
-        top_axis.setStyle(showValues=has_top_trace)
-        if not has_top_trace:
+        top_axis.setStyle(showValues=bool(top_traces))
+        if not top_traces:
             top_axis.setLabel(text="", units="")
             sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
             if callable(sync_tabs):
@@ -370,11 +414,11 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             self._refresh_top_axis_auto_range()
             return
 
-        axis_param = self.__dict__.get("axis_param", {}).get("x")
-        if axis_param is None:
-            axis_name = self.__dict__.get("axis_options", {}).get("x")
-            axis_param = self.__dict__.get("param_dict", {}).get(axis_name)
+        trace_key, trace = top_traces[0]
+        axis_param = self._trace_axis_parameter(trace, "x")
         label = getattr(axis_param, "label", None) or getattr(axis_param, "name", "")
+        if not label:
+            label = self._trace_measurement_name(trace_key, trace)
         unit = getattr(axis_param, "unit", "") or ""
         top_axis.setLabel(text=str(label), units=str(unit))
         sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
@@ -386,6 +430,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         """Update primary labels, then restore any selected top trace axis."""
 
         super()._set_param_axis_labels()
+        self._sync_left_axis_visibility()
+        self._sync_right_axis_visibility()
         self._sync_top_axis_visibility()
 
     def _trace_display_label(self, key: Any, line: Any) -> str:
@@ -476,10 +522,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             label,
             self._initial_trace_style(),
             )
-        if self.__dict__.get("lines", {}).get(label) is self.__dict__.get("line"):
-            style.y_axis = "Left"
-            self._sync_trace_control(label)
-            return
         style.y_axis = "Right" if side.lower() == "right" else "Left"
         self._apply_trace_style(label, self.__dict__.get("lines", {}).get(label))
 
@@ -504,11 +546,17 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
     def initAxes(self) -> None:
         """
-        Adds to the base axis toolbar (left) to allow adding and removing 
-        secondary lines along with changing color.
+        Sets up the hidden 1D axis state and trace controls.
+
+        A 1D plot only has one independent/dependent axis pair. The visible
+        dropdown dock is therefore replaced by the Swap X/Y checkbox in Trace
+        Appearance. Two-dimensional plots continue to use the dock.
 
         """
         super().initAxes()
+
+        self.axes_dock.hide()
+        self.axes_dock.toggleViewAction().setVisible(False)
         
         # Keep the legacy picker widgets only as an internal bridge for
         # preview drops and hidden-source construction. Trace Appearance is
@@ -829,6 +877,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         style = styles.setdefault(trace_key, self._initial_trace_style(order=len(styles)))
         style.line_color = selected_box.color_box.color().name()
         style.y_axis = "Right" if selected_box.axis_side.currentText().lower() == "right" else "Left"
+        if self.plot_axes_swapped():
+            self._transpose_trace_axis_style(style)
         self._ensure_trace_controls()[trace_key] = selected_box
         self._apply_trace_style(trace_key, subplot)
         self._install_trace_appearance_click_handler(trace_key, subplot)
@@ -917,6 +967,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             owner.removeItem(line)
 
         self._sync_right_axis_visibility()
+        self._sync_left_axis_visibility()
         self._sync_top_axis_visibility()
         
         # Remove track of window
@@ -929,6 +980,143 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         dialog = self.__dict__.get("_trace_appearance_dialog")
         if dialog is not None:
             dialog.refresh_rows()
+
+    def _default_plot_axis_names(self) -> tuple[str, str] | None:
+        """Return the independent/dependent axis pair for a 1D plot."""
+
+        independent = tuple(getattr(self.param, "depends_on_", ()))
+        dependent = getattr(self.param, "name", "")
+        if len(independent) != 1 or not dependent or independent[0] == dependent:
+            return None
+        return str(independent[0]), str(dependent)
+
+    def can_swap_plot_axes(self) -> bool:
+        """Return whether this window has a valid, reversible 1D axis pair."""
+
+        names = self._default_plot_axis_names()
+        dropdowns = self.__dict__.get("axis_dropdown", {})
+        if names is None or set(dropdowns) != {"x", "y"}:
+            return False
+
+        for dropdown in dropdowns.values():
+            if any(dropdown.findText(name) < 0 for name in names):
+                return False
+
+        axis_data = self.__dict__.get("axis_data")
+        if isinstance(axis_data, dict) and {"x", "y"}.issubset(axis_data):
+            try:
+                if len(axis_data["x"]) != len(axis_data["y"]):
+                    return False
+            except TypeError:
+                return False
+        return True
+
+    def plot_axes_swapped(self) -> bool:
+        """Return whether the dependent variable is currently horizontal."""
+
+        names = self._default_plot_axis_names()
+        if names is None:
+            return False
+        independent, dependent = names
+        options = self.axis_options
+        return options.get("x") == dependent and options.get("y") == independent
+
+    def set_plot_axes_swapped(self, swapped: bool) -> bool:
+        """Apply the requested 1D axis orientation and refresh the plot."""
+
+        if not self.can_swap_plot_axes():
+            return False
+
+        names = self._default_plot_axis_names()
+        assert names is not None
+        independent, dependent = names
+        target = (
+            {"x": dependent, "y": independent}
+            if swapped
+            else {"x": independent, "y": dependent}
+            )
+        previous = dict(self.axis_options)
+        if previous == target:
+            self._update_axis_context_message()
+            return True
+
+        for axis, name in target.items():
+            dropdown = self.axis_dropdown[axis]
+            was_blocked = dropdown.blockSignals(True)
+            try:
+                dropdown.setCurrentIndex(dropdown.findText(name))
+            finally:
+                dropdown.blockSignals(was_blocked)
+        self._axis_selection = dict(target)
+
+        if previous == {"x": target["y"], "y": target["x"]}:
+            self._transpose_trace_axis_assignments()
+            self._swap_loaded_plot_axes()
+        self._update_axis_context_message()
+
+        dialog = self.__dict__.get("_trace_appearance_dialog")
+        if dialog is not None:
+            dialog.sync_swap_axes_control()
+        self.refreshWindow(force=True)
+        return True
+
+    @staticmethod
+    def _transpose_trace_axis_style(style: _TraceStyle) -> None:
+        """Transpose a trace's physical axis sides in place."""
+
+        previous_x = style.x_axis
+        previous_y = style.y_axis
+        style.x_axis = "Bottom" if previous_y == "Left" else "Top"
+        style.y_axis = "Left" if previous_x == "Bottom" else "Right"
+
+    def _transpose_trace_axis_assignments(self) -> None:
+        """Keep every trace attached to the equivalent axis after X/Y swap."""
+
+        styles = self._ensure_trace_styles()
+        for style in styles.values():
+            self._transpose_trace_axis_style(style)
+        for trace_key, line in self.__dict__.get("lines", {}).items():
+            self._apply_trace_style(trace_key, line)
+
+    def _swap_loaded_plot_axes(self) -> None:
+        """Swap the displayed 1D arrays and labels before the reload finishes."""
+
+        axis_data = self.__dict__.get("axis_data")
+        axis_param = self.__dict__.get("axis_param")
+        if not (
+                isinstance(axis_data, dict)
+                and isinstance(axis_param, dict)
+                and {"x", "y"}.issubset(axis_data)
+                and {"x", "y"}.issubset(axis_param)
+                ):
+            return
+
+        axis_data["x"], axis_data["y"] = axis_data["y"], axis_data["x"]
+        axis_param["x"], axis_param["y"] = axis_param["y"], axis_param["x"]
+
+        line = self.__dict__.get("line")
+        if line is not None:
+            line.setData(x=axis_data["x"], y=axis_data["y"])
+
+        clear_marquee = getattr(self, "clear_marquee", None)
+        if self.__dict__.get("marquee") is not None and callable(clear_marquee):
+            clear_marquee()
+        hide_snap_marker = getattr(self, "_hide_snap_marker", None)
+        if callable(hide_snap_marker):
+            hide_snap_marker()
+
+        self.refresh_secondary_lines()
+        self._set_param_axis_labels()
+        trace_updated = getattr(self, "trace_updated", None)
+        if trace_updated is not None and callable(getattr(trace_updated, "emit", None)):
+            trace_updated.emit()
+
+    def _update_axis_context_message(self) -> None:
+        """Refresh the persistent axis relationship in the coordinates bar."""
+
+        update = getattr(self, "_update_coordinate_context", None)
+        if callable(update):
+            update()
     
     
     @QtCore.pyqtSlot(object)
@@ -1055,6 +1243,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             target_viewbox = self._trace_axis_viewbox(style)
             self._move_trace_to_axis_viewbox(line, target_viewbox)
 
+        self._sync_left_axis_visibility()
         self._sync_right_axis_visibility()
         self._sync_top_axis_visibility()
 
@@ -1432,6 +1621,11 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.opacity_slider.setToolTip("Trace opacity")
         self.x_axis = qtw.QComboBox(); self.x_axis.addItems(["Bottom", "Top"])
         self.y_axis = qtw.QComboBox(); self.y_axis.addItems(["Left", "Right"])
+        self.swap_axes = qtw.QCheckBox("Swap X/Y")
+        self.swap_axes.setToolTip(
+            "Plot the dependent variable horizontally and the independent "
+            "variable vertically."
+            )
         self.visible = qtw.QCheckBox("Visible")
         self.visible.setChecked(True)
 
@@ -1502,7 +1696,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         visibility_layout.addWidget(self.opacity)
         panel_layout.addLayout(visibility_layout)
 
-        trace_settings = qtw.QGroupBox("Axes", panel)
+        trace_settings = qtw.QGroupBox("Trace axes", panel)
         trace_grid = qtw.QGridLayout(trace_settings)
         trace_grid.setContentsMargins(8, 10, 8, 8)
         trace_grid.setHorizontalSpacing(8)
@@ -1513,6 +1707,12 @@ class _TraceAppearanceDialog(qtw.QDialog):
         trace_grid.addWidget(self.y_axis, 1, 1)
         trace_grid.setColumnStretch(2, 1)
         panel_layout.addWidget(trace_settings)
+
+        plot_axes = qtw.QGroupBox("Plot axes", panel)
+        plot_axes_layout = qtw.QVBoxLayout(plot_axes)
+        plot_axes_layout.setContentsMargins(8, 10, 8, 8)
+        plot_axes_layout.addWidget(self.swap_axes)
+        panel_layout.addWidget(plot_axes)
         panel_layout.addStretch()
 
         body.addWidget(panel, 4)
@@ -1546,6 +1746,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         )
         self.add_trace_button.clicked.connect(self._add_selected_trace)
         self.remove_trace_button.clicked.connect(self._remove_selected_traces)
+        self.swap_axes.toggled.connect(self._swap_axes_toggled)
         for _widget, signal in [
             (self.line_enable, self.line_enable.toggled), (self.line_color, self.line_color.currentIndexChanged),
             (self.line_width, self.line_width.valueChanged), (self.line_style, self.line_style.currentIndexChanged),
@@ -1557,6 +1758,28 @@ class _TraceAppearanceDialog(qtw.QDialog):
         ]:
             signal.connect(self._apply_selection)
         self._update_control_enabled_states(False)
+        self.sync_swap_axes_control()
+
+    def sync_swap_axes_control(self) -> None:
+        """Synchronise the global Swap X/Y checkbox with the plot window."""
+
+        can_swap = getattr(self.owner, "can_swap_plot_axes", None)
+        is_swapped = getattr(self.owner, "plot_axes_swapped", None)
+        enabled = bool(callable(can_swap) and can_swap())
+        checked = bool(enabled and callable(is_swapped) and is_swapped())
+        was_blocked = self.swap_axes.blockSignals(True)
+        try:
+            self.swap_axes.setEnabled(enabled)
+            self.swap_axes.setChecked(checked)
+        finally:
+            self.swap_axes.blockSignals(was_blocked)
+
+    def _swap_axes_toggled(self, checked: bool) -> None:
+        """Apply a requested plot-axis orientation immediately."""
+
+        setter = getattr(self.owner, "set_plot_axes_swapped", None)
+        if not callable(setter) or not setter(checked):
+            self.sync_swap_axes_control()
 
     def refresh_available_traces(self) -> None:
         """Refresh measurements available to the Add Trace control."""
@@ -1926,6 +2149,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         return QtGui.QIcon(self._trace_pixmap(style))
 
     def refresh_rows(self):
+        self.sync_swap_axes_control()
         selected = set(self._selected_labels())
         self._sync_plot_order_from_rows()
         self.table.blockSignals(True)
@@ -2107,10 +2331,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             self.owner.lines.get(label)
             for label in self._selected_labels()
             ] if has_selection else []
-        self.y_axis.setEnabled(
-            has_selection
-            and all(line is not self.owner.__dict__.get("line") for line in selected_lines)
-            )
+        self.y_axis.setEnabled(has_selection)
         self.remove_trace_button.setEnabled(
             bool(selected_lines)
             and all(
@@ -2134,8 +2355,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             style.dots_enabled = self.dots_enable.isChecked(); style.dots_color = self._combo_value(self.dots_color); style.dots_size = self.dots_size.value()
             style.markers_enabled = self.marker_enable.isChecked(); style.markers_color = self._combo_value(self.marker_color); style.markers_symbol = self._combo_value(self.marker_symbol); style.markers_size = self.marker_size.value()
             style.x_axis = self.x_axis.currentText()
-            if self.y_axis.isEnabled():
-                style.y_axis = self.y_axis.currentText()
+            style.y_axis = self.y_axis.currentText()
             style.visible = self.visible.isChecked()
             style.opacity = self.opacity.value() / 100
             line = self.owner.lines.get(label)

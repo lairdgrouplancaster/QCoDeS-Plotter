@@ -596,6 +596,13 @@ class PlotRefreshMixin(_PlotRefreshBase):
             # it is used, as the performace hit is neglible
             # Update text
             self._set_param_axis_labels()
+            update_coordinate_context = getattr(
+                self,
+                "_update_coordinate_context",
+                None,
+                )
+            if callable(update_coordinate_context):
+                update_coordinate_context()
             elapsed = perf_counter() - worker.started_at
 
             if getattr(worker, "loaded_from_sql_heatmap", False):

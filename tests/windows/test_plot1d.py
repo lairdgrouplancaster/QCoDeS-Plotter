@@ -341,11 +341,18 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         class Param:
             name = "voltage"
+            label = "Conductance"
+
+        class Gate:
+            name = "gate"
+            label = "Gate voltage"
 
         class Source:
             label = "ID:1 voltage"
             ds = Dataset()
             param = Param()
+            axis_options = {"x": "gate", "y": "voltage"}
+            param_dict = {"gate": Gate(), "voltage": param}
 
         class Line:
             from_win = Source()
@@ -357,6 +364,8 @@ class SnapToTraceTestCase(unittest.TestCase):
         window = plot1d.__new__(plot1d)
         window.line = object()
         window.lines = {trace_key: Line()}
+        window._axis_selection = {"x": "gate", "y": "voltage"}
+        window.param_dict = Source.param_dict
         window.trace_label = qtw.QLabel()
         window.toolbarCo_ord = qtw.QToolBar()
 
@@ -364,9 +373,282 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertEqual(
             window.trace_label.text(),
-            "Snapped to run 1, trace voltage, point 2.",
-            )
+            "Run 1, Conductance vs Gate voltage, snapped to point 2",
+        )
         self.assertEqual(window.trace_label.toolTip(), Source.label)
+
+        window.line = Line()
+        window._clear_snap_report()
+
+        self.assertEqual(
+            window.trace_label.text(),
+            "Run 1, Conductance vs Gate voltage",
+            )
+
+    def test_swapped_secondary_snap_report_uses_its_horizontal_measurement(self):
+        class Param:
+            def __init__(self, name, label):
+                self.name = name
+                self.label = label
+
+        gate = Param("gate", "Gate voltage")
+        conductance = Param("conductance", "Conductance")
+        current = Param("current", "Current")
+        source = type(
+            "Source",
+            (),
+            {
+                "label": "ID:2 current",
+                "ds": type("Dataset", (), {"run_id": 2})(),
+                "param": current,
+                "axis_options": {"x": "gate", "y": "current"},
+                "param_dict": {"gate": gate, "current": current},
+            },
+        )()
+        secondary = type(
+            "Line",
+            (),
+            {"from_win": source, "choose_from": ("y", "x")},
+        )()
+
+        window = plot1d.__new__(plot1d)
+        window.line = object()
+        window.lines = {"secondary": secondary}
+        window._axis_selection = {"x": "conductance", "y": "gate"}
+        window.param_dict = {"gate": gate, "conductance": conductance}
+        window.trace_label = qtw.QLabel()
+        window.toolbarCo_ord = qtw.QToolBar()
+
+        window._show_snap_report("secondary", 3)
+
+        self.assertEqual(
+            window.trace_label.text(),
+            "Run 2, Gate voltage vs Current, snapped to point 3",
+        )
+
+    def test_swap_plot_axes_exchanges_loaded_data_labels_and_refreshes(self):
+        class Param:
+            def __init__(self, name, label, unit, depends_on_=()):
+                self.name = name
+                self.label = label
+                self.unit = unit
+                self.depends_on_ = depends_on_
+
+        class BaseWindow(qtw.QMainWindow):
+            @property
+            def axis_options(self):
+                return {
+                    axis: dropdown.currentText()
+                    for axis, dropdown in self.axis_dropdown.items()
+                    }
+
+            def _set_param_axis_labels(self):
+                self.plot.setLabel(
+                    "bottom",
+                    text=self.axis_param["x"].label,
+                    units=self.axis_param["x"].unit,
+                    )
+                self.plot.setLabel(
+                    "left",
+                    text=self.axis_param["y"].label,
+                    units=self.axis_param["y"].unit,
+                    )
+
+        class Host(Plot1DTraceMixin, BaseWindow):
+            pass
+
+        class SecondaryLine:
+            def __init__(self, parent, source):
+                self.parent = parent
+                self.from_win = source
+                self.choose_from = ("x", "y")
+                self.data = (None, None)
+                self.side = "right"
+
+            def refresh(self):
+                self.choose_from = _subplot_axis_order(
+                    self.parent.axis_options,
+                    self.from_win.axis_options,
+                    shared_parameter="gate",
+                )
+                if self.choose_from is None:
+                    self.setData(x=[], y=[])
+                    return
+                self.setData(
+                    x=self.from_win.axis_data[self.choose_from[0]],
+                    y=self.from_win.axis_data[self.choose_from[1]],
+                )
+
+            def setData(self, *, x, y):
+                self.data = (np.asarray(x), np.asarray(y))
+
+            def getData(self):
+                return self.data
+
+            def setPen(self, _pen):
+                pass
+
+            def setSymbolPen(self, _pen):
+                pass
+
+            def setSymbolBrush(self, _brush):
+                pass
+
+            def setSymbolSize(self, _size):
+                pass
+
+            def setSymbol(self, _symbol):
+                pass
+
+            def setVisible(self, _visible):
+                pass
+
+            def setZValue(self, _value):
+                pass
+
+        host = Host()
+        widget = pg.GraphicsLayoutWidget()
+        try:
+            gate = Param("gate", "Gate voltage", "V")
+            conductance = Param(
+                "conductance",
+                "Conductance",
+                "S",
+                depends_on_=("gate",),
+                )
+            host.param = conductance
+            host.param_dict = {"gate": gate, "conductance": conductance}
+            host.axis_dropdown = {}
+            for axis, current in (("x", "gate"), ("y", "conductance")):
+                dropdown = qtw.QComboBox()
+                dropdown.addItems(["gate", "conductance"])
+                dropdown.setCurrentText(current)
+                host.axis_dropdown[axis] = dropdown
+            host._axis_selection = {"x": "gate", "y": "conductance"}
+            host.axis_data = {
+                "x": np.array([1.0, 2.0]),
+                "y": np.array([10.0, 20.0]),
+                }
+            host.axis_param = {"x": gate, "y": conductance}
+            host.plot = widget.addPlot()
+            host.line = host.plot.plot(
+                x=host.axis_data["x"],
+                y=host.axis_data["y"],
+                )
+            current = Param("current", "Current", "A", depends_on_=("gate",))
+            source = type(
+                "Source",
+                (),
+                {
+                    "axis_options": {"x": "gate", "y": "current"},
+                    "axis_data": {
+                        "x": np.array([1.0, 2.0]),
+                        "y": np.array([100.0, 200.0]),
+                    },
+                    "axis_param": {"x": gate, "y": current},
+                    "param_dict": {"gate": gate, "current": current},
+                    "param": current,
+                    "visible": True,
+                },
+            )()
+            secondary = SecondaryLine(host, source)
+            secondary.refresh()
+            host.label = "main"
+            host.lines = {host.label: host.line, "secondary": secondary}
+            host._trace_styles = {
+                host.label: host._initial_trace_style(),
+                "secondary": host._initial_trace_style(order=1),
+            }
+            host._trace_styles["secondary"].y_axis = "Right"
+            host.right_vb = None
+            host.top_vb = None
+            host.top_right_vb = None
+            host.marquee = None
+            host._trace_appearance_dialog = None
+            refreshes = []
+            host.refreshWindow = lambda force=False: refreshes.append(force)
+
+            self.assertTrue(host.set_plot_axes_swapped(True))
+
+            self.assertEqual(
+                host.axis_options,
+                {"x": "conductance", "y": "gate"},
+                )
+            np.testing.assert_array_equal(host.axis_data["x"], [10.0, 20.0])
+            np.testing.assert_array_equal(host.axis_data["y"], [1.0, 2.0])
+            np.testing.assert_array_equal(host.line.getData()[0], [10.0, 20.0])
+            np.testing.assert_array_equal(host.line.getData()[1], [1.0, 2.0])
+            np.testing.assert_array_equal(secondary.getData()[0], [100.0, 200.0])
+            np.testing.assert_array_equal(secondary.getData()[1], [1.0, 2.0])
+            self.assertEqual(secondary.choose_from, ("y", "x"))
+            self.assertEqual(host._trace_styles["secondary"].x_axis, "Top")
+            self.assertEqual(host._trace_styles["secondary"].y_axis, "Left")
+            self.assertEqual(host.plot.getAxis("bottom").labelText, "Conductance")
+            self.assertEqual(host.plot.getAxis("left").labelText, "Gate voltage")
+            self.assertEqual(host.plot.getAxis("top").labelText, "Current")
+            self.assertTrue(host.plot.getAxis("top").style["showValues"])
+            self.assertFalse(host.plot.getAxis("right").style["showValues"])
+            self.assertEqual(refreshes, [True])
+
+            self.assertTrue(host.set_plot_axes_swapped(False))
+            self.assertEqual(
+                host.axis_options,
+                {"x": "gate", "y": "conductance"},
+                )
+            np.testing.assert_array_equal(secondary.getData()[0], [1.0, 2.0])
+            np.testing.assert_array_equal(secondary.getData()[1], [100.0, 200.0])
+            self.assertEqual(secondary.choose_from, ("x", "y"))
+            self.assertEqual(host._trace_styles["secondary"].x_axis, "Bottom")
+            self.assertEqual(host._trace_styles["secondary"].y_axis, "Right")
+            self.assertFalse(host.plot.getAxis("top").style["showValues"])
+            self.assertTrue(host.plot.getAxis("right").style["showValues"])
+            self.assertEqual(host.plot.getAxis("right").labelText, "Current")
+            self.assertEqual(refreshes, [True, True])
+        finally:
+            widget.deleteLater()
+            host.deleteLater()
+
+    def test_trace_appearance_swap_checkbox_applies_and_disables_when_invalid(self):
+        class Host(qtw.QMainWindow):
+            def __init__(self):
+                super().__init__()
+                self.lines = {}
+                self.applied = []
+                self.valid = True
+                self.swapped = False
+
+            def can_swap_plot_axes(self):
+                return self.valid
+
+            def plot_axes_swapped(self):
+                return self.swapped
+
+            def set_plot_axes_swapped(self, checked):
+                if not self.valid:
+                    return False
+                self.swapped = checked
+                self.applied.append(checked)
+                return True
+
+        host = Host()
+        dialog = _TraceAppearanceDialog(host)
+        try:
+            self.assertTrue(dialog.swap_axes.isEnabled())
+            self.assertFalse(dialog.swap_axes.isChecked())
+
+            dialog.swap_axes.setChecked(True)
+
+            self.assertEqual(host.applied, [True])
+            self.assertTrue(host.swapped)
+
+            host.valid = False
+            dialog.sync_swap_axes_control()
+
+            self.assertFalse(dialog.swap_axes.isEnabled())
+            self.assertFalse(dialog.swap_axes.isChecked())
+        finally:
+            dialog.deleteLater()
+            host.deleteLater()
 
     def test_register_main_line_defers_until_line_exists(self):
         window = plot1d.__new__(plot1d)
@@ -447,7 +729,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         class Plot:
             def __init__(self):
-                self.axes = {"right": Axis(), "top": Axis()}
+                self.axes = {"left": Axis(), "right": Axis(), "top": Axis()}
 
             def getAxis(self, name):
                 return self.axes[name]
@@ -485,6 +767,11 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.plot = Plot()
         window.label = "main"
         window.line = Line()
+        window.param = type(
+            "Param",
+            (),
+            {"name": "conductance", "label": "Conductance", "unit": "S"},
+        )()
         window.axis_param = {
             "x": type(
                 "Param",
@@ -527,7 +814,15 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertEqual(window.plot.axes["right"].label, ("", ""))
 
         window._set_trace_y_axis("main", "Right")
-        self.assertEqual(window._trace_styles["main"].y_axis, "Left")
+        self.assertEqual(window._trace_styles["main"].y_axis, "Right")
+        self.assertEqual(window.line.side, "right")
+        self.assertTrue(window.plot.axes["right"].show_values)
+        self.assertEqual(window.plot.axes["right"].label, ("Conductance", "S"))
+        self.assertTrue(window.plot.axes["left"].show_values)
+        self.assertEqual(window.plot.axes["left"].label, ("Current", "A"))
+
+        window._set_trace_y_axis("main", "Left")
+        self.assertEqual(window.line.side, "left")
         self.assertFalse(window.plot.axes["right"].show_values)
 
         window._trace_styles["secondary"].x_axis = "Top"
@@ -628,6 +923,69 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertGreaterEqual(host.top_vb.viewRange()[0][1], 10.0)
             self.assertLessEqual(host.right_vb.viewRange()[1][0], -3.0)
             self.assertGreaterEqual(host.right_vb.viewRange()[1][1], 4.0)
+        finally:
+            host.deleteLater()
+            host.widget.deleteLater()
+
+    def test_axis_swap_moves_a_right_secondary_trace_to_the_top_viewbox(self):
+        class Host(Plot1DTraceMixin, qtw.QMainWindow):
+            pass
+
+        class Param:
+            def __init__(self, name, label, unit):
+                self.name = name
+                self.label = label
+                self.unit = unit
+
+        host = Host()
+        host.widget = pg.GraphicsLayoutWidget()
+        host.vb = custom_viewbox()
+        host.vb.setDefaultPadding(0)
+        host.plot = host.widget.addPlot(viewBox=host.vb)
+        host.vb.setParent(host.plot)
+        host.right_vb = None
+        host.top_vb = None
+        host.top_right_vb = None
+
+        gate = Param("gate", "Gate voltage", "V")
+        conductance = Param("conductance", "Conductance", "S")
+        current = Param("current", "Current", "A")
+        host.param = conductance
+        host.axis_param = {"x": gate, "y": conductance}
+        host.label = "main"
+        host.line = host.plot.plot(x=[0.0, 1.0], y=[1.0, 2.0])
+        secondary = host.plot.plot(x=[0.0, 1.0], y=[3.0, 4.0])
+        secondary.from_win = type(
+            "Source",
+            (),
+            {
+                "axis_param": {"x": gate, "y": current},
+                "param": current,
+            },
+        )()
+        secondary.choose_from = ("x", "y")
+        host.lines = {host.label: host.line, "secondary": secondary}
+        host._trace_styles = {
+            host.label: host._initial_trace_style(),
+            "secondary": host._initial_trace_style(order=1),
+        }
+        host._trace_styles["secondary"].y_axis = "Right"
+
+        try:
+            host._apply_trace_style("secondary", secondary)
+            self.assertIs(secondary.getViewBox(), host.right_vb)
+
+            host._transpose_trace_axis_assignments()
+
+            self.assertEqual(host._trace_styles["secondary"].x_axis, "Top")
+            self.assertEqual(host._trace_styles["secondary"].y_axis, "Left")
+            self.assertIs(secondary.getViewBox(), host.top_vb)
+
+            host._transpose_trace_axis_assignments()
+
+            self.assertEqual(host._trace_styles["secondary"].x_axis, "Bottom")
+            self.assertEqual(host._trace_styles["secondary"].y_axis, "Right")
+            self.assertIs(secondary.getViewBox(), host.right_vb)
         finally:
             host.deleteLater()
             host.widget.deleteLater()
@@ -1048,7 +1406,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             dialog.table.selectRow(0)
             dialog._sync_controls_from_selection()
-            self.assertFalse(dialog.y_axis.isEnabled())
+            self.assertTrue(dialog.y_axis.isEnabled())
             dialog.x_axis.setCurrentText("Top")
             self.assertEqual(host._trace_styles[host.label].x_axis, "Top")
 
@@ -1599,6 +1957,47 @@ class SnapToTraceTestCase(unittest.TestCase):
                 {"x": "field", "y": "gate"},
             ),
             ("y", "x"),
+        )
+
+        self.assertEqual(
+            _subplot_axis_order(
+                {"x": "current", "y": "gate"},
+                {"x": "gate", "y": "conductance"},
+                shared_parameter="gate",
+            ),
+            ("y", "x"),
+        )
+        self.assertEqual(
+            _subplot_axis_order(
+                {"x": "current", "y": "gate"},
+                {"x": "conductance", "y": "gate"},
+                shared_parameter="gate",
+            ),
+            ("x", "y"),
+        )
+        self.assertIsNone(
+            _subplot_axis_order(
+                {"x": "current", "y": "gate"},
+                {"x": "field", "y": "current"},
+                shared_parameter="gate",
+            )
+        )
+        self.assertEqual(
+            _subplot_axis_order(
+                {"x": "current", "y": "gate"},
+                {"x": "gate", "y": "field"},
+                source_is_cut=True,
+                shared_parameter="gate",
+            ),
+            ("y", "x"),
+        )
+        self.assertIsNone(
+            _subplot_axis_order(
+                {"x": "current", "y": "gate"},
+                {"x": "field", "y": "gate"},
+                source_is_cut=True,
+                shared_parameter="gate",
+            )
         )
 
     def test_completed_cut_updates_and_clears_merged_subplot_immediately(self):

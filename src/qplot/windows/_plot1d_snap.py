@@ -150,6 +150,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self.trace_label = qtw.QLabel("")
         self.trace_label.setMinimumWidth(0)
         self.toolbarCo_ord.addWidget(self.trace_label)
+        self._update_coordinate_context()
 
         self.snap_to_trace_action = create_action(
             SNAP_TO_TRACE_COMMAND,
@@ -250,55 +251,114 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
     def _show_snap_report(self, label, point_number):
         """
-        Shows the currently snapped run, trace, and point.
+        Shows the active run, plotted axes, and snapped point.
 
         """
-        if self.trace_label is None:
-            return
-
-        run_id, trace = self._snap_report_parts(label)
-        self.trace_label.setText(
-            f"Snapped to run {run_id}, trace {trace}, point {point_number}."
-            )
-        line = self.lines.get(label)
-        display_label = getattr(self, "_trace_display_label", None)
-        if callable(display_label):
-            label_text = display_label(label, line)
-        else:
-            source = getattr(line, "from_win", None)
-            label_text = str(getattr(source, "label", label))
-        self.trace_label.setToolTip(label_text)
-        self.trace_label.adjustSize()
-        self.trace_label.updateGeometry()
-        self.toolbarCo_ord.updateGeometry()
+        self._update_coordinate_context(label, point_number)
 
 
     def _clear_snap_report(self):
         """
-        Hides the snap status message.
+        Restores the persistent run and axis relationship message.
 
         """
+        self._update_coordinate_context()
+
+
+    def _update_coordinate_context(self, label=None, point_number=None):
+        """Show ``Run N, measurement vs setpoint`` and optional snap detail."""
+
         if self.trace_label is None:
             return
 
-        self.trace_label.clear()
-        self.trace_label.setToolTip("")
+        run_id, vertical, horizontal, tooltip = self._coordinate_context_parts(label)
+        message = f"Run {run_id}, {vertical} vs {horizontal}"
+        if point_number is not None:
+            message += f", snapped to point {point_number}"
+        self.trace_label.setText(message)
+        self.trace_label.setToolTip(tooltip)
         self.trace_label.adjustSize()
         self.trace_label.updateGeometry()
         self.toolbarCo_ord.updateGeometry()
 
 
-    def _snap_report_parts(self, label):
-        """
-        Returns run and trace names for the snap status message.
+    def _coordinate_context_parts(self, label=None):
+        """Return run and human-readable plotted-axis names for the message."""
 
-        """
-        line = self.lines.get(label)
+        line = self.lines.get(label) if label is not None else self.__dict__.get("line")
         source = getattr(line, "from_win", self)
-        run_id = getattr(source.ds, "run_id", "?")
-        trace = getattr(source.param, "name", str(label).split()[-1])
-        return run_id, trace
+        try:
+            dataset = source.ds
+        except (AttributeError, RuntimeError):
+            dataset = None
+        run_id = getattr(dataset, "run_id", "?")
 
+        host_options = self.__dict__.get("_axis_selection", {})
+        if not host_options:
+            try:
+                host_options = self.axis_options
+            except RuntimeError:
+                host_options = {}
+        horizontal_source = self
+        horizontal_axis = "x"
+        source_axis = "y"
+        if source is not self:
+            axis_order = getattr(line, "choose_from", None)
+            if axis_order is not None and len(axis_order) == 2:
+                horizontal_axis = axis_order[0]
+                source_axis = axis_order[1]
+            horizontal_source = source
+        source_options = (
+            host_options
+            if source is self
+            else getattr(source, "axis_options", {})
+            )
+        horizontal_name = source_options.get(horizontal_axis)
+        if horizontal_name is None:
+            horizontal_name = host_options.get("x", "x")
+            horizontal_source = self
+            horizontal_axis = "x"
+        horizontal = self._parameter_display_name(
+            horizontal_source,
+            horizontal_name,
+            horizontal_axis,
+            )
+        vertical_name = source_options.get(source_axis)
+        if vertical_name is None:
+            try:
+                source_param = source.param
+            except (AttributeError, RuntimeError):
+                source_param = None
+            vertical_name = getattr(source_param, "name", "y")
+        vertical = self._parameter_display_name(
+            source,
+            vertical_name,
+            source_axis,
+            )
+
+        display_label = getattr(self, "_trace_display_label", None)
+        if label is not None and callable(display_label):
+            tooltip = str(display_label(label, line))
+        else:
+            tooltip = str(getattr(source, "label", ""))
+        return run_id, vertical, horizontal, tooltip
+
+
+    @staticmethod
+    def _parameter_display_name(source, name, axis):
+        """Resolve a parameter label without discarding a useful name."""
+
+        param = getattr(source, "param_dict", {}).get(name)
+        if param is None:
+            axis_param = getattr(source, "axis_param", {})
+            candidate = axis_param.get(axis) if isinstance(axis_param, dict) else None
+            if getattr(candidate, "name", name) == name:
+                param = candidate
+        if param is None:
+            candidate = getattr(source, "param", None)
+            if getattr(candidate, "name", None) == name:
+                param = candidate
+        return str(getattr(param, "label", None) or getattr(param, "name", None) or name)
 
     def _nearest_trace_point(self, scene_pos):
         """
