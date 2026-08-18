@@ -71,7 +71,7 @@ def wait_for(predicate, timeout=12):
 
 
 def build_synthetic_database(db_path):
-    initialise_or_create_database_at(str(db_path))
+    initialise_or_create_database_at(str(db_path), journal_mode="DELETE")
     experiment = load_or_create_experiment("qplot_integration", sample_name="synthetic")
 
     gate = ManualParameter("gate", label="Gate voltage", unit="V")
@@ -109,8 +109,11 @@ def build_synthetic_database(db_path):
 
 
 def build_line_database(db_path, point_count, *, guid=None, journal_mode=None):
-    kwargs = {} if journal_mode is None else {"journal_mode": journal_mode}
-    initialise_or_create_database_at(str(db_path), **kwargs)
+    selected_journal_mode = "DELETE" if journal_mode is None else journal_mode
+    initialise_or_create_database_at(
+        str(db_path),
+        journal_mode=selected_journal_mode,
+    )
     experiment = load_or_create_experiment(
         f"qplot_replace_{db_path.stem}",
         sample_name="replacement",
@@ -145,15 +148,37 @@ def build_line_database(db_path, point_count, *, guid=None, journal_mode=None):
 
 
 def build_line_database_with_replayed_stale_wal(db_path):
-    """Create a completed QCoDeS run with a safely replayable old WAL.
+    """Create a generated run with a proven, safely replayable old WAL.
 
-    The sidecars are copied while an unrelated raw SQLite writer owns them and
-    restored only after that writer closes. This gives Windows the same
+    The generated main's token and advanced WAL epoch make the initial pairing
+    safe to load. The main and sidecars are copied while a raw SQLite writer
+    owns them and restored only after it closes. This gives Windows the same
     unpaired-WAL replacement scenario as POSIX without trying to rename a file
-    that SQLite has open.
+    that SQLite has open, while preserving qPlot's first-load trust policy.
     """
 
-    database_run = build_line_database(db_path, 1, journal_mode="WAL")
+    generate_database(
+        [
+            RunSpecification(
+                1,
+                "signal",
+                "Signal",
+                "nA",
+                0.0,
+                0.0,
+                1,
+            )
+        ],
+        db_path,
+    )
+    connection = sqlite3.connect(db_path)
+    try:
+        database_run = connection.execute(
+            "SELECT run_id, guid, result_table_name FROM runs"
+        ).fetchone()
+    finally:
+        connection.close()
+
     parked = {}
     writer = sqlite3.connect(db_path)
     try:
@@ -161,6 +186,8 @@ def build_line_database_with_replayed_stale_wal(db_path):
         writer.execute("PRAGMA wal_autocheckpoint = 0")
         writer.execute("UPDATE runs SET name = ?", ("stale_sidecar_run",))
         writer.commit()
+        parked_main = Path(f"{db_path}.parked-main")
+        shutil.copyfile(db_path, parked_main)
         for suffix in ("-wal", "-shm"):
             source = Path(f"{db_path}{suffix}")
             assert source.is_file()
@@ -170,11 +197,31 @@ def build_line_database_with_replayed_stale_wal(db_path):
     finally:
         writer.close()
 
+    shutil.copyfile(parked_main, db_path)
+    parked_main.unlink()
     for suffix, parked_path in parked.items():
         shutil.copyfile(parked_path, f"{db_path}{suffix}")
         parked_path.unlink()
 
     return database_run
+
+
+def prepare_generated_database_for_live_writes(db_path):
+    """Install qPlot lineage before a test starts a real live WAL writer."""
+    generate_database(
+        [
+            RunSpecification(
+                1,
+                "lineage_seed",
+                "Lineage seed",
+                "V",
+                0.0,
+                0.0,
+                1,
+            )
+        ],
+        db_path,
+    )
 
 
 def dependent_parameter(dataset, dimensions):
@@ -1168,6 +1215,7 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
     configure_temp_qplot(monkeypatch, tmp_path)
     original_database_path = qcodes.config.core.db_location
     database_path = Path(tmp_path) / "live-wal.db"
+    prepare_generated_database_for_live_writes(database_path)
     initialise_or_create_database_at(str(database_path), journal_mode="WAL")
     experiment = load_or_create_experiment("live_wal", sample_name="same_instance")
     gate = ManualParameter("gate")
@@ -1257,6 +1305,7 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
     database_path = source_directory / "live-preview.db"
     selected_export_path = export_directory / "selected-preview.csv"
     run_export_path = export_directory / "run-preview.csv"
+    prepare_generated_database_for_live_writes(database_path)
     initialise_or_create_database_at(str(database_path), journal_mode="WAL")
     experiment = load_or_create_experiment(
         "live_preview_export",
@@ -2180,12 +2229,30 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
     original_database_path = qcodes.config.core.db_location
     database_path = Path(tmp_path) / "live-wal-generation-failure.db"
     csv_path = Path(tmp_path) / "replacement.csv"
-    first_run_id, _first_guid, _first_table = build_line_database(
+    generate_database(
+        [
+            RunSpecification(
+                1,
+                "first_signal",
+                "First signal",
+                "nA",
+                0.0,
+                1.0,
+                2,
+            ),
+            RunSpecification(
+                1,
+                "second_signal",
+                "Second signal",
+                "nA",
+                0.0,
+                2.0,
+                3,
+            ),
+        ],
         database_path,
-        2,
-        journal_mode="DELETE",
     )
-    build_line_database(database_path, 3, journal_mode="DELETE")
+    first_run_id = 1
     write_small_generation_specification(csv_path)
     writer = sqlite3.connect(database_path)
     window = None
@@ -2193,6 +2260,7 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
     injected_error = RuntimeError("injected failure before database publication")
 
     try:
+        assert writer.execute("PRAGMA journal_mode = DELETE").fetchone()[0] == "delete"
         writer.execute("UPDATE runs SET name = 'OLD_MAIN'")
         writer.commit()
         assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
@@ -2482,6 +2550,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
     writer_state = {}
     writer_errors = []
     window = None
+    prepare_generated_database_for_live_writes(database_path)
 
     def write_measurement():
         writer_dataset = None
@@ -2858,6 +2927,7 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
     writer_state = {}
     writer_errors = []
     window = None
+    prepare_generated_database_for_live_writes(database_path)
 
     def write_measurement():
         writer_dataset = None

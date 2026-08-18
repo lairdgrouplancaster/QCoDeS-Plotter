@@ -179,17 +179,56 @@ main-file identity, header, sidecar identity, size, timestamps, and journal
 header/trailer state must remain stable across bounded retries. An observed
 journal is copied even when it is a cold PERSIST or zero-length TRUNCATE
 artifact. SQLite opens the private copy read-write only long enough to perform
-any rollback-journal recovery; the source is never opened in a mode that can
-recover or change it. Ambiguous or continuously changing state fails closed as
-busy or temporarily unavailable, and every private snapshot is removed after
+any permitted WAL inspection or rollback-journal recovery; the source is never
+opened in a mode that can recover or change it. Ambiguous or continuously
+changing state fails closed, and every private snapshot is removed after
 failure or when its owning connection closes.
 
-Generated databases additionally validate a unique main-file lineage token and
-an advanced write epoch in a private WAL view; an unprovable pairing fails
-explicitly. Direct SQLite reads, QCoDeS `AtomicConnection` reads, dataset
-loading, refresh workers, metadata inspection, and the subprocess access probe
-all go through this policy. Never open an input database with SQLite or QCoDeS
-directly from viewer code.
+SQLite's WAL format does not provide main-file provenance. Its header records
+the WAL format, page size, checkpoint sequence, salts, and checksums; frame
+headers repeat the salts and cumulatively checksum their page data. Those
+fields bind frames to that WAL header, not to a unique main database. The main
+header has no reciprocal WAL identifier, and the ordinary latest QCoDeS schema
+has no database-level lineage token. Consequently, path agreement, directory,
+timestamps, inode or platform file identity, compatible pages, and SQLite's
+willingness to open a copied pair are continuity or consistency observations,
+not proof of lineage. An arbitrary first-observed ordinary WAL containing
+frames cannot be paired reliably and raises `UnverifiableDatabaseWalError`. A
+stably observed zero-byte WAL has no frames to associate and is omitted from
+the private view.
+
+Generated databases provide the missing provenance explicitly. qPlot compares
+the unique generation token in a private main-only view with the token in the
+private main-and-WAL view and requires the latter's write epoch to advance
+before accepting the WAL. Generation installs deterministic triggers on every
+initial table. SQLite has no database-wide DML or DDL trigger, so a future
+QCoDeS writer must explicitly call
+`enable_generation_provenance_for_writer()` before creating a measurement. Its
+outer-commit hook discovers new tables and installs their triggers in the same
+creation transaction. This persists coverage for foreground and background
+writes without any viewer-side migration.
+
+An equal-epoch result-page WAL cannot be authenticated after the fact. Its WAL
+frame contains neither the generation token nor a reciprocal main-file
+identifier; an independent database can produce the same page transition.
+Append-only checks, integrity checks, root-page ownership, and successful
+SQLite replay are therefore not substituted for provenance. Such a state fails
+closed with owner-checkpoint and writer-integration guidance. Older generated
+databases remain readable when their existing triggers advance the epoch, and
+an owner can explicitly add current trigger coverage through the writer hook.
+
+Process-local replacement quarantine is negative safety evidence only: it can
+prevent an unpaired WAL from being consumed after an observed main-file
+replacement, but it cannot establish that an unknown WAL belongs to the
+replacement. Ordinary QCoDeS input becomes readable after all owning
+connections close cleanly and SQLite checkpoints the WAL, or after the owning
+writer performs that checkpoint. qPlot never performs a source checkpoint
+itself.
+
+Direct SQLite reads, QCoDeS `AtomicConnection` reads, dataset loading, refresh
+workers, metadata inspection, and the subprocess access probe all go through
+this policy. Never open an input database with SQLite or QCoDeS directly from
+viewer code.
 
 `src/qplot/datahandling/LoadFromDB.py` adapts QCoDeS database loading for
 threaded refreshes.

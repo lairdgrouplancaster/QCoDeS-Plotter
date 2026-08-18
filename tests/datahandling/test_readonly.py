@@ -19,6 +19,7 @@ from qcodes.dataset.sqlite.connection import AtomicConnection
 from qcodes.dataset.sqlite.db_upgrades import _latest_available_version
 from qcodes.parameters import ManualParameter
 
+from qplot import testdata as testdata_module
 from qplot._repair import repair
 from qplot.datahandling import file_identity as file_identity_module
 from qplot.datahandling import readonly as readonly_module
@@ -86,6 +87,70 @@ def test_unavailable_identity_does_not_fall_back_to_mutable_metadata(monkeypatch
     monkeypatch.setattr(file_identity_module.os, "name", "posix")
 
     assert file_identity_module.database_file_identity("view.db") is None
+
+
+def test_wal_fallback_identity_change_marks_source_observation_unstable(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "fallback-identity.db"
+    connection = sqlite3.connect(database_path)
+    connection.close()
+    wal_path = readonly_module._wal_path(database_path)
+    wal_path.write_bytes(b"detached WAL placeholder")
+    real_database_file_identity = readonly_module.database_file_identity
+    wal_identities = iter(
+        (
+            ("windows-file-id", 17, 23),
+            ("windows-file-id", 17, 24),
+        )
+    )
+
+    def changing_wal_identity(path):
+        if Path(path) == wal_path:
+            return next(wal_identities)
+        return real_database_file_identity(path)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "database_file_identity",
+        changing_wal_identity,
+    )
+
+    signature = readonly_module._source_signature(database_path)
+
+    assert signature.wal is not None
+    assert signature.wal_identity == ("windows-file-id", 17, 24)
+    assert not signature.stable
+
+
+def test_wal_stat_signature_is_used_when_file_identity_is_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "stat-fallback.db"
+    connection = sqlite3.connect(database_path)
+    connection.close()
+    wal_path = readonly_module._wal_path(database_path)
+    wal_path.write_bytes(b"detached WAL placeholder")
+    real_database_file_identity = readonly_module.database_file_identity
+
+    def unavailable_wal_identity(path):
+        if Path(path) == wal_path:
+            return None
+        return real_database_file_identity(path)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "database_file_identity",
+        unavailable_wal_identity,
+    )
+
+    signature = readonly_module._source_signature(database_path)
+
+    assert signature.wal is not None
+    assert signature.wal_identity is None
+    assert signature.stable
 
 
 def _directory_state(directory):
@@ -380,12 +445,51 @@ def _create_default_wal_run(database_path):
     return run_id, guid, table_name
 
 
+def _create_generated_wal_run(database_path):
+    generate_database(
+        [
+            RunSpecification(
+                1,
+                "wal_signal",
+                "WAL signal",
+                "V",
+                -1.0,
+                1.0,
+                2,
+            )
+        ],
+        database_path,
+    )
+    connection = sqlite3.connect(database_path)
+    try:
+        return connection.execute(
+            "SELECT run_id, guid, result_table_name FROM runs"
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def _install_test_generation_provenance(database_path):
+    """Add the same lineage record used by qPlot's generated databases."""
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute(
+            f"PRAGMA application_id = "
+            f"{file_identity_module.QPLOT_GENERATED_DATABASE_APPLICATION_ID}"
+        )
+        testdata_module._install_generation_provenance(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def _open_active_wal(database_path):
     writer = sqlite3.connect(database_path)
     assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
     writer.execute("PRAGMA wal_autocheckpoint = 0")
     writer.execute("CREATE TABLE qplot_wal_marker (value INTEGER)")
     writer.execute("INSERT INTO qplot_wal_marker VALUES (1)")
+    writer.execute("UPDATE runs SET name = name")
     writer.commit()
     assert Path(f"{database_path}-wal").is_file()
     assert Path(f"{database_path}-shm").is_file()
@@ -482,7 +586,7 @@ def test_database_dataset_owns_connection_until_dataset_handle_closes(
     original_database_path = qcodes.config.core.db_location
     writer = None
     try:
-        run_id, guid, _table_name = _create_default_wal_run(database_path)
+        run_id, guid, _table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         source_state = _directory_state(tmp_path)
         records = _track_explicit_qcodes_connections(monkeypatch)
@@ -519,7 +623,7 @@ def test_missing_result_table_closes_non_owning_dataset_connection(
     original_database_path = qcodes.config.core.db_location
     writer = None
     try:
-        run_id, guid, table_name = _create_default_wal_run(database_path)
+        run_id, guid, table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         escaped_table_name = table_name.replace('"', '""')
         writer.execute(f'DROP TABLE "{escaped_table_name}"')
@@ -592,7 +696,7 @@ def test_repeated_in_memory_loads_release_connections_and_wal_snapshots(
     original_database_path = qcodes.config.core.db_location
     writer = None
     try:
-        run_id, guid, table_name = _create_default_wal_run(database_path)
+        run_id, guid, table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         escaped_table_name = table_name.replace('"', '""')
         writer.execute(f'DROP TABLE "{escaped_table_name}"')
@@ -633,7 +737,7 @@ def test_loader_exception_closes_connection_and_wal_snapshot(
     original_database_path = qcodes.config.core.db_location
     writer = None
     try:
-        run_id, guid, _table_name = _create_default_wal_run(database_path)
+        run_id, guid, _table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         source_state = _directory_state(tmp_path)
         records = _track_explicit_qcodes_connections(monkeypatch)
@@ -846,11 +950,14 @@ def test_checkpointed_wal_format_uses_private_immutable_snapshot(
     assert _sqlite_artifact_state(database_path) == source_state
 
 
-def test_live_wal_refreshes_see_new_rows_without_source_changes(tmp_path):
+def test_provenance_marked_live_wal_refreshes_see_new_rows_without_source_changes(
+    tmp_path,
+):
     database_path = tmp_path / "live.db"
     original_database_path = qcodes.config.core.db_location
     try:
         initialise_or_create_database_at(database_path)
+        _install_test_generation_provenance(database_path)
         experiment = load_or_create_experiment("live_wal", sample_name="wal")
         setpoint = ManualParameter("live_setpoint")
         signal = ManualParameter("live_signal")
@@ -1698,6 +1805,7 @@ def test_cold_rollback_journal_with_live_wal_remains_transaction_consistent(
 ):
     database_path = tmp_path / f"cold-{journal_mode.lower()}-with-wal.db"
     _copy_rollback_template(latest_schema_rollback_template, database_path)
+    _install_test_generation_provenance(database_path)
     cold_journal = _create_cold_rollback_journal(database_path, journal_mode)
     wal_writer = sqlite3.connect(database_path)
     try:

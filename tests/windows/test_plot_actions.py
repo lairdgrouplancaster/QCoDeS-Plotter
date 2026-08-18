@@ -110,7 +110,10 @@ def test_empty_qcodes_dataset_opens_the_waiting_plot_state(tmp_path, monkeypatch
     window = None
     try:
         database_path = Path(tmp_path) / "empty-plot.db"
-        initialise_or_create_database_at(str(database_path))
+        initialise_or_create_database_at(
+            str(database_path),
+            journal_mode="DELETE",
+        )
         experiment = load_or_create_experiment("empty_plot", sample_name="sample")
         x = ManualParameter("x")
         y = ManualParameter("y")

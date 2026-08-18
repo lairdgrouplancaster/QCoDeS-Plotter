@@ -42,7 +42,7 @@ class DatabaseInstanceChangedError(ReadOnlyDatabaseAccessError):
 
 
 class UnverifiableDatabaseWalError(ReadOnlyDatabaseAccessError):
-    """Raised when a WAL cannot be proven to descend from its marked main."""
+    """Raised when a WAL cannot be proven to descend from its selected main."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +71,7 @@ class _SourceSignature:
     database_identity: DatabaseFileIdentity | None
     database_header: bytes
     wal: tuple[int, int, int, int, int] | None
+    wal_identity: DatabaseFileIdentity | None
     journal: _RollbackJournalObservation | None
     stable: bool
 
@@ -570,18 +571,38 @@ def _rollback_journal_observation(database_path):
     )
 
 
+def _wal_observation(database_path):
+    """Observe one path-bound WAL instance without opening it through SQLite."""
+    wal_path = _wal_path(database_path)
+    identity_before = database_file_identity(wal_path)
+    signature_before = _file_signature(wal_path)
+    signature_after = _file_signature(wal_path)
+    identity_after = database_file_identity(wal_path)
+    return (
+        signature_after,
+        identity_after,
+        identity_before == identity_after and signature_before == signature_after,
+    )
+
+
 def _source_signature(database_path):
     database_signature, database_header, _trailer, database_stable = (
         _file_prefix_observation(database_path, 100)
     )
+    wal_signature, wal_identity, wal_stable = _wal_observation(database_path)
     journal = _rollback_journal_observation(database_path)
     return _SourceSignature(
         database=database_signature,
         database_identity=database_file_identity(database_path),
         database_header=database_header,
-        wal=_file_signature(_wal_path(database_path)),
+        wal=wal_signature,
+        wal_identity=wal_identity,
         journal=journal,
-        stable=database_stable and (journal is None or journal.stable),
+        stable=(
+            database_stable
+            and wal_stable
+            and (journal is None or journal.stable)
+        ),
         )
 
 
@@ -665,13 +686,36 @@ def _generation_provenance(connection):
 
 
 def _unverifiable_generated_wal_error(database_path, reason):
+    writer_guidance = ""
+    if reason == "the WAL does not carry a later verified write epoch":
+        writer_guidance = (
+            " If the owner will create later QCoDeS runs, call "
+            "qplot.testdata.enable_generation_provenance_for_writer on the "
+            "writable QCoDeS connection before creating the Measurement. "
+            "SQLite cannot prove an already-written equal-epoch WAL after "
+            "the fact."
+        )
     return UnverifiableDatabaseWalError(
         f"qPlot cannot prove that {database_path}-wal belongs to the current "
         "generated database main file, so it refused to show a possibly stale "
-        f"view ({reason}). Close the QCoDeS/SQLite writer cleanly so it can "
+        f"view ({reason}).{writer_guidance} Close the QCoDeS/SQLite writer "
+        "cleanly so it can "
         "checkpoint and remove the WAL, then refresh. If the database is being "
         "moved or copied, stop the writer and keep the main, -wal, and -shm "
         "files together. qPlot did not modify the database or its sidecars."
+    )
+
+
+def _unverifiable_unmarked_wal_error(database_path):
+    return UnverifiableDatabaseWalError(
+        f"qPlot cannot prove that {database_path}-wal belongs to the selected "
+        "database main file. Standard SQLite WAL files contain no identifier "
+        "that binds them to a particular main file, and this database has no "
+        "qPlot generation provenance. qPlot therefore refused to show possibly "
+        "unrelated or stale data. Close every QCoDeS/SQLite connection that "
+        "owns the database cleanly so the owning writer checkpoints the WAL, "
+        "then refresh or retry loading. Do not delete, rename, or move the WAL "
+        "by hand. qPlot did not modify the database or any SQLite sidecar."
     )
 
 
@@ -806,13 +850,18 @@ def _prepare_read_target(
 
         journal = before.journal
         wal_present = before.wal is not None
+        empty_wal = wal_present and before.wal[2] == 0
         quarantined = (
             replacement_wal_is_quarantined(database_path)
             if wal_present or journal is not None
             else False
         )
-        ignore_wal = wal_present and not generation_marker and (
-            ignore_unpaired_wal or quarantined
+        ignore_wal = wal_present and (
+            empty_wal
+            or (
+                not generation_marker
+                and (ignore_unpaired_wal or quarantined)
+            )
         )
         include_wal = wal_present and not ignore_wal
 
@@ -839,6 +888,25 @@ def _prepare_read_target(
                 "finish that transaction and refresh. qPlot did not modify the "
                 "source database or its SQLite sidecars."
             )
+
+        if include_wal and not generation_marker:
+            # SQLite WAL salts and checksums validate only the WAL's own frame
+            # sequence. They do not commit to the base main file, and SQLite
+            # will replay a structurally compatible unrelated WAL. Revalidate
+            # the observed pair before rejecting it, but do not allocate or
+            # copy a private snapshot whose contents can never be trusted.
+            _require_expected_database_instance(
+                database_path,
+                expected_database_identity,
+            )
+            _require_prepared_database_instance(
+                database_path,
+                prepared_database_identity,
+            )
+            after = _source_signature_for_validation(database_path)
+            if after != before or not after.stable:
+                continue
+            raise _unverifiable_unmarked_wal_error(database_path)
 
         database_is_wal_format = before.database_header[18:20] == b"\x02\x02"
         if not wal_present and journal is None and not database_is_wal_format:
@@ -922,11 +990,11 @@ def _prepare_read_target(
                         snapshot_path,
                     )
                 except UnverifiableDatabaseWalError:
-                    if not (ignore_unpaired_wal or quarantined):
-                        raise
                     if _source_signature_for_validation(database_path) != before:
                         _cleanup_failed_connection_open(None, snapshot)
                         continue
+                    if not (ignore_unpaired_wal or quarantined):
+                        raise
                     return main_snapshot_path, True, snapshot, True, before
 
             if _source_signature_for_validation(database_path) != before:

@@ -125,12 +125,37 @@ If the database is being written by a running experiment, try again after a
 short wait. For persistent failures, use the `Database Information` button in
 the main window if the file can be opened far enough for diagnostics.
 
-For a live WAL database, qPlot reads a private database-and-WAL snapshot so it
-does not alter the source SQLite sidecars. A writer that commits continuously
-can prevent qPlot from obtaining a consistent copy. In that case qPlot reports
-that the WAL changed during the read-only snapshot; wait for a pause between
-commits and refresh. qPlot deliberately does not show an older immutable view
-when an uncheckpointed WAL is present.
+If qPlot reports that a WAL cannot be verified, it has first observed an
+ordinary QCoDeS database with uncheckpointed WAL data but no trustworthy
+lineage record. SQLite's WAL salts and checksums validate the WAL's own frames;
+they do not identify the main database to which those frames belong. A matching
+filename or a successful SQLite open is not enough to make that association
+safe, so qPlot refuses the read rather than showing potentially unrelated data
+or falling back to an older main-file view.
+
+Close every QCoDeS, SQLite, Python, and notebook connection that owns the
+database cleanly, then retry. SQLite normally checkpoints and removes the WAL
+when its final connection closes. If a WAL remains, use the owning application
+or writer to checkpoint it before retrying. Do not remove a live WAL manually.
+qPlot never checkpoints or changes the source database, `-wal`, `-shm`, or
+`-journal` file.
+
+WALs for qPlot-generated test databases can remain readable while live because
+those databases contain a unique generation token and an advancing write epoch.
+qPlot validates both on a private copy. A generated WAL with missing, different,
+or non-advancing provenance is rejected by the same fail-closed policy. A writer
+that changes an otherwise trusted main or WAL throughout every snapshot attempt
+can also make the database temporarily unavailable; wait for a pause and retry.
+
+QCoDeS creates a new SQLite result table for each later measurement. Before
+creating such a `Measurement`, call
+`qplot.testdata.enable_generation_provenance_for_writer(experiment.conn)` on
+the owner application's writable QCoDeS connection. This installs coverage for
+the new table in its creation transaction, including when results will later be
+written in the background. If this was not enabled before the run and qPlot
+reports a non-advancing epoch, use the owning writer to checkpoint the WAL and
+enable the hook before the next measurement. qPlot cannot safely repair or
+upgrade that provenance while viewing the input.
 
 For a rollback-format database, qPlot uses normal SQLite read-only locking while
 the database is quiescent. If a `-journal` is present, qPlot captures the main

@@ -26,6 +26,7 @@ from qplot.datahandling.file_identity import (
     logical_database_path,
 )
 from qplot.datahandling.readonly import (
+    UnverifiableDatabaseWalError,
     quarantine_wal_for_replaced_database,
     replacement_wal_is_quarantined,
     set_qcodes_database_location,
@@ -1085,6 +1086,15 @@ class DatabaseActionsMixin:
                 return
             if error is not None:
                 log_exception("Main-window refresh failed", error, __name__)
+                if isinstance(error, UnverifiableDatabaseWalError):
+                    self.show_error(
+                        "Unverifiable Database WAL",
+                        "qPlot cannot verify this database's WAL. Close every "
+                        "owning QCoDeS/SQLite connection cleanly, or checkpoint "
+                        "with the owning writer, then refresh.",
+                        str(error),
+                        )
+                    return
                 self.show_error(
                     "Refresh Failed",
                     "Could not refresh the run list.",
@@ -1773,6 +1783,17 @@ class DatabaseActionsMixin:
 
         if error is not None:
             log_exception("Database load failed", error, __name__)
+            if isinstance(error, UnverifiableDatabaseWalError):
+                self.show_error(
+                    "Unverifiable Database WAL",
+                    "qPlot refused to load this database because its WAL "
+                    "cannot be verified. Close every owning QCoDeS/SQLite "
+                    "connection cleanly, or checkpoint with the owning writer, "
+                    "then retry loading the database.",
+                    str(error),
+                )
+                DatabaseActionsMixin._resume_test_database_generation_recovery(self)
+                return
             self.show_error(
                 "Database Load Failed",
                 f"Could not load database {abspath}.",

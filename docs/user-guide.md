@@ -25,12 +25,24 @@ immutable read-only mode. Both paths work when the source file and its directory
 are read-only.
 
 When a WAL exists, qPlot never applies immutable mode to the source because
-that would hide committed rows which have not yet been checkpointed. Instead,
-it copies the database and WAL to a private system-temporary directory, checks
-that the source did not change while they were copied, and opens that snapshot.
-Every refresh makes a new snapshot, so committed rows added by a running
-QCoDeS measurement become visible. The source `-shm` is not opened by qPlot,
-and snapshot files are removed when their connection closes.
+that would hide committed rows which have not yet been checkpointed. It accepts
+a database-and-WAL view only when it can establish that the WAL descends from
+the selected main file. An ordinary SQLite WAL contains page updates, salts,
+and checksums for its own frames, but no unique identity of the main database.
+Matching filenames, locations, timestamps, or file identities therefore cannot
+prove the pairing. If qPlot first observes an ordinary QCoDeS database with an
+uncheckpointed WAL, it fails closed instead of risking data from an unrelated
+database or silently showing the older main-file state.
+
+A stably observed zero-byte WAL contains no frames and is treated as having no
+pending WAL data. qPlot still leaves that source sidecar untouched.
+
+To open such an ordinary QCoDeS database safely, close every QCoDeS, SQLite,
+Python, and notebook connection that owns it cleanly, then retry. SQLite
+normally checkpoints the WAL when the final connection closes. If the WAL
+remains, checkpoint it using the application or writer that owns the database
+before retrying. qPlot never checkpoints, recovers, deletes, or otherwise
+changes an input database or any of its sidecars.
 
 An observed rollback `-journal` is handled the same way: qPlot copies it with
 the main database and any permitted WAL, then checks the source file identities
@@ -39,11 +51,36 @@ journal only on that private copy. A cold PERSIST journal with an invalidated
 header and a zero-length TRUNCATE journal are accepted normally; neither blocks
 a valid database or causes qPlot to alter the source artifact.
 
-Generated test databases also carry a unique lineage token. qPlot validates
-that token and its later write epoch before accepting a WAL beside a generated
-main file. If the WAL cannot be paired safely, qPlot refuses the read and asks
-for the owning SQLite/QCoDeS writer to checkpoint it; it never substitutes an
-older immutable value for an unverified committed WAL value.
+Generated test databases carry explicit provenance that ordinary SQLite files
+lack: a unique lineage token and a write epoch. qPlot copies a candidate main
+and WAL to a private system-temporary directory, checks that the source did not
+change during capture, and accepts the WAL only when the private combined view
+has the same token and a later epoch. The source `-shm` is not opened by qPlot,
+and private snapshot files are removed when their connection closes.
+
+SQLite has no persistent database-wide write trigger. If a QCoDeS script will
+add new measurements to a generated database, enable qPlot provenance on the
+writer's QCoDeS connection before creating the `Measurement`:
+
+```python
+from qplot.testdata import enable_generation_provenance_for_writer
+
+experiment = load_or_create_experiment("later runs", "sample")
+enable_generation_provenance_for_writer(experiment.conn)
+measurement = Measurement(exp=experiment)
+```
+
+The writer hook installs provenance triggers for each newly created result
+table before the same QCoDeS transaction commits. Later foreground and
+background result writes then advance the durable epoch across checkpoints. It
+is an explicit writer operation; the qPlot viewer never calls it. A WAL already
+written by an uninstrumented connection cannot be proven after the fact and is
+rejected with instructions to checkpoint it using its owning writer.
+
+Process-local replacement history remains a separate safety mechanism. It can
+identify that a WAL is unpaired with a main file that replaced one qPlot had
+already observed, so qPlot can quarantine that WAL. This is negative evidence
+only: quarantine never turns an otherwise unknown WAL into a trusted one.
 
 If a busy writer changes the main file or sidecars throughout every snapshot
 attempt, or their transaction state cannot be proved safe, qPlot reports that

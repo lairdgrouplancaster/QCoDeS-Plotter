@@ -22,6 +22,7 @@ from qplot.datahandling.file_identity import (
     database_sidecar_identities,
 )
 from qplot.datahandling.readonly import (
+    UnverifiableDatabaseWalError,
     replacement_wal_is_quarantined,
     sqlite_read_only_connection,
 )
@@ -50,7 +51,36 @@ WINDOWS_CLOUD_PLACEHOLDER_ATTRIBUTES = (
     getattr(stat, "FILE_ATTRIBUTE_OFFLINE", 0x00001000)
     | getattr(stat, "FILE_ATTRIBUTE_RECALL_ON_OPEN", 0x00040000)
     | getattr(stat, "FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS", 0x00400000)
-    )
+)
+_DATABASE_ACCESS_ERROR_PREFIX = "QPLOT_DATABASE_ACCESS_ERROR:"
+
+
+class _DatabaseAccessErrorMessage(str):
+    """Probe text retaining the remote exception type for the load worker."""
+
+    def __new__(cls, message, error_type=None):
+        instance = super().__new__(cls, message)
+        instance.error_type = error_type
+        return instance
+
+
+def _database_access_error_message(output):
+    """Decode a probe error without exposing its transport marker to users."""
+    output = (output or "").strip()
+    for line in reversed(output.splitlines()):
+        if not line.startswith(_DATABASE_ACCESS_ERROR_PREFIX):
+            continue
+        try:
+            payload = json.loads(line.removeprefix(_DATABASE_ACCESS_ERROR_PREFIX))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        message = payload.get("message")
+        error_type = payload.get("type")
+        if isinstance(message, str) and isinstance(error_type, str):
+            return _DatabaseAccessErrorMessage(message, error_type)
+    return _DatabaseAccessErrorMessage(output)
 
 
 def database_path_from_mime_data(mime_data):
@@ -104,7 +134,9 @@ def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS
         "        expected_database_identity=expected_database_identity,\n"
         "    )\n"
         "except Exception as err:\n"
-        "    print(err, file=sys.stderr)\n"
+        "    payload = {'type': type(err).__name__, 'message': str(err)}\n"
+        f"    print('{_DATABASE_ACCESS_ERROR_PREFIX}' + json.dumps(payload), "
+        "file=sys.stderr)\n"
         "    raise SystemExit(1)\n"
         )
 
@@ -135,9 +167,11 @@ def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS
     if result.returncode == 0:
         return None
 
-    details = (result.stderr or result.stdout or "").strip()
+    details = _database_access_error_message(result.stderr or result.stdout)
     if not details:
-        details = f"SQLite access probe exited with code {result.returncode}."
+        details = _DatabaseAccessErrorMessage(
+            f"SQLite access probe exited with code {result.returncode}."
+        )
     return details
 
 
@@ -623,6 +657,8 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
             if (
                     access_error
+                    and getattr(access_error, "error_type", None)
+                    != UnverifiableDatabaseWalError.__name__
                     and database_cloud_storage_label(self.database_path)
                     and os.path.isfile(self.database_path)
                     ):
@@ -635,6 +671,11 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
                     return
 
             if access_error:
+                if (
+                        getattr(access_error, "error_type", None)
+                        == UnverifiableDatabaseWalError.__name__
+                        ):
+                    raise UnverifiableDatabaseWalError(access_error)
                 raise RuntimeError(access_error)
 
             self._emit_status("Opening database read-only...")

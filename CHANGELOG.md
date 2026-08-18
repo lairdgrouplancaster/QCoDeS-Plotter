@@ -24,6 +24,18 @@ installation commands and release validation, see `docs/distribution.md`.
   reset to current defaults, and the recent-database list is now the single
   source for restoring the last opened database.
 
+### Fixed
+
+- Keep WAL provenance advancing when provenance-aware QCoDeS writers create
+  later result tables, including across repeated checkpoints and fresh qPlot
+  processes. Equal-epoch WALs from uninstrumented writers remain fail-closed
+  because SQLite cannot bind those result-only frames to a main database.
+- Refuse a first-observed nonempty ordinary SQLite WAL when its association
+  with the selected QCoDeS main database cannot be proved. qPlot-generated
+  databases remain readable with a live WAL when their lineage token and write
+  epoch match; all inspection and recovery stays on private copies without
+  checkpointing or changing input files.
+
 ## 1.5.1-b2 - 2026-08-13
 
 ### Changed
