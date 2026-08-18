@@ -66,7 +66,7 @@ jobs:
       - name: Run tests
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python -m pytest --no-cov
+        run: python -m pytest --no-cov --durations=20
 
   coverage:
     name: Coverage

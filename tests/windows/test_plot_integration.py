@@ -234,12 +234,12 @@ def dependent_parameter(dataset, dimensions):
 
 
 def close_main_window(window):
-    window.startupDatabaseTimer.stop()
-    window.monitor.stop()
-    window.close_plot_windows(confirm=False, status=False)
-    window.threadPool.waitForDone(1000)
-    window.databaseLoadThreadPool.waitForDone(1000)
-    window.hide()
+    """Close through the production shutdown path before deleting Qt state."""
+
+    window.config.config["user_preference"]["confirm_close"] = False
+    window.config.config["user_preference"]["confirm_close_all"] = False
+    window.close()
+    wait_for(lambda: window._shutdown_ready)
     window.deleteLater()
     qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     qtw.QApplication.processEvents()
@@ -604,6 +604,56 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
         assert vertical_cut.sweep_id in heatmap_window.sweep_lines
     finally:
         close_main_window(window)
+
+
+def test_main_window_close_releases_private_wal_snapshot_before_qt_cleanup(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    database_path = Path(tmp_path) / "close-private-snapshot.db"
+    build_line_database_with_replayed_stale_wal(database_path)
+    source_artifacts = database_artifact_state(database_path)
+    window = main_window.MainWindow()
+    closed = False
+
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+                and window.ds is not None
+            )
+        )
+        window.monitor.stop()
+
+        dataset = window.ds
+        connection = dataset.conn
+        snapshot_path = Path(
+            connection.execute("PRAGMA database_list").fetchone()[2]
+        )
+        snapshot_directory = snapshot_path.parent
+        assert snapshot_directory.name.startswith("qplot-readonly-")
+        assert snapshot_directory.is_dir()
+
+        close_main_window(window)
+        closed = True
+
+        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+            connection.cursor()
+        assert not snapshot_directory.exists()
+        assert database_artifact_state(database_path) == source_artifacts
+    finally:
+        if not closed:
+            close_main_window(window)
+        qcodes.config.core.db_location = original_database_path
 
 
 def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
