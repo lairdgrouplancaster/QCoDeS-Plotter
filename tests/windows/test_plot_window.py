@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui, QtPrintSupport
 from PyQt6 import QtWidgets as qtw
@@ -2403,6 +2404,15 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             _axis_scale_dialog_title = plotWidget._axis_scale_dialog_title
             _axis_scale_dimension = plotWidget._axis_scale_dimension
+            _axis_scale_normalise_axis = staticmethod(
+                plotWidget._axis_scale_normalise_axis
+            )
+            _axis_scale_transform_result = staticmethod(
+                plotWidget._axis_scale_transform_result
+            )
+            data_to_view = plotWidget.data_to_view
+            view_to_data = plotWidget.view_to_data
+            _axis_scale_axis_for_line = plotWidget._axis_scale_axis_for_line
             _axis_scale_viewbox = plotWidget._axis_scale_viewbox
             _axis_scale_axis_number = plotWidget._axis_scale_axis_number
             _axis_scale_axis_constant = plotWidget._axis_scale_axis_constant
@@ -2635,6 +2645,162 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(host._axis_scale_tabs.currentIndex(), 2)
         finally:
             host.deleteLater()
+            widget.deleteLater()
+
+    def test_axis_data_view_helpers_cover_all_sides_and_special_values(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        window = plotWidget.__new__(plotWidget)
+        window.plot = plot_item
+        for side, enabled in (
+                ("bottom", True),
+                ("top", False),
+                ("left", False),
+                ("right", True),
+                ):
+            plot_item.getAxis(side).setLogMode(enabled)
+
+        try:
+            values = np.array([1.0, 10.0, 100.0])
+            np.testing.assert_allclose(window.data_to_view("x", values), [0, 1, 2])
+            np.testing.assert_array_equal(window.data_to_view("x2", values), values)
+            np.testing.assert_array_equal(window.data_to_view("y", values), values)
+            np.testing.assert_allclose(window.data_to_view("y2", values), [0, 1, 2])
+            np.testing.assert_allclose(window.view_to_data("bottom", [0, 1, 2]), values)
+            np.testing.assert_allclose(window.view_to_data("right", [0, 1, 2]), values)
+
+            mapped = window.data_to_view(
+                "x",
+                [-1.0, 0.0, np.nan, -np.inf, np.inf, 1.0],
+            )
+            self.assertTrue(np.all(np.isnan(mapped[:5])))
+            self.assertEqual(mapped[5], 0.0)
+            inverse = window.view_to_data("x", [np.nan, -np.inf, np.inf, 0.0])
+            self.assertTrue(np.isnan(inverse[0]))
+            self.assertEqual(inverse[1], 0.0)
+            self.assertEqual(inverse[2], np.inf)
+            self.assertEqual(inverse[3], 1.0)
+            self.assertTrue(np.isnan(window.data_to_view("x", -1.0)))
+            self.assertEqual(window.view_to_data("x", 2.0), 100.0)
+
+            with self.assertRaisesRegex(ValueError, "Unknown plot axis"):
+                window.data_to_view("diagonal", 1.0)
+        finally:
+            widget.deleteLater()
+
+    def test_primary_secondary_axis_assignment_and_swap_drive_line_log_modes(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        main_line = plot_item.plot(x=[1.0, 10.0, 100.0], y=[1.0, 10.0, 100.0])
+        secondary_line = pg.PlotDataItem(
+            x=[1.0, 10.0, 100.0],
+            y=[1.0, 10.0, 100.0],
+        )
+        window = plot1d.__new__(plot1d)
+        window.plot = plot_item
+        window.line = main_line
+        window.lines = {"main": main_line, "secondary": secondary_line}
+        main_style = window._initial_trace_style()
+        secondary_style = window._initial_trace_style(order=1)
+        secondary_style.x_axis = "Top"
+        secondary_style.y_axis = "Left"
+        window._trace_styles = {
+            "main": main_style,
+            "secondary": secondary_style,
+        }
+        plot_item.getAxis("bottom").setLogMode(True)
+        plot_item.getAxis("top").setLogMode(False)
+        plot_item.getAxis("left").setLogMode(False)
+        plot_item.getAxis("right").setLogMode(True)
+
+        try:
+            window._sync_axis_scale_line_log_mode("main", main_line)
+            window._sync_axis_scale_line_log_mode("secondary", secondary_line)
+            np.testing.assert_allclose(main_line.getData()[0], [0, 1, 2])
+            np.testing.assert_array_equal(main_line.getData()[1], [1, 10, 100])
+            np.testing.assert_array_equal(secondary_line.getData()[0], [1, 10, 100])
+            np.testing.assert_array_equal(secondary_line.getData()[1], [1, 10, 100])
+            self.assertEqual(window._axis_scale_axis_for_line(main_line, "x"), "x")
+            self.assertEqual(window._axis_scale_axis_for_line(main_line, "y"), "y")
+            self.assertEqual(window._axis_scale_axis_for_line(secondary_line, "x"), "x2")
+            self.assertEqual(window._axis_scale_axis_for_line(secondary_line, "y"), "y")
+
+            window._transpose_trace_axis_style(secondary_style)
+            self.assertEqual(
+                (secondary_style.x_axis, secondary_style.y_axis),
+                ("Bottom", "Right"),
+            )
+            window._sync_axis_scale_line_log_mode("secondary", secondary_line)
+            np.testing.assert_allclose(secondary_line.getData()[0], [0, 1, 2])
+            np.testing.assert_allclose(secondary_line.getData()[1], [0, 1, 2])
+        finally:
+            secondary_line.deleteLater()
+            widget.deleteLater()
+
+    def test_log_manual_and_copied_auto_limits_use_physical_fields(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        plot_item.plot(x=[1.0, 10.0, 100.0], y=[1.0, 10.0, 100.0])
+        window = plotWidget.__new__(plotWidget)
+        qtw.QMainWindow.__init__(window)
+        window.plot = plot_item
+        window.vb = plot_item.vb
+        window.vbMenu = window.vb.menu
+        window.top_vb = pg.ViewBox()
+        window.right_vb = pg.ViewBox()
+        window._axis_scale_controls = {}
+        window._axis_scale_custom_auto_axes = set()
+        window._view_range_changed_programmatically = lambda: None
+        statuses = []
+        window.show_status = lambda message, timeout=0: statuses.append((message, timeout))
+        sides = {"x": "bottom", "y": "left", "x2": "top", "y2": "right"}
+        control_widgets = []
+
+        try:
+            for axis, side in sides.items():
+                plot_item.getAxis(side).setLogMode(True)
+                control_widgets.append(window._new_axis_scale_controls(axis))
+                controls = window._axis_scale_controls[axis]
+                controls.minText.setText("10")
+                controls.maxText.setText("1000")
+                window._axis_scale_range_text_changed(axis)
+                viewbox = window._axis_scale_viewbox(axis)
+                axis_number = window._axis_scale_axis_number(axis)
+                np.testing.assert_allclose(
+                    viewbox.viewRange()[axis_number],
+                    [1.0, 3.0],
+                )
+
+                window._sync_axis_scale_controls(axis)
+                self.assertEqual(float(controls.minText.text()), 10.0)
+                self.assertEqual(float(controls.maxText.text()), 1000.0)
+
+                controls.minText.setText("0")
+                controls.maxText.setText("100")
+                window._axis_scale_range_text_changed(axis)
+                np.testing.assert_allclose(
+                    viewbox.viewRange()[axis_number],
+                    [1.0, 3.0],
+                )
+                self.assertEqual(float(controls.minText.text()), 10.0)
+                self.assertIn("greater than zero", statuses[-1][0])
+
+            window._axis_scale_auto_limits = lambda _axis: (0.0, 2.0)
+            x_controls = window._axis_scale_controls["x"]
+            window._update_axis_scale_auto_limits_tooltip("x")
+            self.assertEqual(
+                x_controls.copyAutoLimitsButton.toolTip(),
+                "Set manual limits to 1 and 100.",
+            )
+            window._axis_scale_copy_auto_limits("x")
+            self.assertEqual(float(x_controls.minText.text()), 1.0)
+            self.assertEqual(float(x_controls.maxText.text()), 100.0)
+            np.testing.assert_allclose(window.vb.viewRange()[0], [0.0, 2.0])
+        finally:
+            for control_widget in control_widgets:
+                control_widget.deleteLater()
+            window.top_vb.deleteLater()
+            window.right_vb.deleteLater()
             widget.deleteLater()
 
     def test_axis_scale_rejects_non_finite_and_reversed_manual_ranges(self):

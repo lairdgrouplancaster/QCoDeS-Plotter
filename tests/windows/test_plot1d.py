@@ -265,6 +265,85 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.assertIs(viewbox, plot_item.vb)
         self.assertEqual(point_number, 1)
 
+    def test_real_plot_data_item_snap_reports_raw_values_and_marks_view_coordinates(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        line = plot_item.plot(
+            x=np.array([1.0, 10.0, 100.0]),
+            y=np.array([1.0, 10.0, 100.0]),
+        )
+        line.setLogMode(True, True)
+        window = plot1d.__new__(plot1d)
+        window.plot = plot_item
+        window.right_vb = None
+        window.lines = {"main": line}
+        window.snap_marker = None
+        window._snap_marker_view = None
+
+        try:
+            raw_x, raw_y = line.getOriginalDataset()
+            view_x, view_y = line.getData()
+            np.testing.assert_array_equal(raw_x, [1.0, 10.0, 100.0])
+            np.testing.assert_array_equal(raw_y, [1.0, 10.0, 100.0])
+            np.testing.assert_allclose(view_x, [0.0, 1.0, 2.0])
+            np.testing.assert_allclose(view_y, [0.0, 1.0, 2.0])
+
+            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.05, 0.95))
+            nearest = window._nearest_trace_point(scene_pos)
+
+            label, x_value, y_value, viewbox, point_number = nearest
+            self.assertEqual(label, "main")
+            self.assertEqual((x_value, y_value), (10.0, 10.0))
+            self.assertEqual(point_number, 2)
+            self.assertIs(viewbox, plot_item.vb)
+            self.assertEqual(
+                (nearest.x_view_value, nearest.y_view_value),
+                (1.0, 1.0),
+            )
+
+            window._show_snap_marker(
+                nearest.x_view_value,
+                nearest.y_view_value,
+                nearest.viewbox,
+            )
+            marker_x, marker_y = window.snap_marker.getData()
+            np.testing.assert_array_equal(marker_x, [1.0])
+            np.testing.assert_array_equal(marker_y, [1.0])
+        finally:
+            window._hide_snap_marker()
+            widget.deleteLater()
+
+    def test_real_plot_data_item_log_toggle_and_data_change_keep_raw_boundary(self):
+        line = pg.PlotDataItem(x=[1.0, 10.0, 100.0], y=[2.0, 20.0, 200.0])
+
+        try:
+            line.setLogMode(True, False)
+            np.testing.assert_allclose(line.getData()[0], [0.0, 1.0, 2.0])
+            np.testing.assert_array_equal(
+                line.getOriginalDataset()[0],
+                [1.0, 10.0, 100.0],
+            )
+
+            line.setData(x=[10.0, 100.0, 1000.0], y=[3.0, 30.0, 300.0])
+            np.testing.assert_allclose(line.getData()[0], [1.0, 2.0, 3.0])
+            np.testing.assert_array_equal(
+                line.getOriginalDataset()[0],
+                [10.0, 100.0, 1000.0],
+            )
+
+            line.setLogMode(False, True)
+            np.testing.assert_array_equal(line.getData()[0], [10.0, 100.0, 1000.0])
+            np.testing.assert_allclose(
+                line.getData()[1],
+                np.log10([3.0, 30.0, 300.0]),
+            )
+            np.testing.assert_array_equal(
+                line.getOriginalDataset()[1],
+                [3.0, 30.0, 300.0],
+            )
+        finally:
+            line.deleteLater()
+
     def test_mouse_moved_shows_nearest_1d_array_index(self):
         widget = pg.GraphicsLayoutWidget()
         plot_item = widget.addPlot()
@@ -291,6 +370,35 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             plotWidget.mouseMoved(window, scene_pos)
 
+            self.assertEqual(window.pos_labels["index"].text(), "[1]")
+        finally:
+            widget.deleteLater()
+
+    def test_free_cursor_converts_both_log_view_coordinates_to_physical_values(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        line = plot_item.plot(x=[1.0, 10.0, 100.0], y=[1.0, 10.0, 100.0])
+        line.setLogMode(True, True)
+        plot_item.getAxis("bottom").setLogMode(True)
+        plot_item.getAxis("left").setLogMode(True)
+        window = plot1d.__new__(plot1d)
+        qtw.QMainWindow.__init__(window)
+        window.plot = plot_item
+        window.line = line
+        window.pos_labels = {
+            "index": qtw.QLabel(),
+            "x": qtw.QLabel(),
+            "y": qtw.QLabel(),
+        }
+        window.formatNum = lambda value: f"{value:.3g}"
+
+        try:
+            plot_item.vb.setRange(xRange=(0.0, 2.0), yRange=(0.0, 2.0), padding=0)
+            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.3, 0.7))
+            plotWidget.mouseMoved(window, scene_pos)
+
+            self.assertEqual(window.pos_labels["x"].text(), "x = 20;")
+            self.assertEqual(window.pos_labels["y"].text(), "y = 5.01")
             self.assertEqual(window.pos_labels["index"].text(), "[1]")
         finally:
             widget.deleteLater()
@@ -2586,6 +2694,65 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertIn("X range: 1.00 to 4.00", stats_text)
         self.assertIn("Y range: 2.00 to 6.00", stats_text)
+
+    def test_log_marquee_uses_view_mask_raw_statistics_and_physical_ranges(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        line = plot_item.plot(x=[1.0, 10.0, 100.0], y=[1.0, 10.0, 100.0])
+        line.setLogMode(True, True)
+        plot_item.getAxis("bottom").setLogMode(True)
+        plot_item.getAxis("left").setLogMode(True)
+        window = plot1d.__new__(plot1d)
+        window.plot = plot_item
+        window.line = line
+        window.lines = {"main": line}
+        window._trace_styles = {
+            "main": type(
+                "Style",
+                (),
+                {"x_axis": "Bottom", "y_axis": "Left"},
+            )(),
+        }
+        window.marquee = QtCore.QRectF(0.0, 0.0, 2.0, 2.0)
+        window.formatNum = lambda value: f"{value:.2f}"
+
+        try:
+            np.testing.assert_array_equal(
+                window._marquee_line_values(),
+                [1.0, 10.0, 100.0],
+            )
+            stats_text = window._marquee_stats_text()
+
+            self.assertIn("X range: 1.00 to 100.00", stats_text)
+            self.assertIn("Y range: 1.00 to 100.00", stats_text)
+            self.assertIn("Average: 37.00", stats_text)
+            self.assertIn("Max: 100.00", stats_text)
+            self.assertNotIn("Average: 1.00", stats_text)
+        finally:
+            widget.deleteLater()
+
+    def test_log_marquee_geometry_excludes_nonpositive_raw_samples(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot_item = widget.addPlot()
+        line = plot_item.plot(
+            x=[-1.0, 0.0, 1.0, 10.0, 100.0],
+            y=[-10.0, 0.0, 1.0, 10.0, 100.0],
+        )
+        line.setLogMode(True, True)
+        window = plot1d.__new__(plot1d)
+        window.line = line
+        window.marquee = QtCore.QRectF(-0.1, -0.1, 2.2, 2.2)
+
+        try:
+            view_x, view_y = line.getData()
+            self.assertTrue(np.all(np.isnan(view_x[:2])))
+            self.assertTrue(np.all(np.isnan(view_y[:2])))
+            np.testing.assert_array_equal(
+                window._marquee_line_values(),
+                [1.0, 10.0, 100.0],
+            )
+        finally:
+            widget.deleteLater()
 
     def test_zoom_marquee_sets_selected_axes_without_padding(self):
         class ViewBox:

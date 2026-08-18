@@ -121,7 +121,13 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         if values is None:
             return None
 
-        return self._format_marquee_stats_text(f"{values.size} points", values)
+        line = self.__dict__.get("line")
+        return self._format_marquee_stats_text(
+            f"{values.size} points",
+            values,
+            x_axis=self._axis_scale_axis_for_line(line, "x"),
+            y_axis=self._axis_scale_axis_for_line(line, "y"),
+        )
 
 
     def _marquee_line_values(self) -> npt.NDArray[np.float64] | None:
@@ -130,31 +136,38 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
 
         line = self.__dict__.get("line")
         if line is not None and hasattr(line, "getData"):
-            data = line.getData()
-            if data is not None:
-                x_data, y_data = data
+            view_data = line.getData()
+            if view_data is not None:
+                x_data, y_data = view_data
             else:
                 x_data, y_data = None, None
+            get_original = getattr(line, "getOriginalDataset", None)
+            raw_data = get_original() if callable(get_original) else view_data
+            raw_y_data = raw_data[1] if raw_data is not None else None
         else:
             axis_data = self.__dict__.get("axis_data", {})
             x_data = axis_data.get("x")
             y_data = axis_data.get("y")
+            raw_y_data = y_data
 
-        if x_data is None or y_data is None:
+        if x_data is None or y_data is None or raw_y_data is None:
             return None
 
         x_data = np.asarray(x_data, dtype=float)
         y_data = np.asarray(y_data, dtype=float)
-        count = min(x_data.size, y_data.size)
+        raw_y_data = np.asarray(raw_y_data, dtype=float)
+        count = min(x_data.size, y_data.size, raw_y_data.size)
         if count == 0:
             return None
 
         rect = self.marquee.normalized()
         x_data = x_data[:count]
         y_data = y_data[:count]
+        raw_y_data = raw_y_data[:count]
         mask = (
             np.isfinite(x_data)
             & np.isfinite(y_data)
+            & np.isfinite(raw_y_data)
             & (x_data >= rect.left())
             & (x_data <= rect.right())
             & (y_data >= rect.top())
@@ -163,7 +176,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         if not np.any(mask):
             return None
 
-        return y_data[mask]
+        return raw_y_data[mask]
 
 
     def refreshPlot(self, finished: bool = True, worker: Any | None = None) -> None:

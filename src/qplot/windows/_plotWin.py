@@ -1352,11 +1352,13 @@ class plotWidget(
     
         # get x, y values.
         mousePoint = self.plot.vb.mapSceneToView(pos)
+        physical_x = self.view_to_data("x", mousePoint.x())
+        physical_y = self.view_to_data("y", mousePoint.y())
         
         # Format text into a easy to read format
         index_txt = ""
-        x_txt = f"x = {self.formatNum(mousePoint.x())};"
-        y_txt = f"y = {self.formatNum(mousePoint.y())}"
+        x_txt = f"x = {self.formatNum(physical_x)};"
+        y_txt = f"y = {self.formatNum(physical_y)}"
         
         # For 2d plots.
         if self.pos_labels.get("z", 0):

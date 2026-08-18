@@ -370,6 +370,9 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             size_text: str,
             values: Any,
             rect: QtCore.QRectF | None = None,
+            *,
+            x_axis: str = "x",
+            y_axis: str = "y",
             ) -> str:
         marquee = self.marquee
         if rect is None and marquee is not None:
@@ -377,9 +380,18 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
 
         lines = [size_text]
         if rect is not None:
+            view_to_data = getattr(self, "view_to_data", None)
+            if callable(view_to_data):
+                x_low = view_to_data(x_axis, rect.left())
+                x_high = view_to_data(x_axis, rect.right())
+                y_low = view_to_data(y_axis, rect.top())
+                y_high = view_to_data(y_axis, rect.bottom())
+            else:
+                x_low, x_high = rect.left(), rect.right()
+                y_low, y_high = rect.top(), rect.bottom()
             lines.extend((
-                f"X range: {self.formatNum(rect.left())} to {self.formatNum(rect.right())}",
-                f"Y range: {self.formatNum(rect.top())} to {self.formatNum(rect.bottom())}",
+                f"X range: {self.formatNum(x_low)} to {self.formatNum(x_high)}",
+                f"Y range: {self.formatNum(y_low)} to {self.formatNum(y_high)}",
                 ))
 
         lines.extend((

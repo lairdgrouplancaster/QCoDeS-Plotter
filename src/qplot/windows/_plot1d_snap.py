@@ -54,9 +54,36 @@ class _SnapTraceSample:
     x_value: float
     y_value: float
     point_number: int
+    x_view_value: float = float("nan")
+    y_view_value: float = float("nan")
 
 
-_LineData = tuple[npt.ArrayLike, npt.ArrayLike]
+@dataclass(frozen=True)
+class _LineData:
+    x_view: npt.ArrayLike
+    y_view: npt.ArrayLike
+    x_raw: npt.ArrayLike
+    y_raw: npt.ArrayLike
+
+
+@dataclass(frozen=True)
+class _NearestTracePoint:
+    label: Any
+    x_value: float
+    y_value: float
+    viewbox: Any
+    point_number: int
+    x_view_value: float
+    y_view_value: float
+
+    def __iter__(self):
+        """Retain the historical five-value private-method unpacking API."""
+
+        yield self.label
+        yield self.x_value
+        yield self.y_value
+        yield self.viewbox
+        yield self.point_number
 
 
 def _nearest_trace_sample(
@@ -120,10 +147,20 @@ def _line_snap_data(line: object | None) -> _LineData | None:
     if not callable(get_data):
         return None
 
-    data = get_data()
-    if data is None or data[0] is None or data[1] is None:
+    view_data = get_data()
+    if view_data is None or view_data[0] is None or view_data[1] is None:
         return None
-    return data[0], data[1]
+
+    get_original = getattr(line, "getOriginalDataset", None)
+    raw_data = get_original() if callable(get_original) else view_data
+    if raw_data is None or raw_data[0] is None or raw_data[1] is None:
+        raw_data = view_data
+    return _LineData(
+        x_view=view_data[0],
+        y_view=view_data[1],
+        x_raw=raw_data[0],
+        y_raw=raw_data[1],
+    )
 
 
 def _scene_distance_squared(
@@ -241,12 +278,15 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             self._set_cursor_index_label("")
             return
 
-        label, x_value, y_value, viewbox, point_number = nearest
-        self._set_cursor_index_label(f"[{point_number - 1}]")
-        self.pos_labels["x"].setText(f"x = {self.formatNum(x_value)};")
-        self.pos_labels["y"].setText(f"y = {self.formatNum(y_value)}")
-        self._show_snap_report(label, point_number)
-        self._show_snap_marker(x_value, y_value, viewbox)
+        self._set_cursor_index_label(f"[{nearest.point_number - 1}]")
+        self.pos_labels["x"].setText(f"x = {self.formatNum(nearest.x_value)};")
+        self.pos_labels["y"].setText(f"y = {self.formatNum(nearest.y_value)}")
+        self._show_snap_report(nearest.label, nearest.point_number)
+        self._show_snap_marker(
+            nearest.x_view_value,
+            nearest.y_view_value,
+            nearest.viewbox,
+        )
 
 
     def _show_snap_report(self, label, point_number):
@@ -375,21 +415,25 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
             viewbox = self._viewbox_for_line(line)
             sample, distance = self._nearest_scene_trace_sample(
-                data[0],
-                data[1],
+                data.x_view,
+                data.y_view,
                 scene_pos,
                 viewbox,
+                data.x_raw,
+                data.y_raw,
                 )
             if sample is None:
                 continue
 
             if nearest_distance is None or distance < nearest_distance:
-                nearest = (
-                    label,
-                    sample.x_value,
-                    sample.y_value,
-                    viewbox,
-                    sample.point_number,
+                nearest = _NearestTracePoint(
+                    label=label,
+                    x_value=sample.x_value,
+                    y_value=sample.y_value,
+                    viewbox=viewbox,
+                    point_number=sample.point_number,
+                    x_view_value=sample.x_view_value,
+                    y_view_value=sample.y_view_value,
                     )
                 nearest_distance = distance
 
@@ -397,24 +441,51 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
 
     @staticmethod
-    def _nearest_scene_trace_sample(x_data, y_data, scene_pos, viewbox):
-        """Return the trace sample nearest to a scene position in screen space."""
+    def _nearest_scene_trace_sample(
+            x_data,
+            y_data,
+            scene_pos,
+            viewbox,
+            raw_x_data=None,
+            raw_y_data=None,
+            ):
+        """Return the nearest display sample with its aligned physical values."""
 
         x_data = np.asarray(x_data, dtype=float)
         y_data = np.asarray(y_data, dtype=float)
-        count = min(x_data.size, y_data.size)
+        if raw_x_data is None:
+            raw_x_data = x_data
+        if raw_y_data is None:
+            raw_y_data = y_data
+        raw_x_data = np.asarray(raw_x_data, dtype=float)
+        raw_y_data = np.asarray(raw_y_data, dtype=float)
+        count = min(
+            x_data.size,
+            y_data.size,
+            raw_x_data.size,
+            raw_y_data.size,
+        )
         if count == 0:
             return None, None
 
         x_data = x_data[:count]
         y_data = y_data[:count]
-        finite = np.isfinite(x_data) & np.isfinite(y_data)
+        raw_x_data = raw_x_data[:count]
+        raw_y_data = raw_y_data[:count]
+        finite = (
+            np.isfinite(x_data)
+            & np.isfinite(y_data)
+            & np.isfinite(raw_x_data)
+            & np.isfinite(raw_y_data)
+        )
         if not np.any(finite):
             return None, None
 
         finite_indices = np.flatnonzero(finite)
         x_values = x_data[finite]
         y_values = y_data[finite]
+        raw_x_values = raw_x_data[finite]
+        raw_y_values = raw_y_data[finite]
         origin = viewbox.mapViewToScene(QtCore.QPointF(0.0, 0.0))
         x_basis = viewbox.mapViewToScene(QtCore.QPointF(1.0, 0.0))
         y_basis = viewbox.mapViewToScene(QtCore.QPointF(0.0, 1.0))
@@ -433,9 +504,11 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             )
         index = int(np.argmin(distances))
         sample = _SnapTraceSample(
-            x_value=float(x_values[index]),
-            y_value=float(y_values[index]),
+            x_value=float(raw_x_values[index]),
+            y_value=float(raw_y_values[index]),
             point_number=int(finite_indices[index]) + 1,
+            x_view_value=float(x_values[index]),
+            y_view_value=float(y_values[index]),
             )
         return sample, float(distances[index])
 

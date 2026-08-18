@@ -2,6 +2,8 @@ from collections.abc import Callable
 from math import isclose, isfinite, log10
 from typing import TYPE_CHECKING, Any, Literal
 
+import numpy as np
+import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
@@ -40,6 +42,8 @@ _AXIS_ALIASES: dict[str, _AxisName] = {
     "y2": "y2",
     "right": "y2",
 }
+
+_NumericValue = float | npt.ArrayLike
 
 if TYPE_CHECKING:
     class _PlotAxisScalingBase(qtw.QMainWindow):
@@ -255,6 +259,93 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def _axis_scale_dimension(self, axis: _AxisName) -> Literal["x", "y"]:
         return _AXIS_DIMENSIONS[axis]
 
+    @staticmethod
+    def _axis_scale_normalise_axis(axis: str) -> _AxisName:
+        """Return the semantic axis represented by a name or physical side."""
+
+        semantic_axis = _AXIS_ALIASES.get(axis.lower())
+        if semantic_axis is None:
+            raise ValueError(f"Unknown plot axis: {axis!r}")
+        return semantic_axis
+
+    @staticmethod
+    def _axis_scale_transform_result(
+            source: _NumericValue,
+            result: npt.NDArray[np.float64],
+            ) -> float | npt.NDArray[np.float64]:
+        """Keep scalar transforms scalar while supporting array-like inputs."""
+
+        if np.ndim(source) == 0:
+            return float(result)
+        return result
+
+    def data_to_view(
+            self,
+            axis: str,
+            values: _NumericValue,
+            ) -> float | npt.NDArray[np.float64]:
+        """Convert physical data values to coordinates used by a ViewBox.
+
+        Linear axes are unchanged. Log axes match ``PlotDataItem``: only
+        positive finite samples have display coordinates; nonpositive and
+        non-finite raw samples map to NaN and therefore do not participate in
+        geometry or hit testing.
+        """
+
+        semantic_axis = self._axis_scale_normalise_axis(axis)
+        numeric = np.asarray(values, dtype=float)
+        if not self._axis_scale_log_mode(semantic_axis):
+            result = numeric.copy()
+        else:
+            result = np.full(numeric.shape, np.nan, dtype=float)
+            valid = np.isfinite(numeric) & (numeric > 0)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                np.log10(numeric, out=result, where=valid)
+        return self._axis_scale_transform_result(values, result)
+
+    def view_to_data(
+            self,
+            axis: str,
+            values: _NumericValue,
+            ) -> float | npt.NDArray[np.float64]:
+        """Convert ViewBox coordinates to physical data values.
+
+        For log axes this is the extended-real inverse of ``log10``: NaN
+        remains NaN, positive infinity remains infinity, and negative
+        infinity maps to zero. Finite overflow deliberately becomes infinity.
+        """
+
+        semantic_axis = self._axis_scale_normalise_axis(axis)
+        numeric = np.asarray(values, dtype=float)
+        if not self._axis_scale_log_mode(semantic_axis):
+            result = numeric.copy()
+        else:
+            with np.errstate(over="ignore", invalid="ignore"):
+                result = np.asarray(np.power(10.0, numeric), dtype=float)
+        return self._axis_scale_transform_result(values, result)
+
+    def _axis_scale_axis_for_line(
+            self,
+            line: Any,
+            dimension: Literal["x", "y"],
+            ) -> _AxisName:
+        """Return the semantic axis assigned to one plotted line dimension."""
+
+        styles = self.__dict__.get("_trace_styles")
+        lines = self.__dict__.get("lines")
+        style = None
+        if isinstance(styles, dict) and isinstance(lines, dict):
+            trace_key = next(
+                (key for key, candidate in lines.items() if candidate is line),
+                None,
+            )
+            if trace_key is not None:
+                style = styles.get(trace_key)
+
+        if dimension == "x":
+            return "x2" if getattr(style, "x_axis", "Bottom") == "Top" else "x"
+        return "y2" if getattr(style, "y_axis", "Left") == "Right" else "y"
+
     def _axis_scale_viewbox(self, axis: _AxisName) -> Any:
         if axis == "x2":
             top_vb = self.__dict__.get("top_vb")
@@ -447,8 +538,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
 
         try:
             target_range = state["targetRange"][axis_number]
-            ui.minText.setText(f"{target_range[0]:.5g}")
-            ui.maxText.setText(f"{target_range[1]:.5g}")
+            data_range = self.view_to_data(axis, target_range)
+            ui.minText.setText(f"{data_range[0]:.5g}")
+            ui.maxText.setText(f"{data_range[1]:.5g}")
 
             auto_range = (
                 True
@@ -630,12 +722,23 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
 
         button = self._axis_scale_controls[axis].copyAutoLimitsButton
         limits = self._axis_scale_auto_limits(axis)
-        button.setEnabled(limits is not None)
-        if limits is None:
+        data_limits = (
+            None
+            if limits is None
+            else tuple(float(value) for value in self.view_to_data(axis, limits))
+        )
+        usable = (
+            data_limits is not None
+            and all(isfinite(value) for value in data_limits)
+            and data_limits[0] < data_limits[1]
+        )
+        button.setEnabled(usable)
+        if not usable:
             button.setToolTip("Auto limits are unavailable for this axis.")
             return
+        assert data_limits is not None
         button.setToolTip(
-            f"Set manual limits to {limits[0]:.5g} and {limits[1]:.5g}."
+            f"Set manual limits to {data_limits[0]:.5g} and {data_limits[1]:.5g}."
         )
 
     def _axis_scale_copy_auto_limits(self, axis: _AxisName) -> None:
@@ -644,9 +747,18 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         limits = self._axis_scale_auto_limits(axis)
         if limits is None:
             return
+        data_limits = tuple(
+            float(value) for value in self.view_to_data(axis, limits)
+        )
+        if (
+                not all(isfinite(value) for value in data_limits)
+                or data_limits[0] >= data_limits[1]
+                ):
+            self._update_axis_scale_auto_limits_tooltip(axis)
+            return
         ui = self._axis_scale_controls[axis]
-        ui.minText.setText(f"{limits[0]:.5g}")
-        ui.maxText.setText(f"{limits[1]:.5g}")
+        ui.minText.setText(f"{data_limits[0]:.5g}")
+        ui.maxText.setText(f"{data_limits[1]:.5g}")
         self._axis_scale_range_text_changed(axis)
         self._update_axis_scale_auto_limits_tooltip(axis)
 
@@ -668,7 +780,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui = self._axis_scale_controls[axis]
         axis_number = self._axis_scale_axis_number(axis)
         viewbox = self._axis_scale_viewbox(axis)
-        previous_values = list(viewbox.viewRange()[axis_number])
+        previous_view_values = list(viewbox.viewRange()[axis_number])
+        previous_values = self.view_to_data(axis, previous_view_values)
         try:
             values = [float(ui.minText.text()), float(ui.maxText.text())]
         except ValueError:
@@ -689,12 +802,27 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                     )
             return
 
+        if self._axis_scale_log_mode(axis) and any(value <= 0 for value in values):
+            ui.minText.setText(f"{previous_values[0]:.5g}")
+            ui.maxText.setText(f"{previous_values[1]:.5g}")
+            show_status = getattr(self, "show_status", None)
+            if callable(show_status):
+                show_status(
+                    "Log-scale axis limits must be greater than zero.",
+                    5000,
+                    )
+            return
+
+        view_values = [
+            float(value) for value in self.data_to_view(axis, values)
+        ]
+
         ui.manualRadio.setChecked(True)
         self.__dict__.get("_axis_scale_custom_auto_axes", set()).discard(axis)
         if self._axis_scale_dimension(axis) == "x":
-            viewbox.setXRange(*values, padding=0)
+            viewbox.setXRange(*view_values, padding=0)
         else:
-            viewbox.setYRange(*values, padding=0)
+            viewbox.setYRange(*view_values, padding=0)
         self._view_range_changed_programmatically()
 
     def _axis_scale_uses_filtered_auto(self, axis: _AxisName) -> bool:
@@ -823,7 +951,11 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def _axis_scale_log_mode(self, axis: _AxisName) -> bool:
         """Return the current log state from the displayed axis item."""
 
-        axis_item = self.plot.getAxis(_AXIS_SIDES[axis])
+        plot = self.__dict__.get("plot")
+        get_axis = getattr(plot, "getAxis", None)
+        if not callable(get_axis):
+            return False
+        axis_item = get_axis(_AXIS_SIDES[axis])
         return bool(getattr(axis_item, "logMode", False))
 
     def _sync_axis_scale_line_log_mode(self, trace_key: Any, line: Any) -> None:
