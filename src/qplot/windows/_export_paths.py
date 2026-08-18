@@ -441,8 +441,17 @@ def collect_protected_database_files(
     if owner is not None:
         owners.append(owner)
     if application is not None:
-        owners.extend(qtw.QApplication.topLevelWidgets())
-        owners.extend(qtw.QApplication.allWidgets())
+        # Do not retain protection observations from hidden, deleted-later Qt
+        # test or closed-window objects.  Their filesystem identities may be
+        # reused for an unrelated export on filesystems such as ext4.  The
+        # active export owner is always included above; other active plot/main
+        # windows are top-level and visible.
+        for widget in qtw.QApplication.topLevelWidgets():
+            try:
+                if widget.isVisible():
+                    owners.append(widget)
+            except RuntimeError:
+                pass
 
     seen_owners: set[int] = set()
     for current_owner in owners:

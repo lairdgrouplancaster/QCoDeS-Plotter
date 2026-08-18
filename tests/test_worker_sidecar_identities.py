@@ -23,10 +23,13 @@ def _database_with_sidecars(tmp_path: Path) -> Path:
 
 
 def _replace_sidecars(database_path: Path) -> None:
+    replacements = []
     for suffix in _SIDECAR_SUFFIXES:
         sidecar_path = Path(f"{database_path}{suffix}")
         replacement_path = Path(f"{database_path}{suffix}.replacement")
         replacement_path.write_bytes(f"replacement {suffix}".encode())
+        replacements.append((replacement_path, sidecar_path))
+    for replacement_path, sidecar_path in replacements:
         os.replace(replacement_path, sidecar_path)
 
 
