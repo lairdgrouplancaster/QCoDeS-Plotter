@@ -1,23 +1,33 @@
 import csv
+import json
 import os
 import re
 import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import numpy as np
 import pytest
 import qcodes as qc
-from qcodes.dataset import initialise_or_create_database_at, load_by_id
+from qcodes.dataset import (
+    Measurement,
+    initialise_or_create_database_at,
+    load_by_id,
+    load_or_create_experiment,
+)
 from qcodes.dataset.measurements import DataSaver
 from qcodes.dataset.sqlite.connection import AtomicConnection
+from qcodes.parameters import ManualParameter
 
 from qplot import testdata as testdata_module
 from qplot.datahandling import readonly as readonly_module
 from qplot.datahandling.file_identity import (
     DATABASE_PUBLICATION_GUARD_SUFFIX,
+    QPLOT_GENERATION_LINEAGE_RING_TABLE,
+    QPLOT_GENERATION_LINEAGE_STATE_TABLE,
     database_file_identity,
     database_has_qplot_generation_marker,
 )
@@ -134,6 +144,121 @@ def qplot_run_name(database_path):
         return connection.execute("SELECT name FROM runs").fetchone()[0]
     finally:
         connection.close()
+
+
+def qplot_result_values(database_path, table_name, parameter_name):
+    quoted_table = testdata_module._quote_sqlite_identifier(table_name)
+    quoted_parameter = testdata_module._quote_sqlite_identifier(parameter_name)
+    connection = qcodes_read_only_connection(database_path)
+    try:
+        return [
+            row[0]
+            for row in connection.execute(
+                f"SELECT {quoted_parameter} FROM {quoted_table} ORDER BY id"
+            ).fetchall()
+        ]
+    finally:
+        connection.close()
+
+
+def child_process_qplot_result_values(database_path, table_name, parameter_name):
+    child_script = "\n".join(
+        (
+            "import json",
+            "import sys",
+            "from qplot.datahandling.readonly import qcodes_read_only_connection",
+            "database_path, table_name, parameter_name = sys.argv[1:]",
+            "quote = lambda value: '\"' + value.replace('\"', '\"\"') + '\"'",
+            "connection = qcodes_read_only_connection(database_path)",
+            "try:",
+            "    rows = connection.execute(",
+            "        f'SELECT {quote(parameter_name)} FROM {quote(table_name)} '",
+            "        'ORDER BY id'",
+            "    ).fetchall()",
+            "    print(json.dumps([row[0] for row in rows]))",
+            "finally:",
+            "    connection.close()",
+        )
+    )
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            child_script,
+            str(database_path),
+            table_name,
+            parameter_name,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return json.loads(child.stdout)
+
+
+def future_qcodes_measurement(experiment, name):
+    setpoint = ManualParameter(f"{name}_setpoint")
+    signal = ManualParameter(f"{name}_signal")
+    measurement = Measurement(exp=experiment, name=name)
+    measurement.register_parameter(setpoint)
+    measurement.register_parameter(signal, setpoints=(setpoint,))
+    return measurement, setpoint, signal
+
+
+def add_and_flush_result(datasaver, setpoint, signal, value):
+    datasaver.add_result((setpoint, value), (signal, value * 10.0))
+    datasaver.flush_data_to_database(block=True)
+
+
+def replace_generation_triggers_with_legacy_numeric_format(connection):
+    trigger_names = [
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema "
+            "WHERE type = 'trigger' AND name LIKE 'qplot_provenance_%'"
+        ).fetchall()
+    ]
+    for trigger_name in trigger_names:
+        connection.execute(
+            f"DROP TRIGGER {testdata_module._quote_sqlite_identifier(trigger_name)}"
+        )
+
+    for lineage_table in (
+        QPLOT_GENERATION_LINEAGE_STATE_TABLE,
+        QPLOT_GENERATION_LINEAGE_RING_TABLE,
+    ):
+        connection.execute(
+            f"DROP TABLE {testdata_module._quote_sqlite_identifier(lineage_table)}"
+        )
+
+    table_names = [
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema "
+            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+            "AND name != 'qplot_generation_provenance' ORDER BY name"
+        ).fetchall()
+    ]
+    legacy_names = []
+    provenance_table = testdata_module._quote_sqlite_identifier(
+        "qplot_generation_provenance"
+    )
+    for table_number, table_name in enumerate(table_names):
+        quoted_table = testdata_module._quote_sqlite_identifier(table_name)
+        for operation in ("INSERT", "UPDATE", "DELETE"):
+            trigger_name = (
+                f"qplot_provenance_{table_number}_{operation.lower()}"
+            )
+            legacy_names.append(trigger_name)
+            quoted_trigger = testdata_module._quote_sqlite_identifier(trigger_name)
+            connection.execute(
+                f"CREATE TRIGGER {quoted_trigger} AFTER {operation} "
+                f"ON {quoted_table} BEGIN UPDATE {provenance_table} "
+                "SET write_epoch = write_epoch + 1 WHERE singleton = 1; END"
+            )
+    connection.commit()
+    return tuple(legacy_names)
 
 
 def create_hot_rollback_journal(database_path):
@@ -1595,6 +1720,534 @@ def test_later_legitimate_wal_commit_is_visible_without_source_changes(
             timeout=30,
         )
         assert child.stdout.strip() == "LEGITIMATE_LATER_COMMIT"
+        assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_enabled_writer_proves_future_qcodes_result_after_checkpoint_and_restart(
+    tmp_path,
+):
+    database_path = tmp_path / "future-result.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        assert (
+            testdata_module.enable_generation_provenance_for_writer(writer)
+            is writer
+        )
+        experiment = load_or_create_experiment(
+            "future_result",
+            sample_name="writer_provenance",
+            conn=writer,
+        )
+        assert experiment.conn is writer
+        measurement, setpoint, signal = future_qcodes_measurement(
+            experiment,
+            "future_result_run",
+        )
+
+        with measurement.run(write_in_background=False) as datasaver:
+            table_name = datasaver.dataset.table_name
+            add_and_flush_result(datasaver, setpoint, signal, 1.0)
+            assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (
+                0,
+                0,
+                0,
+            )
+            add_and_flush_result(datasaver, setpoint, signal, 2.0)
+
+            source_before = complete_artifact_state(database_path)
+            assert source_before[""] is not None
+            assert source_before["-wal"] is not None
+            assert source_before["-wal"][3] > 0
+            assert source_before["-shm"] is not None
+            assert source_before["-journal"] is None
+            assert qplot_result_values(
+                database_path,
+                table_name,
+                signal.name,
+            ) == [10.0, 20.0]
+            assert complete_artifact_state(database_path) == source_before
+            assert child_process_qplot_result_values(
+                database_path,
+                table_name,
+                signal.name,
+            ) == [10.0, 20.0]
+            assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_enabled_writer_covers_background_future_table_after_checkpoint(
+    tmp_path,
+):
+    database_path = tmp_path / "background-future-result.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        testdata_module.enable_generation_provenance_for_writer(writer)
+        experiment = load_or_create_experiment(
+            "background_future_result",
+            sample_name="writer_provenance",
+            conn=writer,
+        )
+        measurement, setpoint, signal = future_qcodes_measurement(
+            experiment,
+            "background_future_result_run",
+        )
+
+        with measurement.run(write_in_background=True) as datasaver:
+            table_name = datasaver.dataset.table_name
+            add_and_flush_result(datasaver, setpoint, signal, 1.0)
+            assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (
+                0,
+                0,
+                0,
+            )
+            add_and_flush_result(datasaver, setpoint, signal, 2.0)
+
+            source_before = complete_artifact_state(database_path)
+            assert source_before[""] is not None
+            assert source_before["-wal"] is not None
+            assert source_before["-wal"][3] > 0
+            assert source_before["-shm"] is not None
+            assert source_before["-journal"] is None
+            assert qplot_result_values(
+                database_path,
+                table_name,
+                signal.name,
+            ) == [10.0, 20.0]
+            assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_enabled_writer_tracks_multiple_future_tables_and_checkpoint_cycles(
+    tmp_path,
+):
+    database_path = tmp_path / "multiple-future-results.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        testdata_module.enable_generation_provenance_for_writer(writer)
+        experiment = load_or_create_experiment(
+            "multiple_future_results",
+            sample_name="writer_provenance",
+            conn=writer,
+        )
+        result_tables = []
+
+        for table_number in range(3):
+            measurement, setpoint, signal = future_qcodes_measurement(
+                experiment,
+                f"future_result_run_{table_number}",
+            )
+            with measurement.run(write_in_background=False) as datasaver:
+                table_name = datasaver.dataset.table_name
+                result_tables.append((table_name, signal.name))
+                add_and_flush_result(datasaver, setpoint, signal, 1.0)
+                for value in (2.0, 3.0):
+                    assert writer.execute(
+                        "PRAGMA wal_checkpoint(TRUNCATE)"
+                    ).fetchone() == (0, 0, 0)
+                    add_and_flush_result(datasaver, setpoint, signal, value)
+                    source_before = complete_artifact_state(database_path)
+                    assert qplot_result_values(
+                        database_path,
+                        table_name,
+                        signal.name,
+                    ) == [
+                        result * 10.0
+                        for result in range(1, int(value) + 1)
+                    ]
+                    assert complete_artifact_state(database_path) == source_before
+
+        source_before = complete_artifact_state(database_path)
+        assert source_before["-wal"] is not None
+        assert source_before["-wal"][3] > 0
+        assert source_before["-shm"] is not None
+        assert source_before["-journal"] is None
+        for table_name, parameter_name in result_tables:
+            assert qplot_result_values(
+                database_path,
+                table_name,
+                parameter_name,
+            ) == [10.0, 20.0, 30.0]
+        assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_uninstrumented_future_qcodes_result_wal_fails_closed_with_guidance(
+    tmp_path,
+):
+    database_path = tmp_path / "uninstrumented-future-result.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        experiment = load_or_create_experiment(
+            "uninstrumented_future_result",
+            sample_name="writer_provenance",
+            conn=writer,
+        )
+        measurement, setpoint, signal = future_qcodes_measurement(
+            experiment,
+            "uninstrumented_future_result_run",
+        )
+
+        with measurement.run(write_in_background=False) as datasaver:
+            table_name = datasaver.dataset.table_name
+            add_and_flush_result(datasaver, setpoint, signal, 1.0)
+            assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (
+                0,
+                0,
+                0,
+            )
+            add_and_flush_result(datasaver, setpoint, signal, 2.0)
+
+            immutable = sqlite3.connect(
+                f"{database_path.resolve().as_uri()}?mode=ro&immutable=1",
+                uri=True,
+            )
+            try:
+                main_epoch = immutable.execute(
+                    "SELECT write_epoch FROM qplot_generation_provenance"
+                ).fetchone()[0]
+            finally:
+                immutable.close()
+            wal_epoch = writer.execute(
+                "SELECT write_epoch FROM qplot_generation_provenance"
+            ).fetchone()[0]
+            assert wal_epoch == main_epoch
+
+            source_before = complete_artifact_state(database_path)
+            with pytest.raises(
+                RuntimeError,
+                match="refuses to bless writes already present in a WAL",
+            ):
+                testdata_module.enable_generation_provenance_for_writer(writer)
+            assert complete_artifact_state(database_path) == source_before
+            with pytest.raises(UnverifiableDatabaseWalError) as error_info:
+                qplot_result_values(
+                    database_path,
+                    table_name,
+                    signal.name,
+                )
+            message = str(error_info.value)
+            assert "enable_generation_provenance_for_writer" in message
+            assert "checkpoint" in message.lower()
+            assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_later_provenance_commit_does_not_bless_earlier_uninstrumented_wal(
+    tmp_path,
+):
+    database_path = tmp_path / "uninstrumented-then-provenance.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        testdata_module.enable_generation_provenance_for_writer(writer)
+        assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (
+            0,
+            0,
+            0,
+        )
+
+        uninstrumented = sqlite3.connect(database_path)
+        try:
+            uninstrumented.execute(
+                "CREATE TABLE uninstrumented_results "
+                "(id INTEGER PRIMARY KEY, value TEXT)"
+            )
+            uninstrumented.execute(
+                "INSERT INTO uninstrumented_results(value) VALUES ('UNPROVEN')"
+            )
+            uninstrumented.commit()
+        finally:
+            uninstrumented.close()
+
+        before_later_commit = complete_artifact_state(database_path)
+        with pytest.raises(UnverifiableDatabaseWalError):
+            qplot_run_name(database_path)
+        assert complete_artifact_state(database_path) == before_later_commit
+
+        # The enabled owner now installs the missing table triggers and records
+        # a genuine lineage event.  That later event must not retroactively
+        # authenticate the preceding uninstrumented WAL transaction.
+        writer.execute("UPDATE runs SET name = name")
+        writer.commit()
+        assert writer.execute(
+            "SELECT value FROM uninstrumented_results"
+        ).fetchall() == [("UNPROVEN",)]
+
+        source_before = complete_artifact_state(database_path)
+        with pytest.raises(UnverifiableDatabaseWalError):
+            qplot_run_name(database_path)
+        assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_writer_enablement_locks_before_wal_quiescence_check(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "enablement-lock-order.db"
+    wal_path = Path(f"{database_path}-wal")
+    testdata_module.generate_database([small_specification()], database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    race_started = threading.Event()
+    race_finished = threading.Event()
+    competitor_outcome = []
+
+    def competing_writer():
+        if not race_started.wait(timeout=5):
+            competitor_outcome.append(("timeout", "enablement WAL check not reached"))
+            race_finished.set()
+            return
+        connection = sqlite3.connect(database_path, timeout=0.0)
+        try:
+            connection.execute(
+                "CREATE TABLE racing_uninstrumented "
+                "(id INTEGER PRIMARY KEY, value TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO racing_uninstrumented(value) VALUES ('RACED')"
+            )
+            connection.commit()
+            competitor_outcome.append(("committed", ""))
+        except sqlite3.OperationalError as error:
+            connection.rollback()
+            competitor_outcome.append(("error", str(error)))
+        finally:
+            connection.close()
+            race_finished.set()
+
+    competitor = threading.Thread(target=competing_writer, daemon=True)
+    try:
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (
+            0,
+            0,
+            0,
+        )
+
+        original_stat = Path.stat
+        coordinated = False
+
+        def stat_after_competing_write_attempt(path, *args, **kwargs):
+            nonlocal coordinated
+            result = original_stat(path, *args, **kwargs)
+            if path == wal_path and not coordinated:
+                coordinated = True
+                race_started.set()
+                assert race_finished.wait(timeout=5)
+            return result
+
+        monkeypatch.setattr(Path, "stat", stat_after_competing_write_attempt)
+        competitor.start()
+        testdata_module.enable_generation_provenance_for_writer(writer)
+        competitor.join(timeout=5)
+
+        assert coordinated
+        assert not competitor.is_alive()
+        assert len(competitor_outcome) == 1
+        outcome, detail = competitor_outcome[0]
+        assert outcome == "error"
+        assert "locked" in detail.lower()
+        assert writer.execute(
+            "SELECT name FROM sqlite_schema WHERE name = 'racing_uninstrumented'"
+        ).fetchone() is None
+
+        # A raw writer can still bypass the opt-in hook after enablement, but
+        # its uninstrumented new table must make the resulting WAL unverifiable.
+        uninstrumented = sqlite3.connect(database_path)
+        try:
+            uninstrumented.execute(
+                "CREATE TABLE post_enable_uninstrumented "
+                "(id INTEGER PRIMARY KEY, value TEXT)"
+            )
+            uninstrumented.execute(
+                "INSERT INTO post_enable_uninstrumented(value) VALUES ('RAW')"
+            )
+            uninstrumented.commit()
+        finally:
+            uninstrumented.close()
+
+        source_before = complete_artifact_state(database_path)
+        with pytest.raises(UnverifiableDatabaseWalError):
+            qplot_run_name(database_path)
+        assert complete_artifact_state(database_path) == source_before
+    finally:
+        race_started.set()
+        competitor.join(timeout=5)
+        writer.close()
+
+
+def test_writer_enablement_upgrades_legacy_numeric_provenance_triggers(tmp_path):
+    database_path = tmp_path / "legacy-writer-provenance.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        original_token = writer.execute(
+            "SELECT generation_token FROM qplot_generation_provenance"
+        ).fetchone()[0]
+        legacy_names = replace_generation_triggers_with_legacy_numeric_format(
+            writer
+        )
+        assert legacy_names
+        assert writer.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert writer.execute(
+            "PRAGMA table_info(qplot_generation_provenance)"
+        ).fetchall() == [
+            (0, "singleton", "INTEGER", 0, None, 1),
+            (1, "generation_token", "TEXT", 1, None, 0),
+            (2, "write_epoch", "INTEGER", 1, None, 0),
+        ]
+        assert {
+            row[0]
+            for row in writer.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'table'"
+            ).fetchall()
+        }.isdisjoint(
+            {
+                QPLOT_GENERATION_LINEAGE_STATE_TABLE,
+                QPLOT_GENERATION_LINEAGE_RING_TABLE,
+            }
+        )
+        assert {
+            row[0]
+            for row in writer.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'trigger'"
+            ).fetchall()
+        }.issuperset(legacy_names)
+
+        testdata_module.enable_generation_provenance_for_writer(writer)
+        migrated_token = writer.execute(
+            "SELECT generation_token FROM qplot_generation_provenance"
+        ).fetchone()[0]
+        assert migrated_token != original_token
+        experiment = load_or_create_experiment(
+            "legacy_future_result",
+            sample_name="writer_provenance",
+            conn=writer,
+        )
+        upgraded_names = {
+            row[0]
+            for row in writer.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'trigger'"
+            ).fetchall()
+        }
+        assert upgraded_names.isdisjoint(legacy_names)
+        assert any(
+            name.startswith(testdata_module._PROVENANCE_TRIGGER_PREFIX)
+            for name in upgraded_names
+        )
+        assert {
+            row[0]
+            for row in writer.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'table'"
+            ).fetchall()
+        }.issuperset(
+            {
+                QPLOT_GENERATION_LINEAGE_STATE_TABLE,
+                QPLOT_GENERATION_LINEAGE_RING_TABLE,
+            }
+        )
+
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        measurement, setpoint, signal = future_qcodes_measurement(
+            experiment,
+            "legacy_future_result_run",
+        )
+        with measurement.run(write_in_background=False) as datasaver:
+            table_name = datasaver.dataset.table_name
+            add_and_flush_result(datasaver, setpoint, signal, 1.0)
+            assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (
+                0,
+                0,
+                0,
+            )
+            add_and_flush_result(datasaver, setpoint, signal, 2.0)
+            source_before = complete_artifact_state(database_path)
+            assert qplot_result_values(
+                database_path,
+                table_name,
+                signal.name,
+            ) == [10.0, 20.0]
+            assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_legacy_main_only_is_readable_but_live_higher_epoch_wal_fails_closed(
+    tmp_path,
+):
+    database_path = tmp_path / "legacy-live-wal.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    fixture_writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        replace_generation_triggers_with_legacy_numeric_format(fixture_writer)
+    finally:
+        fixture_writer.close()
+
+    main_only_state = complete_artifact_state(database_path)
+    assert main_only_state[""] is not None
+    assert main_only_state["-wal"] is None
+    assert main_only_state["-shm"] is None
+    assert main_only_state["-journal"] is None
+    assert qplot_run_name(database_path) == "run_1"
+    assert complete_artifact_state(database_path) == main_only_state
+
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("UPDATE runs SET name = 'LEGACY_HIGHER_EPOCH_WAL'")
+        writer.commit()
+
+        immutable = sqlite3.connect(
+            f"{database_path.resolve().as_uri()}?mode=ro&immutable=1",
+            uri=True,
+        )
+        try:
+            assert immutable.execute("SELECT name FROM runs").fetchone()[0] == (
+                "run_1"
+            )
+            main_epoch = immutable.execute(
+                "SELECT write_epoch FROM qplot_generation_provenance"
+            ).fetchone()[0]
+        finally:
+            immutable.close()
+        assert writer.execute("SELECT name FROM runs").fetchone()[0] == (
+            "LEGACY_HIGHER_EPOCH_WAL"
+        )
+        wal_epoch = writer.execute(
+            "SELECT write_epoch FROM qplot_generation_provenance"
+        ).fetchone()[0]
+        assert wal_epoch > main_epoch
+
+        source_before = complete_artifact_state(database_path)
+        with pytest.raises(UnverifiableDatabaseWalError) as error_info:
+            qplot_run_name(database_path)
+        message = str(error_info.value)
+        assert "older qPlot" in message
+        assert "enable_generation_provenance_for_writer" in message
         assert complete_artifact_state(database_path) == source_before
     finally:
         writer.close()

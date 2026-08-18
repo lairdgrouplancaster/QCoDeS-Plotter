@@ -197,25 +197,46 @@ frames cannot be paired reliably and raises `UnverifiableDatabaseWalError`. A
 stably observed zero-byte WAL has no frames to associate and is omitted from
 the private view.
 
-Generated databases provide the missing provenance explicitly. qPlot compares
-the unique generation token in a private main-only view with the token in the
-private main-and-WAL view and requires the latter's write epoch to advance
-before accepting the WAL. Generation installs deterministic triggers on every
-initial table. SQLite has no database-wide DML or DDL trigger, so a future
-QCoDeS writer must explicitly call
-`enable_generation_provenance_for_writer()` before creating a measurement. Its
-outer-commit hook discovers new tables and installs their triggers in the same
-creation transaction. This persists coverage for foreground and background
-writes without any viewer-side migration.
+Generated databases provide the missing provenance explicitly. Alongside the
+unique generation token they store a bounded ring of 256-bit nonce events;
+each event names its parent and the singleton state records the exact chain
+head. On private copies qPlot requires the combined main-and-WAL head to be a
+strict, contiguous descendant of the main-only head. A divergent clone can
+carry the same token and a numerically higher epoch, but it cannot reproduce
+the selected branch's random head, so it is rejected. The 65,536-event ring
+bounds storage; exceeding the retained proof window fails closed with owner
+checkpoint guidance.
+
+qPlot also checksum-scans the valid committed prefix of the private WAL and
+requires every committed transaction to contain the lineage-state root page.
+This prevents a later instrumented commit from retroactively authenticating an
+earlier uninstrumented transaction in the same WAL. Invalid or unsupported WAL
+structure and any commit without that page fail closed; parsing and SQLite
+recovery still occur only on private copies.
+
+Generation installs deterministic lineage triggers on every initial table.
+SQLite has no database-wide DML or DDL trigger, so a future QCoDeS writer must
+explicitly call `enable_generation_provenance_for_writer()` on a quiescent
+`AtomicConnection` before any new experiment or measurement writes. Its
+outer-commit hook discovers new tables, installs their triggers, and records a
+lineage event in the same creation transaction. Persisted row triggers cover
+foreground and background result connections. The hook refuses a nonempty WAL
+so it cannot retroactively authenticate frames written before coverage. It
+acquires SQLite's writer lock before checking WAL quiescence, closing the race
+with a concurrent writer. None of this migration or trigger work occurs in the
+viewer.
 
 An equal-epoch result-page WAL cannot be authenticated after the fact. Its WAL
 frame contains neither the generation token nor a reciprocal main-file
 identifier; an independent database can produce the same page transition.
 Append-only checks, integrity checks, root-page ownership, and successful
 SQLite replay are therefore not substituted for provenance. Such a state fails
-closed with owner-checkpoint and writer-integration guidance. Older generated
-databases remain readable when their existing triggers advance the epoch, and
-an owner can explicitly add current trigger coverage through the writer hook.
+closed with owner-checkpoint and writer-integration guidance. A main-only older
+generated database remains readable, but its epoch-only live WAL cannot prove
+branch ancestry and is rejected. On a quiescent rollback-journal owner
+connection the writer hook can explicitly migrate that database, rotate its
+token, seed a fresh chain root, and install current triggers. The viewer never
+performs that migration.
 
 Process-local replacement quarantine is negative safety evidence only: it can
 prevent an unpaired WAL from being consumed after an observed main-file

@@ -1,5 +1,6 @@
 """Stable paths and identities for databases that may be replaced."""
 
+import hashlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,8 +15,67 @@ DATABASE_PUBLICATION_GUARD_SUFFIX = ".qplot-publishing"
 QPLOT_GENERATED_DATABASE_APPLICATION_ID = 0x51504C54
 QPLOT_GENERATION_PROVENANCE_TABLE = "qplot_generation_provenance"
 QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES = 32
+QPLOT_GENERATION_LINEAGE_STATE_TABLE = "qplot_generation_lineage_state"
+QPLOT_GENERATION_LINEAGE_RING_TABLE = "qplot_generation_lineage_ring"
+QPLOT_GENERATION_LINEAGE_FORMAT_VERSION = 2
+QPLOT_GENERATION_LINEAGE_NONCE_BYTES = 32
+QPLOT_GENERATION_LINEAGE_WINDOW = 65_536
+QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX = "qplot_provenance_v2_"
 _SQLITE_APPLICATION_ID_OFFSET = 68
 SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
+def _quote_sqlite_identifier(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def generation_lineage_transition_statements() -> tuple[str, str, str]:
+    """Return the statements for one bounded, nonce-linked lineage event."""
+    provenance = _quote_sqlite_identifier(QPLOT_GENERATION_PROVENANCE_TABLE)
+    state = _quote_sqlite_identifier(QPLOT_GENERATION_LINEAGE_STATE_TABLE)
+    ring = _quote_sqlite_identifier(QPLOT_GENERATION_LINEAGE_RING_TABLE)
+    insert_event = (
+        f"INSERT OR REPLACE INTO {ring} "
+        "(slot, sequence, parent_nonce, nonce) "
+        f"SELECT (head_sequence + 1) % {QPLOT_GENERATION_LINEAGE_WINDOW}, "
+        f"head_sequence + 1, head_nonce, "
+        f"randomblob({QPLOT_GENERATION_LINEAGE_NONCE_BYTES}) "
+        f"FROM {state} WHERE singleton = 1"
+    )
+    update_head = (
+        f"UPDATE {state} SET "
+        "head_sequence = head_sequence + 1, "
+        f"head_nonce = (SELECT nonce FROM {ring} "
+        f"WHERE sequence = {state}.head_sequence + 1) "
+        "WHERE singleton = 1"
+    )
+    update_legacy_epoch = (
+        f"UPDATE {provenance} SET write_epoch = "
+        f"(SELECT head_sequence FROM {state} WHERE singleton = 1) "
+        "WHERE singleton = 1"
+    )
+    return insert_event, update_head, update_legacy_epoch
+
+
+def generation_provenance_trigger(
+        table_name: str,
+        operation: str,
+        ) -> tuple[str, str]:
+    """Return the stable name and exact SQL for one lineage trigger."""
+    table_digest = hashlib.sha256(
+        table_name.encode("utf-8", errors="surrogatepass")
+    ).hexdigest()
+    trigger_name = (
+        f"{QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX}"
+        f"{table_digest}_{operation.lower()}"
+    )
+    statements = "; ".join(generation_lineage_transition_statements())
+    statement = (
+        f"CREATE TRIGGER {_quote_sqlite_identifier(trigger_name)} "
+        f"AFTER {operation} ON {_quote_sqlite_identifier(table_name)} "
+        f"BEGIN {statements}; END"
+    )
+    return trigger_name, statement
 
 
 def logical_database_path(database_path: str | os.PathLike[str]) -> str:

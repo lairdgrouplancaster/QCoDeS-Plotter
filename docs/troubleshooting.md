@@ -140,22 +140,35 @@ or writer to checkpoint it before retrying. Do not remove a live WAL manually.
 qPlot never checkpoints or changes the source database, `-wal`, `-shm`, or
 `-journal` file.
 
-WALs for qPlot-generated test databases can remain readable while live because
-those databases contain a unique generation token and an advancing write epoch.
-qPlot validates both on a private copy. A generated WAL with missing, different,
-or non-advancing provenance is rejected by the same fail-closed policy. A writer
-that changes an otherwise trusted main or WAL throughout every snapshot attempt
-can also make the database temporarily unavailable; wait for a pause and retry.
+WALs for current qPlot-generated test databases can remain readable while live
+because they contain a unique generation token and a parent-linked random
+lineage chain. On private copies qPlot proves that the WAL head strictly
+descends from the exact main head and that every committed WAL transaction
+carries the lineage-state page. A different token, equal head, missing event,
+divergent clone, malformed WAL, or exhausted proof window is rejected by the
+same fail-closed policy. A writer that changes an otherwise trusted main or WAL
+throughout every snapshot attempt can also make the database temporarily
+unavailable; wait for a pause and retry.
 
-QCoDeS creates a new SQLite result table for each later measurement. Before
-creating such a `Measurement`, call
-`qplot.testdata.enable_generation_provenance_for_writer(experiment.conn)` on
-the owner application's writable QCoDeS connection. This installs coverage for
-the new table in its creation transaction, including when results will later be
-written in the background. If this was not enabled before the run and qPlot
-reports a non-advancing epoch, use the owning writer to checkpoint the WAL and
-enable the hook before the next measurement. qPlot cannot safely repair or
-upgrade that provenance while viewing the input.
+QCoDeS creates a new SQLite result table for each later measurement. Before any
+new experiment or measurement writes, call
+`qplot.testdata.enable_generation_provenance_for_writer(connection)` on the
+owner application's quiescent writable QCoDeS `AtomicConnection`. This installs
+coverage for the new table in its creation transaction, including when results
+will later be written in the background. The hook refuses a nonempty WAL so it
+cannot bless earlier uninstrumented frames. Use the owning writer to checkpoint
+that WAL with `TRUNCATE`, then enable the hook before the next measurement. The
+hook takes SQLite's writer lock before checking WAL quiescence, so concurrent
+writes cannot race that check. qPlot cannot safely repair or upgrade provenance
+while viewing the input.
+
+Older epoch-only generated databases remain readable without a live WAL. Their
+live WALs fail closed because an epoch cannot prove branch ancestry. To migrate,
+first make the owner database quiescent in rollback-journal mode, then call the
+writer hook; it rotates the token and seeds the current lineage format. If more
+than 65,536 lineage events accumulate after the main's last checkpoint, the
+retained proof window is exhausted and the owner must checkpoint before qPlot
+can safely accept another live WAL.
 
 For a rollback-format database, qPlot uses normal SQLite read-only locking while
 the database is quiescent. If a `-journal` is present, qPlot captures the main

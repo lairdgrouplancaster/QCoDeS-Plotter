@@ -26,15 +26,19 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ### Fixed
 
-- Keep WAL provenance advancing when provenance-aware QCoDeS writers create
-  later result tables, including across repeated checkpoints and fresh qPlot
-  processes. Equal-epoch WALs from uninstrumented writers remain fail-closed
-  because SQLite cannot bind those result-only frames to a main database.
+- Bind generated-database WAL provenance to the exact checkpointed branch with
+  a bounded parent-linked nonce chain. Provenance-aware QCoDeS writers cover
+  later result tables, background writes, repeated checkpoints, and fresh qPlot
+  processes, while equal-lineage WALs and higher-counter divergent clone WALs
+  remain fail-closed. Every committed private-WAL transaction must carry its
+  lineage-state page, so a later valid commit cannot bless earlier unknown
+  frames, and writer enablement checks WAL quiescence while holding the SQLite
+  writer lock.
 - Refuse a first-observed nonempty ordinary SQLite WAL when its association
   with the selected QCoDeS main database cannot be proved. qPlot-generated
-  databases remain readable with a live WAL when their lineage token and write
-  epoch match; all inspection and recovery stays on private copies without
-  checkpointing or changing input files.
+  databases remain readable with a live WAL only when its retained chain
+  descends from the selected main; all inspection and recovery stays on private
+  copies without checkpointing or changing input files.
 
 ## 1.5.1-b2 - 2026-08-13
 

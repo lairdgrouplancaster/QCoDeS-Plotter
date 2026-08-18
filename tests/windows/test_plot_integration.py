@@ -21,6 +21,7 @@ from qcodes.dataset import (
     load_by_id,
     load_or_create_experiment,
 )
+from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
 
 import qplot.tools.worker as worker_module
@@ -44,6 +45,7 @@ from qplot.testdata import (
     CSV_COLUMNS,
     GenerationCancelled,
     RunSpecification,
+    enable_generation_provenance_for_writer,
     generate_database,
 )
 from qplot.windows import _database_actions as database_actions_module
@@ -1217,7 +1219,13 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
     database_path = Path(tmp_path) / "live-wal.db"
     prepare_generated_database_for_live_writes(database_path)
     initialise_or_create_database_at(str(database_path), journal_mode="WAL")
-    experiment = load_or_create_experiment("live_wal", sample_name="same_instance")
+    writer_connection = connect(database_path)
+    enable_generation_provenance_for_writer(writer_connection)
+    experiment = load_or_create_experiment(
+        "live_wal",
+        sample_name="same_instance",
+        conn=writer_connection,
+    )
     gate = ManualParameter("gate")
     signal = ManualParameter("signal")
     measurement = Measurement(exp=experiment, name="live_wal")
@@ -1231,6 +1239,7 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
         guid = datasaver.dataset.guid
 
         window = main_window.MainWindow()
+        original_load_file = window.load_file
         try:
             window.startupDatabaseTimer.stop()
             window.monitor.stop()
@@ -1264,8 +1273,6 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             assert database_file_identity(database_path) == loaded_identity
 
             replacement_loads = []
-            original_load_file = window.load_file
-
             def record_load(*args, **kwargs):
                 replacement_loads.append((args, kwargs))
                 return original_load_file(*args, **kwargs)
@@ -1307,9 +1314,12 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
     run_export_path = export_directory / "run-preview.csv"
     prepare_generated_database_for_live_writes(database_path)
     initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+    writer_connection = connect(database_path)
+    enable_generation_provenance_for_writer(writer_connection)
     experiment = load_or_create_experiment(
         "live_preview_export",
         sample_name="same_instance",
+        conn=writer_connection,
     )
     gate = ManualParameter("gate")
     signal = ManualParameter("signal")
@@ -2554,11 +2564,15 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
 
     def write_measurement():
         writer_dataset = None
+        writer_connection = None
         try:
             initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+            writer_connection = connect(database_path)
+            enable_generation_provenance_for_writer(writer_connection)
             experiment = load_or_create_experiment(
                 "threaded_live_run",
                 sample_name="completion_race",
+                conn=writer_connection,
                 )
             gate = ManualParameter("gate")
             signal_a = ManualParameter("signal_a")
@@ -2597,8 +2611,8 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
             initial_row_written.set()
             writer_completed.set()
         finally:
-            if writer_dataset is not None:
-                writer_dataset.conn.close()
+            if writer_connection is not None:
+                writer_connection.close()
 
     writer_thread = threading.Thread(target=write_measurement)
     writer_thread.start()
@@ -2931,11 +2945,15 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
 
     def write_measurement():
         writer_dataset = None
+        writer_connection = None
         try:
             initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+            writer_connection = connect(database_path)
+            enable_generation_provenance_for_writer(writer_connection)
             experiment = load_or_create_experiment(
                 "threaded_live_heatmap",
                 sample_name="direct_sql_completion",
+                conn=writer_connection,
                 )
             x_param = ManualParameter("x_param")
             y_param = ManualParameter("y_param")
@@ -2974,8 +2992,8 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
             initial_row_written.set()
             writer_completed.set()
         finally:
-            if writer_dataset is not None:
-                writer_dataset.conn.close()
+            if writer_connection is not None:
+                writer_connection.close()
 
     writer_thread = threading.Thread(target=write_measurement)
     writer_thread.start()

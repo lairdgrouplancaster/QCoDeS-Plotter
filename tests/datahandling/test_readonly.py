@@ -484,9 +484,11 @@ def _install_test_generation_provenance(database_path):
 
 
 def _open_active_wal(database_path):
-    writer = sqlite3.connect(database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    testdata_module.enable_generation_provenance_for_writer(writer)
     assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
     writer.execute("PRAGMA wal_autocheckpoint = 0")
+    writer.execute("BEGIN IMMEDIATE")
     writer.execute("CREATE TABLE qplot_wal_marker (value INTEGER)")
     writer.execute("INSERT INTO qplot_wal_marker VALUES (1)")
     writer.execute("UPDATE runs SET name = name")
@@ -626,6 +628,7 @@ def test_missing_result_table_closes_non_owning_dataset_connection(
         run_id, guid, table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         escaped_table_name = table_name.replace('"', '""')
+        writer.execute("BEGIN IMMEDIATE")
         writer.execute(f'DROP TABLE "{escaped_table_name}"')
         writer.commit()
         source_state = _directory_state(tmp_path)
@@ -699,6 +702,7 @@ def test_repeated_in_memory_loads_release_connections_and_wal_snapshots(
         run_id, guid, table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         escaped_table_name = table_name.replace('"', '""')
+        writer.execute("BEGIN IMMEDIATE")
         writer.execute(f'DROP TABLE "{escaped_table_name}"')
         writer.commit()
         source_state = _directory_state(tmp_path)
@@ -955,10 +959,19 @@ def test_provenance_marked_live_wal_refreshes_see_new_rows_without_source_change
 ):
     database_path = tmp_path / "live.db"
     original_database_path = qcodes.config.core.db_location
+    writer = None
     try:
         initialise_or_create_database_at(database_path)
         _install_test_generation_provenance(database_path)
-        experiment = load_or_create_experiment("live_wal", sample_name="wal")
+        writer = testdata_module._connect_writable_exact_path(database_path)
+        testdata_module.enable_generation_provenance_for_writer(writer)
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        experiment = load_or_create_experiment(
+            "live_wal",
+            sample_name="wal",
+            conn=writer,
+        )
         setpoint = ManualParameter("live_setpoint")
         signal = ManualParameter("live_signal")
         measurement = Measurement(exp=experiment, name="live_wal_run")
@@ -1057,6 +1070,8 @@ def test_provenance_marked_live_wal_refreshes_see_new_rows_without_source_change
         dataset.conn.close()
         experiment.conn.close()
     finally:
+        if writer is not None:
+            writer.close()
         qcodes.config.core.db_location = original_database_path
 
 

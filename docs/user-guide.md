@@ -52,30 +52,49 @@ header and a zero-length TRUNCATE journal are accepted normally; neither blocks
 a valid database or causes qPlot to alter the source artifact.
 
 Generated test databases carry explicit provenance that ordinary SQLite files
-lack: a unique lineage token and a write epoch. qPlot copies a candidate main
-and WAL to a private system-temporary directory, checks that the source did not
-change during capture, and accepts the WAL only when the private combined view
-has the same token and a later epoch. The source `-shm` is not opened by qPlot,
-and private snapshot files are removed when their connection closes.
+lack: a unique generation token and a bounded chain of random, parent-linked
+lineage events. qPlot copies a candidate main and WAL to a private
+system-temporary directory, checks that the source did not change during
+capture, and accepts the WAL only when its chain is a strict descendant of the
+exact main-file chain head. A higher counter from a divergent clone is not
+enough. The source `-shm` is not opened by qPlot, and private snapshot files are
+removed when their connection closes.
+
+The private WAL checksum scan also requires every committed transaction to
+carry the lineage-state page. A later valid provenance commit therefore cannot
+bless earlier uninstrumented frames. If the valid WAL prefix is malformed or a
+transaction has no lineage event, qPlot fails closed with checkpoint guidance.
 
 SQLite has no persistent database-wide write trigger. If a QCoDeS script will
 add new measurements to a generated database, enable qPlot provenance on the
 writer's QCoDeS connection before creating the `Measurement`:
 
 ```python
+from qcodes.dataset import load_or_create_experiment
+from qcodes.dataset.sqlite.database import connect
 from qplot.testdata import enable_generation_provenance_for_writer
 
-experiment = load_or_create_experiment("later runs", "sample")
-enable_generation_provenance_for_writer(experiment.conn)
+connection = connect(database_path)
+enable_generation_provenance_for_writer(connection)
+experiment = load_or_create_experiment("later runs", "sample", conn=connection)
 measurement = Measurement(exp=experiment)
 ```
 
 The writer hook installs provenance triggers for each newly created result
 table before the same QCoDeS transaction commits. Later foreground and
-background result writes then advance the durable epoch across checkpoints. It
-is an explicit writer operation; the qPlot viewer never calls it. A WAL already
-written by an uninstrumented connection cannot be proven after the fact and is
-rejected with instructions to checkpoint it using its owning writer.
+background result writes then extend the durable ancestry chain across
+checkpoints. Call the hook on a quiescent `AtomicConnection`, before any new
+experiment or measurement writes. It refuses a nonempty WAL so it cannot
+retroactively bless unknown frames. Checkpoint such a WAL with `TRUNCATE` on
+the owning writer first. Enablement holds SQLite's writer lock while checking
+that quiescent state, so a concurrent writer cannot slip frames between the
+check and the first lineage event. This is an explicit writer operation; the
+qPlot viewer never calls it.
+
+The retained chain covers 65,536 lineage events between checkpoints. If a very
+large uncheckpointed write overwrites that proof window, qPlot fails closed and
+asks the owner to checkpoint rather than inferring ancestry from filenames,
+timestamps, or successful SQLite replay.
 
 Process-local replacement history remains a separate safety mechanism. It can
 identify that a WAL is unpaired with a main file that replaced one qPlot had

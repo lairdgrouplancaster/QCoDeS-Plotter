@@ -1,6 +1,7 @@
 import os
 import shutil
 import sqlite3
+import struct
 import tempfile
 import threading
 import weakref
@@ -13,12 +14,18 @@ from qcodes.dataset.sqlite.database import connect, get_DB_debug, get_DB_locatio
 
 from qplot.datahandling.file_identity import (
     QPLOT_GENERATED_DATABASE_APPLICATION_ID,
+    QPLOT_GENERATION_LINEAGE_FORMAT_VERSION,
+    QPLOT_GENERATION_LINEAGE_NONCE_BYTES,
+    QPLOT_GENERATION_LINEAGE_RING_TABLE,
+    QPLOT_GENERATION_LINEAGE_STATE_TABLE,
+    QPLOT_GENERATION_LINEAGE_WINDOW,
     QPLOT_GENERATION_PROVENANCE_TABLE,
     QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES,
     DatabaseFileIdentity,
     database_file_identity,
     database_has_qplot_generation_marker,
     database_publication_guard_path,
+    generation_provenance_trigger,
 )
 from qplot.datahandling.qcodes_compat import result_owns_supplied_connection
 
@@ -26,6 +33,11 @@ SQLITE_READ_ONLY_CACHE_KIB = 16 * 1024
 WAL_SNAPSHOT_ATTEMPTS = 5
 _ROLLBACK_JOURNAL_MAGIC = b"\xd9\xd5\x05\xf9 \xa1c\xd7"
 _ROLLBACK_JOURNAL_PREFIX_BYTES = 4096
+_WAL_HEADER_BYTES = 32
+_WAL_FRAME_HEADER_BYTES = 24
+_WAL_FORMAT_VERSION = 3_007_000
+_WAL_MAGIC_LITTLE_ENDIAN_CHECKSUMS = 0x377F0682
+_WAL_MAGIC_BIG_ENDIAN_CHECKSUMS = 0x377F0683
 _DATABASE_INSTANCE_REGISTRY: dict[
     Path,
     tuple[DatabaseFileIdentity | None, bool],
@@ -107,8 +119,8 @@ def quarantine_wal_for_replaced_database(database_path):
     detected, qPlot captures a private main-only view while the retained
     sidecar is unpaired. A sidecar can vanish and later be recreated by the old
     writer, so a transient absence is not enough to prove a later WAL belongs
-    to the replacement. A generated database's matching lineage token and
-    advanced write epoch can establish that a later WAL was written from the
+    to the replacement. A generated database's matching token and nonce-linked
+    history can establish that a later WAL strictly descends from the
     replacement and release this quarantine. qPlot never changes the source
     database or any sidecar to make that happen.
 
@@ -685,15 +697,225 @@ def _generation_provenance(connection):
     return row
 
 
+def _generation_lineage_state(connection):
+    """Read and structurally validate the branch-bound provenance head."""
+    state = connection.execute(
+        f"SELECT singleton, format_version, generation_token, head_sequence, "
+        f"head_nonce, window_size FROM {QPLOT_GENERATION_LINEAGE_STATE_TABLE}"
+    ).fetchall()
+    if len(state) != 1:
+        raise ValueError("invalid qPlot generation lineage state")
+    singleton, version, token, sequence, nonce, window = state[0]
+    tip = connection.execute(
+        f"SELECT slot, parent_nonce, nonce FROM "
+        f"{QPLOT_GENERATION_LINEAGE_RING_TABLE} WHERE sequence = ?",
+        (sequence,),
+    ).fetchone()
+    if (
+            singleton != 1
+            or version != QPLOT_GENERATION_LINEAGE_FORMAT_VERSION
+            or not isinstance(token, str)
+            or not isinstance(sequence, int)
+            or sequence < 0
+            or not isinstance(nonce, bytes)
+            or len(nonce) != QPLOT_GENERATION_LINEAGE_NONCE_BYTES
+            or window != QPLOT_GENERATION_LINEAGE_WINDOW
+            or tip is None
+            or tip[0] != sequence % QPLOT_GENERATION_LINEAGE_WINDOW
+            or tip[2] != nonce
+            ):
+        raise ValueError("invalid qPlot generation lineage state")
+    return token, sequence, nonce, window
+
+
+def _wal_checksum(data, byte_order, state=(0, 0)):
+    """Return SQLite's cumulative two-word WAL checksum."""
+    if len(data) % 8:
+        raise ValueError("invalid WAL checksum input length")
+    checksum_0, checksum_1 = state
+    for word_0, word_1 in struct.iter_unpack(f"{byte_order}II", data):
+        checksum_0 = (checksum_0 + word_0 + checksum_1) & 0xFFFFFFFF
+        checksum_1 = (checksum_1 + word_1 + checksum_0) & 0xFFFFFFFF
+    return checksum_0, checksum_1
+
+
+def _committed_wal_transaction_pages(wal_path):
+    """Return page sets for SQLite's valid committed private-WAL prefix.
+
+    WAL files can retain invalid frames from an earlier checkpoint cycle.  The
+    checksum scan mirrors SQLite recovery: it stops at the first invalid frame
+    and ignores valid but uncommitted tail frames after the last commit marker.
+    """
+    with open(wal_path, "rb") as wal_file:
+        header = wal_file.read(_WAL_HEADER_BYTES)
+        if len(header) != _WAL_HEADER_BYTES:
+            raise ValueError("missing or truncated WAL header")
+        magic = int.from_bytes(header[:4], "big")
+        if magic == _WAL_MAGIC_LITTLE_ENDIAN_CHECKSUMS:
+            checksum_byte_order = "<"
+        elif magic == _WAL_MAGIC_BIG_ENDIAN_CHECKSUMS:
+            checksum_byte_order = ">"
+        else:
+            raise ValueError("invalid WAL magic")
+        if int.from_bytes(header[4:8], "big") != _WAL_FORMAT_VERSION:
+            raise ValueError("unsupported WAL format")
+        page_size = int.from_bytes(header[8:12], "big")
+        if (
+                page_size < 512
+                or page_size > 65_536
+                or page_size & (page_size - 1)
+                ):
+            raise ValueError("invalid WAL page size")
+        checksum = _wal_checksum(header[:24], checksum_byte_order)
+        stored_header_checksum = (
+            int.from_bytes(header[24:28], "big"),
+            int.from_bytes(header[28:32], "big"),
+        )
+        if checksum != stored_header_checksum:
+            raise ValueError("invalid WAL header checksum")
+
+        salts = header[16:24]
+        current_transaction_pages = set()
+        committed_transactions = []
+        while True:
+            frame_header = wal_file.read(_WAL_FRAME_HEADER_BYTES)
+            if not frame_header:
+                break
+            if len(frame_header) != _WAL_FRAME_HEADER_BYTES:
+                break
+            page = wal_file.read(page_size)
+            if len(page) != page_size or frame_header[8:16] != salts:
+                break
+            next_checksum = _wal_checksum(
+                frame_header[:8],
+                checksum_byte_order,
+                checksum,
+            )
+            next_checksum = _wal_checksum(
+                page,
+                checksum_byte_order,
+                next_checksum,
+            )
+            stored_frame_checksum = (
+                int.from_bytes(frame_header[16:20], "big"),
+                int.from_bytes(frame_header[20:24], "big"),
+            )
+            if next_checksum != stored_frame_checksum:
+                break
+            page_number = int.from_bytes(frame_header[:4], "big")
+            if page_number == 0:
+                break
+            checksum = next_checksum
+            current_transaction_pages.add(page_number)
+            if int.from_bytes(frame_header[4:8], "big"):
+                committed_transactions.append(
+                    frozenset(current_transaction_pages)
+                )
+                current_transaction_pages.clear()
+
+    if not committed_transactions:
+        raise ValueError("the WAL has no valid committed transaction")
+    return tuple(committed_transactions)
+
+
+def _lineage_state_root_page(connection):
+    rows = connection.execute(
+        "SELECT rootpage FROM sqlite_schema WHERE type = 'table' AND name = ?",
+        (QPLOT_GENERATION_LINEAGE_STATE_TABLE,),
+    ).fetchall()
+    if len(rows) != 1 or not isinstance(rows[0][0], int) or rows[0][0] <= 0:
+        raise ValueError("invalid qPlot generation lineage root page")
+    return rows[0][0]
+
+
+def _require_generation_lineage_trigger_inventory(connection):
+    """Require every current user table to carry the exact v2 trigger trio."""
+    excluded_tables = (
+        QPLOT_GENERATION_PROVENANCE_TABLE,
+        QPLOT_GENERATION_LINEAGE_STATE_TABLE,
+        QPLOT_GENERATION_LINEAGE_RING_TABLE,
+    )
+    table_names = [
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema "
+            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+            "AND name NOT IN (?, ?, ?) ORDER BY name",
+            excluded_tables,
+        ).fetchall()
+    ]
+    triggers = {
+        row[0]: (row[1], row[2])
+        for row in connection.execute(
+            "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'trigger'"
+        ).fetchall()
+    }
+    for table_name in table_names:
+        for operation in ("INSERT", "UPDATE", "DELETE"):
+            trigger_name, statement = generation_provenance_trigger(
+                table_name,
+                operation,
+            )
+            if triggers.get(trigger_name) != (table_name, statement):
+                raise ValueError(
+                    f"missing or invalid lineage trigger for {table_name!r}"
+                )
+
+
+def _require_generation_lineage_descendant(
+        connection,
+        main_sequence,
+        main_nonce,
+        snapshot_sequence,
+        snapshot_nonce,
+        window,
+        ):
+    """Prove the WAL head is linked directly to the selected main's head."""
+    transition_count = snapshot_sequence - main_sequence
+    if transition_count <= 0:
+        raise ValueError("non-advancing lineage")
+    if transition_count > window:
+        raise OverflowError("lineage proof window exceeded")
+    rows = connection.execute(
+        f"SELECT slot, sequence, parent_nonce, nonce FROM "
+        f"{QPLOT_GENERATION_LINEAGE_RING_TABLE} "
+        "WHERE sequence > ? AND sequence <= ? ORDER BY sequence",
+        (main_sequence, snapshot_sequence),
+    ).fetchall()
+    if len(rows) != transition_count:
+        raise ValueError("lineage branch has missing transitions")
+
+    expected_sequence = main_sequence + 1
+    expected_parent = main_nonce
+    for slot, sequence, parent_nonce, nonce in rows:
+        if (
+                sequence != expected_sequence
+                or slot != sequence % window
+                or parent_nonce != expected_parent
+                or not isinstance(nonce, bytes)
+                or len(nonce) != QPLOT_GENERATION_LINEAGE_NONCE_BYTES
+                ):
+            raise ValueError("lineage branch does not descend from the main")
+        expected_sequence += 1
+        expected_parent = nonce
+    if expected_parent != snapshot_nonce:
+        raise ValueError("lineage branch does not reach the WAL head")
+
+
 def _unverifiable_generated_wal_error(database_path, reason):
     writer_guidance = ""
-    if reason == "the WAL does not carry a later verified write epoch":
+    if (
+            "lineage event" in reason
+            or "older qPlot" in reason
+            or "proof window" in reason
+            ):
         writer_guidance = (
             " If the owner will create later QCoDeS runs, call "
             "qplot.testdata.enable_generation_provenance_for_writer on the "
-            "writable QCoDeS connection before creating the Measurement. "
-            "SQLite cannot prove an already-written equal-epoch WAL after "
-            "the fact."
+            "quiescent writable QCoDeS connection before creating the "
+            "Measurement. The writer API refuses to bless a nonempty WAL; "
+            "checkpoint it with TRUNCATE first. SQLite cannot prove an "
+            "already-written uninstrumented WAL after the fact."
         )
     return UnverifiableDatabaseWalError(
         f"qPlot cannot prove that {database_path}-wal belongs to the current "
@@ -723,23 +945,99 @@ def _require_matching_generated_wal_provenance(
         database_path,
         main_snapshot_path,
         snapshot_path,
+        committed_transactions=None,
         ):
     """Require a private WAL view to carry this generated main's lineage."""
     main_connection = None
     snapshot_connection = None
     try:
+        if committed_transactions is None:
+            committed_transactions = _committed_wal_transaction_pages(
+                _wal_path(snapshot_path)
+            )
         main_connection = sqlite3.connect(
             sqlite_read_only_uri(main_snapshot_path, immutable=True),
             uri=True,
         )
         main_provenance = _generation_provenance(main_connection)
+        main_lineage = _generation_lineage_state(main_connection)
+        main_lineage_root = _lineage_state_root_page(main_connection)
+        _require_generation_lineage_trigger_inventory(main_connection)
         snapshot_connection = sqlite3.connect(snapshot_path)
         snapshot_provenance = _generation_provenance(snapshot_connection)
+        snapshot_lineage = _generation_lineage_state(snapshot_connection)
+        snapshot_lineage_root = _lineage_state_root_page(snapshot_connection)
+        _require_generation_lineage_trigger_inventory(snapshot_connection)
     except (sqlite3.Error, ValueError) as error:
         raise _unverifiable_generated_wal_error(
             database_path,
-            "the lineage record is missing, invalid, or from an older qPlot",
+            "the lineage history or trigger coverage is missing, invalid, or "
+            "from an older qPlot",
         ) from error
+    else:
+        if (
+                snapshot_lineage_root != main_lineage_root
+                or any(
+                    main_lineage_root not in transaction_pages
+                    for transaction_pages in committed_transactions
+                )
+                ):
+            raise _unverifiable_generated_wal_error(
+                database_path,
+                "one or more WAL transactions carry no verified lineage event",
+            )
+        main_token, main_epoch = main_provenance
+        snapshot_token, snapshot_epoch = snapshot_provenance
+        main_lineage_token, main_sequence, main_nonce, main_window = main_lineage
+        (
+            snapshot_lineage_token,
+            snapshot_sequence,
+            snapshot_nonce,
+            snapshot_window,
+        ) = snapshot_lineage
+        if (
+                snapshot_token != main_token
+                or snapshot_lineage_token != main_lineage_token
+                or main_lineage_token != main_token
+                ):
+            raise _unverifiable_generated_wal_error(
+                database_path,
+                "the WAL carries a different generation token",
+            )
+        if main_epoch != main_sequence or snapshot_epoch != snapshot_sequence:
+            raise _unverifiable_generated_wal_error(
+                database_path,
+                "the lineage counters disagree with their branch heads",
+            )
+        if main_window != snapshot_window:
+            raise _unverifiable_generated_wal_error(
+                database_path,
+                "the WAL carries a different lineage proof window",
+            )
+        if snapshot_sequence <= main_sequence:
+            raise _unverifiable_generated_wal_error(
+                database_path,
+                "the WAL does not carry a later verified lineage event",
+            )
+        try:
+            _require_generation_lineage_descendant(
+                snapshot_connection,
+                main_sequence,
+                main_nonce,
+                snapshot_sequence,
+                snapshot_nonce,
+                main_window,
+            )
+        except OverflowError as error:
+            raise _unverifiable_generated_wal_error(
+                database_path,
+                "the WAL exceeded the retained lineage proof window",
+            ) from error
+        except ValueError as error:
+            raise _unverifiable_generated_wal_error(
+                database_path,
+                "the WAL lineage branch does not descend from the selected main",
+            ) from error
     finally:
         if snapshot_connection is not None:
             try:
@@ -751,19 +1049,6 @@ def _require_matching_generated_wal_provenance(
                 main_connection.close()
             except sqlite3.Error:
                 pass
-
-    main_token, main_epoch = main_provenance
-    snapshot_token, snapshot_epoch = snapshot_provenance
-    if snapshot_token != main_token:
-        raise _unverifiable_generated_wal_error(
-            database_path,
-            "the WAL carries a different generation token",
-        )
-    if snapshot_epoch <= main_epoch:
-        raise _unverifiable_generated_wal_error(
-            database_path,
-            "the WAL does not carry a later verified write epoch",
-        )
 
 
 def _journal_names_super_journal(journal):
@@ -974,6 +1259,20 @@ def _prepare_read_target(
                 database_path,
                 prepared_database_identity,
             )
+            committed_transactions = None
+            if include_wal and generation_marker:
+                try:
+                    committed_transactions = _committed_wal_transaction_pages(
+                        _wal_path(snapshot_path)
+                    )
+                except (OSError, ValueError) as error:
+                    if _source_signature_for_validation(database_path) != before:
+                        _cleanup_failed_connection_open(None, snapshot)
+                        continue
+                    raise _unverifiable_generated_wal_error(
+                        database_path,
+                        "the WAL has no verifiable committed lineage events",
+                    ) from error
             if journal is not None:
                 try:
                     _recover_private_rollback_journal(database_path, snapshot_path)
@@ -988,6 +1287,7 @@ def _prepare_read_target(
                         database_path,
                         main_snapshot_path,
                         snapshot_path,
+                        committed_transactions,
                     )
                 except UnverifiableDatabaseWalError:
                     if _source_signature_for_validation(database_path) != before:
