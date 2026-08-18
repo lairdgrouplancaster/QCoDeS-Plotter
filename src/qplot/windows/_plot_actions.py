@@ -1187,7 +1187,20 @@ class PlotActionsMixin:
         Add a run-table preview to the plot it was dropped onto.
 
         """
-        return self.add_trace_to_plot(target_win, source_identity, parameter_name)
+        # The plot is normally in front of the main window when a drop occurs.
+        # Keep its status bar in sync with the main-window feedback produced by
+        # ``add_trace_to_plot`` so a post-drop rejection is visible where the
+        # user performed the action.
+        previous_target = getattr(self, "_preview_drop_feedback_window", None)
+        self._preview_drop_feedback_window = target_win
+        try:
+            return self.add_trace_to_plot(
+                target_win,
+                source_identity,
+                parameter_name,
+            )
+        finally:
+            self._preview_drop_feedback_window = previous_target
 
 
     def add_trace_to_plot(self, target_win, source_identity, parameter_name, param=None):

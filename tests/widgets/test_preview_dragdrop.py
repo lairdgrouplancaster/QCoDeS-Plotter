@@ -70,6 +70,83 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
             )
         self.assertFalse(plotWidget.accepts_preview_trace_drop(target, mismatched))
 
+    def test_incompatible_preview_drop_shows_reason_on_target_plot(self):
+        messages = []
+        target = type(
+            "Target",
+            (),
+            {
+                "operation_kind": "plot1d",
+                "param": type(
+                    "Param",
+                    (),
+                    {"depends_on_": ("gate",)},
+                    )(),
+                "accepts_preview_trace_drop": (
+                    plotWidget.accepts_preview_trace_drop
+                ),
+                "_preview_drop_rejection_message": (
+                    plotWidget._preview_drop_rejection_message
+                ),
+                "show_status": lambda _self, message, timeout: messages.append(
+                    (message, timeout)
+                ),
+            },
+        )()
+
+        class DropEvent:
+            def __init__(self):
+                self.ignored = False
+
+            def type(self):
+                return QtCore.QEvent.Type.Drop
+
+            def mimeData(self):
+                return make_run_preview_mime("source-guid", "signal", ["bias"])
+
+            def ignore(self):
+                self.ignored = True
+
+        event = DropEvent()
+
+        self.assertTrue(plotWidget._handle_preview_drag_drop(target, event))
+        self.assertTrue(event.ignored)
+        self.assertEqual(messages, [(
+            "Cannot add signal; line traces need the same independent variable.",
+            5000,
+        )])
+
+    def test_preview_drop_feedback_is_mirrored_to_target_plot(self):
+        main_messages = []
+        plot_messages = []
+
+        class StatusBar:
+            def showMessage(self, message, timeout):
+                main_messages.append((message, timeout))
+
+        target = type(
+            "Target",
+            (),
+            {
+                "show_status": lambda _self, message, timeout: plot_messages.append(
+                    (message, timeout)
+                ),
+            },
+        )()
+        harness = type(
+            "MainWindowHarness",
+            (),
+            {
+                "_preview_drop_feedback_window": target,
+                "statusBar": lambda _self: StatusBar(),
+            },
+        )()
+
+        main_window.MainWindow.show_status(harness, "Drop rejected", 5000)
+
+        self.assertEqual(main_messages, [("Drop rejected", 5000)])
+        self.assertEqual(plot_messages, [("Drop rejected", 5000)])
+
     def test_add_trace_to_plot_uses_existing_add_path(self):
         class Param:
             def __init__(self, name, depends_on):

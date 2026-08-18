@@ -337,6 +337,8 @@ class plotWidget(
             return False
 
         if not self.accepts_preview_trace_drop(payload):
+            if event.type() == QtCore.QEvent.Type.Drop:
+                self.show_status(self._preview_drop_rejection_message(payload), 5000)
             event.ignore()
             return True
 
@@ -367,6 +369,24 @@ class plotWidget(
 
         target_axes = tuple(getattr(self.param, "depends_on_", ()))
         return preview_drop_is_compatible(target_axes, payload)
+
+
+    def _preview_drop_rejection_message(self, payload):
+        """Explain why a preview cannot be added to this plot."""
+
+        parameter_name = str(payload.get("parameter") or "this measurement")
+        operation_kind = getattr(self, "operation_kind", None)
+        if operation_kind == "plot1d":
+            return (
+                f"Cannot add {parameter_name}; line traces need the same "
+                "independent variable."
+            )
+        if operation_kind == "plot2d":
+            return (
+                f"Cannot add {parameter_name}; heatmaps need the same two "
+                "independent variables."
+            )
+        return "Drop previews onto a compatible line plot or heatmap."
 
 
 

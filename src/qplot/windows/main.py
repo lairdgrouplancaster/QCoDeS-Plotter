@@ -885,6 +885,15 @@ class MainWindow(
         status_bar = cast(qtw.QStatusBar, self.statusBar())
         status_bar.showMessage(message, timeout)
 
+        # A preview-drop action is initiated in a separate plot window, which
+        # can cover the main window and its status bar.  Mirror feedback to
+        # that plot for the duration of the action so rejected drops have an
+        # immediately visible explanation.
+        target = getattr(self, "_preview_drop_feedback_window", None)
+        target_show_status = getattr(target, "show_status", None)
+        if callable(target_show_status):
+            target_show_status(message, timeout)
+
 
     def show_error(self, title : str, message : str, details : str | None = None):
         """
