@@ -1,13 +1,18 @@
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.qcodes_cache import cache_parameter_is_synchronized
 from qplot.tools.heatmap_geometry import HeatmapGeometry
+from qplot.tools.operation_registry import OperationValidationError
 from qplot.windows._colorbar import (
     _CET_COLORBAR_SUBTYPES,
     _MATPLOTLIB_COLORBAR_SUBTYPES,
@@ -15,6 +20,7 @@ from qplot.windows._colorbar import (
 )
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
+from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
@@ -54,6 +60,9 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             def setRange(self, low, high):
                 self.range = (low, high)
 
+            def setValue(self, value):
+                self.value = value
+
             def setEnabled(self, enabled):
                 self.enabled = enabled
 
@@ -63,6 +72,9 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         class TextBox:
             def text(self):
                 return ""
+
+            def setText(self, text):
+                self.value = text
 
         class Line:
             def __init__(self):
@@ -182,54 +194,6 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         self.assertEqual(cut.fixed_index, 8)
         self.assertEqual(cut.picker.slider.value, 8)
         np.testing.assert_array_equal(cut.axis_data["y"], [8.0, 108.0])
-
-    def test_cut_axis_changes_publish_merge_compatibility_updates(self):
-        class Signal:
-            def __init__(self):
-                self.emissions = []
-
-            def emit(self, *args):
-                self.emissions.append(args)
-
-        class Control:
-            def __init__(self, text=""):
-                self.text = text
-
-            def blockSignals(self, _blocked):
-                pass
-
-            def currentText(self):
-                return self.text
-
-            def setText(self, text):
-                self.text = text
-
-            def setValue(self, _value):
-                pass
-
-        cut = type("Cut", (), {})()
-        cut.picker = type(
-            "Picker",
-            (),
-            {
-                "slider": Control(),
-                "text_box": Control(),
-                "option_box": Control("field"),
-            },
-        )()
-        cut.axis_dropdown = {"x": Control("gate")}
-        cut.axis_options = {"x": "gate", "y": "field"}
-        cut.sweep_indep = "gate"
-        cut.fixed_indep = "field"
-        cut.merge_compatibility_changed = Signal()
-        refreshes = []
-        cut.refreshWindow = lambda *, force: refreshes.append(force)
-
-        sweeper.change_axis(cut, "x")
-        sweeper.change_fixed_param(cut, 0)
-
-        self.assertEqual(refreshes, [True, True])
-        self.assertEqual(cut.merge_compatibility_changed.emissions, [(), ()])
 
     def test_heatmap_cut_identity_includes_unique_id_and_visible_number(self):
         cut = sweeper.__new__(sweeper)
@@ -818,6 +782,550 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         window._zoom_large_heatmap_to_all()
 
         self.assertEqual(synchronizations, [True, True])
+
+
+class CutAxisTransactionQtIntegrationTestCase(unittest.TestCase):
+    class Worker:
+        def __init__(self, *, running=True):
+            self.running = running
+            self.cancelled = False
+            self.database_replaced = False
+
+        def cancel(self):
+            self.cancelled = True
+
+        def is_cancelled(self):
+            return self.cancelled
+
+    class Line:
+        def __init__(self):
+            self.opts = {"pen": "test-pen"}
+            self.x = np.asarray([])
+            self.y = np.asarray([])
+
+        def setData(self, *args, **kwargs):
+            if kwargs:
+                self.x = np.asarray(kwargs.get("x", []))
+                self.y = np.asarray(kwargs.get("y", []))
+            elif len(args) == 2:
+                self.x = np.asarray(args[0])
+                self.y = np.asarray(args[1])
+            else:
+                self.x = np.asarray([])
+                self.y = np.asarray([])
+
+    class Pool:
+        def __init__(self):
+            self.started = []
+
+        def start(self, worker):
+            self.started.append(worker)
+
+    class Operations:
+        def get_data(self):
+            return []
+
+    class Dataset:
+        running = False
+        number_of_results = 6
+        run_id = 1
+        cache = SimpleNamespace()
+
+    class RefreshController:
+        def __init__(self, cut):
+            self.cut = cut
+            self.workers = []
+
+        def __call__(self, force=False):
+            current = self.cut.__dict__.get("worker")
+            if current is not None and getattr(current, "running", False):
+                self.cut._queue_pending_refresh(force=force)
+                return
+            worker = CutAxisTransactionQtIntegrationTestCase.Worker()
+            self.workers.append(worker)
+            self.cut.worker = worker
+            self.cut._refresh_worker_will_start(worker)
+
+    def setUp(self):
+        self._cuts = []
+
+    def tearDown(self):
+        for cut in self._cuts:
+            cut.deleteLater()
+        qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        qtw.QApplication.processEvents()
+
+    def _cut(self):
+        cut = sweeper.__new__(sweeper)
+        qtw.QMainWindow.__init__(cut)
+        self._cuts.append(cut)
+
+        cut.sweep_id = 7
+        cut.sweep_indep = "gate"
+        cut.fixed_indep = "bias"
+        cut.fixed_index = 1
+        cut.fixed_value = 20.0
+        cut.fixed_indep_data = np.asarray([10.0, 20.0, 30.0])
+        cut._axis_change_serial = 0
+        cut._axis_change_transaction = None
+        cut._axis_selection = {"x": "gate", "y": "bias"}
+        cut._refresh_pending = False
+        cut._refresh_pending_force = False
+        cut._refresh_pending_scheduled = False
+        cut._closed = False
+        cut._merged_trace_users = 0
+        cut._qplot_display_synchronized = True
+        cut._qplot_display_uses_direct_sql = False
+        cut._last_error_text = None
+        cut.visible = False
+
+        gate = SimpleNamespace(name="gate", label="Gate", unit="V")
+        bias = SimpleNamespace(name="bias", label="Bias", unit="mV")
+        signal = SimpleNamespace(name="signal", label="Signal", unit="nA")
+        cut.param = signal
+        cut.display_param = signal
+        cut.param_dict = {"gate": gate, "bias": bias, "signal": signal}
+        cut.axis_param = {"x": gate, "y": signal}
+        cut.axis_data = {
+            "x": np.asarray([0.0, 1.0]),
+            "y": np.asarray([3.0, 4.0]),
+            }
+        cut.dataGrid = np.asarray([
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+            ])
+        cut.line = self.Line()
+        cut.line.setData(x=cut.axis_data["x"], y=cut.axis_data["y"])
+
+        x_combo = qtw.QComboBox(cut)
+        x_combo.addItems(["gate", "bias", "field"])
+        x_combo.setCurrentText("gate")
+        y_combo = qtw.QComboBox(cut)
+        y_combo.addItem("signal")
+        fixed_combo = qtw.QComboBox(cut)
+        fixed_combo.addItems(["gate", "bias", "field"])
+        fixed_combo.setCurrentText("bias")
+        slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal, cut)
+        slider.setRange(0, 2)
+        slider.setValue(1)
+        text_box = qtw.QLineEdit("20", cut)
+        text_box.setReadOnly(True)
+        cut.axis_dropdown = {"x": x_combo, "y": y_combo}
+        cut.picker = SimpleNamespace(
+            option_box=fixed_combo,
+            slider=slider,
+            text_box=text_box,
+            )
+        x_combo.currentIndexChanged.connect(lambda _index: cut.change_axis("x"))
+        fixed_combo.currentIndexChanged.connect(cut.change_fixed_param)
+        slider.valueChanged.connect(cut.change_index)
+
+        overlay_target = qtw.QWidget(cut)
+        overlay_target.resize(400, 240)
+        cut.plot_state_overlay = PlotStateOverlay(overlay_target)
+        cut.monitor = QtCore.QTimer(cut)
+        cut.spinBox = qtw.QDoubleSpinBox(cut)
+        cut.spinBox.setValue(0.2)
+        cut.threadPool = self.Pool()
+        cut.oper_widget = self.Operations()
+        cut.config = SimpleNamespace(get=lambda _key: 2_000_000)
+        cut.formatNum = lambda value: f"{float(value):g}"
+        cut._label_updates = []
+        cut._set_param_axis_labels = lambda: cut._label_updates.append(
+            dict(cut.axis_param)
+            )
+        cut.show_error_calls = []
+        cut.show_error = lambda *args: cut.show_error_calls.append(args)
+
+        dataset_key = DatasetKey("missing-cut-axis-test.db", "guid")
+        cut._dataset_key = dataset_key
+        cut._guid = dataset_key.guid
+        cut._dataset_holder = {dataset_key: DatasetHandle(self.Dataset())}
+        cut.worker = self.Worker(running=False)
+        return cut
+
+    @staticmethod
+    def _start_axis_change(cut):
+        cut.axis_dropdown["x"].setCurrentText("bias")
+        transaction = cut._axis_change_transaction
+        assert transaction is not None
+        return transaction
+
+    @staticmethod
+    def _finish_success(cut, worker, *, fixed="gate"):
+        gate = cut.param_dict["gate"]
+        bias = cut.param_dict["bias"]
+        field = SimpleNamespace(name="field", label="Field", unit="T")
+        cut.axis_data = {
+            "x": np.asarray([10.0, 20.0, 30.0]),
+            "y": np.asarray([0.0, 1.0]),
+            }
+        cut.axis_param = {
+            "x": bias,
+            "y": gate if fixed == "gate" else field,
+            }
+        cut.dataGrid = np.asarray([
+            [1.0, 3.0, 5.0],
+            [2.0, 4.0, 6.0],
+            ])
+        cut.hide_plot_state()
+        with patch.object(plotWidget, "refreshPlot", return_value=True):
+            cut.refreshPlot(True, worker=worker)
+
+    def _assert_prior_state_and_single_slider_update(
+            self,
+            cut,
+            *,
+            overlay_title=None,
+            ):
+        self.assertFalse(cut.picker.slider.signalsBlocked())
+        self.assertEqual(
+            (cut.picker.slider.minimum(), cut.picker.slider.maximum()),
+            (0, 2),
+            )
+        self.assertEqual(cut.picker.slider.value(), 1)
+        self.assertTrue(cut.picker.slider.isEnabled())
+        self.assertEqual(cut.picker.text_box.text(), "20")
+        self.assertEqual(cut.axis_dropdown["x"].currentText(), "gate")
+        self.assertEqual(cut.picker.option_box.currentText(), "bias")
+        self.assertEqual((cut.sweep_indep, cut.fixed_indep), ("gate", "bias"))
+        self.assertEqual(cut.fixed_index, 1)
+        self.assertEqual(cut.fixed_value, 20.0)
+        np.testing.assert_array_equal(cut.axis_data["x"], [0.0, 1.0])
+        np.testing.assert_array_equal(cut.axis_data["y"], [3.0, 4.0])
+        np.testing.assert_array_equal(cut.line.x, [0.0, 1.0])
+        np.testing.assert_array_equal(cut.line.y, [3.0, 4.0])
+        self.assertEqual(cut.axis_param["x"].name, "gate")
+        self.assertEqual(cut.axis_param["y"].name, "signal")
+        self.assertIsNone(cut._axis_change_transaction)
+        self.assertFalse(cut._refresh_pending)
+        self.assertFalse(cut._refresh_pending_force)
+        if overlay_title is None:
+            self.assertTrue(cut.plot_state_overlay.frame.isHidden())
+        else:
+            self.assertFalse(cut.plot_state_overlay.frame.isHidden())
+            self.assertEqual(
+                cut.plot_state_overlay.title_label.text(),
+                overlay_title,
+                )
+
+        sweep_updates = []
+        cut.sweep_moved.connect(lambda *args: sweep_updates.append(args))
+        cut.picker.slider.setValue(2)
+        self.assertEqual(len(sweep_updates), 1)
+        self.assertEqual(cut.fixed_index, 2)
+        self.assertEqual(cut.fixed_value, 30.0)
+        self.assertEqual(cut.picker.text_box.text(), "30")
+        np.testing.assert_array_equal(cut.axis_data["y"], [5.0, 6.0])
+        np.testing.assert_array_equal(cut.line.y, [5.0, 6.0])
+
+    def test_successful_axis_change_commits_one_coherent_cut(self):
+        cut = self._cut()
+        controller = self.RefreshController(cut)
+        cut.refreshWindow = controller
+        compatibility_updates = []
+        cut.merge_compatibility_changed.connect(
+            lambda: compatibility_updates.append(True)
+            )
+
+        transaction = self._start_axis_change(cut)
+        worker = transaction.worker
+        self.assertIsNotNone(worker)
+        self.assertFalse(cut.picker.slider.signalsBlocked())
+        self.assertFalse(cut.picker.slider.isEnabled())
+        self.assertEqual(cut.picker.text_box.text(), "20")
+        self.assertEqual(cut.plot_state_overlay.title_label.text(), "Updating cut axes")
+
+        self._finish_success(cut, worker)
+
+        self.assertTrue(transaction.finalized)
+        self.assertIs(cut.worker, worker)
+        self.assertFalse(worker.running)
+        self.assertIsNone(cut._axis_change_transaction)
+        self.assertEqual(len(controller.workers), 1)
+        self.assertEqual(compatibility_updates, [True])
+        self.assertFalse(cut.picker.slider.signalsBlocked())
+        self.assertTrue(cut.picker.slider.isEnabled())
+        self.assertEqual(
+            (cut.picker.slider.minimum(), cut.picker.slider.maximum()),
+            (0, 1),
+            )
+        self.assertEqual(cut.picker.slider.value(), 0)
+        self.assertEqual(cut.picker.text_box.text(), "0")
+        self.assertEqual(cut.axis_dropdown["x"].currentText(), "bias")
+        self.assertEqual(cut.picker.option_box.currentText(), "gate")
+        self.assertEqual((cut.sweep_indep, cut.fixed_indep), ("bias", "gate"))
+        np.testing.assert_array_equal(cut.axis_data["y"], [1.0, 3.0, 5.0])
+        np.testing.assert_array_equal(cut.line.y, [1.0, 3.0, 5.0])
+        self.assertEqual(cut.axis_param["x"].name, "bias")
+        self.assertEqual(cut.axis_param["y"].name, "signal")
+        self.assertTrue(cut.plot_state_overlay.frame.isHidden())
+        self.assertFalse(cut._refresh_pending)
+
+        sweep_updates = []
+        cut.sweep_moved.connect(lambda *args: sweep_updates.append(args))
+        cut.picker.slider.setValue(1)
+        self.assertEqual(len(sweep_updates), 1)
+        np.testing.assert_array_equal(cut.axis_data["y"], [2.0, 4.0, 6.0])
+
+    def test_empty_axis_change_commits_deliberate_disabled_empty_state(self):
+        cut = self._cut()
+        controller = self.RefreshController(cut)
+        cut.refreshWindow = controller
+        compatibility_updates = []
+        cut.merge_compatibility_changed.connect(
+            lambda: compatibility_updates.append(True)
+            )
+        transaction = self._start_axis_change(cut)
+        worker = transaction.worker
+        cut.axis_data = {"x": np.asarray([]), "y": np.asarray([])}
+        cut.axis_param = {
+            "x": cut.param_dict["bias"],
+            "y": cut.param_dict["gate"],
+            }
+        cut.dataGrid = np.empty((0, 0))
+
+        with patch.object(plotWidget, "refreshPlot", return_value=True):
+            cut.refreshPlot(True, worker=worker)
+
+        self.assertTrue(transaction.finalized)
+        self.assertIsNone(cut._axis_change_transaction)
+        self.assertIs(cut.worker, worker)
+        self.assertFalse(worker.running)
+        self.assertFalse(cut.picker.slider.signalsBlocked())
+        self.assertFalse(cut.picker.slider.isEnabled())
+        self.assertEqual(
+            (cut.picker.slider.minimum(), cut.picker.slider.maximum()),
+            (0, 0),
+            )
+        self.assertEqual(cut.picker.slider.value(), 0)
+        self.assertEqual(cut.picker.text_box.text(), "")
+        self.assertEqual(cut.axis_dropdown["x"].currentText(), "bias")
+        self.assertEqual(cut.picker.option_box.currentText(), "gate")
+        self.assertEqual((cut.sweep_indep, cut.fixed_indep), ("bias", "gate"))
+        self.assertEqual(cut.axis_data["x"].size, 0)
+        self.assertEqual(cut.axis_data["y"].size, 0)
+        self.assertEqual(cut.line.x.size, 0)
+        self.assertEqual(cut.line.y.size, 0)
+        self.assertEqual(cut.axis_param["y"].name, "signal")
+        self.assertEqual(compatibility_updates, [True])
+        self.assertFalse(cut._refresh_pending)
+        self.assertEqual(
+            cut.plot_state_overlay.title_label.text(),
+            "Waiting for plottable cut data",
+            )
+
+    def test_operation_validation_error_before_worker_launch_rolls_back(self):
+        cut = self._cut()
+
+        class InvalidOperations:
+            def get_data(self):
+                raise OperationValidationError("Fill Below: enter a valid value.")
+
+        cut.oper_widget = InvalidOperations()
+        cut.refreshWindow = lambda force=False: cut.load_data()
+        prior_worker = cut.worker
+        finalized = []
+        finalizer = cut._finalize_axis_change
+
+        def record_finalizer(transaction, outcome, **kwargs):
+            finalized.append((transaction, outcome))
+            return finalizer(transaction, outcome, **kwargs)
+
+        cut._finalize_axis_change = record_finalizer
+
+        cut.axis_dropdown["x"].setCurrentText("bias")
+
+        self.assertEqual(len(finalized), 1)
+        self.assertTrue(finalized[0][0].finalized)
+        self.assertEqual(finalized[0][1], "failure")
+        self.assertIs(cut.worker, prior_worker)
+        self.assertEqual(cut.threadPool.started, [])
+        self._assert_prior_state_and_single_slider_update(
+            cut,
+            overlay_title="Operations not applied",
+            )
+
+    def test_worker_error_and_finished_false_share_one_finalized_rollback(self):
+        cut = self._cut()
+        controller = self.RefreshController(cut)
+        cut.refreshWindow = controller
+        transaction = self._start_axis_change(cut)
+        worker = transaction.worker
+
+        cut.err_raiser(RuntimeError("worker failed"), worker=worker)
+        self.assertTrue(transaction.finalized)
+        cut.refreshPlot(False, worker=worker)
+
+        self.assertIs(cut.worker, worker)
+        self.assertFalse(worker.running)
+        self.assertEqual(len(cut.show_error_calls), 1)
+        self._assert_prior_state_and_single_slider_update(
+            cut,
+            overlay_title="Plot load failed",
+            )
+
+    def test_worker_cancellation_restores_prior_overlay_and_cut(self):
+        cut = self._cut()
+        controller = self.RefreshController(cut)
+        cut.refreshWindow = controller
+        transaction = self._start_axis_change(cut)
+        worker = transaction.worker
+
+        worker.cancel()
+        cut.refreshPlot(False, worker=worker)
+
+        self.assertTrue(transaction.finalized)
+        self.assertTrue(worker.cancelled)
+        self.assertIs(cut.worker, worker)
+        self.assertFalse(worker.running)
+        self._assert_prior_state_and_single_slider_update(cut)
+
+    def test_atomic_source_replacement_rolls_back_and_releases_transaction(self):
+        cut = self._cut()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "source.db"
+            replacement_path = Path(temp_dir) / "replacement.db"
+            database_path.write_bytes(b"old database instance")
+            replacement_path.write_bytes(b"new database instance")
+            dataset_key = DatasetKey(database_path, "guid")
+            cut._dataset_key = dataset_key
+            cut._dataset_holder = {dataset_key: DatasetHandle(self.Dataset())}
+            replacements = []
+            cut.database_replaced.connect(replacements.append)
+            controller = self.RefreshController(cut)
+            cut.refreshWindow = controller
+            transaction = self._start_axis_change(cut)
+            worker = transaction.worker
+
+            os.replace(replacement_path, database_path)
+            cut.refreshPlot(True, worker=worker)
+
+            self.assertTrue(transaction.finalized)
+            self.assertTrue(worker.cancelled)
+            self.assertIs(cut.worker, worker)
+            self.assertFalse(worker.running)
+            self.assertEqual(replacements, [str(database_path)])
+            self._assert_prior_state_and_single_slider_update(
+                cut,
+                overlay_title="Database replaced",
+                )
+
+    def test_second_axis_change_supersedes_first_without_stale_finalization(self):
+        cut = self._cut()
+        controller = self.RefreshController(cut)
+        cut.refreshWindow = controller
+        compatibility_updates = []
+        cut.merge_compatibility_changed.connect(
+            lambda: compatibility_updates.append(True)
+            )
+        first = self._start_axis_change(cut)
+        first_worker = first.worker
+
+        cut.picker.option_box.setCurrentText("field")
+        second = cut._axis_change_transaction
+        self.assertIsNot(second, first)
+        self.assertTrue(first.finalized)
+        self.assertTrue(first_worker.cancelled)
+        self.assertIsNone(second.worker)
+        self.assertTrue(cut._refresh_pending)
+        self.assertFalse(cut.picker.slider.signalsBlocked())
+
+        cut.refreshPlot(False, worker=first_worker)
+        qtw.QApplication.processEvents()
+        second_worker = second.worker
+        self.assertIsNotNone(second_worker)
+        self.assertIs(cut.worker, second_worker)
+        self.assertFalse(cut._refresh_pending)
+
+        cut.refreshPlot(True, worker=first_worker)
+        self.assertIs(cut._axis_change_transaction, second)
+        self.assertFalse(second.finalized)
+        self._finish_success(cut, second_worker, fixed="field")
+
+        self.assertTrue(second.finalized)
+        self.assertIsNone(cut._axis_change_transaction)
+        self.assertIs(cut.worker, second_worker)
+        self.assertFalse(second_worker.running)
+        self.assertEqual(len(controller.workers), 2)
+        self.assertEqual(compatibility_updates, [True])
+        self.assertEqual(cut.axis_dropdown["x"].currentText(), "bias")
+        self.assertEqual(cut.picker.option_box.currentText(), "field")
+        self.assertEqual((cut.sweep_indep, cut.fixed_indep), ("bias", "field"))
+        self.assertFalse(cut.picker.slider.signalsBlocked())
+        self.assertEqual(cut.picker.slider.value(), 0)
+        self.assertEqual(cut.picker.text_box.text(), "0")
+        np.testing.assert_array_equal(cut.line.y, [1.0, 3.0, 5.0])
+        self.assertTrue(cut.plot_state_overlay.frame.isHidden())
+
+    def test_window_close_during_refresh_finalizes_before_late_callback(self):
+        cut = self._cut()
+        controller = self.RefreshController(cut)
+        cut.refreshWindow = controller
+        transaction = self._start_axis_change(cut)
+        worker = transaction.worker
+        removed = []
+        cut.remove_sweep.connect(removed.append)
+
+        cut.closeEvent(QtGui.QCloseEvent())
+
+        self.assertTrue(transaction.finalized)
+        self.assertTrue(cut._closed)
+        self.assertTrue(worker.cancelled)
+        self.assertEqual(removed, [cut.sweep_id])
+        self.assertFalse(cut.picker.slider.signalsBlocked())
+        self.assertFalse(cut._refresh_pending)
+        cut.refreshPlot(False, worker=worker)
+        self.assertFalse(worker.running)
+        self._assert_prior_state_and_single_slider_update(cut)
+
+    def test_refresh_launch_refusal_uses_the_same_idempotent_rollback(self):
+        cut = self._cut()
+        cut.refreshWindow = lambda force=False: None
+        prior_worker = cut.worker
+        finalized = []
+        finalizer = cut._finalize_axis_change
+
+        def record_finalizer(transaction, outcome, **kwargs):
+            finalized.append(transaction)
+            return finalizer(transaction, outcome, **kwargs)
+
+        cut._finalize_axis_change = record_finalizer
+
+        cut.axis_dropdown["x"].setCurrentText("bias")
+
+        self.assertEqual(len(finalized), 1)
+        self.assertTrue(finalized[0].finalized)
+        self.assertFalse(finalizer(finalized[0], "failure"))
+        self.assertIs(cut.worker, prior_worker)
+        self._assert_prior_state_and_single_slider_update(cut)
+
+    def test_unexpected_refresh_exception_finalizes_then_propagates(self):
+        cut = self._cut()
+
+        def fail_refresh(force=False):
+            raise RuntimeError("unexpected refresh failure")
+
+        cut.refreshWindow = fail_refresh
+        cut.axis_dropdown["x"].blockSignals(True)
+        cut.axis_dropdown["x"].setCurrentText("bias")
+        cut.axis_dropdown["x"].blockSignals(False)
+
+        with self.assertRaisesRegex(RuntimeError, "unexpected refresh failure"):
+            cut.change_axis("x")
+
+        self._assert_prior_state_and_single_slider_update(cut)
+
+    def test_failure_recovery_emits_exactly_one_change_index_update(self):
+        cut = self._cut()
+        controller = self.RefreshController(cut)
+        cut.refreshWindow = controller
+        transaction = self._start_axis_change(cut)
+
+        self.assertTrue(cut._finalize_axis_change(transaction, "failure"))
+        self.assertFalse(cut._finalize_axis_change(transaction, "failure"))
+        self._assert_prior_state_and_single_slider_update(cut)
 
 
 class HeatmapHoverOutlineTestCase(unittest.TestCase):

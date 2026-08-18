@@ -345,7 +345,14 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         # Run worker
         self.worker = worker
-        self.threadPool.start(worker)
+        worker_will_start = getattr(type(self), "_refresh_worker_will_start", None)
+        if callable(worker_will_start):
+            worker_will_start(self, worker)
+        try:
+            self.threadPool.start(worker)
+        except Exception:
+            worker.running = False
+            raise
 
         if wait_on_thread:
             hold_up.exec()  # The actual place the code waits for self.end_wait.emit
