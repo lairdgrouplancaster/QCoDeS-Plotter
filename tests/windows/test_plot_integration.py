@@ -234,12 +234,38 @@ def dependent_parameter(dataset, dimensions):
 
 
 def close_main_window(window):
-    """Close through the production shutdown path before deleting Qt state."""
+    """Stop workers and close owned datasets before deleting Qt state."""
 
-    window.config.config["user_preference"]["confirm_close"] = False
-    window.config.config["user_preference"]["confirm_close_all"] = False
-    window.close()
-    wait_for(lambda: window._shutdown_ready)
+    window.startupDatabaseTimer.stop()
+    window.monitor.stop()
+    window.infoBox.preview.shutdown()
+    window.close_plot_windows(confirm=False, status=False)
+    for worker_name in (
+        "_database_load_worker",
+        "_database_detail_worker",
+        "_database_expensive_detail_worker",
+        "_database_refresh_worker",
+        "_test_database_generation_worker",
+    ):
+        worker = getattr(window, worker_name, None)
+        cancel = getattr(worker, "cancel", None)
+        if callable(cancel):
+            cancel()
+    window._cancel_plot_work()
+    for pool_name in (
+        "threadPool",
+        "databaseLoadThreadPool",
+        "databaseDetailThreadPool",
+        "databaseExpensiveDetailThreadPool",
+        "databaseRefreshThreadPool",
+        "testDatabaseGenerationThreadPool",
+    ):
+        assert getattr(window, pool_name).waitForDone(12_000)
+    qtw.QApplication.processEvents()
+    window.close_database(status=False)
+    assert window.ds is None
+    assert window.dataset_holder == {}
+    window.hide()
     window.deleteLater()
     qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     qtw.QApplication.processEvents()
@@ -681,6 +707,13 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
     original_get_run_status = database_module.get_run_status
     replacement_loads = []
     original_load_file = window.load_file
+    snapshot_connections = []
+    original_attach_snapshot_cleanup = readonly_module._attach_snapshot_cleanup
+
+    def record_snapshot_connection(connection, snapshot):
+        snapshot_directory = Path(snapshot.name)
+        original_attach_snapshot_cleanup(connection, snapshot)
+        snapshot_connections.append((connection, snapshot_directory))
 
     def record_status(message, timeout=5000):
         status_messages.append((message, timeout))
@@ -698,6 +731,11 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         return original_load_file(*args, **kwargs)
 
     try:
+        monkeypatch.setattr(
+            readonly_module,
+            "_attach_snapshot_cleanup",
+            record_snapshot_connection,
+        )
         window.startupDatabaseTimer.stop()
         window.monitor.stop()
         window.config.config["user_preference"]["confirm_close"] = False
@@ -806,6 +844,10 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         release_refresh.set()
         window.load_file = original_load_file
         close_main_window(window)
+        for connection, snapshot_directory in snapshot_connections:
+            with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+                connection.cursor()
+            assert not snapshot_directory.exists()
         qcodes.config.core.db_location = original_database_path
 
 
