@@ -74,6 +74,29 @@ On macOS/Linux, prefer:
 ```bash
 .venv-mac/bin/python -m qplot
 ```
+
+## Matplotlib cache
+
+On macOS, prefix every Python command that may import Matplotlib with the same
+writable cache directory:
+
+```bash
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m pytest
+```
+
+Reuse this exact cache directory; do not create a fresh temporary directory for
+each run. The first invocation may build the font cache once, but subsequent
+runs should reuse it. Set `MPLCONFIGDIR` on each command invocation because
+separate Codex shell commands may not share exported environment variables.
+
+For automated qPlot startup smoke checks, use:
+
+```bash
+QT_QPA_PLATFORM=offscreen MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m qplot
+```
+
+Omit `QT_QPA_PLATFORM=offscreen` when a visible manual UI check is required.
+
 ## GitHub publishing
 
 Do not use the GitHub CLI (`gh`) or require `gh auth` for repository work.

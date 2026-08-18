@@ -70,10 +70,26 @@ class CommandRegistryTestCase(unittest.TestCase):
             "Ctrl+Alt+O",
             )
 
+    def test_print_plot_uses_platform_standard_shortcut(self):
+        spec = command_spec("plot.print")
+
+        self.assertEqual(spec.object_name, "printPlotAction")
+        self.assertEqual(spec.resolved_shortcuts()[0].toString(), "Ctrl+P")
+        self.assertEqual(spec.help_shortcut, "Ctrl+P / Cmd+P")
+        self.assertTrue(
+            any(
+                shortcut in spec.resolved_shortcuts()
+                for shortcut in QtGui.QKeySequence.keyBindings(
+                    QtGui.QKeySequence.StandardKey.Print
+                )
+            )
+        )
+
     def test_shortcut_help_is_generated_from_registered_commands(self):
         html = shortcut_help_html()
 
         self.assertIn(command_spec("database.load").status_tip, html)
         self.assertIn(command_spec("plot.export").help_text, html)
+        self.assertIn(command_spec("plot.print").status_tip, html)
         self.assertIn(command_spec("heatmap.horizontal_cut").status_tip, html)
         self.assertIn("Ctrl+1 to Ctrl+9", html)

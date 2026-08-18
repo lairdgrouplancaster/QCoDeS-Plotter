@@ -68,9 +68,9 @@ surfacing worker failures.
 structure used by the main window and plot windows to track an open dataset,
 its active plot-window user count, and any delayed-release timer.
 
-`src/qplot/windows/_plot_export.py` contains shared plot export behavior:
-pyqtgraph export-dialog setup, PDF rendering, clipboard image copies, high-DPI
-copies, and SVG clipboard output.
+`src/qplot/windows/_plot_export.py` contains shared plot output behavior:
+native printing, pyqtgraph export-dialog setup, PDF rendering, clipboard image
+copies, high-DPI copies, and SVG clipboard output.
 
 `src/qplot/windows/_plot_feedback.py` contains shared plot-window status,
 state-overlay, error-dialog, and shortcut helpers. Keep common plot-window user

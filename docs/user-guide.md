@@ -309,13 +309,22 @@ The main window can export measurement data as CSV:
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
 `Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or
-the plot context menu to save the rendered plot area as a PDF. Use
+the plot context menu to save a plot-sized PDF of the rendered plot area. Use
 `Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution
 is set in `Options -> Preferences...`: screen resolution preserves the current
 display pixels, while 300 dpi renders a higher-resolution clipboard image at the
 same logical plot size, and vector SVG copies editable SVG data for applications
 that accept SVG from the clipboard.
+
+Use `File -> Print Plot...`, `Ctrl+P`, or `Cmd+P` to open the system print
+dialog. Printing includes only the visible plot area, scales it to the printable
+page without stretching or cropping, and excludes the plot-window controls.
+When the system dialog exposes a concrete PDF destination, `Print Plot...` can
+also produce a page-formatted PDF. qPlot stages that file beside the selected
+destination and publishes it atomically only after rendering succeeds. Use
+`Save Plot as PDF...` instead when you want a plot-sized PDF without the printer
+page layout.
 
 ## Live Data
 
@@ -358,6 +367,7 @@ Plot-window shortcuts:
 | `Ctrl+0` | Return all plot axes to autoscale mode |
 | `Ctrl+C` / `Cmd+C` | Copy the plot image to the clipboard using the selected copy format/resolution |
 | `Ctrl+E` | Export the plot |
+| `Ctrl+P` / `Cmd+P` | Print the visible plot area |
 | `Ctrl+Alt+R` | Show or hide the refresh toolbar |
 | `Ctrl+Alt+C` | Show or hide the coordinate toolbar |
 | `Ctrl+Alt+A` | Show or hide the axis control panel |

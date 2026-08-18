@@ -22,9 +22,13 @@ QUICK_START_HTML = """
   <li><b>Inspect the plot.</b> Use the mouse wheel to zoom, left-drag to pan,
   and Shift-drag to constrain panning to one axis,
       right-click for plot actions, and double-click axes for scale controls.</li>
-  <li><b>Export data or plots.</b> Use the CSV button or preview context menu
-      for measurement data, and <b>File -&gt; Export Plot...</b> or
-      <b>File -&gt; Save Plot as PDF...</b> in plot windows.</li>
+  <li><b>Export or print data and plots.</b> Use the CSV button or preview
+      context menu for measurement data. In plot windows, use
+      <b>File -&gt; Export Plot...</b> for images or data, or
+      <b>File -&gt; Save Plot as PDF...</b> for a plot-sized PDF. Use
+      <b>File -&gt; Print Plot...</b> for a printer or, when the system dialog
+      offers a concrete PDF destination, a page-formatted PDF. qPlot stages and
+      atomically publishes PDF file output.</li>
 </ol>
 <p>Plot windows may appear before their data has finished loading. Check the
 status bar at the bottom of the window before assuming a load has failed.</p>

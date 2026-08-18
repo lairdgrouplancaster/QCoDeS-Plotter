@@ -1,10 +1,17 @@
+import os
+import stat
+from dataclasses import dataclass
 from os import path
 from typing import TYPE_CHECKING, Any, Literal
 
-from PyQt6 import QtCore, QtGui, QtSvg
+from PyQt6 import QtCore, QtGui, QtPrintSupport, QtSvg
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import ImageExporter
 
+from qplot.datahandling.file_identity import (
+    DatabaseFileIdentity,
+    database_file_identity,
+)
 from qplot.diagnostics import log_exception
 
 from ._export_paths import (
@@ -26,6 +33,21 @@ _MAX_EXPORTED_IMAGE_SIZE = 20_000
 _HIGH_DPI_COPY_RESOLUTION = 300
 _INCHES_PER_METER = 39.370_078_740_157_48
 _DpiAxis = Literal["x", "y"]
+
+
+class _UnsafePrintDestinationError(RuntimeError):
+    """Raised when printer file output cannot be staged safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PrintPdfDestination:
+    """A concrete PDF destination captured after the print dialog closes."""
+
+    filename: str
+    parent_identity: tuple[int, int, int]
+    target_signature: tuple[int, ...] | None
+    protected_database_identities: frozenset[DatabaseFileIdentity]
+
 
 if TYPE_CHECKING:
     class _PlotExportBase(qtw.QMainWindow):
@@ -49,9 +71,542 @@ else:
 
 class PlotExportMixin(_PlotExportBase):
     """
-    Plot-window export, PDF, and clipboard-image helpers.
+    Plot-window printing, export, PDF, and clipboard-image helpers.
 
     """
+
+    @QtCore.pyqtSlot()
+    def print_plot(self) -> bool:
+        """
+        Opens the native print dialog and prints the visible plot area.
+
+        """
+        try:
+            printer = self._create_plot_printer()
+            dialog = QtPrintSupport.QPrintDialog(printer, self)
+            dialog.setWindowTitle("Print Plot")
+            dialog.setMinMax(1, 1)
+            dialog.setFromTo(1, 1)
+            dialog.setOption(
+                QtPrintSupport.QAbstractPrintDialog.PrintDialogOption.PrintPageRange,
+                False,
+            )
+            # Keep Qt's generic file field disabled: on some platforms that
+            # dialog probes the selected path before returning. Native/system
+            # PDF destinations may still be exposed on the configured printer
+            # after acceptance; those are redirected through staging below.
+            dialog.setOption(
+                QtPrintSupport.QAbstractPrintDialog.PrintDialogOption.PrintToFile,
+                False,
+            )
+
+            if dialog.exec() != qtw.QDialog.DialogCode.Accepted:
+                self.show_status("Plot printing cancelled.", 3000)
+                return False
+
+            pdf_destination = self._prepare_print_pdf_destination(printer)
+            if pdf_destination is not None:
+                if not self._print_plot_pdf_atomically(printer, pdf_destination):
+                    raise RuntimeError(
+                        "The plot PDF could not be rendered or published."
+                    )
+                self.show_status(
+                    f"Printed plot to PDF: {pdf_destination.filename}",
+                    5000,
+                )
+                return True
+
+            if not self._render_plot_to_printer(printer):
+                raise RuntimeError("The plot could not be rendered to the printer.")
+        except _UnsafePrintDestinationError as err:
+            self.show_status("Could not print plot to PDF.", 5000)
+            if hasattr(self, "show_error"):
+                self.show_error(
+                    "Print to PDF Failed",
+                    "qPlot could not safely use the selected PDF destination.",
+                    str(err),
+                )
+            return False
+        except Exception as err:
+            log_exception("Plot printing failed", err, __name__)
+            self.show_status("Could not print plot.", 5000)
+            if hasattr(self, "show_error"):
+                self.show_error(
+                    "Print Failed",
+                    "Could not print the plot.",
+                    str(err),
+                )
+            return False
+
+        self.show_status("Plot sent to printer.", 3000)
+        return True
+
+
+    def _prepare_print_pdf_destination(
+            self,
+            printer: QtPrintSupport.QPrinter,
+            ) -> _PrintPdfDestination | None:
+        """
+        Validates a concrete PDF path returned by the system print dialog.
+
+        An empty output filename denotes a physical printer. Other opaque
+        print-to-file destinations are rejected because qPlot cannot redirect
+        them through its atomic publication path.
+
+        """
+        output_file_name = getattr(printer, "outputFileName", None)
+        if not callable(output_file_name):
+            return None
+
+        selected_path = str(output_file_name() or "")
+        if not selected_path:
+            return None
+        if selected_path.strip().casefold() == "file:":
+            raise _UnsafePrintDestinationError(
+                "The printer did not provide a concrete PDF filename."
+            )
+
+        output_format = getattr(printer, "outputFormat", None)
+        if (
+                not callable(output_format)
+                or output_format()
+                != QtPrintSupport.QPrinter.OutputFormat.PdfFormat
+                ):
+            raise _UnsafePrintDestinationError(
+                "Only PDF file output can be staged safely."
+            )
+
+        selected_path = path.abspath(selected_path)
+        if path.splitext(selected_path)[1].casefold() != ".pdf":
+            raise _UnsafePrintDestinationError(
+                "The selected print destination must end in .pdf."
+            )
+
+        parent = path.realpath(path.dirname(selected_path))
+        try:
+            parent_stat = os.stat(parent)
+        except OSError as err:
+            raise _UnsafePrintDestinationError(
+                "The selected PDF folder is not available."
+            ) from err
+        if not stat.S_ISDIR(parent_stat.st_mode):
+            raise _UnsafePrintDestinationError(
+                "The selected PDF parent is not a folder."
+            )
+
+        filename = path.join(parent, path.basename(selected_path))
+        protected_identities = self._protected_database_identities()
+        self._ensure_print_target_is_not_protected(
+            filename,
+            protected_identities,
+        )
+        return _PrintPdfDestination(
+            filename=filename,
+            parent_identity=self._print_directory_identity(parent_stat),
+            target_signature=self._print_target_signature(filename),
+            protected_database_identities=protected_identities,
+        )
+
+
+    def _print_plot_pdf_atomically(
+            self,
+            printer: QtPrintSupport.QPrinter,
+            destination: _PrintPdfDestination,
+            ) -> bool:
+        """Renders a page-formatted PDF beside its target, then publishes it."""
+        return write_export_atomically(
+            destination.filename,
+            lambda staging_path: self._write_print_pdf_stage(
+                printer,
+                staging_path,
+            ),
+            before_publish=lambda: self._revalidate_print_pdf_destination(
+                destination
+            ),
+        )
+
+
+    def _write_print_pdf_stage(
+            self,
+            printer: QtPrintSupport.QPrinter,
+            staging_path: str,
+            ) -> bool:
+        """Redirects the configured PDF printer to one private staging file."""
+        if path.splitext(staging_path)[1].casefold() != ".pdf":
+            raise _UnsafePrintDestinationError(
+                "The private print staging path is not a PDF file."
+            )
+
+        printer.setOutputFileName(staging_path)
+        actual_path = str(printer.outputFileName() or "")
+        if (
+                path.normcase(path.realpath(path.abspath(actual_path)))
+                != path.normcase(path.realpath(path.abspath(staging_path)))
+                ):
+            raise _UnsafePrintDestinationError(
+                "The printer did not accept qPlot's private staging path."
+            )
+        if printer.outputFormat() != QtPrintSupport.QPrinter.OutputFormat.PdfFormat:
+            raise _UnsafePrintDestinationError(
+                "The printer did not retain PDF output while staging."
+            )
+
+        return self._paint_plot_to_device(printer)
+
+
+    def _revalidate_print_pdf_destination(
+            self,
+            destination: _PrintPdfDestination,
+            ) -> None:
+        """Rejects a destination that changed while its PDF was rendering."""
+        parent = path.dirname(destination.filename)
+        try:
+            current_parent = os.stat(parent)
+        except OSError as err:
+            raise _UnsafePrintDestinationError(
+                "The selected PDF folder changed while printing."
+            ) from err
+        if self._print_directory_identity(current_parent) != destination.parent_identity:
+            raise _UnsafePrintDestinationError(
+                "The selected PDF folder changed while printing."
+            )
+
+        protected_identities = (
+            destination.protected_database_identities
+            | self._protected_database_identities()
+        )
+        self._ensure_print_target_is_not_protected(
+            destination.filename,
+            protected_identities,
+        )
+        current_target = self._print_target_signature(destination.filename)
+        if current_target != destination.target_signature:
+            raise _UnsafePrintDestinationError(
+                "The selected PDF file changed while printing; it was not replaced."
+            )
+
+
+    def _protected_database_identities(
+            self,
+            ) -> frozenset[DatabaseFileIdentity]:
+        """Collects current and retained identities for every visible DB owner."""
+        identities: set[DatabaseFileIdentity] = set()
+        database_paths: set[str] = set()
+
+        def add_identity(candidate: object) -> None:
+            if isinstance(candidate, tuple) and len(candidate) in {2, 3}:
+                identities.add(candidate)  # type: ignore[arg-type]
+
+        def add_source(candidate: object) -> None:
+            if candidate is None:
+                return
+            add_identity(candidate)
+            add_identity(getattr(candidate, "database_identity", None))
+            add_identity(getattr(candidate, "identity", None))
+            for attribute in (
+                    "database_path",
+                    "logical_path",
+                    "resolved_database_path",
+                    "resolved_path",
+                    ):
+                candidate_path = getattr(candidate, attribute, None)
+                if candidate_path:
+                    database_paths.add(path.abspath(str(candidate_path)))
+
+        owners = [self]
+        if qtw.QApplication.instance() is not None:
+            owners.extend(qtw.QApplication.topLevelWidgets())
+
+        seen_owners: set[int] = set()
+        for owner in owners:
+            if id(owner) in seen_owners:
+                continue
+            seen_owners.add(id(owner))
+
+            add_source(getattr(owner, "_dataset_key", None))
+            add_source(getattr(owner, "_selected_dataset_key", None))
+            for holder_name in ("_dataset_holder", "dataset_holder"):
+                holder = getattr(owner, holder_name, None)
+                items = getattr(holder, "items", None)
+                if not callable(items):
+                    continue
+                for dataset_key, dataset_handle in items():
+                    add_source(dataset_key)
+                    add_source(dataset_handle)
+
+            for instance_name in (
+                    "_loaded_database_instance",
+                    "_database_refresh_instance",
+                    ):
+                add_source(getattr(owner, instance_name, None))
+
+            load_state = getattr(owner, "_database_load_state", None)
+            if isinstance(load_state, dict):
+                add_source(load_state.get("load_instance"))
+                add_identity(load_state.get("load_identity"))
+                load_path = load_state.get("abspath")
+                if load_path:
+                    database_paths.add(path.abspath(str(load_path)))
+
+            replacement_state = getattr(
+                owner,
+                "_test_database_replacement_state",
+                None,
+            )
+            add_source(replacement_state)
+            add_source(getattr(replacement_state, "original_instance", None))
+
+            generation_worker = getattr(
+                owner,
+                "_test_database_generation_worker",
+                None,
+            )
+            add_source(generation_worker)
+
+            file_textbox = getattr(owner, "fileTextbox", None)
+            displayed_path = getattr(file_textbox, "text", None)
+            if callable(displayed_path):
+                candidate_path = displayed_path()
+                if candidate_path:
+                    database_paths.add(path.abspath(str(candidate_path)))
+
+        for database_path in database_paths:
+            for suffix in ("", "-wal", "-shm", "-journal"):
+                identity = database_file_identity(f"{database_path}{suffix}")
+                if identity is not None:
+                    identities.add(identity)
+
+        return frozenset(identities)
+
+
+    @staticmethod
+    def _ensure_print_target_is_not_protected(
+            filename: str,
+            protected_identities: frozenset[DatabaseFileIdentity],
+            ) -> None:
+        """Rejects a PDF entry that is the same file as a retained DB input."""
+        target_identity = database_file_identity(filename)
+        if (
+                target_identity is not None
+                and target_identity in protected_identities
+                ):
+            raise _UnsafePrintDestinationError(
+                "The selected PDF path refers to an input database file."
+            )
+
+
+    @staticmethod
+    def _print_directory_identity(file_stat: os.stat_result) -> tuple[int, int, int]:
+        """Returns stable identity fields for a selected output directory."""
+        return (
+            int(file_stat.st_dev),
+            int(file_stat.st_ino),
+            int(file_stat.st_mode),
+        )
+
+
+    @staticmethod
+    def _print_target_signature(filename: str) -> tuple[int, ...] | None:
+        """Captures an existing, ordinary PDF entry without following links."""
+        try:
+            file_stat = os.lstat(filename)
+        except FileNotFoundError:
+            return None
+        except OSError as err:
+            raise _UnsafePrintDestinationError(
+                "The selected PDF file could not be inspected safely."
+            ) from err
+
+        if stat.S_ISLNK(file_stat.st_mode):
+            raise _UnsafePrintDestinationError(
+                "Symbolic-link PDF destinations are not supported."
+            )
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise _UnsafePrintDestinationError(
+                "The selected PDF destination is not a regular file."
+            )
+        if int(file_stat.st_nlink) != 1:
+            raise _UnsafePrintDestinationError(
+                "Hard-linked PDF destinations are not supported."
+            )
+
+        signature = (
+            int(file_stat.st_dev),
+            int(file_stat.st_ino),
+            int(file_stat.st_mode),
+            int(file_stat.st_nlink),
+            int(file_stat.st_size),
+            int(file_stat.st_mtime_ns),
+            int(file_stat.st_ctime_ns),
+        )
+        try:
+            with open(filename, "rb") as existing_file:
+                opened_stat = os.fstat(existing_file.fileno())
+                opened_signature = (
+                    int(opened_stat.st_dev),
+                    int(opened_stat.st_ino),
+                    int(opened_stat.st_mode),
+                    int(opened_stat.st_nlink),
+                    int(opened_stat.st_size),
+                    int(opened_stat.st_mtime_ns),
+                    int(opened_stat.st_ctime_ns),
+                )
+                header = existing_file.read(5)
+        except OSError as err:
+            raise _UnsafePrintDestinationError(
+                "The selected PDF file could not be read safely."
+            ) from err
+
+        if opened_signature != signature:
+            raise _UnsafePrintDestinationError(
+                "The selected PDF file changed while it was being inspected."
+            )
+        if header != b"%PDF-":
+            raise _UnsafePrintDestinationError(
+                "The selected destination is not an existing PDF file."
+            )
+        return signature
+
+
+    def _create_plot_printer(self) -> QtPrintSupport.QPrinter:
+        """
+        Creates a printer whose device-space sizing matches the plot view.
+
+        pyqtgraph uses cosmetic pens and device-sized text for several plot
+        elements.  Screen-resolution printer coordinates preserve their
+        intended physical proportions while the print engine retains vector
+        output.
+
+        """
+        printer = QtPrintSupport.QPrinter(
+            QtPrintSupport.QPrinter.PrinterMode.ScreenResolution
+        )
+        printer.setCreator("qPlot")
+
+        title = "qPlot plot"
+        window_title = getattr(self, "windowTitle", None)
+        if callable(window_title):
+            candidate = window_title().strip()
+            if candidate:
+                title = candidate
+        printer.setDocName(title)
+
+        widget = self.__dict__.get("widget")
+        if widget is not None:
+            orientation = QtGui.QPageLayout.Orientation.Portrait
+            if widget.width() > widget.height():
+                orientation = QtGui.QPageLayout.Orientation.Landscape
+            printer.setPageOrientation(orientation)
+
+        return printer
+
+
+    def _render_plot_to_printer(
+            self,
+            printer: QtGui.QPagedPaintDevice,
+            ) -> bool:
+        """
+        Renders to a physical printer while rejecting direct file output.
+
+        """
+        self._ensure_printer_has_no_file_output(printer)
+        return self._paint_plot_to_device(printer)
+
+
+    def _paint_plot_to_device(
+            self,
+            printer: QtGui.QPagedPaintDevice,
+            ) -> bool:
+        """
+        Renders the current plot view into a paged device's printable area.
+
+        Rendering the graphics view through ``QPainter`` retains vector line
+        work and text while excluding the surrounding plot-window controls.
+
+        """
+        widget = self.__dict__.get("widget")
+        if widget is None or not hasattr(widget, "render"):
+            return False
+
+        source = QtCore.QRect(widget.rect())
+        if source.width() < 1 or source.height() < 1:
+            return False
+
+        painter = QtGui.QPainter()
+        if not painter.begin(printer):
+            return False
+
+        print_finished = False
+        try:
+            printable = QtCore.QRectF(painter.viewport())
+            destination = self._fit_print_rect(source.size(), printable)
+            if destination.isEmpty():
+                return False
+
+            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+            painter.fillRect(printable, QtGui.QColor("white"))
+            widget.render(
+                painter,
+                destination,
+                source,
+                QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
+            )
+        finally:
+            print_finished = painter.end()
+
+        return print_finished
+
+
+    def _ensure_printer_has_no_file_output(
+            self,
+            printer: QtGui.QPagedPaintDevice,
+            ) -> None:
+        """
+        Rejects direct print-to-file output before the backend opens its path.
+
+        Concrete PDF output is redirected to a private sibling file before
+        this physical-printer entry point is called. Any filename remaining
+        here would bypass that atomic staging path.
+
+        """
+        output_file_name = getattr(printer, "outputFileName", None)
+        if not callable(output_file_name):
+            return
+
+        output_path = str(output_file_name() or "")
+        if not output_path:
+            return
+        raise _UnsafePrintDestinationError(
+            "Direct printer output bypassed qPlot's PDF staging path: "
+            f"{output_path}"
+        )
+
+
+    @staticmethod
+    def _fit_print_rect(
+            source_size: QtCore.QSize,
+            printable: QtCore.QRectF,
+            ) -> QtCore.QRectF:
+        """
+        Fits and centres a plot inside a printable rectangle without cropping.
+
+        """
+        if (
+                source_size.width() < 1
+                or source_size.height() < 1
+                or printable.isEmpty()
+                ):
+            return QtCore.QRectF()
+
+        fitted_size = QtCore.QSizeF(source_size)
+        fitted_size.scale(
+            printable.size(),
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+        )
+        destination = QtCore.QRectF(QtCore.QPointF(), fitted_size)
+        destination.moveCenter(printable.center())
+        return destination
 
     @QtCore.pyqtSlot()
     def open_export_dialog(self) -> None:

@@ -9,6 +9,10 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ### Added
 
+- Print the visible plot area through the system print dialog, including
+  page-formatted PDFs when it exposes a concrete PDF destination. PDF file
+  output is staged and atomically published; Save Plot as PDF remains the
+  plot-sized output path.
 - Make every run-table column optional and persistent from the header menu,
   including Experiment, Sample, Name, Completed, and GUID, with horizontal
   scrolling for wider layouts.

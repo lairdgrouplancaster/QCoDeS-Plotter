@@ -514,6 +514,13 @@ class plotWidget(
         self.savePlotPdfAction.setStatusTip("Save the visible plot area as a PDF")
         self.savePlotPdfAction.triggered.connect(self.save_plot_pdf)
 
+        self.printPlotAction = create_action("plot.print", self)
+        self.register_shortcut(
+            self.printPlotAction,
+            command_spec("plot.print"),
+            )
+        self.printPlotAction.triggered.connect(self.print_plot)
+
         self.copyPlotImageAction = create_action("plot.copy_image", self)
         self.register_shortcut(
             self.copyPlotImageAction,
@@ -877,7 +884,18 @@ class plotWidget(
         if save_plot_pdf_action is not None:
             file_menu.addAction(save_plot_pdf_action)
 
-        if export_plot_action is not None or save_plot_pdf_action is not None:
+        print_plot_action = getattr(self, "printPlotAction", None)
+        if print_plot_action is not None:
+            file_menu.addAction(print_plot_action)
+
+        if any(
+                action is not None
+                for action in (
+                    export_plot_action,
+                    save_plot_pdf_action,
+                    print_plot_action,
+                    )
+                ):
             file_menu.addSeparator()
 
         copy_plot_image_action = getattr(self, "copyPlotImageAction", None)

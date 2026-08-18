@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pyqtgraph as pg
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, QtPrintSupport
 from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.operation_registry import OperationValidationError
@@ -47,6 +47,90 @@ def _colorbar_config_values():
             for subtype, _label in subtypes
             })
     return values
+
+
+class _PrintFilePrinter:
+    def __init__(self, filename, *, output_format=None):
+        self._filename = str(filename)
+        self._output_format = (
+            output_format
+            if output_format is not None
+            else QtPrintSupport.QPrinter.OutputFormat.PdfFormat
+        )
+        self.output_history = [self._filename]
+
+    def outputFileName(self):
+        return self._filename
+
+    def setOutputFileName(self, filename):
+        self._filename = str(filename)
+        self.output_history.append(self._filename)
+
+    def outputFormat(self):
+        return self._output_format
+
+
+class _AcceptedPrintDialog:
+    def __init__(self, _printer, _parent):
+        pass
+
+    def setWindowTitle(self, _title):
+        pass
+
+    def setMinMax(self, _minimum, _maximum):
+        pass
+
+    def setFromTo(self, _first, _last):
+        pass
+
+    def setOption(self, _option, _enabled):
+        pass
+
+    def exec(self):
+        return qtw.QDialog.DialogCode.Accepted
+
+
+class _AtomicPrintHost(qtw.QMainWindow):
+    print_plot = plotWidget.print_plot
+    _prepare_print_pdf_destination = plotWidget._prepare_print_pdf_destination
+    _print_plot_pdf_atomically = plotWidget._print_plot_pdf_atomically
+    _write_print_pdf_stage = plotWidget._write_print_pdf_stage
+    _revalidate_print_pdf_destination = (
+        plotWidget._revalidate_print_pdf_destination
+    )
+    _protected_database_identities = plotWidget._protected_database_identities
+    _ensure_print_target_is_not_protected = staticmethod(
+        plotWidget._ensure_print_target_is_not_protected
+    )
+    _print_directory_identity = staticmethod(plotWidget._print_directory_identity)
+    _print_target_signature = staticmethod(plotWidget._print_target_signature)
+    _fit_print_rect = staticmethod(plotWidget._fit_print_rect)
+
+    def __init__(self, printer, *, paint_result=True, paint_error=None):
+        super().__init__()
+        self.printer = printer
+        self.paint_result = paint_result
+        self.paint_error = paint_error
+        self.staged_paths = []
+        self.status_messages = []
+        self.errors = []
+
+    def _create_plot_printer(self):
+        return self.printer
+
+    def _paint_plot_to_device(self, printer):
+        staging_path = Path(printer.outputFileName())
+        self.staged_paths.append(staging_path)
+        staging_path.write_bytes(b"%PDF-staged print")
+        if self.paint_error is not None:
+            raise self.paint_error
+        return self.paint_result
+
+    def show_status(self, message, timeout=0):
+        self.status_messages.append((message, timeout))
+
+    def show_error(self, title, message, details=None):
+        self.errors.append((title, message, details))
 
 
 class PlotWindowRefreshTestCase(unittest.TestCase):
@@ -1196,6 +1280,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             def save_plot_pdf(self):
                 pass
 
+            def print_plot(self):
+                pass
+
             def copy_plot_image(self):
                 pass
 
@@ -1253,6 +1340,10 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 self.pdf_called = True
                 return True
 
+            def print_plot(self):
+                self.print_called = True
+                return True
+
             def copy_plot_image(self):
                 self.copy_called = True
                 return True
@@ -1280,6 +1371,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
         host.oper_dock = qtw.QDockWidget()
         host.copy_called = False
         host.pdf_called = False
+        host.print_called = False
 
         try:
             host.initContextMenu()
@@ -1302,22 +1394,46 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 host.savePlotPdfAction.objectName(),
                 "savePlotPdfAction",
                 )
+            self.assertEqual(
+                host.printPlotAction.objectName(),
+                "printPlotAction",
+                )
             self.assertIn(host.copyPlotImageAction, host.actions())
+            self.assertIn(host.printPlotAction, host.actions())
             self.assertGreater(len(host.copyPlotImageAction.shortcuts()), 0)
             self.assertEqual(
+                host.printPlotAction.shortcut().toString(),
+                "Ctrl+P",
+                )
+            self.assertEqual(
                 host.copyPlotImageAction.shortcutContext(),
+                QtCore.Qt.ShortcutContext.WindowShortcut,
+                )
+            self.assertEqual(
+                host.printPlotAction.shortcutContext(),
                 QtCore.Qt.ShortcutContext.WindowShortcut,
                 )
             self.assertIn("Copy Plot Image", context_actions)
             self.assertIn("Save Plot as PDF...", context_actions)
             self.assertNotIn("Copy Plot Image at Size...", context_actions)
             self.assertIn(host.savePlotPdfAction, menus["File"].actions())
+            self.assertIn(host.printPlotAction, menus["File"].actions())
             self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
+            self.assertEqual(
+                menus["File"].actions()[:3],
+                [
+                    host.exportPlotAction,
+                    host.savePlotPdfAction,
+                    host.printPlotAction,
+                ],
+            )
 
             host.savePlotPdfAction.trigger()
+            host.printPlotAction.trigger()
             host.copyPlotImageAction.trigger()
 
             self.assertTrue(host.pdf_called)
+            self.assertTrue(host.print_called)
             self.assertTrue(host.copy_called)
         finally:
             host.deleteLater()
@@ -1524,6 +1640,599 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(window.widget.grabbed, 1)
             self.assertTrue(target.exists())
             self.assertEqual(target.read_bytes()[:4], b"%PDF")
+
+    def test_print_rect_is_centred_and_preserves_aspect_ratio(self):
+        printable = QtCore.QRectF(10, 20, 100, 100)
+
+        destination = plotWidget._fit_print_rect(
+            QtCore.QSize(400, 200),
+            printable,
+        )
+
+        self.assertEqual(destination, QtCore.QRectF(10, 45, 100, 50))
+
+    def test_plot_printer_preserves_screen_sized_plot_elements(self):
+        class Printer:
+            def __init__(self, mode):
+                self.mode = mode
+                self.creator = ""
+                self.document_name = ""
+                self.orientation = None
+
+            def setCreator(self, creator):
+                self.creator = creator
+
+            def setDocName(self, name):
+                self.document_name = name
+
+            def setPageOrientation(self, orientation):
+                self.orientation = orientation
+
+        Printer.PrinterMode = QtPrintSupport.QPrinter.PrinterMode
+
+        class Host(qtw.QMainWindow):
+            _create_plot_printer = plotWidget._create_plot_printer
+
+        host = Host()
+        host.widget = qtw.QWidget(host)
+        host.widget.resize(200, 100)
+        host.setWindowTitle("Run 7 signal")
+
+        try:
+            with patch.object(QtPrintSupport, "QPrinter", Printer):
+                printer = host._create_plot_printer()
+
+            self.assertEqual(
+                printer.mode,
+                QtPrintSupport.QPrinter.PrinterMode.ScreenResolution,
+            )
+            self.assertEqual(printer.creator, "qPlot")
+            self.assertEqual(printer.document_name, "Run 7 signal")
+            self.assertEqual(
+                printer.orientation,
+                QtGui.QPageLayout.Orientation.Landscape,
+            )
+        finally:
+            host.deleteLater()
+
+    def test_render_plot_to_printer_creates_pdf(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        window = plotWidget.__new__(plotWidget)
+        window.widget = widget
+
+        try:
+            widget.resize(160, 120)
+            widget.show()
+            qtw.QApplication.processEvents()
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                target = Path(temp_dir) / "printed-plot.pdf"
+                printer = QtGui.QPdfWriter(str(target))
+                printer.setResolution(96)
+
+                self.assertTrue(
+                    plotWidget._render_plot_to_printer(window, printer)
+                )
+                self.assertTrue(target.exists())
+                self.assertGreater(target.stat().st_size, 0)
+                self.assertEqual(target.read_bytes()[:4], b"%PDF")
+        finally:
+            widget.deleteLater()
+
+    def test_print_plot_renders_after_dialog_is_accepted(self):
+        dialogs = []
+
+        class Dialog:
+            def __init__(self, printer, parent):
+                self.printer = printer
+                self.parent = parent
+                self.title = ""
+                self.page_range = None
+                self.from_to = None
+                self.options = []
+                dialogs.append(self)
+
+            def setWindowTitle(self, title):
+                self.title = title
+
+            def setMinMax(self, minimum, maximum):
+                self.page_range = (minimum, maximum)
+
+            def setFromTo(self, first, last):
+                self.from_to = (first, last)
+
+            def setOption(self, option, enabled):
+                self.options.append((option, enabled))
+
+            def exec(self):
+                return qtw.QDialog.DialogCode.Accepted
+
+        class Host(qtw.QMainWindow):
+            print_plot = plotWidget.print_plot
+            _prepare_print_pdf_destination = (
+                plotWidget._prepare_print_pdf_destination
+            )
+
+            def __init__(self):
+                super().__init__()
+                self.widget = qtw.QWidget(self)
+                self.printer = object()
+                self.rendered_printers = []
+                self.status_messages = []
+
+            def _create_plot_printer(self):
+                return self.printer
+
+            def _render_plot_to_printer(self, printer):
+                self.rendered_printers.append(printer)
+                return True
+
+            def show_status(self, message, timeout=0):
+                self.status_messages.append((message, timeout))
+
+        host = Host()
+
+        try:
+            with patch.object(QtPrintSupport, "QPrintDialog", Dialog):
+                self.assertTrue(host.print_plot())
+
+            self.assertEqual(len(dialogs), 1)
+            self.assertIs(dialogs[0].parent, host)
+            self.assertEqual(dialogs[0].title, "Print Plot")
+            self.assertEqual(dialogs[0].page_range, (1, 1))
+            self.assertEqual(dialogs[0].from_to, (1, 1))
+            self.assertEqual(
+                dialogs[0].options,
+                [
+                    (
+                        QtPrintSupport.QAbstractPrintDialog.PrintDialogOption.PrintPageRange,
+                        False,
+                    ),
+                    (
+                        QtPrintSupport.QAbstractPrintDialog.PrintDialogOption.PrintToFile,
+                        False,
+                    ),
+                ],
+            )
+            self.assertEqual(host.rendered_printers, [dialogs[0].printer])
+            self.assertEqual(
+                host.status_messages[-1],
+                ("Plot sent to printer.", 3000),
+            )
+        finally:
+            host.deleteLater()
+
+    def test_print_plot_cancel_does_not_render(self):
+        class Dialog:
+            def __init__(self, _printer, _parent):
+                pass
+
+            def setWindowTitle(self, _title):
+                pass
+
+            def setMinMax(self, _minimum, _maximum):
+                pass
+
+            def setFromTo(self, _first, _last):
+                pass
+
+            def setOption(self, _option, _enabled):
+                pass
+
+            def exec(self):
+                return qtw.QDialog.DialogCode.Rejected
+
+        class Host(qtw.QMainWindow):
+            print_plot = plotWidget.print_plot
+            _prepare_print_pdf_destination = (
+                plotWidget._prepare_print_pdf_destination
+            )
+
+            def __init__(self):
+                super().__init__()
+                self.widget = qtw.QWidget(self)
+                self.printer = object()
+                self.render_calls = 0
+                self.status_messages = []
+
+            def _create_plot_printer(self):
+                return self.printer
+
+            def _render_plot_to_printer(self, _printer):
+                self.render_calls += 1
+                return True
+
+            def show_status(self, message, timeout=0):
+                self.status_messages.append((message, timeout))
+
+        host = Host()
+
+        try:
+            with patch.object(QtPrintSupport, "QPrintDialog", Dialog):
+                self.assertFalse(host.print_plot())
+
+            self.assertEqual(host.render_calls, 0)
+            self.assertEqual(
+                host.status_messages[-1],
+                ("Plot printing cancelled.", 3000),
+            )
+        finally:
+            host.deleteLater()
+
+    def test_print_plot_reports_render_failure(self):
+        class Dialog:
+            def __init__(self, _printer, _parent):
+                pass
+
+            def setWindowTitle(self, _title):
+                pass
+
+            def setMinMax(self, _minimum, _maximum):
+                pass
+
+            def setFromTo(self, _first, _last):
+                pass
+
+            def setOption(self, _option, _enabled):
+                pass
+
+            def exec(self):
+                return qtw.QDialog.DialogCode.Accepted
+
+        class Host(qtw.QMainWindow):
+            print_plot = plotWidget.print_plot
+            _prepare_print_pdf_destination = (
+                plotWidget._prepare_print_pdf_destination
+            )
+
+            def __init__(self):
+                super().__init__()
+                self.widget = qtw.QWidget(self)
+                self.status_messages = []
+                self.errors = []
+
+            def _create_plot_printer(self):
+                return object()
+
+            def _render_plot_to_printer(self, _printer):
+                return False
+
+            def show_status(self, message, timeout=0):
+                self.status_messages.append((message, timeout))
+
+            def show_error(self, title, message, details=None):
+                self.errors.append((title, message, details))
+
+        host = Host()
+
+        try:
+            with patch.object(QtPrintSupport, "QPrintDialog", Dialog):
+                self.assertFalse(host.print_plot())
+
+            self.assertEqual(
+                host.status_messages[-1],
+                ("Could not print plot.", 5000),
+            )
+            self.assertEqual(host.errors[0][:2], (
+                "Print Failed",
+                "Could not print the plot.",
+            ))
+            self.assertIn("could not be rendered", host.errors[0][2])
+        finally:
+            host.deleteLater()
+
+    def test_print_plot_atomically_publishes_system_selected_pdf(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "printed-plot.pdf"
+            target.write_bytes(b"%PDF-existing sentinel")
+            printer = _PrintFilePrinter(target)
+            host = _AtomicPrintHost(printer)
+
+            try:
+                with patch.object(
+                        QtPrintSupport,
+                        "QPrintDialog",
+                        _AcceptedPrintDialog,
+                        ):
+                    self.assertTrue(host.print_plot())
+
+                self.assertEqual(target.read_bytes(), b"%PDF-staged print")
+                self.assertEqual(len(host.staged_paths), 1)
+                staging_path = host.staged_paths[0]
+                self.assertNotEqual(staging_path, target)
+                self.assertEqual(
+                    staging_path.parent.resolve(),
+                    target.parent.resolve(),
+                )
+                self.assertEqual(staging_path.suffix, ".pdf")
+                self.assertFalse(staging_path.exists())
+                self.assertEqual(set(target.parent.iterdir()), {target})
+                self.assertEqual(
+                    host.status_messages[-1],
+                    (f"Printed plot to PDF: {target.resolve()}", 5000),
+                )
+                self.assertEqual(host.errors, [])
+            finally:
+                host.deleteLater()
+
+    def test_print_plot_atomically_publishes_real_qprinter_pdf(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot()
+        plot.plot([0, 1], [1, 2])
+
+        try:
+            widget.resize(160, 120)
+            widget.show()
+            qtw.QApplication.processEvents()
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                target = Path(temp_dir) / "printed-plot.pdf"
+                printer = QtPrintSupport.QPrinter(
+                    QtPrintSupport.QPrinter.PrinterMode.ScreenResolution
+                )
+                printer.setOutputFormat(
+                    QtPrintSupport.QPrinter.OutputFormat.PdfFormat
+                )
+                printer.setOutputFileName(str(target))
+                host = _AtomicPrintHost(printer)
+                host.widget = widget
+                host._paint_plot_to_device = (
+                    plotWidget._paint_plot_to_device.__get__(host, type(host))
+                )
+
+                try:
+                    with patch.object(
+                            QtPrintSupport,
+                            "QPrintDialog",
+                            _AcceptedPrintDialog,
+                            ):
+                        self.assertTrue(host.print_plot())
+
+                    self.assertTrue(target.is_file())
+                    self.assertGreater(target.stat().st_size, 0)
+                    self.assertEqual(target.read_bytes()[:4], b"%PDF")
+                    self.assertEqual(set(target.parent.iterdir()), {target})
+                finally:
+                    host.deleteLater()
+        finally:
+            widget.deleteLater()
+
+    def test_print_pdf_render_failure_preserves_existing_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "printed-plot.pdf"
+            sentinel = b"%PDF-existing sentinel"
+            target.write_bytes(sentinel)
+            printer = _PrintFilePrinter(target)
+            host = _AtomicPrintHost(printer, paint_result=False)
+
+            try:
+                with patch.object(
+                        QtPrintSupport,
+                        "QPrintDialog",
+                        _AcceptedPrintDialog,
+                        ):
+                    self.assertFalse(host.print_plot())
+
+                self.assertEqual(target.read_bytes(), sentinel)
+                self.assertEqual(len(host.staged_paths), 1)
+                self.assertFalse(host.staged_paths[0].exists())
+                self.assertEqual(set(target.parent.iterdir()), {target})
+                self.assertEqual(
+                    host.status_messages[-1],
+                    ("Could not print plot.", 5000),
+                )
+                self.assertEqual(host.errors[0][0], "Print Failed")
+            finally:
+                host.deleteLater()
+
+    def test_print_pdf_rejects_target_changed_during_render(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "printed-plot.pdf"
+            target.write_bytes(b"%PDF-original sentinel")
+            printer = _PrintFilePrinter(target)
+            host = _AtomicPrintHost(printer)
+
+            def paint_and_change_target(active_printer):
+                staging_path = Path(active_printer.outputFileName())
+                host.staged_paths.append(staging_path)
+                staging_path.write_bytes(b"%PDF-staged print")
+                target.write_bytes(b"%PDF-concurrent replacement")
+                return True
+
+            host._paint_plot_to_device = paint_and_change_target
+
+            try:
+                destination = host._prepare_print_pdf_destination(printer)
+                self.assertIsNotNone(destination)
+
+                with self.assertRaisesRegex(
+                        RuntimeError,
+                        "changed while printing",
+                        ):
+                    host._print_plot_pdf_atomically(printer, destination)
+
+                self.assertEqual(
+                    target.read_bytes(),
+                    b"%PDF-concurrent replacement",
+                )
+                self.assertEqual(len(host.staged_paths), 1)
+                self.assertFalse(host.staged_paths[0].exists())
+                self.assertEqual(set(target.parent.iterdir()), {target})
+            finally:
+                host.deleteLater()
+
+    def test_print_pdf_rejects_database_and_sqlite_sidecar_filenames(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "input.db"
+            for suffix in ("", "-wal", "-shm", "-journal"):
+                with self.subTest(suffix=suffix):
+                    target = Path(f"{database_path}{suffix}")
+                    sentinel = f"protected{suffix}".encode()
+                    target.write_bytes(sentinel)
+                    printer = _PrintFilePrinter(target)
+                    host = _AtomicPrintHost(printer)
+
+                    try:
+                        with self.assertRaisesRegex(
+                                RuntimeError,
+                                "must end in .pdf",
+                                ):
+                            host._prepare_print_pdf_destination(printer)
+                    finally:
+                        host.deleteLater()
+
+                    self.assertEqual(target.read_bytes(), sentinel)
+
+    def test_print_pdf_rejects_hardlink_to_database(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "input.db"
+            alias_path = Path(temp_dir) / "print-output.pdf"
+            sentinel = b"database sentinel"
+            database_path.write_bytes(sentinel)
+            try:
+                os.link(database_path, alias_path)
+            except OSError as err:
+                self.skipTest(f"Hard links are unavailable: {err}")
+
+            printer = _PrintFilePrinter(alias_path)
+            host = _AtomicPrintHost(printer)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "Hard-linked"):
+                    host._prepare_print_pdf_destination(printer)
+            finally:
+                host.deleteLater()
+
+            self.assertEqual(database_path.read_bytes(), sentinel)
+            self.assertEqual(alias_path.read_bytes(), sentinel)
+
+    def test_print_pdf_rejects_last_hardlink_to_retained_database_instance(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "input.db"
+            alias_path = Path(temp_dir) / "print-output.pdf"
+            replacement_path = Path(temp_dir) / "replacement.db"
+            sentinel = b"retained database sentinel"
+            database_path.write_bytes(sentinel)
+            try:
+                os.link(database_path, alias_path)
+            except OSError as err:
+                self.skipTest(f"Hard links are unavailable: {err}")
+
+            dataset_key = DatasetKey(str(database_path), "retained-guid")
+            replacement_path.write_bytes(b"replacement database")
+            os.replace(replacement_path, database_path)
+            self.assertEqual(alias_path.stat().st_nlink, 1)
+
+            printer = _PrintFilePrinter(alias_path)
+            host = _AtomicPrintHost(printer)
+            host._dataset_key = dataset_key
+            host._dataset_holder = {
+                dataset_key: DatasetHandle(object()),
+            }
+            try:
+                with self.assertRaisesRegex(RuntimeError, "input database"):
+                    host._prepare_print_pdf_destination(printer)
+            finally:
+                host.deleteLater()
+
+            self.assertEqual(alias_path.read_bytes(), sentinel)
+            self.assertEqual(database_path.read_bytes(), b"replacement database")
+
+    def test_print_pdf_rejects_last_hardlink_to_replaced_sqlite_sidecar(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "input.db"
+            database_path.write_bytes(b"SQLite format 3\x00")
+            dataset_key = DatasetKey(str(database_path), "retained-guid")
+
+            for suffix in ("-wal", "-shm", "-journal"):
+                with self.subTest(suffix=suffix):
+                    sidecar_path = Path(f"{database_path}{suffix}")
+                    alias_path = Path(temp_dir) / f"print-{suffix[1:]}.pdf"
+                    replacement_path = Path(temp_dir) / f"replacement{suffix}"
+                    sentinel = f"retained SQLite {suffix}".encode()
+                    sidecar_path.write_bytes(sentinel)
+                    try:
+                        os.link(sidecar_path, alias_path)
+                    except OSError as err:
+                        self.skipTest(f"Hard links are unavailable: {err}")
+
+                    replacement_path.write_bytes(b"replacement sidecar")
+                    os.replace(replacement_path, sidecar_path)
+                    self.assertEqual(alias_path.stat().st_nlink, 1)
+
+                    printer = _PrintFilePrinter(alias_path)
+                    host = _AtomicPrintHost(printer)
+                    host._dataset_key = dataset_key
+                    host._dataset_holder = {
+                        dataset_key: DatasetHandle(object()),
+                    }
+                    try:
+                        with self.assertRaisesRegex(
+                                RuntimeError,
+                                "not an existing PDF",
+                                ):
+                            host._prepare_print_pdf_destination(printer)
+                    finally:
+                        host.deleteLater()
+
+                    self.assertEqual(alias_path.read_bytes(), sentinel)
+                    self.assertEqual(
+                        sidecar_path.read_bytes(),
+                        b"replacement sidecar",
+                    )
+
+    def test_print_pdf_rejects_symlink_to_database(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "input.db"
+            alias_path = Path(temp_dir) / "print-output.pdf"
+            sentinel = b"database sentinel"
+            database_path.write_bytes(sentinel)
+            try:
+                alias_path.symlink_to(database_path)
+            except OSError as err:
+                self.skipTest(f"Symbolic links are unavailable: {err}")
+
+            printer = _PrintFilePrinter(alias_path)
+            host = _AtomicPrintHost(printer)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "Symbolic-link"):
+                    host._prepare_print_pdf_destination(printer)
+            finally:
+                host.deleteLater()
+
+            self.assertEqual(database_path.read_bytes(), sentinel)
+            self.assertTrue(alias_path.is_symlink())
+
+    def test_print_pdf_rejects_opaque_or_non_pdf_destinations(self):
+        window = plotWidget.__new__(plotWidget)
+        cases = (
+            (
+                "FILE:",
+                QtPrintSupport.QPrinter.OutputFormat.PdfFormat,
+                "concrete PDF filename",
+            ),
+            (
+                "report.prn",
+                QtPrintSupport.QPrinter.OutputFormat.PdfFormat,
+                "must end in .pdf",
+            ),
+            (
+                "report.pdf",
+                QtPrintSupport.QPrinter.OutputFormat.NativeFormat,
+                "Only PDF file output",
+            ),
+        )
+
+        for filename, output_format, message in cases:
+            with self.subTest(filename=filename, output_format=output_format):
+                printer = _PrintFilePrinter(
+                    filename,
+                    output_format=output_format,
+                )
+                with self.assertRaisesRegex(RuntimeError, message):
+                    plotWidget._prepare_print_pdf_destination(window, printer)
 
     def test_copy_plot_image_at_size_copies_exported_image_to_clipboard(self):
         widget = pg.GraphicsLayoutWidget()
@@ -1741,6 +2450,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 pass
 
             def save_plot_pdf(self):
+                pass
+
+            def print_plot(self):
                 pass
 
             def copy_plot_image(self):

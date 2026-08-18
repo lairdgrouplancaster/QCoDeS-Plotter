@@ -114,6 +114,16 @@ class operations_options_base(qtw.QWidget):
 
         # Allows user to toggle options
         self.list_options = qtw.QListWidget()
+        # Some platform styles draw the vertical scrollbar as an overlay.  Keep
+        # the option-row controls clear of that area, rather than allowing the
+        # checkboxes to extend underneath it.
+        scrollbar_extent = max(
+            self.list_options.verticalScrollBar().sizeHint().width(),
+            self.style().pixelMetric(
+                qtw.QStyle.PixelMetric.PM_ScrollBarExtent,
+                ),
+            )
+        self.list_options.setViewportMargins(0, 0, scrollbar_extent, 0)
         self.main_layout.addWidget(self.list_options)
         
         self.add_all_options()

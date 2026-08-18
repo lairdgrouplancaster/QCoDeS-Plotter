@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._export_paths import write_export_atomically
 from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plot_export import PlotExportMixin
 
@@ -228,3 +229,35 @@ def test_unsuffixed_export_creates_final_target_when_absent(tmp_path, kind):
     assert harness.errors == []
     question.assert_not_called()
     assert any(call.args[1] == "r+b" for call in open_file.call_args_list)
+
+
+def test_atomic_export_before_publish_failure_preserves_target_and_cleans_stage(
+        tmp_path,
+        ):
+    target = tmp_path / "report.pdf"
+    sentinel = b"existing export sentinel"
+    target.write_bytes(sentinel)
+    staged_paths = []
+
+    def writer(staged_filename):
+        staged_path = Path(staged_filename)
+        staged_paths.append(staged_path)
+        staged_path.write_bytes(b"%PDF-new")
+        return True
+
+    def reject_publish():
+        assert staged_paths[0].is_file()
+        assert target.read_bytes() == sentinel
+        raise RuntimeError("target became protected before publication")
+
+    with pytest.raises(RuntimeError, match="became protected"):
+        write_export_atomically(
+            str(target),
+            writer,
+            before_publish=reject_publish,
+        )
+
+    assert target.read_bytes() == sentinel
+    assert len(staged_paths) == 1
+    assert not staged_paths[0].exists()
+    assert set(tmp_path.iterdir()) == {target}

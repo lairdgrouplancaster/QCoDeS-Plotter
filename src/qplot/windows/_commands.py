@@ -269,6 +269,15 @@ COMMANDS: dict[str, CommandSpec] = {
         help_section="Plot Windows",
         help_shortcut="Ctrl+C / Cmd+C",
     ),
+    "plot.print": CommandSpec(
+        "plot.print",
+        "&Print Plot...",
+        "Print the visible plot area",
+        _standard_shortcuts(QKeySequence.StandardKey.Print, ["Ctrl+P"]),
+        object_name="printPlotAction",
+        help_section="Plot Windows",
+        help_shortcut="Ctrl+P / Cmd+P",
+    ),
     "plot.export": CommandSpec(
         "plot.export",
         "&Export Plot...",

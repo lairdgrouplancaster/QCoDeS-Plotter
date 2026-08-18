@@ -195,7 +195,7 @@ def test_example_csv_is_ready_to_generate(tmp_path):
         501,
         501,
         121 * 81,
-        201 * 101,
+        121 * 81,
     ]
     with pytest.raises(SpecificationError, match="already exists"):
         write_example_csv(csv_path)
@@ -229,7 +229,7 @@ def test_instruction_collection_is_cumulative_and_spans_10mb_to_30gb(tmp_path):
         "conductance",
         "resistance",
         "transconductance",
-        "charge_sensor",
+        "current",
     ]
     assert {
         (
@@ -239,6 +239,16 @@ def test_instruction_collection_is_cumulative_and_spans_10mb_to_30gb(tmp_path):
         )
         for specification in one_dimensional
     } == {(-0.1, 0.1, 1001)}
+
+    two_dimensional = [
+        specification
+        for specification in specification_sets[0]
+        if specification.dimensions == 2
+    ]
+    assert two_dimensional[:2] == [
+        two_dimensional[0],
+        two_dimensional[0],
+    ]
 
     for predecessor, successor in zip(
         specification_sets[:-1],
