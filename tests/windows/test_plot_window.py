@@ -560,6 +560,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
                 self.started.append(worker)
 
         window = plotWidget.__new__(plotWidget)
+        qtw.QMainWindow.__init__(window)
         window._guid = "guid"
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
@@ -1131,7 +1132,14 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window.worker = worker
         window.line = line
         window.marquee = None
-        window.trace_label = None
+        # This focused refresh host is a valid Qt widget, but does not build
+        # the complete plotting UI. Keep the coordinate-status hook narrow so
+        # the test reaches its empty-refresh assertions independently.
+        window.trace_label = qtw.QLabel()
+        coordinate_context_updates = []
+        window._update_coordinate_context = lambda: coordinate_context_updates.append(
+            True
+            )
         window._guid = "guid"
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
@@ -1154,6 +1162,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         self.assertEqual(states[-1][0][0], "Waiting for plottable data")
         self.assertEqual(states[-1][1]["kind"], "empty")
         self.assertEqual(trace_updates, [True])
+        self.assertEqual(coordinate_context_updates, [True])
 
     def test_successful_line_refresh_notifies_merged_traces_once(self):
         class Signal:
@@ -1190,7 +1199,11 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window.worker = worker
         window.line = Line()
         window.marquee = None
-        window.trace_label = None
+        window.trace_label = qtw.QLabel()
+        coordinate_context_updates = []
+        window._update_coordinate_context = lambda: coordinate_context_updates.append(
+            True
+            )
         window._guid = "guid"
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
@@ -1211,6 +1224,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
             [((), {"x": [0.0, 1.0], "y": [10.0, 20.0]})],
             )
         self.assertEqual(trace_updates, [True])
+        self.assertEqual(coordinate_context_updates, [True])
 
 
 class RunListParentLookupTestCase(unittest.TestCase):

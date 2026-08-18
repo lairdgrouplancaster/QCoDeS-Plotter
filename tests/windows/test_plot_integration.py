@@ -1910,8 +1910,10 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
             ["stale preview"],
             None,
         )
-        window.spinBox.setValue(4.125)
-        expected_monitor_interval = round(window.spinBox.value() * 1000)
+        # The production control represents tenths of a second, so keep the
+        # test input representable while checking the conversion explicitly.
+        window.spinBox.setValue(4.1)
+        expected_monitor_interval = 4100
         assert_same_path_generation_consumers_released(window)
         assert window.testDatabaseGenerationThreadPool.activeThreadCount() == 1
         assert window.loadDatabaseButton.isEnabled()
@@ -2105,8 +2107,8 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
                 and not window._database_expensive_detail_active
             )
         )
-        window.spinBox.setValue(2.375)
-        expected_monitor_interval = round(window.spinBox.value() * 1000)
+        window.spinBox.setValue(2.4)
+        expected_monitor_interval = 2400
         selected_run_id = select_nondefault_run_and_finish_previews(window)
         assert window.monitor.isActive()
         assert window.monitor.interval() == expected_monitor_interval
@@ -2220,8 +2222,8 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
                 and not window._database_expensive_detail_active
             )
         )
-        window.spinBox.setValue(2.375)
-        expected_monitor_interval = round(window.spinBox.value() * 1000)
+        window.spinBox.setValue(2.4)
+        expected_monitor_interval = 2400
         selected_run_id = select_nondefault_run_and_finish_previews(window)
         assert window.ds.name == "NEW_WAL"
         assert window.monitor.isActive()
@@ -2321,8 +2323,8 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
                 and not window._database_expensive_detail_active
             )
         )
-        window.spinBox.setValue(2.375)
-        expected_monitor_interval = round(window.spinBox.value() * 1000)
+        window.spinBox.setValue(2.4)
+        expected_monitor_interval = 2400
         parameter = dependent_parameter(window.ds, 1)
         window.openPlot(params=[parameter], show=False)
         old_plot = window.windows[-1]

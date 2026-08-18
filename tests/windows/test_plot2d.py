@@ -306,6 +306,10 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         window.param = Param()
         window.end_wait = Signal()
         window._set_param_axis_labels = lambda: None
+        coordinate_context_updates = []
+        window._update_coordinate_context = lambda: coordinate_context_updates.append(
+            True
+            )
         window.show_status_messages = []
         window.show_status = lambda *args: window.show_status_messages.append(args)
 
@@ -315,6 +319,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         self.assertEqual(window.end_wait.emitted, 1)
         self.assertIn("Waiting for plottable data", window.show_status_messages[-1][0])
         self.assertIsNone(window._heatmap_geometry())
+        self.assertEqual(coordinate_context_updates, [True])
 
     def test_plottable_heatmap_data_requires_axes_and_finite_grid(self):
         window = plot2d.__new__(plot2d)
