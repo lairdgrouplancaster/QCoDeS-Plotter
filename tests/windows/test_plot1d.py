@@ -489,7 +489,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertEqual(
             window.trace_label.text(),
-            "Run 1, Conductance vs Gate voltage, snapped to point 2",
+            "Run 1: Conductance vs Gate voltage (snapped to point 1)",
         )
         self.assertEqual(window.trace_label.toolTip(), Source.label)
 
@@ -498,7 +498,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertEqual(
             window.trace_label.text(),
-            "Run 1, Conductance vs Gate voltage",
+            "Run 1: Conductance vs Gate voltage",
             )
 
     def test_swapped_secondary_snap_report_uses_its_horizontal_measurement(self):
@@ -539,7 +539,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertEqual(
             window.trace_label.text(),
-            "Run 2, Gate voltage vs Current, snapped to point 3",
+            "Run 2: Gate voltage vs Current (snapped to point 2)",
         )
 
     def test_swap_plot_axes_exchanges_loaded_data_labels_and_refreshes(self):

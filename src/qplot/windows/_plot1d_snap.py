@@ -306,15 +306,15 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
 
     def _update_coordinate_context(self, label=None, point_number=None):
-        """Show ``Run N, measurement vs setpoint`` and optional snap detail."""
+        """Show ``Run N: measurement vs setpoint`` and optional snap detail."""
 
         if self.trace_label is None:
             return
 
         run_id, vertical, horizontal, tooltip = self._coordinate_context_parts(label)
-        message = f"Run {run_id}, {vertical} vs {horizontal}"
+        message = f"Run {run_id}: {vertical} vs {horizontal}"
         if point_number is not None:
-            message += f", snapped to point {point_number}"
+            message += f" (snapped to point {point_number - 1})"
         self.trace_label.setText(message)
         self.trace_label.setToolTip(tooltip)
         self.trace_label.adjustSize()
