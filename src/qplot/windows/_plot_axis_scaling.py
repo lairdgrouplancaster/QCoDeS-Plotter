@@ -24,6 +24,12 @@ _AXIS_DIMENSIONS: dict[_AxisName, Literal["x", "y"]] = {
     "x2": "x",
     "y2": "y",
 }
+_AXIS_SIDES: dict[_AxisName, str] = {
+    "x": "bottom",
+    "y": "left",
+    "x2": "top",
+    "y2": "right",
+}
 _AXIS_ALIASES: dict[str, _AxisName] = {
     "x": "x",
     "bottom": "x",
@@ -131,6 +137,15 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 continue
 
             self.vbMenu.removeAction(action)
+
+        # Log controls now live with the other per-axis controls. The original
+        # PlotItem checkboxes are global to both sides and cannot represent X2
+        # and Y2 independently.
+        plot_controls = getattr(self.plot, "ctrl", None)
+        for name in ("logXCheck", "logYCheck"):
+            control = getattr(plot_controls, name, None)
+            if control is not None:
+                control.hide()
 
         self._install_axis_scale_viewbox_range_handlers(
             self.vb,
@@ -288,6 +303,12 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.autoPanCheck.setToolTip(
             "Follow new data by moving this axis without changing its displayed span."
         )
+        ui.logCheck = qtw.QCheckBox("Log Scale", widget)
+        ui.logCheck.setObjectName("axisScaleLogCheck")
+        ui.logCheck.setToolTip(
+            "Display this axis on a base-10 logarithmic scale. Values at or "
+            "below zero are not shown."
+        )
         ui.autoPercentSpin.setToolTip(
             "Percentage of the data range included during autoscaling. Lower "
             "values can reduce the influence of extreme spikes."
@@ -347,11 +368,12 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.gridLayout.addWidget(ui.visibleOnlyCheck, 3, 1, 1, 3)
         ui.gridLayout.addWidget(ui.autoPanCheck, 4, 1, 1, 3)
         ui.gridLayout.addWidget(ui.rangeSeparator, 5, 0, 1, 4)
-        ui.gridLayout.addWidget(ui.invertCheck, 6, 0, 1, 2)
-        ui.gridLayout.addWidget(ui.mouseCheck, 6, 2, 1, 2)
-        ui.gridLayout.addWidget(ui.linkSeparator, 7, 0, 1, 4)
-        ui.gridLayout.addWidget(ui.label, 8, 0)
-        ui.gridLayout.addWidget(ui.linkCombo, 8, 1, 1, 3)
+        ui.gridLayout.addWidget(ui.logCheck, 6, 0, 1, 4)
+        ui.gridLayout.addWidget(ui.invertCheck, 7, 0, 1, 2)
+        ui.gridLayout.addWidget(ui.mouseCheck, 7, 2, 1, 2)
+        ui.gridLayout.addWidget(ui.linkSeparator, 8, 0, 1, 4)
+        ui.gridLayout.addWidget(ui.label, 9, 0)
+        ui.gridLayout.addWidget(ui.linkCombo, 9, 1, 1, 3)
         ui.gridLayout.setColumnStretch(1, 1)
         ui.gridLayout.setColumnStretch(2, 1)
         self._axis_scale_controls[axis] = ui
@@ -386,6 +408,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.invertCheck.toggled.connect(
             lambda checked, axis=axis: self._axis_scale_invert_toggled(axis, checked)
             )
+        ui.logCheck.toggled.connect(
+            lambda checked, axis=axis: self._axis_scale_log_toggled(axis, checked)
+            )
         ui.copyAutoLimitsButton.clicked.connect(
             lambda _checked=False, axis=axis: self._axis_scale_copy_auto_limits(axis)
         )
@@ -415,6 +440,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 ui.autoPanCheck,
                 ui.visibleOnlyCheck,
                 ui.invertCheck,
+                ui.logCheck,
                 ui.mouseCheck,
                 ):
             widget.blockSignals(True)
@@ -439,6 +465,19 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             ui.visibleOnlyCheck.setChecked(state["autoVisibleOnly"][axis_number])
             dimension = self._axis_scale_dimension(axis)
             ui.invertCheck.setChecked(state.get(dimension + "Inverted", False))
+            axis_item = self.plot.getAxis(_AXIS_SIDES[axis])
+            ui.logCheck.setChecked(bool(getattr(axis_item, "logMode", False)))
+            log_supported = self._axis_scale_log_is_supported(axis)
+            ui.logCheck.setEnabled(log_supported)
+            if log_supported:
+                ui.logCheck.setToolTip(
+                    "Display this axis on a base-10 logarithmic scale. Values "
+                    "at or below zero are not shown."
+                )
+            else:
+                ui.logCheck.setToolTip(
+                    "Log scaling is available for line-plot axes."
+                )
             self._sync_axis_scale_link_combo(axis)
             self._update_axis_scale_auto_limits_tooltip(axis)
         finally:
@@ -452,6 +491,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                     ui.autoPanCheck,
                     ui.visibleOnlyCheck,
                     ui.invertCheck,
+                    ui.logCheck,
                     ui.mouseCheck,
                     ):
                 widget.blockSignals(False)
@@ -766,6 +806,103 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             viewbox.invertX(checked)
         else:
             viewbox.invertY(checked)
+
+    def _axis_scale_log_is_supported(self, axis: _AxisName) -> bool:
+        """Return whether this axis contains data items that support log mode."""
+
+        if getattr(self, "operation_kind", None) == "plot2d":
+            return False
+        for _viewbox, items in self._axis_scale_bound_item_groups(axis):
+            candidates = items
+            if candidates is None:
+                candidates = list(getattr(self.plot, "dataItems", []))
+            if any(callable(getattr(item, "setLogMode", None)) for item in candidates):
+                return True
+        return False
+
+    def _axis_scale_log_mode(self, axis: _AxisName) -> bool:
+        """Return the current log state from the displayed axis item."""
+
+        axis_item = self.plot.getAxis(_AXIS_SIDES[axis])
+        return bool(getattr(axis_item, "logMode", False))
+
+    def _sync_axis_scale_line_log_mode(self, trace_key: Any, line: Any) -> None:
+        """Apply the log modes of a trace's assigned axes to that trace."""
+
+        set_log_mode = getattr(line, "setLogMode", None)
+        if not callable(set_log_mode):
+            return
+        style = self.__dict__.get("_trace_styles", {}).get(trace_key)
+        x_axis: _AxisName = (
+            "x2" if getattr(style, "x_axis", "Bottom") == "Top" else "x"
+        )
+        y_axis: _AxisName = (
+            "y2" if getattr(style, "y_axis", "Left") == "Right" else "y"
+        )
+        set_log_mode(
+            self._axis_scale_log_mode(x_axis),
+            self._axis_scale_log_mode(y_axis),
+        )
+
+    def _axis_scale_log_toggled(self, axis: _AxisName, checked: bool) -> None:
+        """Apply a tab's log state to its ticks and assigned line traces."""
+
+        if not self._axis_scale_log_is_supported(axis):
+            self._sync_axis_scale_controls(axis)
+            return
+
+        self.plot.getAxis(_AXIS_SIDES[axis]).setLogMode(checked)
+        if axis in ("x", "y"):
+            control_name = "logXCheck" if axis == "x" else "logYCheck"
+            plot_control = getattr(
+                getattr(self.plot, "ctrl", None),
+                control_name,
+                None,
+            )
+            if plot_control is not None:
+                plot_control.blockSignals(True)
+                try:
+                    plot_control.setChecked(checked)
+                finally:
+                    plot_control.blockSignals(False)
+        styles = self.__dict__.get("_trace_styles")
+        lines = self.__dict__.get("lines")
+        if isinstance(styles, dict) and isinstance(lines, dict):
+            for trace_key, line in lines.items():
+                style = styles.get(trace_key)
+                if self._axis_scale_dimension(axis) == "x":
+                    assigned_axis = (
+                        "x2"
+                        if getattr(style, "x_axis", "Bottom") == "Top"
+                        else "x"
+                    )
+                else:
+                    assigned_axis = (
+                        "y2"
+                        if getattr(style, "y_axis", "Left") == "Right"
+                        else "y"
+                    )
+                if assigned_axis == axis:
+                    self._sync_axis_scale_line_log_mode(trace_key, line)
+        else:
+            axis_number = self._axis_scale_axis_number(axis)
+            for item in getattr(self.plot, "dataItems", []):
+                set_log_mode = getattr(item, "setLogMode", None)
+                if not callable(set_log_mode):
+                    continue
+                current = list(getattr(item, "opts", {}).get("logMode", (False, False)))
+                current[axis_number] = checked
+                set_log_mode(bool(current[0]), bool(current[1]))
+
+        if self._axis_scale_uses_filtered_auto(axis):
+            self._apply_axis_scale_filtered_auto(axis)
+        else:
+            self._axis_scale_viewbox(axis).enableAutoRange(
+                self._axis_scale_axis_constant(axis),
+                True,
+            )
+        self._sync_axis_scale_controls(axis)
+        self._view_range_changed_programmatically()
 
     def _axis_scale_axis_is_used(self, axis: _AxisName) -> bool:
         """Return whether the plot currently has a trace on this axis."""

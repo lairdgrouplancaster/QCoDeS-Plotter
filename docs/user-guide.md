@@ -198,6 +198,8 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog.
+* Use `Log Scale` in an axis-scaling tab to switch a line-plot axis between
+  linear and base-10 logarithmic scaling. Non-positive values are omitted.
 * Right-drag on the plot, or scroll over an axis, to fast scale an axis.
 * The bottom toolbar shows cursor coordinates and array indices.
 * The left panel controls assigned axes and plot-specific options.

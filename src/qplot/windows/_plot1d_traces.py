@@ -1242,6 +1242,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if "vb" in self.__dict__ and "plot" in self.__dict__:
             target_viewbox = self._trace_axis_viewbox(style)
             self._move_trace_to_axis_viewbox(line, target_viewbox)
+            sync_log_mode = getattr(self, "_sync_axis_scale_line_log_mode", None)
+            if callable(sync_log_mode):
+                sync_log_mode(label, line)
 
         self._sync_left_axis_visibility()
         self._sync_right_axis_visibility()

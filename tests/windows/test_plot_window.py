@@ -1717,6 +1717,12 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _axis_scale_auto_pan_toggled = plotWidget._axis_scale_auto_pan_toggled
             _axis_scale_visible_only_toggled = plotWidget._axis_scale_visible_only_toggled
             _axis_scale_invert_toggled = plotWidget._axis_scale_invert_toggled
+            _axis_scale_log_is_supported = plotWidget._axis_scale_log_is_supported
+            _axis_scale_log_mode = plotWidget._axis_scale_log_mode
+            _sync_axis_scale_line_log_mode = (
+                plotWidget._sync_axis_scale_line_log_mode
+            )
+            _axis_scale_log_toggled = plotWidget._axis_scale_log_toggled
             _axis_scale_axis_is_used = plotWidget._axis_scale_axis_is_used
             _create_axis_scale_dialog = plotWidget._create_axis_scale_dialog
             _axis_scale_current_tab_changed = plotWidget._axis_scale_current_tab_changed
@@ -1758,6 +1764,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertNotIn("Y axis", action_texts)
             self.assertEqual(host.plot.ctrlMenu.title(), "Options")
             self.assertEqual(host.plot.ctrlMenu.menuAction().text(), "Options")
+            self.assertTrue(host.plot.ctrl.logXCheck.isHidden())
+            self.assertTrue(host.plot.ctrl.logYCheck.isHidden())
 
             main_line = host.plot.plot(x=[200.0, 400.0], y=[10.0, 20.0])
             host.vb.setXRange(-100.0, 100.0, padding=0)
@@ -1782,6 +1790,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(x_controls.maximumLabel.text(), "Maximum")
             self.assertEqual(x_controls.invertCheck.text(), "Reverse Axis")
             self.assertEqual(x_controls.mouseCheck.text(), "Allow Zoom/Pan")
+            self.assertEqual(x_controls.logCheck.text(), "Log Scale")
+            self.assertTrue(x_controls.logCheck.isEnabled())
+            self.assertFalse(x_controls.logCheck.isChecked())
             self.assertEqual(
                 x_controls.visibleOnlyCheck.text(),
                 "Autoscale from Visible Data",
@@ -1816,6 +1827,14 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 x_controls.invertCheck.width(),
                 x_controls.invertCheck.sizeHint().width(),
                 )
+            x_controls.logCheck.click()
+            self.assertTrue(host.plot.getAxis("bottom").logMode)
+            self.assertTrue(host.plot.ctrl.logXCheck.isChecked())
+            self.assertEqual(main_line.opts["logMode"], [True, False])
+            x_controls.logCheck.click()
+            self.assertFalse(host.plot.getAxis("bottom").logMode)
+            self.assertFalse(host.plot.ctrl.logXCheck.isChecked())
+            self.assertEqual(main_line.opts["logMode"], [False, False])
             self.assertEqual(
                 host._axis_scale_tabs.tabToolTip(2),
                 "Top horizontal axis",
@@ -1884,6 +1903,12 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertIs(host._axis_scale_dialog, dialog)
             self.assertEqual(host._axis_scale_tabs.currentIndex(), 3)
             self.assertIs(host._axis_scale_viewbox("y2"), host.right_vb)
+            right_controls = host._axis_scale_controls["y2"]
+            self.assertTrue(right_controls.logCheck.isEnabled())
+            right_controls.logCheck.click()
+            self.assertEqual(main_line.opts["logMode"], [False, False])
+            self.assertEqual(top_line.opts["logMode"], [False, True])
+            self.assertTrue(host.plot.getAxis("right").logMode)
 
             event = type(
                 "MouseEvent",
