@@ -7,6 +7,8 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.6.0-b1 - 2026-08-18
+
 ### Added
 
 - Print the visible plot area through the system print dialog, including
