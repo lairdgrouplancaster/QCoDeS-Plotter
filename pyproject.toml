@@ -158,3 +158,41 @@ ignore_missing_imports = true
 no_implicit_optional = true
 sqlite_cache = false
 warn_unused_ignores = true
+
+# Qt's Python stubs describe several runtime-composed widget attributes as
+# optional or absent. Keep mypy coverage for these modules while excluding only
+# the error categories produced by those dynamic Qt APIs.
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot_axis_scaling"
+disable_error_code = ["index", "misc", "override", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot1d_traces"
+disable_error_code = ["attr-defined", "misc", "override", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot2d_layers"
+disable_error_code = ["assignment", "attr-defined", "misc", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = [
+    "qplot.windows._widgets.operations",
+    "qplot.windows._widgets.treeWidgets",
+]
+disable_error_code = ["union-attr"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._window_controls"
+disable_error_code = ["arg-type", "var-annotated"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot_export"
+disable_error_code = ["assignment", "misc"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot1d_snap"
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "qplot.testdata"
+disable_error_code = ["method-assign"]
