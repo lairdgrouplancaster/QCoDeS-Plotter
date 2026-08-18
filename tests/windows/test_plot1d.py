@@ -309,6 +309,14 @@ class SnapToTraceTestCase(unittest.TestCase):
             marker_x, marker_y = window.snap_marker.getData()
             np.testing.assert_array_equal(marker_x, [1.0])
             np.testing.assert_array_equal(marker_y, [1.0])
+            self.assertEqual(
+                window.snap_marker.zValue(),
+                -1,
+            )
+            self.assertGreater(
+                line.curve.zValue(),
+                window.snap_marker.zValue(),
+            )
         finally:
             window._hide_snap_marker()
             widget.deleteLater()

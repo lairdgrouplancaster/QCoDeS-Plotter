@@ -541,6 +541,10 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
                 pen=pg.mkPen("k", width=1),
                 brush=pg.mkBrush("w"),
                 )
+            # The marker follows the pointer and is often directly over the
+            # trace. Keep it behind plot lines so the line receives a
+            # double-click before the marker can consume it.
+            self.snap_marker.setZValue(-1)
 
         if self._snap_marker_view is not viewbox:
             self._hide_snap_marker()
