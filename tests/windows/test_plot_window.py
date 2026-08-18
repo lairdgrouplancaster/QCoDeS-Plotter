@@ -1,4 +1,6 @@
 import os
+import sqlite3
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,10 +8,24 @@ from unittest.mock import patch
 
 import numpy as np
 import pyqtgraph as pg
+import qcodes
 from PyQt6 import QtCore, QtGui, QtPrintSupport
 from PyQt6 import QtWidgets as qtw
+from pyqtgraph.exporters import (
+    CSVExporter,
+    HDF5Exporter,
+    ImageExporter,
+    MatplotlibExporter,
+    SVGExporter,
+)
+from qcodes.dataset import initialise_or_create_database_at
 
+from qplot.datahandling.file_identity import (
+    SQLITE_SIDECAR_SUFFIXES,
+    database_file_identity,
+)
 from qplot.tools.operation_registry import OperationValidationError
+from qplot.windows import _plot_export as plot_export_module
 from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows._colorbar import (
     _CET_COLORBAR_SUBTYPES,
@@ -27,6 +43,36 @@ from qplot.windows._preferences import (
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
+
+_PRINT_DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
+
+
+def _print_path_artifact_state(path):
+    """Capture exact content, metadata, and identity without opening SQLite."""
+    try:
+        path_stat = path.lstat()
+    except FileNotFoundError:
+        return None
+
+    return {
+        "lstat_identity": (int(path_stat.st_dev), int(path_stat.st_ino)),
+        "database_identity": database_file_identity(path),
+        "mode": int(path_stat.st_mode),
+        "nlink": int(path_stat.st_nlink),
+        "size": int(path_stat.st_size),
+        "mtime_ns": int(path_stat.st_mtime_ns),
+        "bytes": path.read_bytes() if stat.S_ISREG(path_stat.st_mode) else None,
+    }
+
+
+def _print_database_artifact_state(database_path):
+    """Capture a database main and every possible SQLite sidecar."""
+    return {
+        suffix: _print_path_artifact_state(
+            Path(f"{database_path}{suffix}")
+        )
+        for suffix in _PRINT_DATABASE_ARTIFACT_SUFFIXES
+    }
 
 
 def _colorbar_config_values():
@@ -126,6 +172,68 @@ class _AtomicPrintHost(qtw.QMainWindow):
         if self.paint_error is not None:
             raise self.paint_error
         return self.paint_result
+
+    def show_status(self, message, timeout=0):
+        self.status_messages.append((message, timeout))
+
+    def show_error(self, title, message, details=None):
+        self.errors.append((title, message, details))
+
+
+class _PyqtgraphExportHost(qtw.QMainWindow):
+    _export_pyqtgraph_exporter = plotWidget._export_pyqtgraph_exporter
+    _copy_pyqtgraph_exporter = plotWidget._copy_pyqtgraph_exporter
+    _pyqtgraph_export_specification = staticmethod(
+        plotWidget._pyqtgraph_export_specification
+    )
+
+    def __init__(self, suggested_path):
+        super().__init__()
+        self.suggested_path = str(suggested_path)
+        self.status_messages = []
+        self.errors = []
+
+    def _default_plot_pdf_filename(self):
+        return self.suggested_path
+
+    def show_status(self, message, timeout=0):
+        self.status_messages.append((message, timeout))
+
+    def show_error(self, title, message, details=None):
+        self.errors.append((title, message, details))
+
+
+class _PyqtgraphDialogHost(qtw.QMainWindow):
+    open_export_dialog = plotWidget.open_export_dialog
+    _install_safe_pyqtgraph_export_dialog = (
+        plotWidget._install_safe_pyqtgraph_export_dialog
+    )
+    _dispose_pyqtgraph_export_dialog = staticmethod(
+        plotWidget._dispose_pyqtgraph_export_dialog
+    )
+    _dispose_plot_export_dialog = plotWidget._dispose_plot_export_dialog
+    _remove_scene_export_context_menu = (
+        plotWidget._remove_scene_export_context_menu
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.widget = pg.GraphicsLayoutWidget()
+        self.setCentralWidget(self.widget)
+        self.plot = self.widget.addPlot()
+        self.plot.plot([0.0, 1.0], [1.0, 2.0])
+        self.export_calls = []
+        self.copy_calls = []
+        self.status_messages = []
+        self.errors = []
+
+    def _export_pyqtgraph_exporter(self, exporter):
+        self.export_calls.append(exporter)
+        return True
+
+    def _copy_pyqtgraph_exporter(self, exporter):
+        self.copy_calls.append(exporter)
+        return True
 
     def show_status(self, message, timeout=0):
         self.status_messages.append((message, timeout))
@@ -1023,6 +1131,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window.worker = worker
         window.line = line
         window.marquee = None
+        window.trace_label = None
         window._guid = "guid"
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
@@ -1081,6 +1190,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window.worker = worker
         window.line = Line()
         window.marquee = None
+        window.trace_label = None
         window._guid = "guid"
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
@@ -1259,6 +1369,178 @@ class RunListParentLookupTestCase(unittest.TestCase):
         finally:
             widget.deleteLater()
 
+    @unittest.skipIf(
+        plot_export_module._SafePyqtgraphExportDialog is None,
+        "The installed PyQtGraph export dialog is unsupported",
+    )
+    def test_open_export_dialog_wires_only_exact_safe_exporters(self):
+        host = _PyqtgraphDialogHost()
+        dialog = None
+
+        try:
+            host.open_export_dialog()
+            qtw.QApplication.processEvents()
+            dialog = host.widget.scene().exportDialog
+
+            self.assertIs(
+                type(dialog),
+                plot_export_module._SafePyqtgraphExportDialog,
+            )
+            self.assertIs(dialog._qplot_owner, host)
+            self.assertTrue(dialog.isVisible())
+            self.assertIs(dialog.ui.itemTree.currentItem().gitem, host.plot)
+
+            exporter_classes = [
+                dialog.ui.formatList.item(row).expClass
+                for row in range(dialog.ui.formatList.count())
+            ]
+            self.assertEqual(
+                exporter_classes,
+                [ImageExporter, CSVExporter, SVGExporter],
+            )
+            self.assertNotIn(HDF5Exporter, exporter_classes)
+            self.assertNotIn(MatplotlibExporter, exporter_classes)
+
+            for row, exporter_class in enumerate(exporter_classes):
+                with self.subTest(exporter=exporter_class.__name__):
+                    dialog.ui.formatList.setCurrentRow(row)
+                    qtw.QApplication.processEvents()
+                    self.assertIs(type(dialog.currentExporter), exporter_class)
+                    self.assertTrue(dialog.ui.exportBtn.isEnabled())
+                    self.assertEqual(
+                        dialog.ui.copyBtn.isEnabled(),
+                        exporter_class in (ImageExporter, SVGExporter),
+                    )
+
+            dialog.ui.formatList.setCurrentRow(1)
+            qtw.QApplication.processEvents()
+            selected_exporter = dialog.currentExporter
+            dialog.ui.exportBtn.click()
+            self.assertEqual(host.export_calls, [selected_exporter])
+            self.assertFalse(dialog.selectBox.isVisible())
+
+            dialog.show(host.plot)
+            dialog.ui.formatList.setCurrentRow(0)
+            qtw.QApplication.processEvents()
+            selected_exporter = dialog.currentExporter
+            dialog.ui.copyBtn.click()
+            self.assertEqual(host.copy_calls, [selected_exporter])
+            self.assertFalse(dialog.selectBox.isVisible())
+            self.assertEqual(host.status_messages, [])
+            self.assertEqual(host.errors, [])
+        finally:
+            host._dispose_plot_export_dialog()
+            host.deleteLater()
+
+    @unittest.skipIf(
+        plot_export_module._SafePyqtgraphExportDialog is None,
+        "The installed PyQtGraph export dialog is unsupported",
+    )
+    def test_pyqtgraph_exporter_subclass_is_never_instantiated_or_invoked(self):
+        constructed = []
+
+        class ImageExporterSubclass(ImageExporter):
+            Name = "Untrusted image subclass"
+
+            def __init__(self, item):
+                constructed.append(item)
+
+            def export(self, **_kwargs):
+                raise AssertionError("An untrusted exporter subclass was invoked")
+
+        dialog_host = _PyqtgraphDialogHost()
+        dialog = None
+        try:
+            dialog_host.open_export_dialog()
+            qtw.QApplication.processEvents()
+            dialog = dialog_host.widget.scene().exportDialog
+            item = plot_export_module._FormatExportListWidgetItem(
+                ImageExporterSubclass,
+                ImageExporterSubclass.Name,
+            )
+            dialog.ui.formatList.addItem(item)
+            dialog.ui.formatList.setCurrentItem(item)
+            qtw.QApplication.processEvents()
+
+            self.assertEqual(constructed, [])
+            self.assertIsNone(dialog.currentExporter)
+            self.assertFalse(dialog.ui.exportBtn.isEnabled())
+            self.assertFalse(dialog.ui.copyBtn.isEnabled())
+            self.assertEqual(dialog_host.export_calls, [])
+            self.assertEqual(dialog_host.copy_calls, [])
+        finally:
+            dialog_host._dispose_plot_export_dialog()
+            dialog_host.deleteLater()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            host = _PyqtgraphExportHost(directory / "suggested.pdf")
+            exporter = ImageExporterSubclass.__new__(ImageExporterSubclass)
+            try:
+                with patch.object(
+                    qtw.QFileDialog,
+                    "getSaveFileName",
+                ) as save_dialog:
+                    self.assertFalse(host._export_pyqtgraph_exporter(exporter))
+                    self.assertFalse(host._copy_pyqtgraph_exporter(exporter))
+
+                save_dialog.assert_not_called()
+                self.assertEqual(constructed, [])
+                self.assertEqual(list(directory.iterdir()), [])
+            finally:
+                host.deleteLater()
+
+    @unittest.skipIf(
+        plot_export_module._SafePyqtgraphExportDialog is None,
+        "The installed PyQtGraph export dialog is unsupported",
+    )
+    def test_scene_export_cache_replaces_stock_dialog_and_stays_disabled(self):
+        host = _PyqtgraphDialogHost()
+        scene = host.widget.scene()
+        stale_export_action = scene.contextMenu[0]
+        stock_dialog = plot_export_module._PyqtgraphExportDialog(scene)
+        stock_select_box = stock_dialog.selectBox
+        scene.exportDialog = stock_dialog
+
+        try:
+            self.assertIs(stock_select_box.scene(), scene)
+
+            host._remove_scene_export_context_menu()
+            safe_dialog = scene.exportDialog
+            safe_select_box = safe_dialog.selectBox
+
+            self.assertEqual(scene.contextMenu, [])
+            self.assertIsNone(stock_select_box.scene())
+            self.assertIs(
+                type(safe_dialog),
+                plot_export_module._SafePyqtgraphExportDialog,
+            )
+            self.assertIs(safe_dialog._qplot_owner, host)
+
+            scene.contextMenuItem = host.plot
+            stale_export_action.trigger()
+            qtw.QApplication.processEvents()
+            self.assertIs(scene.exportDialog, safe_dialog)
+            self.assertTrue(safe_dialog.isVisible())
+
+            host._dispose_plot_export_dialog()
+            disabled_dialog = scene.exportDialog
+            self.assertFalse(safe_dialog.isVisible())
+            self.assertIsNone(safe_select_box.scene())
+            self.assertIs(
+                type(disabled_dialog),
+                plot_export_module._DisabledPyqtgraphExportDialog,
+            )
+
+            stale_export_action.trigger()
+            scene.showExportDialog()
+            self.assertIs(scene.exportDialog, disabled_dialog)
+            self.assertEqual(host.export_calls, [])
+            self.assertEqual(host.copy_calls, [])
+        finally:
+            host._dispose_plot_export_dialog()
+            host.deleteLater()
+
     def test_plot_export_action_has_keyboard_shortcut(self):
         class Host(qtw.QMainWindow):
             initContextMenu = plotWidget.initContextMenu
@@ -1314,6 +1596,197 @@ class RunListParentLookupTestCase(unittest.TestCase):
         finally:
             host.deleteLater()
             widget.deleteLater()
+
+    def test_safe_pyqtgraph_file_exporters_publish_from_sibling_stages(self):
+        cases = (
+            (ImageExporter, "plot.png", b"new image"),
+            (CSVExporter, "plot.csv", b"x,y\n1,2\n"),
+            (SVGExporter, "plot.svg", b"<svg/>"),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            host = _PyqtgraphExportHost(directory / "suggested.pdf")
+            try:
+                for exporter_type, filename, payload in cases:
+                    with self.subTest(exporter=exporter_type.__name__):
+                        target = directory / filename
+                        original = b"existing export sentinel"
+                        target.write_bytes(original)
+                        exporter = exporter_type.__new__(exporter_type)
+                        staged_paths = []
+
+                        def export(
+                                *,
+                                fileName=None,
+                                _target=target,
+                                _staged_paths=staged_paths,
+                                _original=original,
+                                _payload=payload,
+                                **_kwargs,
+                                ):
+                            staging_path = Path(fileName)
+                            _staged_paths.append(staging_path)
+                            self.assertNotEqual(staging_path, _target)
+                            self.assertEqual(staging_path.parent, _target.parent)
+                            self.assertEqual(
+                                staging_path.suffix.casefold(),
+                                _target.suffix.casefold(),
+                            )
+                            self.assertTrue(
+                                staging_path.name.startswith(f".{_target.name}.")
+                            )
+                            self.assertEqual(_target.read_bytes(), _original)
+                            staging_path.write_bytes(_payload)
+                            return True
+
+                        exporter.export = export
+                        with (
+                            patch.object(
+                                qtw.QFileDialog,
+                                "getSaveFileName",
+                                return_value=(str(target), ""),
+                            ),
+                            patch.object(
+                                qtw.QMessageBox,
+                                "question",
+                                return_value=qtw.QMessageBox.StandardButton.Yes,
+                            ) as question,
+                        ):
+                            self.assertTrue(host._export_pyqtgraph_exporter(exporter))
+
+                        question.assert_called_once()
+                        self.assertEqual(target.read_bytes(), payload)
+                        self.assertEqual(len(staged_paths), 1)
+                        self.assertFalse(staged_paths[0].exists())
+                        self.assertFalse(any(
+                            entry.name.startswith(f".{target.name}.")
+                            for entry in directory.iterdir()
+                        ))
+                        self.assertEqual(
+                            host.status_messages[-1],
+                            (f"Exported plot: {target}", 5000),
+                        )
+                        self.assertEqual(host.errors, [])
+            finally:
+                host.deleteLater()
+
+    def test_safe_pyqtgraph_image_export_rejects_loaded_png_database(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            database_path = directory / "loaded-input.png"
+            contents = b"SQLite format 3\x00" + (b"\x00" * 128)
+            database_path.write_bytes(contents)
+            dataset_key = DatasetKey(str(database_path), "loaded-png-guid")
+            host = _PyqtgraphExportHost(directory / "suggested.pdf")
+            host._dataset_key = dataset_key
+            exporter = ImageExporter.__new__(ImageExporter)
+            export_calls = []
+
+            def export(*, fileName=None, **_kwargs):
+                export_calls.append(fileName)
+                Path(fileName).write_bytes(b"unsafe replacement")
+                return True
+
+            exporter.export = export
+            before_stat = database_path.stat()
+            before_identity = database_file_identity(database_path)
+            before_entries = set(directory.iterdir())
+            try:
+                with (
+                    patch.object(
+                        qtw.QFileDialog,
+                        "getSaveFileName",
+                        return_value=(str(database_path), ""),
+                    ),
+                    patch.object(qtw.QMessageBox, "question") as question,
+                ):
+                    self.assertFalse(host._export_pyqtgraph_exporter(exporter))
+
+                question.assert_not_called()
+                after_stat = database_path.stat()
+                self.assertEqual(export_calls, [])
+                self.assertEqual(database_path.read_bytes(), contents)
+                self.assertEqual(after_stat.st_mtime_ns, before_stat.st_mtime_ns)
+                self.assertEqual(
+                    (after_stat.st_dev, after_stat.st_ino),
+                    (before_stat.st_dev, before_stat.st_ino),
+                )
+                self.assertEqual(
+                    database_file_identity(database_path),
+                    before_identity,
+                )
+                self.assertEqual(set(directory.iterdir()), before_entries)
+                self.assertEqual(host.errors[-1][0], "Plot Export Failed")
+            finally:
+                host.deleteLater()
+
+    def test_unsafe_pyqtgraph_exporters_are_disabled_before_choosing_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            host = _PyqtgraphExportHost(directory / "suggested.pdf")
+            exporters = (
+                HDF5Exporter.__new__(HDF5Exporter),
+                MatplotlibExporter.__new__(MatplotlibExporter),
+                object(),
+            )
+            try:
+                for exporter in exporters:
+                    with self.subTest(exporter=type(exporter).__name__):
+                        if hasattr(exporter, "export"):
+                            exporter.export = lambda **_kwargs: self.fail(
+                                "A disabled exporter attempted to write"
+                            )
+
+                        with patch.object(
+                            qtw.QFileDialog,
+                            "getSaveFileName",
+                        ) as save_dialog:
+                            self.assertFalse(
+                                host._export_pyqtgraph_exporter(exporter)
+                            )
+
+                        save_dialog.assert_not_called()
+                        self.assertEqual(
+                            host.status_messages[-1],
+                            ("That PyQtGraph export format is disabled.", 5000),
+                        )
+                        self.assertEqual(
+                            host.errors[-1][0],
+                            "Plot Export Disabled",
+                        )
+                self.assertEqual(list(directory.iterdir()), [])
+            finally:
+                host.deleteLater()
+
+    def test_safe_pyqtgraph_export_chooser_cancellation_creates_nothing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            host = _PyqtgraphExportHost(directory / "suggested.pdf")
+            exporter = CSVExporter.__new__(CSVExporter)
+            exporter.export = lambda **_kwargs: self.fail(
+                "A cancelled exporter attempted to write"
+            )
+            try:
+                with (
+                    patch.object(
+                        qtw.QFileDialog,
+                        "getSaveFileName",
+                        return_value=("", ""),
+                    ),
+                    patch.object(qtw.QMessageBox, "question") as question,
+                ):
+                    self.assertFalse(host._export_pyqtgraph_exporter(exporter))
+
+                question.assert_not_called()
+                self.assertEqual(list(directory.iterdir()), [])
+                self.assertEqual(
+                    host.status_messages[-1],
+                    ("Plot export cancelled.", 3000),
+                )
+                self.assertEqual(host.errors, [])
+            finally:
+                host.deleteLater()
 
     def test_plot_copy_image_action_has_shortcut_context_menu_and_edit_menu(self):
         class Host(qtw.QMainWindow):
@@ -1933,13 +2406,30 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host = _AtomicPrintHost(printer)
 
             try:
-                with patch.object(
+                with (
+                    patch.object(
                         QtPrintSupport,
                         "QPrintDialog",
                         _AcceptedPrintDialog,
-                        ):
+                    ),
+                    patch.object(
+                        qtw.QMessageBox,
+                        "question",
+                        return_value=qtw.QMessageBox.StandardButton.Yes,
+                    ) as question,
+                ):
                     self.assertTrue(host.print_plot())
 
+                question.assert_called_once()
+                self.assertIs(question.call_args.args[0], host)
+                self.assertEqual(
+                    question.call_args.args[1],
+                    "Replace Printed PDF?",
+                )
+                self.assertIn(
+                    os.path.abspath(target),
+                    question.call_args.args[2],
+                )
                 self.assertEqual(target.read_bytes(), b"%PDF-staged print")
                 self.assertEqual(len(host.staged_paths), 1)
                 staging_path = host.staged_paths[0]
@@ -1953,8 +2443,94 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 self.assertEqual(set(target.parent.iterdir()), {target})
                 self.assertEqual(
                     host.status_messages[-1],
-                    (f"Printed plot to PDF: {target.resolve()}", 5000),
+                    (f"Printed plot to PDF: {os.path.abspath(target)}", 5000),
                 )
+                self.assertEqual(host.errors, [])
+            finally:
+                host.deleteLater()
+
+    def test_print_pdf_declined_replacement_preserves_existing_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "printed-plot.pdf"
+            target.write_bytes(b"%PDF-existing sentinel")
+            printer = _PrintFilePrinter(target)
+            host = _AtomicPrintHost(printer)
+            before = _print_path_artifact_state(target)
+            before_entries = set(target.parent.iterdir())
+
+            try:
+                with (
+                    patch.object(
+                        QtPrintSupport,
+                        "QPrintDialog",
+                        _AcceptedPrintDialog,
+                    ),
+                    patch.object(
+                        qtw.QMessageBox,
+                        "question",
+                        return_value=qtw.QMessageBox.StandardButton.No,
+                    ) as question,
+                ):
+                    self.assertFalse(host.print_plot())
+
+                question.assert_called_once()
+                self.assertIn(
+                    os.path.abspath(target),
+                    question.call_args.args[2],
+                )
+                self.assertEqual(_print_path_artifact_state(target), before)
+                self.assertEqual(set(target.parent.iterdir()), before_entries)
+                self.assertEqual(host.staged_paths, [])
+                self.assertEqual(
+                    host.status_messages[-1],
+                    ("Plot printing cancelled.", 3000),
+                )
+                self.assertEqual(host.errors, [])
+            finally:
+                host.deleteLater()
+
+    def test_print_pdf_file_appearing_before_capture_requires_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "printed-plot.pdf"
+            appeared_state = []
+
+            class AppearingPrintDialog(_AcceptedPrintDialog):
+                def exec(self):
+                    target.write_bytes(b"%PDF-concurrent sentinel")
+                    appeared_state.append(_print_path_artifact_state(target))
+                    return qtw.QDialog.DialogCode.Accepted
+
+            printer = _PrintFilePrinter(target)
+            host = _AtomicPrintHost(printer)
+
+            try:
+                self.assertFalse(target.exists())
+                with (
+                    patch.object(
+                        QtPrintSupport,
+                        "QPrintDialog",
+                        AppearingPrintDialog,
+                    ),
+                    patch.object(
+                        qtw.QMessageBox,
+                        "question",
+                        return_value=qtw.QMessageBox.StandardButton.No,
+                    ) as question,
+                ):
+                    self.assertFalse(host.print_plot())
+
+                question.assert_called_once()
+                self.assertIn(
+                    os.path.abspath(target),
+                    question.call_args.args[2],
+                )
+                self.assertEqual(len(appeared_state), 1)
+                self.assertEqual(
+                    _print_path_artifact_state(target),
+                    appeared_state[0],
+                )
+                self.assertEqual(set(target.parent.iterdir()), {target})
+                self.assertEqual(host.staged_paths, [])
                 self.assertEqual(host.errors, [])
             finally:
                 host.deleteLater()
@@ -2010,13 +2586,21 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host = _AtomicPrintHost(printer, paint_result=False)
 
             try:
-                with patch.object(
+                with (
+                    patch.object(
                         QtPrintSupport,
                         "QPrintDialog",
                         _AcceptedPrintDialog,
-                        ):
+                    ),
+                    patch.object(
+                        qtw.QMessageBox,
+                        "question",
+                        return_value=qtw.QMessageBox.StandardButton.Yes,
+                    ) as question,
+                ):
                     self.assertFalse(host.print_plot())
 
+                question.assert_called_once()
                 self.assertEqual(target.read_bytes(), sentinel)
                 self.assertEqual(len(host.staged_paths), 1)
                 self.assertFalse(host.staged_paths[0].exists())
@@ -2046,8 +2630,14 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host._paint_plot_to_device = paint_and_change_target
 
             try:
-                destination = host._prepare_print_pdf_destination(printer)
+                with patch.object(
+                    qtw.QMessageBox,
+                    "question",
+                    return_value=qtw.QMessageBox.StandardButton.Yes,
+                ) as question:
+                    destination = host._prepare_print_pdf_destination(printer)
                 self.assertIsNotNone(destination)
+                question.assert_called_once()
 
                 with self.assertRaisesRegex(
                         RuntimeError,
@@ -2064,6 +2654,68 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 self.assertEqual(set(target.parent.iterdir()), {target})
             finally:
                 host.deleteLater()
+
+    def test_print_pdf_rejects_attached_qcodes_database_named_pdf_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "loaded-input.pdf"
+            original_database_path = qcodes.config.core.db_location
+            writer = None
+            host = None
+            try:
+                initialise_or_create_database_at(
+                    str(database_path),
+                    journal_mode="WAL",
+                )
+                writer = sqlite3.connect(database_path)
+                self.assertEqual(
+                    writer.execute("PRAGMA journal_mode = WAL").fetchone()[0],
+                    "wal",
+                )
+                writer.execute("PRAGMA wal_autocheckpoint = 0")
+                writer.execute("CREATE TABLE qplot_print_safety (value INTEGER)")
+                writer.execute("INSERT INTO qplot_print_safety VALUES (1)")
+                writer.commit()
+                self.assertTrue(Path(f"{database_path}-wal").is_file())
+                self.assertTrue(Path(f"{database_path}-shm").is_file())
+
+                dataset_key = DatasetKey(str(database_path), "loaded-pdf-guid")
+                printer = _PrintFilePrinter(database_path)
+                host = _AtomicPrintHost(printer)
+                host._dataset_key = dataset_key
+                before = _print_database_artifact_state(database_path)
+                before_entries = set(database_path.parent.iterdir())
+
+                with (
+                    patch.object(
+                        QtPrintSupport,
+                        "QPrintDialog",
+                        _AcceptedPrintDialog,
+                    ),
+                    patch.object(qtw.QMessageBox, "question") as question,
+                ):
+                    self.assertFalse(host.print_plot())
+
+                question.assert_not_called()
+                self.assertEqual(
+                    _print_database_artifact_state(database_path),
+                    before,
+                )
+                self.assertEqual(
+                    set(database_path.parent.iterdir()),
+                    before_entries,
+                )
+                self.assertEqual(host.staged_paths, [])
+                self.assertEqual(
+                    host.status_messages[-1],
+                    ("Could not print plot to PDF.", 5000),
+                )
+                self.assertEqual(host.errors[-1][0], "Print to PDF Failed")
+            finally:
+                if host is not None:
+                    host.deleteLater()
+                if writer is not None:
+                    writer.close()
+                qcodes.config.core.db_location = original_database_path
 
     def test_print_pdf_rejects_database_and_sqlite_sidecar_filenames(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2145,15 +2797,18 @@ class RunListParentLookupTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "input.db"
             database_path.write_bytes(b"SQLite format 3\x00")
-            dataset_key = DatasetKey(str(database_path), "retained-guid")
 
             for suffix in ("-wal", "-shm", "-journal"):
                 with self.subTest(suffix=suffix):
                     sidecar_path = Path(f"{database_path}{suffix}")
                     alias_path = Path(temp_dir) / f"print-{suffix[1:]}.pdf"
                     replacement_path = Path(temp_dir) / f"replacement{suffix}"
-                    sentinel = f"retained SQLite {suffix}".encode()
+                    sentinel = f"%PDF-retained SQLite {suffix}".encode()
                     sidecar_path.write_bytes(sentinel)
+                    dataset_key = DatasetKey(
+                        str(database_path),
+                        f"retained-guid-{suffix}",
+                    )
                     try:
                         os.link(sidecar_path, alias_path)
                     except OSError as err:
@@ -2172,7 +2827,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                     try:
                         with self.assertRaisesRegex(
                                 RuntimeError,
-                                "not an existing PDF",
+                                "input database",
                                 ):
                             host._prepare_print_pdf_destination(printer)
                     finally:

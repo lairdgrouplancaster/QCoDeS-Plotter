@@ -3,6 +3,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 
 from PyQt6 import QtCore, QtGui
@@ -32,8 +33,8 @@ from qplot.datahandling.readonly import (
 from qplot.diagnostics import log_event, log_exception
 from qplot.testdata import (
     GenerationCancelled,
-    copy_instruction_collection,
     generate_database,
+    instruction_collection_contents,
     read_specifications,
     write_example_csv,
 )
@@ -43,7 +44,11 @@ from ._dataset_handle import (
     canonical_database_path,
     database_file_identity,
 )
-from ._export_paths import choose_export_path, write_export_atomically
+from ._export_paths import (
+    choose_export_path,
+    prepare_export_destination,
+    write_export_atomically,
+)
 from ._widgets.details_tables import (
     CopyableTableWidget,
     copy_to_clipboard,
@@ -184,6 +189,13 @@ def reveal_file_in_file_manager(file_path):
 
     folder = os.path.dirname(file_path)
     return QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(folder))
+
+
+def _write_export_bytes(filename, content):
+    """Write one private staging file for the shared export transaction."""
+    with open(filename, "wb") as output_file:
+        output_file.write(content)
+    return True
 
 
 class TestDatabaseGenerationSignals(QtCore.QObject):
@@ -483,22 +495,21 @@ class DatabaseActionsMixin:
             self.database_open_directory(),
             "qplot-test-runs.csv",
         )
-        csv_path = choose_export_path(
-            self,
-            caption="Create Test Database CSV",
-            suggested_path=suggested_path,
-            name_filter="CSV Files (*.csv)",
-            required_suffix=".csv",
-            replace_title="Replace Example CSV?",
-            file_description="example CSV file",
-        )
-        if not csv_path:
-            self.show_status("Example CSV creation cancelled.", 3000)
-            return False
-
         try:
+            destination = choose_export_path(
+                self,
+                caption="Create Test Database CSV",
+                suggested_path=suggested_path,
+                name_filter="CSV Files (*.csv)",
+                required_suffix=".csv",
+                replace_title="Replace Example CSV?",
+                file_description="example CSV file",
+            )
+            if destination is None:
+                self.show_status("Example CSV creation cancelled.", 3000)
+                return False
             write_export_atomically(
-                csv_path,
+                destination,
                 lambda temporary: write_example_csv(temporary, overwrite=True),
             )
         except Exception as err:
@@ -510,6 +521,7 @@ class DatabaseActionsMixin:
             )
             return False
 
+        csv_path = destination.filename
         opened = reveal_file_in_file_manager(csv_path)
         if not opened:
             self.show_error(
@@ -537,7 +549,28 @@ class DatabaseActionsMixin:
 
         directory = os.path.abspath(directory)
         try:
-            output_paths = copy_instruction_collection(directory)
+            collection = instruction_collection_contents()
+            destinations = tuple(
+                prepare_export_destination(
+                    self,
+                    os.path.join(directory, filename),
+                )
+                for filename, _content in collection
+            )
+            for destination, (_filename, content) in zip(
+                    destinations,
+                    collection,
+                    strict=True,
+                    ):
+                write_export_atomically(
+                    destination,
+                    lambda temporary, data=content: (
+                        _write_export_bytes(temporary, data)
+                    ),
+                )
+            output_paths = tuple(
+                Path(destination.filename) for destination in destinations
+            )
         except Exception as err:
             log_exception("Test-data CSV collection export failed", err, __name__)
             self.show_error(

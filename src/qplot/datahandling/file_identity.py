@@ -1,7 +1,7 @@
 """Stable paths and identities for databases that may be replaced."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeAlias
 
@@ -15,6 +15,7 @@ QPLOT_GENERATED_DATABASE_APPLICATION_ID = 0x51504C54
 QPLOT_GENERATION_PROVENANCE_TABLE = "qplot_generation_provenance"
 QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES = 32
 _SQLITE_APPLICATION_ID_OFFSET = 68
+SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
 def logical_database_path(database_path: str | os.PathLike[str]) -> str:
@@ -56,6 +57,12 @@ class DatabaseInstance:
     logical_path: str
     resolved_path: str
     identity: DatabaseFileIdentity | None
+    sidecar_identities: frozenset[DatabaseFileIdentity] = field(
+        default_factory=frozenset,
+        compare=False,
+        hash=False,
+        repr=False,
+    )
 
 
 def database_instance(
@@ -69,7 +76,35 @@ def database_instance(
         logical_path=logical_path,
         resolved_path=resolved_path,
         identity=database_file_identity(resolved_path),
+        sidecar_identities=database_sidecar_identities(
+            logical_path,
+            resolved_path,
+        ),
     )
+
+
+def database_sidecar_identities(
+        database_path: str | os.PathLike[str],
+        resolved_database_path: str | os.PathLike[str] | None = None,
+        ) -> frozenset[DatabaseFileIdentity]:
+    """Capture existing SQLite sidecars without opening the database.
+
+    Both the user-selected path and its resolved target are checked because
+    SQLite sidecars may be associated with either spelling when the input path
+    contains symbolic links. Only filesystem metadata is inspected.
+    """
+
+    logical_path = logical_database_path(database_path)
+    resolved_path = canonical_database_path(
+        resolved_database_path if resolved_database_path is not None else logical_path
+    )
+    identities: set[DatabaseFileIdentity] = set()
+    for base_path in {logical_path, resolved_path}:
+        for suffix in SQLITE_SIDECAR_SUFFIXES:
+            identity = database_file_identity(f"{base_path}{suffix}")
+            if identity is not None:
+                identities.add(identity)
+    return frozenset(identities)
 
 
 def database_instances_differ(

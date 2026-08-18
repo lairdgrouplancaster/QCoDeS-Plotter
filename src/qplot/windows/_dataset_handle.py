@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PyQt6 import QtCore
 
@@ -6,6 +6,7 @@ from qplot.datahandling.file_identity import (
     DatabaseFileIdentity,
     canonical_database_path,
     database_file_identity,
+    database_sidecar_identities,
     logical_database_path,
 )
 
@@ -29,6 +30,12 @@ class DatasetKey:
     guid: str
     database_identity: DatabaseFileIdentity | None = None
     resolved_database_path: str | None = None
+    sidecar_identities: frozenset[DatabaseFileIdentity] = field(
+        default_factory=frozenset,
+        compare=False,
+        hash=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         logical_path = logical_database_path(self.database_path)
@@ -53,6 +60,15 @@ class DatasetKey:
                 self,
                 "database_identity",
                 database_file_identity(resolved_path),
+            )
+        if not self.sidecar_identities:
+            object.__setattr__(
+                self,
+                "sidecar_identities",
+                database_sidecar_identities(
+                    logical_path,
+                    self.resolved_database_path,
+                ),
             )
 
 

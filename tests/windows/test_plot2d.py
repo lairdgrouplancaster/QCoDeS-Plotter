@@ -327,6 +327,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             name = "signal"
 
         window = plot2d.__new__(plot2d)
+        qtw.QMainWindow.__init__(window)
         worker = Worker()
         window.__dict__["axis_data"] = {
             "x": np.array([0.0, 1.0]),

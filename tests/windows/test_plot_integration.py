@@ -1910,6 +1910,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
             None,
         )
         window.spinBox.setValue(4.125)
+        expected_monitor_interval = round(window.spinBox.value() * 1000)
         assert_same_path_generation_consumers_released(window)
         assert window.testDatabaseGenerationThreadPool.activeThreadCount() == 1
         assert window.loadDatabaseButton.isEnabled()
@@ -1940,7 +1941,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         assert window._test_database_replacement_state is None
         assert window.generateTestDatabaseAction.isEnabled()
         assert window.monitor.isActive()
-        assert window.monitor.interval() == 4125
+        assert window.monitor.interval() == expected_monitor_interval
         assert window.ds is not None
         if outcome == "success":
             assert database_instance(database_path) != original_instance
@@ -2104,9 +2105,10 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
             )
         )
         window.spinBox.setValue(2.375)
+        expected_monitor_interval = round(window.spinBox.value() * 1000)
         selected_run_id = select_nondefault_run_and_finish_previews(window)
         assert window.monitor.isActive()
-        assert window.monitor.interval() == 2375
+        assert window.monitor.interval() == expected_monitor_interval
         assert not replacement_wal_is_quarantined(database_path)
 
         original_instance = database_instance(database_path)
@@ -2218,10 +2220,11 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
             )
         )
         window.spinBox.setValue(2.375)
+        expected_monitor_interval = round(window.spinBox.value() * 1000)
         selected_run_id = select_nondefault_run_and_finish_previews(window)
         assert window.ds.name == "NEW_WAL"
         assert window.monitor.isActive()
-        assert window.monitor.interval() == 2375
+        assert window.monitor.interval() == expected_monitor_interval
         assert not replacement_wal_is_quarantined(database_path)
 
         original_instance = database_instance(database_path)
@@ -2318,6 +2321,7 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
             )
         )
         window.spinBox.setValue(2.375)
+        expected_monitor_interval = round(window.spinBox.value() * 1000)
         parameter = dependent_parameter(window.ds, 1)
         window.openPlot(params=[parameter], show=False)
         old_plot = window.windows[-1]
@@ -2355,7 +2359,7 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         assert not window._test_database_generation_active
         assert window._test_database_generation_worker is None
         assert window.monitor.isActive()
-        assert window.monitor.interval() == 2375
+        assert window.monitor.interval() == expected_monitor_interval
         assert errors == []
     finally:
         if window is not None:

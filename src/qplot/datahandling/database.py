@@ -17,7 +17,10 @@ from time import perf_counter
 
 from PyQt6 import QtCore
 
-from qplot.datahandling.file_identity import database_file_identity
+from qplot.datahandling.file_identity import (
+    database_file_identity,
+    database_sidecar_identities,
+)
 from qplot.datahandling.readonly import (
     replacement_wal_is_quarantined,
     sqlite_read_only_connection,
@@ -506,6 +509,7 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self.signals = DatabaseRefreshSignals()
         self.generation = generation
         self.database_path = database_path
+        self.sidecar_identities = database_sidecar_identities(database_path)
         self.last_run_id = int(last_run_id or 0)
         self.watched_runs = list(watched_runs or [])
         self._cancelled = threading.Event()
@@ -587,6 +591,7 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self.signals = DatabaseLoadSignals()
         self.generation = generation
         self.database_path = database_path
+        self.sidecar_identities = database_sidecar_identities(database_path)
         self.cloud_sync_timeout = cloud_sync_timeout
         self._cancelled = threading.Event()
         self._init_sql_interrupt()
@@ -698,6 +703,7 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self.signals = DatabaseDetailSignals()
         self.generation = generation
         self.database_path = database_path
+        self.sidecar_identities = database_sidecar_identities(database_path)
         self.run_ids = list(run_ids or [])
         self._default_run_order = {
             run_id: index

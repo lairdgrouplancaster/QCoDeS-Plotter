@@ -8,6 +8,7 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot import testdata as testdata_module
 from qplot.datahandling.file_identity import (
+    database_file_identity,
     database_instance,
     database_publication_guard_path,
 )
@@ -133,6 +134,79 @@ def test_export_csv_collection_opens_its_folder(tmp_path):
         reveal_file.assert_called_once_with(output_paths[0])
         assert "Exported 10 instruction CSV files" in harness.status_messages[-1][0]
         assert harness.errors == []
+    finally:
+        harness.deleteLater()
+
+
+def test_example_csv_rejects_loaded_database_with_csv_suffix(tmp_path):
+    database_path = tmp_path / "loaded-input.csv"
+    database_path.write_bytes(b"SQLite format 3\x00loaded database sentinel")
+    before = (
+        database_path.read_bytes(),
+        database_path.stat().st_mtime_ns,
+        database_file_identity(database_path),
+    )
+    harness = GuiHarness(tmp_path)
+    harness._loaded_database_instance = database_instance(database_path)
+
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(database_path), "CSV Files (*.csv)"),
+            ),
+            patch.object(qtw.QMessageBox, "question") as question,
+            patch(
+                "qplot.windows._database_actions.reveal_file_in_file_manager",
+            ) as reveal_file,
+        ):
+            assert not harness.create_test_database_csv()
+
+        assert (
+            database_path.read_bytes(),
+            database_path.stat().st_mtime_ns,
+            database_file_identity(database_path),
+        ) == before
+        question.assert_not_called()
+        reveal_file.assert_not_called()
+        assert harness.errors[-1][0] == "Example CSV Creation Failed"
+    finally:
+        harness.deleteLater()
+
+
+def test_collection_preflights_all_targets_before_writing(tmp_path):
+    database_path = tmp_path / INSTRUCTION_FILE_NAMES[-1]
+    database_path.write_bytes(b"SQLite format 3\x00collection database sentinel")
+    before = (
+        database_path.read_bytes(),
+        database_path.stat().st_mtime_ns,
+        database_file_identity(database_path),
+    )
+    harness = GuiHarness(tmp_path)
+    harness._loaded_database_instance = database_instance(database_path)
+
+    try:
+        with (
+            patch.object(
+                qtw.QFileDialog,
+                "getExistingDirectory",
+                return_value=str(tmp_path),
+            ),
+            patch(
+                "qplot.windows._database_actions.reveal_file_in_file_manager",
+            ) as reveal_file,
+        ):
+            assert not harness.export_test_database_csv_collection()
+
+        assert set(tmp_path.iterdir()) == {database_path}
+        assert (
+            database_path.read_bytes(),
+            database_path.stat().st_mtime_ns,
+            database_file_identity(database_path),
+        ) == before
+        reveal_file.assert_not_called()
+        assert harness.errors[-1][0] == "CSV Collection Export Failed"
     finally:
         harness.deleteLater()
 

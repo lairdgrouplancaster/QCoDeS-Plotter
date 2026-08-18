@@ -923,19 +923,28 @@ class PlotActionsMixin:
 
 
     def _choose_csv_export_filename(self, default_name):
-        filename = choose_export_path(
-            self,
-            caption="Export CSV",
-            suggested_path=default_name,
-            name_filter="CSV files (*.csv)",
-            required_suffix=".csv",
-            replace_title="Replace CSV File?",
-            file_description="CSV file",
-        )
-        if not filename:
+        try:
+            destination = choose_export_path(
+                self,
+                caption="Export CSV",
+                suggested_path=default_name,
+                name_filter="CSV files (*.csv)",
+                required_suffix=".csv",
+                replace_title="Replace CSV File?",
+                file_description="CSV file",
+            )
+        except Exception as err:
+            log_exception("CSV export destination rejected", err, __name__)
+            self.show_error(
+                "CSV Export Failed",
+                "qPlot could not safely use the selected CSV destination.",
+                str(err),
+            )
+            return None
+        if destination is None:
             self.show_status("CSV export cancelled.", 3000)
             return None
-        return filename
+        return destination
 
 
     def _publish_preview_csv(self, frame, filename, dataset_key):

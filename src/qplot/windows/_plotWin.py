@@ -575,18 +575,21 @@ class plotWidget(
 
     def _remove_scene_export_context_menu(self):
         """
-        Removes pyqtgraph's scene-level export action from right-click menus.
+        Removes every scene-level generic action and owns its exporter cache.
 
         """
         scene = self.widget.scene()
-        context_menu = getattr(scene, "contextMenu", None)
-        if context_menu is None:
-            return
-
-        scene.contextMenu = [
-            action for action in context_menu
-            if action.text().replace("&", "") != "Export..."
-            ]
+        # PyQtGraph's default list currently contains only its direct Export
+        # action. Clearing the list by identity-independent ownership is safer
+        # than matching translated display text.
+        scene.contextMenu = []
+        install_dialog = getattr(
+            self,
+            "_install_safe_pyqtgraph_export_dialog",
+            None,
+        )
+        if callable(install_dialog):
+            install_dialog()
 
 
     def _context_menu_action(self, text):
@@ -1308,6 +1311,13 @@ class plotWidget(
         Unused but required by slot.
 
         """
+        dispose_export_dialog = getattr(
+            self,
+            "_dispose_plot_export_dialog",
+            None,
+        )
+        if callable(dispose_export_dialog):
+            dispose_export_dialog()
         if self.__dict__.get("_merged_trace_users", 0) <= 0:
             self.monitor.stop()
             self._refresh_pending = False

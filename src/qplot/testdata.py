@@ -390,13 +390,12 @@ def copy_instruction_collection(directory, overwrite=False):
                 f"to replace them: {', '.join(existing)}"
             )
 
-    resource_directory = resources.files("qplot").joinpath("resources", "testdata")
     try:
-        contents = tuple(
-            resource_directory.joinpath(name).read_bytes()
-            for name in INSTRUCTION_FILE_NAMES
-        )
-        for output_path, content in zip(output_paths, contents, strict=True):
+        for output_path, (_name, content) in zip(
+                output_paths,
+                instruction_collection_contents(),
+                strict=True,
+                ):
             mode = "wb" if overwrite else "xb"
             with output_path.open(mode) as handle:
                 handle.write(content)
@@ -406,6 +405,15 @@ def copy_instruction_collection(directory, overwrite=False):
         ) from error
 
     return output_paths
+
+
+def instruction_collection_contents():
+    """Return installed collection filenames and bytes without writing them."""
+    resource_directory = resources.files("qplot").joinpath("resources", "testdata")
+    return tuple(
+        (name, resource_directory.joinpath(name).read_bytes())
+        for name in INSTRUCTION_FILE_NAMES
+    )
 
 
 def _raise_if_cancelled(cancelled_callback):

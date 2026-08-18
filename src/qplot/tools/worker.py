@@ -8,6 +8,7 @@ from PyQt6 import QtCore
 
 from qplot.datahandling import load_param_data_from_db, load_param_data_from_db_prep
 from qplot.datahandling.dimensions import ensure_supported_plot_dimensions
+from qplot.datahandling.file_identity import database_sidecar_identities
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
     cache_dataset_completed,
@@ -101,6 +102,9 @@ class loader(QtCore.QRunnable):
         # Required working data
         self.cache = cache
         self.table_name = cache_table_name(cache)
+        self.sidecar_identities = database_sidecar_identities(
+            cache_database_path(cache)
+        )
         self.param = param
         self.dataset_completed: bool | None = None
         self.display_param = copy(param)

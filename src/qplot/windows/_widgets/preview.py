@@ -10,6 +10,7 @@ from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
     unsupported_plot_message,
 )
+from qplot.datahandling.file_identity import database_sidecar_identities
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.diagnostics import log_exception
 
@@ -909,6 +910,7 @@ class PreviewWorker(QtCore.QRunnable):
         self.signals = PreviewSignals()
         self.generation = generation
         self.database_path = database_path
+        self.sidecar_identities = database_sidecar_identities(database_path)
         self.guid = guid
         self.metadata = metadata
         self.preview_size = preview_size
