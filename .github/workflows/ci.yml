@@ -71,6 +71,11 @@ jobs:
           python -m pip install -U pip
           python -m pip install -e ".[dev]"
 
+      - name: Install Qt system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libegl1
+
       - name: Run tests with coverage
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
