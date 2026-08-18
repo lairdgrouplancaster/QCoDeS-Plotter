@@ -54,6 +54,31 @@ from qplot.windows import main as main_window
 from qplot.windows._dataset_handle import database_file_identity
 
 
+@pytest.fixture(autouse=True)
+def assert_qcodes_snapshot_connections_closed(monkeypatch):
+    """Require every test-owned QCoDeS snapshot to be explicitly closed."""
+
+    snapshot_connections = []
+    original_attach_snapshot_cleanup = readonly_module._attach_snapshot_cleanup
+
+    def record_snapshot_connection(connection, snapshot):
+        snapshot_directory = Path(snapshot.name)
+        original_attach_snapshot_cleanup(connection, snapshot)
+        snapshot_connections.append((connection, snapshot_directory))
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_attach_snapshot_cleanup",
+        record_snapshot_connection,
+    )
+    yield
+
+    for connection, snapshot_directory in snapshot_connections:
+        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+            connection.cursor()
+        assert not snapshot_directory.exists()
+
+
 def configure_temp_qplot(monkeypatch, tmp_path):
     qplot_home = tmp_path / ".qplot"
     monkeypatch.setattr(config, "default_path", str(qplot_home))
@@ -707,13 +732,6 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
     original_get_run_status = database_module.get_run_status
     replacement_loads = []
     original_load_file = window.load_file
-    snapshot_connections = []
-    original_attach_snapshot_cleanup = readonly_module._attach_snapshot_cleanup
-
-    def record_snapshot_connection(connection, snapshot):
-        snapshot_directory = Path(snapshot.name)
-        original_attach_snapshot_cleanup(connection, snapshot)
-        snapshot_connections.append((connection, snapshot_directory))
 
     def record_status(message, timeout=5000):
         status_messages.append((message, timeout))
@@ -731,11 +749,6 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         return original_load_file(*args, **kwargs)
 
     try:
-        monkeypatch.setattr(
-            readonly_module,
-            "_attach_snapshot_cleanup",
-            record_snapshot_connection,
-        )
         window.startupDatabaseTimer.stop()
         window.monitor.stop()
         window.config.config["user_preference"]["confirm_close"] = False
@@ -844,10 +857,6 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         release_refresh.set()
         window.load_file = original_load_file
         close_main_window(window)
-        for connection, snapshot_directory in snapshot_connections:
-            with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-                connection.cursor()
-            assert not snapshot_directory.exists()
         qcodes.config.core.db_location = original_database_path
 
 
