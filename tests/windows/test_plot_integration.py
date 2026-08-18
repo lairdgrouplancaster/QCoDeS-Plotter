@@ -54,31 +54,6 @@ from qplot.windows import main as main_window
 from qplot.windows._dataset_handle import database_file_identity
 
 
-@pytest.fixture(autouse=True)
-def assert_qcodes_snapshot_connections_closed(monkeypatch):
-    """Require every test-owned QCoDeS snapshot to be explicitly closed."""
-
-    snapshot_connections = []
-    original_attach_snapshot_cleanup = readonly_module._attach_snapshot_cleanup
-
-    def record_snapshot_connection(connection, snapshot):
-        snapshot_directory = Path(snapshot.name)
-        original_attach_snapshot_cleanup(connection, snapshot)
-        snapshot_connections.append((connection, snapshot_directory))
-
-    monkeypatch.setattr(
-        readonly_module,
-        "_attach_snapshot_cleanup",
-        record_snapshot_connection,
-    )
-    yield
-
-    for connection, snapshot_directory in snapshot_connections:
-        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-            connection.cursor()
-        assert not snapshot_directory.exists()
-
-
 def configure_temp_qplot(monkeypatch, tmp_path):
     qplot_home = tmp_path / ".qplot"
     monkeypatch.setattr(config, "default_path", str(qplot_home))

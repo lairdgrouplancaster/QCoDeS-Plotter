@@ -67,11 +67,37 @@ def _wait_for(predicate, timeout=12):
 
 
 def _close_main_window(window):
+    """Stop workers and close owned datasets before deleting Qt state."""
+
     window.startupDatabaseTimer.stop()
     window.monitor.stop()
+    window.infoBox.preview.shutdown()
     window.close_plot_windows(confirm=False, status=False)
-    window.threadPool.waitForDone(1000)
-    window.databaseLoadThreadPool.waitForDone(1000)
+    for worker_name in (
+        "_database_load_worker",
+        "_database_detail_worker",
+        "_database_expensive_detail_worker",
+        "_database_refresh_worker",
+        "_test_database_generation_worker",
+    ):
+        worker = getattr(window, worker_name, None)
+        cancel = getattr(worker, "cancel", None)
+        if callable(cancel):
+            cancel()
+    window._cancel_plot_work()
+    for pool_name in (
+        "threadPool",
+        "databaseLoadThreadPool",
+        "databaseDetailThreadPool",
+        "databaseExpensiveDetailThreadPool",
+        "databaseRefreshThreadPool",
+        "testDatabaseGenerationThreadPool",
+    ):
+        assert getattr(window, pool_name).waitForDone(12_000)
+    qtw.QApplication.processEvents()
+    window.close_database(status=False)
+    assert window.ds is None
+    assert window.dataset_holder == {}
     window.hide()
     window.deleteLater()
     qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
