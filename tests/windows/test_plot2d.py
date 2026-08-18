@@ -1211,7 +1211,7 @@ class CutAxisTransactionQtIntegrationTestCase(unittest.TestCase):
             self.assertTrue(worker.cancelled)
             self.assertIs(cut.worker, worker)
             self.assertFalse(worker.running)
-            self.assertEqual(replacements, [str(database_path)])
+            self.assertEqual(replacements, [os.path.normcase(str(database_path))])
             self._assert_prior_state_and_single_slider_update(
                 cut,
                 overlay_title="Database replaced",
