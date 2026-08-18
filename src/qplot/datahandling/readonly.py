@@ -1,8 +1,10 @@
+import os
 import shutil
 import sqlite3
 import tempfile
 import threading
 import weakref
+from dataclasses import dataclass
 from pathlib import Path
 
 import qcodes
@@ -22,6 +24,8 @@ from qplot.datahandling.qcodes_compat import result_owns_supplied_connection
 
 SQLITE_READ_ONLY_CACHE_KIB = 16 * 1024
 WAL_SNAPSHOT_ATTEMPTS = 5
+_ROLLBACK_JOURNAL_MAGIC = b"\xd9\xd5\x05\xf9 \xa1c\xd7"
+_ROLLBACK_JOURNAL_PREFIX_BYTES = 4096
 _DATABASE_INSTANCE_REGISTRY: dict[
     Path,
     tuple[DatabaseFileIdentity | None, bool],
@@ -41,8 +45,38 @@ class UnverifiableDatabaseWalError(ReadOnlyDatabaseAccessError):
     """Raised when a WAL cannot be proven to descend from its marked main."""
 
 
+@dataclass(frozen=True, slots=True)
+class _RollbackJournalObservation:
+    """One path-bound rollback-journal identity and state observation."""
+
+    file_signature: tuple[int, int, int, int, int]
+    file_identity: DatabaseFileIdentity | None
+    prefix: bytes
+    trailer: bytes
+    stable: bool
+
+    @property
+    def potentially_hot(self):
+        return (
+            self.file_signature[2] > 512
+            and self.prefix.startswith(_ROLLBACK_JOURNAL_MAGIC)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceSignature:
+    """Ephemeral state binding one private snapshot to its source files."""
+
+    database: tuple[int, int, int, int, int] | None
+    database_identity: DatabaseFileIdentity | None
+    database_header: bytes
+    wal: tuple[int, int, int, int, int] | None
+    journal: _RollbackJournalObservation | None
+    stable: bool
+
+
 class _ManagedSQLiteConnection(sqlite3.Connection):
-    """SQLite connection that owns a temporary WAL snapshot, when needed."""
+    """SQLite connection that owns a temporary database snapshot, when needed."""
 
     _qplot_snapshot: tempfile.TemporaryDirectory | None = None
 
@@ -69,13 +103,13 @@ def quarantine_wal_for_replaced_database(database_path):
     Atomic replacement changes the main database file but can leave an old
     writer's ``-wal`` sidecar behind. SQLite can otherwise combine those two
     unrelated files and expose the old database. Once a replacement is
-    detected, qPlot deliberately opens the new main file immutable while the
-    retained sidecar is unpaired. A sidecar can vanish and later be recreated
-    by the old writer, so a transient absence is not enough to prove a later
-    WAL belongs to the replacement. A generated database's matching lineage
-    token and advanced write epoch can establish that a later WAL was written
-    from the replacement and release this quarantine. qPlot never changes the
-    source database or any sidecar to make that happen.
+    detected, qPlot captures a private main-only view while the retained
+    sidecar is unpaired. A sidecar can vanish and later be recreated by the old
+    writer, so a transient absence is not enough to prove a later WAL belongs
+    to the replacement. A generated database's matching lineage token and
+    advanced write epoch can establish that a later WAL was written from the
+    replacement and release this quarantine. qPlot never changes the source
+    database or any sidecar to make that happen.
 
     A changed WAL identity is not enough to prove it belongs to the replacement
     main file: an old writer can rotate or recreate its WAL after the main file
@@ -142,13 +176,14 @@ def _require_expected_database_instance(database_path, expected_database_identit
 
 
 def _require_prepared_database_instance(database_path, prepared_database_identity):
-    """Bind publication-marker and WAL decisions to one main-file identity."""
+    """Bind publication-marker and sidecar decisions to one main-file identity."""
     if database_file_identity(database_path) == prepared_database_identity:
         return
     quarantine_wal_for_replaced_database(database_path)
     raise DatabaseInstanceChangedError(
         "The database was replaced while qPlot was selecting a read-only view. "
-        "Refresh to retry; qPlot did not combine the replacement with a prior WAL."
+        "Refresh to retry; qPlot did not combine the replacement with a prior "
+        "SQLite sidecar."
     )
 
 
@@ -167,6 +202,20 @@ def configure_read_only_sqlite_connection(conn):
     return conn
 
 
+def _cleanup_failed_connection_open(conn, snapshot):
+    """Release both provisional owners after any open/attachment failure."""
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if snapshot is not None:
+        try:
+            snapshot.cleanup()
+        except Exception:
+            pass
+
+
 def qcodes_read_only_connection(
         database_path,
         *,
@@ -175,20 +224,35 @@ def qcodes_read_only_connection(
         ):
     """Open a source-preserving, AtomicConnection-compatible database view.
 
-    A checkpointed database with no WAL is opened directly as immutable. If a
-    WAL exists, qPlot instead opens a consistent private copy under the system
-    temporary directory. This keeps live WAL rows visible without letting
-    SQLite create or update source ``-wal`` or ``-shm`` files.
+    Quiescent rollback-format sources use SQLite's enforced read-only locking.
+    WAL-format databases and sources with a WAL or rollback journal are
+    captured under the system temporary directory. Immutable access and any
+    rollback recovery are permitted only on that private copy.
     """
     source_path = _resolved_database_path(database_path)
     for _attempt in range(2):
-        target_path, immutable, snapshot, ignore_wal = _prepare_read_target(
+        (
+            target_path,
+            immutable,
+            snapshot,
+            ignore_wal,
+            prepared_source,
+        ) = _prepare_read_target(
             source_path,
             ignore_unpaired_wal=ignore_unpaired_wal,
             expected_database_identity=expected_database_identity,
         )
         conn = None
         try:
+            if not _prepared_source_is_current(
+                    source_path,
+                    prepared_source,
+                    direct=snapshot is None,
+                    ignore_wal=ignore_wal,
+                    ):
+                if snapshot is not None:
+                    _cleanup_failed_connection_open(None, snapshot)
+                continue
             _require_publication_complete(source_path)
             conn = connect(
                 _qcodes_uri_path(target_path, immutable=immutable),
@@ -200,36 +264,28 @@ def qcodes_read_only_connection(
                 source_path,
                 expected_database_identity,
             )
-        except Exception:
-            if conn is not None:
-                conn.close()
-            if snapshot is not None:
-                snapshot.cleanup()
-            raise
-
-        if (
-                immutable
-                and _wal_path(source_path).exists()
-                and not ignore_wal
-                ):
-            conn.close()
-            continue
-
-        try:
+            if not _prepared_source_is_current(
+                    source_path,
+                    prepared_source,
+                    direct=snapshot is None,
+                    ignore_wal=ignore_wal,
+                    ):
+                _cleanup_failed_connection_open(conn, snapshot)
+                continue
             _require_publication_complete(source_path)
-        except Exception:
-            conn.close()
+            conn.path_to_dbfile = str(source_path)
             if snapshot is not None:
-                snapshot.cleanup()
+                _attach_snapshot_cleanup(conn, snapshot)
+                snapshot = None
+            return configure_read_only_sqlite_connection(conn)
+        except Exception:
+            _cleanup_failed_connection_open(conn, snapshot)
             raise
-        conn.path_to_dbfile = str(source_path)
-        if snapshot is not None:
-            _attach_snapshot_cleanup(conn, snapshot)
-        return configure_read_only_sqlite_connection(conn)
 
     raise ReadOnlyDatabaseAccessError(
-        "The database became live while qPlot was opening it. Refresh to retry; "
-        "qPlot did not open the source in a mode that could change it."
+        "The database became busy while qPlot was opening a transaction-consistent "
+        "view. It is temporarily unavailable; refresh to retry. qPlot did not "
+        "modify the source database or its SQLite sidecars."
         )
 
 
@@ -325,21 +381,37 @@ def sqlite_read_only_connection(
         ):
     """Open a direct source-preserving SQLite connection.
 
-    Static databases are opened immutable in place. WAL databases are opened
-    from a consistency-checked temporary snapshot so SQLite never touches the
-    source sidecars and every new connection sees a fresh committed WAL view.
+    Quiescent rollback-format sources use enforced read-only locking. WAL-
+    format databases and sources with a WAL or rollback journal use a
+    consistency-checked private snapshot. SQLite can therefore use immutable
+    access or recover a hot journal without doing either to the source.
     """
     source_path = _resolved_database_path(database_path)
     kwargs.setdefault("factory", _ManagedSQLiteConnection)
 
     for _attempt in range(2):
-        target_path, immutable, snapshot, ignore_wal = _prepare_read_target(
+        (
+            target_path,
+            immutable,
+            snapshot,
+            ignore_wal,
+            prepared_source,
+        ) = _prepare_read_target(
             source_path,
             ignore_unpaired_wal=ignore_unpaired_wal,
             expected_database_identity=expected_database_identity,
         )
         conn = None
         try:
+            if not _prepared_source_is_current(
+                    source_path,
+                    prepared_source,
+                    direct=snapshot is None,
+                    ignore_wal=ignore_wal,
+                    ):
+                if snapshot is not None:
+                    _cleanup_failed_connection_open(None, snapshot)
+                continue
             _require_publication_complete(source_path)
             conn = sqlite3.connect(
                 sqlite_read_only_uri(target_path, immutable=immutable),
@@ -352,43 +424,33 @@ def sqlite_read_only_connection(
                 source_path,
                 expected_database_identity,
             )
-        except Exception:
-            if conn is not None:
-                conn.close()
-            if snapshot is not None:
-                snapshot.cleanup()
-            raise
-
-        if (
-                immutable
-                and _wal_path(source_path).exists()
-                and not ignore_wal
-                ):
-            conn.close()
-            continue
-
-        try:
+            if not _prepared_source_is_current(
+                    source_path,
+                    prepared_source,
+                    direct=snapshot is None,
+                    ignore_wal=ignore_wal,
+                    ):
+                _cleanup_failed_connection_open(conn, snapshot)
+                continue
             _require_publication_complete(source_path)
-        except Exception:
-            conn.close()
             if snapshot is not None:
-                snapshot.cleanup()
+                attach_snapshot = getattr(conn, "attach_snapshot", None)
+                if not callable(attach_snapshot):
+                    raise TypeError(
+                        "A custom SQLite connection factory used for a live "
+                        "database snapshot must provide attach_snapshot()."
+                    )
+                attach_snapshot(snapshot)
+                snapshot = None
+            return configure_read_only_sqlite_connection(conn)
+        except Exception:
+            _cleanup_failed_connection_open(conn, snapshot)
             raise
-        if snapshot is not None:
-            attach_snapshot = getattr(conn, "attach_snapshot", None)
-            if not callable(attach_snapshot):
-                conn.close()
-                snapshot.cleanup()
-                raise TypeError(
-                    "A custom SQLite connection factory used for a live WAL "
-                    "database must provide attach_snapshot()."
-                )
-            attach_snapshot(snapshot)
-        return configure_read_only_sqlite_connection(conn)
 
     raise ReadOnlyDatabaseAccessError(
-        "The database became live while qPlot was opening it. Refresh to retry; "
-        "qPlot did not open the source in a mode that could change it."
+        "The database became busy while qPlot was opening a transaction-consistent "
+        "view. It is temporarily unavailable; refresh to retry. qPlot did not "
+        "modify the source database or its SQLite sidecars."
         )
 
 
@@ -428,6 +490,10 @@ def _wal_path(database_path):
     return Path(f"{database_path}-wal")
 
 
+def _journal_path(database_path):
+    return Path(f"{database_path}-journal")
+
+
 def replacement_wal_is_quarantined(database_path):
     """Return whether an unpaired WAL must be omitted from this read.
 
@@ -440,25 +506,132 @@ def replacement_wal_is_quarantined(database_path):
     return bool(quarantined)
 
 
-def _file_signature(path):
-    try:
-        stat_result = path.stat()
-    except FileNotFoundError:
-        return None
+def _stat_signature(stat_result):
     return (
         stat_result.st_dev,
         stat_result.st_ino,
         stat_result.st_size,
         stat_result.st_mtime_ns,
         stat_result.st_ctime_ns,
-        )
+    )
+
+
+def _file_signature(path):
+    try:
+        stat_result = path.stat()
+    except FileNotFoundError:
+        return None
+    return _stat_signature(stat_result)
+
+
+def _file_prefix_observation(path, byte_count, *, include_trailer=False):
+    """Read identifying bytes while proving which path instance supplied them."""
+    path_signature_before = _file_signature(path)
+    if path_signature_before is None:
+        return None, b"", b"", True
+    try:
+        with path.open("rb") as handle:
+            descriptor_before = _stat_signature(os.fstat(handle.fileno()))
+            prefix = handle.read(byte_count)
+            trailer = b""
+            if include_trailer and descriptor_before[2] >= 16:
+                handle.seek(-16, os.SEEK_END)
+                trailer = handle.read(16)
+            descriptor_after = _stat_signature(os.fstat(handle.fileno()))
+    except FileNotFoundError:
+        return path_signature_before, b"", b"", False
+    path_signature_after = _file_signature(path)
+    stable = (
+        path_signature_before
+        == descriptor_before
+        == descriptor_after
+        == path_signature_after
+    )
+    return descriptor_after, prefix, trailer, stable
+
+
+def _rollback_journal_observation(database_path):
+    journal_path = _journal_path(database_path)
+    identity_before = database_file_identity(journal_path)
+    signature, prefix, trailer, stable = _file_prefix_observation(
+        journal_path,
+        _ROLLBACK_JOURNAL_PREFIX_BYTES,
+        include_trailer=True,
+    )
+    if signature is None:
+        return None
+    identity_after = database_file_identity(journal_path)
+    return _RollbackJournalObservation(
+        file_signature=signature,
+        file_identity=identity_after,
+        prefix=prefix,
+        trailer=trailer,
+        stable=stable and identity_before == identity_after,
+    )
 
 
 def _source_signature(database_path):
-    return (
-        _file_signature(database_path),
-        _file_signature(_wal_path(database_path)),
+    database_signature, database_header, _trailer, database_stable = (
+        _file_prefix_observation(database_path, 100)
+    )
+    journal = _rollback_journal_observation(database_path)
+    return _SourceSignature(
+        database=database_signature,
+        database_identity=database_file_identity(database_path),
+        database_header=database_header,
+        wal=_file_signature(_wal_path(database_path)),
+        journal=journal,
+        stable=database_stable and (journal is None or journal.stable),
         )
+
+
+def _signature_requires_private_snapshot(signature, *, ignore_wal):
+    return (
+        not signature.stable
+        or signature.journal is not None
+        or (signature.wal is not None and not ignore_wal)
+    )
+
+
+def _prepared_source_is_current(
+        database_path,
+        prepared_source,
+        *,
+        direct,
+        ignore_wal,
+        ):
+    """Validate the exact main/journal instance through connection opening."""
+    try:
+        current_source = _source_signature(database_path)
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            f"Could not validate the database instance and sidecars: {error}"
+        ) from error
+    if current_source.database_identity != prepared_source.database_identity:
+        quarantine_wal_for_replaced_database(database_path)
+        raise DatabaseInstanceChangedError(
+            "The database was replaced while qPlot was opening its read-only view."
+        )
+    return (
+        current_source == prepared_source
+        and (
+            not direct
+            or not _signature_requires_private_snapshot(
+                current_source,
+                ignore_wal=ignore_wal,
+            )
+        )
+    )
+
+
+def _source_signature_for_validation(database_path):
+    """Read a validation signature while keeping filesystem errors explicit."""
+    try:
+        return _source_signature(database_path)
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            f"Could not validate a read-only copy of {database_path}: {error}"
+        ) from error
 
 
 def _generation_provenance(connection):
@@ -502,13 +675,17 @@ def _unverifiable_generated_wal_error(database_path, reason):
     )
 
 
-def _require_matching_generated_wal_provenance(database_path, snapshot_path):
+def _require_matching_generated_wal_provenance(
+        database_path,
+        main_snapshot_path,
+        snapshot_path,
+        ):
     """Require a private WAL view to carry this generated main's lineage."""
     main_connection = None
     snapshot_connection = None
     try:
         main_connection = sqlite3.connect(
-            sqlite_read_only_uri(database_path, immutable=True),
+            sqlite_read_only_uri(main_snapshot_path, immutable=True),
             uri=True,
         )
         main_provenance = _generation_provenance(main_connection)
@@ -521,9 +698,15 @@ def _require_matching_generated_wal_provenance(database_path, snapshot_path):
         ) from error
     finally:
         if snapshot_connection is not None:
-            snapshot_connection.close()
+            try:
+                snapshot_connection.close()
+            except sqlite3.Error:
+                pass
         if main_connection is not None:
-            main_connection.close()
+            try:
+                main_connection.close()
+            except sqlite3.Error:
+                pass
 
     main_token, main_epoch = main_provenance
     snapshot_token, snapshot_epoch = snapshot_provenance
@@ -539,13 +722,50 @@ def _require_matching_generated_wal_provenance(database_path, snapshot_path):
         )
 
 
+def _journal_names_super_journal(journal):
+    """Reject recovery that could follow a path outside the private snapshot."""
+    if not journal.potentially_hot or len(journal.trailer) != 16:
+        return False
+    if journal.trailer[-8:] != _ROLLBACK_JOURNAL_MAGIC:
+        return False
+    name_length = int.from_bytes(journal.trailer[:4], "big")
+    journal_size = journal.file_signature[2]
+    return 0 < name_length <= journal_size - 20
+
+
+def _recover_private_rollback_journal(database_path, snapshot_path):
+    """Let SQLite resolve a copied journal without ever opening the source."""
+    connection = None
+    try:
+        connection = sqlite3.connect(
+            f"file:{_sqlite_uri_path(snapshot_path)}?mode=rw",
+            uri=True,
+            timeout=0,
+        )
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone()
+    except sqlite3.Error as error:
+        raise ReadOnlyDatabaseAccessError(
+            "qPlot could not recover a transaction-consistent private copy of "
+            f"{database_path}. The database is busy or temporarily unavailable; "
+            "finish the current transaction or refresh to retry. qPlot did not "
+            "modify the source database or its SQLite sidecars."
+        ) from error
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+
+
 def _prepare_read_target(
         database_path,
         *,
         ignore_unpaired_wal=False,
         expected_database_identity=None,
     ):
-    """Select immutable static access or make a stable private WAL snapshot."""
+    """Select safe direct access or capture a stable private SQLite snapshot."""
     _require_publication_complete(database_path)
     if not database_path.is_file():
         raise FileNotFoundError(database_path)
@@ -566,35 +786,62 @@ def _prepare_read_target(
         ) from error
 
     wal_path = _wal_path(database_path)
-    if not wal_path.exists():
-        _require_expected_database_instance(
-            database_path,
-            expected_database_identity,
-        )
-        _require_prepared_database_instance(
-            database_path,
-            prepared_database_identity,
-        )
-        return database_path, True, None, False
-    if not generation_marker and (
-            ignore_unpaired_wal
-            or replacement_wal_is_quarantined(database_path)
-            ):
-        _require_prepared_database_instance(
-            database_path,
-            prepared_database_identity,
-        )
-        return database_path, True, None, True
+    journal_path = _journal_path(database_path)
 
     for _attempt in range(WAL_SNAPSHOT_ATTEMPTS):
         _require_expected_database_instance(
             database_path,
             expected_database_identity,
         )
-        before = _source_signature(database_path)
-        if before[0] is None:
+        try:
+            before = _source_signature(database_path)
+        except OSError as error:
+            raise ReadOnlyDatabaseAccessError(
+                f"Could not inspect a read-only view of {database_path}: {error}"
+            ) from error
+        if before.database is None:
             raise FileNotFoundError(database_path)
-        if before[1] is None:
+        if not before.stable:
+            continue
+
+        journal = before.journal
+        wal_present = before.wal is not None
+        quarantined = (
+            replacement_wal_is_quarantined(database_path)
+            if wal_present or journal is not None
+            else False
+        )
+        ignore_wal = wal_present and not generation_marker and (
+            ignore_unpaired_wal or quarantined
+        )
+        include_wal = wal_present and not ignore_wal
+
+        if journal is not None and journal.potentially_hot and include_wal:
+            raise ReadOnlyDatabaseAccessError(
+                "The database has both an active-looking rollback journal and "
+                "a WAL, so qPlot cannot prove which transaction state is valid. "
+                "The database is busy or temporarily unavailable; finish the "
+                "writer transaction and refresh. qPlot did not modify the source "
+                "database or its SQLite sidecars."
+            )
+        if journal is not None and journal.potentially_hot and quarantined:
+            raise ReadOnlyDatabaseAccessError(
+                "The rollback journal cannot be paired with the database instance "
+                "that replaced the previously loaded file. The database is busy "
+                "or temporarily unavailable; close the old writer and refresh. "
+                "qPlot did not modify the source database or its SQLite sidecars."
+            )
+        if journal is not None and _journal_names_super_journal(journal):
+            raise ReadOnlyDatabaseAccessError(
+                "The rollback journal belongs to a multi-database transaction, "
+                "which qPlot cannot recover without following files outside its "
+                "private snapshot. The database is temporarily unavailable; "
+                "finish that transaction and refresh. qPlot did not modify the "
+                "source database or its SQLite sidecars."
+            )
+
+        database_is_wal_format = before.database_header[18:20] == b"\x02\x02"
+        if not wal_present and journal is None and not database_is_wal_format:
             _require_expected_database_instance(
                 database_path,
                 expected_database_identity,
@@ -603,81 +850,107 @@ def _prepare_read_target(
                 database_path,
                 prepared_database_identity,
             )
+            try:
+                after = _source_signature(database_path)
+            except OSError as error:
+                raise ReadOnlyDatabaseAccessError(
+                    f"Could not validate a read-only view of {database_path}: {error}"
+                ) from error
+            if after != before or not after.stable:
+                continue
             return (
                 database_path,
-                True,
+                False,
                 None,
                 False,
+                before,
             )
 
         snapshot = tempfile.TemporaryDirectory(prefix="qplot-readonly-")
         snapshot_path = Path(snapshot.name) / "database.db"
+        main_snapshot_path = Path(snapshot.name) / "database-main.db"
         try:
             shutil.copyfile(database_path, snapshot_path)
-            shutil.copyfile(wal_path, _wal_path(snapshot_path))
+            if include_wal and generation_marker:
+                shutil.copyfile(snapshot_path, main_snapshot_path)
+            if include_wal:
+                shutil.copyfile(wal_path, _wal_path(snapshot_path))
+            if journal is not None:
+                shutil.copyfile(journal_path, _journal_path(snapshot_path))
         except FileNotFoundError:
-            snapshot.cleanup()
+            _cleanup_failed_connection_open(None, snapshot)
             continue
         except OSError as err:
-            snapshot.cleanup()
+            _cleanup_failed_connection_open(None, snapshot)
             raise ReadOnlyDatabaseAccessError(
                 f"Could not copy a read-only view of {database_path}: {err}"
                 ) from err
 
-        if _source_signature(database_path) == before:
-            try:
-                _require_expected_database_instance(
-                    database_path,
-                    expected_database_identity,
-                )
-                _require_prepared_database_instance(
-                    database_path,
-                    prepared_database_identity,
-                )
-            except Exception:
-                snapshot.cleanup()
-                raise
-            if generation_marker:
+        try:
+            after_copy = _source_signature(database_path)
+        except OSError as error:
+            _cleanup_failed_connection_open(None, snapshot)
+            raise ReadOnlyDatabaseAccessError(
+                f"Could not validate a read-only copy of {database_path}: {error}"
+            ) from error
+        if after_copy != before or not after_copy.stable:
+            _cleanup_failed_connection_open(None, snapshot)
+            continue
+
+        try:
+            _require_expected_database_instance(
+                database_path,
+                expected_database_identity,
+            )
+            _require_prepared_database_instance(
+                database_path,
+                prepared_database_identity,
+            )
+            if journal is not None:
+                try:
+                    _recover_private_rollback_journal(database_path, snapshot_path)
+                except ReadOnlyDatabaseAccessError:
+                    if _source_signature_for_validation(database_path) != before:
+                        _cleanup_failed_connection_open(None, snapshot)
+                        continue
+                    raise
+            if include_wal and generation_marker:
                 try:
                     _require_matching_generated_wal_provenance(
                         database_path,
+                        main_snapshot_path,
                         snapshot_path,
                     )
                 except UnverifiableDatabaseWalError:
-                    if not (
-                        ignore_unpaired_wal
-                        or replacement_wal_is_quarantined(database_path)
-                        ):
-                        snapshot.cleanup()
+                    if not (ignore_unpaired_wal or quarantined):
                         raise
-                    snapshot.cleanup()
-                    return database_path, True, None, True
-            if _source_signature(database_path) != before:
-                snapshot.cleanup()
+                    if _source_signature_for_validation(database_path) != before:
+                        _cleanup_failed_connection_open(None, snapshot)
+                        continue
+                    return main_snapshot_path, True, snapshot, True, before
+
+            if _source_signature_for_validation(database_path) != before:
+                _cleanup_failed_connection_open(None, snapshot)
                 continue
-            if generation_marker:
+            if include_wal and generation_marker:
                 if not _release_wal_quarantine(
                         database_path,
                         prepared_database_identity,
                         ):
-                    snapshot.cleanup()
                     raise DatabaseInstanceChangedError(
                         "The database was replaced while qPlot was validating "
                         "its WAL provenance."
                     )
-            elif (
-                    ignore_unpaired_wal
-                    or replacement_wal_is_quarantined(database_path)
-                    ):
-                snapshot.cleanup()
-                return database_path, True, None, True
-            return snapshot_path, False, snapshot, False
-        snapshot.cleanup()
+            return snapshot_path, not include_wal, snapshot, ignore_wal, before
+        except Exception:
+            _cleanup_failed_connection_open(None, snapshot)
+            raise
 
     raise ReadOnlyDatabaseAccessError(
-        "The database WAL changed continuously while qPlot tried to make a "
-        "non-mutating snapshot. Refresh to retry; the source database and its "
-        "SQLite sidecars were not opened for writing."
+        "The database main file or SQLite sidecars changed continuously while "
+        "qPlot tried to capture a transaction-consistent snapshot. The database "
+        "is busy or temporarily unavailable; refresh to retry. qPlot did not "
+        "modify the source database or its SQLite sidecars."
         )
 
 

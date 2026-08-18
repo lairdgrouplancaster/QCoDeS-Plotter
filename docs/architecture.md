@@ -168,15 +168,28 @@ diagnostic report generation.
 
 `src/qplot/datahandling/readonly.py` centralises enforced read-only database
 access. Use these helpers for QCoDeS and direct SQLite connections so qPlot does
-not initialise, upgrade, or write to loaded QCoDeS databases. The access policy
-has two paths: databases without a WAL use direct `mode=ro&immutable=1` access;
-databases with a WAL use a consistency-checked database-plus-WAL copy under the
-system temporary directory. Generated databases additionally validate a unique
-main-file lineage token and an advanced write epoch in that private WAL view;
-an unprovable pairing fails explicitly. Direct SQLite reads, QCoDeS
-`AtomicConnection` reads, dataset loading, refresh workers, metadata
-inspection, and the subprocess access probe all go through this policy. Never
-open an input database with SQLite or QCoDeS directly from viewer code.
+not initialise, upgrade, or write to loaded QCoDeS databases. A quiescent
+rollback-format source uses direct `mode=ro` access so SQLite retains its normal
+read locks. A checkpointed WAL-format source is copied first and is opened with
+`immutable=1` only at that private path.
+
+An accepted WAL or any observed rollback `-journal` routes access through a
+private snapshot. The main file is copied before the accepted sidecars, and
+main-file identity, header, sidecar identity, size, timestamps, and journal
+header/trailer state must remain stable across bounded retries. An observed
+journal is copied even when it is a cold PERSIST or zero-length TRUNCATE
+artifact. SQLite opens the private copy read-write only long enough to perform
+any rollback-journal recovery; the source is never opened in a mode that can
+recover or change it. Ambiguous or continuously changing state fails closed as
+busy or temporarily unavailable, and every private snapshot is removed after
+failure or when its owning connection closes.
+
+Generated databases additionally validate a unique main-file lineage token and
+an advanced write epoch in a private WAL view; an unprovable pairing fails
+explicitly. Direct SQLite reads, QCoDeS `AtomicConnection` reads, dataset
+loading, refresh workers, metadata inspection, and the subprocess access probe
+all go through this policy. Never open an input database with SQLite or QCoDeS
+directly from viewer code.
 
 `src/qplot/datahandling/LoadFromDB.py` adapts QCoDeS database loading for
 threaded refreshes.

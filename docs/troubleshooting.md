@@ -132,6 +132,16 @@ that the WAL changed during the read-only snapshot; wait for a pause between
 commits and refresh. qPlot deliberately does not show an older immutable view
 when an uncheckpointed WAL is present.
 
+For a rollback-format database, qPlot uses normal SQLite read-only locking while
+the database is quiescent. If a `-journal` is present, qPlot captures the main
+file and journal into a private snapshot and allows SQLite recovery only there.
+Cold PERSIST and zero-length TRUNCATE journals are valid and should load
+normally. If the main file or journal changes during every capture attempt, or
+their transaction state is ambiguous, qPlot reports that the database is busy
+or temporarily unavailable. Finish or pause the writing transaction and
+refresh; qPlot will not fall back to a source mode that could expose
+uncommitted pages or modify the database and its sidecars.
+
 ## A OneDrive Database Waits for Sync
 
 On macOS, OneDrive and other cloud providers can leave a `.db` file as an

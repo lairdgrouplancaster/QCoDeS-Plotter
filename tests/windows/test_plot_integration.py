@@ -1760,7 +1760,8 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
         assert errors
         assert errors[-1][0] == "Run Load Failed"
         assert "replaced" in errors[-1][2].lower()
-        assert opened_connections
+        # The replacement may now be rejected before SQLite is opened. If it
+        # happens after opening, every provisional connection must be closed.
         for connection in opened_connections:
             with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
                 connection.cursor()

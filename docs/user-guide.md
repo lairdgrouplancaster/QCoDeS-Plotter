@@ -18,9 +18,11 @@ qplot path/to/database.db
 ```
 
 qPlot opens QCoDeS databases without changing the database file or any SQLite
-`-wal`, `-shm`, or `-journal` files beside it. A checkpointed database with no
-WAL is opened directly with SQLite's immutable read-only mode, so it can also
-be viewed when both the file and its directory are read-only.
+`-wal`, `-shm`, or `-journal` files beside it. When no sidecar is present, a
+rollback-format database is opened with SQLite's normal read-only locking. A
+checkpointed WAL-format database is copied to a private snapshot before using
+immutable read-only mode. Both paths work when the source file and its directory
+are read-only.
 
 When a WAL exists, qPlot never applies immutable mode to the source because
 that would hide committed rows which have not yet been checkpointed. Instead,
@@ -30,16 +32,24 @@ Every refresh makes a new snapshot, so committed rows added by a running
 QCoDeS measurement become visible. The source `-shm` is not opened by qPlot,
 and snapshot files are removed when their connection closes.
 
+An observed rollback `-journal` is handled the same way: qPlot copies it with
+the main database and any permitted WAL, then checks the source file identities
+and journal state before accepting the snapshot. SQLite may recover an active
+journal only on that private copy. A cold PERSIST journal with an invalidated
+header and a zero-length TRUNCATE journal are accepted normally; neither blocks
+a valid database or causes qPlot to alter the source artifact.
+
 Generated test databases also carry a unique lineage token. qPlot validates
 that token and its later write epoch before accepting a WAL beside a generated
 main file. If the WAL cannot be paired safely, qPlot refuses the read and asks
 for the owning SQLite/QCoDeS writer to checkpoint it; it never substitutes an
 older immutable value for an unverified committed WAL value.
 
-If a busy writer changes the files throughout every snapshot attempt, qPlot
-reports a read-only snapshot error and leaves the source untouched. It does not
-fall back to an immutable view that could silently show stale data. Refresh
-again after the writer has a sufficiently long pause between commits.
+If a busy writer changes the main file or sidecars throughout every snapshot
+attempt, or their transaction state cannot be proved safe, qPlot reports that
+the database is busy or temporarily unavailable and leaves the source
+untouched. It does not fall back to an immutable view that could expose stale
+or uncommitted data. Finish the transaction or refresh after the writer pauses.
 
 ### Opening Databases from the File Manager
 
