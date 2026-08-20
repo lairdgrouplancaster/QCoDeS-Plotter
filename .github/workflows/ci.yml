@@ -80,7 +80,17 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.5"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: "auto"
+          cache-dependency-glob: |
+            pyproject.toml
+            .github/workflows/ci.yml
+          cache-local-path: ${{ runner.tool_cache }}/uv-cache
 
       - name: Configure Windows temporary directory
         if: runner.os == 'Windows'
@@ -91,14 +101,18 @@ jobs:
           "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
           "PYTEST_ADDOPTS=--basetemp=$pytestTemp" >> $env:GITHUB_ENV
 
-      - name: Install package
-        run: |
-          python -m pip install -U pip
-          python -m pip install -e . "pytest>=8.0" "pytest-cov>=6.0" "pytest-timeout>=2.3"
+      - name: Install package and test tools
+        if: runner.os != 'Windows' || matrix.suite != 'full'
+        run: >-
+          uv pip install --system -e .
+          "pytest>=8.0" "pytest-cov>=6.0" "pytest-timeout>=2.3"
 
-      - name: Install Windows parallel test runner
+      - name: Install package and Windows parallel test tools
         if: runner.os == 'Windows' && matrix.suite == 'full'
-        run: python -m pip install "pytest-xdist>=3.8"
+        run: >-
+          uv pip install --system -e .
+          "pytest>=8.0" "pytest-cov>=6.0" "pytest-timeout>=2.3"
+          "pytest-xdist>=3.8"
 
       # Keep each Qt/QCoDeS test file in one process, and cap Windows disk and
       # thread-pool contention at two workers.
