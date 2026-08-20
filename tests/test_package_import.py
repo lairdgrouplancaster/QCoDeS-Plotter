@@ -1,3 +1,4 @@
+import sqlite3
 import subprocess
 import sys
 from importlib.metadata import distribution, version
@@ -43,3 +44,46 @@ def test_import_qplot_does_not_import_window_modules():
     )
 
     assert result.stdout.splitlines() == ["False", "True"]
+
+
+def test_database_probe_keeps_heavy_dependencies_lazy(tmp_path):
+    database_path = tmp_path / "probe.db"
+    sqlite3.connect(database_path).close()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "from qplot.datahandling.readonly import "
+                "probe_read_only_database\n"
+                "probe_read_only_database(sys.argv[1])\n"
+                "heavy_modules = (\n"
+                "    'qcodes', 'numpy', 'PyQt6', 'pyqtgraph', 'jsonschema',\n"
+                "    'qplot.configuration.config',\n"
+                "    'qplot.datahandling.LoadFromDB',\n"
+                "    'qplot.datahandling.readSQL',\n"
+                ")\n"
+                "print([name for name in heavy_modules if name in sys.modules])"
+            ),
+            str(database_path),
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "[]"
+
+
+def test_lazy_package_exports_preserve_public_api():
+    from qplot.configuration.config import config as direct_config
+    from qplot.datahandling import LoadFromDB, readSQL
+
+    assert qplot.config is direct_config
+    datahandling = qplot.datahandling
+    for name in datahandling.__all__:
+        defining_module = (
+            LoadFromDB if name.startswith("load_param_data") else readSQL
+        )
+        assert getattr(datahandling, name) is getattr(defining_module, name)

@@ -8,10 +8,6 @@ import weakref
 from dataclasses import dataclass
 from pathlib import Path
 
-import qcodes
-from qcodes.dataset import load_by_guid, load_by_id
-from qcodes.dataset.sqlite.database import connect, get_DB_debug, get_DB_location
-
 from qplot.datahandling.file_identity import (
     QPLOT_GENERATED_DATABASE_APPLICATION_ID,
     QPLOT_GENERATION_LINEAGE_FORMAT_VERSION,
@@ -29,7 +25,52 @@ from qplot.datahandling.file_identity import (
     open_file_identity,
     path_bound_file_identity,
 )
-from qplot.datahandling.qcodes_compat import result_owns_supplied_connection
+
+
+def connect(*args, **kwargs):
+    """Forward to QCoDeS without importing it for SQLite-only reads."""
+    from qcodes.dataset.sqlite.database import connect as qcodes_connect
+
+    return qcodes_connect(*args, **kwargs)
+
+
+def get_DB_debug():
+    """Return QCoDeS' database debug setting on demand."""
+    from qcodes.dataset.sqlite.database import get_DB_debug as qcodes_get_DB_debug
+
+    return qcodes_get_DB_debug()
+
+
+def get_DB_location():
+    """Return QCoDeS' configured database path on demand."""
+    from qcodes.dataset.sqlite.database import (
+        get_DB_location as qcodes_get_DB_location,
+    )
+
+    return qcodes_get_DB_location()
+
+
+def load_by_guid(*args, **kwargs):
+    """Forward to QCoDeS' GUID loader on demand."""
+    from qcodes.dataset import load_by_guid as qcodes_load_by_guid
+
+    return qcodes_load_by_guid(*args, **kwargs)
+
+
+def load_by_id(*args, **kwargs):
+    """Forward to QCoDeS' run-ID loader on demand."""
+    from qcodes.dataset import load_by_id as qcodes_load_by_id
+
+    return qcodes_load_by_id(*args, **kwargs)
+
+
+def result_owns_supplied_connection(result):
+    """Check QCoDeS connection ownership without importing it for probes."""
+    from qplot.datahandling.qcodes_compat import (
+        result_owns_supplied_connection as qcodes_result_owns_connection,
+    )
+
+    return qcodes_result_owns_connection(result)
 
 SQLITE_READ_ONLY_CACHE_KIB = 16 * 1024
 WAL_SNAPSHOT_ATTEMPTS = 5
@@ -109,6 +150,8 @@ class _ManagedSQLiteConnection(sqlite3.Connection):
 
 def set_qcodes_database_location(database_path):
     """Point QCoDeS at a database without initialising or upgrading it."""
+    import qcodes
+
     qcodes.config.core.db_location = str(database_path)
 
 

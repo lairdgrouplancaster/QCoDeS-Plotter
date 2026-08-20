@@ -82,6 +82,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Configure Windows temporary directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pytestTemp = (Join-Path $env:RUNNER_TEMP "pytest").Replace("\", "/")
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "PYTEST_ADDOPTS=--basetemp=$pytestTemp" >> $env:GITHUB_ENV
+
       - name: Install package
         run: |
           python -m pip install -U pip
