@@ -77,6 +77,7 @@ class plot2d(
             self._reload_visible_heatmap_data
             )
         self._connect_heatmap_range_controls()
+        self._install_line_control_view_range_preserver()
 
         for side in ("left", "right", "top", "bottom"):
             _install_flush_axis_draw_specs(self.plot.getAxis(side))
@@ -112,6 +113,49 @@ class plot2d(
         self.plot.autoBtn.clicked.connect(
             lambda _button: self._zoom_large_heatmap_to_all()
             )
+
+
+    def _install_line_control_view_range_preserver(self) -> None:
+        """Keep a heatmap's viewport stable while its side dock is relaid out."""
+
+        axes_dock = self.__dict__.get("axes_dock")
+        if axes_dock is not None:
+            axes_dock.installEventFilter(self)
+
+
+    def _preserve_heatmap_view_range_after_line_control_layout(self) -> None:
+        """Restore the current viewport after a line-control dock visibility change."""
+
+        try:
+            view_range = self.vb.viewRange()
+            saved_range = (
+                tuple(float(value) for value in view_range[0]),
+                tuple(float(value) for value in view_range[1]),
+                )
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return
+
+        token = self.__dict__.get("_line_control_view_range_token", 0) + 1
+        self.__dict__["_line_control_view_range_token"] = token
+
+        def restore() -> None:
+            if self.__dict__.get("_line_control_view_range_token") != token:
+                return
+            try:
+                current_range = self.vb.viewRange()
+            except (AttributeError, TypeError):
+                return
+            if np.allclose(current_range, saved_range, rtol=1e-12, atol=1e-12):
+                return
+            self.vb.setRange(
+                xRange=saved_range[0],
+                yRange=saved_range[1],
+                padding=0,
+                disableAutoRange=False,
+                )
+            self._sync_secondary_heatmap_view_ranges()
+
+        QtCore.QTimer.singleShot(0, restore)
 
 
     def _view_range_changed_programmatically(self) -> None:
@@ -390,6 +434,15 @@ class plot2d(
 
 
     def eventFilter(self, source, event):
+        if (
+                source is self.__dict__.get("axes_dock")
+                and event.type() in {
+                    QtCore.QEvent.Type.Show,
+                    QtCore.QEvent.Type.Hide,
+                    }
+                ):
+            self._preserve_heatmap_view_range_after_line_control_layout()
+
         if (
                 event.type() == QtCore.QEvent.Type.Resize
                 and source is self.__dict__.get("_heatmap_downsample_button_parent")

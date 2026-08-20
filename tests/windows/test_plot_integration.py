@@ -595,6 +595,49 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
         close_main_window(window)
 
 
+def test_hiding_line_control_preserves_heatmap_view_range(tmp_path, monkeypatch):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = Path(tmp_path) / "line-control-view-range.db"
+    _line_run_id, heatmap_run_id = build_synthetic_database(database_path)
+
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and window.RunList.topLevelItemCount() >= 2
+            )
+        )
+
+        heatmap_dataset = load_by_id(heatmap_run_id)
+        heatmap_param = dependent_parameter(heatmap_dataset, 2)
+        window.ds = heatmap_dataset
+        window.openPlot(params=[heatmap_param], show=True)
+        heatmap_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(heatmap_window, "dataGrid")
+                and not getattr(heatmap_window.worker, "running", False)
+            )
+        )
+        qtw.QApplication.processEvents()
+
+        initial_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
+        heatmap_window.axes_dock.toggleViewAction().trigger()
+        wait_for(lambda: heatmap_window.axes_dock.isHidden())
+        qtw.QApplication.processEvents()
+
+        np.testing.assert_allclose(heatmap_window.vb.viewRange(), initial_range)
+    finally:
+        close_main_window(window)
+
+
 def test_main_window_close_releases_private_wal_snapshot_before_qt_cleanup(
     tmp_path,
     monkeypatch,
