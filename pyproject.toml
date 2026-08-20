@@ -41,6 +41,7 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=6.0",
     "pytest-timeout>=2.3",
+    "pytest-xdist>=3.8",
     "ruff>=0.8",
     "twine>=5.0",
 ]
