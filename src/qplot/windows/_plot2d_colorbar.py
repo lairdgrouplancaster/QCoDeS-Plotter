@@ -25,7 +25,6 @@ from ._plot_axis_scaling import (
     _install_flush_axis_draw_specs,
 )
 
-
 COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
 DEFAULT_COLORBAR_WIDTH = 15
 

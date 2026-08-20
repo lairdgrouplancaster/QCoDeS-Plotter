@@ -91,6 +91,7 @@ jobs:
             pyproject.toml
             .github/workflows/ci.yml
           cache-local-path: ${{ runner.tool_cache }}/uv-cache
+          prune-cache: ${{ runner.os == 'Windows' && matrix.python-version == '3.11' }}
 
       - name: Configure Windows temporary directory
         if: runner.os == 'Windows'

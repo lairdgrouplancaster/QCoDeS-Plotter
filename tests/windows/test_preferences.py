@@ -7,18 +7,18 @@ from PyQt6 import QtWidgets as qtw
 from qplot.configuration.config import config
 from qplot.windows import main as main_window
 from qplot.windows._preferences import (
+    COLORBAR_WIDTH_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
-    COLORBAR_WIDTH_KEY,
     MOUSE_MODE_KEY,
     PreferencesDialog,
-    )
+)
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
-    )
+)
 
 
 class FakeConfig:
