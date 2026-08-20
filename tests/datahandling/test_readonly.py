@@ -153,6 +153,71 @@ def test_wal_stat_signature_is_used_when_file_identity_is_unavailable(
     assert signature.stable
 
 
+def test_path_and_descriptor_stat_fields_may_differ_for_same_file(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "different-stat-fields.db"
+    database_path.write_bytes(b"database contents")
+    stable_identity = ("windows-file-id", 17, 23)
+    signatures = iter(
+        (
+            (11, 101, 17, 200, 300),
+            (0, 0, 17, 200, 300),
+            (0, 0, 17, 200, 300),
+            (11, 101, 17, 200, 300),
+        )
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        lambda _path: stable_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "open_file_identity",
+        lambda _descriptor: stable_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_stat_signature",
+        lambda _stat_result: next(signatures),
+    )
+
+    signature, prefix, trailer, stable = (
+        readonly_module._file_prefix_observation(database_path, 8)
+    )
+
+    assert signature == (0, 0, 17, 200, 300)
+    assert prefix == b"database"
+    assert trailer == b""
+    assert stable
+
+
+def test_path_and_descriptor_identity_mismatch_is_unstable(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "replaced-during-open.db"
+    database_path.write_bytes(b"database contents")
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        lambda _path: ("windows-file-id", 17, 23),
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "open_file_identity",
+        lambda _descriptor: ("windows-file-id", 17, 24),
+    )
+
+    _signature, _prefix, _trailer, stable = (
+        readonly_module._file_prefix_observation(database_path, 8)
+    )
+
+    assert not stable
+
+
 def _directory_state(directory):
     state = {}
     for path in directory.iterdir():

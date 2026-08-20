@@ -26,6 +26,8 @@ from qplot.datahandling.file_identity import (
     database_has_qplot_generation_marker,
     database_publication_guard_path,
     generation_provenance_trigger,
+    open_file_identity,
+    path_bound_file_identity,
 )
 from qplot.datahandling.qcodes_compat import result_owns_supplied_connection
 
@@ -539,11 +541,13 @@ def _file_signature(path):
 
 def _file_prefix_observation(path, byte_count, *, include_trailer=False):
     """Read identifying bytes while proving which path instance supplied them."""
+    path_identity_before = path_bound_file_identity(path)
     path_signature_before = _file_signature(path)
     if path_signature_before is None:
         return None, b"", b"", True
     try:
         with path.open("rb") as handle:
+            descriptor_identity_before = open_file_identity(handle.fileno())
             descriptor_before = _stat_signature(os.fstat(handle.fileno()))
             prefix = handle.read(byte_count)
             trailer = b""
@@ -551,15 +555,33 @@ def _file_prefix_observation(path, byte_count, *, include_trailer=False):
                 handle.seek(-16, os.SEEK_END)
                 trailer = handle.read(16)
             descriptor_after = _stat_signature(os.fstat(handle.fileno()))
+            descriptor_identity_after = open_file_identity(handle.fileno())
     except FileNotFoundError:
         return path_signature_before, b"", b"", False
     path_signature_after = _file_signature(path)
-    stable = (
-        path_signature_before
-        == descriptor_before
-        == descriptor_after
-        == path_signature_after
+    path_identity_after = path_bound_file_identity(path)
+    identities = (
+        path_identity_before,
+        descriptor_identity_before,
+        descriptor_identity_after,
+        path_identity_after,
     )
+    identities_available = all(identity is not None for identity in identities)
+    stable_identity = identities_available and len(set(identities)) == 1
+    stable_metadata = (
+        path_signature_before == path_signature_after
+        and descriptor_before == descriptor_after
+        and path_signature_before[2:4] == descriptor_before[2:4]
+    )
+    if identities_available:
+        stable = stable_identity and stable_metadata
+    else:
+        stable = (
+            path_signature_before
+            == descriptor_before
+            == descriptor_after
+            == path_signature_after
+        )
     return descriptor_after, prefix, trailer, stable
 
 
