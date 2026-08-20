@@ -25,6 +25,7 @@ from qplot.windows._preferences import (
 )
 from qplot.windows._run_controls import AUTO_PLOT_KEY
 from qplot.windows._widgets.treeWidgets import RunList
+from tests._window_lifecycle import close_main_window
 
 
 class TemporaryConfigTestCase(unittest.TestCase):
@@ -543,8 +544,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         try:
             self.assertEqual(window.spinBox.value(), 3.5)
         finally:
-            window.monitor.stop()
-            window.deleteLater()
+            close_main_window(window)
 
     def test_main_window_refresh_interval_changes_are_persistent(self):
         window = main_window.MainWindow()
@@ -554,8 +554,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
             self.assertEqual(config().get("user_preference.default_refresh_rate"), 2.5)
         finally:
-            window.monitor.stop()
-            window.deleteLater()
+            close_main_window(window)
 
     def test_main_window_uses_configured_auto_plot(self):
         cfg = config()
@@ -565,8 +564,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         try:
             self.assertTrue(window.autoPlotBox.isChecked())
         finally:
-            window.monitor.stop()
-            window.deleteLater()
+            close_main_window(window)
 
     def test_main_window_auto_plot_changes_are_persistent(self):
         window = main_window.MainWindow()
@@ -576,8 +574,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
             self.assertTrue(config().get(AUTO_PLOT_KEY))
         finally:
-            window.monitor.stop()
-            window.deleteLater()
+            close_main_window(window)
 
     def test_main_window_loads_most_recent_database_on_startup_when_available(self):
         cfg = config()
@@ -601,8 +598,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             finally:
                 main_window.MainWindow.load_database_path = old_load_database_path
                 if window is not None:
-                    window.monitor.stop()
-                    window.deleteLater()
+                    close_main_window(window)
 
     def test_main_window_loads_startup_database_argument_before_recent_database(self):
         cfg = config()
@@ -631,8 +627,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             finally:
                 main_window.MainWindow.load_database_path = old_load_database_path
                 if window is not None:
-                    window.monitor.stop()
-                    window.deleteLater()
+                    close_main_window(window)
 
     def test_main_window_ignores_missing_recent_database_on_startup(self):
         cfg = config()
@@ -654,8 +649,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         finally:
             main_window.MainWindow.load_database_path = old_load_database_path
             if window is not None:
-                window.monitor.stop()
-                window.deleteLater()
+                close_main_window(window)
 
     def test_main_window_has_database_info_button(self):
         window = main_window.MainWindow()
@@ -666,8 +660,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
                 "Show database information"
                 )
         finally:
-            window.monitor.stop()
-            window.deleteLater()
+            close_main_window(window)
 
     def test_default_refresh_rate_is_one_second(self):
         cfg = config()

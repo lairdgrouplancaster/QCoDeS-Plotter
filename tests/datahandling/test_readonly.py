@@ -928,30 +928,34 @@ def test_checkpointed_wal_format_uses_private_immutable_snapshot(
     opener,
 ):
     database_path = tmp_path / "checkpointed-wal.db"
-    _create_default_wal_run(database_path)
-    assert database_path.read_bytes()[18:20] == b"\x02\x02"
-    assert not readonly_module._wal_path(database_path).exists()
-    assert not readonly_module._journal_path(database_path).exists()
-
-    source_state = _sqlite_artifact_state(database_path)
-    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
-    connection = opener(database_path)
+    original_database_path = qcodes.config.core.db_location
     try:
-        opened_path = Path(
-            connection.execute("PRAGMA database_list").fetchone()[2]
-        ).resolve()
-        assert opened_path != database_path.resolve()
-        assert opened_path.parent in {
-            snapshot_directory.resolve()
-            for snapshot_directory in snapshot_directories
-        }
-        assert opened_path.is_file()
+        _create_default_wal_run(database_path)
+        assert database_path.read_bytes()[18:20] == b"\x02\x02"
+        assert not readonly_module._wal_path(database_path).exists()
+        assert not readonly_module._journal_path(database_path).exists()
+
+        source_state = _sqlite_artifact_state(database_path)
+        snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+        connection = opener(database_path)
+        try:
+            opened_path = Path(
+                connection.execute("PRAGMA database_list").fetchone()[2]
+            ).resolve()
+            assert opened_path != database_path.resolve()
+            assert opened_path.parent in {
+                snapshot_directory.resolve()
+                for snapshot_directory in snapshot_directories
+            }
+            assert opened_path.is_file()
+            assert _sqlite_artifact_state(database_path) == source_state
+        finally:
+            connection.close()
+
+        assert all(not path.exists() for path in snapshot_directories)
         assert _sqlite_artifact_state(database_path) == source_state
     finally:
-        connection.close()
-
-    assert all(not path.exists() for path in snapshot_directories)
-    assert _sqlite_artifact_state(database_path) == source_state
+        qcodes.config.core.db_location = original_database_path
 
 
 def test_provenance_marked_live_wal_refreshes_see_new_rows_without_source_changes(

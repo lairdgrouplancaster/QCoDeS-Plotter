@@ -7,6 +7,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+import qcodes
 from PyQt6 import QtWidgets as qtw
 
 
@@ -21,6 +22,17 @@ def ensure_qapplication():
 @pytest.fixture(scope="session", autouse=True)
 def qapplication():
     return ensure_qapplication()
+
+
+@pytest.fixture(autouse=True)
+def restore_qcodes_database_location():
+    """Keep QCoDeS's process-wide default database isolated per test."""
+
+    original_database_path = qcodes.config.core.db_location
+    try:
+        yield
+    finally:
+        qcodes.config.core.db_location = original_database_path
 
 
 @pytest.fixture(autouse=True)

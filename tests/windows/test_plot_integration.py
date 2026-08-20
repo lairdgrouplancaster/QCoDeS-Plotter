@@ -52,6 +52,7 @@ from qplot.windows import _database_actions as database_actions_module
 from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows import main as main_window
 from qplot.windows._dataset_handle import database_file_identity
+from tests._window_lifecycle import close_main_window
 
 
 def configure_temp_qplot(monkeypatch, tmp_path):
@@ -231,44 +232,6 @@ def dependent_parameter(dataset, dimensions):
         if param.depends_on and len(param.depends_on_) == dimensions:
             return param
     raise AssertionError(f"No {dimensions}D dependent parameter in run {dataset.run_id}")
-
-
-def close_main_window(window):
-    """Stop workers and close owned datasets before deleting Qt state."""
-
-    window.startupDatabaseTimer.stop()
-    window.monitor.stop()
-    window.infoBox.preview.shutdown()
-    window.close_plot_windows(confirm=False, status=False)
-    for worker_name in (
-        "_database_load_worker",
-        "_database_detail_worker",
-        "_database_expensive_detail_worker",
-        "_database_refresh_worker",
-        "_test_database_generation_worker",
-    ):
-        worker = getattr(window, worker_name, None)
-        cancel = getattr(worker, "cancel", None)
-        if callable(cancel):
-            cancel()
-    window._cancel_plot_work()
-    for pool_name in (
-        "threadPool",
-        "databaseLoadThreadPool",
-        "databaseDetailThreadPool",
-        "databaseExpensiveDetailThreadPool",
-        "databaseRefreshThreadPool",
-        "testDatabaseGenerationThreadPool",
-    ):
-        assert getattr(window, pool_name).waitForDone(12_000)
-    qtw.QApplication.processEvents()
-    window.close_database(status=False)
-    assert window.ds is None
-    assert window.dataset_holder == {}
-    window.hide()
-    window.deleteLater()
-    qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
-    qtw.QApplication.processEvents()
 
 
 def database_artifact_state(database_path):

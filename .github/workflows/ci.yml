@@ -36,14 +36,38 @@ jobs:
         run: python -m mypy
 
   checks:
-    name: ${{ matrix.os }} Python ${{ matrix.python-version }}
+    name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, macos-latest]
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: windows-2025
+            python-version: "3.11"
+            suite: full
+          - os: windows-2025
+            python-version: "3.12"
+            suite: compatibility
+          - os: windows-2025
+            python-version: "3.13"
+            suite: compatibility
+          - os: windows-2025
+            python-version: "3.14"
+            suite: full
+          - os: macos-latest
+            python-version: "3.11"
+            suite: full
+          - os: macos-latest
+            python-version: "3.12"
+            suite: compatibility
+          - os: macos-latest
+            python-version: "3.13"
+            suite: compatibility
+          - os: macos-latest
+            python-version: "3.14"
+            suite: full
 
     env:
       QT_QPA_PLATFORM: offscreen
@@ -61,12 +85,26 @@ jobs:
       - name: Install package
         run: |
           python -m pip install -U pip
-          python -m pip install -e . "pytest>=8.0" "pytest-cov>=6.0"
+          python -m pip install -e . "pytest>=8.0" "pytest-cov>=6.0" "pytest-timeout>=2.3"
 
-      - name: Run tests
+      - name: Run full test suite
+        if: matrix.suite == 'full'
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python -m pytest --no-cov
+        run: >-
+          python -m pytest --no-cov
+          --timeout=90 --timeout-method=thread --durations=20
+
+      - name: Run compatibility test suite
+        if: matrix.suite == 'compatibility'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: >-
+          python -m pytest --no-cov --maxfail=1
+          --timeout=90 --timeout-method=thread --durations=20
+          tests/datahandling/test_readonly.py
+          tests/windows/test_heatmap_layer_integration.py
+          tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots
 
   coverage:
     name: Coverage
