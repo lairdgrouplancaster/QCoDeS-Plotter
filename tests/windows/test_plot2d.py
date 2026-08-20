@@ -13,6 +13,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling.qcodes_cache import cache_parameter_is_synchronized
 from qplot.tools.heatmap_geometry import HeatmapGeometry
 from qplot.tools.operation_registry import OperationValidationError
+from qplot.windows import _plot_axis_scaling as axis_scaling_module
 from qplot.windows._colorbar import (
     _CET_COLORBAR_SUBTYPES,
     _MATPLOTLIB_COLORBAR_SUBTYPES,
@@ -1334,6 +1335,39 @@ class CutAxisTransactionQtIntegrationTestCase(unittest.TestCase):
 
 
 class HeatmapHoverOutlineTestCase(unittest.TestCase):
+    def test_heatmap_axes_remove_pyqtgraph_one_pixel_frame_standoff(self):
+        expected_offsets = {
+            "left": (
+                QtCore.QPointF(1.0, 1.0),
+                QtCore.QPointF(1.0, -1.0),
+                ),
+            "right": (
+                QtCore.QPointF(-1.0, 1.0),
+                QtCore.QPointF(-1.0, -1.0),
+                ),
+            "top": (
+                QtCore.QPointF(1.0, 1.0),
+                QtCore.QPointF(-1.0, 1.0),
+                ),
+            "bottom": (
+                QtCore.QPointF(1.0, -1.0),
+                QtCore.QPointF(-1.0, -1.0),
+                ),
+            }
+        start = QtCore.QPointF(10.0, 20.0)
+        end = QtCore.QPointF(30.0, 40.0)
+
+        for orientation, offsets in expected_offsets.items():
+            axis = pg.AxisItem(orientation)
+            specs = (("pen", start, end), ["ticks"], ["text"])
+
+            adjusted = axis_scaling_module._flush_axis_draw_specs(axis, specs)
+
+            self.assertEqual(adjusted[0][1], start + offsets[0])
+            self.assertEqual(adjusted[0][2], end + offsets[1])
+            self.assertEqual(adjusted[1], ["ticks"])
+            self.assertEqual(adjusted[2], ["text"])
+
     def test_heatmap_limit_requires_current_config_when_worker_has_no_limit(self):
         class MissingConfig:
             def get(self, key):
@@ -3049,6 +3083,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             window.bar.getAxis("right").labelString(),
             )
         self.assertNotIn("(x", window.bar.getAxis("right").labelString())
+        for side in ("left", "right", "top", "bottom"):
+            self.assertTrue(
+                window.bar.getAxis(side)._qplot_flush_axis_draw_specs
+                )
+        self.assertEqual(window.bar.layout.getContentsMargins()[1], 0.0)
+        self.assertEqual(window.bar.layout.getContentsMargins()[3], 0.0)
 
     def test_colorbar_label_uses_operation_display_parameter(self):
         class SourceParam:

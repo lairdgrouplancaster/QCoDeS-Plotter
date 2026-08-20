@@ -17,6 +17,7 @@ from ._commands import command_spec, create_action
 from ._plot2d_colorbar import Plot2DColorbarMixin
 from ._plot2d_layers import Plot2DLayerMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
+from ._plot_axis_scaling import _install_flush_axis_draw_specs
 from ._plotWin import plotWidget
 
 _COLORBAR_COLORMAPS = _colorbar._COLORBAR_COLORMAPS
@@ -76,6 +77,9 @@ class plot2d(
             self._reload_visible_heatmap_data
             )
         self._connect_heatmap_range_controls()
+
+        for side in ("left", "right", "top", "bottom"):
+            _install_flush_axis_draw_specs(self.plot.getAxis(side))
 
         self.image = pg.ImageItem(axisOrder='row-major')
         self.image.setZValue(0) # Like *Send to back*

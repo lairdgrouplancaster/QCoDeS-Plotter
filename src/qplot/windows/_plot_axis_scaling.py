@@ -77,6 +77,53 @@ def _axis_scale_power_text(scale: float) -> str:
     return f"{scale:g}"
 
 
+def _flush_axis_draw_specs(axis: pg.AxisItem, specs: Any) -> Any:
+    """Move pyqtgraph's axis line onto the edge of its linked view."""
+
+    if specs is None:
+        return None
+
+    endpoint_offsets = {
+        "left": (QtCore.QPointF(1.0, 1.0), QtCore.QPointF(1.0, -1.0)),
+        "right": (QtCore.QPointF(-1.0, 1.0), QtCore.QPointF(-1.0, -1.0)),
+        "top": (QtCore.QPointF(1.0, 1.0), QtCore.QPointF(-1.0, 1.0)),
+        "bottom": (QtCore.QPointF(1.0, -1.0), QtCore.QPointF(-1.0, -1.0)),
+        }
+    offsets = endpoint_offsets.get(axis.orientation)
+    if offsets is None:
+        return specs
+
+    axis_spec, tick_specs, text_specs = specs
+    pen, start, end = axis_spec
+    start_offset, end_offset = offsets
+    flush_axis_spec = (
+        pen,
+        QtCore.QPointF(start) + start_offset,
+        QtCore.QPointF(end) + end_offset,
+        )
+    return flush_axis_spec, tick_specs, text_specs
+
+
+def _install_flush_axis_draw_specs(axis: pg.AxisItem) -> None:
+    """Remove the one-pixel frame standoff from an existing axis item."""
+
+    if getattr(axis, "_qplot_flush_axis_draw_specs", False):
+        return
+
+    original_generate_draw_specs = axis.generateDrawSpecs
+
+    def generate_draw_specs(painter: Any) -> Any:
+        return _flush_axis_draw_specs(
+            axis,
+            original_generate_draw_specs(painter),
+            )
+
+    axis.generateDrawSpecs = generate_draw_specs
+    axis._qplot_flush_axis_draw_specs = True
+    axis.picture = None
+    axis.update()
+
+
 class _PowerScaledAxisItem(pg.AxisItem):
     """
     Display pyqtgraph's auto SI scaling as powers of ten in the axis unit.

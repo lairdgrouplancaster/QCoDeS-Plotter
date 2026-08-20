@@ -20,7 +20,10 @@ from ._colorbar import (
     _matplotlib_colorbar_colormap_subtype,
 )
 from ._plot2d_colorbar_dialog import ColorbarScaleDialogMixin
-from ._plot_axis_scaling import _axis_scale_power_text
+from ._plot_axis_scaling import (
+    _axis_scale_power_text,
+    _install_flush_axis_draw_specs,
+)
 
 
 class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
@@ -181,6 +184,18 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         axis = getattr(bar, "axis", None)
         if axis is None:
             return
+
+        layout = getattr(bar, "layout", None)
+        get_margins = getattr(layout, "getContentsMargins", None)
+        set_margins = getattr(layout, "setContentsMargins", None)
+        if callable(get_margins) and callable(set_margins):
+            left, _top, right, _bottom = get_margins()
+            set_margins(left, 0, right, 0)
+
+        get_axis = getattr(bar, "getAxis", None)
+        if callable(get_axis):
+            for side in ("left", "right", "top", "bottom"):
+                _install_flush_axis_draw_specs(get_axis(side))
 
         self._restore_colorbar_default_tick_formatter(axis)
         axis.autoSIPrefix = False
