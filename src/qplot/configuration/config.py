@@ -86,8 +86,11 @@ class config:
                         "config.json root must be a JSON object"
                     )
 
+                migrated = self._migrate_config(loaded_config)
                 self.validate(loaded_config)
                 self.config = loaded_config
+                if migrated:
+                    self.save_config(self.default_file)
             
             # config.json does not meet schema requirements
             except (json.JSONDecodeError, jsonschema.ValidationError):
@@ -341,6 +344,20 @@ class config:
         """Validate a config with strict Python integer and finite-number types."""
 
         StrictConfigValidator(self.schema).validate(candidate)
+
+
+    def _migrate_config(self, candidate):
+        """Apply non-destructive migrations for newly introduced settings."""
+
+        preferences = candidate.get("user_preference")
+        if not isinstance(preferences, dict) or "colorbar_width" in preferences:
+            return False
+
+        preferences["colorbar_width"] = deepcopy(
+            self.schema["properties"]["user_preference"]["properties"]
+            ["colorbar_width"]["default"]
+            )
+        return True
 
 
     def schema_for(self, key):

@@ -269,6 +269,7 @@ class plot2d(
                     colorbar_items,
                     colorMap=self._colorbar_colormap(),
                     rounding=self._data_colorbar_rounding(),
+                    width=self._configured_colorbar_width(),
                     colorMapMenu=False,
                     )
                 self._heatmap_colorbar_item_ids = tuple(

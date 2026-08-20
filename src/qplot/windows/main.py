@@ -810,6 +810,9 @@ class MainWindow(
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
+            apply_colorbar_width = getattr(win, "apply_colorbar_width_preference", None)
+            if callable(apply_colorbar_width):
+                apply_colorbar_width()
         self._sync_mouse_mode_settings()
 
 

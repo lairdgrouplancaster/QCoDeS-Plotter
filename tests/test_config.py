@@ -141,6 +141,23 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(config().get("user_preference.bar_colour"), "CET-L1")
 
+    def test_existing_config_is_migrated_with_default_colorbar_width(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["user_preference"]["theme"] = "dark"
+        del stored_config["user_preference"]["colorbar_width"]
+        with open(config.default_file, "w") as fp:
+            json.dump(stored_config, fp)
+
+        reloaded = config()
+
+        self.assertEqual(reloaded.get("user_preference.theme"), "dark")
+        self.assertEqual(reloaded.get("user_preference.colorbar_width"), 15)
+        self.assertFalse(hasattr(reloaded, "invalid_config_backup_file"))
+        with open(config.default_file) as fp:
+            persisted = json.load(fp)
+        self.assertEqual(persisted["user_preference"]["colorbar_width"], 15)
+
     def test_config_update_rejects_unknown_key(self):
         cfg = config()
 

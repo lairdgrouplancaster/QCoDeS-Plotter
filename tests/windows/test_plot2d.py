@@ -30,6 +30,7 @@ from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 def _colorbar_config_values(overrides=None):
     values = {
         "user_preference.bar_colour": "viridis",
+        "user_preference.colorbar_width": 15,
         "user_preference.bar_colour_include_cet": True,
         "user_preference.bar_colour_include_matplotlib": True,
         "user_preference.bar_colour_include_local": True,
@@ -2980,6 +2981,28 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             )
         self.assertIsInstance(window.bar.color_map, pg.ColorMap)
 
+    def test_colorbar_width_preference_resizes_existing_vertical_bar(self):
+        class Layout:
+            def __init__(self):
+                self.column_width = None
+
+            def setColumnFixedWidth(self, column, width):
+                self.column_width = (column, width)
+
+        class Config:
+            def get(self, key):
+                self.last_key = key
+                return 24
+
+        window = plot2d.__new__(plot2d)
+        window.bar = type("Colorbar", (), {"layout": Layout(), "horizontal": False})()
+        window.config = Config()
+
+        window.apply_colorbar_width_preference()
+
+        self.assertEqual(window.config.last_key, "user_preference.colorbar_width")
+        self.assertEqual(window.bar.layout.column_width, (1, 24))
+
     def test_none_is_not_offered_or_applied_as_colorbar_colormap(self):
         window = plot2d.__new__(plot2d)
         window.status_messages = []
@@ -3089,6 +3112,31 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 )
         self.assertEqual(window.bar.layout.getContentsMargins()[1], 0.0)
         self.assertEqual(window.bar.layout.getContentsMargins()[3], 0.0)
+
+    def test_colorbar_tick_formatter_mirrors_ticks_without_left_labels(self):
+        window = plot2d.__new__(plot2d)
+        window.bar = pg.ColorBarItem(values=(-2.0, 2.0))
+
+        window._set_colorbar_tick_formatter()
+
+        right = window.bar.getAxis("right")
+        left = window.bar.getAxis("left")
+        self.assertFalse(left.style["showValues"])
+        self.assertEqual(left.range, right.range)
+        self.assertEqual(
+            left._tickLevels,
+            [
+                [(value, "") for value in values]
+                for _spacing, values in right.tickValues(
+                    *right.range,
+                    max(1, int(right.height())),
+                    )
+                ],
+            )
+
+        window.bar.setLevels((10.0, 20.0))
+
+        self.assertEqual(left.range, [10.0, 20.0])
 
     def test_colorbar_label_uses_operation_display_parameter(self):
         class SourceParam:

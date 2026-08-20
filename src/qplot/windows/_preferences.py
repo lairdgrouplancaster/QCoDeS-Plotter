@@ -38,8 +38,11 @@ COPY_PLOT_IMAGE_RESOLUTION_OPTIONS = (
     ("Vector SVG", COPY_PLOT_IMAGE_RESOLUTION_SVG),
 )
 
+COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
+
 PREFERENCE_KEYS = (
     "user_preference.theme",
+    COLORBAR_WIDTH_KEY,
     "GUI.preview_size",
     MOUSE_MODE_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
@@ -126,6 +129,16 @@ class PreferencesDialog(qtw.QDialog):
         for label, value in THEME_OPTIONS:
             self.themeCombo.addItem(label, value)
         self._add_row(form, "&Theme:", self.themeCombo)
+
+        self.colorbarWidthSpin = qtw.QSpinBox(tab)
+        self.colorbarWidthSpin.setObjectName("colorbarWidthPreferenceSpin")
+        self.colorbarWidthSpin.setAccessibleName("Color scale width")
+        self.colorbarWidthSpin.setRange(1, 500)
+        self.colorbarWidthSpin.setSuffix(" px")
+        self.colorbarWidthSpin.setToolTip(
+            "Width of heatmap colour scale bars"
+            )
+        self._add_row(form, "Color scale &width:", self.colorbarWidthSpin)
 
         self.previewSizeSpin = qtw.QSpinBox(tab)
         self.previewSizeSpin.setObjectName("previewSizePreferenceSpin")
@@ -323,6 +336,7 @@ class PreferencesDialog(qtw.QDialog):
         """
         widgets = (
             self.themeCombo,
+            self.colorbarWidthSpin,
             self.previewSizeSpin,
             self.mouseModeCombo,
             self.copyPlotImageResolutionCombo,
@@ -339,6 +353,8 @@ class PreferencesDialog(qtw.QDialog):
         try:
             theme_index = self.themeCombo.findData(values["user_preference.theme"])
             self.themeCombo.setCurrentIndex(max(theme_index, 0))
+
+            self.colorbarWidthSpin.setValue(int(values[COLORBAR_WIDTH_KEY]))
 
             self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
             mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
@@ -386,6 +402,7 @@ class PreferencesDialog(qtw.QDialog):
         """
         values = {
             "user_preference.theme": self.themeCombo.currentData(),
+            COLORBAR_WIDTH_KEY: int(self.colorbarWidthSpin.value()),
             "GUI.preview_size": int(self.previewSizeSpin.value()),
             MOUSE_MODE_KEY: self.mouseModeCombo.currentData(),
             COPY_PLOT_IMAGE_RESOLUTION_KEY: (

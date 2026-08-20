@@ -26,6 +26,10 @@ from ._plot_axis_scaling import (
 )
 
 
+COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
+DEFAULT_COLORBAR_WIDTH = 15
+
+
 class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     """
     Heatmap colorbar controls for plot2d windows.
@@ -33,6 +37,30 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     This mixin owns color autoscaling, colorbar interaction handlers, color-map
     filtering, and the color scale dialog.
     """
+
+    def _configured_colorbar_width(self):
+        """Return the configured heatmap colour-scale width in pixels."""
+
+        return int(_config_value(
+            self.__dict__.get("config"),
+            COLORBAR_WIDTH_KEY,
+            DEFAULT_COLORBAR_WIDTH,
+            ))
+
+    def apply_colorbar_width_preference(self):
+        """Apply the configured width to an existing colour bar, if present."""
+
+        bar = self.__dict__.get("bar")
+        layout = getattr(bar, "layout", None)
+        if layout is None:
+            return
+
+        width = self._configured_colorbar_width()
+        if getattr(bar, "horizontal", False):
+            layout.setRowFixedHeight(1, width)
+        else:
+            layout.setColumnFixedWidth(1, width)
+
     if TYPE_CHECKING:
         plot: Any
 
@@ -203,6 +231,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         axis.setStyle(tickTextWidth=60)
         self._set_colorbar_label_direction(bar)
         self._install_colorbar_axis_scale_sync(bar)
+        self._install_colorbar_mirrored_ticks(bar)
         self._sync_colorbar_axis_scaling()
         self._install_colorbar_scale_bar_handlers(bar)
         self._install_colorbar_scale_axis_handlers(axis)
@@ -228,6 +257,55 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
 
         axis.setRange = set_range
         axis._qplot_colorbar_scale_sync_installed = True
+
+    def _install_colorbar_mirrored_ticks(self, bar):
+        """Mirror vertical colour-bar ticks on the left without their labels."""
+
+        if getattr(bar, "horizontal", False):
+            return
+
+        get_axis = getattr(bar, "getAxis", None)
+        axis = getattr(bar, "axis", None)
+        if not callable(get_axis) or axis is None:
+            return
+
+        mirror = get_axis("left")
+        if mirror is None:
+            return
+
+        mirror.unlinkFromView()
+        mirror.setStyle(showValues=False)
+
+        def sync_ticks():
+            low, high = axis.range
+            mirror.setRange(low, high)
+            length = max(1, int(axis.height()))
+            tick_values = axis.tickValues(low, high, length)
+            mirror.setTicks([
+                [(value, "") for value in values]
+                for _spacing, values in tick_values
+                ])
+
+        sync_ticks()
+        if getattr(axis, "_qplot_colorbar_mirrored_ticks_installed", False):
+            return
+
+        previous_set_range = axis.setRange
+
+        def set_range(low, high, previous_set_range=previous_set_range):
+            previous_set_range(low, high)
+            sync_ticks()
+
+        previous_resize_event = getattr(axis, "resizeEvent", None)
+
+        def resize_event(event=None, previous_handler=previous_resize_event):
+            if previous_handler is not None:
+                previous_handler(event)
+            sync_ticks()
+
+        axis.setRange = set_range
+        axis.resizeEvent = resize_event
+        axis._qplot_colorbar_mirrored_ticks_installed = True
 
     def _sync_colorbar_axis_scaling(self):
         bar = self.__dict__.get("bar")

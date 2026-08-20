@@ -1071,6 +1071,9 @@ class plotWidget(
         """
         self.update_theme(self.config)
         self.apply_mouse_mode_preference()
+        apply_colorbar_width = getattr(self, "apply_colorbar_width_preference", None)
+        if callable(apply_colorbar_width):
+            apply_colorbar_width()
 
 
     def _configured_mouse_mode(self):
