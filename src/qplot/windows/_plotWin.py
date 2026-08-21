@@ -939,6 +939,7 @@ class plotWidget(
         # Use of QDockWidget over QToolbar to allow proper widget placement
         self.axes_dock = QDock_context("Data axes", self)
         self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.axes_dock)
+        self.axes_dock.setVisible(False)
         
         # Widget production
         x_layout = self.axes_dock.addLayout()
