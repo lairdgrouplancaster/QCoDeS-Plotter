@@ -1,5 +1,7 @@
 import hashlib
+import sys
 import time
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -55,7 +57,7 @@ def _configure_temp_qplot(monkeypatch, tmp_path):
     )
 
 
-def _wait_for(predicate, timeout=12):
+def _wait_for(predicate, timeout=12, diagnostics=None):
     app = qtw.QApplication.instance()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -64,7 +66,26 @@ def _wait_for(predicate, timeout=12):
             app.processEvents()
             return
         time.sleep(0.03)
-    raise AssertionError("Timed out waiting for GUI integration state")
+    details = ""
+    if diagnostics is not None:
+        details = f"\n{diagnostics()}"
+    raise AssertionError(f"Timed out waiting for GUI integration state{details}")
+
+
+def _database_load_diagnostics(window):
+    stacks = []
+    for thread_id, frame in sys._current_frames().items():
+        if frame is None:
+            continue
+        stacks.append(
+            f"Thread {thread_id}:\n{''.join(traceback.format_stack(frame))}"
+        )
+    return (
+        f"load_active={window._database_load_active!r}; "
+        f"status={window.databaseLoadLabel.text()!r}; "
+        f"load_threads={window.databaseLoadThreadPool.activeThreadCount()}\n"
+        + "\n".join(stacks)
+    )
 
 
 def _database_artifact_state(database_path):
@@ -179,7 +200,8 @@ def test_preview_drop_adds_and_removes_real_secondary_heatmap(
                 and not window._database_detail_active
                 and not window._database_expensive_detail_active
                 and window.ds is not None
-            )
+            ),
+            diagnostics=lambda: _database_load_diagnostics(window),
         )
         window.monitor.stop()
         assert window.ds.guid == guid
