@@ -1,10 +1,12 @@
 import os
-import shutil
 import sqlite3
 import struct
+import sys
 import tempfile
 import threading
+import time
 import weakref
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,11 +29,31 @@ from qplot.datahandling.file_identity import (
 )
 
 
-def connect(*args, **kwargs):
-    """Forward to QCoDeS without importing it for SQLite-only reads."""
+def connect(
+        name,
+        debug=False,
+        version=-1,
+        read_only=False,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Open QCoDeS connections while keeping viewer reads under qPlot control."""
     from qcodes.dataset.sqlite.database import connect as qcodes_connect
 
-    return qcodes_connect(*args, **kwargs)
+    if not read_only:
+        return qcodes_connect(
+            name,
+            debug=debug,
+            version=version,
+            read_only=False,
+        )
+    return _qcodes_read_only_atomic_connection(
+        name,
+        debug=debug,
+        cancelled_callback=cancelled_callback,
+        deadline=deadline,
+    )
 
 
 def get_DB_debug():
@@ -73,6 +95,9 @@ def result_owns_supplied_connection(result):
     return qcodes_result_owns_connection(result)
 
 SQLITE_READ_ONLY_CACHE_KIB = 16 * 1024
+SNAPSHOT_COPY_CHUNK_BYTES = 1024 * 1024
+QCODE_SQLITE_BUSY_QUANTUM_SECONDS = 0.05
+QCODE_SQLITE_OPEN_TIMEOUT_SECONDS = 5.0
 WAL_SNAPSHOT_ATTEMPTS = 5
 _ROLLBACK_JOURNAL_MAGIC = b"\xd9\xd5\x05\xf9 \xa1c\xd7"
 _ROLLBACK_JOURNAL_PREFIX_BYTES = 4096
@@ -81,6 +106,9 @@ _WAL_FRAME_HEADER_BYTES = 24
 _WAL_FORMAT_VERSION = 3_007_000
 _WAL_MAGIC_LITTLE_ENDIAN_CHECKSUMS = 0x377F0682
 _WAL_MAGIC_BIG_ENDIAN_CHECKSUMS = 0x377F0683
+_SQLITE_PENDING_BYTE = 0x40000000
+_SQLITE_SHARED_FIRST = _SQLITE_PENDING_BYTE + 2
+_SQLITE_SHARED_SIZE = 510
 _DATABASE_INSTANCE_REGISTRY: dict[
     Path,
     tuple[DatabaseFileIdentity | None, bool],
@@ -92,12 +120,533 @@ class ReadOnlyDatabaseAccessError(RuntimeError):
     """Raised when qPlot cannot take a non-mutating view of a database."""
 
 
+class ReadOnlyDatabaseCancelledError(InterruptedError):
+    """Raised when a caller cancels read-only database preparation."""
+
+
 class DatabaseInstanceChangedError(ReadOnlyDatabaseAccessError):
     """Raised when a database was atomically replaced during a requested read."""
 
 
 class UnverifiableDatabaseWalError(ReadOnlyDatabaseAccessError):
     """Raised when a WAL cannot be proven to descend from its selected main."""
+
+
+def _raise_if_read_interrupted(cancelled_callback=None, deadline=None):
+    """Stop cooperative work before it can publish a partial read target."""
+    if cancelled_callback is not None and cancelled_callback():
+        raise ReadOnlyDatabaseCancelledError("Database read cancelled.")
+    if deadline is not None and time.monotonic() >= deadline:
+        raise TimeoutError("Timed out while preparing a read-only database view.")
+
+
+def _read_control_progress_handler(cancelled_callback=None, deadline=None):
+    """Return a SQLite progress handler for the same cooperative controls."""
+    if cancelled_callback is None and deadline is None:
+        return None
+
+    def interrupted():
+        if cancelled_callback is not None and cancelled_callback():
+            return 1
+        return int(deadline is not None and time.monotonic() >= deadline)
+
+    return interrupted
+
+
+def _install_read_control_progress_handler(
+        connection,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    progress_handler = _read_control_progress_handler(
+        cancelled_callback,
+        deadline,
+    )
+    if progress_handler is not None:
+        set_progress_handler = getattr(connection, "set_progress_handler", None)
+        if callable(set_progress_handler):
+            set_progress_handler(progress_handler, 1000)
+
+
+def _sqlite_timeout_before_deadline(timeout, deadline):
+    """Limit SQLite's busy wait to the remaining cooperative deadline."""
+    if deadline is None:
+        return timeout
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Timed out while preparing a read-only database view.")
+    return min(float(timeout), remaining)
+
+
+def _register_qcodes_sqlite_types(qcodes_database):
+    """Register the adapters and converters used by QCoDeS connections."""
+    sqlite3.register_adapter(
+        qcodes_database.np.ndarray,
+        qcodes_database._adapt_array,
+    )
+    sqlite3.register_converter("array", qcodes_database._convert_array)
+    for numpy_int in qcodes_database.numpy_ints:
+        sqlite3.register_adapter(numpy_int, int)
+    sqlite3.register_converter("numeric", qcodes_database._convert_numeric)
+    for numpy_float in (float, *qcodes_database.numpy_floats):
+        sqlite3.register_adapter(numpy_float, qcodes_database._adapt_float)
+    for complex_type in qcodes_database.complex_types:
+        sqlite3.register_adapter(
+            complex_type,
+            qcodes_database._adapt_complex,
+        )
+    sqlite3.register_converter("complex", qcodes_database._convert_complex)
+
+
+def _sqlite_error_is_busy(error):
+    """Return whether SQLite reported a retryable lock or busy condition."""
+    error_code = getattr(error, "sqlite_errorcode", None)
+    if isinstance(error_code, int):
+        primary_code = error_code & 0xFF
+        return primary_code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    message = str(error).lower()
+    return "locked" in message or "busy" in message
+
+
+def _qcodes_read_only_atomic_connection(
+        name,
+        *,
+        debug=False,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Build a latest-schema QCoDeS connection without viewer-side upgrades."""
+    from qcodes.dataset.sqlite import database as qcodes_database
+
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    _register_qcodes_sqlite_types(qcodes_database)
+    connection = None
+    busy_deadline = time.monotonic() + QCODE_SQLITE_OPEN_TIMEOUT_SECONDS
+    try:
+        connection = sqlite3.connect(
+            f"file:{name!s}?mode=ro",
+            detect_types=sqlite3.PARSE_DECLTYPES,
+            check_same_thread=True,
+            timeout=_sqlite_timeout_before_deadline(
+                QCODE_SQLITE_BUSY_QUANTUM_SECONDS,
+                deadline,
+            ),
+            uri=True,
+            factory=qcodes_database.AtomicConnection,
+        )
+        _install_read_control_progress_handler(
+            connection,
+            cancelled_callback,
+            deadline,
+        )
+
+        while True:
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            try:
+                version_row = connection.execute("PRAGMA user_version").fetchone()
+                connection.execute(
+                    "SELECT 1 FROM sqlite_schema LIMIT 1"
+                ).fetchone()
+            except sqlite3.OperationalError as error:
+                _raise_if_read_interrupted(cancelled_callback, deadline)
+                if (
+                        not _sqlite_error_is_busy(error)
+                        or time.monotonic() >= busy_deadline
+                        ):
+                    raise
+                continue
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            break
+
+        if (
+                version_row is None
+                or len(version_row) != 1
+                or not isinstance(version_row[0], int)
+                ):
+            raise RuntimeError(
+                f"Database {name} has an invalid SQLite user_version."
+            )
+        database_version = version_row[0]
+        latest_version = qcodes_database._latest_available_version()
+        if database_version != latest_version:
+            raise RuntimeError(
+                f"Database {name} has schema version {database_version}, but "
+                f"qPlot requires the latest supported QCoDeS schema version "
+                f"{latest_version}. qPlot did not upgrade the input database."
+            )
+        if debug:
+            connection.set_trace_callback(print)
+        return connection
+    except Exception:
+        if connection is not None:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+        raise
+
+
+@contextmanager
+def _posix_sqlite_shared_lock_bytes(
+        database_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Hold SQLite's rollback-mode shared-lock bytes without opening SQLite."""
+    import errno
+    import fcntl
+
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    try:
+        database_file = open(database_path, "rb")
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            f"Could not open {database_path} for a read-only lock check: {error}"
+        ) from error
+
+    pending_locked = False
+    shared_locked = False
+    try:
+        try:
+            fcntl.lockf(
+                database_file.fileno(),
+                fcntl.LOCK_SH | fcntl.LOCK_NB,
+                1,
+                _SQLITE_PENDING_BYTE,
+                os.SEEK_SET,
+            )
+            pending_locked = True
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            fcntl.lockf(
+                database_file.fileno(),
+                fcntl.LOCK_SH | fcntl.LOCK_NB,
+                _SQLITE_SHARED_SIZE,
+                _SQLITE_SHARED_FIRST,
+                os.SEEK_SET,
+            )
+            shared_locked = True
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+        except (ReadOnlyDatabaseCancelledError, TimeoutError):
+            raise
+        except OSError as error:
+            if error.errno in (errno.EACCES, errno.EAGAIN):
+                raise sqlite3.OperationalError("database is locked") from error
+            raise ReadOnlyDatabaseAccessError(
+                "Could not prove that SQLite shared-lock bytes are available "
+                f"for {database_path}: {error}"
+            ) from error
+
+        yield database_file
+    finally:
+        if shared_locked:
+            try:
+                fcntl.lockf(
+                    database_file.fileno(),
+                    fcntl.LOCK_UN,
+                    _SQLITE_SHARED_SIZE,
+                    _SQLITE_SHARED_FIRST,
+                    os.SEEK_SET,
+                )
+            except OSError:
+                pass
+        if pending_locked:
+            try:
+                fcntl.lockf(
+                    database_file.fileno(),
+                    fcntl.LOCK_UN,
+                    1,
+                    _SQLITE_PENDING_BYTE,
+                    os.SEEK_SET,
+                )
+            except OSError:
+                pass
+        database_file.close()
+
+
+@contextmanager
+def _windows_sqlite_shared_lock_bytes(
+        database_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Hold SQLite's Windows shared-lock ranges using nonblocking LockFileEx."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class _Overlapped(ctypes.Structure):
+        _fields_ = (
+            ("Internal", ctypes.c_size_t),
+            ("InternalHigh", ctypes.c_size_t),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        )
+
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    try:
+        database_file = open(database_path, "rb")
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            f"Could not open {database_path} for a read-only lock check: {error}"
+        ) from error
+
+    kernel32 = ctypes.WinDLL(  # type: ignore[attr-defined]
+        "kernel32",
+        use_last_error=True,
+    )
+    lock_file_ex = kernel32.LockFileEx
+    lock_file_ex.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(_Overlapped),
+    )
+    lock_file_ex.restype = wintypes.BOOL
+    unlock_file_ex = kernel32.UnlockFileEx
+    unlock_file_ex.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(_Overlapped),
+    )
+    unlock_file_ex.restype = wintypes.BOOL
+    windows_handle = wintypes.HANDLE(
+        msvcrt.get_osfhandle(  # type: ignore[attr-defined]
+            database_file.fileno()
+        )
+    )
+    locked_ranges = []
+
+    def lock_shared_range(offset, length):
+        overlapped = _Overlapped()
+        overlapped.Offset = offset & 0xFFFFFFFF
+        overlapped.OffsetHigh = (offset >> 32) & 0xFFFFFFFF
+        if not lock_file_ex(
+                windows_handle,
+                0x00000001,
+                0,
+                length & 0xFFFFFFFF,
+                (length >> 32) & 0xFFFFFFFF,
+                ctypes.byref(overlapped),
+                ):
+            error_code = ctypes.get_last_error()  # type: ignore[attr-defined]
+            if error_code in (32, 33, 997):
+                raise sqlite3.OperationalError("database is locked")
+            raise ReadOnlyDatabaseAccessError(
+                "Could not prove that SQLite shared-lock bytes are available "
+                f"for {database_path}: Windows error {error_code}."
+            )
+        locked_ranges.append((overlapped, length))
+
+    try:
+        lock_shared_range(_SQLITE_PENDING_BYTE, 1)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+        lock_shared_range(_SQLITE_SHARED_FIRST, _SQLITE_SHARED_SIZE)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+        yield database_file
+    finally:
+        for overlapped, length in reversed(locked_ranges):
+            unlock_file_ex(
+                windows_handle,
+                0,
+                length & 0xFFFFFFFF,
+                (length >> 32) & 0xFFFFFFFF,
+                ctypes.byref(overlapped),
+            )
+        database_file.close()
+
+
+@contextmanager
+def _sqlite_shared_lock_bytes(
+        database_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Hold the platform's SQLite shared-lock ranges or fail closed."""
+    if os.name == "posix":
+        lock_context = _posix_sqlite_shared_lock_bytes(
+            database_path,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+        )
+    elif os.name == "nt":
+        lock_context = _windows_sqlite_shared_lock_bytes(
+            database_path,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+        )
+    else:
+        raise ReadOnlyDatabaseAccessError(
+            "qPlot cannot perform a non-mutating SQLite lock check on this "
+            "platform. Database access was rejected without opening a mutable "
+            "SQLite view."
+        )
+    with lock_context as database_file:
+        yield database_file
+
+
+def _source_matches_under_sqlite_lock(
+        database_path,
+        expected_source,
+        database_file,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Validate a source while never reopening its locked main file."""
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    try:
+        descriptor_signature_before = _stat_signature(
+            os.fstat(database_file.fileno())
+        )
+        descriptor_identity_before = open_file_identity(database_file.fileno())
+        path_signature_before = _file_signature(database_path)
+        path_identity_before = path_bound_file_identity(database_path)
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            "Could not validate the database main file under its SQLite "
+            f"shared lock: {error}"
+        ) from error
+
+    try:
+        wal_signature, wal_identity, wal_stable = _wal_observation(
+            database_path,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+        )
+        journal = _rollback_journal_observation(
+            database_path,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+        )
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            "Could not validate SQLite sidecars while holding the database "
+            f"shared lock: {error}"
+        ) from error
+
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    try:
+        descriptor_signature_after = _stat_signature(
+            os.fstat(database_file.fileno())
+        )
+        descriptor_identity_after = open_file_identity(database_file.fileno())
+        path_signature_after = _file_signature(database_path)
+        path_identity_after = path_bound_file_identity(database_path)
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            "Could not finish validating the database main file under its "
+            f"SQLite shared lock: {error}"
+        ) from error
+
+    return (
+        expected_source.database is not None
+        and descriptor_signature_before
+        == descriptor_signature_after
+        == path_signature_before
+        == path_signature_after
+        == expected_source.database
+        and descriptor_identity_before
+        == descriptor_identity_after
+        == path_identity_before
+        == path_identity_after
+        == expected_source.database_identity
+        and wal_stable
+        and wal_signature == expected_source.wal
+        and wal_identity == expected_source.wal_identity
+        and journal == expected_source.journal
+        and (journal is None or journal.stable)
+    )
+
+
+def _copy_file_cooperatively(
+        source,
+        destination,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Copy one snapshot artifact in bounded, cooperatively checked chunks."""
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    if _clone_file_if_supported(source, destination):
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+        return destination
+    with open(source, "rb") as source_file, open(destination, "wb") as destination_file:
+        while True:
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            chunk = source_file.read(SNAPSHOT_COPY_CHUNK_BYTES)
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            if not chunk:
+                break
+            written = destination_file.write(chunk)
+            if written != len(chunk):
+                raise OSError(
+                    f"Short write while copying {source} to a private snapshot."
+                )
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    return destination
+
+
+def _clone_file_if_supported(source, destination):
+    """Create a copy-on-write clone without weakening snapshot isolation."""
+    destination_path = Path(destination)
+    destination_existed = destination_path.exists()
+    if sys.platform == "darwin":
+        import ctypes
+
+        clonefile = ctypes.CDLL(None, use_errno=True).clonefile
+        clonefile.argtypes = (
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_int,
+        )
+        clonefile.restype = ctypes.c_int
+        result = clonefile(
+            os.fsencode(source),
+            os.fsencode(destination),
+            0,
+        )
+        if result == 0:
+            return True
+    elif sys.platform.startswith("linux"):
+        import fcntl
+
+        try:
+            with (
+                open(source, "rb") as source_file,
+                open(destination, "xb") as destination_file,
+            ):
+                fcntl.ioctl(
+                    destination_file.fileno(),
+                    0x40049409,  # Linux FICLONE
+                    source_file.fileno(),
+                )
+            return True
+        except OSError:
+            pass
+    else:
+        return False
+
+    if not destination_existed:
+        try:
+            destination_path.unlink()
+        except FileNotFoundError:
+            pass
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,8 +680,34 @@ class _SourceSignature:
     stable: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceReadPolicy:
+    """Sidecar policy derived from one stable source observation."""
+
+    journal: _RollbackJournalObservation | None
+    wal_present: bool
+    quarantined: bool
+    ignore_wal: bool
+    include_wal: bool
+    database_is_wal_format: bool
+
+    @property
+    def requires_private_snapshot(self):
+        """Classify states unsuitable for the probe's direct lock-byte check.
+
+        Full viewer openers snapshot every source state. This narrower flag is
+        retained only so the isolated access probe never treats a journal- or
+        WAL-bearing source as a rollback-mode direct-lock candidate.
+        """
+        return (
+            self.journal is not None
+            or self.wal_present
+            or self.database_is_wal_format
+        )
+
+
 class _ManagedSQLiteConnection(sqlite3.Connection):
-    """SQLite connection that owns a temporary database snapshot, when needed."""
+    """SQLite connection that owns its temporary database snapshot."""
 
     _qplot_snapshot: tempfile.TemporaryDirectory | None = None
 
@@ -279,16 +854,19 @@ def qcodes_read_only_connection(
         *,
         ignore_unpaired_wal=False,
         expected_database_identity=None,
+        cancelled_callback=None,
+        deadline=None,
         ):
-    """Open a source-preserving, AtomicConnection-compatible database view.
+    """Open an AtomicConnection-compatible private database snapshot.
 
-    Quiescent rollback-format sources use SQLite's enforced read-only locking.
-    WAL-format databases and sources with a WAL or rollback journal are
-    captured under the system temporary directory. Immutable access and any
-    rollback recovery are permitted only on that private copy.
+    Every source state is copied under the system temporary directory before
+    SQLite is invoked. Immutable access, WAL handling, and rollback recovery
+    therefore occur only on qPlot's private files.
     """
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     source_path = _resolved_database_path(database_path)
     for _attempt in range(2):
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         (
             target_path,
             immutable,
@@ -299,14 +877,19 @@ def qcodes_read_only_connection(
             source_path,
             ignore_unpaired_wal=ignore_unpaired_wal,
             expected_database_identity=expected_database_identity,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
         )
         conn = None
         try:
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             if not _prepared_source_is_current(
                     source_path,
                     prepared_source,
                     direct=snapshot is None,
                     ignore_wal=ignore_wal,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
                     ):
                 if snapshot is not None:
                     _cleanup_failed_connection_open(None, snapshot)
@@ -316,7 +899,15 @@ def qcodes_read_only_connection(
                 _qcodes_uri_path(target_path, immutable=immutable),
                 get_DB_debug(),
                 read_only=True,
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
                 )
+            _install_read_control_progress_handler(
+                conn,
+                cancelled_callback,
+                deadline,
+            )
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             _require_publication_complete(source_path)
             _require_expected_database_instance(
                 source_path,
@@ -327,6 +918,8 @@ def qcodes_read_only_connection(
                     prepared_source,
                     direct=snapshot is None,
                     ignore_wal=ignore_wal,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
                     ):
                 _cleanup_failed_connection_open(conn, snapshot)
                 continue
@@ -335,7 +928,9 @@ def qcodes_read_only_connection(
             if snapshot is not None:
                 _attach_snapshot_cleanup(conn, snapshot)
                 snapshot = None
-            return configure_read_only_sqlite_connection(conn)
+            configured = configure_read_only_sqlite_connection(conn)
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            return configured
         except Exception:
             _cleanup_failed_connection_open(conn, snapshot)
             raise
@@ -352,6 +947,8 @@ def load_by_guid_read_only(
         database_path=None,
         *,
         expected_database_identity=None,
+        cancelled_callback=None,
+        deadline=None,
         ):
     """Load a QCoDeS dataset by GUID through a read-only connection."""
     if database_path is None:
@@ -359,12 +956,19 @@ def load_by_guid_read_only(
     conn = qcodes_read_only_connection(
         database_path,
         expected_database_identity=expected_database_identity,
+        cancelled_callback=cancelled_callback,
+        deadline=deadline,
     )
     connection_transferred = False
     try:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         result = load_by_guid(guid, conn=conn)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         connection_transferred = result_owns_supplied_connection(result)
         return result
+    except Exception:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+        raise
     finally:
         if not connection_transferred:
             conn.close()
@@ -375,6 +979,8 @@ def load_by_id_read_only(
         database_path=None,
         *,
         expected_database_identity=None,
+        cancelled_callback=None,
+        deadline=None,
         ):
     """Load a QCoDeS dataset by run ID through a read-only connection."""
     if database_path is None:
@@ -382,12 +988,19 @@ def load_by_id_read_only(
     conn = qcodes_read_only_connection(
         database_path,
         expected_database_identity=expected_database_identity,
+        cancelled_callback=cancelled_callback,
+        deadline=deadline,
     )
     connection_transferred = False
     try:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         result = load_by_id(run_id, conn=conn)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         connection_transferred = result_owns_supplied_connection(result)
         return result
+    except Exception:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+        raise
     finally:
         if not connection_transferred:
             conn.close()
@@ -435,19 +1048,22 @@ def sqlite_read_only_connection(
         *,
         ignore_unpaired_wal=False,
         expected_database_identity=None,
+        cancelled_callback=None,
+        deadline=None,
         **kwargs,
         ):
-    """Open a direct source-preserving SQLite connection.
+    """Open a source-preserving SQLite connection to a private snapshot.
 
-    Quiescent rollback-format sources use enforced read-only locking. WAL-
-    format databases and sources with a WAL or rollback journal use a
-    consistency-checked private snapshot. SQLite can therefore use immutable
-    access or recover a hot journal without doing either to the source.
+    Every source state uses a consistency-checked private copy. SQLite can
+    therefore use immutable access, follow a WAL, or recover a hot journal
+    without opening or changing the source database and its sidecars.
     """
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     source_path = _resolved_database_path(database_path)
     kwargs.setdefault("factory", _ManagedSQLiteConnection)
 
     for _attempt in range(2):
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         (
             target_path,
             immutable,
@@ -458,14 +1074,19 @@ def sqlite_read_only_connection(
             source_path,
             ignore_unpaired_wal=ignore_unpaired_wal,
             expected_database_identity=expected_database_identity,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
         )
         conn = None
         try:
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             if not _prepared_source_is_current(
                     source_path,
                     prepared_source,
                     direct=snapshot is None,
                     ignore_wal=ignore_wal,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
                     ):
                 if snapshot is not None:
                     _cleanup_failed_connection_open(None, snapshot)
@@ -473,10 +1094,16 @@ def sqlite_read_only_connection(
             _require_publication_complete(source_path)
             conn = sqlite3.connect(
                 sqlite_read_only_uri(target_path, immutable=immutable),
-                timeout=timeout,
+                timeout=_sqlite_timeout_before_deadline(timeout, deadline),
                 uri=True,
                 **kwargs,
                 )
+            _install_read_control_progress_handler(
+                conn,
+                cancelled_callback,
+                deadline,
+            )
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             _require_publication_complete(source_path)
             _require_expected_database_instance(
                 source_path,
@@ -487,6 +1114,8 @@ def sqlite_read_only_connection(
                     prepared_source,
                     direct=snapshot is None,
                     ignore_wal=ignore_wal,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
                     ):
                 _cleanup_failed_connection_open(conn, snapshot)
                 continue
@@ -500,7 +1129,9 @@ def sqlite_read_only_connection(
                     )
                 attach_snapshot(snapshot)
                 snapshot = None
-            return configure_read_only_sqlite_connection(conn)
+            configured = configure_read_only_sqlite_connection(conn)
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            return configured
         except Exception:
             _cleanup_failed_connection_open(conn, snapshot)
             raise
@@ -512,23 +1143,236 @@ def sqlite_read_only_connection(
         )
 
 
+def _probe_sqlite_user_version(
+        database_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Perform one bounded immutable read without ever following sidecars.
+
+    Lock availability is checked separately through the platform lock-byte
+    protocol when the isolated access-probe child requests it. Keeping this
+    SQLite connection immutable prevents a DELETE-to-WAL race from creating a
+    source ``-shm`` file between signature observation and connection opening.
+    """
+    connection = None
+    try:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+        connection = sqlite3.connect(
+            sqlite_read_only_uri(database_path, immutable=True),
+            timeout=_sqlite_timeout_before_deadline(1, deadline),
+            uri=True,
+        )
+        _install_read_control_progress_handler(
+            connection,
+            cancelled_callback,
+            deadline,
+        )
+        connection.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone()
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+    except sqlite3.Error:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+        raise
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def probe_read_only_database(
         database_path,
         *,
         ignore_unpaired_wal=False,
         expected_database_identity=None,
+        cancelled_callback=None,
+        deadline=None,
+        _check_sqlite_lock_bytes=False,
         ):
-    """Exercise the same non-mutating open policy used by all viewer reads."""
-    conn = sqlite_read_only_connection(
-        database_path,
-        timeout=1,
-        ignore_unpaired_wal=ignore_unpaired_wal,
-        expected_database_identity=expected_database_identity,
+    """Promptly check access and identity without building a full snapshot.
+
+    The real opener remains responsible for transaction-consistent snapshot
+    creation and generated-WAL provenance.  This probe deliberately touches
+    only bounded regions of source artifacts and opens SQLite immutable, so a
+    concurrent transition to WAL cannot create source sidecars. The isolated
+    access-check child can additionally request a platform lock-byte check for
+    a sidecar-free rollback-mode source.
+    """
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    source_path = _resolved_database_path(database_path)
+    _require_publication_complete(source_path)
+    if not source_path.is_file():
+        raise FileNotFoundError(source_path)
+
+    _require_expected_database_instance(
+        source_path,
+        expected_database_identity,
     )
+    prepared_database_identity = database_file_identity(source_path)
+    if prepared_database_identity is None:
+        raise FileNotFoundError(source_path)
+
     try:
-        conn.execute("PRAGMA user_version").fetchone()
-    finally:
-        conn.close()
+        generation_marker = database_has_qplot_generation_marker(source_path)
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
+    except OSError as error:
+        raise ReadOnlyDatabaseAccessError(
+            f"Could not inspect the database publication marker: {error}"
+        ) from error
+
+    for _attempt in range(WAL_SNAPSHOT_ATTEMPTS):
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+        _require_expected_database_instance(
+            source_path,
+            expected_database_identity,
+        )
+        try:
+            before = _source_signature_with_controls(
+                source_path,
+                cancelled_callback,
+                deadline,
+            )
+        except (ReadOnlyDatabaseCancelledError, TimeoutError):
+            raise
+        except OSError as error:
+            raise ReadOnlyDatabaseAccessError(
+                f"Could not inspect a read-only view of {source_path}: {error}"
+            ) from error
+        if before.database is None:
+            raise FileNotFoundError(source_path)
+        if not before.stable:
+            continue
+
+        policy = _source_read_policy(
+            source_path,
+            before,
+            generation_marker=generation_marker,
+            ignore_unpaired_wal=ignore_unpaired_wal,
+        )
+        if policy.include_wal and not generation_marker:
+            _require_expected_database_instance(
+                source_path,
+                expected_database_identity,
+            )
+            _require_prepared_database_instance(
+                source_path,
+                prepared_database_identity,
+            )
+            after = _source_signature_for_validation(
+                source_path,
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
+            )
+            if after != before or not after.stable:
+                continue
+            raise _unverifiable_unmarked_wal_error(source_path)
+
+        if not _bounded_artifact_is_current(
+                source_path,
+                before.database,
+                before.database_identity,
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
+                ):
+            continue
+        if (
+                before.wal is not None
+                and not _bounded_artifact_is_current(
+                    _wal_path(source_path),
+                    before.wal,
+                    before.wal_identity,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
+                )
+                ):
+            continue
+
+        def source_is_still_current(expected_source=before):
+            _require_publication_complete(source_path)
+            _require_expected_database_instance(
+                source_path,
+                expected_database_identity,
+            )
+            _require_prepared_database_instance(
+                source_path,
+                prepared_database_identity,
+            )
+            after = _source_signature_for_validation(
+                source_path,
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
+            )
+            return after == expected_source and after.stable
+
+        sqlite_error = None
+        try:
+            _probe_sqlite_user_version(
+                source_path,
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
+            )
+        except (ReadOnlyDatabaseCancelledError, TimeoutError):
+            raise
+        except sqlite3.Error as error:
+            sqlite_error = error
+
+        # This is deliberately the last full validation before a platform
+        # lock-byte check. On POSIX, closing *any* descriptor for an inode drops
+        # all process-owned fcntl locks for that inode, so no helper that opens
+        # the main file may run after the lock context is entered.
+        if not source_is_still_current():
+            continue
+        if sqlite_error is not None:
+            raise sqlite_error
+
+        if (
+                not _check_sqlite_lock_bytes
+                or policy.requires_private_snapshot
+                ):
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            return
+
+        try:
+            with _sqlite_shared_lock_bytes(
+                    source_path,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
+                    ) as database_file:
+                _require_publication_complete(source_path)
+                _require_expected_database_instance(
+                    source_path,
+                    expected_database_identity,
+                )
+                _require_prepared_database_instance(
+                    source_path,
+                    prepared_database_identity,
+                )
+                if not _source_matches_under_sqlite_lock(
+                        source_path,
+                        before,
+                        database_file,
+                        cancelled_callback=cancelled_callback,
+                        deadline=deadline,
+                        ):
+                    continue
+                _raise_if_read_interrupted(cancelled_callback, deadline)
+                return
+        except (ReadOnlyDatabaseCancelledError, TimeoutError):
+            raise
+        except sqlite3.Error:
+            # A concurrent journal-mode or file transition can look exactly
+            # like lock contention. Revalidate after releasing any partial OS
+            # locks; reject the lock only when the source is still identical.
+            if not source_is_still_current():
+                continue
+            raise
+
+    raise ReadOnlyDatabaseAccessError(
+        "The database main file or SQLite sidecars changed continuously while "
+        "qPlot checked read-only access. The database is busy or temporarily "
+        "unavailable; refresh to retry. qPlot did not modify the source database "
+        "or its SQLite sidecars."
+    )
 
 
 def _qcodes_uri_path(database_path, *, immutable):
@@ -582,25 +1426,37 @@ def _file_signature(path):
     return _stat_signature(stat_result)
 
 
-def _file_prefix_observation(path, byte_count, *, include_trailer=False):
+def _file_prefix_observation(
+        path,
+        byte_count,
+        *,
+        include_trailer=False,
+        cancelled_callback=None,
+        deadline=None,
+        ):
     """Read identifying bytes while proving which path instance supplied them."""
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     path_identity_before = path_bound_file_identity(path)
     path_signature_before = _file_signature(path)
     if path_signature_before is None:
         return None, b"", b"", True
     try:
         with path.open("rb") as handle:
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             descriptor_identity_before = open_file_identity(handle.fileno())
             descriptor_before = _stat_signature(os.fstat(handle.fileno()))
             prefix = handle.read(byte_count)
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             trailer = b""
             if include_trailer and descriptor_before[2] >= 16:
                 handle.seek(-16, os.SEEK_END)
                 trailer = handle.read(16)
+                _raise_if_read_interrupted(cancelled_callback, deadline)
             descriptor_after = _stat_signature(os.fstat(handle.fileno()))
             descriptor_identity_after = open_file_identity(handle.fileno())
     except FileNotFoundError:
         return path_signature_before, b"", b"", False
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     path_signature_after = _file_signature(path)
     path_identity_after = path_bound_file_identity(path)
     identities = (
@@ -628,16 +1484,49 @@ def _file_prefix_observation(path, byte_count, *, include_trailer=False):
     return descriptor_after, prefix, trailer, stable
 
 
-def _rollback_journal_observation(database_path):
+def _bounded_artifact_is_current(
+        artifact_path,
+        expected_signature,
+        expected_identity,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Touch an artifact's beginning and end while retaining its identity."""
+    signature, _prefix, _trailer, stable = _file_prefix_observation(
+        artifact_path,
+        _WAL_HEADER_BYTES,
+        include_trailer=True,
+        cancelled_callback=cancelled_callback,
+        deadline=deadline,
+    )
+    _raise_if_read_interrupted(cancelled_callback, deadline)
+    return (
+        stable
+        and signature == expected_signature
+        and database_file_identity(artifact_path) == expected_identity
+    )
+
+
+def _rollback_journal_observation(
+        database_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
     journal_path = _journal_path(database_path)
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     identity_before = database_file_identity(journal_path)
     signature, prefix, trailer, stable = _file_prefix_observation(
         journal_path,
         _ROLLBACK_JOURNAL_PREFIX_BYTES,
         include_trailer=True,
+        cancelled_callback=cancelled_callback,
+        deadline=deadline,
     )
     if signature is None:
         return None
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     identity_after = database_file_identity(journal_path)
     return _RollbackJournalObservation(
         file_signature=signature,
@@ -648,11 +1537,18 @@ def _rollback_journal_observation(database_path):
     )
 
 
-def _wal_observation(database_path):
+def _wal_observation(
+        database_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
     """Observe one path-bound WAL instance without opening it through SQLite."""
     wal_path = _wal_path(database_path)
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     identity_before = database_file_identity(wal_path)
     signature_before = _file_signature(wal_path)
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     signature_after = _file_signature(wal_path)
     identity_after = database_file_identity(wal_path)
     return (
@@ -662,12 +1558,32 @@ def _wal_observation(database_path):
     )
 
 
-def _source_signature(database_path):
+def _source_signature(
+        database_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     database_signature, database_header, _trailer, database_stable = (
-        _file_prefix_observation(database_path, 100)
+        _file_prefix_observation(
+            database_path,
+            100,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+        )
     )
-    wal_signature, wal_identity, wal_stable = _wal_observation(database_path)
-    journal = _rollback_journal_observation(database_path)
+    wal_signature, wal_identity, wal_stable = _wal_observation(
+        database_path,
+        cancelled_callback=cancelled_callback,
+        deadline=deadline,
+    )
+    journal = _rollback_journal_observation(
+        database_path,
+        cancelled_callback=cancelled_callback,
+        deadline=deadline,
+    )
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     return _SourceSignature(
         database=database_signature,
         database_identity=database_file_identity(database_path),
@@ -680,7 +1596,22 @@ def _source_signature(database_path):
             and wal_stable
             and (journal is None or journal.stable)
         ),
-        )
+    )
+
+
+def _source_signature_with_controls(
+        database_path,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Keep no-control instrumentation compatible with the legacy call shape."""
+    if cancelled_callback is None and deadline is None:
+        return _source_signature(database_path)
+    return _source_signature(
+        database_path,
+        cancelled_callback=cancelled_callback,
+        deadline=deadline,
+    )
 
 
 def _signature_requires_private_snapshot(signature, *, ignore_wal):
@@ -691,16 +1622,85 @@ def _signature_requires_private_snapshot(signature, *, ignore_wal):
     )
 
 
+def _source_read_policy(
+        database_path,
+        signature,
+        *,
+        generation_marker,
+        ignore_unpaired_wal,
+        ):
+    """Apply the shared fail-closed sidecar policy to one observation."""
+    journal = signature.journal
+    wal_present = signature.wal is not None
+    empty_wal = wal_present and signature.wal[2] == 0
+    quarantined = (
+        replacement_wal_is_quarantined(database_path)
+        if wal_present or journal is not None
+        else False
+    )
+    ignore_wal = wal_present and (
+        empty_wal
+        or (
+            not generation_marker
+            and (ignore_unpaired_wal or quarantined)
+        )
+    )
+    include_wal = wal_present and not ignore_wal
+
+    if journal is not None and journal.potentially_hot and include_wal:
+        raise ReadOnlyDatabaseAccessError(
+            "The database has both an active-looking rollback journal and "
+            "a WAL, so qPlot cannot prove which transaction state is valid. "
+            "The database is busy or temporarily unavailable; finish the "
+            "writer transaction and refresh. qPlot did not modify the source "
+            "database or its SQLite sidecars."
+        )
+    if journal is not None and journal.potentially_hot and quarantined:
+        raise ReadOnlyDatabaseAccessError(
+            "The rollback journal cannot be paired with the database instance "
+            "that replaced the previously loaded file. The database is busy "
+            "or temporarily unavailable; close the old writer and refresh. "
+            "qPlot did not modify the source database or its SQLite sidecars."
+        )
+    if journal is not None and _journal_names_super_journal(journal):
+        raise ReadOnlyDatabaseAccessError(
+            "The rollback journal belongs to a multi-database transaction, "
+            "which qPlot cannot recover without following files outside its "
+            "private snapshot. The database is temporarily unavailable; "
+            "finish that transaction and refresh. qPlot did not modify the "
+            "source database or its SQLite sidecars."
+        )
+
+    return _SourceReadPolicy(
+        journal=journal,
+        wal_present=wal_present,
+        quarantined=quarantined,
+        ignore_wal=ignore_wal,
+        include_wal=include_wal,
+        database_is_wal_format=(
+            signature.database_header[18:20] == b"\x02\x02"
+        ),
+    )
+
+
 def _prepared_source_is_current(
         database_path,
         prepared_source,
         *,
         direct,
         ignore_wal,
+        cancelled_callback=None,
+        deadline=None,
         ):
     """Validate the exact main/journal instance through connection opening."""
     try:
-        current_source = _source_signature(database_path)
+        current_source = _source_signature_with_controls(
+            database_path,
+            cancelled_callback,
+            deadline,
+        )
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
     except OSError as error:
         raise ReadOnlyDatabaseAccessError(
             f"Could not validate the database instance and sidecars: {error}"
@@ -722,10 +1722,21 @@ def _prepared_source_is_current(
     )
 
 
-def _source_signature_for_validation(database_path):
+def _source_signature_for_validation(
+        database_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
     """Read a validation signature while keeping filesystem errors explicit."""
     try:
-        return _source_signature(database_path)
+        return _source_signature_with_controls(
+            database_path,
+            cancelled_callback,
+            deadline,
+        )
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
     except OSError as error:
         raise ReadOnlyDatabaseAccessError(
             f"Could not validate a read-only copy of {database_path}: {error}"
@@ -804,15 +1815,22 @@ def _wal_checksum(data, byte_order, state=(0, 0)):
     return checksum_0, checksum_1
 
 
-def _committed_wal_transaction_pages(wal_path):
+def _committed_wal_transaction_pages(
+        wal_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
     """Return page sets for SQLite's valid committed private-WAL prefix.
 
     WAL files can retain invalid frames from an earlier checkpoint cycle.  The
     checksum scan mirrors SQLite recovery: it stops at the first invalid frame
     and ignores valid but uncommitted tail frames after the last commit marker.
     """
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     with open(wal_path, "rb") as wal_file:
         header = wal_file.read(_WAL_HEADER_BYTES)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         if len(header) != _WAL_HEADER_BYTES:
             raise ValueError("missing or truncated WAL header")
         magic = int.from_bytes(header[:4], "big")
@@ -843,12 +1861,15 @@ def _committed_wal_transaction_pages(wal_path):
         current_transaction_pages = set()
         committed_transactions = []
         while True:
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             frame_header = wal_file.read(_WAL_FRAME_HEADER_BYTES)
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             if not frame_header:
                 break
             if len(frame_header) != _WAL_FRAME_HEADER_BYTES:
                 break
             page = wal_file.read(page_size)
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             if len(page) != page_size or frame_header[8:16] != salts:
                 break
             next_checksum = _wal_checksum(
@@ -878,6 +1899,7 @@ def _committed_wal_transaction_pages(wal_path):
                 )
                 current_transaction_pages.clear()
 
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     if not committed_transactions:
         raise ValueError("the WAL has no valid committed transaction")
     return tuple(committed_transactions)
@@ -1011,29 +2033,56 @@ def _require_matching_generated_wal_provenance(
         main_snapshot_path,
         snapshot_path,
         committed_transactions=None,
+        *,
+        cancelled_callback=None,
+        deadline=None,
         ):
     """Require a private WAL view to carry this generated main's lineage."""
     main_connection = None
     snapshot_connection = None
     try:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         if committed_transactions is None:
             committed_transactions = _committed_wal_transaction_pages(
-                _wal_path(snapshot_path)
+                _wal_path(snapshot_path),
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
             )
         main_connection = sqlite3.connect(
             sqlite_read_only_uri(main_snapshot_path, immutable=True),
             uri=True,
         )
+        _install_read_control_progress_handler(
+            main_connection,
+            cancelled_callback,
+            deadline,
+        )
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         main_provenance = _generation_provenance(main_connection)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         main_lineage = _generation_lineage_state(main_connection)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         main_lineage_root = _lineage_state_root_page(main_connection)
         _require_generation_lineage_trigger_inventory(main_connection)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         snapshot_connection = sqlite3.connect(snapshot_path)
+        _install_read_control_progress_handler(
+            snapshot_connection,
+            cancelled_callback,
+            deadline,
+        )
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         snapshot_provenance = _generation_provenance(snapshot_connection)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         snapshot_lineage = _generation_lineage_state(snapshot_connection)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         snapshot_lineage_root = _lineage_state_root_page(snapshot_connection)
         _require_generation_lineage_trigger_inventory(snapshot_connection)
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
     except (sqlite3.Error, ValueError) as error:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         raise _unverifiable_generated_wal_error(
             database_path,
             "the lineage history or trigger coverage is missing, invalid, or "
@@ -1093,6 +2142,7 @@ def _require_matching_generated_wal_provenance(
                 snapshot_nonce,
                 main_window,
             )
+            _raise_if_read_interrupted(cancelled_callback, deadline)
         except OverflowError as error:
             raise _unverifiable_generated_wal_error(
                 database_path,
@@ -1102,6 +2152,12 @@ def _require_matching_generated_wal_provenance(
             raise _unverifiable_generated_wal_error(
                 database_path,
                 "the WAL lineage branch does not descend from the selected main",
+            ) from error
+        except sqlite3.Error as error:
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            raise _unverifiable_generated_wal_error(
+                database_path,
+                "the WAL lineage branch could not be validated",
             ) from error
     finally:
         if snapshot_connection is not None:
@@ -1127,18 +2183,35 @@ def _journal_names_super_journal(journal):
     return 0 < name_length <= journal_size - 20
 
 
-def _recover_private_rollback_journal(database_path, snapshot_path):
+def _recover_private_rollback_journal(
+        database_path,
+        snapshot_path,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
     """Let SQLite resolve a copied journal without ever opening the source."""
     connection = None
     try:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         connection = sqlite3.connect(
             f"file:{_sqlite_uri_path(snapshot_path)}?mode=rw",
             uri=True,
             timeout=0,
         )
+        _install_read_control_progress_handler(
+            connection,
+            cancelled_callback,
+            deadline,
+        )
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         connection.execute("PRAGMA query_only = ON")
         connection.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone()
+        _raise_if_read_interrupted(cancelled_callback, deadline)
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
     except sqlite3.Error as error:
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         raise ReadOnlyDatabaseAccessError(
             "qPlot could not recover a transaction-consistent private copy of "
             f"{database_path}. The database is busy or temporarily unavailable; "
@@ -1158,8 +2231,11 @@ def _prepare_read_target(
         *,
         ignore_unpaired_wal=False,
         expected_database_identity=None,
+        cancelled_callback=None,
+        deadline=None,
     ):
-    """Select safe direct access or capture a stable private SQLite snapshot."""
+    """Capture a stable private SQLite snapshot for every viewer read."""
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     _require_publication_complete(database_path)
     if not database_path.is_file():
         raise FileNotFoundError(database_path)
@@ -1168,12 +2244,15 @@ def _prepare_read_target(
         database_path,
         expected_database_identity,
     )
+    _raise_if_read_interrupted(cancelled_callback, deadline)
     prepared_database_identity = database_file_identity(database_path)
     if prepared_database_identity is None:
         raise FileNotFoundError(database_path)
 
     try:
         generation_marker = database_has_qplot_generation_marker(database_path)
+    except (ReadOnlyDatabaseCancelledError, TimeoutError):
+        raise
     except OSError as error:
         raise ReadOnlyDatabaseAccessError(
             f"Could not inspect the database publication marker: {error}"
@@ -1183,12 +2262,19 @@ def _prepare_read_target(
     journal_path = _journal_path(database_path)
 
     for _attempt in range(WAL_SNAPSHOT_ATTEMPTS):
+        _raise_if_read_interrupted(cancelled_callback, deadline)
         _require_expected_database_instance(
             database_path,
             expected_database_identity,
         )
         try:
-            before = _source_signature(database_path)
+            before = _source_signature_with_controls(
+                database_path,
+                cancelled_callback,
+                deadline,
+            )
+        except (ReadOnlyDatabaseCancelledError, TimeoutError):
+            raise
         except OSError as error:
             raise ReadOnlyDatabaseAccessError(
                 f"Could not inspect a read-only view of {database_path}: {error}"
@@ -1198,46 +2284,16 @@ def _prepare_read_target(
         if not before.stable:
             continue
 
-        journal = before.journal
-        wal_present = before.wal is not None
-        empty_wal = wal_present and before.wal[2] == 0
-        quarantined = (
-            replacement_wal_is_quarantined(database_path)
-            if wal_present or journal is not None
-            else False
+        policy = _source_read_policy(
+            database_path,
+            before,
+            generation_marker=generation_marker,
+            ignore_unpaired_wal=ignore_unpaired_wal,
         )
-        ignore_wal = wal_present and (
-            empty_wal
-            or (
-                not generation_marker
-                and (ignore_unpaired_wal or quarantined)
-            )
-        )
-        include_wal = wal_present and not ignore_wal
-
-        if journal is not None and journal.potentially_hot and include_wal:
-            raise ReadOnlyDatabaseAccessError(
-                "The database has both an active-looking rollback journal and "
-                "a WAL, so qPlot cannot prove which transaction state is valid. "
-                "The database is busy or temporarily unavailable; finish the "
-                "writer transaction and refresh. qPlot did not modify the source "
-                "database or its SQLite sidecars."
-            )
-        if journal is not None and journal.potentially_hot and quarantined:
-            raise ReadOnlyDatabaseAccessError(
-                "The rollback journal cannot be paired with the database instance "
-                "that replaced the previously loaded file. The database is busy "
-                "or temporarily unavailable; close the old writer and refresh. "
-                "qPlot did not modify the source database or its SQLite sidecars."
-            )
-        if journal is not None and _journal_names_super_journal(journal):
-            raise ReadOnlyDatabaseAccessError(
-                "The rollback journal belongs to a multi-database transaction, "
-                "which qPlot cannot recover without following files outside its "
-                "private snapshot. The database is temporarily unavailable; "
-                "finish that transaction and refresh. qPlot did not modify the "
-                "source database or its SQLite sidecars."
-            )
+        journal = policy.journal
+        quarantined = policy.quarantined
+        ignore_wal = policy.ignore_wal
+        include_wal = policy.include_wal
 
         if include_wal and not generation_marker:
             # SQLite WAL salts and checksums validate only the WAL's own frame
@@ -1253,48 +2309,49 @@ def _prepare_read_target(
                 database_path,
                 prepared_database_identity,
             )
-            after = _source_signature_for_validation(database_path)
+            after = _source_signature_for_validation(
+                database_path,
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
+            )
             if after != before or not after.stable:
                 continue
             raise _unverifiable_unmarked_wal_error(database_path)
-
-        database_is_wal_format = before.database_header[18:20] == b"\x02\x02"
-        if not wal_present and journal is None and not database_is_wal_format:
-            _require_expected_database_instance(
-                database_path,
-                expected_database_identity,
-            )
-            _require_prepared_database_instance(
-                database_path,
-                prepared_database_identity,
-            )
-            try:
-                after = _source_signature(database_path)
-            except OSError as error:
-                raise ReadOnlyDatabaseAccessError(
-                    f"Could not validate a read-only view of {database_path}: {error}"
-                ) from error
-            if after != before or not after.stable:
-                continue
-            return (
-                database_path,
-                False,
-                None,
-                False,
-                before,
-            )
 
         snapshot = tempfile.TemporaryDirectory(prefix="qplot-readonly-")
         snapshot_path = Path(snapshot.name) / "database.db"
         main_snapshot_path = Path(snapshot.name) / "database-main.db"
         try:
-            shutil.copyfile(database_path, snapshot_path)
+            _copy_file_cooperatively(
+                database_path,
+                snapshot_path,
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
+            )
             if include_wal and generation_marker:
-                shutil.copyfile(snapshot_path, main_snapshot_path)
+                _copy_file_cooperatively(
+                    snapshot_path,
+                    main_snapshot_path,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
+                )
             if include_wal:
-                shutil.copyfile(wal_path, _wal_path(snapshot_path))
+                _copy_file_cooperatively(
+                    wal_path,
+                    _wal_path(snapshot_path),
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
+                )
             if journal is not None:
-                shutil.copyfile(journal_path, _journal_path(snapshot_path))
+                _copy_file_cooperatively(
+                    journal_path,
+                    _journal_path(snapshot_path),
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
+                )
+        except (ReadOnlyDatabaseCancelledError, TimeoutError):
+            _cleanup_failed_connection_open(None, snapshot)
+            raise
         except FileNotFoundError:
             _cleanup_failed_connection_open(None, snapshot)
             continue
@@ -1305,7 +2362,14 @@ def _prepare_read_target(
                 ) from err
 
         try:
-            after_copy = _source_signature(database_path)
+            after_copy = _source_signature_with_controls(
+                database_path,
+                cancelled_callback,
+                deadline,
+            )
+        except (ReadOnlyDatabaseCancelledError, TimeoutError):
+            _cleanup_failed_connection_open(None, snapshot)
+            raise
         except OSError as error:
             _cleanup_failed_connection_open(None, snapshot)
             raise ReadOnlyDatabaseAccessError(
@@ -1316,6 +2380,7 @@ def _prepare_read_target(
             continue
 
         try:
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             _require_expected_database_instance(
                 database_path,
                 expected_database_identity,
@@ -1328,10 +2393,18 @@ def _prepare_read_target(
             if include_wal and generation_marker:
                 try:
                     committed_transactions = _committed_wal_transaction_pages(
-                        _wal_path(snapshot_path)
+                        _wal_path(snapshot_path),
+                        cancelled_callback=cancelled_callback,
+                        deadline=deadline,
                     )
+                except (ReadOnlyDatabaseCancelledError, TimeoutError):
+                    raise
                 except (OSError, ValueError) as error:
-                    if _source_signature_for_validation(database_path) != before:
+                    if _source_signature_for_validation(
+                            database_path,
+                            cancelled_callback=cancelled_callback,
+                            deadline=deadline,
+                            ) != before:
                         _cleanup_failed_connection_open(None, snapshot)
                         continue
                     raise _unverifiable_generated_wal_error(
@@ -1340,9 +2413,18 @@ def _prepare_read_target(
                     ) from error
             if journal is not None:
                 try:
-                    _recover_private_rollback_journal(database_path, snapshot_path)
+                    _recover_private_rollback_journal(
+                        database_path,
+                        snapshot_path,
+                        cancelled_callback=cancelled_callback,
+                        deadline=deadline,
+                    )
                 except ReadOnlyDatabaseAccessError:
-                    if _source_signature_for_validation(database_path) != before:
+                    if _source_signature_for_validation(
+                            database_path,
+                            cancelled_callback=cancelled_callback,
+                            deadline=deadline,
+                            ) != before:
                         _cleanup_failed_connection_open(None, snapshot)
                         continue
                     raise
@@ -1353,16 +2435,27 @@ def _prepare_read_target(
                         main_snapshot_path,
                         snapshot_path,
                         committed_transactions,
+                        cancelled_callback=cancelled_callback,
+                        deadline=deadline,
                     )
                 except UnverifiableDatabaseWalError:
-                    if _source_signature_for_validation(database_path) != before:
+                    if _source_signature_for_validation(
+                            database_path,
+                            cancelled_callback=cancelled_callback,
+                            deadline=deadline,
+                            ) != before:
                         _cleanup_failed_connection_open(None, snapshot)
                         continue
                     if not (ignore_unpaired_wal or quarantined):
                         raise
+                    _raise_if_read_interrupted(cancelled_callback, deadline)
                     return main_snapshot_path, True, snapshot, True, before
 
-            if _source_signature_for_validation(database_path) != before:
+            if _source_signature_for_validation(
+                    database_path,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
+                    ) != before:
                 _cleanup_failed_connection_open(None, snapshot)
                 continue
             if include_wal and generation_marker:
@@ -1374,6 +2467,7 @@ def _prepare_read_target(
                         "The database was replaced while qPlot was validating "
                         "its WAL provenance."
                     )
+            _raise_if_read_interrupted(cancelled_callback, deadline)
             return snapshot_path, not include_wal, snapshot, ignore_wal, before
         except Exception:
             _cleanup_failed_connection_open(None, snapshot)

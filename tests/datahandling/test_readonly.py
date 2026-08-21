@@ -3,8 +3,11 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
 from types import SimpleNamespace
 
 import pytest
@@ -255,6 +258,31 @@ def _sqlite_artifact_state(database_path):
             status.st_mtime_ns,
         )
     return state
+
+
+def _start_interactive_sqlite_process(database_path, script):
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(database_path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdout is not None
+    ready = process.stdout.readline().strip()
+    if ready != "ready":
+        _stdout, stderr = process.communicate(timeout=5)
+        raise AssertionError(f"SQLite helper did not become ready: {stderr}")
+    return process
+
+
+def _stop_interactive_sqlite_process(process):
+    if process.poll() is None:
+        assert process.stdin is not None
+        process.stdin.write("stop\n")
+        process.stdin.flush()
+    _stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
 
 
 def _run_names_from_connection(opener, database_path):
@@ -510,6 +538,61 @@ def _create_default_wal_run(database_path):
     return run_id, guid, table_name
 
 
+def _create_large_sparse_wal_header_database(database_path, logical_size):
+    """Create a valid tiny SQLite database with a very large sparse tail."""
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.execute("INSERT INTO probe VALUES ('readable')")
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert database_path.read_bytes()[18:20] == b"\x02\x02"
+    assert not readonly_module._wal_path(database_path).exists()
+    assert not Path(f"{database_path}-shm").exists()
+    os.truncate(database_path, logical_size)
+
+    connection = sqlite3.connect(
+        f"{database_path.resolve().as_uri()}?mode=ro&immutable=1",
+        uri=True,
+    )
+    try:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("SELECT value FROM probe").fetchone() == ("readable",)
+    finally:
+        connection.close()
+
+
+def _sparse_database_state(database_path):
+    """Capture identity, metadata, sampled bytes, and exact sidecar presence."""
+    status = database_path.stat()
+    sample_size = 4096
+    with database_path.open("rb") as database_file:
+        prefix = database_file.read(sample_size)
+        database_file.seek(max(0, status.st_size // 2))
+        middle = database_file.read(sample_size)
+        database_file.seek(max(0, status.st_size - sample_size))
+        suffix = database_file.read(sample_size)
+    return (
+        database_file_identity(database_path),
+        status.st_dev,
+        status.st_ino,
+        status.st_nlink,
+        status.st_size,
+        status.st_mtime_ns,
+        getattr(status, "st_blocks", None),
+        prefix,
+        middle,
+        suffix,
+        tuple(
+            Path(f"{database_path}{sidecar_suffix}").exists()
+            for sidecar_suffix in ("-wal", "-shm", "-journal")
+        ),
+    )
+
+
 def _create_generated_wal_run(database_path):
     generate_database(
         [
@@ -561,6 +644,22 @@ def _open_active_wal(database_path):
     assert Path(f"{database_path}-wal").is_file()
     assert Path(f"{database_path}-shm").is_file()
     return writer
+
+
+@pytest.fixture(scope="module")
+def all_snapshot_components_source(tmp_path_factory):
+    """Keep one stable source that exercises every private-copy component."""
+    database_path = (
+        tmp_path_factory.mktemp("all-snapshot-components") / "all-components.db"
+    )
+    _create_generated_wal_run(database_path)
+    cold_journal = _create_cold_rollback_journal(database_path, "PERSIST")
+    writer = _open_active_wal(database_path)
+    readonly_module._journal_path(database_path).write_bytes(cold_journal)
+    try:
+        yield database_path
+    finally:
+        writer.close()
 
 
 def _load_read_only(loader_kind, run_id, guid, database_path):
@@ -641,6 +740,73 @@ def test_qcodes_read_only_connection_rejects_writes(tmp_path):
             conn.execute("CREATE TABLE qplot_read_only_probe (value INTEGER)")
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize(
+    "interruption_kind",
+    ["cancellation", "deadline"],
+)
+def test_qcodes_open_is_promptly_interruptible_while_sqlite_is_exclusively_locked(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    interruption_kind,
+):
+    database_path = tmp_path / f"qcodes-{interruption_kind}-locked.db"
+    _copy_rollback_template(latest_schema_rollback_template, database_path)
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    writer_script = (
+        "import sqlite3, sys\n"
+        "connection = sqlite3.connect(sys.argv[1])\n"
+        "connection.execute('PRAGMA journal_mode = DELETE')\n"
+        "connection.execute('BEGIN EXCLUSIVE')\n"
+        "print('ready', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "connection.rollback()\n"
+        "connection.close()\n"
+    )
+    writer = _start_interactive_sqlite_process(database_path, writer_script)
+
+    controls = {}
+    busy_observed = []
+    if interruption_kind == "cancellation":
+        real_error_is_busy = readonly_module._sqlite_error_is_busy
+
+        def mark_first_busy_error(error):
+            is_busy = real_error_is_busy(error)
+            if is_busy:
+                busy_observed.append(True)
+            return is_busy
+
+        monkeypatch.setattr(
+            readonly_module,
+            "_sqlite_error_is_busy",
+            mark_first_busy_error,
+        )
+        controls["cancelled_callback"] = lambda: bool(busy_observed)
+        expected_error = readonly_module.ReadOnlyDatabaseCancelledError
+    else:
+        controls["deadline"] = readonly_module.time.monotonic() + 0.15
+        expected_error = TimeoutError
+
+    started = perf_counter()
+    try:
+        with pytest.raises(expected_error):
+            readonly_module.connect(
+                database_path,
+                read_only=True,
+                **controls,
+            )
+        assert perf_counter() - started < 1
+        assert writer.poll() is None
+        if interruption_kind == "cancellation":
+            assert busy_observed
+        assert snapshot_directories == []
+    finally:
+        _stop_interactive_sqlite_process(writer)
+
+    assert _sqlite_artifact_state(database_path) == source_state
 
 
 @pytest.mark.parametrize("loader_kind", ["guid", "run_id"])
@@ -748,7 +914,8 @@ def test_exported_netcdf_closes_non_owning_dataset_connection(
         record = records[0]
         assert record.close_count == 1
         _assert_connection_closed(record.connection)
-        assert record.snapshot_directory is None
+        assert record.snapshot_directory is not None
+        assert not record.snapshot_directory.exists()
         assert _directory_state(tmp_path) == source_state
     finally:
         if writable_dataset is not None:
@@ -1021,6 +1188,227 @@ def test_checkpointed_wal_format_uses_private_immutable_snapshot(
         assert _sqlite_artifact_state(database_path) == source_state
     finally:
         qcodes.config.core.db_location = original_database_path
+
+
+def test_snapshot_copy_with_worker_controls_prefers_copy_on_write_clone(
+    tmp_path,
+    monkeypatch,
+):
+    source_path = tmp_path / "source.db"
+    destination_path = tmp_path / "snapshot.db"
+    source_path.write_bytes(b"private snapshot contents")
+    clone_calls = []
+    cancellation_checks = []
+
+    def clone_copy(source, destination):
+        clone_calls.append((Path(source), Path(destination)))
+        shutil.copyfile(source, destination)
+        return True
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        clone_copy,
+    )
+
+    result = readonly_module._copy_file_cooperatively(
+        source_path,
+        destination_path,
+        cancelled_callback=lambda: cancellation_checks.append(True) and False,
+    )
+
+    assert result == destination_path
+    assert clone_calls == [(source_path, destination_path)]
+    assert cancellation_checks == [True, True]
+    assert destination_path.read_bytes() == source_path.read_bytes()
+
+
+def test_copy_on_write_clone_is_an_independent_private_file(tmp_path):
+    source_path = tmp_path / "source.db"
+    destination_path = tmp_path / "snapshot.db"
+    source_path.write_bytes(b"source")
+
+    if not readonly_module._clone_file_if_supported(
+            source_path,
+            destination_path,
+            ):
+        pytest.skip("The test filesystem does not support copy-on-write clones")
+
+    destination_path.write_bytes(b"snapshot")
+
+    assert source_path.read_bytes() == b"source"
+    assert destination_path.read_bytes() == b"snapshot"
+    assert database_file_identity(source_path) != database_file_identity(
+        destination_path
+    )
+
+
+@pytest.mark.parametrize(
+    "destination_name",
+    [
+        "database.db",
+        "database-main.db",
+        "database.db-wal",
+        "database.db-journal",
+    ],
+    ids=["main", "retained-main", "wal", "journal"],
+)
+def test_cancellation_during_each_snapshot_component_cleans_partial_copy(
+    monkeypatch,
+    all_snapshot_components_source,
+    destination_name,
+):
+    database_path = all_snapshot_components_source
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        lambda *_args: False,
+    )
+
+    real_copy = readonly_module._copy_file_cooperatively
+    active_copy = {"destination": None, "checks": 0}
+    cancellation_checkpoints = []
+
+    def tracked_copy(source, destination, *args, **kwargs):
+        active_copy["destination"] = Path(destination).name
+        active_copy["checks"] = 0
+        try:
+            return real_copy(source, destination, *args, **kwargs)
+        finally:
+            active_copy["destination"] = None
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        tracked_copy,
+    )
+
+    def cancel_after_a_partial_chunk():
+        if active_copy["destination"] != destination_name:
+            return False
+        active_copy["checks"] += 1
+        # The helper checks before opening, before reading, after reading, and
+        # after writing. Its fifth check is therefore between chunks.
+        if active_copy["checks"] == 5:
+            cancellation_checkpoints.append(destination_name)
+            return True
+        return False
+
+    with pytest.raises(InterruptedError) as caught:
+        sqlite_read_only_connection(
+            database_path,
+            cancelled_callback=cancel_after_a_partial_chunk,
+        )
+
+    assert isinstance(
+        caught.value,
+        readonly_module.ReadOnlyDatabaseCancelledError,
+    )
+    assert cancellation_checkpoints == [destination_name]
+    assert len(snapshot_directories) == 1
+    assert all(not path.exists() for path in snapshot_directories)
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows does not permit replacing the copier's open source handle.",
+)
+def test_main_replacement_between_snapshot_chunks_is_rejected_without_source_writes(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "chunk-race.db"
+    replacement_path = tmp_path / "chunk-race-replacement.db"
+    _create_default_wal_run(database_path)
+    shutil.copy2(database_path, replacement_path)
+    expected_identity = database_file_identity(database_path)
+    assert expected_identity is not None
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        lambda *_args: False,
+    )
+    replacement_states = []
+    real_copy = readonly_module._copy_file_cooperatively
+    main_copy_checks = []
+
+    def tracked_copy(source, destination, *args, **kwargs):
+        if Path(destination).name == "database.db":
+            main_copy_checks.clear()
+        return real_copy(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        tracked_copy,
+    )
+
+    def replace_after_a_partial_chunk():
+        if replacement_states or not snapshot_directories:
+            return False
+        if not (snapshot_directories[-1] / "database.db").exists():
+            return False
+        main_copy_checks.append(True)
+        if len(main_copy_checks) != 4:
+            return False
+        os.replace(replacement_path, database_path)
+        replacement_states.append(_sqlite_artifact_state(database_path))
+        return False
+
+    with pytest.raises(DatabaseInstanceChangedError, match="replaced"):
+        sqlite_read_only_connection(
+            database_path,
+            expected_database_identity=expected_identity,
+            cancelled_callback=replace_after_a_partial_chunk,
+        )
+
+    assert len(main_copy_checks) >= 4
+    assert len(replacement_states) == 1
+    assert snapshot_directories
+    assert all(not path.exists() for path in snapshot_directories)
+    replacement_state = replacement_states[0]
+    assert _sqlite_artifact_state(database_path) == replacement_state
+    assert replacement_state[""][0] == source_state[""][0]
+    assert replacement_state[""][5:] == source_state[""][5:]
+    assert replacement_state[""][1] != source_state[""][1]
+    for suffix in _SQLITE_ARTIFACT_SUFFIXES[1:]:
+        assert replacement_state[suffix] == source_state[suffix]
+
+
+def test_access_probe_does_not_copy_large_sparse_wal_header_database(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "large-sparse-wal-header.db"
+    _create_large_sparse_wal_header_database(
+        database_path,
+        logical_size=8 * 1024**3,
+    )
+    source_state = _sparse_database_state(database_path)
+    full_snapshot_attempts = []
+
+    def reject_full_snapshot(*args, **kwargs):
+        full_snapshot_attempts.append((args, kwargs))
+        raise AssertionError("The bounded access probe attempted a full snapshot")
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_prepare_read_target",
+        reject_full_snapshot,
+    )
+
+    readonly_module.probe_read_only_database(database_path)
+
+    assert full_snapshot_attempts == []
+    assert database_access_error(database_path) is None
+    assert _sparse_database_state(database_path) == source_state
 
 
 def test_provenance_marked_live_wal_refreshes_see_new_rows_without_source_changes(
@@ -1429,6 +1817,349 @@ def test_database_access_probe_rejects_replacement_before_child_open(
             writer.close()
 
 
+def test_database_access_probe_rejects_genuinely_blocked_sqlite_reader(tmp_path):
+    database_path = tmp_path / "exclusive-lock.db"
+    writer = sqlite3.connect(database_path)
+    try:
+        writer.execute("PRAGMA journal_mode = DELETE")
+        writer.execute("CREATE TABLE probe (value TEXT)")
+        writer.execute("INSERT INTO probe VALUES ('committed')")
+        writer.commit()
+        source_state = _sqlite_artifact_state(database_path)
+        writer.execute("BEGIN EXCLUSIVE")
+        assert not readonly_module._journal_path(database_path).exists()
+
+        error = database_access_error(database_path, timeout=2.5)
+        after_probe_state = _sqlite_artifact_state(database_path)
+
+        assert error is not None
+        message = str(error).lower()
+        assert "locked" in message or "busy" in message or "timed out" in message
+        assert after_probe_state == source_state
+    finally:
+        if writer.in_transaction:
+            writer.rollback()
+        writer.close()
+
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="This regression exercises POSIX process-associated fcntl locks.",
+)
+def test_locked_source_validation_keeps_shared_lock_until_context_exit(tmp_path):
+    database_path = tmp_path / "locked-validation.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.commit()
+    finally:
+        connection.close()
+
+    source_state = _sqlite_artifact_state(database_path)
+    source_signature = readonly_module._source_signature(database_path)
+    assert source_signature.stable
+    contender_script = (
+        "import sqlite3, sys\n"
+        "connection = sqlite3.connect(sys.argv[1], timeout=0)\n"
+        "try:\n"
+        "    connection.execute('BEGIN EXCLUSIVE')\n"
+        "except sqlite3.OperationalError:\n"
+        "    print('locked')\n"
+        "else:\n"
+        "    print('acquired')\n"
+        "    connection.rollback()\n"
+        "finally:\n"
+        "    connection.close()\n"
+    )
+
+    with readonly_module._sqlite_shared_lock_bytes(database_path) as database_file:
+        assert readonly_module._source_matches_under_sqlite_lock(
+            database_path,
+            source_signature,
+            database_file,
+        )
+        contender = subprocess.run(
+            [sys.executable, "-c", contender_script, str(database_path)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        assert contender.stdout.strip() == "locked"
+
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="The deterministic writer unlinks its open SHM on POSIX.",
+)
+def test_quick_probe_never_recreates_shm_during_delete_to_wal_race(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "probe-delete-to-wal.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.execute("INSERT INTO probe VALUES ('committed')")
+        connection.commit()
+    finally:
+        connection.close()
+
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    writer_script = (
+        "import os, sqlite3, sys\n"
+        "path = sys.argv[1]\n"
+        "connection = sqlite3.connect(path)\n"
+        "print('ready', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "assert connection.execute('PRAGMA journal_mode = WAL').fetchone()[0] "
+        "== 'wal'\n"
+        "connection.execute('PRAGMA wal_autocheckpoint = 0')\n"
+        "connection.execute(\"INSERT INTO probe VALUES ('wal')\")\n"
+        "connection.commit()\n"
+        "shm_path = path + '-shm'\n"
+        "if os.path.exists(shm_path):\n"
+        "    os.unlink(shm_path)\n"
+        "print('transitioned', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "connection.close()\n"
+    )
+    writer = _start_interactive_sqlite_process(database_path, writer_script)
+    real_probe = readonly_module._probe_sqlite_user_version
+    intentional_state = []
+
+    def transition_before_immutable_probe(*args, **kwargs):
+        if not intentional_state:
+            assert writer.stdin is not None
+            assert writer.stdout is not None
+            writer.stdin.write("transition\n")
+            writer.stdin.flush()
+            assert writer.stdout.readline().strip() == "transitioned"
+            state = _sqlite_artifact_state(database_path)
+            assert state["-wal"] is not None
+            assert state["-shm"] is None
+            intentional_state.append(state)
+        return real_probe(*args, **kwargs)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_probe_sqlite_user_version",
+        transition_before_immutable_probe,
+    )
+    try:
+        with pytest.raises(readonly_module.UnverifiableDatabaseWalError):
+            readonly_module.probe_read_only_database(database_path)
+
+        assert len(intentional_state) == 1
+        assert _sqlite_artifact_state(database_path) == intentional_state[0]
+        assert not Path(f"{database_path}-shm").exists()
+        assert snapshot_directories == []
+    finally:
+        _stop_interactive_sqlite_process(writer)
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="The deterministic writer unlinks its open SHM on POSIX.",
+)
+@pytest.mark.parametrize(
+    "opener",
+    [sqlite_read_only_connection, qcodes_read_only_connection],
+    ids=["sqlite", "qcodes"],
+)
+def test_full_opener_never_recreates_shm_during_delete_to_wal_race(
+    tmp_path,
+    monkeypatch,
+    opener,
+):
+    database_path = tmp_path / "opener-delete-to-wal.db"
+    _create_generated_wal_run(database_path)
+    setup_connection = sqlite3.connect(database_path)
+    try:
+        assert setup_connection.execute(
+            "PRAGMA journal_mode = DELETE"
+        ).fetchone() == ("delete",)
+    finally:
+        setup_connection.close()
+
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    writer_script = (
+        "import os, sqlite3, sys\n"
+        "path = sys.argv[1]\n"
+        "connection = sqlite3.connect(path)\n"
+        "print('ready', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "assert connection.execute('PRAGMA journal_mode = WAL').fetchone()[0] "
+        "== 'wal'\n"
+        "connection.execute('PRAGMA wal_autocheckpoint = 0')\n"
+        "connection.execute('UPDATE runs SET name = name')\n"
+        "connection.commit()\n"
+        "shm_path = path + '-shm'\n"
+        "if os.path.exists(shm_path):\n"
+        "    os.unlink(shm_path)\n"
+        "print('transitioned', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "connection.close()\n"
+    )
+    writer = _start_interactive_sqlite_process(database_path, writer_script)
+    real_copy = readonly_module._copy_file_cooperatively
+    intentional_state = []
+
+    def transition_before_first_main_copy(source, destination, **kwargs):
+        if Path(source).resolve() == database_path.resolve() and not intentional_state:
+            assert writer.stdin is not None
+            assert writer.stdout is not None
+            writer.stdin.write("transition\n")
+            writer.stdin.flush()
+            assert writer.stdout.readline().strip() == "transitioned"
+            state = _sqlite_artifact_state(database_path)
+            assert state["-wal"] is not None
+            assert state["-shm"] is None
+            intentional_state.append(state)
+        return real_copy(source, destination, **kwargs)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        transition_before_first_main_copy,
+    )
+    try:
+        connection = opener(database_path)
+        try:
+            assert connection.execute("SELECT COUNT(*) FROM runs").fetchone() == (1,)
+            assert len(intentional_state) == 1
+            assert _sqlite_artifact_state(database_path) == intentional_state[0]
+            assert not Path(f"{database_path}-shm").exists()
+            assert sum(path.exists() for path in snapshot_directories) == 1
+        finally:
+            connection.close()
+
+        assert snapshot_directories
+        assert all(not path.exists() for path in snapshot_directories)
+        assert _sqlite_artifact_state(database_path) == intentional_state[0]
+    finally:
+        _stop_interactive_sqlite_process(writer)
+
+
+def test_database_access_probe_cancellation_kills_and_reaps_blocked_child(
+    tmp_path,
+    monkeypatch,
+):
+    from qplot.datahandling import database as database_module
+
+    database_path = tmp_path / "cancel-blocked-probe.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.commit()
+    finally:
+        connection.close()
+    source_state = _sqlite_artifact_state(database_path)
+
+    class BlockedProcess:
+        def __init__(self):
+            self.returncode = None
+            self.kill_calls = 0
+            self.communicate_timeouts = []
+
+        def communicate(self, timeout=None):
+            self.communicate_timeouts.append(timeout)
+            if self.kill_calls:
+                self.returncode = -9
+                return "", ""
+            raise database_module.subprocess.TimeoutExpired(
+                ["blocked-probe"],
+                timeout,
+            )
+
+        def kill(self):
+            self.kill_calls += 1
+
+    blocked_process = BlockedProcess()
+    popen_calls = []
+
+    def open_blocked_process(command, **kwargs):
+        popen_calls.append((command, kwargs))
+        return blocked_process
+
+    monkeypatch.setattr(
+        database_module.subprocess,
+        "Popen",
+        open_blocked_process,
+    )
+    cancellation_checks = 0
+
+    def cancel_after_one_poll():
+        nonlocal cancellation_checks
+        cancellation_checks += 1
+        return bool(blocked_process.communicate_timeouts)
+
+    no_result = object()
+    result = no_result
+    cancel_started = perf_counter()
+    with pytest.raises(InterruptedError, match="cancelled"):
+        result = database_module.database_access_error(
+            database_path,
+            timeout=30,
+            cancelled_callback=cancel_after_one_poll,
+        )
+
+    assert perf_counter() - cancel_started < 1
+    assert result is no_result
+    assert len(popen_calls) == 1
+    assert cancellation_checks >= 3
+    assert blocked_process.kill_calls == 1
+    assert len(blocked_process.communicate_timeouts) == 2
+    poll_timeout, reap_timeout = blocked_process.communicate_timeouts
+    assert 0 < poll_timeout <= 0.05
+    assert reap_timeout is None
+    assert blocked_process.returncode == -9
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+def test_database_access_probe_propagates_child_deadline_timeout(
+    tmp_path,
+    monkeypatch,
+):
+    from qplot.datahandling import database as database_module
+
+    child_message = "Child probe deadline exceeded."
+    child_error = json.dumps({
+        "type": TimeoutError.__name__,
+        "message": child_message,
+    })
+    completed_probe = SimpleNamespace(
+        returncode=1,
+        stdout="",
+        stderr=f"{database_module._DATABASE_ACCESS_ERROR_PREFIX}{child_error}",
+    )
+    run_calls = []
+
+    def finish_with_child_timeout(command, **kwargs):
+        run_calls.append((command, kwargs))
+        return completed_probe
+
+    monkeypatch.setattr(
+        database_module.subprocess,
+        "run",
+        finish_with_child_timeout,
+    )
+    deadline = database_module.monotonic() + 10
+
+    with pytest.raises(TimeoutError, match=child_message):
+        database_module.database_access_error(
+            tmp_path / "deadline-probe.db",
+            deadline=deadline,
+        )
+
+    assert len(run_calls) == 1
+    assert 0 < run_calls[0][1]["timeout"] <= 3
+
+
 def test_unstable_live_wal_fails_instead_of_using_immutable_data(
     tmp_path,
     monkeypatch,
@@ -1566,7 +2297,7 @@ def test_continuously_changing_rollback_journal_fails_closed_and_cleans_snapshot
             replacement_paths.append(replacement_path)
 
     snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
-    real_copyfile = shutil.copyfile
+    real_copyfile = readonly_module._copy_file_cooperatively
     injection_states = []
     journal_copy_count = 0
 
@@ -1599,8 +2330,8 @@ def test_continuously_changing_rollback_journal_fails_closed_and_cleans_snapshot
 
     monkeypatch.setattr(readonly_module, "WAL_SNAPSHOT_ATTEMPTS", attempts)
     monkeypatch.setattr(
-        readonly_module.shutil,
-        "copyfile",
+        readonly_module,
+        "_copy_file_cooperatively",
         copyfile_then_change_journal,
     )
 
@@ -1641,7 +2372,7 @@ def test_rollback_snapshot_cleanup_on_failure(
     snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
 
     if failure_stage in {"main_copy", "journal_copy"}:
-        real_copyfile = shutil.copyfile
+        real_copyfile = readonly_module._copy_file_cooperatively
         failed_source = database_path if failure_stage == "main_copy" else journal_path
 
         def fail_selected_copy(source, destination, *args, **kwargs):
@@ -1649,7 +2380,11 @@ def test_rollback_snapshot_cleanup_on_failure(
                 raise OSError(f"injected {failure_stage} failure")
             return real_copyfile(source, destination, *args, **kwargs)
 
-        monkeypatch.setattr(readonly_module.shutil, "copyfile", fail_selected_copy)
+        monkeypatch.setattr(
+            readonly_module,
+            "_copy_file_cooperatively",
+            fail_selected_copy,
+        )
     elif failure_stage == "private_recovery":
 
         def fail_private_recovery(*_args, **_kwargs):

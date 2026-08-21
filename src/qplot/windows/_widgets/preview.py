@@ -1,6 +1,8 @@
 import json
+import sqlite3
 import threading
 from collections import OrderedDict
+from time import monotonic
 
 import numpy as np
 from PyQt6 import QtCore, QtGui
@@ -57,6 +59,20 @@ VIRIDIS_STOPS = np.asarray([
     (189, 223, 38),
     (253, 231, 37),
     ], dtype=np.float64)
+
+
+def _raise_if_preview_aborted(is_cancelled=None, deadline=None):
+    if is_cancelled is not None and is_cancelled():
+        raise InterruptedError("Preview generation cancelled.")
+    if deadline is not None and monotonic() >= deadline:
+        raise TimeoutError("Preview generation deadline exceeded.")
+
+
+def _preview_abort_requested(is_cancelled=None, deadline=None):
+    return bool(
+        (is_cancelled is not None and is_cancelled())
+        or (deadline is not None and monotonic() >= deadline)
+        )
 
 
 class PreviewTab(qtw.QWidget):
@@ -977,7 +993,16 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
 
 
 class PreviewWorker(QtCore.QRunnable):
-    def __init__(self, generation, database_path, guid, metadata, preview_size):
+    def __init__(
+            self,
+            generation,
+            database_path,
+            guid,
+            metadata,
+            preview_size,
+            *,
+            deadline=None,
+            ):
         super().__init__()
         self.signals = PreviewSignals()
         self.generation = generation
@@ -992,13 +1017,16 @@ class PreviewWorker(QtCore.QRunnable):
         self.guid = guid
         self.metadata = metadata
         self.preview_size = preview_size
+        self.deadline = deadline
         self._cancelled = threading.Event()
         self._connection_lock = threading.Lock()
+        self._publication_lock = threading.RLock()
         self._connection = None
 
 
     def cancel(self):
-        self._cancelled.set()
+        with self._publication_lock:
+            self._cancelled.set()
         with self._connection_lock:
             connection = self._connection
         if connection is not None:
@@ -1025,21 +1053,25 @@ class PreviewWorker(QtCore.QRunnable):
 
 
     def _emit_finished(self, previews, error):
-        try:
-            self.signals.finished.emit(
-                self,
-                self.generation,
-                self.guid,
-                previews,
-                error,
-            )
-        except RuntimeError as err:
-            message = str(err)
-            if not (
-                    "wrapped C/C++ object" in message
-                    and "has been deleted" in message
-                    ):
-                raise
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                previews = []
+                error = None
+            try:
+                self.signals.finished.emit(
+                    self,
+                    self.generation,
+                    self.guid,
+                    previews,
+                    error,
+                )
+            except RuntimeError as err:
+                message = str(err)
+                if not (
+                        "wrapped C/C++ object" in message
+                        and "has been deleted" in message
+                        ):
+                    raise
 
 
     def run(self):
@@ -1047,16 +1079,23 @@ class PreviewWorker(QtCore.QRunnable):
             if self._cancelled.is_set():
                 previews = []
             else:
+                preview_kwargs = {
+                    "size": self.preview_size,
+                    "is_cancelled": self._cancelled.is_set,
+                    "connection_callback": self._set_connection,
+                }
+                if self.deadline is not None:
+                    preview_kwargs["deadline"] = self.deadline
                 previews = generate_run_previews(
                     self.database_instance,
                     self.metadata,
-                    size=self.preview_size,
-                    is_cancelled=self._cancelled.is_set,
-                    connection_callback=self._set_connection,
-                )
+                    **preview_kwargs,
+                    )
             if self._cancelled.is_set():
                 previews = []
             self._emit_finished(previews, None)
+        except InterruptedError:
+            self._emit_finished([], None)
         except DatabaseInstanceChangedError as error:
             self._emit_finished([], error)
         except Exception as error:
@@ -1077,9 +1116,9 @@ def generate_run_previews(
         size=PREVIEW_SIZE,
         is_cancelled=None,
         connection_callback=None,
+        deadline=None,
         ):
-    if is_cancelled is not None and is_cancelled():
-        return []
+    _raise_if_preview_aborted(is_cancelled, deadline)
 
     table_name = metadata.get("result_table_name")
     if not database_path or not table_name:
@@ -1095,25 +1134,31 @@ def generate_run_previews(
         return []
 
     previews = []
+    connection_kwargs = {
+        "timeout": 10,
+        "expected_database_identity": database_instance.identity,
+    }
+    if is_cancelled is not None:
+        connection_kwargs["cancelled_callback"] = is_cancelled
+    if deadline is not None:
+        connection_kwargs["deadline"] = deadline
     conn = sqlite_read_only_connection(
         database_instance.logical_path,
-        timeout=10,
-        expected_database_identity=database_instance.identity,
-    )
-    if connection_callback is not None:
-        connection_callback(conn)
+        **connection_kwargs,
+        )
     cursor = None
     try:
-        if is_cancelled is not None:
+        if connection_callback is not None:
+            connection_callback(conn)
+        if is_cancelled is not None or deadline is not None:
             conn.set_progress_handler(
-                lambda: int(bool(is_cancelled())),
+                lambda: int(_preview_abort_requested(is_cancelled, deadline)),
                 PREVIEW_SQL_PROGRESS_OPCODES,
                 )
         cursor = conn.cursor()
         available_columns = _table_columns(cursor, table_name)
         for parameter, axes in dependencies.items():
-            if is_cancelled is not None and is_cancelled():
-                break
+            _raise_if_preview_aborted(is_cancelled, deadline)
             if parameter not in available_columns:
                 continue
 
@@ -1133,19 +1178,31 @@ def generate_run_previews(
                     parameter,
                     axes[:2],
                     size,
-                    is_cancelled=is_cancelled,
+                    is_cancelled=lambda: _preview_abort_requested(
+                        is_cancelled,
+                        deadline,
+                        ),
                     )
             else:
                 continue
 
             if preview is not None:
                 previews.append(preview)
+        _raise_if_preview_aborted(is_cancelled, deadline)
+    except sqlite3.OperationalError as error:
+        if "interrupted" in str(error).lower():
+            _raise_if_preview_aborted(is_cancelled, deadline)
+        raise
     finally:
-        if cursor is not None:
-            cursor.close()
-        if connection_callback is not None:
-            connection_callback(None)
-        conn.close()
+        try:
+            if cursor is not None:
+                cursor.close()
+        finally:
+            try:
+                if connection_callback is not None:
+                    connection_callback(None)
+            finally:
+                conn.close()
 
     _require_current_preview_database_instance(database_instance)
     return previews

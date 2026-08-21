@@ -3,7 +3,9 @@
 import json
 import os
 import sqlite3
+import threading
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 import pytest
@@ -235,8 +237,10 @@ def test_database_load_worker_rejects_read_open_aba_without_emitting_b(
         _database_path,
         timeout=database_module.DATABASE_ACCESS_TIMEOUT_SECONDS,
         expected_database_identity=None,
+        cancelled_callback=None,
+        deadline=None,
     ):
-        del timeout
+        del timeout, cancelled_callback, deadline
         probe_identities.append(expected_database_identity)
         return None
 
@@ -279,17 +283,53 @@ def test_database_load_worker_binds_the_subprocess_access_probe_across_aba(
         replacement_path: _artifact_state(replacement_path),
     }
     swap = _MainFileABASwap(database_path, replacement_path)
-    real_run = database_module.subprocess.run
+    real_popen = database_module.subprocess.Popen
     child_expected_identities = []
 
-    def run_child_with_aba(command, **kwargs):
-        encoded_identity = json.loads(command[-1])
-        child_expected_identities.append(
-            None if encoded_identity is None else tuple(encoded_identity)
-        )
-        return swap.around(lambda: real_run(command, **kwargs))
+    class PopenWithABASwap:
+        def __init__(self, command, **kwargs):
+            encoded_identity = json.loads(command[-1])
+            child_expected_identities.append(
+                None if encoded_identity is None else tuple(encoded_identity)
+            )
+            assert not swap.parked_path.exists()
+            os.replace(swap.selected_path, swap.parked_path)
+            os.replace(swap.replacement_path, swap.selected_path)
+            swap.count += 1
+            self._restored = False
+            try:
+                self._process = real_popen(command, **kwargs)
+            except BaseException:
+                self._restore()
+                raise
 
-    monkeypatch.setattr(database_module.subprocess, "run", run_child_with_aba)
+        @property
+        def returncode(self):
+            return self._process.returncode
+
+        def communicate(self, *args, **kwargs):
+            try:
+                result = self._process.communicate(*args, **kwargs)
+            except database_module.subprocess.TimeoutExpired:
+                raise
+            except BaseException:
+                self._restore()
+                raise
+            if self._process.returncode is not None:
+                self._restore()
+            return result
+
+        def kill(self):
+            return self._process.kill()
+
+        def _restore(self):
+            if self._restored:
+                return
+            os.replace(swap.selected_path, swap.replacement_path)
+            os.replace(swap.parked_path, swap.selected_path)
+            self._restored = True
+
+    monkeypatch.setattr(database_module.subprocess, "Popen", PopenWithABASwap)
     worker = database_module.DatabaseLoadWorker(
         11,
         str(database_path),
@@ -625,6 +665,230 @@ def test_detail_worker_cancellation_closes_its_snapshot_and_stops_later_batches(
     assert snapshot_directories
     assert all(not path.exists() for path in snapshot_directories)
     assert _artifact_state(database_path) == before
+
+
+@pytest.mark.parametrize(
+    "worker_kind",
+    ["load", "refresh", "detail", "expensive-detail"],
+)
+def test_database_worker_cancel_interrupts_snapshot_preparation_without_results(
+    tmp_path,
+    monkeypatch,
+    worker_kind,
+):
+    database_path = tmp_path / f"cancel-copy-{worker_kind}.db"
+    runs = _build_qcodes_database(database_path, (2, 3), seed=170)
+    accepted_instance = database_instance(database_path)
+    source_state = _artifact_state(database_path)
+    if worker_kind == "load":
+        worker = database_module.DatabaseLoadWorker(
+            81,
+            str(database_path),
+            expected_database_instance=accepted_instance,
+        )
+        monkeypatch.setattr(database_module, "database_access_error", lambda *_a, **_k: None)
+    elif worker_kind == "refresh":
+        worker = database_module.DatabaseRefreshWorker(
+            81,
+            str(database_path),
+            0,
+            [],
+            expected_database_instance=accepted_instance,
+        )
+    elif worker_kind == "detail":
+        worker = database_module.DatabaseDetailWorker(
+            81,
+            str(database_path),
+            list(runs),
+            batch_size=1,
+            expected_database_instance=accepted_instance,
+        )
+    else:
+        assert worker_kind == "expensive-detail"
+        worker = database_module.DatabaseExpensiveDetailWorker(
+            81,
+            str(database_path),
+            list(runs),
+            batch_size=1,
+            expected_database_instance=accepted_instance,
+        )
+
+    finished = []
+    batches = []
+    worker.signals.finished.connect(lambda *args: finished.append(args))
+    batch_ready = getattr(worker.signals, "batch_ready", None)
+    if batch_ready is not None:
+        batch_ready.connect(lambda *args: batches.append(args))
+
+    snapshot_directories = []
+    real_temporary_directory = readonly_module.tempfile.TemporaryDirectory
+
+    def tracked_temporary_directory(*args, **kwargs):
+        snapshot = real_temporary_directory(*args, **kwargs)
+        snapshot_directories.append(Path(snapshot.name))
+        return snapshot
+
+    monkeypatch.setattr(
+        readonly_module.tempfile,
+        "TemporaryDirectory",
+        tracked_temporary_directory,
+    )
+    monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        lambda *_args: False,
+    )
+    real_copy = readonly_module._copy_file_cooperatively
+    copy_checkpoint = threading.Event()
+
+    def controlled_copy(
+        source,
+        destination,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+    ):
+        assert callable(cancelled_callback)
+        destination = Path(destination)
+        copy_checks = 0
+
+        def pause_after_partial_chunk():
+            nonlocal copy_checks
+            cancelled = bool(cancelled_callback())
+            if not cancelled and destination.name == "database.db":
+                copy_checks += 1
+                if copy_checks == 5:
+                    copy_checkpoint.set()
+                    worker._cancelled.wait(2)
+                    cancelled = bool(cancelled_callback())
+            return cancelled
+
+        return real_copy(
+            source,
+            destination,
+            cancelled_callback=pause_after_partial_chunk,
+            deadline=deadline,
+        )
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        controlled_copy,
+    )
+    thread = threading.Thread(target=worker.run)
+    thread.start()
+    assert copy_checkpoint.wait(2), "Worker never reached a partial snapshot copy"
+
+    cancel_started = perf_counter()
+    worker.cancel()
+    thread.join(1)
+
+    assert not thread.is_alive()
+    assert perf_counter() - cancel_started < 1
+    assert worker._cancelled.is_set()
+    assert finished == []
+    assert batches == []
+    assert snapshot_directories
+    assert all(not path.exists() for path in snapshot_directories)
+    assert _artifact_state(database_path) == source_state
+
+
+@pytest.mark.parametrize(
+    "worker_kind",
+    ["load", "refresh", "detail", "expensive-detail"],
+)
+def test_database_worker_cancel_wins_result_publication_race(
+    tmp_path,
+    worker_kind,
+):
+    database_path = tmp_path / f"publication-race-{worker_kind}.db"
+    if worker_kind == "load":
+        worker = database_module.DatabaseLoadWorker(82, str(database_path))
+    elif worker_kind == "refresh":
+        worker = database_module.DatabaseRefreshWorker(
+            82,
+            str(database_path),
+            0,
+            [],
+        )
+    elif worker_kind == "detail":
+        worker = database_module.DatabaseDetailWorker(
+            82,
+            str(database_path),
+            [1],
+        )
+    else:
+        assert worker_kind == "expensive-detail"
+        worker = database_module.DatabaseExpensiveDetailWorker(
+            82,
+            str(database_path),
+            [1],
+        )
+
+    published = []
+
+    class RecordingSignal:
+        @staticmethod
+        def emit(*args):
+            published.append(args)
+
+    class RecordingSignals:
+        finished = RecordingSignal()
+        batch_ready = RecordingSignal()
+
+    worker.signals = RecordingSignals()
+
+    class TrackedPublicationLock:
+        def __init__(self):
+            self._lock = threading.RLock()
+            self.publisher = None
+            self.publisher_waiting = threading.Event()
+
+        def __enter__(self):
+            if threading.current_thread() is self.publisher:
+                self.publisher_waiting.set()
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            self._lock.release()
+
+    publication_lock = TrackedPublicationLock()
+    worker._publication_lock = publication_lock
+    if worker_kind == "load":
+        publish = lambda: worker._emit_finished({1: {"guid": "late"}}, None)
+    elif worker_kind == "refresh":
+        publish = lambda: worker._emit_finished(
+            {1: {"guid": "late"}},
+            {"late": {"completed": False}},
+            None,
+        )
+    else:
+        publish = lambda: worker._emit_batch_ready({1: {"guid": "late"}})
+
+    publication_errors = []
+
+    def publish_result():
+        try:
+            publish()
+        except BaseException as err:
+            publication_errors.append(err)
+
+    publisher = threading.Thread(target=publish_result)
+    publication_lock.publisher = publisher
+    with publication_lock:
+        publisher.start()
+        assert publication_lock.publisher_waiting.wait(2)
+        worker.cancel()
+        assert worker._cancelled.is_set()
+        assert published == []
+
+    publisher.join(2)
+
+    assert not publisher.is_alive()
+    assert publication_errors == []
+    assert published == []
 
 
 def test_stale_detail_callbacks_cannot_publish_partial_batches():

@@ -1,9 +1,14 @@
 import os
+import sqlite3
+import threading
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
+import pytest
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling import readonly as readonly_module
 from qplot.datahandling.file_identity import DatabaseInstance, database_instance
 from qplot.datahandling.readonly import (
     DatabaseInstanceChangedError,
@@ -147,7 +152,6 @@ def test_preview_rejects_replacement_before_sqlite_open_and_preserves_source(
 
     def replace_before_sqlite_open(database_source, *args, **kwargs):
         os.replace(replacement_path, database_path)
-        worker.cancel()
         replacement_states.append(_artifact_state(database_path))
         open_arguments.append((database_source, kwargs))
         return original_open(database_source, *args, **kwargs)
@@ -163,7 +167,11 @@ def test_preview_rejects_replacement_before_sqlite_open_and_preserves_source(
     assert isinstance(completions[0][4], DatabaseInstanceChangedError)
     assert open_arguments == [(
         accepted_instance.logical_path,
-        {"timeout": 10, "expected_database_identity": accepted_instance.identity},
+        {
+            "timeout": 10,
+            "expected_database_identity": accepted_instance.identity,
+            "cancelled_callback": worker._cancelled.is_set,
+        },
     )]
     assert replacements == [accepted_instance.logical_path]
     assert ready == []
@@ -241,6 +249,191 @@ def test_unchanged_database_preview_is_cached_and_selected_without_source_writes
     assert len(images) == 1
     assert images[0].guid == guid
     assert _artifact_state(database_path) == source_state
+
+
+def test_generate_run_previews_pre_cancelled_raises_interrupted_error(monkeypatch):
+    open_calls = []
+
+    def reject_database_open(*args, **kwargs):
+        open_calls.append((args, kwargs))
+        raise AssertionError("A pre-cancelled preview attempted to open its database")
+
+    monkeypatch.setattr(
+        preview_module,
+        "sqlite_read_only_connection",
+        reject_database_open,
+    )
+    cancelled = threading.Event()
+    cancelled.set()
+
+    with pytest.raises(InterruptedError, match="cancelled"):
+        generate_run_previews(
+            "pre-cancelled.db",
+            {},
+            is_cancelled=cancelled.is_set,
+        )
+
+    assert open_calls == []
+
+
+def test_preview_cancel_interrupts_snapshot_copy_and_publishes_no_partial_preview(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "cancel-preview-copy.db"
+    metadata, _columns, _values = _preview_database(database_path, seed=7)
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
+    finally:
+        connection.close()
+    assert database_path.read_bytes()[18:20] == b"\x02\x02"
+    assert not Path(f"{database_path}-wal").exists()
+    source_state = _artifact_state(database_path)
+
+    preview, worker = _start_selected_preview(database_path, metadata)
+    ready = []
+    completions = []
+    preview.previewsReady.connect(lambda *args: ready.append(args))
+    worker.signals.finished.connect(lambda *args: completions.append(args))
+    snapshot_directories = []
+    real_temporary_directory = readonly_module.tempfile.TemporaryDirectory
+
+    def tracked_temporary_directory(*args, **kwargs):
+        snapshot = real_temporary_directory(*args, **kwargs)
+        snapshot_directories.append(Path(snapshot.name))
+        return snapshot
+
+    monkeypatch.setattr(
+        readonly_module.tempfile,
+        "TemporaryDirectory",
+        tracked_temporary_directory,
+    )
+    monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        lambda *_args: False,
+    )
+    real_copy = readonly_module._copy_file_cooperatively
+    copy_checkpoint = threading.Event()
+
+    def controlled_copy(
+        source,
+        destination,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+    ):
+        assert callable(cancelled_callback)
+        destination = Path(destination)
+        copy_checks = 0
+
+        def pause_after_partial_chunk():
+            nonlocal copy_checks
+            cancelled = bool(cancelled_callback())
+            if not cancelled and destination.name == "database.db":
+                copy_checks += 1
+                if copy_checks == 5:
+                    copy_checkpoint.set()
+                    worker._cancelled.wait(2)
+                    cancelled = bool(cancelled_callback())
+            return cancelled
+
+        return real_copy(
+            source,
+            destination,
+            cancelled_callback=pause_after_partial_chunk,
+            deadline=deadline,
+        )
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        controlled_copy,
+    )
+    thread = threading.Thread(target=worker.run)
+    thread.start()
+    assert copy_checkpoint.wait(2), "Preview never reached a partial snapshot copy"
+
+    cancel_started = perf_counter()
+    worker.cancel()
+    thread.join(1)
+    qtw.QApplication.processEvents()
+
+    assert not thread.is_alive()
+    assert perf_counter() - cancel_started < 1
+    assert worker.is_cancelled()
+    assert len(completions) == 1
+    assert completions[0][3:] == ([], None)
+    assert ready == []
+    assert preview.cache == {}
+    assert snapshot_directories
+    assert all(not path.exists() for path in snapshot_directories)
+    assert _artifact_state(database_path) == source_state
+
+
+def test_preview_cancel_wins_final_result_publication_race(tmp_path):
+    worker = preview_module.PreviewWorker(
+        19,
+        tmp_path / "publication-race.db",
+        "preview-guid",
+        {},
+        40,
+    )
+    published = []
+
+    class RecordingSignal:
+        @staticmethod
+        def emit(*args):
+            published.append(args)
+
+    class RecordingSignals:
+        finished = RecordingSignal()
+
+    worker.signals = RecordingSignals()
+
+    class TrackedPublicationLock:
+        def __init__(self):
+            self._lock = threading.RLock()
+            self.publisher = None
+            self.publisher_waiting = threading.Event()
+
+        def __enter__(self):
+            if threading.current_thread() is self.publisher:
+                self.publisher_waiting.set()
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            self._lock.release()
+
+    publication_lock = TrackedPublicationLock()
+    worker._publication_lock = publication_lock
+    publication_errors = []
+
+    def publish_result():
+        try:
+            worker._emit_finished([{"parameter": "late"}], None)
+        except BaseException as error:
+            publication_errors.append(error)
+
+    publisher = threading.Thread(target=publish_result)
+    publication_lock.publisher = publisher
+    with publication_lock:
+        publisher.start()
+        assert publication_lock.publisher_waiting.wait(2)
+        worker.cancel()
+        assert worker.is_cancelled()
+        assert published == []
+
+    publisher.join(2)
+
+    assert not publisher.is_alive()
+    assert publication_errors == []
+    assert len(published) == 1
+    assert published[0][:3] == (worker, 19, "preview-guid")
+    assert published[0][3:] == ([], None)
 
 
 def test_stale_generation_completion_cannot_publish_preview(tmp_path):

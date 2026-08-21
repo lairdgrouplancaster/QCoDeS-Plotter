@@ -85,6 +85,64 @@ class ToolFunctionTestCase(unittest.TestCase):
         self.assertTrue(connection.interrupted.is_set())
         self.assertTrue(worker.is_cancelled())
 
+    def test_cancel_wins_final_success_publication_race(self):
+        published = []
+
+        class RecordingSignal:
+            @staticmethod
+            def emit(finished):
+                published.append(finished)
+
+        class RecordingEmitter:
+            finished = RecordingSignal()
+
+        class TrackedPublicationLock:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self.publisher = None
+                self.publisher_waiting = threading.Event()
+
+            def __enter__(self):
+                if threading.current_thread() is self.publisher:
+                    self.publisher_waiting.set()
+                self._lock.acquire()
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback):
+                self._lock.release()
+
+        worker = loader.__new__(loader)
+        worker.running = True
+        worker.emitter = RecordingEmitter()
+        worker._cancelled = threading.Event()
+        worker._sql_connection_lock = threading.Lock()
+        worker._sql_connection = None
+        publication_lock = TrackedPublicationLock()
+        worker._publication_lock = publication_lock
+        publication_errors = []
+
+        def publish_success():
+            try:
+                worker._emit_finished(True)
+            except BaseException as err:
+                publication_errors.append(err)
+
+        publisher = threading.Thread(target=publish_success)
+        publication_lock.publisher = publisher
+        with publication_lock:
+            publisher.start()
+            self.assertTrue(publication_lock.publisher_waiting.wait(2))
+            worker.cancel()
+            self.assertTrue(worker.is_cancelled())
+            self.assertEqual(published, [])
+
+        publisher.join(2)
+
+        self.assertFalse(publisher.is_alive())
+        self.assertEqual(publication_errors, [])
+        self.assertEqual(published, [False])
+        self.assertFalse(worker.running)
+
     def test_cancellation_between_pipeline_operations_skips_remaining_work(self):
         calls = []
         worker = loader.__new__(loader)

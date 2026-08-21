@@ -587,7 +587,10 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
 
         line_dataset = load_by_id(line_run_id)
         line_param = dependent_parameter(line_dataset, 1)
-        window.ds = line_dataset
+        window._replace_selected_dataset(
+            line_dataset,
+            window._current_dataset_key(line_dataset.guid),
+        )
         window.openPlot(params=[line_param], show=True)
         line_window = window.windows[-1]
         wait_for(
@@ -608,7 +611,10 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
 
         heatmap_dataset = load_by_id(heatmap_run_id)
         heatmap_param = dependent_parameter(heatmap_dataset, 2)
-        window.ds = heatmap_dataset
+        window._replace_selected_dataset(
+            heatmap_dataset,
+            window._current_dataset_key(heatmap_dataset.guid),
+        )
         window.openPlot(params=[heatmap_param], show=False)
         heatmap_window = window.windows[-1]
         wait_for(
@@ -666,7 +672,10 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
 
         line_dataset = load_by_id(line_run_id)
         line_param = dependent_parameter(line_dataset, 1)
-        window.ds = line_dataset
+        window._replace_selected_dataset(
+            line_dataset,
+            window._current_dataset_key(line_dataset.guid),
+        )
         window.openPlot(params=[line_param], show=False)
         line_window = window.windows[-1]
         wait_for(
@@ -703,7 +712,10 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
 
         uniform_dataset = load_by_id(uniform_run_id)
         uniform_param = dependent_parameter(uniform_dataset, 2)
-        window.ds = uniform_dataset
+        window._replace_selected_dataset(
+            uniform_dataset,
+            window._current_dataset_key(uniform_dataset.guid),
+        )
         window.openPlot(params=[uniform_param], show=False)
         uniform_window = window.windows[-1]
         wait_for(
@@ -734,7 +746,10 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
 
         nonuniform_dataset = load_by_id(nonuniform_run_id)
         nonuniform_param = dependent_parameter(nonuniform_dataset, 2)
-        window.ds = nonuniform_dataset
+        window._replace_selected_dataset(
+            nonuniform_dataset,
+            window._current_dataset_key(nonuniform_dataset.guid),
+        )
         window.openPlot(params=[nonuniform_param], show=False)
         nonuniform_window = window.windows[-1]
         wait_for(
@@ -877,7 +892,10 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
 
         heatmap_dataset = load_by_id(heatmap_run_id)
         heatmap_param = dependent_parameter(heatmap_dataset, 2)
-        window.ds = heatmap_dataset
+        window._replace_selected_dataset(
+            heatmap_dataset,
+            window._current_dataset_key(heatmap_dataset.guid),
+        )
         window.openPlot(params=[heatmap_param], show=False)
         heatmap_window = window.windows[-1]
         wait_for(
@@ -953,7 +971,10 @@ def test_hiding_data_axes_preserves_heatmap_view_range(tmp_path, monkeypatch):
 
         heatmap_dataset = load_by_id(heatmap_run_id)
         heatmap_param = dependent_parameter(heatmap_dataset, 2)
-        window.ds = heatmap_dataset
+        window._replace_selected_dataset(
+            heatmap_dataset,
+            window._current_dataset_key(heatmap_dataset.guid),
+        )
         window.openPlot(params=[heatmap_param], show=True)
         heatmap_window = window.windows[-1]
         wait_for(
@@ -1028,6 +1049,113 @@ def test_main_window_close_releases_private_wal_snapshot_before_qt_cleanup(
         if not closed:
             close_main_window(window)
         qcodes.config.core.db_location = original_database_path
+
+
+def test_main_window_close_completes_promptly_while_snapshot_copy_is_cancelled(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = Path(tmp_path) / "close-during-snapshot-copy.db"
+    build_line_database(database_path, 8)
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
+    finally:
+        connection.close()
+    assert database_path.read_bytes()[18:20] == b"\x02\x02"
+    source_artifacts = database_artifact_state(database_path)
+    accepted_instance = database_instance(database_path)
+    window = main_window.MainWindow()
+    worker = database_module.DatabaseLoadWorker(
+        1,
+        str(database_path),
+        expected_database_instance=accepted_instance,
+    )
+    snapshot_directories = []
+    real_temporary_directory = readonly_module.tempfile.TemporaryDirectory
+
+    def tracked_temporary_directory(*args, **kwargs):
+        snapshot = real_temporary_directory(*args, **kwargs)
+        snapshot_directories.append(Path(snapshot.name))
+        return snapshot
+
+    monkeypatch.setattr(
+        readonly_module.tempfile,
+        "TemporaryDirectory",
+        tracked_temporary_directory,
+    )
+    monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(database_module, "database_access_error", lambda *_a, **_k: None)
+    real_copy = readonly_module._copy_file_cooperatively
+    copy_checkpoint = threading.Event()
+
+    def controlled_copy(
+        source,
+        destination,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+    ):
+        assert callable(cancelled_callback)
+        destination = Path(destination)
+        copy_checks = 0
+
+        def pause_after_partial_chunk():
+            nonlocal copy_checks
+            cancelled = bool(cancelled_callback())
+            if not cancelled and destination.name == "database.db":
+                copy_checks += 1
+                if copy_checks == 5:
+                    copy_checkpoint.set()
+                    worker._cancelled.wait(2)
+                    cancelled = bool(cancelled_callback())
+            return cancelled
+
+        return real_copy(
+            source,
+            destination,
+            cancelled_callback=pause_after_partial_chunk,
+            deadline=deadline,
+        )
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        controlled_copy,
+    )
+
+    try:
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window._database_load_generation = 1
+        window._database_load_active = True
+        window._database_load_state = {
+            "abspath": str(database_path),
+            "load_instance": accepted_instance,
+        }
+        window._database_load_worker = worker
+        window.databaseLoadThreadPool.start(worker)
+        assert copy_checkpoint.wait(2), "Load never reached a partial snapshot copy"
+
+        close_started = time.monotonic()
+        window.close()
+        wait_for(
+            lambda: (
+                window._shutdown_ready
+                and window.databaseLoadThreadPool.activeThreadCount() == 0
+            ),
+            timeout=2,
+        )
+
+        assert time.monotonic() - close_started < 1
+        assert worker._cancelled.is_set()
+        assert snapshot_directories
+        assert all(not path.exists() for path in snapshot_directories)
+        assert database_artifact_state(database_path) == source_artifacts
+    finally:
+        close_main_window(window)
 
 
 def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(

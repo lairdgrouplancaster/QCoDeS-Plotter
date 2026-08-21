@@ -473,7 +473,7 @@ def scenario_snapshot_replacement(work_directory, artifact):
         replacement_paths.append(replacement_path)
 
     before = _artifact_state(database_path)
-    real_copyfile = readonly.shutil.copyfile
+    real_copyfile = readonly._copy_file_cooperatively
     real_temporary_directory = readonly.tempfile.TemporaryDirectory
     injected_states = []
     snapshot_directories = []
@@ -492,7 +492,7 @@ def scenario_snapshot_replacement(work_directory, artifact):
 
     readonly.WAL_SNAPSHOT_ATTEMPTS = attempts
     readonly.tempfile.TemporaryDirectory = tracked_temporary_directory
-    readonly.shutil.copyfile = copy_then_replace_source
+    readonly._copy_file_cooperatively = copy_then_replace_source
     caught = None
     try:
         try:
@@ -503,7 +503,7 @@ def scenario_snapshot_replacement(work_directory, artifact):
             connection.close()
             raise AssertionError("A source replacement was unexpectedly accepted")
     finally:
-        readonly.shutil.copyfile = real_copyfile
+        readonly._copy_file_cooperatively = real_copyfile
         readonly.tempfile.TemporaryDirectory = real_temporary_directory
 
     assert caught is not None
