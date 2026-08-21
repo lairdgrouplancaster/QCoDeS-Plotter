@@ -1604,6 +1604,12 @@ class moreInfo(qtw.QTabWidget):
         self.addTab(self.metadata, "Metadata")
         self.addTab(self.snapshot, "Snapshot")
         self.addTab(self.raw, "Raw key-value")
+        self.currentChanged.connect(self._preview_tab_changed)
+        self._preview_tab_changed(self.currentIndex())
+
+
+    def _preview_tab_changed(self, index):
+        self.preview.set_preview_active(self.widget(index) is self.preview)
 
 
     def set_preview_size(self, preview_size):

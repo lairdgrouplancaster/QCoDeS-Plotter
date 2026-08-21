@@ -29,6 +29,7 @@ from qplot.diagnostics import log_exception
 from .._dragdrop import make_run_preview_mime
 
 PREVIEW_SIZE = 200
+PREVIEW_THUMBNAIL_SIZE = 64
 PREVIEW_BACKGROUND_COLOR = "#f4f7fb"
 PREVIEW_HEIGHT_PADDING = 48
 COLLAPSE_MINIMUM_RATIO = 0.25
@@ -38,9 +39,10 @@ PREVIEW_SAMPLES_PER_CELL = 4
 PREVIEW_ROWID_CHUNK = 900
 PREVIEW_FILL_EMPTY_MIN_COVERAGE = 0.75
 PREVIEW_REMAINING_PRIORITY = 0
-PREVIEW_VISIBLE_PRIORITY = 50
-PREVIEW_SELECTED_PRIORITY = 100
-PREVIEW_PLOTTED_PRIORITY = 125
+PREVIEW_VISIBLE_PRIORITY = 100
+PREVIEW_SELECTED_PRIORITY = 125
+PREVIEW_SELECTED_THUMBNAIL_PRIORITY = 150
+PREVIEW_PLOTTED_PRIORITY = 50
 PREVIEW_MAX_ACTIVE_WORKERS = 2
 PREVIEW_SQL_PROGRESS_OPCODES = 1_000
 PREVIEW_SELECTED_PROPERTY = "previewSelected"
@@ -97,8 +99,10 @@ class PreviewTab(qtw.QWidget):
         self.current_guid = None
         self.run_metadata = {}
         self.cache = OrderedDict()
+        self.thumbnail_cache = OrderedDict()
         self.cache_bytes = 0
         self.errors = {}
+        self.thumbnail_errors = {}
         self.queue = {}
         self._explicit_guids: set[str] = set()
         self.active: set[tuple[int, str]] = set()
@@ -107,6 +111,7 @@ class PreviewTab(qtw.QWidget):
         self.metadata_signatures = {}
         self._start_scheduled = False
         self._shutting_down = False
+        self._preview_active = True
 
         # A widget-owned QThreadPool waits for its runnables in the QObject
         # destructor.  If a Python QRunnable needs the GIL while SIP is
@@ -215,8 +220,10 @@ class PreviewTab(qtw.QWidget):
         self.current_guid = None
         self.run_metadata = self._normalise_runs(runs)
         self.cache = OrderedDict()
+        self.thumbnail_cache = OrderedDict()
         self.cache_bytes = 0
         self.errors = {}
+        self.thumbnail_errors = {}
         self.queue = {}
         self._explicit_guids = set()
         self.active = set()
@@ -242,7 +249,9 @@ class PreviewTab(qtw.QWidget):
 
             if changed:
                 self._drop_cached(guid)
+                self.thumbnail_cache.pop(guid, None)
                 self.errors.pop(guid, None)
+                self.thumbnail_errors.pop(guid, None)
                 active_worker = self._workers.get((self.generation, guid))
                 if active_worker is not None:
                     active_worker.cancel()
@@ -277,8 +286,23 @@ class PreviewTab(qtw.QWidget):
         else:
             self._show_message("Generating preview...")
 
-        self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
+        self._enqueue(
+            guid,
+            priority=(
+                PREVIEW_SELECTED_PRIORITY
+                if guid in self.thumbnail_cache
+                else PREVIEW_SELECTED_THUMBNAIL_PRIORITY
+                ),
+            )
         self._start_next()
+
+
+    def set_preview_active(self, active):
+        """Generate the selected full-size preview only when it can be seen."""
+        self._preview_active = bool(active)
+        if not self._preview_active or not self.current_guid:
+            return
+        self.set_current_run(type("Dataset", (), {"guid": self.current_guid})())
 
 
     def clear_current_run(self):
@@ -321,24 +345,51 @@ class PreviewTab(qtw.QWidget):
         if not self.database_path:
             return
 
-        selected_guids = set(self._guids_for_run_ids(selected_run_ids))
-        visible_guids = set(self._guids_for_run_ids(visible_run_ids))
-        if self.current_guid:
-            selected_guids.add(self.current_guid)
-            visible_guids.discard(self.current_guid)
+        selected_guids = self._guids_for_run_ids(selected_run_ids)
+        if self.current_guid and self.current_guid not in selected_guids:
+            selected_guids.insert(0, self.current_guid)
+        visible_guids = [
+            guid for guid in self._guids_for_run_ids(visible_run_ids)
+            if guid not in selected_guids
+            ]
+        selected_thumbnail_guids = [
+            guid for guid in selected_guids
+            if guid not in self.thumbnail_cache
+            ]
+        selected_preview_guids = [
+            guid for guid in selected_guids
+            if guid in self.thumbnail_cache
+            ]
+        visible_thumbnail_guids = [
+            guid for guid in visible_guids
+            if guid not in self.thumbnail_cache
+            ]
+        visible_preview_guids = [
+            guid for guid in visible_guids
+            if guid in self.thumbnail_cache
+            ]
 
         requested_priorities = {
             guid: PREVIEW_VISIBLE_PRIORITY
-            for guid in visible_guids
+            for guid in visible_thumbnail_guids
             }
         requested_priorities.update({
             guid: PREVIEW_SELECTED_PRIORITY
-            for guid in selected_guids
+            for guid in selected_preview_guids
             })
         requested_priorities.update({
-            guid: PREVIEW_PLOTTED_PRIORITY
-            for guid in self._explicit_guids
+            guid: PREVIEW_SELECTED_THUMBNAIL_PRIORITY
+            for guid in selected_thumbnail_guids
             })
+        requested_priorities.update({
+            guid: PREVIEW_REMAINING_PRIORITY
+            for guid in visible_preview_guids
+            })
+        for guid in self._explicit_guids:
+            requested_priorities[guid] = max(
+                PREVIEW_PLOTTED_PRIORITY,
+                requested_priorities.get(guid, PREVIEW_PLOTTED_PRIORITY),
+            )
         requested_guids = set(requested_priorities)
         for guid in list(self.queue):
             if guid not in requested_guids:
@@ -389,13 +440,36 @@ class PreviewTab(qtw.QWidget):
                     allow_active=True,
                     )
 
-        for guid in visible_guids:
-            self._enqueue(guid, priority=PREVIEW_VISIBLE_PRIORITY)
-        for guid in selected_guids:
+        for guid in selected_thumbnail_guids:
+            self._enqueue(guid, priority=PREVIEW_SELECTED_THUMBNAIL_PRIORITY)
+        for guid in selected_preview_guids:
             self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
+        for guid in visible_thumbnail_guids:
+            self._enqueue(guid, priority=PREVIEW_VISIBLE_PRIORITY)
+        for guid in visible_preview_guids:
+            self._enqueue(guid, priority=PREVIEW_REMAINING_PRIORITY)
         for guid in self._explicit_guids:
             self._enqueue(guid, priority=PREVIEW_PLOTTED_PRIORITY)
 
+        # Preserve the run-list viewport order for equal-priority visible
+        # requests.  This also removes any accidental duplicate queue entries.
+        ordered_guids = [
+            *selected_thumbnail_guids,
+            *selected_preview_guids,
+            *visible_thumbnail_guids,
+            *visible_preview_guids,
+        ]
+        prioritized_guids = set(ordered_guids)
+        ordered_guids.extend(
+            guid for guid in self._explicit_guids if guid not in prioritized_guids
+            )
+        self.queue = {
+            guid: self.queue[guid]
+            for guid in ordered_guids
+            if guid in self.queue
+            }
+
+        self._preempt_for_higher_priority_request()
         self._start_next()
 
 
@@ -488,9 +562,15 @@ class PreviewTab(qtw.QWidget):
     def _enqueue(self, guid, priority=0, allow_active=False):
         if self._shutting_down:
             return
-        if guid in self.cache:
+        is_thumbnail = priority in (
+            PREVIEW_VISIBLE_PRIORITY,
+            PREVIEW_SELECTED_THUMBNAIL_PRIORITY,
+        )
+        if is_thumbnail and guid in self.thumbnail_cache:
             return
-        if guid in self.errors:
+        if not is_thumbnail and guid in self.cache:
+            return
+        if guid in (self.thumbnail_errors if is_thumbnail else self.errors):
             return
         if (self.generation, guid) in self.active and not allow_active:
             return
@@ -504,6 +584,37 @@ class PreviewTab(qtw.QWidget):
 
     def _cancel_workers(self):
         for worker in tuple(self._workers.values()):
+            worker.cancel()
+
+
+    def _preempt_for_higher_priority_request(self):
+        """Cancel one lower-priority job when all slots block urgent work."""
+        active_keys = [
+            active_key
+            for active_key in self.active
+            if active_key[0] == self.generation
+        ]
+        if len(active_keys) < PREVIEW_MAX_ACTIVE_WORKERS or not self.queue:
+            return
+
+        highest_queued = max(self.queue.values())
+        lowest_active_key = min(
+            active_keys,
+            key=lambda key: self._active_priorities.get(
+                key,
+                PREVIEW_REMAINING_PRIORITY,
+            ),
+        )
+        if (
+                highest_queued
+                <= self._active_priorities.get(
+                    lowest_active_key,
+                    PREVIEW_REMAINING_PRIORITY,
+                )
+                ):
+            return
+        worker = self._workers.get(lowest_active_key)
+        if worker is not None:
             worker.cancel()
 
 
@@ -576,34 +687,16 @@ class PreviewTab(qtw.QWidget):
         if available_slots == 0:
             return
         active_guids = {guid for _generation, guid in active_keys}
-        foreground_active = any(
-            self._active_priorities.get(active_key, PREVIEW_VISIBLE_PRIORITY)
-            >= PREVIEW_SELECTED_PRIORITY
-            for active_key in active_keys
-            )
-        background_active = any(
-            self._active_priorities.get(active_key, PREVIEW_VISIBLE_PRIORITY)
-            < PREVIEW_SELECTED_PRIORITY
-            for active_key in active_keys
-            )
-
-        if not foreground_active:
+        while available_slots:
             guid = self._next_queued_guid(
-                lambda priority: priority >= PREVIEW_SELECTED_PRIORITY,
+                lambda _priority: True,
                 active_guids,
                 )
-            if guid is not None:
-                self._start_worker(guid)
-                active_guids.add(guid)
-                available_slots -= 1
-
-        if available_slots and not background_active:
-            guid = self._next_queued_guid(
-                lambda priority: priority < PREVIEW_SELECTED_PRIORITY,
-                active_guids,
-                )
-            if guid is not None:
-                self._start_worker(guid)
+            if guid is None:
+                break
+            self._start_worker(guid)
+            active_guids.add(guid)
+            available_slots -= 1
 
 
     def _next_queued_guid(self, accepts_priority, active_guids):
@@ -616,10 +709,7 @@ class PreviewTab(qtw.QWidget):
             return None
         return max(
             candidates,
-            key=lambda guid: (
-                self.queue[guid],
-                self.run_metadata[guid].get("run_id", 0),
-                ),
+            key=lambda guid: self.queue[guid],
             )
 
 
@@ -639,7 +729,14 @@ class PreviewTab(qtw.QWidget):
             self.database_instance,
             guid,
             self.run_metadata[guid],
-            self.preview_size,
+            (
+                PREVIEW_THUMBNAIL_SIZE
+                if priority in (
+                    PREVIEW_VISIBLE_PRIORITY,
+                    PREVIEW_SELECTED_THUMBNAIL_PRIORITY,
+                )
+                else self.preview_size
+            ),
             )
         worker.signals.finished.connect(self._worker_signal_finished)
         self._workers[active_key] = worker
@@ -670,7 +767,7 @@ class PreviewTab(qtw.QWidget):
             )
         was_active = active_key in self.active
         self.active.discard(active_key)
-        self._active_priorities.pop(active_key, None)
+        completed_priority = self._active_priorities.pop(active_key, None)
         if self._shutting_down:
             return
         if was_active and generation == self.generation:
@@ -698,14 +795,27 @@ class PreviewTab(qtw.QWidget):
             self._database_was_replaced(worker.database_instance)
             return
 
-        self._explicit_guids.discard(guid)
+        is_thumbnail = worker.preview_size == PREVIEW_THUMBNAIL_SIZE
+        if not is_thumbnail:
+            self._explicit_guids.discard(guid)
         if error:
-            self.errors[guid] = str(error)
+            (self.thumbnail_errors if is_thumbnail else self.errors)[guid] = str(error)
         else:
-            self._store_cached(guid, previews)
+            if is_thumbnail:
+                self.thumbnail_cache[guid] = previews
+                if (
+                        guid == self.current_guid
+                        or completed_priority
+                        == PREVIEW_SELECTED_THUMBNAIL_PRIORITY
+                        ):
+                    self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
+                else:
+                    self._enqueue(guid, priority=PREVIEW_REMAINING_PRIORITY)
+            else:
+                self._store_cached(guid, previews)
             self.previewsReady.emit(guid, previews)
 
-        if guid == self.current_guid:
+        if guid == self.current_guid and not is_thumbnail:
             if error:
                 self._show_message("Preview failed", str(error))
             else:
@@ -724,8 +834,10 @@ class PreviewTab(qtw.QWidget):
         self.current_guid = None
         self.run_metadata = {}
         self.cache = OrderedDict()
+        self.thumbnail_cache = OrderedDict()
         self.cache_bytes = 0
         self.errors = {}
+        self.thumbnail_errors = {}
         self.queue = {}
         self._explicit_guids = set()
         self.active = set()

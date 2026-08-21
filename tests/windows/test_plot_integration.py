@@ -1086,6 +1086,11 @@ def test_main_window_close_completes_promptly_while_snapshot_copy_is_cancelled(
         tracked_temporary_directory,
     )
     monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        lambda *_args: False,
+    )
     monkeypatch.setattr(database_module, "database_access_error", lambda *_a, **_k: None)
     real_copy = readonly_module._copy_file_cooperatively
     copy_checkpoint = threading.Event()

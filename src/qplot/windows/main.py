@@ -742,14 +742,7 @@ class MainWindow(
         if not self._save_preview_size(preview_size):
             return False
 
-        self.preview_size = preview_size
-        if hasattr(self, "infoBox"):
-            self.infoBox.set_preview_size(preview_size)
-            prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
-            if callable(prioritize_previews):
-                prioritize_previews()
-            if hasattr(self, "runInfoSplitter"):
-                self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+        self._apply_preview_size(preview_size)
         self.show_status(f"Preview size set to {preview_size} px.", 3000)
         return True
 
@@ -839,16 +832,33 @@ class MainWindow(
 
 
     def _sync_preview_size_actions(self):
-        self.preview_size = self._configured_preview_size()
+        self._apply_preview_size(self._configured_preview_size())
+
+
+    def _apply_preview_size(self, preview_size):
+        """Apply a persisted preview size to the live UI once.
+
+        Persistence is intentionally kept outside this method.  This lets menu
+        actions, Preferences, and resetting settings share the same runtime
+        cache invalidation and visible-row regeneration path.
+        """
+        preview_size = int(preview_size)
+        size_changed = preview_size != self.preview_size
+        self.preview_size = preview_size
         for action in getattr(self, "previewSizeActions", []):
             action.blockSignals(True)
             action.setChecked(action.data() == self.preview_size)
             action.blockSignals(False)
 
-        if hasattr(self, "infoBox"):
+        if size_changed and hasattr(self, "infoBox"):
             self.infoBox.set_preview_size(self.preview_size)
+            prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+            if callable(prioritize_previews):
+                prioritize_previews()
             if hasattr(self, "runInfoSplitter"):
                 self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+
+        return size_changed
 
 
     def _sync_thread_pool_settings(self):

@@ -241,10 +241,15 @@ def test_unchanged_database_preview_is_cached_and_selected_without_source_writes
     guid = metadata["guid"]
     assert worker.database_instance is accepted_instance
     assert replacements == []
-    assert len(ready) == 1
-    assert ready[0][0] == guid
+    assert guid in preview.thumbnail_cache
+    assert len(preview.thread_pool.started) == 2
+
+    preview.thread_pool.started[1].run()
+
+    assert len(ready) == 2
+    assert ready[-1][0] == guid
     assert preview.current_guid == guid
-    assert preview.cache[guid] == ready[0][1]
+    assert preview.cache[guid] == ready[-1][1]
     images = preview.findChildren(DraggablePreviewImageLabel)
     assert len(images) == 1
     assert images[0].guid == guid

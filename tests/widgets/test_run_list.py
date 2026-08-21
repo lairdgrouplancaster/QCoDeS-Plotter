@@ -1725,6 +1725,47 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
+    def test_run_table_keeps_existing_thumbnail_while_regenerating(self):
+        cell = treeWidgets.RunPreviewCell("run-guid", 1)
+        old_image = render_sparkline_preview(
+            np.array([0, 1], dtype=float),
+            np.array([1, 2], dtype=float),
+            size=40,
+            )
+        new_image = render_sparkline_preview(
+            np.array([0, 1], dtype=float),
+            np.array([2, 1], dtype=float),
+            size=40,
+            )
+        try:
+            cell.show_previews([{
+                "parameter": "signal",
+                "image": old_image,
+                }])
+            old_label = cell.findChild(qtw.QLabel, "measurementPreviewImage")
+            old_cache_key = old_label.pixmap().cacheKey()
+
+            cell.set_generating(True)
+
+            self.assertIs(
+                cell.findChild(qtw.QLabel, "measurementPreviewImage"),
+                old_label,
+                )
+            self.assertEqual(
+                cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder"),
+                [],
+                )
+
+            cell.show_previews([{
+                "parameter": "signal",
+                "image": new_image,
+                }])
+            new_label = cell.findChild(qtw.QLabel, "measurementPreviewImage")
+            self.assertIsNot(new_label, old_label)
+            self.assertNotEqual(new_label.pixmap().cacheKey(), old_cache_key)
+        finally:
+            cell.deleteLater()
+
     def test_large_run_list_uses_compact_cells_instead_of_widgets_per_run(self):
         old_isfile = treeWidgets.isfile
         old_limit = treeWidgets.MAX_RUN_PREVIEW_WIDGETS

@@ -70,6 +70,47 @@ class FakeConfig:
 
 
 class PreferencesDialogTestCase(unittest.TestCase):
+    def test_successful_preferences_preview_size_sync_reprioritizes_once(self):
+        cfg = FakeConfig()
+
+        class InfoBox:
+            def __init__(self):
+                self.sizes = []
+
+            def set_preview_size(self, size):
+                self.sizes.append(size)
+
+        class Window:
+            _sync_preview_size_actions = main_window.MainWindow._sync_preview_size_actions
+            _apply_preview_size = main_window.MainWindow._apply_preview_size
+            _configured_preview_size = main_window.RunControlsMixin._configured_preview_size
+
+            def __init__(self):
+                self.config = cfg
+                self.preview_size = 200
+                self.infoBox = InfoBox()
+                self.previewSizeActions = []
+                self.prioritizations = 0
+
+            def _prioritize_preview_runs(self):
+                self.prioritizations += 1
+
+        window = Window()
+        dialog = PreferencesDialog(cfg)
+        try:
+            dialog.preferencesApplied.connect(window._sync_preview_size_actions)
+            dialog.previewSizeSpin.setValue(300)
+
+            self.assertTrue(dialog.apply_preferences())
+            self.assertEqual(window.infoBox.sizes, [300])
+            self.assertEqual(window.prioritizations, 1)
+
+            window._sync_preview_size_actions()
+            self.assertEqual(window.infoBox.sizes, [300])
+            self.assertEqual(window.prioritizations, 1)
+        finally:
+            dialog.deleteLater()
+
     def test_dialog_loads_current_config_values(self):
         cfg = FakeConfig()
         cfg.values.update({
