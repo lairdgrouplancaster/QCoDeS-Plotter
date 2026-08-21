@@ -794,6 +794,11 @@ class Plot2DLayerMixin:
             for item in self._primary_heatmap_axis_items():
                 renderer_viewboxes.setdefault(id(item), primary_viewbox)
 
+        self._install_heatmap_double_click_handlers(
+            self,
+            primary_key,
+            )
+
     def _has_heatmap_window(self, window: Any) -> bool:
         """Return whether ``window`` is already represented on this heatmap."""
 
@@ -865,6 +870,7 @@ class Plot2DLayerMixin:
                 "x": "Bottom",
                 "y": "Left",
             }
+            self._install_heatmap_double_click_handlers(layer, trace_key)
             self._apply_heatmap_axis_assignment(layer, auto_range=False)
             self._sync_heatmap_layer_order()
             self._sync_heatmap_colorbar_items(rescale=True)
@@ -1151,6 +1157,48 @@ class Plot2DLayerMixin:
             if candidate is layer:
                 return key
         return None
+
+    def _install_heatmap_double_click_handlers(
+        self,
+        layer: Any,
+        layer_key: Any,
+    ) -> None:
+        """Bind double-click handlers so a heatmap image opens its appearance row."""
+
+        for item in self._heatmap_render_items(layer):
+            item._qplot_heatmap_key = layer_key
+            if getattr(item, "_qplot_heatmap_double_click_handler", False):
+                continue
+
+            previous_handler = getattr(item, "mouseDoubleClickEvent", None)
+
+            def mouse_double_click(
+                event,
+                target=item,
+                previous_double_click=previous_handler,
+            ):
+                button = getattr(event, "button", lambda: None)()
+                if button == QtCore.Qt.MouseButton.LeftButton:
+                    heatmap_key = getattr(
+                        target,
+                        "_qplot_heatmap_key",
+                        layer_key,
+                    )
+                    opener = getattr(
+                        self,
+                        "open_heatmap_appearance_dialog",
+                        None,
+                    )
+                    if callable(opener):
+                        opener(heatmap_key)
+                    event.accept()
+                    return
+
+                if previous_double_click is not None:
+                    previous_double_click(event)
+
+            item.mouseDoubleClickEvent = mouse_double_click
+            item._qplot_heatmap_double_click_handler = True
 
     def _heatmap_axis_sides(self, layer: Any) -> tuple[str, str]:
         """Return the horizontal and vertical display sides for one heatmap."""
