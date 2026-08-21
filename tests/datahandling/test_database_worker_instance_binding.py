@@ -182,6 +182,24 @@ def _assert_bound_worker(worker, accepted_instance: DatabaseInstance):
     assert worker.sidecar_identities == accepted_instance.sidecar_identities
 
 
+def test_worker_signal_path_preserves_scheduler_spelling():
+    requested_path = r"D:\Experiments\MixedCase.db"
+    accepted_instance = DatabaseInstance(
+        logical_path=r"d:\experiments\mixedcase.db",
+        resolved_path=r"d:\experiments\mixedcase.db",
+        identity=("windows-file-id", 7, 11),
+    )
+
+    worker = database_module.DatabaseLoadWorker(
+        1,
+        requested_path,
+        expected_database_instance=accepted_instance,
+    )
+
+    assert worker._signal_database_path == requested_path
+    assert worker._read_database_path == accepted_instance.logical_path
+
+
 def test_metadata_workers_retain_the_exact_scheduled_database_instance(tmp_path):
     database_path = tmp_path / "scheduled.db"
     _build_qcodes_database(database_path, (2,), seed=1)

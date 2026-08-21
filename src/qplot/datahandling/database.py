@@ -601,11 +601,7 @@ class _InterruptibleSqlWorker:
         # logical_database_path values.  Keeping the original spelling here
         # makes an otherwise identical Windows path (for example ``D:`` vs
         # ``d:``) look like a different database to signal consumers.
-        self._signal_database_path = (
-            expected_database_instance.logical_path
-            if supplied_instance
-            else requested_database_path
-        )
+        self._signal_database_path = requested_database_path
         self._read_database_path = (
             expected_database_instance.logical_path
             if supplied_instance

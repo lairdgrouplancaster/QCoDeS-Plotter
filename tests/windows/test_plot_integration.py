@@ -4,10 +4,8 @@ import hashlib
 import os
 import shutil
 import sqlite3
-import sys
 import threading
 import time
-import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,7 +62,7 @@ def configure_temp_qplot(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "default_file", str(qplot_home / config.config_file_name))
 
 
-def wait_for(predicate, timeout=12, diagnostics=None):
+def wait_for(predicate, timeout=12):
     app = qtw.QApplication.instance()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -73,26 +71,7 @@ def wait_for(predicate, timeout=12, diagnostics=None):
             app.processEvents()
             return
         time.sleep(0.03)
-    details = ""
-    if diagnostics is not None:
-        details = f"\n{diagnostics()}"
-    raise AssertionError(f"Timed out waiting for GUI integration state{details}")
-
-
-def database_load_diagnostics(window):
-    stacks = []
-    for thread_id, frame in sys._current_frames().items():
-        if frame is None:
-            continue
-        stacks.append(
-            f"Thread {thread_id}:\n{''.join(traceback.format_stack(frame))}"
-        )
-    return (
-        f"load_active={window._database_load_active!r}; "
-        f"status={window.databaseLoadLabel.text()!r}; "
-        f"load_threads={window.databaseLoadThreadPool.activeThreadCount()}\n"
-        + "\n".join(stacks)
-    )
+    raise AssertionError("Timed out waiting for GUI integration state")
 
 
 def build_synthetic_database(db_path):
@@ -603,8 +582,7 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
             lambda: (
                 not window._database_load_active
                 and window.RunList.topLevelItemCount() >= 2
-            ),
-            diagnostics=lambda: database_load_diagnostics(window),
+            )
         )
 
         line_dataset = load_by_id(line_run_id)
