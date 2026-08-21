@@ -183,7 +183,7 @@ def verify_snapshot_cleanup(records):
 
 
 def capture_screenshots(line_guid, heatmap_guid):
-    from PyQt6 import QtCore, QtWidgets
+    from PyQt6 import QtCore, QtWidgets, sip
 
     from qplot.diagnostics import configure_logging, install_excepthook
     from qplot.windows import MainWindow
@@ -193,8 +193,10 @@ def capture_screenshots(line_guid, heatmap_guid):
 
     audit = install_snapshot_cleanup_audit()
     app = QtWidgets.QApplication(["capture_demo_screenshots"])
+    app.setQuitOnLastWindowClosed(False)
     main_window = MainWindow()
     dialog = None
+    plot_windows = []
     try:
         main_window.startupDatabaseTimer.stop()
         main_window.config.config["user_preference"]["confirm_close"] = False
@@ -248,9 +250,10 @@ def capture_screenshots(line_guid, heatmap_guid):
         try:
             if dialog is not None:
                 dialog.close()
+            plot_windows = list(main_window.windows)
+            main_window.close_plot_windows(confirm=False, status=False)
             main_window.close()
             wait_for(app, lambda: main_window._shutdown_ready)
-            app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
             app.processEvents()
             if audit is not None:
                 readonly_module, original_attach, records = audit
@@ -258,6 +261,14 @@ def capture_screenshots(line_guid, heatmap_guid):
         finally:
             if audit is not None:
                 readonly_module._attach_snapshot_cleanup = original_attach
+            # Destroy every top-level Qt object while QApplication is still
+            # alive.  Leaving closed plot windows to Python interpreter
+            # teardown can crash Qt's offscreen platform plugin on Linux.
+            for widget in (dialog, *plot_windows, main_window):
+                if widget is not None and not sip.isdeleted(widget):
+                    widget.deleteLater()
+            app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            app.processEvents()
             app.quit()
 
 

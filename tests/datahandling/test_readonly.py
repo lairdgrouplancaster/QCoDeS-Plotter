@@ -703,7 +703,7 @@ def _create_large_sparse_wal_header_database(database_path, logical_size):
     assert not readonly_module._wal_path(database_path).exists()
     assert not Path(f"{database_path}-shm").exists()
     _mark_file_sparse_on_windows(database_path)
-    os.truncate(database_path, logical_size)
+    _extend_sparse_file(database_path, logical_size)
     allocated_size = _allocated_file_size(database_path)
     assert allocated_size < logical_size // 16
 
@@ -754,6 +754,23 @@ def _mark_file_sparse_on_windows(path):
             None,
         ):
             raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _extend_sparse_file(path, logical_size):
+    """Extend a sparse file without making the Windows CRT fill the gap."""
+    if os.name != "nt":
+        os.truncate(path, logical_size)
+        return
+
+    # ``os.truncate`` uses the Windows CRT's ``_chsize_s`` implementation,
+    # which can physically write the zero-filled extension even after NTFS has
+    # marked the file sparse.  A one-byte write at the target EOF goes through
+    # the sparse-aware Windows file handle and leaves the intervening range as
+    # an unallocated hole.
+    with Path(path).open("r+b") as sparse_file:
+        sparse_file.seek(logical_size - 1)
+        sparse_file.write(b"\0")
+        sparse_file.flush()
 
 
 def _allocated_file_size(path):
