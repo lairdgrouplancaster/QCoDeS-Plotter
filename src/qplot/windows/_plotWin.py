@@ -368,6 +368,9 @@ class plotWidget(
         
         ### WIDGETS
         self._window_layout = qtw.QVBoxLayout()
+        # The graphics widget supplies its own canvas background.  Avoid
+        # exposing the window background as an unintended surround around it.
+        self._window_layout.setContentsMargins(0, 0, 0, 0)
         
         self.widget = pg.GraphicsLayoutWidget()
         self.plot_state_overlay = PlotStateOverlay(self.widget)
