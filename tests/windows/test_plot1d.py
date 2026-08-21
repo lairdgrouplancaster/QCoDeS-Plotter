@@ -174,11 +174,13 @@ class SnapToTraceTestCase(unittest.TestCase):
         painter = QtGui.QPainter(image)
 
         def dispose_plot_widget():
-            # Closing alone leaves the native PlotWidget alive until Python's
-            # later garbage collection.  On the Windows offscreen backend that
-            # can race QPainter teardown and abort the test worker.
             painter.end()
             widget.close()
+            # Processing a forced deferred deletion while the offscreen paint
+            # stack is unwinding segfaults on Linux and macOS. Windows needs
+            # the eager deletion to avoid leaving the native widget alive.
+            if sys.platform != "win32":
+                return
             widget.deleteLater()
             qtw.QApplication.sendPostedEvents(
                 None,
