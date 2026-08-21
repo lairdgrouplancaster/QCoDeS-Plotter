@@ -320,6 +320,9 @@ class plot2d(
                     id(item) for item in colorbar_items
                     )
                 self._set_colorbar_tick_formatter()
+                # The colour bar is created after the initial plot theme has
+                # been applied, so style its axes immediately as well.
+                self.config.theme.style_plotItem(self)
                 if self._colorbar_manual_levels is None:
                     self.scaleColorbar()
                 else:

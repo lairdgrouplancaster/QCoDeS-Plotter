@@ -7,6 +7,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.configuration.config import config
 from qplot.windows import main as main_window
 from qplot.windows._preferences import (
+    AXIS_TICK_WIDTH_KEY,
     COLORBAR_WIDTH_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
@@ -26,6 +27,7 @@ class FakeConfig:
         self.defaults = {
             "user_preference.theme": "light",
             COLORBAR_WIDTH_KEY: 15,
+            AXIS_TICK_WIDTH_KEY: 2.0,
             "GUI.preview_size": 200,
             MOUSE_MODE_KEY: "pan",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
@@ -71,6 +73,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
         cfg.values.update({
             "user_preference.theme": "dark",
             COLORBAR_WIDTH_KEY: 21,
+            AXIS_TICK_WIDTH_KEY: 2.5,
             "GUI.preview_size": 300,
             MOUSE_MODE_KEY: "rect",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -88,6 +91,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
         try:
             self.assertEqual(dialog.themeCombo.currentData(), "dark")
             self.assertEqual(dialog.colorbarWidthSpin.value(), 21)
+            self.assertEqual(dialog.axisTickWidthSpin.value(), 2.5)
             self.assertEqual(dialog.previewSizeSpin.value(), 300)
             self.assertEqual(dialog.mouseModeCombo.currentData(), "rect")
             self.assertEqual(
@@ -266,6 +270,7 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
         try:
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
             dialog.colorbarWidthSpin.setValue(21)
+            dialog.axisTickWidthSpin.setValue(2.5)
             dialog.previewSizeSpin.setValue(300)
             dialog.mouseModeCombo.setCurrentIndex(
                 dialog.mouseModeCombo.findData("rect")
@@ -289,6 +294,7 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
             reloaded = config()
             self.assertEqual(reloaded.get("user_preference.theme"), "dark")
             self.assertEqual(reloaded.get(COLORBAR_WIDTH_KEY), 21)
+            self.assertEqual(reloaded.get(AXIS_TICK_WIDTH_KEY), 2.5)
             self.assertEqual(reloaded.get("GUI.preview_size"), 300)
             self.assertEqual(reloaded.get(MOUSE_MODE_KEY), "rect")
             self.assertEqual(

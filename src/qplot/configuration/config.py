@@ -350,14 +350,16 @@ class config:
         """Apply non-destructive migrations for newly introduced settings."""
 
         preferences = candidate.get("user_preference")
-        if not isinstance(preferences, dict) or "colorbar_width" in preferences:
+        if not isinstance(preferences, dict):
             return False
 
-        preferences["colorbar_width"] = deepcopy(
-            self.schema["properties"]["user_preference"]["properties"]
-            ["colorbar_width"]["default"]
-            )
-        return True
+        preference_schema = self.schema["properties"]["user_preference"]["properties"]
+        migrated = False
+        for key in ("colorbar_width", "axis_tick_width"):
+            if key not in preferences:
+                preferences[key] = deepcopy(preference_schema[key]["default"])
+                migrated = True
+        return migrated
 
 
     def schema_for(self, key):

@@ -121,6 +121,12 @@
                     "maximum": 500,
                     "default": 15
                 },
+                "axis_tick_width": {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 10,
+                    "default": 2
+                },
                 "bar_colour_include_cet": {
                     "type": "boolean",
                     "default": true
@@ -228,6 +234,7 @@
                 "theme",
                 "bar_colour",
                 "colorbar_width",
+                "axis_tick_width",
                 "bar_colour_include_cet",
                 "bar_colour_include_matplotlib",
                 "bar_colour_include_local",
