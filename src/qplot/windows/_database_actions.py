@@ -26,6 +26,7 @@ from qplot.datahandling.file_identity import (
     logical_database_path,
 )
 from qplot.datahandling.readonly import (
+    DatabaseInstanceChangedError,
     UnverifiableDatabaseWalError,
     quarantine_wal_for_replaced_database,
     replacement_wal_is_quarantined,
@@ -1036,6 +1037,7 @@ class DatabaseActionsMixin:
             database_path,
             self.RunList.maxRunId,
             watched_guids,
+            expected_database_instance=current_instance,
         )
         self._database_refresh_worker = worker
         worker.signals.finished.connect(
@@ -1066,6 +1068,10 @@ class DatabaseActionsMixin:
 
         try:
             if database_path != self.fileTextbox.text():
+                return
+            if isinstance(error, DatabaseInstanceChangedError):
+                DatabaseActionsMixin._cancel_database_refresh(self)
+                self._reload_replaced_database(database_path)
                 return
             refresh_identity = getattr(self, "_database_refresh_identity", None)
             refresh_instance = getattr(self, "_database_refresh_instance", None)
@@ -1169,16 +1175,19 @@ class DatabaseActionsMixin:
             database_path,
             *,
             generation_recovery=False,
+            load_started_at=None,
             ):
         """Invalidate one replaced database instance and force a safe reload."""
         if not generation_recovery:
             return self.load_file(
                 database_path,
+                load_started_at,
                 force=True,
                 replacement=True,
             )
         return self.load_file(
             database_path,
+            load_started_at,
             force=True,
             replacement=True,
             generation_recovery=True,
@@ -1210,6 +1219,32 @@ class DatabaseActionsMixin:
             return False
         self._reload_replaced_database(database_path)
         return True
+
+
+    def _reload_if_worker_database_instance_changed(
+            self,
+            database_path,
+            expected_instance,
+            ):
+        """Reject a metadata callback not bound to the accepted DB instance."""
+        if not isinstance(expected_instance, DatabaseInstance):
+            return DatabaseActionsMixin._reload_if_database_instance_changed(
+                self,
+                database_path,
+            )
+
+        current_instance = database_instance(expected_instance.logical_path)
+        loaded_instance = getattr(self, "_loaded_database_instance", None)
+        if (
+                database_instances_differ(expected_instance, current_instance)
+                or (
+                    isinstance(loaded_instance, DatabaseInstance)
+                    and database_instances_differ(loaded_instance, current_instance)
+                )
+                ):
+            self._reload_replaced_database(database_path)
+            return True
+        return False
 
 
     @QtCore.pyqtSlot()
@@ -1525,7 +1560,12 @@ class DatabaseActionsMixin:
             "runtime_settings.cloud_sync_timeout"
             )
 
-        worker = DatabaseLoadWorker(generation, abspath, cloud_sync_timeout)
+        worker = DatabaseLoadWorker(
+            generation,
+            abspath,
+            cloud_sync_timeout,
+            expected_database_instance=current_instance,
+        )
         self._database_load_worker = worker
         worker.signals.status.connect(self.database_load_status)
         worker.signals.finished.connect(self.database_load_finished)
@@ -1763,20 +1803,36 @@ class DatabaseActionsMixin:
         load_instance = state.get("load_instance")
         current_instance = database_instance(abspath)
 
-        if _database_observations_differ(
-                load_instance or load_identity,
-                current_instance,
+        if (
+                isinstance(error, DatabaseInstanceChangedError)
+                or _database_observations_differ(
+                    load_instance or load_identity,
+                    current_instance,
+                )
                 ):
+            self._database_load_generation += 1
             self.show_status("Database changed while loading; retrying...", 0)
             generation_recovery = bool(state.get("generation_recovery"))
+            reload_replaced_database = getattr(
+                self,
+                "_reload_replaced_database",
+                None,
+            )
+            if not callable(reload_replaced_database):
+                reload_replaced_database = (
+                    lambda database_path, **kwargs:
+                    DatabaseActionsMixin._reload_replaced_database(
+                        self,
+                        database_path,
+                        **kwargs,
+                    )
+                )
             QtCore.QTimer.singleShot(
                 0,
-                lambda: self.load_file(
+                lambda: reload_replaced_database(
                     abspath,
-                    load_started_at,
-                    force=True,
-                    replacement=True,
                     generation_recovery=generation_recovery,
+                    load_started_at=load_started_at,
                 ),
             )
             return
@@ -1980,11 +2036,13 @@ class DatabaseActionsMixin:
             )
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_detail_instance = None
         self._database_expensive_detail_generation = (
             getattr(self, "_database_expensive_detail_generation", 0) + 1
             )
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_expensive_detail_instance = None
 
 
     def _start_database_detail_load(self, abspath, runs):
@@ -2008,7 +2066,19 @@ class DatabaseActionsMixin:
         expensive_generation = self._database_expensive_detail_generation
         self._database_expensive_detail_active = True
 
-        worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=100)
+        detail_instance = getattr(self, "_loaded_database_instance", None)
+        if not isinstance(detail_instance, DatabaseInstance):
+            detail_instance = database_instance(abspath)
+        self._database_detail_instance = detail_instance
+        self._database_expensive_detail_instance = detail_instance
+
+        worker = DatabaseDetailWorker(
+            generation,
+            abspath,
+            run_ids,
+            batch_size=100,
+            expected_database_instance=detail_instance,
+        )
         self._database_detail_worker = worker
         priority_run_ids = self._database_detail_priority_run_ids()
         worker.prioritize_run_ids(priority_run_ids)
@@ -2027,6 +2097,7 @@ class DatabaseActionsMixin:
             abspath,
             run_ids,
             batch_size=100,
+            expected_database_instance=detail_instance,
             )
         self._database_expensive_detail_worker = expensive_worker
         expensive_worker.prioritize_run_ids(priority_run_ids)
@@ -2140,9 +2211,10 @@ class DatabaseActionsMixin:
             return
         if abspath != self.fileTextbox.text():
             return
-        if DatabaseActionsMixin._reload_if_database_instance_changed(
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
                 abspath,
+                getattr(self, "_database_detail_instance", None),
                 ):
             return
 
@@ -2172,9 +2244,10 @@ class DatabaseActionsMixin:
             return
         if abspath != self.fileTextbox.text():
             return
-        if DatabaseActionsMixin._reload_if_database_instance_changed(
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
                 abspath,
+                getattr(self, "_database_expensive_detail_instance", None),
                 ):
             return
 
@@ -2194,16 +2267,28 @@ class DatabaseActionsMixin:
             prioritize_previews()
         self._refresh_selected_run_details(updated_runs)
 
-
     @QtCore.pyqtSlot(int, str, object)
     def database_detail_finished(self, generation, abspath, error):
         if generation != getattr(self, "_database_detail_generation", 0):
             return
 
+        detail_instance = getattr(self, "_database_detail_instance", None)
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_detail_instance = None
 
         if abspath != self.fileTextbox.text():
+            return
+
+        if isinstance(error, DatabaseInstanceChangedError):
+            DatabaseActionsMixin._cancel_database_detail_load(self)
+            self._reload_replaced_database(abspath)
+            return
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
+            self,
+            abspath,
+            detail_instance,
+        ):
             return
 
         if error is not None:
@@ -2214,16 +2299,32 @@ class DatabaseActionsMixin:
         if not getattr(self, "_database_expensive_detail_active", False):
             self.show_status("Run details loaded.", 5000)
 
-
     @QtCore.pyqtSlot(int, str, object)
     def database_expensive_detail_finished(self, generation, abspath, error):
         if generation != getattr(self, "_database_expensive_detail_generation", 0):
             return
 
+        detail_instance = getattr(
+            self,
+            "_database_expensive_detail_instance",
+            None,
+        )
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_expensive_detail_instance = None
 
         if abspath != self.fileTextbox.text():
+            return
+
+        if isinstance(error, DatabaseInstanceChangedError):
+            DatabaseActionsMixin._cancel_database_detail_load(self)
+            self._reload_replaced_database(abspath)
+            return
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
+            self,
+            abspath,
+            detail_instance,
+        ):
             return
 
         if error is not None:

@@ -161,9 +161,11 @@ class MainWindow(
         self._database_detail_generation = 0
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_detail_instance = None
         self._database_expensive_detail_generation = 0
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_expensive_detail_instance = None
         self._database_refresh_generation = 0
         self._database_refresh_active = False
         self._database_refresh_pending = False
@@ -521,11 +523,13 @@ class MainWindow(
             )
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_detail_instance = None
         self._database_expensive_detail_generation = (
             getattr(self, "_database_expensive_detail_generation", 0) + 1
             )
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_expensive_detail_instance = None
         self._database_refresh_generation = (
             getattr(self, "_database_refresh_generation", 0) + 1
             )
@@ -533,6 +537,7 @@ class MainWindow(
         self._database_refresh_pending = False
         self._database_refresh_worker = None
         self._database_refresh_identity = None
+        self._database_refresh_instance = None
         self._test_database_generation_active = False
         self._test_database_generation_worker = None
         self._test_database_replacement_state = None

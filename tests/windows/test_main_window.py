@@ -4586,7 +4586,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
         access_results = iter(["timed out", None])
 
-        def access_error(database_path):
+        def access_error(database_path, **_kwargs):
             calls.append(("access", database_path))
             return next(access_results)
 

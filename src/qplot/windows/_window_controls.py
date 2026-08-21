@@ -114,7 +114,7 @@ def add_application_quit_action(window, menu, fallback_handler):
         quit_action = create_action("app.quit", action_owner)
         quit_handler = getattr(action_owner, "quit_application", fallback_handler)
         quit_action.triggered.connect(quit_handler)
-        setattr(action_owner, "_qplot_quit_action", quit_action)
+        action_owner._qplot_quit_action = quit_action
 
     _install_application_quit_shortcut_filter(action_owner, quit_action)
     menu.addAction(quit_action)
