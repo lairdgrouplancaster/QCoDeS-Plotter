@@ -127,6 +127,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "&Quit qPlot",
         "Close the database and quit qPlot",
         _standard_shortcuts(QKeySequence.StandardKey.Quit, ["Ctrl+Q"]),
+        QtCore.Qt.ShortcutContext.ApplicationShortcut,
         help_section="General",
         help_shortcut="Ctrl+Q / Cmd+Q",
     ),

@@ -45,6 +45,7 @@ from ._widgets import (
     operations_widget,
 )
 from ._window_controls import (
+    add_application_quit_action,
     add_standard_window_controls,
     main_window_for,
 )
@@ -922,9 +923,11 @@ class plotWidget(
         closeAction.triggered.connect(self.close)
         file_menu.addAction(closeAction)
 
-        quitAction = create_action("app.quit", self)
-        quitAction.triggered.connect(self.request_application_quit)
-        file_menu.addAction(quitAction)
+        add_application_quit_action(
+            self,
+            file_menu,
+            self.request_application_quit,
+            )
 
         window_menu = add_standard_window_controls(self)
         self._add_plot_area_resize_menu(window_menu)

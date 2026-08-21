@@ -49,6 +49,7 @@ from ._run_controls import RunControlsMixin
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
+    add_application_quit_action,
     add_restore_defaults_option,
     add_standard_window_controls,
     ask_confirmation_with_dont_ask_again,
@@ -304,9 +305,7 @@ class MainWindow(
         closeAction.triggered.connect(self.close)
         fileMenu.addAction(closeAction)
 
-        quitAction = create_action("app.quit", self)
-        quitAction.triggered.connect(self.quit_application)
-        fileMenu.addAction(quitAction)
+        add_application_quit_action(self, fileMenu, self.quit_application)
 
         add_standard_window_controls(self)
         

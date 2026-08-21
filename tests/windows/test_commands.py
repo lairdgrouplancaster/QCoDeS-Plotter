@@ -40,6 +40,10 @@ class CommandRegistryTestCase(unittest.TestCase):
         self.assertEqual(close_action.text, "&Close Database")
         self.assertEqual(close_action.object_name, "closeDatabaseAction")
         self.assertEqual(quit_action.help_shortcut, "Ctrl+Q / Cmd+Q")
+        self.assertEqual(
+            quit_action.shortcut_context,
+            QtCore.Qt.ShortcutContext.ApplicationShortcut,
+        )
         self.assertTrue(
             any(
                 shortcut in quit_action.resolved_shortcuts()

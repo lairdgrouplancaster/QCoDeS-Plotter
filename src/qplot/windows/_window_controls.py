@@ -1,6 +1,6 @@
 from collections import Counter
 
-from PyQt6 import QtGui
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._commands import create_action
@@ -19,7 +19,49 @@ _WINDOW_KIND_LABELS = {
     "plot1d": "1D",
     "plot2d": "2D",
     "sweeper": "Cut",
-}
+    }
+
+
+class _ApplicationQuitShortcutFilter(QtCore.QObject):
+    """Deliver Quit while a modal dialog blocks its owner window."""
+
+    def __init__(self, quit_action, parent):
+        super().__init__(parent)
+        self.quit_action = quit_action
+
+    def eventFilter(self, watched, event):
+        if (
+                event.type() != QtCore.QEvent.Type.KeyPress
+                or not isinstance(event, QtGui.QKeyEvent)
+                or event.isAutoRepeat()
+                ):
+            return False
+
+        key_sequence = QtGui.QKeySequence(event.keyCombination())
+        if any(
+                key_sequence.matches(shortcut)
+                == QtGui.QKeySequence.SequenceMatch.ExactMatch
+                for shortcut in self.quit_action.shortcuts()
+                ):
+            self.quit_action.trigger()
+            return True
+
+        return False
+
+
+def _install_application_quit_shortcut_filter(action_owner, quit_action):
+    """Install the modal-dialog fallback for qPlot's Quit action."""
+    if getattr(action_owner, "_qplot_quit_shortcut_filter", None) is not None:
+        return
+
+    app = qtw.QApplication.instance()
+    if app is None:
+        return
+
+    shortcut_filter = _ApplicationQuitShortcutFilter(quit_action, action_owner)
+    app.installEventFilter(shortcut_filter)
+    action_owner._qplot_quit_shortcut_filter = shortcut_filter
+
 
 def add_standard_window_controls(window):
     """
@@ -54,6 +96,29 @@ def add_standard_window_controls(window):
         )
 
     return window_menu
+
+
+def add_application_quit_action(window, menu, fallback_handler):
+    """
+    Add qPlot's single application-wide Quit action to a File menu.
+
+    A shared action prevents Qt from treating identical application shortcuts
+    in the main and plot windows as ambiguous, while still exposing Quit in
+    every window's File menu.
+    """
+    main_window = main_window_for(window)
+    action_owner = main_window if main_window is not None else window
+    quit_action = getattr(action_owner, "_qplot_quit_action", None)
+
+    if not isinstance(quit_action, QtGui.QAction):
+        quit_action = create_action("app.quit", action_owner)
+        quit_handler = getattr(action_owner, "quit_application", fallback_handler)
+        quit_action.triggered.connect(quit_handler)
+        setattr(action_owner, "_qplot_quit_action", quit_action)
+
+    _install_application_quit_shortcut_filter(action_owner, quit_action)
+    menu.addAction(quit_action)
+    return quit_action
 
 
 def populate_available_window_actions(window, window_menu):
