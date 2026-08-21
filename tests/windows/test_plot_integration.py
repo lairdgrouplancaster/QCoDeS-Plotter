@@ -15,6 +15,7 @@ import pytest
 import qcodes
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
+from pyqtgraph.exporters import CSVExporter
 from qcodes.dataset import (
     Measurement,
     initialise_or_create_database_at,
@@ -109,6 +110,56 @@ def build_synthetic_database(db_path):
         heatmap_run_id = datasaver.dataset.run_id
 
     return line_run_id, heatmap_run_id
+
+
+def append_nonuniform_heatmap_run():
+    experiment = load_or_create_experiment(
+        "qplot_csv_export",
+        sample_name="nonuniform",
+    )
+    gate = ManualParameter("offset_gate", label="Offset gate", unit="V")
+    bias = ManualParameter("uneven_bias", label="Uneven bias", unit="mV")
+    signal = ManualParameter("mapped_signal", label="Mapped signal", unit="uS")
+    measurement = Measurement(exp=experiment, name="nonuniform_csv_export")
+    measurement.register_parameter(gate)
+    measurement.register_parameter(bias)
+    measurement.register_parameter(signal, setpoints=(gate, bias))
+
+    missing_coordinate = (-0.25, 13.0)
+    with measurement.run() as datasaver:
+        for gate_value in (-2.0, -0.25, 4.5):
+            for bias_value in (7.0, 13.0, 28.0):
+                if (gate_value, bias_value) == missing_coordinate:
+                    continue
+                datasaver.add_result(
+                    (gate, gate_value),
+                    (bias, bias_value),
+                    (signal, gate_value * 1000.0 + bias_value),
+                )
+
+        return datasaver.dataset.run_id, missing_coordinate
+
+
+def export_real_plot_csv(monkeypatch, plot_window, target):
+    """Run qPlot's real exporter entry point with only the dialogs automated."""
+    monkeypatch.setattr(
+        qtw.QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(target), ""),
+    )
+    monkeypatch.setattr(
+        qtw.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
+    )
+    return plot_window._export_pyqtgraph_exporter(
+        CSVExporter(plot_window.plot)
+    )
+
+
+def csv_rows(csv_path):
+    with csv_path.open(newline="", encoding="utf-8") as csv_file:
+        return list(csv.reader(csv_file))
 
 
 def build_line_database(db_path, point_count, *, guid=None, journal_mode=None):
@@ -591,6 +642,291 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
         np.testing.assert_array_equal(vertical_cut.axis_data["x"], source_y)
         np.testing.assert_array_equal(vertical_cut.axis_data["y"], source_grid[:, 2])
         assert vertical_cut.sweep_id in heatmap_window.sweep_lines
+    finally:
+        close_main_window(window)
+
+
+def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = Path(tmp_path) / "plot-csv-export.db"
+    line_run_id, uniform_run_id = build_synthetic_database(database_path)
+    nonuniform_run_id, missing_coordinate = append_nonuniform_heatmap_run()
+
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(lambda: not window._database_load_active)
+
+        line_dataset = load_by_id(line_run_id)
+        line_param = dependent_parameter(line_dataset, 1)
+        window.ds = line_dataset
+        window.openPlot(params=[line_param], show=False)
+        line_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(line_window, "axis_data")
+                and not getattr(line_window.worker, "running", False)
+            )
+        )
+
+        line_target = Path(tmp_path) / "line.csv"
+        monkeypatch.setattr(
+            line_window,
+            "_write_heatmap_csv_stage",
+            lambda *_args: pytest.fail("A line CSV used the heatmap serializer"),
+        )
+        assert export_real_plot_csv(monkeypatch, line_window, line_target)
+        line_rows = csv_rows(line_target)
+        assert len(line_rows) == line_window.axis_data["x"].size + 1
+        assert len(line_rows[0]) >= 2
+        assert len(line_rows[0]) % 2 == 0
+        expected_line = np.column_stack((
+            line_window.axis_data["x"],
+            line_window.axis_data["y"],
+        ))
+        populated_pairs = [
+            np.asarray([row[index:index + 2] for row in line_rows[1:]], dtype=float)
+            for index in range(0, len(line_rows[0]), 2)
+            if all(row[index] and row[index + 1] for row in line_rows[1:])
+        ]
+        assert any(
+            np.allclose(pair, expected_line, rtol=1e-9, atol=1e-12)
+            for pair in populated_pairs
+        )
+
+        uniform_dataset = load_by_id(uniform_run_id)
+        uniform_param = dependent_parameter(uniform_dataset, 2)
+        window.ds = uniform_dataset
+        window.openPlot(params=[uniform_param], show=False)
+        uniform_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(uniform_window, "dataGrid")
+                and not getattr(uniform_window.worker, "running", False)
+            )
+        )
+        assert uniform_window._required_heatmap_geometry().is_uniform
+
+        uniform_target = Path(tmp_path) / "uniform.csv"
+        assert export_real_plot_csv(monkeypatch, uniform_window, uniform_target)
+        uniform_rows = csv_rows(uniform_target)
+        assert uniform_rows[0] == [
+            uniform_window.axis_param["x"].name,
+            uniform_window.axis_param["y"].name,
+            uniform_window.display_param.name,
+        ]
+        expected_uniform = [
+            (x_value, y_value, uniform_window.dataGrid[y_index, x_index])
+            for y_index, y_value in enumerate(uniform_window.axis_data["y"])
+            for x_index, x_value in enumerate(uniform_window.axis_data["x"])
+        ]
+        np.testing.assert_allclose(
+            np.asarray(uniform_rows[1:], dtype=float),
+            expected_uniform,
+        )
+
+        nonuniform_dataset = load_by_id(nonuniform_run_id)
+        nonuniform_param = dependent_parameter(nonuniform_dataset, 2)
+        window.ds = nonuniform_dataset
+        window.openPlot(params=[nonuniform_param], show=False)
+        nonuniform_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(nonuniform_window, "dataGrid")
+                and not getattr(nonuniform_window.worker, "running", False)
+            )
+        )
+        assert not nonuniform_window._required_heatmap_geometry().is_uniform
+        assert np.isnan(nonuniform_window.dataGrid).sum() == 1
+
+        nonuniform_target = Path(tmp_path) / "nonuniform.csv"
+        assert export_real_plot_csv(
+            monkeypatch,
+            nonuniform_window,
+            nonuniform_target,
+        )
+        nonuniform_rows = csv_rows(nonuniform_target)
+        header = nonuniform_rows[0]
+        assert header == [
+            nonuniform_window.axis_param["x"].name,
+            nonuniform_window.axis_param["y"].name,
+            nonuniform_window.display_param.name,
+        ]
+        exported = np.asarray(nonuniform_rows[1:], dtype=float)
+        expected_nonuniform = np.asarray([
+            (x_value, y_value, nonuniform_window.dataGrid[y_index, x_index])
+            for y_index, y_value in enumerate(nonuniform_window.axis_data["y"])
+            for x_index, x_value in enumerate(nonuniform_window.axis_data["x"])
+        ])
+        np.testing.assert_allclose(exported, expected_nonuniform, equal_nan=True)
+
+        gate_column = header.index("offset_gate")
+        bias_column = header.index("uneven_bias")
+        value_column = header.index("mapped_signal")
+        missing_rows = exported[
+            (exported[:, gate_column] == missing_coordinate[0])
+            & (exported[:, bias_column] == missing_coordinate[1])
+        ]
+        assert missing_rows.shape == (1, 3)
+        assert np.isnan(missing_rows[0, value_column])
+
+        subtract_row_mean = next(
+            nonuniform_window.oper_widget.list_options.item(index)
+            for index in range(nonuniform_window.oper_widget.list_options.count())
+            if nonuniform_window.oper_widget.list_options.item(index).label
+            == "Subtract Row Mean"
+        )
+        before_operation = np.asarray(nonuniform_window.dataGrid).copy()
+        previous_worker = nonuniform_window.worker
+        subtract_row_mean.input.setChecked(True)
+        nonuniform_window.refreshWindow(force=True)
+        wait_for(
+            lambda: (
+                nonuniform_window.worker is not previous_worker
+                and not getattr(nonuniform_window.worker, "running", False)
+            )
+        )
+        assert not np.allclose(
+            nonuniform_window.dataGrid,
+            before_operation,
+            equal_nan=True,
+        )
+
+        operated_target = Path(tmp_path) / "operated.csv"
+        assert export_real_plot_csv(
+            monkeypatch,
+            nonuniform_window,
+            operated_target,
+        )
+        operated_rows = np.asarray(csv_rows(operated_target)[1:], dtype=float)
+        np.testing.assert_allclose(
+            operated_rows[:, 2].reshape(nonuniform_window.dataGrid.shape),
+            nonuniform_window.dataGrid,
+            equal_nan=True,
+        )
+
+        preserved_target = Path(tmp_path) / "preserved.csv"
+        preserved_contents = "existing export sentinel\n"
+        preserved_target.write_text(preserved_contents, encoding="utf-8")
+        valid_grid = nonuniform_window.dataGrid
+        nonuniform_window.dataGrid = valid_grid[:-1, :]
+        failure_statuses = []
+        monkeypatch.setattr(
+            nonuniform_window,
+            "show_status",
+            lambda message, *_args: failure_statuses.append(message),
+        )
+        try:
+            assert not export_real_plot_csv(
+                monkeypatch,
+                nonuniform_window,
+                preserved_target,
+            )
+        finally:
+            nonuniform_window.dataGrid = valid_grid
+        assert preserved_target.read_text(encoding="utf-8") == preserved_contents
+        assert "Could not export plot." in failure_statuses
+        assert "Could not safely export the plot." in failure_statuses
+
+        empty_target = Path(tmp_path) / "preserved-empty.csv"
+        empty_target.write_text(preserved_contents, encoding="utf-8")
+        valid_axis_data = nonuniform_window.axis_data
+        nonuniform_window.axis_data = {
+            "x": np.asarray([], dtype=float),
+            "y": np.asarray([], dtype=float),
+        }
+        nonuniform_window.dataGrid = np.empty((0, 0))
+        try:
+            assert not export_real_plot_csv(
+                monkeypatch,
+                nonuniform_window,
+                empty_target,
+            )
+        finally:
+            nonuniform_window.axis_data = valid_axis_data
+            nonuniform_window.dataGrid = valid_grid
+        assert empty_target.read_text(encoding="utf-8") == preserved_contents
+    finally:
+        close_main_window(window)
+
+
+def test_real_plot2d_csv_exports_only_current_downsampled_grid(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = Path(tmp_path) / "downsampled-csv-export.db"
+    _line_run_id, heatmap_run_id = build_synthetic_database(database_path)
+
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.config.config["runtime_settings"]["max_full_heatmap_points"] = 4
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(lambda: not window._database_load_active)
+
+        heatmap_dataset = load_by_id(heatmap_run_id)
+        heatmap_param = dependent_parameter(heatmap_dataset, 2)
+        window.ds = heatmap_dataset
+        window.openPlot(params=[heatmap_param], show=False)
+        heatmap_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(heatmap_window, "dataGrid")
+                and not getattr(heatmap_window.worker, "running", False)
+            )
+        )
+
+        full_grid = np.asarray(heatmap_window.dataGrid).copy()
+        full_x = np.asarray(heatmap_window.axis_data["x"]).copy()
+        full_y = np.asarray(heatmap_window.axis_data["y"]).copy()
+
+        # Install the same kind of canonical state committed by a completed
+        # viewport/detail reload. Export must snapshot it without reloading the
+        # full source grid or expanding omitted cells.
+        current_x = full_x[::2]
+        current_y = full_y[::2]
+        current_grid = full_grid[::2, ::2]
+        heatmap_window.axis_data = {"x": current_x, "y": current_y}
+        heatmap_window.dataGrid = current_grid
+        heatmap_window._update_heatmap_geometry()
+        heatmap_window._render_heatmap()
+        heatmap_window._large_heatmap_sql_mode = True
+        heatmap_window._heatmap_downsample_info = {
+            "source_grid_columns": full_x.size,
+            "source_grid_rows": full_y.size,
+            "grid_columns": current_x.size,
+            "grid_rows": current_y.size,
+            "grid_binned": True,
+            "axis_ranges": {
+                "x": (float(current_x[0]), float(current_x[-1])),
+                "y": (float(current_y[0]), float(current_y[-1])),
+            },
+        }
+
+        assert current_grid.size == current_x.size * current_y.size
+        assert current_grid.size < full_grid.size
+
+        target = Path(tmp_path) / "current-resolution.csv"
+        assert export_real_plot_csv(monkeypatch, heatmap_window, target)
+        rows = np.asarray(csv_rows(target)[1:], dtype=float)
+        assert rows.shape == (current_grid.size, 3)
+        expected = np.asarray([
+            (x_value, y_value, current_grid[y_index, x_index])
+            for y_index, y_value in enumerate(current_y)
+            for x_index, x_value in enumerate(current_x)
+        ])
+        np.testing.assert_allclose(rows, expected, equal_nan=True)
     finally:
         close_main_window(window)
 

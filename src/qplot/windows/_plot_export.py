@@ -1,8 +1,10 @@
+import csv
 import os
 import weakref
 from os import path
 from typing import TYPE_CHECKING, Any, Literal
 
+import numpy as np
 from PyQt6 import QtCore, QtGui, QtPrintSupport, QtSvg
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
@@ -674,9 +676,18 @@ class PlotExportMixin(_PlotExportBase):
             if destination is None:
                 self.show_status("Plot export cancelled.", 3000)
                 return False
+            writer = lambda staging_path: exporter.export(fileName=staging_path)
+            if (
+                    type(exporter) is CSVExporter
+                    and getattr(self, "operation_kind", None) == "plot2d"
+                    ):
+                writer = lambda staging_path: self._write_heatmap_csv_stage(
+                    staging_path,
+                    exporter,
+                    )
             saved = write_export_atomically(
                 destination,
-                lambda staging_path: exporter.export(fileName=staging_path),
+                writer,
             )
         except Exception as err:
             log_exception("PyQtGraph plot export failed", err, __name__)
@@ -694,6 +705,86 @@ class PlotExportMixin(_PlotExportBase):
             return False
         self.show_status(f"Exported plot: {destination.filename}", 5000)
         return True
+
+
+    def _write_heatmap_csv_stage(
+            self,
+            staging_path: str,
+            exporter: CSVExporter,
+            ) -> bool:
+        """Write the canonical, currently plotted heatmap as long-form rows.
+
+        ``dataGrid[row, column]`` is paired with the Y centre at ``row`` and
+        the X centre at ``column``.  This deliberately snapshots the displayed
+        grid, so a viewport-loaded or downsampled large heatmap exports that
+        current resolution without initiating another database read.
+        """
+        axis_data = self.__dict__.get("axis_data")
+        if not isinstance(axis_data, dict):
+            raise ValueError("Heatmap coordinate data is not available.")
+
+        x_centres = np.asarray(axis_data.get("x", []), dtype=float)
+        y_centres = np.asarray(axis_data.get("y", []), dtype=float)
+        data_grid = np.asarray(self.__dict__.get("dataGrid", []))
+        expected_shape = (y_centres.size, x_centres.size)
+        if x_centres.ndim != 1 or y_centres.ndim != 1:
+            raise ValueError("Heatmap coordinate axes must be one-dimensional.")
+        if data_grid.ndim != 2 or data_grid.shape != expected_shape:
+            raise ValueError(
+                f"Heatmap data shape {data_grid.shape} does not match "
+                f"axis shape {expected_shape}."
+            )
+        if data_grid.size == 0:
+            raise ValueError("The currently plotted heatmap is empty.")
+
+        delimiter = "\t" if exporter.params["separator"] == "tab" else ","
+        column_names = self._heatmap_csv_column_names()
+        rows_written = 0
+        with open(staging_path, "w", encoding="utf-8", newline="") as csv_file:
+            csv_writer = csv.writer(
+                csv_file,
+                delimiter=delimiter,
+                quoting=csv.QUOTE_MINIMAL,
+                lineterminator="\n",
+            )
+            csv_writer.writerow(column_names)
+            for y_index, y_centre in enumerate(y_centres):
+                for x_index, x_centre in enumerate(x_centres):
+                    csv_writer.writerow((
+                        float(x_centre),
+                        float(y_centre),
+                        data_grid[y_index, x_index],
+                    ))
+                    rows_written += 1
+
+        if rows_written != data_grid.size or os.path.getsize(staging_path) == 0:
+            raise RuntimeError("Heatmap CSV serialization produced no usable data.")
+        return True
+
+
+    def _heatmap_csv_column_names(self) -> tuple[str, str, str]:
+        """Return stable parameter names for heatmap coordinate/value columns."""
+        axis_param = self.__dict__.get("axis_param")
+        if not isinstance(axis_param, dict):
+            axis_param = {}
+        value_param = self.__dict__.get(
+            "display_param",
+            self.__dict__.get("param"),
+        )
+        return (
+            self._export_parameter_name(axis_param.get("x"), "x"),
+            self._export_parameter_name(axis_param.get("y"), "y"),
+            self._export_parameter_name(value_param, "value"),
+        )
+
+
+    @staticmethod
+    def _export_parameter_name(parameter: Any, fallback: str) -> str:
+        """Use a QCoDeS parameter name, with a meaningful safe fallback."""
+        name = getattr(parameter, "name", None)
+        if name is None or not str(name).strip():
+            return fallback
+        return str(name)
 
 
     def _copy_pyqtgraph_exporter(self, exporter: Any) -> bool:
