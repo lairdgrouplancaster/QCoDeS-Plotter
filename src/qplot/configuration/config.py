@@ -6,7 +6,7 @@ import tempfile
 from copy import deepcopy
 from importlib.resources import files
 from os import makedirs, path
-from shutil import copy2
+from shutil import copyfileobj
 
 import jsonschema
 
@@ -74,12 +74,19 @@ class config:
     
     def __init__(self):
         self.schema = self.load_config(self.default__schema_file)
+        self.startup_warning = None
         
         # Make config file if missing
         if not path.isfile(self.default_file):
-            makedirs(path.dirname(self.default_file), exist_ok=True)
-            # Create config from schema
-            self.reset_to_defaults()
+            self.config = self.build_default_config()
+            try:
+                self.save_config(self.default_file)
+            except OSError as error:
+                self._record_startup_persistence_failure(
+                    "Could not create default configuration at "
+                    f"{self.default_file}",
+                    error,
+                    )
         else:
             try:
                 loaded_config = self.load_config(self.default_file)
@@ -95,17 +102,15 @@ class config:
                     try:
                         self.save_config(self.default_file)
                     except OSError as error:
-                        log_exception(
+                        self._record_startup_persistence_failure(
                             "Could not persist migrated configuration at "
                             f"{self.default_file}",
                             error,
-                            __name__,
                             )
-            
+
             # config.json does not meet schema requirements
-            except (json.JSONDecodeError, jsonschema.ValidationError):
-                self.invalid_config_backup_file = self.backup_invalid_config()
-                self.reset_to_defaults()
+            except (json.JSONDecodeError, jsonschema.ValidationError) as error:
+                self._recover_invalid_config(error)
         
     
     def __str__(self) -> str:
@@ -323,17 +328,7 @@ class config:
 
         Needs adjusting if nesting of config increases
         """
-        config = {}
-        # Runs through all values in schema and fetch default value
-        for key, val in self.schema["properties"].items():
-            subdict = {}
-            for k, v in val["properties"].items():
-                subdict[k] = deepcopy(v["default"])
-            # Reset value
-            config[key] = subdict
-        
-        # Confirm reset worked
-        self.validate(config)
+        config = self.build_default_config()
         
         # Save reset to file. Keep the last persisted configuration
         # authoritative if any part of the atomic write fails.
@@ -348,6 +343,58 @@ class config:
             else:
                 del self.config
             raise
+
+
+    def build_default_config(self):
+        """Construct and validate a fresh default configuration in memory."""
+
+        config = {}
+        for key, val in self.schema["properties"].items():
+            config[key] = {
+                setting: deepcopy(setting_schema["default"])
+                for setting, setting_schema in val["properties"].items()
+                }
+        self.validate(config)
+        return config
+
+
+    def _recover_invalid_config(self, original_error):
+        """Use defaults after an invalid config without risking the original."""
+
+        log_exception(
+            f"Invalid configuration at {self.default_file}",
+            original_error,
+            __name__,
+            )
+        self.config = self.build_default_config()
+        try:
+            self.invalid_config_backup_file = self.backup_invalid_config()
+        except OSError as error:
+            self._record_startup_persistence_failure(
+                "Could not back up invalid configuration at "
+                f"{self.default_file}",
+                error,
+                )
+            return
+
+        try:
+            self.save_config(self.default_file)
+        except OSError as error:
+            self._record_startup_persistence_failure(
+                "Could not replace invalid configuration at "
+                f"{self.default_file}",
+                error,
+                )
+
+
+    def _record_startup_persistence_failure(self, context, error):
+        """Log a failed startup write and retain a non-blocking UI warning."""
+
+        log_exception(context, error, __name__)
+        self.startup_warning = (
+            "Configuration recovery could not be saved; using defaults for "
+            "this session."
+            )
 
 
     def validate(self, candidate):
@@ -398,9 +445,41 @@ class config:
         Copies an invalid config file aside before resetting to defaults.
 
         """
-        backup_file = self.next_invalid_config_backup_file()
-        makedirs(path.dirname(backup_file), exist_ok=True)
-        copy2(self.default_file, backup_file)
+        directory = path.dirname(self.default_file)
+        makedirs(directory, exist_ok=True)
+        source_stat = os.stat(self.default_file)
+
+        while True:
+            backup_file = self.next_invalid_config_backup_file()
+            try:
+                descriptor = os.open(
+                    backup_file,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    stat.S_IMODE(source_stat.st_mode),
+                    )
+            except FileExistsError:
+                continue
+            break
+
+        try:
+            with (
+                open(self.default_file, "rb") as source,
+                os.fdopen(descriptor, "wb") as destination,
+                ):
+                copyfileobj(source, destination)
+                destination.flush()
+                os.fsync(destination.fileno())
+            os.chmod(backup_file, stat.S_IMODE(source_stat.st_mode))
+            os.utime(
+                backup_file,
+                ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns),
+                )
+        except OSError:
+            try:
+                os.unlink(backup_file)
+            except FileNotFoundError:
+                pass
+            raise
         return backup_file
 
 

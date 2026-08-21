@@ -230,6 +230,9 @@ class MainWindow(
         self.show() 
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowType.WindowStaysOnTopHint) 
         self.show()
+        startup_warning = getattr(self.config, "startup_warning", None)
+        if startup_warning:
+            self.show_status(startup_warning, 10_000)
         self.startupDatabaseTimer.start(0)
 
 

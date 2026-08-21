@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -200,6 +201,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             self.assertEqual(migrated.get("user_preference.axis_major_tick_count"), 3)
             self.assertNotIn("axis_tick_density", migrated.config["user_preference"])
             self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+            self.assertIsNotNone(migrated.startup_warning)
             self.assertEqual(save_config.call_count, 1)
             logged.assert_called_once_with(
                 f"Could not persist migrated configuration at {config.default_file}",
@@ -267,6 +269,139 @@ class TemporaryConfigTestCase(unittest.TestCase):
             [],
             )
 
+    def test_invalid_config_backup_failure_uses_validated_defaults_in_memory(self):
+        config()
+        original_contents = b'{"user_preference": '
+        Path(config.default_file).write_bytes(original_contents)
+        Path(config.default_file).chmod(0o640)
+        original_mode = stat.S_IMODE(Path(config.default_file).stat().st_mode)
+
+        with (
+            patch(
+                "qplot.configuration.config.os.open",
+                side_effect=PermissionError("simulated read-only directory"),
+                ),
+            patch("qplot.configuration.config.log_exception") as logged,
+            ):
+            recovered = config()
+
+        self.assertEqual(recovered.get("user_preference.theme"), "light")
+        recovered.validate(recovered.config)
+        self.assertIsNotNone(recovered.startup_warning)
+        self.assertFalse(hasattr(recovered, "invalid_config_backup_file"))
+        self.assertEqual(Path(config.default_file).read_bytes(), original_contents)
+        self.assertEqual(
+            stat.S_IMODE(Path(config.default_file).stat().st_mode),
+            original_mode,
+            )
+        self.assertEqual(list(Path(config.default_path).glob("config.invalid*.json")), [])
+        self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
+        self.assertEqual(logged.call_count, 2)
+
+    def test_failed_backup_removes_partial_backup_file(self):
+        config()
+        original_contents = b'{"user_preference": '
+        Path(config.default_file).write_bytes(original_contents)
+
+        with patch(
+                "qplot.configuration.config.copyfileobj",
+                side_effect=OSError("simulated backup copy failure"),
+                ):
+            recovered = config()
+
+        self.assertEqual(recovered.get("user_preference.theme"), "light")
+        recovered.validate(recovered.config)
+        self.assertEqual(Path(config.default_file).read_bytes(), original_contents)
+        self.assertEqual(list(Path(config.default_path).glob("config.invalid*.json")), [])
+        self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
+
+    def test_schema_invalid_backup_failure_uses_validated_defaults_in_memory(self):
+        config()
+        original_contents = b"[]\n"
+        Path(config.default_file).write_bytes(original_contents)
+
+        with (
+            patch(
+                "qplot.configuration.config.os.open",
+                side_effect=PermissionError("simulated read-only directory"),
+                ),
+            patch("qplot.configuration.config.log_exception") as logged,
+            ):
+            recovered = config()
+
+        self.assertEqual(recovered.get("GUI.preview_size"), 200)
+        recovered.validate(recovered.config)
+        self.assertIsNotNone(recovered.startup_warning)
+        self.assertEqual(Path(config.default_file).read_bytes(), original_contents)
+        self.assertEqual(list(Path(config.default_path).glob("config.invalid*.json")), [])
+        self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
+        self.assertEqual(logged.call_count, 2)
+
+    def test_invalid_config_default_save_failure_keeps_original_and_backup(self):
+        config()
+        original_contents = b'{"GUI": '
+        Path(config.default_file).write_bytes(original_contents)
+        Path(config.default_file).chmod(0o640)
+        original_mode = stat.S_IMODE(Path(config.default_file).stat().st_mode)
+
+        with (
+            patch(
+                "qplot.configuration.config.os.replace",
+                side_effect=PermissionError("simulated atomic save failure"),
+                ),
+            patch("qplot.configuration.config.log_exception") as logged,
+            ):
+            recovered = config()
+
+        backup = Path(recovered.invalid_config_backup_file)
+        self.assertEqual(recovered.get("GUI.preview_size"), 200)
+        recovered.validate(recovered.config)
+        self.assertIsNotNone(recovered.startup_warning)
+        self.assertEqual(Path(config.default_file).read_bytes(), original_contents)
+        self.assertEqual(
+            stat.S_IMODE(Path(config.default_file).stat().st_mode),
+            original_mode,
+            )
+        self.assertEqual(backup.read_bytes(), original_contents)
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), original_mode)
+        self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
+        self.assertEqual(logged.call_count, 2)
+
+    def test_invalid_config_backup_uses_unique_name_without_changing_existing_backup(self):
+        config()
+        original_contents = b'{"broken": '
+        existing_backup = Path(config.default_path) / "config.invalid.json"
+        existing_contents = b"existing backup must remain unchanged"
+        existing_backup.write_bytes(existing_contents)
+        existing_backup.chmod(0o600)
+        Path(config.default_file).write_bytes(original_contents)
+        Path(config.default_file).chmod(0o640)
+
+        recovered = config()
+
+        backup = Path(recovered.invalid_config_backup_file)
+        self.assertEqual(backup.name, "config.invalid.1.json")
+        self.assertEqual(backup.read_bytes(), original_contents)
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o640)
+        self.assertEqual(existing_backup.read_bytes(), existing_contents)
+        self.assertEqual(stat.S_IMODE(existing_backup.stat().st_mode), 0o600)
+        self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
+
+    def test_later_explicit_save_succeeds_after_backup_permission_failure(self):
+        config()
+        original_contents = b'{"user_preference": '
+        Path(config.default_file).write_bytes(original_contents)
+
+        with patch(
+                "qplot.configuration.config.os.open",
+                side_effect=PermissionError("simulated read-only directory"),
+                ):
+            recovered = config()
+
+        recovered.update("user_preference.theme", "dark")
+
+        self.assertEqual(config().get("user_preference.theme"), "dark")
+
     @unittest.skipUnless(
         os.name == "posix" and os.geteuid() != 0,
         "directory permissions are not reliable for this test environment",
@@ -297,6 +432,38 @@ class TemporaryConfigTestCase(unittest.TestCase):
                 migrated.update("user_preference.theme", "light")
         finally:
             config_directory.chmod(original_mode)
+
+    @unittest.skipUnless(
+        os.name == "posix" and os.geteuid() != 0,
+        "directory permissions are not reliable for this test environment",
+        )
+    def test_read_only_directory_preserves_invalid_config_and_uses_defaults(self):
+        config()
+        original_contents = b'{"user_preference": '
+        Path(config.default_file).write_bytes(original_contents)
+        Path(config.default_file).chmod(0o640)
+        original_mode = stat.S_IMODE(Path(config.default_file).stat().st_mode)
+        config_directory = Path(config.default_path)
+        directory_mode = config_directory.stat().st_mode
+        config_directory.chmod(0o555)
+        try:
+            recovered = config()
+
+            self.assertEqual(recovered.get("user_preference.theme"), "light")
+            recovered.validate(recovered.config)
+            self.assertIsNotNone(recovered.startup_warning)
+            self.assertEqual(Path(config.default_file).read_bytes(), original_contents)
+            self.assertEqual(
+                stat.S_IMODE(Path(config.default_file).stat().st_mode),
+                original_mode,
+                )
+            self.assertEqual(
+                list(config_directory.glob("config.invalid*.json")),
+                [],
+                )
+            self.assertEqual(list(config_directory.glob("*.tmp")), [])
+        finally:
+            config_directory.chmod(directory_mode)
 
     def test_config_update_rejects_unknown_key(self):
         cfg = config()
@@ -571,6 +738,36 @@ class TemporaryConfigTestCase(unittest.TestCase):
         with open(reloaded.invalid_config_backup_file) as fp:
             backup = json.load(fp)
         self.assertEqual(backup["user_preference"]["theme"], "missing-theme")
+
+    def test_malformed_json_is_backed_up_and_replaced_with_defaults(self):
+        config()
+        original_contents = b'{"user_preference": '
+        Path(config.default_file).write_bytes(original_contents)
+
+        recovered = config()
+
+        self.assertEqual(recovered.get("user_preference.theme"), "light")
+        recovered.validate(recovered.config)
+        self.assertEqual(
+            Path(recovered.invalid_config_backup_file).read_bytes(),
+            original_contents,
+            )
+        self.assertEqual(config().get("user_preference.theme"), "light")
+
+    def test_schema_invalid_json_is_backed_up_and_replaced_with_defaults(self):
+        config()
+        original_contents = b"[]\n"
+        Path(config.default_file).write_bytes(original_contents)
+
+        recovered = config()
+
+        self.assertEqual(recovered.get("GUI.preview_size"), 200)
+        recovered.validate(recovered.config)
+        self.assertEqual(
+            Path(recovered.invalid_config_backup_file).read_bytes(),
+            original_contents,
+            )
+        self.assertEqual(config().get("GUI.preview_size"), 200)
 
     def test_non_standard_json_number_is_backed_up_and_reset(self):
         config()
