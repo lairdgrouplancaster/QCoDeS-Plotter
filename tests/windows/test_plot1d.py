@@ -174,19 +174,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         painter = QtGui.QPainter(image)
 
         def dispose_plot_widget():
-            painter.end()
             widget.close()
-            # Processing a forced deferred deletion while the offscreen paint
-            # stack is unwinding segfaults on Linux and macOS. Windows needs
-            # the eager deletion to avoid leaving the native widget alive.
-            if sys.platform != "win32":
-                return
-            widget.deleteLater()
-            qtw.QApplication.sendPostedEvents(
-                None,
-                QtCore.QEvent.Type.DeferredDelete,
-            )
-            qtw.QApplication.processEvents()
 
         self.addCleanup(dispose_plot_widget)
 
@@ -198,6 +186,8 @@ class SnapToTraceTestCase(unittest.TestCase):
             qtw.QApplication.processEvents()
             specs = axis.generateDrawSpecs(painter)
             self.assertEqual([spec[2] for spec in specs[2]], expected)
+        # End painting before unittest begins destroying the native widget.
+        painter.end()
 
     def test_tick_positions_are_bounded_and_precision_aware(self):
         self.assertEqual(
