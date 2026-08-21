@@ -279,7 +279,7 @@ def test_database_load_worker_rejects_read_open_aba_without_emitting_b(
         (accepted_instance.logical_path, accepted_instance.identity)
     ]
     assert len(finished) == 1
-    assert finished[0][:3] == (10, accepted_instance.logical_path, {})
+    assert finished[0][:3] == (10, str(database_path), {})
     assert isinstance(finished[0][3], DatabaseInstanceChangedError)
     assert runs_a[1]["guid"] != runs_b[1]["guid"]
     assert database_instance(database_path).identity == accepted_instance.identity
@@ -359,7 +359,7 @@ def test_database_load_worker_binds_the_subprocess_access_probe_across_aba(
     assert swap.count == 1
     assert child_expected_identities == [accepted_instance.identity]
     assert len(finished) == 1
-    assert finished[0][:3] == (11, accepted_instance.logical_path, {})
+    assert finished[0][:3] == (11, str(database_path), {})
     assert isinstance(finished[0][3], DatabaseInstanceChangedError)
     assert database_instance(database_path).identity == accepted_instance.identity
     assert _artifact_state(database_path) == before[database_path]
@@ -402,7 +402,7 @@ def test_database_refresh_worker_discards_new_runs_when_watched_status_open_is_b
     assert len(finished) == 1
     assert finished[0][:4] == (
         20,
-        accepted_instance.logical_path,
+        str(database_path),
         {},
         {},
     )
@@ -454,7 +454,7 @@ def test_database_detail_worker_binds_every_iterated_batch_and_suppresses_b(
         {metadata["guid"] for metadata in runs_b.values()}
     )
     assert len(finished) == 1
-    assert finished[0][:2] == (30, accepted_instance.logical_path)
+    assert finished[0][:2] == (30, str(database_path))
     assert isinstance(finished[0][2], DatabaseInstanceChangedError)
     assert database_instance(database_path).identity == accepted_instance.identity
     assert _artifact_state(database_path) == before[database_path]
@@ -505,7 +505,7 @@ def test_expensive_detail_worker_binds_storage_phase_and_suppresses_b(
     )
     assert runs_a[1]["guid"] != runs_b[1]["guid"]
     assert len(finished) == 1
-    assert finished[0][:2] == (40, accepted_instance.logical_path)
+    assert finished[0][:2] == (40, str(database_path))
     assert isinstance(finished[0][2], DatabaseInstanceChangedError)
     assert database_instance(database_path).identity == accepted_instance.identity
     assert _artifact_state(database_path) == before[database_path]
@@ -553,7 +553,7 @@ def test_same_instance_qcodes_live_write_is_accepted_and_source_is_unchanged(
             generation, path, new_runs, statuses, error = finished[0]
             assert (generation, path, error) == (
                 50,
-                accepted_instance.logical_path,
+                str(database_path),
                 None,
             )
             assert new_runs[dataset.run_id]["guid"] == dataset.guid
@@ -593,7 +593,7 @@ def test_one_way_replacement_rejects_before_touching_any_sqlite_artifact(
     _batches, finished = _collect_worker(worker)
 
     assert len(finished) == 1
-    assert finished[0][:3] == (60, accepted_instance.logical_path, {})
+    assert finished[0][:3] == (60, str(database_path), {})
     assert isinstance(finished[0][3], DatabaseInstanceChangedError)
     assert _artifact_state(database_path) == replacement_state
     assert _artifact_state(parked_path) == parked_state
