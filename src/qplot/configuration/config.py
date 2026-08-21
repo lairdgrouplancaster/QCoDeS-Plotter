@@ -10,6 +10,8 @@ from shutil import copy2
 
 import jsonschema
 
+from qplot.diagnostics import log_exception
+
 from .themes import dark, light, pyqt
 
 THEME_CLASSES = {
@@ -90,7 +92,15 @@ class config:
                 self.validate(loaded_config)
                 self.config = loaded_config
                 if migrated:
-                    self.save_config(self.default_file)
+                    try:
+                        self.save_config(self.default_file)
+                    except OSError as error:
+                        log_exception(
+                            "Could not persist migrated configuration at "
+                            f"{self.default_file}",
+                            error,
+                            __name__,
+                            )
             
             # config.json does not meet schema requirements
             except (json.JSONDecodeError, jsonschema.ValidationError):

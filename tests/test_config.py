@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 from copy import deepcopy
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from jsonschema import ValidationError
 from PyQt6 import QtWidgets as qtw
@@ -162,6 +162,141 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(persisted["user_preference"]["colorbar_width"], 15)
         self.assertEqual(persisted["user_preference"]["axis_major_tick_count"], 3)
         self.assertNotIn("axis_tick_density", persisted["user_preference"])
+
+    def test_migration_save_failure_keeps_valid_config_in_memory(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["user_preference"].update({
+            "theme": "dark",
+            "bar_colour": "CET-L1",
+            })
+        for key in (
+                "colorbar_width",
+                "axis_tick_width",
+                "axis_major_tick_count",
+                ):
+            del stored_config["user_preference"][key]
+        stored_config["user_preference"]["axis_tick_density"] = 0.1
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+        original_contents = Path(config.default_file).read_text(encoding="utf-8")
+
+        with (
+            patch.object(
+                config,
+                "save_config",
+                side_effect=PermissionError("simulated migration failure"),
+                ) as save_config,
+            patch("qplot.configuration.config.log_exception") as logged,
+            ):
+            migrated = config()
+
+            self.assertEqual(migrated.get("user_preference.theme"), "dark")
+            self.assertEqual(migrated.get("user_preference.bar_colour"), "CET-L1")
+            self.assertEqual(migrated.get("user_preference.colorbar_width"), 15)
+            self.assertEqual(migrated.get("user_preference.axis_tick_width"), 2.0)
+            self.assertEqual(migrated.get("user_preference.axis_major_tick_count"), 3)
+            self.assertNotIn("axis_tick_density", migrated.config["user_preference"])
+            self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+            self.assertEqual(save_config.call_count, 1)
+            logged.assert_called_once_with(
+                f"Could not persist migrated configuration at {config.default_file}",
+                ANY,
+                "qplot.configuration.config",
+                )
+
+        self.assertEqual(
+            Path(config.default_file).read_text(encoding="utf-8"),
+            original_contents,
+            )
+        self.assertEqual(
+            list(Path(config.default_path).glob(".config.json.*.tmp")),
+            [],
+            )
+
+    def test_failed_migration_is_retried_and_explicit_saves_still_fail(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        del stored_config["user_preference"]["colorbar_width"]
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+
+        with patch.object(
+                config,
+                "save_config",
+                side_effect=OSError("simulated persistence failure"),
+                ) as save_config:
+            first_startup = config()
+            second_startup = config()
+
+            self.assertEqual(first_startup.get("user_preference.colorbar_width"), 15)
+            self.assertEqual(second_startup.get("user_preference.colorbar_width"), 15)
+            self.assertEqual(save_config.call_count, 2)
+
+            with self.assertRaisesRegex(OSError, "simulated persistence failure"):
+                first_startup.update("user_preference.theme", "dark")
+
+        self.assertEqual(first_startup.get("user_preference.theme"), "light")
+        self.assertEqual(save_config.call_count, 3)
+
+    def test_failed_migration_atomic_save_removes_temporary_file(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        del stored_config["user_preference"]["colorbar_width"]
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+
+        with (
+            patch(
+                "qplot.configuration.config.json.dump",
+                side_effect=OSError("simulated write failure"),
+                ),
+            patch("qplot.configuration.config.log_exception"),
+            ):
+            migrated = config()
+
+        self.assertEqual(migrated.get("user_preference.colorbar_width"), 15)
+        self.assertEqual(
+            list(Path(config.default_path).glob(".config.json.*.tmp")),
+            [],
+            )
+
+    @unittest.skipUnless(
+        os.name == "posix" and os.geteuid() != 0,
+        "directory permissions are not reliable for this test environment",
+        )
+    def test_read_only_directory_allows_migration_but_not_later_saves(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["user_preference"]["theme"] = "dark"
+        del stored_config["user_preference"]["colorbar_width"]
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+        config_directory = Path(config.default_path)
+        original_mode = config_directory.stat().st_mode
+        config_directory.chmod(0o555)
+        try:
+            migrated = config()
+
+            self.assertEqual(migrated.get("user_preference.theme"), "dark")
+            self.assertEqual(migrated.get("user_preference.colorbar_width"), 15)
+            self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+            self.assertEqual(
+                list(config_directory.glob(".config.json.*.tmp")),
+                [],
+                )
+            with self.assertRaises(PermissionError):
+                migrated.update("user_preference.theme", "light")
+        finally:
+            config_directory.chmod(original_mode)
 
     def test_config_update_rejects_unknown_key(self):
         cfg = config()
