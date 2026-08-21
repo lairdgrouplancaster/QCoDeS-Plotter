@@ -101,7 +101,7 @@ def test_wal_fallback_identity_change_marks_source_observation_unstable(
     connection.close()
     wal_path = readonly_module._wal_path(database_path)
     wal_path.write_bytes(b"detached WAL placeholder")
-    real_database_file_identity = readonly_module.database_file_identity
+    real_path_bound_file_identity = readonly_module.path_bound_file_identity
     wal_identities = iter(
         (
             ("windows-file-id", 17, 23),
@@ -112,11 +112,11 @@ def test_wal_fallback_identity_change_marks_source_observation_unstable(
     def changing_wal_identity(path):
         if Path(path) == wal_path:
             return next(wal_identities)
-        return real_database_file_identity(path)
+        return real_path_bound_file_identity(path)
 
     monkeypatch.setattr(
         readonly_module,
-        "database_file_identity",
+        "path_bound_file_identity",
         changing_wal_identity,
     )
 
@@ -136,16 +136,16 @@ def test_wal_stat_signature_is_used_when_file_identity_is_unavailable(
     connection.close()
     wal_path = readonly_module._wal_path(database_path)
     wal_path.write_bytes(b"detached WAL placeholder")
-    real_database_file_identity = readonly_module.database_file_identity
+    real_path_bound_file_identity = readonly_module.path_bound_file_identity
 
     def unavailable_wal_identity(path):
         if Path(path) == wal_path:
             return None
-        return real_database_file_identity(path)
+        return real_path_bound_file_identity(path)
 
     monkeypatch.setattr(
         readonly_module,
-        "database_file_identity",
+        "path_bound_file_identity",
         unavailable_wal_identity,
     )
 
@@ -187,11 +187,12 @@ def test_path_and_descriptor_stat_fields_may_differ_for_same_file(
         lambda _stat_result: next(signatures),
     )
 
-    signature, prefix, trailer, stable = (
+    signature, identity, prefix, trailer, stable = (
         readonly_module._file_prefix_observation(database_path, 8)
     )
 
-    assert signature == (0, 0, 17, 200, 300)
+    assert signature == (11, 101, 17, 200, 300)
+    assert identity == stable_identity
     assert prefix == b"database"
     assert trailer == b""
     assert stable
@@ -214,11 +215,160 @@ def test_path_and_descriptor_identity_mismatch_is_unstable(
         lambda _descriptor: ("windows-file-id", 17, 24),
     )
 
-    _signature, _prefix, _trailer, stable = (
+    _signature, _identity, _prefix, _trailer, stable = (
         readonly_module._file_prefix_observation(database_path, 8)
     )
 
     assert not stable
+
+
+@pytest.mark.parametrize(
+    ("descriptor_identity", "expected_current"),
+    [
+        (("windows-file-id", 17, 23), True),
+        (("windows-file-id", 17, 24), False),
+    ],
+)
+def test_bounded_artifact_compares_windows_path_and_handle_observations(
+    tmp_path,
+    monkeypatch,
+    descriptor_identity,
+    expected_current,
+):
+    artifact_path = tmp_path / "bounded-artifact.db-wal"
+    artifact_path.write_bytes(b"bounded artifact contents for both ends")
+    path_identity = ("windows-file-id", 17, 23)
+    path_signature = (11, 101, 39, 200, 300)
+    descriptor_signature = (0, 0, 39, 200, 300)
+    signatures = iter(
+        (
+            path_signature,
+            descriptor_signature,
+            descriptor_signature,
+            path_signature,
+        )
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        lambda _path: path_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "open_file_identity",
+        lambda _descriptor: descriptor_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_stat_signature",
+        lambda _stat_result: next(signatures),
+    )
+
+    assert readonly_module._bounded_artifact_is_current(
+        artifact_path,
+        path_signature,
+        path_identity,
+    ) is expected_current
+
+
+@pytest.mark.parametrize(
+    ("descriptor_identity", "expected_match"),
+    [
+        (("windows-file-id", 17, 23), True),
+        (("windows-file-id", 17, 24), False),
+    ],
+)
+def test_locked_source_compares_windows_path_and_handle_observations(
+    tmp_path,
+    monkeypatch,
+    descriptor_identity,
+    expected_match,
+):
+    database_path = tmp_path / "locked-windows-observation.db"
+    database_path.write_bytes(b"locked database contents")
+    source_state = _sqlite_artifact_state(database_path)
+    path_identity = ("windows-file-id", 17, 23)
+    path_signature = (11, 101, 24, 200, 300)
+    descriptor_signature = (0, 0, 24, 200, 300)
+    expected_source = readonly_module._SourceSignature(
+        database=path_signature,
+        database_identity=path_identity,
+        database_header=b"locked database contents",
+        wal=None,
+        wal_identity=None,
+        journal=None,
+        stable=True,
+    )
+    signatures = iter(
+        (
+            descriptor_signature,
+            path_signature,
+            descriptor_signature,
+            path_signature,
+        )
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        lambda _path: path_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "open_file_identity",
+        lambda _descriptor: descriptor_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_stat_signature",
+        lambda _stat_result: next(signatures),
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_wal_observation",
+        lambda *_args, **_kwargs: (None, None, True),
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_rollback_journal_observation",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with database_path.open("rb") as database_file:
+        assert readonly_module._source_matches_under_sqlite_lock(
+            database_path,
+            expected_source,
+            database_file,
+        ) is expected_match
+
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+def test_bounded_artifact_rejects_mutation_during_validation(tmp_path):
+    artifact_path = tmp_path / "mutation-race.db-wal"
+    artifact_path.write_bytes(b"A" * 4096)
+    expected_signature = readonly_module._file_signature(artifact_path)
+    expected_identity = readonly_module.path_bound_file_identity(artifact_path)
+    original_mtime_ns = artifact_path.stat().st_mtime_ns
+    checks = 0
+
+    def mutate_after_prefix_read():
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            os.utime(
+                artifact_path,
+                ns=(original_mtime_ns + 1_000_000_000,) * 2,
+            )
+        return False
+
+    assert not readonly_module._bounded_artifact_is_current(
+        artifact_path,
+        expected_signature,
+        expected_identity,
+        cancelled_callback=mutate_after_prefix_read,
+    )
+    assert checks >= 3
+    assert artifact_path.stat().st_mtime_ns != original_mtime_ns
 
 
 def _directory_state(directory):
@@ -552,7 +702,10 @@ def _create_large_sparse_wal_header_database(database_path, logical_size):
     assert database_path.read_bytes()[18:20] == b"\x02\x02"
     assert not readonly_module._wal_path(database_path).exists()
     assert not Path(f"{database_path}-shm").exists()
+    _mark_file_sparse_on_windows(database_path)
     os.truncate(database_path, logical_size)
+    allocated_size = _allocated_file_size(database_path)
+    assert allocated_size < logical_size // 16
 
     connection = sqlite3.connect(
         f"{database_path.resolve().as_uri()}?mode=ro&immutable=1",
@@ -563,6 +716,68 @@ def _create_large_sparse_wal_header_database(database_path, logical_size):
         assert connection.execute("SELECT value FROM probe").fetchone() == ("readable",)
     finally:
         connection.close()
+
+
+def _mark_file_sparse_on_windows(path):
+    """Tell NTFS to preserve holes before extending the logical file size."""
+    if os.name != "nt":
+        return
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    device_io_control = kernel32.DeviceIoControl
+    device_io_control.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPDWORD,
+        wintypes.LPVOID,
+    )
+    device_io_control.restype = wintypes.BOOL
+    bytes_returned = wintypes.DWORD()
+    with Path(path).open("r+b") as sparse_file:
+        handle = msvcrt.get_osfhandle(sparse_file.fileno())
+        if not device_io_control(
+            handle,
+            0x000900C4,  # FSCTL_SET_SPARSE
+            None,
+            0,
+            None,
+            0,
+            ctypes.byref(bytes_returned),
+            None,
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _allocated_file_size(path):
+    """Return allocated bytes so the large-file fixture can prove sparseness."""
+    status = Path(path).stat()
+    if os.name != "nt":
+        blocks = getattr(status, "st_blocks", None)
+        assert blocks is not None
+        return blocks * 512
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_compressed_file_size = kernel32.GetCompressedFileSizeW
+    get_compressed_file_size.argtypes = (wintypes.LPCWSTR, wintypes.LPDWORD)
+    get_compressed_file_size.restype = wintypes.DWORD
+    high_size = wintypes.DWORD()
+    ctypes.set_last_error(0)
+    low_size = get_compressed_file_size(str(path), ctypes.byref(high_size))
+    error_code = ctypes.get_last_error()
+    if low_size == 0xFFFFFFFF and error_code:
+        raise ctypes.WinError(error_code)
+    return (high_size.value << 32) | low_size
 
 
 def _sparse_database_state(database_path):
@@ -1404,10 +1619,44 @@ def test_access_probe_does_not_copy_large_sparse_wal_header_database(
         reject_full_snapshot,
     )
 
+    from qplot.datahandling import database as database_module
+
+    guard_directory = tmp_path / "subprocess-guard"
+    guard_directory.mkdir()
+    guard_marker = guard_directory / "active"
+    (guard_directory / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        "from qplot.datahandling import readonly\n"
+        f"Path({str(guard_marker)!r}).write_text('active', encoding='utf-8')\n"
+        "def reject_snapshot(*args, **kwargs):\n"
+        "    raise AssertionError('bounded probe attempted a full snapshot')\n"
+        "readonly._prepare_read_target = reject_snapshot\n",
+        encoding="utf-8",
+    )
+    real_subprocess_run = database_module.subprocess.run
+
+    def run_with_subprocess_snapshot_guard(command, **kwargs):
+        environment = os.environ.copy()
+        prior_pythonpath = environment.get("PYTHONPATH")
+        environment["PYTHONPATH"] = (
+            str(guard_directory)
+            if not prior_pythonpath
+            else f"{guard_directory}{os.pathsep}{prior_pythonpath}"
+        )
+        kwargs["env"] = environment
+        return real_subprocess_run(command, **kwargs)
+
+    monkeypatch.setattr(
+        database_module.subprocess,
+        "run",
+        run_with_subprocess_snapshot_guard,
+    )
+
     readonly_module.probe_read_only_database(database_path)
 
     assert full_snapshot_attempts == []
     assert database_access_error(database_path) is None
+    assert guard_marker.read_text(encoding="utf-8") == "active"
     assert _sparse_database_state(database_path) == source_state
 
 
@@ -1840,6 +2089,28 @@ def test_database_access_probe_rejects_genuinely_blocked_sqlite_reader(tmp_path)
         if writer.in_transaction:
             writer.rollback()
         writer.close()
+
+
+def test_stable_rollback_mode_probe_succeeds_without_source_changes(tmp_path):
+    database_path = tmp_path / "stable-rollback.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute(
+            "PRAGMA journal_mode = DELETE"
+        ).fetchone() == ("delete",)
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.execute("INSERT INTO probe VALUES ('committed')")
+        connection.commit()
+    finally:
+        connection.close()
+    source_state = _sqlite_artifact_state(database_path)
+
+    readonly_module.probe_read_only_database(
+        database_path,
+        _check_sqlite_lock_bytes=True,
+    )
+    assert database_access_error(database_path) is None
+    assert _sqlite_artifact_state(database_path) == source_state
 
 
 @pytest.mark.skipif(

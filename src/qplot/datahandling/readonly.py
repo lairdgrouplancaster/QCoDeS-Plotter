@@ -552,16 +552,23 @@ def _source_matches_under_sqlite_lock(
             f"SQLite shared lock: {error}"
         ) from error
 
+    main_file_stable = _path_and_descriptor_observations_match(
+        path_signature_before,
+        path_identity_before,
+        descriptor_signature_before,
+        descriptor_identity_before,
+        descriptor_signature_after,
+        descriptor_identity_after,
+        path_signature_after,
+        path_identity_after,
+    )
     return (
         expected_source.database is not None
-        and descriptor_signature_before
-        == descriptor_signature_after
-        == path_signature_before
+        and main_file_stable
+        and path_signature_before
         == path_signature_after
         == expected_source.database
-        and descriptor_identity_before
-        == descriptor_identity_after
-        == path_identity_before
+        and path_identity_before
         == path_identity_after
         == expected_source.database_identity
         and wal_stable
@@ -1241,24 +1248,6 @@ def probe_read_only_database(
         if before.database is None:
             raise FileNotFoundError(source_path)
         if not before.stable:
-            # Windows can report transient metadata changes while a writer is
-            # live. This preflight is only an accessibility check, so validate
-            # an unstable view with the private-snapshot reader used by the
-            # real opener; it retains all consistency and WAL-lineage checks.
-            if _check_sqlite_lock_bytes:
-                conn = sqlite_read_only_connection(
-                    source_path,
-                    ignore_unpaired_wal=ignore_unpaired_wal,
-                    expected_database_identity=expected_database_identity,
-                    cancelled_callback=cancelled_callback,
-                    deadline=deadline,
-                    )
-                try:
-                    conn.execute("PRAGMA user_version").fetchone()
-                finally:
-                    conn.close()
-                _raise_if_read_interrupted(cancelled_callback, deadline)
-                return
             continue
 
         policy = _source_read_policy(
@@ -1457,7 +1446,7 @@ def _file_prefix_observation(
     path_identity_before = path_bound_file_identity(path)
     path_signature_before = _file_signature(path)
     if path_signature_before is None:
-        return None, b"", b"", True
+        return None, None, b"", b"", True
     try:
         with path.open("rb") as handle:
             _raise_if_read_interrupted(cancelled_callback, deadline)
@@ -1473,33 +1462,65 @@ def _file_prefix_observation(
             descriptor_after = _stat_signature(os.fstat(handle.fileno()))
             descriptor_identity_after = open_file_identity(handle.fileno())
     except FileNotFoundError:
-        return path_signature_before, b"", b"", False
+        return path_signature_before, path_identity_before, b"", b"", False
     _raise_if_read_interrupted(cancelled_callback, deadline)
     path_signature_after = _file_signature(path)
     path_identity_after = path_bound_file_identity(path)
+    stable = _path_and_descriptor_observations_match(
+        path_signature_before,
+        path_identity_before,
+        descriptor_before,
+        descriptor_identity_before,
+        descriptor_after,
+        descriptor_identity_after,
+        path_signature_after,
+        path_identity_after,
+    )
+    observed_signature = (
+        path_signature_after
+        if path_signature_after is not None
+        else path_signature_before
+    )
+    return observed_signature, path_identity_after, prefix, trailer, stable
+
+
+def _path_and_descriptor_observations_match(
+        path_signature_before,
+        path_identity_before,
+        descriptor_signature_before,
+        descriptor_identity_before,
+        descriptor_signature_after,
+        descriptor_identity_after,
+        path_signature_after,
+        path_identity_after,
+        ):
+    """Compare path and descriptor observations without mixing stat domains."""
+    signatures = (
+        path_signature_before,
+        descriptor_signature_before,
+        descriptor_signature_after,
+        path_signature_after,
+    )
+    if any(signature is None for signature in signatures):
+        return False
+
+    stable_metadata = (
+        path_signature_before == path_signature_after
+        and descriptor_signature_before == descriptor_signature_after
+        and path_signature_before[2:4] == descriptor_signature_before[2:4]
+        and path_signature_after[2:4] == descriptor_signature_after[2:4]
+    )
     identities = (
         path_identity_before,
         descriptor_identity_before,
         descriptor_identity_after,
         path_identity_after,
     )
-    identities_available = all(identity is not None for identity in identities)
-    stable_identity = identities_available and len(set(identities)) == 1
-    stable_metadata = (
-        path_signature_before == path_signature_after
-        and descriptor_before == descriptor_after
-        and path_signature_before[2:4] == descriptor_before[2:4]
-    )
-    if identities_available:
-        stable = stable_identity and stable_metadata
-    else:
-        stable = (
-            path_signature_before
-            == descriptor_before
-            == descriptor_after
-            == path_signature_after
-        )
-    return descriptor_after, prefix, trailer, stable
+    if all(identity is not None for identity in identities):
+        return stable_metadata and len(set(identities)) == 1
+    if any(identity is not None for identity in identities):
+        return False
+    return len(set(signatures)) == 1
 
 
 def _bounded_artifact_is_current(
@@ -1511,7 +1532,7 @@ def _bounded_artifact_is_current(
         deadline=None,
         ):
     """Touch an artifact's beginning and end while retaining its identity."""
-    signature, _prefix, _trailer, stable = _file_prefix_observation(
+    signature, identity, _prefix, _trailer, stable = _file_prefix_observation(
         artifact_path,
         _WAL_HEADER_BYTES,
         include_trailer=True,
@@ -1522,7 +1543,7 @@ def _bounded_artifact_is_current(
     return (
         stable
         and signature == expected_signature
-        and database_file_identity(artifact_path) == expected_identity
+        and identity == expected_identity
     )
 
 
@@ -1534,8 +1555,7 @@ def _rollback_journal_observation(
         ):
     journal_path = _journal_path(database_path)
     _raise_if_read_interrupted(cancelled_callback, deadline)
-    identity_before = database_file_identity(journal_path)
-    signature, prefix, trailer, stable = _file_prefix_observation(
+    signature, identity, prefix, trailer, stable = _file_prefix_observation(
         journal_path,
         _ROLLBACK_JOURNAL_PREFIX_BYTES,
         include_trailer=True,
@@ -1545,13 +1565,12 @@ def _rollback_journal_observation(
     if signature is None:
         return None
     _raise_if_read_interrupted(cancelled_callback, deadline)
-    identity_after = database_file_identity(journal_path)
     return _RollbackJournalObservation(
         file_signature=signature,
-        file_identity=identity_after,
+        file_identity=identity,
         prefix=prefix,
         trailer=trailer,
-        stable=stable and identity_before == identity_after,
+        stable=stable,
     )
 
 
@@ -1564,11 +1583,11 @@ def _wal_observation(
     """Observe one path-bound WAL instance without opening it through SQLite."""
     wal_path = _wal_path(database_path)
     _raise_if_read_interrupted(cancelled_callback, deadline)
-    identity_before = database_file_identity(wal_path)
+    identity_before = path_bound_file_identity(wal_path)
     signature_before = _file_signature(wal_path)
     _raise_if_read_interrupted(cancelled_callback, deadline)
     signature_after = _file_signature(wal_path)
-    identity_after = database_file_identity(wal_path)
+    identity_after = path_bound_file_identity(wal_path)
     return (
         signature_after,
         identity_after,
@@ -1583,7 +1602,13 @@ def _source_signature(
         deadline=None,
         ):
     _raise_if_read_interrupted(cancelled_callback, deadline)
-    database_signature, database_header, _trailer, database_stable = (
+    (
+        database_signature,
+        database_identity,
+        database_header,
+        _trailer,
+        database_stable,
+    ) = (
         _file_prefix_observation(
             database_path,
             100,
@@ -1604,7 +1629,7 @@ def _source_signature(
     _raise_if_read_interrupted(cancelled_callback, deadline)
     return _SourceSignature(
         database=database_signature,
-        database_identity=database_file_identity(database_path),
+        database_identity=database_identity,
         database_header=database_header,
         wal=wal_signature,
         wal_identity=wal_identity,

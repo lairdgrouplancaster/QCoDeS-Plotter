@@ -376,15 +376,20 @@ class TemporaryConfigTestCase(unittest.TestCase):
         existing_backup.chmod(0o600)
         Path(config.default_file).write_bytes(original_contents)
         Path(config.default_file).chmod(0o640)
+        source_mode = stat.S_IMODE(Path(config.default_file).stat().st_mode)
+        existing_mode = stat.S_IMODE(existing_backup.stat().st_mode)
+        if os.name == "posix":
+            self.assertEqual(source_mode, 0o640)
+            self.assertEqual(existing_mode, 0o600)
 
         recovered = config()
 
         backup = Path(recovered.invalid_config_backup_file)
         self.assertEqual(backup.name, "config.invalid.1.json")
         self.assertEqual(backup.read_bytes(), original_contents)
-        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o640)
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), source_mode)
         self.assertEqual(existing_backup.read_bytes(), existing_contents)
-        self.assertEqual(stat.S_IMODE(existing_backup.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(existing_backup.stat().st_mode), existing_mode)
         self.assertEqual(list(Path(config.default_path).glob("*.tmp")), [])
 
     def test_later_explicit_save_succeeds_after_backup_permission_failure(self):
