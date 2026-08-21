@@ -154,6 +154,7 @@ class RunControlsMixin:
 
         self.RunList = RunList(config=self.config)
         self.RunList.selected.connect(self.updateSelected)
+        self.RunList.nonSingleSelection.connect(self.clear_non_single_run_selection)
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
         self.RunList.previewExportRequested.connect(self.export_run_preview_csv)

@@ -254,6 +254,12 @@ class PlotActionsMixin:
             info_box.clear()
 
 
+    @QtCore.pyqtSlot()
+    def clear_non_single_run_selection(self):
+        """Drop the single-run action target for an empty or multi-selection."""
+        self._clear_selected_run_state()
+
+
     def _evict_dataset_handle(self, dataset_key):
         handle = self.dataset_holder.pop(dataset_key, None)
         if handle is None:

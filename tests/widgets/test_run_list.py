@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
+from PyQt6.QtTest import QTest
 
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
@@ -12,6 +13,73 @@ from qplot.windows._widgets.preview import (
 
 
 class RunListTooltipTestCase(unittest.TestCase):
+    def test_selection_signals_distinguish_single_and_non_single_rows(self):
+        old_isfile = treeWidgets.isfile
+        treeWidgets.isfile = lambda _: False
+        try:
+            run_list = treeWidgets.RunList()
+            run_list.resize(640, 180)
+            run_list.addRuns({
+                1: {"guid": "guid-1", "sweep_parameters": [], "measure_parameters": []},
+                2: {"guid": "guid-2", "sweep_parameters": [], "measure_parameters": []},
+                })
+            selected = []
+            non_single = []
+            run_list.selected.connect(selected.append)
+            run_list.nonSingleSelection.connect(lambda: non_single.append(True))
+
+            first = run_list.topLevelItem(0)
+            second = run_list.topLevelItem(1)
+            run_list.show()
+            qtw.QApplication.processEvents()
+
+            # Keyboard navigation remains a valid one-row selection.
+            run_list.setCurrentItem(first)
+            QTest.keyClick(run_list, QtCore.Qt.Key.Key_Down)
+            self.assertEqual(selected[-1], run_list.currentItem().guid)
+            self.assertGreaterEqual(len(selected), 2)
+            self.assertEqual(non_single, [])
+
+            # Ctrl-clicking the current item leaves no selected row.
+            second_rect = run_list.visualItemRect(second)
+            QTest.mouseClick(
+                run_list.viewport(),
+                QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.KeyboardModifier.ControlModifier,
+                second_rect.center(),
+                )
+            self.assertEqual(run_list.selectedItems(), [])
+            self.assertEqual(non_single, [True])
+
+            # Multiple selected rows also explicitly invalidate a single target.
+            run_list.setSelectionMode(
+                qtw.QAbstractItemView.SelectionMode.ExtendedSelection
+                )
+            first.setSelected(True)
+            second.setSelected(True)
+            self.assertCountEqual(run_list.selectedItems(), [first, second])
+            self.assertEqual(non_single, [True, True])
+
+            run_list.setCurrentItem(first)
+            self.assertEqual(selected[-1], "guid-1")
+
+            # Database-load code can still clear programmatically without an
+            # invalidation signal while source signals are blocked.
+            run_list.blockSignals(True)
+            run_list.clearSelection()
+            run_list.blockSignals(False)
+            self.assertEqual(non_single, [True, True])
+        finally:
+            if "run_list" in locals():
+                run_list.hide()
+                run_list.deleteLater()
+                qtw.QApplication.sendPostedEvents(
+                    None,
+                    QtCore.QEvent.Type.DeferredDelete,
+                    )
+                qtw.QApplication.processEvents()
+            treeWidgets.isfile = old_isfile
+
     def test_format_timestamp_tolerates_malformed_database_values(self):
         self.assertEqual(treeWidgets.format_timestamp("not-a-timestamp"), "unknown")
         self.assertEqual(treeWidgets.format_timestamp(float("nan")), "unknown")
