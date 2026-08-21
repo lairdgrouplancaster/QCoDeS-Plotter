@@ -14,6 +14,7 @@ from qcodes.parameters import ManualParameter
 from qplot.datahandling.file_identity import (
     SQLITE_SIDECAR_SUFFIXES,
     database_file_identity,
+    logical_database_path,
 )
 from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows._export_paths import prepare_export_destination
@@ -119,6 +120,10 @@ def _create_run(database_path: Path, row_count: int):
         run_id = dataset.run_id
         guid = dataset.guid
     dataset.conn.close()
+    # Measurement retains the experiment's independent connection.  Closing
+    # only the dataset connection leaves the source database locked on
+    # Windows, preventing the replacement race this test is meant to model.
+    experiment.conn.close()
     return run_id, guid
 
 
@@ -183,7 +188,7 @@ def _assert_replacement_was_rejected(
         ):
     assert replacement_states
     assert _artifact_state(source) == replacement_states[-1]
-    assert harness.reload_requests == [str(source)]
+    assert harness.reload_requests == [logical_database_path(source)]
     assert harness.errors == []
     assert "database was replaced" in harness.status_messages[-1][0].lower()
     assert "no csv was written" in harness.status_messages[-1][0].lower()

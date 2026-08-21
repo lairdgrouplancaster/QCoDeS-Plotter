@@ -159,7 +159,6 @@ class SnapToTraceTestCase(unittest.TestCase):
 
     def test_horizontal_axis_target_counts_only_labels_that_fit(self):
         widget = pg.PlotWidget()
-        self.addCleanup(widget.close)
         widget.resize(600, 400)
         widget.show()
         plot = widget.getPlotItem()
@@ -169,9 +168,23 @@ class SnapToTraceTestCase(unittest.TestCase):
             800,
             600,
             QtGui.QImage.Format.Format_ARGB32,
-            )
+        )
         painter = QtGui.QPainter(image)
-        self.addCleanup(painter.end)
+
+        def dispose_plot_widget():
+            # Closing alone leaves the native PlotWidget alive until Python's
+            # later garbage collection.  On the Windows offscreen backend that
+            # can race QPainter teardown and abort the test worker.
+            painter.end()
+            widget.close()
+            widget.deleteLater()
+            qtw.QApplication.sendPostedEvents(
+                None,
+                QtCore.QEvent.Type.DeferredDelete,
+            )
+            qtw.QApplication.processEvents()
+
+        self.addCleanup(dispose_plot_widget)
 
         for target, expected in (
                 (3, ["-5", "0", "5"]),
