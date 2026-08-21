@@ -10,8 +10,18 @@ from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
     unsupported_plot_message,
 )
-from qplot.datahandling.file_identity import database_sidecar_identities
-from qplot.datahandling.readonly import sqlite_read_only_connection
+from qplot.datahandling.file_identity import (
+    DatabaseInstance,
+    database_instances_differ,
+)
+from qplot.datahandling.file_identity import (
+    database_instance as capture_database_instance,
+)
+from qplot.datahandling.readonly import (
+    DatabaseInstanceChangedError,
+    quarantine_wal_for_replaced_database,
+    sqlite_read_only_connection,
+)
 from qplot.diagnostics import log_exception
 
 from .._dragdrop import make_run_preview_mime
@@ -58,6 +68,7 @@ class PreviewTab(qtw.QWidget):
     exportRequested = QtCore.pyqtSignal(str)
     previewsReady = QtCore.pyqtSignal(str, object)
     previewGenerationChanged = QtCore.pyqtSignal(str, bool)
+    databaseReplaced = QtCore.pyqtSignal(str)
 
     def __init__(self, *args, preview_size=PREVIEW_SIZE):
         super().__init__(*args)
@@ -65,6 +76,7 @@ class PreviewTab(qtw.QWidget):
         self.preview_size = int(preview_size or PREVIEW_SIZE)
         self._update_minimum_height()
         self.database_path = ""
+        self.database_instance: DatabaseInstance | None = None
         self.generation = 0
         self.current_guid = None
         self.run_metadata = {}
@@ -178,7 +190,12 @@ class PreviewTab(qtw.QWidget):
     def set_database_runs(self, database_path, runs):
         self._cancel_workers()
         self.generation += 1
-        self.database_path = database_path
+        self.database_instance = _preview_database_instance(database_path)
+        self.database_path = (
+            self.database_instance.logical_path
+            if self.database_instance is not None
+            else ""
+        )
         self.current_guid = None
         self.run_metadata = self._normalise_runs(runs)
         self.cache = OrderedDict()
@@ -591,6 +608,10 @@ class PreviewTab(qtw.QWidget):
 
 
     def _start_worker(self, guid):
+        if self.database_instance is None:
+            self.queue.pop(guid, None)
+            return
+
         priority = self.queue.pop(guid)
         active_key = (self.generation, guid)
         self.active.add(active_key)
@@ -599,19 +620,33 @@ class PreviewTab(qtw.QWidget):
 
         worker = PreviewWorker(
             self.generation,
-            self.database_path,
+            self.database_instance,
             guid,
             self.run_metadata[guid],
             self.preview_size,
             )
-        worker.signals.finished.connect(self._worker_finished)
+        worker.signals.finished.connect(self._worker_signal_finished)
         self._workers[active_key] = worker
         self.thread_pool.start(worker)
 
 
-    @QtCore.pyqtSlot(int, str, object, object)
-    def _worker_finished(self, generation, guid, previews, error):
+    @QtCore.pyqtSlot(object, int, str, object, object)
+    def _worker_signal_finished(self, worker, generation, guid, previews, error):
+        self._worker_finished(generation, guid, previews, error, worker)
+
+
+    def _worker_finished(
+            self,
+            generation,
+            guid,
+            previews,
+            error,
+            completed_worker=None,
+            ):
         active_key = (generation, guid)
+        current_worker = self._workers.get(active_key)
+        if completed_worker is not None and completed_worker is not current_worker:
+            return
         worker = self._workers.pop(active_key, None)
         was_cancelled = bool(
             worker is not None
@@ -629,8 +664,22 @@ class PreviewTab(qtw.QWidget):
             self._start_next()
             return
 
+        if worker is None:
+            self._start_next()
+            return
+
+        if isinstance(error, DatabaseInstanceChangedError):
+            self._database_was_replaced(worker.database_instance)
+            return
+
         if was_cancelled:
             self._start_next()
+            return
+
+        try:
+            _require_current_preview_database_instance(worker.database_instance)
+        except DatabaseInstanceChangedError:
+            self._database_was_replaced(worker.database_instance)
             return
 
         self._explicit_guids.discard(guid)
@@ -647,6 +696,29 @@ class PreviewTab(qtw.QWidget):
                 self._show_previews(previews)
 
         self._start_next()
+
+
+    def _database_was_replaced(self, replaced_instance):
+        """Discard stale previews and ask MainWindow to reload the source."""
+        replaced_path = replaced_instance.logical_path
+        self._cancel_workers()
+        self.generation += 1
+        self.database_path = ""
+        self.database_instance = None
+        self.current_guid = None
+        self.run_metadata = {}
+        self.cache = OrderedDict()
+        self.cache_bytes = 0
+        self.errors = {}
+        self.queue = {}
+        self._explicit_guids = set()
+        self.active = set()
+        self._active_priorities = {}
+        self._workers = {}
+        self.metadata_signatures = {}
+        self._start_scheduled = False
+        self._show_message("Database replaced; reloading previews...")
+        self.databaseReplaced.emit(replaced_path)
 
 
     def _clear_layout(self):
@@ -909,8 +981,14 @@ class PreviewWorker(QtCore.QRunnable):
         super().__init__()
         self.signals = PreviewSignals()
         self.generation = generation
-        self.database_path = database_path
-        self.sidecar_identities = database_sidecar_identities(database_path)
+        database_instance = _preview_database_instance(database_path)
+        if database_instance is None:
+            raise ValueError("PreviewWorker requires a database path")
+        self.database_instance = database_instance
+        self.database_path = database_instance.logical_path
+        self.resolved_database_path = database_instance.resolved_path
+        self.database_identity = database_instance.identity
+        self.sidecar_identities = database_instance.sidecar_identities
         self.guid = guid
         self.metadata = metadata
         self.preview_size = preview_size
@@ -949,6 +1027,7 @@ class PreviewWorker(QtCore.QRunnable):
     def _emit_finished(self, previews, error):
         try:
             self.signals.finished.emit(
+                self,
                 self.generation,
                 self.guid,
                 previews,
@@ -969,7 +1048,7 @@ class PreviewWorker(QtCore.QRunnable):
                 previews = []
             else:
                 previews = generate_run_previews(
-                    self.database_path,
+                    self.database_instance,
                     self.metadata,
                     size=self.preview_size,
                     is_cancelled=self._cancelled.is_set,
@@ -978,6 +1057,8 @@ class PreviewWorker(QtCore.QRunnable):
             if self._cancelled.is_set():
                 previews = []
             self._emit_finished(previews, None)
+        except DatabaseInstanceChangedError as error:
+            self._emit_finished([], error)
         except Exception as error:
             if self._cancelled.is_set():
                 self._emit_finished([], None)
@@ -987,7 +1068,7 @@ class PreviewWorker(QtCore.QRunnable):
 
 
 class PreviewSignals(QtCore.QObject):
-    finished = QtCore.pyqtSignal(int, str, object, object)
+    finished = QtCore.pyqtSignal(object, int, str, object, object)
 
 
 def generate_run_previews(
@@ -1004,12 +1085,21 @@ def generate_run_previews(
     if not database_path or not table_name:
         return []
 
+    database_instance = _preview_database_instance(database_path)
+    if database_instance is None:
+        return []
+    _require_current_preview_database_instance(database_instance)
+
     dependencies = _dependencies_from_metadata(metadata)
     if not dependencies:
         return []
 
     previews = []
-    conn = sqlite_read_only_connection(database_path, timeout=10)
+    conn = sqlite_read_only_connection(
+        database_instance.logical_path,
+        timeout=10,
+        expected_database_identity=database_instance.identity,
+    )
     if connection_callback is not None:
         connection_callback(conn)
     cursor = None
@@ -1057,7 +1147,28 @@ def generate_run_previews(
             connection_callback(None)
         conn.close()
 
+    _require_current_preview_database_instance(database_instance)
     return previews
+
+
+def _preview_database_instance(database_source):
+    """Return the exact source instance carried by one preview request."""
+    if isinstance(database_source, DatabaseInstance):
+        return database_source
+    if not database_source:
+        return None
+    return capture_database_instance(database_source)
+
+
+def _require_current_preview_database_instance(expected_instance):
+    """Reject a preview if its accepted logical source has been replaced."""
+    current_instance = capture_database_instance(expected_instance.logical_path)
+    if not database_instances_differ(expected_instance, current_instance):
+        return
+    quarantine_wal_for_replaced_database(expected_instance.logical_path)
+    raise DatabaseInstanceChangedError(
+        "The database was replaced while qPlot was generating a preview."
+    )
 
 
 def _unsupported_preview(parameter, axes):

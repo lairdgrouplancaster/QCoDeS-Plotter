@@ -168,6 +168,9 @@ class RunControlsMixin:
         self.infoBox.preview.previewGenerationChanged.connect(
             self.RunList.set_run_preview_generating
             )
+        self.infoBox.preview.databaseReplaced.connect(
+            self._reload_replaced_database
+            )
         if self.fileTextbox.text() and self.RunList.topLevelItemCount():
             self.infoBox.preview.set_database_runs(
                 self.fileTextbox.text(),
