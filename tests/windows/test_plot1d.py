@@ -1,3 +1,5 @@
+import math
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -194,6 +196,192 @@ class SnapToTraceTestCase(unittest.TestCase):
             qtw.QApplication.processEvents()
             specs = axis.generateDrawSpecs(painter)
             self.assertEqual([spec[2] for spec in specs[2]], expected)
+
+    def test_tick_positions_are_bounded_and_precision_aware(self):
+        self.assertEqual(
+            plotwin_module._tick_positions(0.0, 1.0, 0.5, 0.0),
+            [0.0, 0.5, 1.0],
+            )
+        self.assertEqual(
+            plotwin_module._tick_positions(1.0, -1.0, 1.0, 0.0),
+            [-1.0, 0.0, 1.0],
+            )
+        self.assertEqual(
+            plotwin_module._tick_positions(-9.0, -1.0, 2.0, 0.0),
+            [-8.0, -6.0, -4.0, -2.0],
+            )
+
+        for lower, upper, spacing in (
+                (1e12, 1e12 + 1.0, 0.5),
+                (1e15, 1e15 + 1.0, 0.5),
+                (1e-9, 1e-9 + 1e-12, 5e-13),
+                ):
+            with self.subTest(lower=lower, upper=upper):
+                positions = plotwin_module._tick_positions(
+                    lower,
+                    upper,
+                    spacing,
+                    0.0,
+                    )
+                self.assertGreaterEqual(len(positions), 2)
+                self.assertLessEqual(
+                    len(positions),
+                    plotwin_module._MAX_TICK_POSITIONS,
+                    )
+
+        # This lattice would previously allocate around two billion entries
+        # because the endpoint tolerance was based on 1e15 rather than the span.
+        with patch("builtins.range", side_effect=AssertionError("range allocated")):
+            self.assertEqual(
+                plotwin_module._tick_positions(
+                    1e15,
+                    1e15 + 1.0,
+                    1e-6,
+                    0.0,
+                    ),
+                [],
+                )
+
+    def test_major_tick_spacing_handles_edge_ranges_without_invalid_levels(self):
+        axis = type("Axis", (), {"_qplot_major_tick_count": 3})()
+        smallest_positive = math.nextafter(0.0, 1.0)
+        ranges = (
+            (0.0, 1.0),
+            (-10.0, -1.0),
+            (-1.0, 1.0),
+            (1e12, 1e12 + 1.0),
+            (1e15, 1e15 + 1.0),
+            (1e-9, 1e-9 + 1e-12),
+            (0.0, smallest_positive),
+            (0.0, 1e-300),
+            (0.0, 1e300),
+            (-1e308, 1e308),
+            )
+
+        for lower, upper in ranges:
+            with self.subTest(lower=lower, upper=upper):
+                levels = plotwin_module._major_tick_spacing(
+                    axis,
+                    lower,
+                    upper,
+                    600,
+                    )
+                self.assertGreaterEqual(len(levels), 1)
+                self.assertLessEqual(len(levels), 2)
+                for spacing, offset in levels:
+                    self.assertTrue(math.isfinite(spacing))
+                    self.assertGreater(spacing, 0.0)
+                    self.assertTrue(math.isfinite(offset))
+                positions = plotwin_module._tick_positions(
+                    lower,
+                    upper,
+                    *levels[0],
+                    )
+                self.assertLessEqual(
+                    len(positions),
+                    plotwin_module._MAX_TICK_POSITIONS,
+                    )
+
+        for lower, upper in (
+                (1.0, 1.0),
+                (math.nan, 1.0),
+                (-math.inf, 1.0),
+                (0.0, math.inf),
+                ):
+            with self.subTest(lower=lower, upper=upper):
+                self.assertEqual(
+                    plotwin_module._major_tick_spacing(
+                        axis,
+                        lower,
+                        upper,
+                        600,
+                        ),
+                    [],
+                    )
+
+    def test_major_tick_spacing_has_safe_fallback_when_no_labels_fit(self):
+        axis = type("Axis", (), {"_qplot_major_tick_count": 3})()
+
+        with patch.object(
+                plotwin_module,
+                "_visible_horizontal_tick_positions",
+                return_value=[],
+                ):
+            levels = plotwin_module._major_tick_spacing(axis, 0.0, 1.0, 1)
+
+        self.assertEqual(levels, [(0.5, 0.0), (0.1, 0.0)])
+
+    def test_real_axes_handle_narrow_vertical_reversed_and_log_ranges(self):
+        for size in (1, 5, 10, 20):
+            axis = pg.AxisItem("bottom")
+            plotwin_module._configure_major_ticks(axis, 3)
+            with self.subTest(size=size):
+                levels = axis.tickSpacing(0.0, 1.0, size)
+                self.assertGreater(levels[0][0], 0.0)
+
+        vertical_axis = pg.AxisItem("left")
+        plotwin_module._configure_major_ticks(vertical_axis, 3)
+        self.assertEqual(
+            vertical_axis.tickSpacing(1.0, -1.0, 1),
+            [(1.0, 0.0), (0.2, 0.0)],
+            )
+
+        log_axis = pg.AxisItem("bottom")
+        log_axis.setLogMode(True)
+        plotwin_module._configure_major_ticks(log_axis, 3)
+        levels = log_axis.tickSpacing(3.0, -3.0, 10)
+        self.assertGreater(levels[0][0], 0.0)
+        values = [-2.0, 0.0, 2.0]
+        self.assertEqual(
+            log_axis.tickStrings(values, 1.0, levels[0][0]),
+            log_axis._qplot_original_tick_strings(
+                values,
+                1.0,
+                levels[0][0],
+                ),
+            )
+
+    def test_plot_widget_narrow_resize_and_grab_does_not_reach_qt_exception_hook(self):
+        widget = pg.PlotWidget()
+        widget.show()
+        plot = widget.getPlotItem()
+        for side in ("bottom", "left"):
+            plotwin_module._configure_major_ticks(plot.getAxis(side), 3)
+
+        def dispose_plot_widget():
+            widget.close()
+            widget.deleteLater()
+            qtw.QApplication.sendPostedEvents(
+                None,
+                QtCore.QEvent.Type.DeferredDelete,
+                )
+            qtw.QApplication.processEvents()
+
+        self.addCleanup(dispose_plot_widget)
+        qt_errors = []
+
+        def record_qt_error(exception_type, exception, traceback):
+            qt_errors.append((exception_type, exception, traceback))
+
+        with patch.object(sys, "excepthook", side_effect=record_qt_error):
+            for lower, upper in (
+                    (0.0, 1.0),
+                    (1e15, 1e15 + 1.0),
+                    ):
+                plot.setXRange(lower, upper, padding=0.0)
+                plot.setYRange(-1.0, 1.0, padding=0.0)
+                for width in (1, 5, 10, 20):
+                    with self.subTest(lower=lower, width=width):
+                        widget.resize(width, 120)
+                        qtw.QApplication.processEvents()
+                        self.assertFalse(widget.grab().isNull())
+
+            plot.setLogMode(x=True)
+            plot.setXRange(-3.0, 3.0, padding=0.0)
+            qtw.QApplication.processEvents()
+            self.assertFalse(widget.grab().isNull())
+
+        self.assertEqual(qt_errors, [])
 
     def test_trace_scroll_area_does_not_lock_dock_width(self):
         host = Plot1DTraceMixin.__new__(Plot1DTraceMixin)
