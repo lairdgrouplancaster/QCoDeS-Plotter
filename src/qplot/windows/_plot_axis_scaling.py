@@ -903,15 +903,24 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         self._view_range_changed_programmatically()
 
     def _axis_scale_uses_filtered_auto(self, axis: _AxisName) -> bool:
-        """Return whether auto-ranging must respect per-trace axis assignment."""
+        """Return whether auto-ranging must respect per-item axis assignment."""
 
         return (
-            isinstance(self.__dict__.get("_trace_styles"), dict)
-            and isinstance(self.__dict__.get("lines"), dict)
+            (
+                isinstance(self.__dict__.get("_trace_styles"), dict)
+                and isinstance(self.__dict__.get("lines"), dict)
+            )
+            or (
+                isinstance(
+                    self.__dict__.get("_heatmap_axis_assignments"),
+                    dict,
+                )
+                and isinstance(self.__dict__.get("heatmaps"), dict)
+            )
         )
 
     def _apply_axis_scale_filtered_auto(self, axis: _AxisName) -> None:
-        """Apply a trace-filtered auto range while retaining Auto mode in the UI."""
+        """Apply an item-filtered auto range while retaining Auto mode in the UI."""
 
         limits = self._axis_scale_auto_limits(axis)
         if limits is None:

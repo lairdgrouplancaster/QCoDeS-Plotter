@@ -13,6 +13,7 @@ from qplot.windows._plot2d_layers import (
     _heatmap_axis_order,
     _heatmap_layer_compatibility,
 )
+from qplot.windows._plot_axis_scaling import PlotAxisScalingMixin
 
 
 class _Monitor:
@@ -69,7 +70,7 @@ class _SourceWindow(QtCore.QObject):
         self.spinBox.setValue(0.5)
 
 
-class _LayerHost(Plot2DLayerMixin):
+class _LayerHost(Plot2DLayerMixin, PlotAxisScalingMixin):
     def __init__(
             self,
             trace_key,
@@ -107,6 +108,9 @@ class _LayerHost(Plot2DLayerMixin):
     @property
     def axis_options(self):
         return dict(self._axis_options)
+
+    def _view_range_changed_programmatically(self):
+        pass
 
     def close(self):
         for layer in list(getattr(self, "heatmaps", {}).values()):
@@ -651,5 +655,29 @@ def test_primary_heatmap_interactions_follow_its_selected_viewbox(tmp_path):
         ] is host.top_right_vb
         assert host._primary_heatmap_viewbox() is host.top_right_vb
         assert host._primary_heatmap_semantic_axes() == ("x2", "y2")
+    finally:
+        host.close()
+
+
+def test_autoscale_includes_heatmap_on_combined_secondary_axes(tmp_path):
+    host = _LayerHost(
+        _trace_key(tmp_path, "host-guid", "host_signal"),
+        axis_options={"x": "field", "y": "gate"},
+    )
+
+    try:
+        host._init_heatmap_layers()
+        host.image.setImage(np.ones((2, 3)), autoLevels=False)
+        host.image.setRect(QtCore.QRectF(10.0, 20.0, 30.0, 40.0))
+        host._set_layer_axes(host, "Top", "Right")
+        host.top_vb.setXRange(-100.0, -90.0, padding=0)
+        host.right_vb.setYRange(-200.0, -190.0, padding=0)
+
+        host.force_all_axes_autoscale()
+
+        x_range, y_range = host.top_right_vb.viewRange()
+        assert x_range[0] <= 10.0 < 40.0 <= x_range[1]
+        assert y_range[0] <= 20.0 < 60.0 <= y_range[1]
+        assert host._axis_scale_custom_auto_axes == {"x2", "y2"}
     finally:
         host.close()
