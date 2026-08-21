@@ -159,13 +159,13 @@ class PreferencesDialog(qtw.QDialog):
 
         self.axisMajorTickCountSpin = qtw.QSpinBox(tab)
         self.axisMajorTickCountSpin.setObjectName("axisMajorTickCountPreferenceSpin")
-        self.axisMajorTickCountSpin.setAccessibleName("Major ticks per axis")
+        self.axisMajorTickCountSpin.setAccessibleName("Target labels per axis")
         self.axisMajorTickCountSpin.setRange(2, 10)
         self.axisMajorTickCountSpin.setToolTip(
             "Target number of labelled major ticks on each axis, including "
             "the heatmap colour scale"
             )
-        self._add_row(form, "&Major ticks per axis:", self.axisMajorTickCountSpin)
+        self._add_row(form, "&Target labels per axis:", self.axisMajorTickCountSpin)
 
         self.previewSizeSpin = qtw.QSpinBox(tab)
         self.previewSizeSpin.setObjectName("previewSizePreferenceSpin")
