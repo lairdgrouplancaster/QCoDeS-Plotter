@@ -2570,7 +2570,11 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
             self.assertTrue(harness.load_file("database-b.db"))
 
-            self.assertEqual(self._database_view(harness), previous_view)
+            expected_view = dict(previous_view)
+            # A pending load intentionally pauses automatic refresh, while
+            # preserving the visible committed database view.
+            expected_view["monitor_stopped"] = True
+            self.assertEqual(self._database_view(harness), expected_view)
             self.assertEqual(get_DB_location(), "database-a.db")
             self.assertTrue(harness._database_load_active)
             self.assertEqual(harness._database_load_state["abspath"], "database-b.db")
@@ -3032,7 +3036,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
             harness.cancel_database_load()
 
-            self.assertEqual(self._database_view(harness), previous_view)
+            expected_view = dict(previous_view)
+            expected_view["monitor_stopped"] = True
+            self.assertEqual(self._database_view(harness), expected_view)
             self.assertEqual(get_DB_location(), "database-a.db")
             self.assertFalse(harness._database_load_active)
         finally:
@@ -3054,7 +3060,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 RuntimeError("broken database"),
                 )
 
-            self.assertEqual(self._database_view(harness), previous_view)
+            expected_view = dict(previous_view)
+            expected_view["monitor_stopped"] = True
+            self.assertEqual(self._database_view(harness), expected_view)
             self.assertEqual(get_DB_location(), "database-a.db")
             self.assertFalse(harness._database_load_active)
         finally:

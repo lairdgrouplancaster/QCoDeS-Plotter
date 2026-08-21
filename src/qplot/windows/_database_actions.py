@@ -890,7 +890,11 @@ class DatabaseActionsMixin:
         if hasattr(self, "_hide_database_load_panel"):
             self._hide_database_load_panel()
 
-        self.monitor.stop()
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._main_refresh_interval())
+        else:
+            self.monitor.stop()
         self.fileTextbox.setText("")
         self.run_idBox.setText("")
         self.measurementBox.setText("*")
@@ -983,11 +987,20 @@ class DatabaseActionsMixin:
 
 
     @QtCore.pyqtSlot()
-    def refreshMain(self):
+    def refreshMain(self, automatic=False):
         """
         On self.monitor timer or force refresh, check for new runs in Database
 
         """
+        if automatic and getattr(self, "_loaded_database_instance", None) is None:
+            # The automatic path is silent: its lifecycle guard has already
+            # invalidated this timer, so do not turn a stale queued timeout
+            # into repeated "Load a database" status messages.
+            apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+            if callable(apply_refresh_interval):
+                apply_refresh_interval(self._main_refresh_interval())
+            return
+
         if not self.fileTextbox.text():
             self.show_status("Load a database before refreshing.", 5000)
             return
@@ -1552,6 +1565,9 @@ class DatabaseActionsMixin:
             "replacement_reload": replacement,
             "generation_recovery": generation_recovery,
         }
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._main_refresh_interval())
 
         self._set_database_load_controls_enabled(False)
         self._show_database_load_panel(load_message)
@@ -1641,7 +1657,16 @@ class DatabaseActionsMixin:
     def _release_database_runtime_state(self, abspath):
         """Release database consumers without asserting that publication won."""
         old_instance = getattr(self, "_loaded_database_instance", None)
-        self.monitor.stop()
+        stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
+        if callable(stop_refresh_timer):
+            stop_refresh_timer()
+        else:
+            self.monitor.stop()
+        # Once consumers have been released, this is no longer a committed
+        # source even though the path remains displayed while replacement
+        # loading is in progress.
+        self._loaded_database_identity = None
+        self._loaded_database_instance = None
         DatabaseActionsMixin._cancel_database_refresh(self)
         self._cancel_database_detail_load()
 
@@ -1764,6 +1789,9 @@ class DatabaseActionsMixin:
         self._hide_database_load_panel()
         self.show_status("Database load cancelled.", 3000)
         DatabaseActionsMixin._resume_test_database_generation_recovery(self)
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._main_refresh_interval())
 
 
     @QtCore.pyqtSlot(int, str)
@@ -1849,6 +1877,9 @@ class DatabaseActionsMixin:
                     str(error),
                 )
                 DatabaseActionsMixin._resume_test_database_generation_recovery(self)
+                apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+                if callable(apply_refresh_interval):
+                    apply_refresh_interval(self._main_refresh_interval())
                 return
             self.show_error(
                 "Database Load Failed",
@@ -1856,6 +1887,9 @@ class DatabaseActionsMixin:
                 str(error),
             )
             DatabaseActionsMixin._resume_test_database_generation_recovery(self)
+            apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+            if callable(apply_refresh_interval):
+                apply_refresh_interval(self._main_refresh_interval())
             return
 
         self._cancel_database_detail_load()
@@ -1947,14 +1981,9 @@ class DatabaseActionsMixin:
         if callable(prioritize_previews):
             prioritize_previews()
         self._sync_empty_state()
-        if transaction_matches:
-            self.monitor.stop()
-            if replacement_state.monitor_was_active:
-                self.monitor.start(max(1, replacement_state.monitor_interval_ms))
-        else:
-            apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
-            if callable(apply_refresh_interval):
-                apply_refresh_interval(self._current_refresh_interval())
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._current_refresh_interval())
 
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)

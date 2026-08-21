@@ -493,6 +493,13 @@ class MainWindow(
                 event.ignore()
                 return
 
+        # Mark the refresh lifecycle as shut down before cancelling workers.
+        # This also invalidates a QTimer timeout that was already queued.
+        self._automatic_refresh_shutdown = True
+        stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
+        if callable(stop_refresh_timer):
+            stop_refresh_timer()
+
         preview = getattr(getattr(self, "infoBox", None), "preview", None)
         if preview is not None:
             preview.shutdown()
@@ -545,7 +552,11 @@ class MainWindow(
         self._test_database_generation_worker = None
         self._test_database_replacement_state = None
         self._database_view_released_for_generation = False
-        self.monitor.stop()
+        stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
+        if callable(stop_refresh_timer):
+            stop_refresh_timer()
+        else:
+            self.monitor.stop()
         self.close_plot_windows(confirm=False, status=False)
         self.close_database(status=False)
 

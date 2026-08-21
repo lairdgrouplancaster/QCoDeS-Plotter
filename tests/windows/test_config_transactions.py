@@ -59,6 +59,14 @@ class TransactionalGuiTestCase(unittest.TestCase):
                 self.spinBox = qtw.QDoubleSpinBox()
                 self.spinBox.setValue(1.0)
                 self.monitor = QtCore.QTimer()
+                # Refresh settings may arm the timer only for an accepted
+                # database instance; the persistence test supplies one.
+                self._loaded_database_instance = type(
+                    "CommittedInstance",
+                    (),
+                    {"identity": (1, 1)},
+                )()
+                self._database_load_generation = 0
                 self.errors = []
                 self.empty_state_syncs = 0
 
