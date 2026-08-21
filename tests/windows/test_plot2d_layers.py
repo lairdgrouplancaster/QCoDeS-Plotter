@@ -593,3 +593,63 @@ def test_registry_supports_multiple_secondary_heatmaps(tmp_path):
         host.close()
         for source in sources:
             source.spinBox.deleteLater()
+
+
+def test_heatmap_renderers_move_together_between_all_axis_viewboxes(tmp_path):
+    host, source, layer = _new_layer(tmp_path)
+
+    try:
+        host._init_heatmap_layers()
+        host.heatmaps[layer.trace_key] = layer
+        host._heatmap_axis_assignments[layer.trace_key] = {
+            "x": "Bottom",
+            "y": "Left",
+        }
+
+        host._set_layer_axes(layer, "Top", "Right")
+
+        assert host._heatmap_axis_sides(layer) == ("Top", "Right")
+        assert layer.image.getViewBox() is host.top_right_vb
+        assert layer.heatmap_mesh.getViewBox() is host.top_right_vb
+        assert host.plot.getAxis("top").style["showValues"]
+        assert host.plot.getAxis("right").style["showValues"]
+
+        host._set_layer_axes(layer, "Bottom", "Right")
+        assert layer.image.getViewBox() is host.right_vb
+        assert layer.heatmap_mesh.getViewBox() is host.right_vb
+
+        host._set_layer_axes(layer, "Top", "Left")
+        assert layer.image.getViewBox() is host.top_vb
+        assert layer.heatmap_mesh.getViewBox() is host.top_vb
+
+        host._set_layer_axes(layer, "Bottom", "Left")
+        assert layer.image.getViewBox() is host.vb
+        assert layer.heatmap_mesh.getViewBox() is host.vb
+        assert not host.plot.getAxis("top").style["showValues"]
+        assert not host.plot.getAxis("right").style["showValues"]
+    finally:
+        host.close()
+        source.spinBox.deleteLater()
+
+
+def test_primary_heatmap_interactions_follow_its_selected_viewbox(tmp_path):
+    host = _LayerHost(
+        _trace_key(tmp_path, "host-guid", "host_signal"),
+        axis_options={"x": "field", "y": "gate"},
+    )
+    host.hover_pixel_outline = qtw.QGraphicsRectItem()
+    host.plot.addItem(host.hover_pixel_outline)
+
+    try:
+        host._init_heatmap_layers()
+        host._set_layer_axes(host, "Top", "Right")
+
+        assert host.image.getViewBox() is host.top_right_vb
+        assert host.heatmap_mesh.getViewBox() is host.top_right_vb
+        assert host._heatmap_renderer_viewboxes[
+            id(host.hover_pixel_outline)
+        ] is host.top_right_vb
+        assert host._primary_heatmap_viewbox() is host.top_right_vb
+        assert host._primary_heatmap_semantic_axes() == ("x2", "y2")
+    finally:
+        host.close()

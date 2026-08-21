@@ -1417,7 +1417,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.config = Config()
             host.label = "main"
             host.line = pg.PlotDataItem()
-            host.axes_dock = QDock_context("Line control", host)
+            host.axes_dock = QDock_context("Data axes", host)
             host.addDockWidget(
                 QtCore.Qt.DockWidgetArea.LeftDockWidgetArea,
                 host.axes_dock,
@@ -1457,7 +1457,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.config = Config()
             host.label = "main"
             host.line = pg.PlotDataItem()
-            host.axes_dock = QDock_context("Line control", host)
+            host.axes_dock = QDock_context("Data axes", host)
             host.addDockWidget(
                 QtCore.Qt.DockWidgetArea.LeftDockWidgetArea,
                 host.axes_dock,
@@ -2032,7 +2032,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.label = "ID:1 current"
             host.param = type("Param", (), {"name": "current"})()
             host.line = pg.PlotDataItem()
-            host.axes_dock = QDock_context("Line control", host)
+            host.axes_dock = QDock_context("Data axes", host)
             host.addDockWidget(
                 QtCore.Qt.DockWidgetArea.LeftDockWidgetArea,
                 host.axes_dock,
@@ -2581,7 +2581,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.vb.setDefaultPadding(0)
             host.plot = host.widget.addPlot(viewBox=host.vb)
             host.vb.setParent(host.plot)
-            host.axes_dock = QDock_context("Line control", host)
+            host.axes_dock = QDock_context("Data axes", host)
             host.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, host.axes_dock)
             host.lineScroll = qtw.QScrollArea()
             host.scrollWidget = qtw.QWidget()

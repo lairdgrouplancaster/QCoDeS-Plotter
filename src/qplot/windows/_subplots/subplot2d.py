@@ -144,7 +144,7 @@ class sweeper(plotWidget):
             self.axis_dropdown["y"].setDisabled(True)
             self.axis_dropdown["y"].setCurrentText(self.param.name)
         
-        # add line control
+        # Add cut-axis controls to the Data axes dock.
         main_line = picker_1d(self, self.config, [self.label])
         main_line.option_box.setCurrentIndex(0)
         main_line.option_box.setDisabled(True)

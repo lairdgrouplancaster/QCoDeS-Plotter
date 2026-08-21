@@ -309,8 +309,8 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "toolbar.axis_control": CommandSpec(
         "toolbar.axis_control",
-        "Line control",
-        "Show or hide the axis control panel",
+        "Data axes",
+        "Show or hide the data-axis panel",
         "Ctrl+Alt+A",
         help_section="Plot Windows",
     ),
@@ -395,7 +395,7 @@ def toolbar_toggle_command_spec(title: str) -> CommandSpec | None:
     by_title = {
         "Refresh Timer": "toolbar.refresh",
         "Co-ordinates": "toolbar.coordinates",
-        "Line control": "toolbar.axis_control",
+        "Data axes": "toolbar.axis_control",
         "Operations": "toolbar.operations",
     }
     command_id = by_title.get(title)

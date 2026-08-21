@@ -552,6 +552,19 @@ class PlotActionsMixin:
         elif window_type == "plot2d":
             win.open_subplot.connect(self.openWin)
             win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
+            win._heatmap_candidate_provider = (
+                lambda target_window=win: self._heatmap_candidates_for_plot(
+                    target_window
+                )
+            )
+            win._heatmap_add_request = (
+                lambda source_key, parameter_name, target_window=win:
+                self.add_heatmap_to_plot(
+                    target_window,
+                    source_key,
+                    parameter_name,
+                )
+            )
             remove_dataset = getattr(win, "remove_dataset", None)
             if remove_dataset is not None:
                 remove_dataset.connect(self.remove_ds_at)
@@ -1420,6 +1433,41 @@ class PlotActionsMixin:
                 ):
                     continue
                 candidates.append((f"ID:{run_id} {parameter_name}", trace_key))
+        return candidates
+
+
+    def _heatmap_candidates_for_plot(self, target_win):
+        """Return loaded-database 2D measurements compatible with a heatmap."""
+
+        target_axes = tuple(
+            getattr(getattr(target_win, "param", None), "depends_on_", ())
+        )
+        if len(target_axes) != 2:
+            return []
+
+        run_list = getattr(self, "RunList", None)
+        all_run_metadata = getattr(run_list, "all_run_metadata", None)
+        if not callable(all_run_metadata):
+            return []
+
+        candidates = []
+        primary_key = TraceKey(target_win._dataset_key, target_win.param.name)
+        plotted = getattr(target_win, "heatmaps", {})
+        for run_id, metadata in all_run_metadata().items():
+            axes = tuple(metadata.get("sweep_parameters") or ())
+            if len(axes) != 2 or set(axes) != set(target_axes):
+                continue
+            guid = metadata.get("guid")
+            if not guid:
+                continue
+            source_key = self._current_dataset_key(guid)
+            for parameter_name in metadata.get("measure_parameters") or ():
+                heatmap_key = TraceKey(source_key, parameter_name)
+                if heatmap_key == primary_key or heatmap_key in plotted:
+                    continue
+                candidates.append(
+                    (f"ID:{run_id} {parameter_name}", heatmap_key)
+                )
         return candidates
 
 

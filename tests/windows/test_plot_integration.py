@@ -931,9 +931,9 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
         close_main_window(window)
 
 
-def test_hiding_line_control_preserves_heatmap_view_range(tmp_path, monkeypatch):
+def test_hiding_data_axes_preserves_heatmap_view_range(tmp_path, monkeypatch):
     configure_temp_qplot(monkeypatch, tmp_path)
-    database_path = Path(tmp_path) / "line-control-view-range.db"
+    database_path = Path(tmp_path) / "data-axes-view-range.db"
     _line_run_id, heatmap_run_id = build_synthetic_database(database_path)
 
     window = main_window.MainWindow()
@@ -963,6 +963,12 @@ def test_hiding_line_control_preserves_heatmap_view_range(tmp_path, monkeypatch)
             )
         )
         qtw.QApplication.processEvents()
+
+        assert heatmap_window.axes_dock.windowTitle() == "Data axes"
+        assert not heatmap_window.axes_dock.findChildren(
+            qtw.QWidget,
+            "heatmapLayerRow",
+        )
 
         initial_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
         heatmap_window.axes_dock.toggleViewAction().trigger()

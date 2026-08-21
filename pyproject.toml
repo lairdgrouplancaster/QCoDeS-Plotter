@@ -136,6 +136,7 @@ files = [
     "src/qplot/windows/_plot_export.py",
     "src/qplot/windows/_plot_feedback.py",
     "src/qplot/windows/_plot_marquee.py",
+    "src/qplot/windows/_plot_appearance.py",
     "src/qplot/windows/_plot_refresh.py",
     "src/qplot/windows/_plot_state.py",
     "src/qplot/windows/_preferences.py",
@@ -171,6 +172,10 @@ disable_error_code = ["index", "misc", "override", "union-attr"]
 [[tool.mypy.overrides]]
 module = "qplot.windows._plot1d_traces"
 disable_error_code = ["attr-defined", "misc", "override", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot_appearance"
+disable_error_code = ["override", "union-attr"]
 
 [[tool.mypy.overrides]]
 module = "qplot.windows._plot2d_layers"

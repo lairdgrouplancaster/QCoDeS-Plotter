@@ -1,7 +1,7 @@
 from math import ceil, floor, isclose, isfinite, log10
 from os import path
 from types import MethodType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -918,7 +918,7 @@ class plotWidget(
         
     def initAxes(self):
         """
-        Sets up left toolbar.
+        Sets up the Data axes dock.
         Sets up which axis parameters are placed on for both 1d, 2d and more.
         
         Refresh fetches the text of the dropdown menu to deciede which data to
@@ -934,7 +934,7 @@ class plotWidget(
             self.param_dict[param_spec.name] = param_spec
         
         # Use of QDockWidget over QToolbar to allow proper widget placement
-        self.axes_dock = QDock_context("Line control", self)
+        self.axes_dock = QDock_context("Data axes", self)
         self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.axes_dock)
         
         # Widget production
@@ -1540,9 +1540,31 @@ class plotWidget(
             return
     
         # get x, y values.
-        mousePoint = self.plot.vb.mapSceneToView(pos)
-        physical_x = self.view_to_data("x", mousePoint.x())
-        physical_y = self.view_to_data("y", mousePoint.y())
+        try:
+            viewbox_getter = getattr(self, "_primary_heatmap_viewbox", None)
+        except RuntimeError:
+            viewbox_getter = None
+        coordinate_viewbox = (
+            viewbox_getter() if callable(viewbox_getter) else self.plot.vb
+        )
+        if coordinate_viewbox is None:
+            coordinate_viewbox = self.plot.vb
+        mousePoint = coordinate_viewbox.mapSceneToView(pos)
+        try:
+            semantic_axes_getter = getattr(
+                self,
+                "_primary_heatmap_semantic_axes",
+                None,
+            )
+        except RuntimeError:
+            semantic_axes_getter = None
+        semantic_x, semantic_y = (
+            semantic_axes_getter()
+            if callable(semantic_axes_getter)
+            else ("x", "y")
+        )
+        physical_x = cast(float, self.view_to_data(semantic_x, mousePoint.x()))
+        physical_y = cast(float, self.view_to_data(semantic_y, mousePoint.y()))
         
         # Format text into a easy to read format
         index_txt = ""

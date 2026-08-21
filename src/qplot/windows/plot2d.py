@@ -77,7 +77,7 @@ class plot2d(
             self._reload_visible_heatmap_data
             )
         self._connect_heatmap_range_controls()
-        self._install_line_control_view_range_preserver()
+        self._install_axes_dock_view_range_preserver()
 
         for side in ("left", "right", "top", "bottom"):
             _install_flush_axis_draw_specs(self.plot.getAxis(side))
@@ -115,7 +115,7 @@ class plot2d(
             )
 
 
-    def _install_line_control_view_range_preserver(self) -> None:
+    def _install_axes_dock_view_range_preserver(self) -> None:
         """Keep a heatmap's viewport stable while its side dock is relaid out."""
 
         axes_dock = self.__dict__.get("axes_dock")
@@ -123,11 +123,12 @@ class plot2d(
             axes_dock.installEventFilter(self)
 
 
-    def _preserve_heatmap_view_range_after_line_control_layout(self) -> None:
-        """Restore the current viewport after a line-control dock visibility change."""
+    def _preserve_heatmap_view_range_after_axes_dock_layout(self) -> None:
+        """Restore the viewport after the Data axes dock changes visibility."""
 
         try:
-            view_range = self.vb.viewRange()
+            viewbox = self._primary_heatmap_viewbox()
+            view_range = viewbox.viewRange()
             saved_range = (
                 tuple(float(value) for value in view_range[0]),
                 tuple(float(value) for value in view_range[1]),
@@ -135,19 +136,19 @@ class plot2d(
         except (AttributeError, IndexError, TypeError, ValueError):
             return
 
-        token = self.__dict__.get("_line_control_view_range_token", 0) + 1
-        self.__dict__["_line_control_view_range_token"] = token
+        token = self.__dict__.get("_axes_dock_view_range_token", 0) + 1
+        self.__dict__["_axes_dock_view_range_token"] = token
 
         def restore() -> None:
-            if self.__dict__.get("_line_control_view_range_token") != token:
+            if self.__dict__.get("_axes_dock_view_range_token") != token:
                 return
             try:
-                current_range = self.vb.viewRange()
+                current_range = viewbox.viewRange()
             except (AttributeError, TypeError):
                 return
             if np.allclose(current_range, saved_range, rtol=1e-12, atol=1e-12):
                 return
-            self.vb.setRange(
+            viewbox.setRange(
                 xRange=saved_range[0],
                 yRange=saved_range[1],
                 padding=0,
@@ -445,7 +446,7 @@ class plot2d(
                     QtCore.QEvent.Type.Hide,
                     }
                 ):
-            self._preserve_heatmap_view_range_after_line_control_layout()
+            self._preserve_heatmap_view_range_after_axes_dock_layout()
 
         if (
                 event.type() == QtCore.QEvent.Type.Resize
@@ -1019,7 +1020,7 @@ class plot2d(
 
         self._heatmap_view_reload_timer.stop()
         view_ranges = self._heatmap_full_view_ranges or full_axis_ranges
-        self.vb.setRange(
+        self._primary_heatmap_viewbox().setRange(
             xRange=view_ranges["x"],
             yRange=view_ranges["y"],
             padding=0,
@@ -1089,7 +1090,7 @@ class plot2d(
             return None
 
         try:
-            view_x, view_y = self.vb.viewRange()
+            view_x, view_y = self._primary_heatmap_viewbox().viewRange()
         except Exception:
             return None
 
@@ -1232,6 +1233,10 @@ class plot2d(
 
     def _render_heatmap(self) -> None:
         """Render uniform grids as images and rectilinear grids as meshes."""
+
+        if not self.__dict__.get("_primary_heatmap_visible", True):
+            self._hide_heatmap_renderers()
+            return
 
         geometry = self._required_heatmap_geometry()
         data_grid = np.asarray(self.dataGrid)

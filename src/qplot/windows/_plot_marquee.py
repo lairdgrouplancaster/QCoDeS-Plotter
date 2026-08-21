@@ -88,6 +88,19 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
         self.plot.addItem(self.marquee_handles)
 
+    def _marquee_viewbox(self) -> Any:
+        """Return the coordinate owner for marquee graphics and navigation."""
+
+        try:
+            heatmap_viewbox = getattr(self, "_primary_heatmap_viewbox", None)
+        except RuntimeError:
+            heatmap_viewbox = None
+        if callable(heatmap_viewbox):
+            viewbox = heatmap_viewbox()
+            if viewbox is not None:
+                return viewbox
+        return self.__dict__.get("vb") or self.plot.vb
+
     def is_marquee_dragging(self) -> bool:
         return self._marquee_drag_state is not None
 
@@ -165,7 +178,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         if self.marquee is None:
             return False
 
-        point = self.plot.vb.mapSceneToView(scene_pos)
+        point = self._marquee_viewbox().mapSceneToView(scene_pos)
         return self.marquee.normalized().contains(point)
 
     def open_marquee_context_menu(
@@ -264,9 +277,17 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             return False
 
         if "x" in axes:
-            self.vb.setXRange(rect.left(), rect.right(), padding=0)
+            self._marquee_viewbox().setXRange(
+                rect.left(),
+                rect.right(),
+                padding=0,
+            )
         if "y" in axes:
-            self.vb.setYRange(rect.top(), rect.bottom(), padding=0)
+            self._marquee_viewbox().setYRange(
+                rect.top(),
+                rect.bottom(),
+                padding=0,
+            )
         self._view_range_changed_programmatically()
         return True
 
@@ -527,7 +548,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
 
         threshold = 8
         for handle, point in self._marquee_handle_points().items():
-            handle_scene_pos = self.plot.vb.mapViewToScene(point)
+            handle_scene_pos = self._marquee_viewbox().mapViewToScene(point)
             distance = (
                 (handle_scene_pos.x() - scene_pos.x()) ** 2
                 + (handle_scene_pos.y() - scene_pos.y()) ** 2

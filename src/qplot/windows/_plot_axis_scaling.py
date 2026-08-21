@@ -661,11 +661,41 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         self,
         axis: _AxisName,
     ) -> list[tuple[Any, list[Any] | None]]:
-        """Group traces assigned to an axis by their containing viewbox."""
+        """Group plot items assigned to an axis by their containing ViewBox."""
 
         styles = self.__dict__.get("_trace_styles")
         lines = self.__dict__.get("lines")
         if not isinstance(styles, dict) or not isinstance(lines, dict):
+            assignments = self.__dict__.get("_heatmap_axis_assignments")
+            heatmaps = self.__dict__.get("heatmaps")
+            axis_sides = getattr(self, "_heatmap_axis_sides", None)
+            render_items = getattr(self, "_heatmap_render_items", None)
+            axis_viewbox = getattr(self, "_heatmap_axis_viewbox", None)
+            if (
+                isinstance(assignments, dict)
+                and isinstance(heatmaps, dict)
+                and callable(axis_sides)
+                and callable(render_items)
+                and callable(axis_viewbox)
+            ):
+                dimension = self._axis_scale_dimension(axis)
+                expected = {
+                    "x": "Bottom",
+                    "x2": "Top",
+                    "y": "Left",
+                    "y2": "Right",
+                }[axis]
+                heatmap_groups: dict[Any, list[Any]] = {}
+                for layer in heatmaps.values():
+                    x_side, y_side = axis_sides(layer)
+                    selected = x_side if dimension == "x" else y_side
+                    if selected != expected:
+                        continue
+                    viewbox = axis_viewbox(layer)
+                    heatmap_groups.setdefault(viewbox, []).extend(
+                        render_items(layer)
+                    )
+                return list(heatmap_groups.items())
             return [(self._axis_scale_viewbox(axis), None)]
 
         attribute, value = {
@@ -1084,11 +1114,23 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         self._view_range_changed_programmatically()
 
     def _axis_scale_axis_is_used(self, axis: _AxisName) -> bool:
-        """Return whether the plot currently has a trace on this axis."""
+        """Return whether the plot currently has an item on this axis."""
 
         styles = self.__dict__.get("_trace_styles")
         lines = self.__dict__.get("lines")
         if not isinstance(styles, dict) or not isinstance(lines, dict):
+            assignments = self.__dict__.get("_heatmap_axis_assignments")
+            if isinstance(assignments, dict):
+                attribute, value = {
+                    "x": ("x", "Bottom"),
+                    "y": ("y", "Left"),
+                    "x2": ("x", "Top"),
+                    "y2": ("y", "Right"),
+                }[axis]
+                return any(
+                    assignment.get(attribute) == value
+                    for assignment in assignments.values()
+                )
             return axis in ("x", "y")
 
         attribute, value = {

@@ -210,6 +210,10 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             line.sigClicked.connect(self.activate_sweep_line)
             self.sweep_lines[sweep_id] = line # Track for update/delete
             line.sweep_id = sweep_id # give copy of id if needed
+            primary_viewbox = getattr(self, "_primary_heatmap_viewbox", None)
+            move_item = getattr(self, "_move_heatmap_item_to_viewbox", None)
+            if callable(primary_viewbox) and callable(move_item):
+                move_item(line, primary_viewbox())
             self.set_sweep_line_cursor(line)
         
         self.set_sweep_line_index(line, fixed_index, emit=False)
@@ -232,7 +236,11 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             return
         self.restore_sweep_line_hover_cursor(self.sweep_lines[sweep_id])
         self.restore_sweep_line_drag_cursor(self.sweep_lines[sweep_id])
-        self.plot.removeItem(self.sweep_lines[sweep_id])
+        remove_item = getattr(self, "_remove_heatmap_render_item", None)
+        if callable(remove_item):
+            remove_item(self.sweep_lines[sweep_id])
+        else:
+            self.plot.removeItem(self.sweep_lines[sweep_id])
         self.sweep_lines.pop(sweep_id)
         
         

@@ -8,11 +8,11 @@ All layers attached to one host deliberately share its colour map and levels.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.heatmap_geometry import (
@@ -20,6 +20,12 @@ from qplot.tools.heatmap_geometry import (
     canonicalize_heatmap_data,
 )
 
+from ._colorbar import (
+    _COLORBAR_COLORMAP_LABELS,
+    _colorbar_colormap_for_name,
+    _colorbar_colormap_preview,
+)
+from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
 from ._plot_refresh import plot_refresh_required
 
 DEFAULT_OVERLAY_OPACITY = 0.65
@@ -191,6 +197,7 @@ class HeatmapLayer:
         self.heatmap_mesh.hide()
 
         self.opacity = DEFAULT_OVERLAY_OPACITY
+        self.visible = True
         self.set_opacity(opacity)
 
         self._renderers_added = False
@@ -229,6 +236,15 @@ class HeatmapLayer:
         self.opacity = value
         self.image.setOpacity(value)
         self.heatmap_mesh.setOpacity(value)
+
+    def set_visible(self, visible: bool) -> None:
+        """Persist visibility across source refreshes and renderer changes."""
+
+        self.visible = bool(visible)
+        if not self.visible:
+            self._hide_renderers()
+            return
+        self._render()
 
     def refresh(
         self,
@@ -319,6 +335,14 @@ class HeatmapLayer:
         for item in self.render_items():
             item.hide()
             if not self._renderers_added:
+                continue
+            remove_item = getattr(
+                self.parent,
+                "_remove_heatmap_render_item",
+                None,
+            )
+            if callable(remove_item):
+                remove_item(item)
                 continue
             try:
                 self.parent.plot.removeItem(item)
@@ -457,7 +481,7 @@ class HeatmapLayer:
 
     def _render(self) -> None:
         geometry = self.geometry
-        if geometry is None:
+        if geometry is None or not self.visible:
             self._hide_renderers()
             return
 
@@ -524,6 +548,200 @@ class Plot2DLayerMixin:
 
     heatmaps: dict[Any, Any]
 
+    def initMenu(self) -> None:
+        """Add Heatmap Appearance to the standard View menu."""
+
+        super().initMenu()
+        menu_bar = self.menuBar()
+        if menu_bar is None:
+            return
+        view_menu = None
+        for action in menu_bar.actions():
+            if action.text().replace("&", "") == "View":
+                view_menu = action.menu()
+                break
+        if view_menu is None:
+            return
+        view_menu.addSeparator()
+        action = QtGui.QAction(
+            "Heatmap Appearance…",
+            cast(QtCore.QObject, self),
+        )
+        action.triggered.connect(self.open_heatmap_appearance_dialog)
+        view_menu.addAction(action)
+        self.__dict__["heatmap_appearance_action"] = action
+
+    def open_heatmap_appearance_dialog(self, heatmap_key: Any = None) -> None:
+        """Show the shared-item-style editor for this plot's heatmap layers."""
+
+        dialog = self.__dict__.get("_heatmap_appearance_dialog")
+        if dialog is None:
+            dialog = _HeatmapAppearanceDialog(self)
+            self.__dict__["_heatmap_appearance_dialog"] = dialog
+        dialog.refresh_rows()
+        if heatmap_key is not None:
+            dialog.select_heatmap(heatmap_key)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def available_heatmap_candidates(self) -> list[tuple[str, Any]]:
+        """Return database-backed heatmaps eligible for the Add control."""
+
+        provider = self.__dict__.get("_heatmap_candidate_provider")
+        if callable(provider):
+            return list(provider())
+        return []
+
+    def add_heatmap_from_dialog(self, label: str, heatmap_key: Any) -> bool:
+        """Ask the main window to construct and retain one selected layer."""
+
+        request = self.__dict__.get("_heatmap_add_request")
+        dataset_key = getattr(heatmap_key, "dataset_key", None)
+        parameter_name = getattr(heatmap_key, "parameter_name", None)
+        if callable(request) and dataset_key is not None and parameter_name:
+            return bool(request(dataset_key, parameter_name))
+        return False
+
+    def _heatmap_display_label(self, key: Any, layer: Any) -> str:
+        if layer is self:
+            return str(self.__dict__.get("label", key))
+        return str(getattr(layer, "label", key))
+
+    def _heatmap_measurement_name(self, key: Any, layer: Any) -> str:
+        source = self if layer is self else getattr(layer, "from_win", None)
+        parameter = getattr(source, "param", None)
+        return str(getattr(parameter, "name", key))
+
+    def _heatmap_is_visible(self, layer: Any) -> bool:
+        if layer is self:
+            return bool(self.__dict__.get("_primary_heatmap_visible", True))
+        return bool(getattr(layer, "visible", True))
+
+    def _heatmap_opacity(self, layer: Any) -> float:
+        if layer is self:
+            return float(self.__dict__.get("_primary_heatmap_opacity", 1.0))
+        return float(getattr(layer, "opacity", DEFAULT_OVERLAY_OPACITY))
+
+    def _set_layer_visibility(self, layer: Any, visible: bool) -> None:
+        if layer is not self:
+            setter = getattr(layer, "set_visible", None)
+            if callable(setter):
+                setter(visible)
+                return
+
+        visible = bool(visible)
+        self.__dict__["_primary_heatmap_visible"] = visible
+        if not visible:
+            for item in (
+                self.__dict__.get("image"),
+                self.__dict__.get("heatmap_mesh"),
+            ):
+                if item is not None:
+                    item.hide()
+            return
+        render = getattr(self, "_render_heatmap", None)
+        geometry = getattr(self, "_heatmap_geometry", None)
+        if callable(render) and callable(geometry) and geometry() is not None:
+            render()
+
+    def _sync_heatmap_layer_order(self) -> None:
+        """Map table/registry order onto heatmap renderer Z values."""
+
+        heatmaps = self.__dict__.get("heatmaps", {})
+        count = len(heatmaps)
+        if not count:
+            return
+        step = _MAX_OVERLAY_Z_VALUE / max(count, 1)
+        for row, layer in enumerate(heatmaps.values()):
+            z_value = min(
+                _MAX_OVERLAY_Z_VALUE,
+                max(0.0, (row + 1) * step),
+            )
+            items = (
+                (
+                    self.__dict__.get("image"),
+                    self.__dict__.get("heatmap_mesh"),
+                )
+                if layer is self
+                else tuple(layer.render_items())
+            )
+            for item in items:
+                if item is not None:
+                    item.setZValue(z_value)
+
+    def _default_heatmap_axis_names(self) -> tuple[str, str] | None:
+        names = tuple(getattr(self.param, "depends_on_", ()))
+        if len(names) != 2 or names[0] == names[1]:
+            return None
+        return str(names[1]), str(names[0])
+
+    def can_swap_plot_axes(self) -> bool:
+        names = self._default_heatmap_axis_names()
+        dropdowns = self.__dict__.get("axis_dropdown", {})
+        return bool(
+            names is not None
+            and set(dropdowns) == {"x", "y"}
+            and all(
+                dropdown.findText(name) >= 0
+                for dropdown in dropdowns.values()
+                for name in names
+            )
+        )
+
+    def plot_axes_swapped(self) -> bool:
+        names = self._default_heatmap_axis_names()
+        if names is None:
+            return False
+        default_x, default_y = names
+        options = self.axis_options
+        return (
+            options.get("x") == default_y
+            and options.get("y") == default_x
+        )
+
+    def set_plot_axes_swapped(self, swapped: bool) -> bool:
+        if not self.can_swap_plot_axes():
+            return False
+        names = self._default_heatmap_axis_names()
+        assert names is not None
+        default_x, default_y = names
+        target = (
+            {"x": default_y, "y": default_x}
+            if swapped
+            else {"x": default_x, "y": default_y}
+        )
+        previous = dict(self.axis_options)
+        if previous == target:
+            return True
+        for axis, name in target.items():
+            dropdown = self.axis_dropdown[axis]
+            blocked = dropdown.blockSignals(True)
+            try:
+                dropdown.setCurrentIndex(dropdown.findText(name))
+            finally:
+                dropdown.blockSignals(blocked)
+        self._axis_selection = dict(target)
+        if previous == {"x": target["y"], "y": target["x"]}:
+            self._transpose_heatmap_axis_assignments()
+        self.refreshWindow(force=True)
+        dialog = self.__dict__.get("_heatmap_appearance_dialog")
+        if dialog is not None:
+            dialog.sync_swap_axes_control()
+        return True
+
+    def _transpose_heatmap_axis_assignments(self) -> None:
+        """Keep heatmaps on equivalent physical sides after swapping X/Y."""
+
+        assignments = self.__dict__.get("_heatmap_axis_assignments", {})
+        for assignment in assignments.values():
+            previous_x = assignment.get("x", "Bottom")
+            previous_y = assignment.get("y", "Left")
+            assignment["x"] = "Bottom" if previous_y == "Left" else "Top"
+            assignment["y"] = "Left" if previous_x == "Bottom" else "Right"
+        for layer in self.__dict__.get("heatmaps", {}).values():
+            self._apply_heatmap_axis_assignment(layer, auto_range=False)
+
     @staticmethod
     def _window_heatmap_key(window: Any) -> Any:
         try:
@@ -544,7 +762,7 @@ class Plot2DLayerMixin:
             return None
 
     def _init_heatmap_layers(self) -> None:
-        """Register the primary heatmap and create the layer-control panel."""
+        """Register the primary heatmap and its appearance state."""
 
         primary_key = self._window_heatmap_key(self)
         if primary_key is None:
@@ -556,15 +774,25 @@ class Plot2DLayerMixin:
             heatmaps = {}
             self.__dict__["heatmaps"] = heatmaps
         heatmaps.setdefault(primary_key, self)
-
-        rows = self.__dict__.get("_heatmap_layer_rows")
-        if not isinstance(rows, dict):
-            rows = {}
-            self.__dict__["_heatmap_layer_rows"] = rows
-
-        if self.__dict__.get("_heatmap_layer_layout") is None:
-            self._init_heatmap_layer_controls()
-        self._add_heatmap_layer_row(primary_key, self, removable=False)
+        self.__dict__.setdefault("_primary_heatmap_opacity", 1.0)
+        self.__dict__.setdefault("_primary_heatmap_visible", True)
+        self.__dict__.setdefault("_heatmap_appearance_dialog", None)
+        assignments = self.__dict__.get("_heatmap_axis_assignments")
+        if not isinstance(assignments, dict):
+            assignments = {}
+            self.__dict__["_heatmap_axis_assignments"] = assignments
+        assignments.setdefault(
+            primary_key,
+            {"x": "Bottom", "y": "Left"},
+        )
+        renderer_viewboxes = self.__dict__.get("_heatmap_renderer_viewboxes")
+        if not isinstance(renderer_viewboxes, dict):
+            renderer_viewboxes = {}
+            self.__dict__["_heatmap_renderer_viewboxes"] = renderer_viewboxes
+        primary_viewbox = self.__dict__.get("vb")
+        if primary_viewbox is not None:
+            for item in self._primary_heatmap_axis_items():
+                renderer_viewboxes.setdefault(id(item), primary_viewbox)
 
     def _has_heatmap_window(self, window: Any) -> bool:
         """Return whether ``window`` is already represented on this heatmap."""
@@ -585,7 +813,7 @@ class Plot2DLayerMixin:
         return False
 
     def add_heatmap(self, from_win: Any) -> bool:
-        """Add a compatible source heatmap as a translucent shared-axis layer."""
+        """Add a compatible source heatmap as a translucent plot layer."""
 
         if not isinstance(self.__dict__.get("heatmaps"), dict):
             self._init_heatmap_layers()
@@ -633,7 +861,12 @@ class Plot2DLayerMixin:
                 z_value=z_value,
             )
             self.heatmaps[trace_key] = layer
-            self._add_heatmap_layer_row(trace_key, layer, removable=True)
+            self._heatmap_axis_assignments[trace_key] = {
+                "x": "Bottom",
+                "y": "Left",
+            }
+            self._apply_heatmap_axis_assignment(layer, auto_range=False)
+            self._sync_heatmap_layer_order()
             self._sync_heatmap_colorbar_items(rescale=True)
             self._sync_secondary_heatmap_view_ranges(layer=layer)
         except Exception:
@@ -641,10 +874,16 @@ class Plot2DLayerMixin:
                 layer.disconnect_source_updates()
                 layer.remove_renderers()
             self.heatmaps.pop(trace_key, None)
-            self._remove_heatmap_layer_row(trace_key)
+            self.__dict__.get("_heatmap_axis_assignments", {}).pop(
+                trace_key,
+                None,
+            )
             if retained:
                 self._emit_remove_dataset(dataset_key)
             raise
+        dialog = self.__dict__.get("_heatmap_appearance_dialog")
+        if dialog is not None:
+            dialog.refresh_rows()
         return True
 
     def remove_heatmap(self, label: str = "", trace_key: Any = None) -> bool:
@@ -670,13 +909,21 @@ class Plot2DLayerMixin:
             return False
 
         heatmaps.pop(selected_key, None)
-        self._remove_heatmap_layer_row(selected_key)
+        self.__dict__.get("_heatmap_axis_assignments", {}).pop(
+            selected_key,
+            None,
+        )
         layer.disconnect_source_updates()
         layer.remove_renderers()
         dataset_key = getattr(getattr(layer, "from_win", None), "_dataset_key", None)
         if dataset_key is not None:
             self._emit_remove_dataset(dataset_key)
+        self._sync_heatmap_layer_order()
+        self._sync_heatmap_axis_visibility()
         self._sync_heatmap_colorbar_items(rescale=True)
+        dialog = self.__dict__.get("_heatmap_appearance_dialog")
+        if dialog is not None:
+            dialog.refresh_rows()
         return True
 
     def refresh_secondary_heatmaps(self) -> None:
@@ -703,15 +950,6 @@ class Plot2DLayerMixin:
     ) -> None:
         """Map the host viewport onto SQL-backed hidden heatmap sources."""
 
-        view_box = self.__dict__.get("vb")
-        view_range = getattr(view_box, "viewRange", None)
-        if not callable(view_range):
-            return
-        try:
-            host_x_range, host_y_range = view_range()
-        except (TypeError, ValueError, RuntimeError):
-            return
-
         if layer is None:
             layers = [
                 candidate
@@ -721,10 +959,6 @@ class Plot2DLayerMixin:
         else:
             layers = [layer]
 
-        host_ranges = {
-            "x": tuple(host_x_range),
-            "y": tuple(host_y_range),
-        }
         for candidate in layers:
             source = getattr(candidate, "from_win", None)
             if (
@@ -739,6 +973,19 @@ class Plot2DLayerMixin:
             )
             if axis_order is None or compatibility_error is not None:
                 continue
+
+            view_box = self._heatmap_axis_viewbox(candidate)
+            view_range = getattr(view_box, "viewRange", None)
+            if not callable(view_range):
+                continue
+            try:
+                host_x_range, host_y_range = view_range()
+            except (TypeError, ValueError, RuntimeError):
+                continue
+            host_ranges = {
+                "x": tuple(host_x_range),
+                "y": tuple(host_y_range),
+            }
 
             source_ranges = {
                 axis_order[index]: host_ranges[parent_axis]
@@ -881,105 +1128,6 @@ class Plot2DLayerMixin:
             except (TypeError, RuntimeError):
                 pass
 
-    def _init_heatmap_layer_controls(self) -> None:
-        if qtw.QApplication.instance() is None:
-            return
-        axes_dock = self.__dict__.get("axes_dock")
-        if axes_dock is None:
-            return
-
-        container = qtw.QWidget()
-        layout = qtw.QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        heading = qtw.QLabel("Heatmaps")
-        layout.addWidget(heading)
-
-        content_layout = getattr(axes_dock, "content_layout", None)
-        if content_layout is not None and hasattr(content_layout, "insertWidget"):
-            insertion_index = max(0, content_layout.count() - 1)
-            content_layout.insertWidget(insertion_index, container)
-        else:
-            add_widget = getattr(axes_dock, "addWidget", None)
-            if not callable(add_widget):
-                return
-            add_widget(container)
-
-        self.__dict__["_heatmap_layer_controls"] = container
-        self.__dict__["_heatmap_layer_layout"] = layout
-
-    def _add_heatmap_layer_row(
-        self,
-        trace_key: Any,
-        layer: Any,
-        *,
-        removable: bool,
-    ) -> None:
-        rows = self.__dict__.setdefault("_heatmap_layer_rows", {})
-        if trace_key in rows:
-            return
-        layout = self.__dict__.get("_heatmap_layer_layout")
-        if layout is None or qtw.QApplication.instance() is None:
-            return
-
-        row = qtw.QWidget()
-        row.setObjectName("heatmapLayerRow")
-        row_layout = qtw.QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-
-        if layer is self:
-            label_text = str(self.__dict__.get("label", trace_key))
-        else:
-            label_text = str(getattr(layer, "label", trace_key))
-        label_widget = qtw.QLabel(label_text)
-        label_widget.setToolTip(label_text)
-        row_layout.addWidget(label_widget, 1)
-
-        opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
-        opacity_slider.setObjectName("heatmapOpacitySlider")
-        opacity_slider.setRange(0, 100)
-        opacity_slider.setToolTip("Heatmap opacity")
-        initial_opacity = (
-            getattr(layer, "opacity", DEFAULT_OVERLAY_OPACITY)
-            if removable
-            else self.__dict__.get("_primary_heatmap_opacity", 1.0)
-        )
-        opacity_slider.setValue(round(float(initial_opacity) * 100))
-        opacity_slider.valueChanged.connect(
-            lambda value, selected_layer=layer: self._set_layer_opacity(
-                selected_layer,
-                value / 100,
-            )
-        )
-        row_layout.addWidget(opacity_slider)
-
-        remove_button = qtw.QPushButton("X")
-        remove_button.setObjectName("removeHeatmapButton")
-        remove_button.setFixedWidth(24)
-        remove_button.setToolTip("Remove this heatmap from the plot")
-        remove_button.setEnabled(removable)
-        if removable:
-            remove_button.clicked.connect(
-                lambda _checked=False, selected_key=trace_key: self.remove_heatmap(
-                    trace_key=selected_key,
-                )
-            )
-        row_layout.addWidget(remove_button)
-
-        row.label_widget = label_widget
-        row.opacity_slider = opacity_slider
-        row.remove_button = remove_button
-        rows[trace_key] = row
-        layout.addWidget(row)
-
-    def _remove_heatmap_layer_row(self, trace_key: Any) -> None:
-        rows = self.__dict__.get("_heatmap_layer_rows", {})
-        row = rows.pop(trace_key, None)
-        if row is None:
-            return
-        row.setParent(None)
-        row.deleteLater()
-
     def _set_layer_opacity(self, layer: Any, opacity: float) -> None:
         if layer is not self:
             set_opacity = getattr(layer, "set_opacity", None)
@@ -995,6 +1143,343 @@ class Plot2DLayerMixin:
         ):
             if item is not None:
                 item.setOpacity(value)
+
+    def _heatmap_key_for_layer(self, layer: Any) -> Any:
+        """Return the stable registry key for a heatmap object."""
+
+        for key, candidate in self.__dict__.get("heatmaps", {}).items():
+            if candidate is layer:
+                return key
+        return None
+
+    def _heatmap_axis_sides(self, layer: Any) -> tuple[str, str]:
+        """Return the horizontal and vertical display sides for one heatmap."""
+
+        key = self._heatmap_key_for_layer(layer)
+        assignment = self.__dict__.get("_heatmap_axis_assignments", {}).get(
+            key,
+            {},
+        )
+        x_axis = "Top" if assignment.get("x") == "Top" else "Bottom"
+        y_axis = "Right" if assignment.get("y") == "Right" else "Left"
+        return x_axis, y_axis
+
+    def _primary_heatmap_axis_items(self) -> list[Any]:
+        """Return graphics whose coordinates belong to the primary heatmap."""
+
+        names = (
+            "image",
+            "heatmap_mesh",
+            "hover_pixel_outline",
+            "marquee_highlight",
+            "marquee_outline",
+            "marquee_handles",
+        )
+        items = [self.__dict__.get(name) for name in names]
+        items.extend(self.__dict__.get("sweep_lines", {}).values())
+        return [item for item in items if item is not None]
+
+    def _heatmap_axis_items(self, layer: Any) -> list[Any]:
+        if layer is self:
+            return self._primary_heatmap_axis_items()
+        render_items = getattr(layer, "render_items", None)
+        return list(render_items()) if callable(render_items) else []
+
+    def _heatmap_render_items(self, layer: Any) -> list[Any]:
+        """Return only data renderers, excluding interaction decorations."""
+
+        if layer is self:
+            return [
+                item
+                for item in (
+                    self.__dict__.get("image"),
+                    self.__dict__.get("heatmap_mesh"),
+                )
+                if item is not None
+            ]
+        render_items = getattr(layer, "render_items", None)
+        return list(render_items()) if callable(render_items) else []
+
+    def _ensure_heatmap_axis_viewboxes(
+        self,
+        *,
+        top: bool = False,
+        right: bool = False,
+    ) -> None:
+        """Create the linked ViewBoxes required by a heatmap's axis pair."""
+
+        plot = self.__dict__.get("plot")
+        primary = self.__dict__.get("vb")
+        if plot is None or primary is None:
+            return
+
+        if right and self.__dict__.get("right_vb") is None:
+            right_viewbox = pg.ViewBox()
+            right_viewbox.setDefaultPadding(0)
+            plot.scene().addItem(right_viewbox)
+            plot.getAxis("right").linkToView(right_viewbox)
+            right_viewbox.setXLink(primary)
+            right_viewbox.sigRangeChanged.connect(
+                self._heatmap_overlay_range_changed
+            )
+            self.__dict__["right_vb"] = right_viewbox
+
+        if top and self.__dict__.get("top_vb") is None:
+            top_viewbox = pg.ViewBox()
+            top_viewbox.setDefaultPadding(0)
+            plot.scene().addItem(top_viewbox)
+            plot.getAxis("top").linkToView(top_viewbox)
+            top_viewbox.setYLink(primary)
+            top_viewbox.sigRangeChanged.connect(
+                self._heatmap_overlay_range_changed
+            )
+            self.__dict__["top_vb"] = top_viewbox
+
+        if top and right and self.__dict__.get("top_right_vb") is None:
+            top_right_viewbox = pg.ViewBox()
+            top_right_viewbox.setDefaultPadding(0)
+            plot.scene().addItem(top_right_viewbox)
+            top_right_viewbox.setXLink(self.top_vb)
+            top_right_viewbox.setYLink(self.right_vb)
+            top_right_viewbox.sigRangeChanged.connect(
+                self._heatmap_overlay_range_changed
+            )
+            self.__dict__["top_right_vb"] = top_right_viewbox
+
+        if not self.__dict__.get("_heatmap_axis_viewboxes_connected", False):
+            moved = getattr(primary, "main_moved", None)
+            if moved is not None:
+                moved.connect(self._update_heatmap_axis_viewboxes)
+            primary.sigResized.connect(self._update_heatmap_axis_viewboxes)
+            auto_button = getattr(plot, "autoBtn", None)
+            if auto_button is not None:
+                auto_button.clicked.connect(
+                    self._heatmap_axis_auto_button_clicked
+                )
+            auto_requested = getattr(primary, "autoRange_triggered", None)
+            if auto_requested is not None:
+                auto_requested.connect(self._heatmap_axis_auto_range_requested)
+            self.__dict__["_heatmap_axis_viewboxes_connected"] = True
+
+        install_range_handlers = getattr(
+            self,
+            "_install_axis_scale_viewbox_range_handlers",
+            None,
+        )
+        if callable(install_range_handlers):
+            if self.__dict__.get("right_vb") is not None:
+                install_range_handlers(self.right_vb, y_axis="y2")
+            if self.__dict__.get("top_vb") is not None:
+                install_range_handlers(self.top_vb, x_axis="x2")
+        self._update_heatmap_axis_viewboxes(None)
+
+    def _heatmap_axis_viewbox(self, layer: Any) -> Any:
+        """Return the ViewBox representing a heatmap's selected axis pair."""
+
+        primary = self.__dict__.get("vb")
+        if primary is None:
+            plot = self.__dict__.get("plot")
+            primary = getattr(plot, "vb", None)
+        x_axis, y_axis = self._heatmap_axis_sides(layer)
+        uses_top = x_axis == "Top"
+        uses_right = y_axis == "Right"
+        if uses_top or uses_right:
+            self._ensure_heatmap_axis_viewboxes(
+                top=uses_top,
+                right=uses_right,
+            )
+        if uses_top and uses_right:
+            return self.__dict__.get("top_right_vb") or primary
+        if uses_top:
+            return self.__dict__.get("top_vb") or primary
+        if uses_right:
+            return self.__dict__.get("right_vb") or primary
+        return primary
+
+    def _primary_heatmap_viewbox(self) -> Any:
+        """Return the coordinate owner used by primary heatmap interactions."""
+
+        return self._heatmap_axis_viewbox(self)
+
+    def _primary_heatmap_semantic_axes(self) -> tuple[str, str]:
+        x_axis, y_axis = self._heatmap_axis_sides(self)
+        return (
+            "x2" if x_axis == "Top" else "x",
+            "y2" if y_axis == "Right" else "y",
+        )
+
+    def _move_heatmap_item_to_viewbox(self, item: Any, target: Any) -> None:
+        """Move one heatmap-related graphics item without recreating it."""
+
+        if target is None:
+            return
+        tracked = self.__dict__.setdefault("_heatmap_renderer_viewboxes", {})
+        get_viewbox = getattr(item, "getViewBox", None)
+        current = get_viewbox() if callable(get_viewbox) else None
+        current = current or tracked.get(id(item))
+        if current is target:
+            tracked[id(item)] = target
+            return
+
+        if current is self.__dict__.get("vb"):
+            self.plot.removeItem(item)
+        elif current is not None:
+            current.removeItem(item)
+        else:
+            try:
+                self.plot.removeItem(item)
+            except (AttributeError, RuntimeError, ValueError):
+                pass
+
+        if target is self.__dict__.get("vb"):
+            self.plot.addItem(item)
+        else:
+            target.addItem(item)
+        tracked[id(item)] = target
+
+    def _remove_heatmap_render_item(self, item: Any) -> None:
+        """Remove a renderer from whichever ViewBox currently owns it."""
+
+        tracked = self.__dict__.get("_heatmap_renderer_viewboxes", {})
+        get_viewbox = getattr(item, "getViewBox", None)
+        current = get_viewbox() if callable(get_viewbox) else None
+        tracked_current = tracked.pop(id(item), None)
+        current = current or tracked_current
+        if current is self.__dict__.get("vb") or current is None:
+            self.plot.removeItem(item)
+        else:
+            current.removeItem(item)
+
+    def _apply_heatmap_axis_assignment(
+        self,
+        layer: Any,
+        *,
+        auto_range: bool = True,
+    ) -> None:
+        target = self._heatmap_axis_viewbox(layer)
+        for item in self._heatmap_axis_items(layer):
+            self._move_heatmap_item_to_viewbox(item, target)
+        self._sync_heatmap_axis_visibility()
+        if auto_range and target is not None:
+            target.autoRange()
+        self._sync_secondary_heatmap_view_ranges(layer=None if layer is self else layer)
+
+    def _set_layer_axes(self, layer: Any, x_axis: str, y_axis: str) -> None:
+        """Assign one heatmap to any of the four displayed axis pairs."""
+
+        key = self._heatmap_key_for_layer(layer)
+        if key is None:
+            return
+        assignment = {
+            "x": "Top" if x_axis == "Top" else "Bottom",
+            "y": "Right" if y_axis == "Right" else "Left",
+        }
+        assignments = self.__dict__.setdefault("_heatmap_axis_assignments", {})
+        if assignments.get(key) == assignment:
+            return
+        assignments[key] = assignment
+        self._apply_heatmap_axis_assignment(layer)
+
+    def _heatmap_axis_parameter(self, display_axis: str) -> Any:
+        parameters = self.__dict__.get("axis_param", {})
+        if isinstance(parameters, dict):
+            parameter = parameters.get(display_axis)
+            if parameter is not None:
+                return parameter
+        options = getattr(self, "axis_options", {})
+        name = options.get(display_axis) if isinstance(options, dict) else None
+        parameter_dict = self.__dict__.get("param_dict", {})
+        if isinstance(parameter_dict, dict) and name is not None:
+            return parameter_dict.get(name)
+        return None
+
+    def _sync_heatmap_axis_visibility(self) -> None:
+        """Show and label secondary axes used by at least one heatmap."""
+
+        plot = self.__dict__.get("plot")
+        if plot is None:
+            return
+        layers = list(self.__dict__.get("heatmaps", {}).values())
+        for side, display_axis, selected_side in (
+            ("top", "x", "Top"),
+            ("right", "y", "Right"),
+        ):
+            used = any(
+                selected_side in self._heatmap_axis_sides(layer)
+                for layer in layers
+            )
+            axis = plot.getAxis(side)
+            axis.setStyle(showValues=used)
+            if not used:
+                axis.setLabel(text="", units="")
+                continue
+            parameter = self._heatmap_axis_parameter(display_axis)
+            label = getattr(parameter, "label", None) or getattr(
+                parameter,
+                "name",
+                getattr(self, "axis_options", {}).get(display_axis, ""),
+            )
+            unit = getattr(parameter, "unit", "") or ""
+            axis.setLabel(text=str(label), units=str(unit))
+        sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
+        if callable(sync_tabs):
+            sync_tabs()
+
+    def _set_param_axis_labels(self) -> None:
+        """Refresh primary labels without losing active heatmap side axes."""
+
+        super()._set_param_axis_labels()
+        self._sync_heatmap_axis_visibility()
+
+    def _update_heatmap_axis_viewboxes(self, event: Any = None) -> None:
+        """Keep secondary ViewBoxes aligned and mirror primary navigation."""
+
+        primary = self.__dict__.get("vb")
+        if primary is None:
+            return
+        geometry = primary.sceneBoundingRect()
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.setGeometry(geometry)
+
+        right_viewbox = self.__dict__.get("right_vb")
+        top_viewbox = self.__dict__.get("top_vb")
+        constrained_axis = getattr(primary, "_main_moved_axis", None)
+        if event is not None:
+            if event.__class__.__name__ == "QGraphicsSceneWheelEvent":
+                if right_viewbox is not None:
+                    right_viewbox.wheelEvent(event, axis=1)
+                if top_viewbox is not None:
+                    top_viewbox.wheelEvent(event, axis=0)
+            elif event.__class__.__name__ == "MouseDragEvent":
+                if right_viewbox is not None and constrained_axis in (None, 1):
+                    right_viewbox.mouseDragEvent(event, axis=1)
+                if top_viewbox is not None and constrained_axis in (None, 0):
+                    top_viewbox.mouseDragEvent(event, axis=0)
+
+    def _heatmap_axis_auto_button_clicked(self, *_args: Any) -> None:
+        auto_button = getattr(self.plot, "autoBtn", None)
+        enabled = auto_button is None or auto_button.mode == "auto"
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.enableAutoRange(enable=enabled)
+
+    def _heatmap_axis_auto_range_requested(self, *_args: Any) -> None:
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.autoRange()
+        self._sync_secondary_heatmap_view_ranges()
+
+    def _heatmap_overlay_range_changed(self, *_args: Any) -> None:
+        self._sync_secondary_heatmap_view_ranges()
+        primary_viewbox = self._primary_heatmap_viewbox()
+        if primary_viewbox is not self.__dict__.get("vb"):
+            schedule = getattr(self, "_schedule_visible_heatmap_reload", None)
+            if callable(schedule):
+                schedule()
 
     def _emit_remove_dataset(self, dataset_key: Any) -> None:
         try:
@@ -1053,3 +1538,561 @@ class Plot2DLayerMixin:
         except (TypeError, ValueError, RuntimeError):
             return None
         return cls._normalise_colorbar_levels(levels)
+
+
+class _HeatmapTableWidget(ReorderAppearanceTable):
+    """Heatmap-specific instance of the shared appearance reorder table."""
+
+    _REORDER_MIME_TYPE = "application/x-qplot-heatmap-reorder"
+
+    def __init__(self, dialog: _HeatmapAppearanceDialog) -> None:
+        super().__init__(dialog, mime_type=self._REORDER_MIME_TYPE)
+
+
+class _HeatmapAppearanceDialog(qtw.QDialog):
+    """Edit heatmap layers using the same interaction model as traces."""
+
+    _COL_ID = 0
+    _COL_PREVIEW = 1
+    _COL_MEASUREMENT = 2
+
+    def __init__(self, owner: Plot2DLayerMixin) -> None:
+        super().__init__(cast(qtw.QWidget, owner))
+        self.owner = owner
+        self._building = False
+        self.setWindowTitle("Heatmap Appearance")
+        self.resize(780, 360)
+        self.setMinimumSize(700, 300)
+        self.setStyleSheet(
+            self.styleSheet()
+            + """
+            QTableWidget#heatmapAppearanceTable {
+                border: 1px solid palette(mid);
+                background-color: palette(base);
+                alternate-background-color: palette(alternate-base);
+                gridline-color: palette(midlight);
+            }
+            QTableWidget#heatmapAppearanceTable::item {
+                padding: 2px 6px;
+                border: none;
+            }
+            QTableWidget#heatmapAppearanceTable QHeaderView::section {
+                font-weight: normal;
+            }
+            QPushButton#heatmapColorScaleButton {
+                color: palette(link);
+                text-decoration: underline;
+                padding: 2px;
+            }
+            """
+        )
+
+        main = qtw.QVBoxLayout(self)
+        main.setContentsMargins(10, 10, 10, 10)
+        main.setSpacing(8)
+        body = qtw.QHBoxLayout()
+        body.setSpacing(10)
+        main.addLayout(body, 1)
+
+        heatmap_group = qtw.QGroupBox(self)
+        heatmap_layout = qtw.QVBoxLayout(heatmap_group)
+        heatmap_layout.setContentsMargins(8, 8, 8, 8)
+        heatmap_layout.setSpacing(6)
+
+        self.table = _HeatmapTableWidget(self)
+        configure_appearance_table(
+            self.table,
+            self,
+            object_name="heatmapAppearanceTable",
+            item_name="heatmap",
+        )
+        self.table.itemSelectionChanged.connect(
+            self._sync_controls_from_selection
+        )
+        heatmap_layout.addWidget(self.table)
+
+        actions = qtw.QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
+        self.add_heatmap_combo = qtw.QComboBox(self)
+        self.add_heatmap_combo.setObjectName("heatmapAppearanceAddCombo")
+        self.add_heatmap_combo.setMinimumContentsLength(18)
+        self.add_heatmap_combo.setSizeAdjustPolicy(
+            qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.add_heatmap_combo.setToolTip(
+            "Choose an available measurement to add."
+        )
+        self.add_heatmap_button = qtw.QPushButton("Add Heatmap", self)
+        self.add_heatmap_button.setObjectName("heatmapAppearanceAddButton")
+        self.add_heatmap_button.setEnabled(False)
+        self.remove_heatmap_button = qtw.QPushButton("Remove Heatmap", self)
+        self.remove_heatmap_button.setObjectName("heatmapAppearanceRemoveButton")
+        self.remove_heatmap_button.setEnabled(False)
+        actions.addWidget(self.add_heatmap_combo, 1)
+        actions.addWidget(self.add_heatmap_button)
+        actions.addWidget(self.remove_heatmap_button)
+        heatmap_layout.addLayout(actions)
+        body.addWidget(heatmap_group, 5)
+
+        panel = qtw.QWidget(self)
+        panel_layout = qtw.QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(8)
+
+        color_scale_group = qtw.QGroupBox("Color scale", panel)
+        color_scale_layout = qtw.QGridLayout(color_scale_group)
+        color_scale_layout.setContentsMargins(8, 10, 8, 8)
+        color_scale_layout.setHorizontalSpacing(8)
+        color_scale_layout.addWidget(qtw.QLabel("Colors"), 0, 0)
+        self.color_scale_name = qtw.QLabel()
+        self.color_scale_name.setObjectName("heatmapColorScaleName")
+        color_scale_layout.addWidget(self.color_scale_name, 0, 1, 1, 2)
+        self.color_scale_preview = qtw.QLabel()
+        self.color_scale_preview.setObjectName("heatmapColorScalePreview")
+        self.color_scale_preview.setMinimumWidth(170)
+        color_scale_layout.addWidget(self.color_scale_preview, 1, 0, 1, 3)
+        self.color_scale_button = qtw.QPushButton("Color scale…")
+        self.color_scale_button.setObjectName("heatmapColorScaleButton")
+        self.color_scale_button.setFlat(True)
+        self.color_scale_button.setCursor(
+            QtCore.Qt.CursorShape.PointingHandCursor
+        )
+        self.color_scale_button.setToolTip("Open the Color scale dialog.")
+        color_scale_layout.addWidget(
+            self.color_scale_button,
+            2,
+            0,
+            1,
+            3,
+            QtCore.Qt.AlignmentFlag.AlignLeft,
+        )
+        panel_layout.addWidget(color_scale_group)
+
+        self.visible = qtw.QCheckBox("Visible")
+        self.visible.setChecked(True)
+        self.opacity = qtw.QSpinBox()
+        self.opacity.setObjectName("heatmapAppearanceOpacity")
+        self.opacity.setRange(0, 100)
+        self.opacity.setValue(100)
+        self.opacity.setSuffix("%")
+        self.opacity.setFixedWidth(68)
+        self.opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.opacity_slider.setObjectName("heatmapAppearanceOpacitySlider")
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(100)
+        visibility_layout = qtw.QHBoxLayout()
+        visibility_layout.setContentsMargins(0, 0, 0, 0)
+        visibility_layout.setSpacing(6)
+        visibility_layout.addWidget(self.visible)
+        visibility_layout.addSpacing(16)
+        visibility_layout.addWidget(qtw.QLabel("Opacity"))
+        visibility_layout.addWidget(self.opacity_slider, 1)
+        visibility_layout.addWidget(self.opacity)
+        panel_layout.addLayout(visibility_layout)
+
+        self.x_axis = qtw.QComboBox()
+        self.x_axis.addItems(["Bottom", "Top"])
+        self.x_axis.setToolTip("Choose the horizontal axis for this heatmap.")
+        self.y_axis = qtw.QComboBox()
+        self.y_axis.addItems(["Left", "Right"])
+        self.y_axis.setToolTip("Choose the vertical axis for this heatmap.")
+        for combo in (self.x_axis, self.y_axis):
+            combo.setFixedWidth(108)
+        heatmap_axes = qtw.QGroupBox("Heatmap axes", panel)
+        heatmap_axes_grid = qtw.QGridLayout(heatmap_axes)
+        heatmap_axes_grid.setContentsMargins(8, 10, 8, 8)
+        heatmap_axes_grid.addWidget(qtw.QLabel("Horizontal"), 0, 0)
+        heatmap_axes_grid.addWidget(self.x_axis, 0, 1)
+        heatmap_axes_grid.addWidget(qtw.QLabel("Vertical"), 1, 0)
+        heatmap_axes_grid.addWidget(self.y_axis, 1, 1)
+        heatmap_axes_grid.setColumnStretch(2, 1)
+        panel_layout.addWidget(heatmap_axes)
+
+        self.swap_axes = qtw.QCheckBox("Swap X/Y")
+        self.swap_axes.setToolTip("Exchange the two plotted heatmap axes.")
+        plot_axes = qtw.QGroupBox("Plot axes", panel)
+        plot_axes_layout = qtw.QVBoxLayout(plot_axes)
+        plot_axes_layout.setContentsMargins(8, 10, 8, 8)
+        plot_axes_layout.addWidget(self.swap_axes)
+        panel_layout.addWidget(plot_axes)
+        panel_layout.addStretch()
+        body.addWidget(panel, 4)
+
+        buttons = qtw.QDialogButtonBox(
+            qtw.QDialogButtonBox.StandardButton.Close,
+            self,
+        )
+        buttons.rejected.connect(self.close)
+        main.addWidget(buttons)
+
+        self.opacity_slider.valueChanged.connect(self.opacity.setValue)
+        self.opacity.valueChanged.connect(self.opacity_slider.setValue)
+        self.opacity.valueChanged.connect(self._apply_selection)
+        self.visible.toggled.connect(self._apply_selection)
+        self.x_axis.currentTextChanged.connect(self._apply_axis_selection)
+        self.y_axis.currentTextChanged.connect(self._apply_axis_selection)
+        self.swap_axes.toggled.connect(self._swap_axes_toggled)
+        self.color_scale_button.clicked.connect(self._open_color_scale)
+        self.add_heatmap_combo.currentIndexChanged.connect(
+            self._add_heatmap_selection_changed
+        )
+        self.add_heatmap_button.clicked.connect(self._add_selected_heatmap)
+        self.remove_heatmap_button.clicked.connect(
+            self._remove_selected_heatmaps
+        )
+        self._update_control_enabled_states(False)
+        self.sync_swap_axes_control()
+        self.refresh_color_scale(refresh_rows=False)
+
+    def refresh_color_scale(self, *, refresh_rows: bool = True) -> None:
+        """Refresh the shared color-map name and both kinds of preview."""
+
+        name_getter = getattr(self.owner, "_current_colorbar_colormap_name", None)
+        name = str(name_getter()) if callable(name_getter) else "viridis"
+        self.color_scale_name.setText(_COLORBAR_COLORMAP_LABELS.get(name, name))
+        self.color_scale_name.setToolTip(name)
+        self.color_scale_preview.setPixmap(
+            _colorbar_colormap_preview(name, width=190, height=18)
+        )
+        if refresh_rows:
+            self.refresh_rows()
+
+    def _open_color_scale(self, _checked: bool = False) -> None:
+        opener = getattr(self.owner, "open_colorbar_scale_dialog", None)
+        if callable(opener):
+            opener()
+
+    def sync_swap_axes_control(self) -> None:
+        can_swap = getattr(self.owner, "can_swap_plot_axes", None)
+        is_swapped = getattr(self.owner, "plot_axes_swapped", None)
+        enabled = bool(callable(can_swap) and can_swap())
+        checked = bool(enabled and callable(is_swapped) and is_swapped())
+        blocked = self.swap_axes.blockSignals(True)
+        try:
+            self.swap_axes.setEnabled(enabled)
+            self.swap_axes.setChecked(checked)
+        finally:
+            self.swap_axes.blockSignals(blocked)
+
+    def _swap_axes_toggled(self, checked: bool) -> None:
+        setter = getattr(self.owner, "set_plot_axes_swapped", None)
+        if not callable(setter) or not setter(checked):
+            self.sync_swap_axes_control()
+
+    def refresh_available_heatmaps(self) -> None:
+        previous_key = self.add_heatmap_combo.currentData()
+        plotted_keys = set(self.owner.heatmaps)
+        available = [
+            (label, key)
+            for label, key in self.owner.available_heatmap_candidates()
+            if key not in plotted_keys
+        ]
+        blocked = self.add_heatmap_combo.blockSignals(True)
+        try:
+            self.add_heatmap_combo.clear()
+            self.add_heatmap_combo.addItem(
+                "Select a heatmap to add…",
+                userData=None,
+            )
+            for label, key in available:
+                self.add_heatmap_combo.addItem(label, userData=key)
+            index = self.add_heatmap_combo.findData(previous_key)
+            self.add_heatmap_combo.setCurrentIndex(max(index, 0))
+        finally:
+            self.add_heatmap_combo.blockSignals(blocked)
+        self._add_heatmap_selection_changed(
+            self.add_heatmap_combo.currentIndex()
+        )
+
+    def _add_heatmap_selection_changed(self, _index: int) -> None:
+        self.add_heatmap_button.setEnabled(
+            self.add_heatmap_combo.currentData() is not None
+        )
+
+    def _add_selected_heatmap(self, _checked: bool = False) -> None:
+        key = self.add_heatmap_combo.currentData()
+        if key is None:
+            return
+        try:
+            added = self.owner.add_heatmap_from_dialog(
+                self.add_heatmap_combo.currentText(),
+                key,
+            )
+        except Exception as error:
+            qtw.QMessageBox.critical(
+                self,
+                "Could Not Add Heatmap",
+                f"The selected heatmap could not be added:\n{error}",
+            )
+            added = False
+        self.refresh_rows()
+        if added:
+            self.select_heatmap(key)
+
+    def _remove_selected_heatmaps(self, _checked: bool = False) -> None:
+        selected = self._selected_keys()
+        if not selected or self.owner._primary_heatmap_key in selected:
+            return
+        for key in selected:
+            layer = self.owner.heatmaps.get(key)
+            if layer is not None:
+                self.owner.remove_heatmap(
+                    self.owner._heatmap_display_label(key, layer),
+                    key,
+                )
+        self.refresh_rows()
+
+    def refresh_rows(self) -> None:
+        self.sync_swap_axes_control()
+        selected = set(self._selected_keys())
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        try:
+            for row, (key, layer) in enumerate(self.owner.heatmaps.items()):
+                self.table.insertRow(row)
+                label = self.owner._heatmap_display_label(key, layer)
+                heatmap_id = (
+                    label.split()[0].replace("ID:", "")
+                    if label.startswith("ID:")
+                    else str(row + 1)
+                )
+                measurement = self.owner._heatmap_measurement_name(key, layer)
+                for column, value in (
+                    (self._COL_ID, heatmap_id),
+                    (self._COL_MEASUREMENT, measurement),
+                ):
+                    item = qtw.QTableWidgetItem(value)
+                    item.setFlags(
+                        item.flags()
+                        & ~QtCore.Qt.ItemFlag.ItemIsEditable
+                        | QtCore.Qt.ItemFlag.ItemIsDragEnabled
+                    )
+                    item.setTextAlignment(
+                        (
+                            QtCore.Qt.AlignmentFlag.AlignRight
+                            | QtCore.Qt.AlignmentFlag.AlignVCenter
+                        )
+                        if column == self._COL_ID
+                        else QtCore.Qt.AlignmentFlag.AlignVCenter
+                    )
+                    item.setToolTip(value)
+                    self.table.setItem(row, column, item)
+
+                preview = qtw.QTableWidgetItem()
+                preview.setIcon(QtGui.QIcon(self._heatmap_pixmap(layer)))
+                preview.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                preview.setFlags(
+                    preview.flags()
+                    & ~QtCore.Qt.ItemFlag.ItemIsEditable
+                    & ~QtCore.Qt.ItemFlag.ItemIsDragEnabled
+                )
+                preview.setToolTip("Heatmap preview")
+                self.table.setItem(row, self._COL_PREVIEW, preview)
+                id_item = self.table.item(row, self._COL_ID)
+                if id_item is not None:
+                    id_item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+                    id_item.setToolTip(label)
+                self.table.setRowHeight(row, 28)
+                if key in selected:
+                    self.table.selectRow(row)
+        finally:
+            self.table.blockSignals(False)
+
+        self.owner._sync_heatmap_layer_order()
+        if self.table.rowCount() and not self._selected_keys():
+            self.table.selectRow(0)
+        else:
+            self._sync_controls_from_selection()
+        self.refresh_available_heatmaps()
+
+    def _heatmap_pixmap(self, layer: Any) -> QtGui.QPixmap:
+        """Render a small data-shaped image rather than a line glyph."""
+
+        size = QtCore.QSize(64, 22)
+        source = (
+            self.owner.__dict__.get("dataGrid")
+            if layer is self.owner
+            else getattr(layer, "data_grid", None)
+        )
+        try:
+            data = np.asarray(source, dtype=float)
+        except (TypeError, ValueError):
+            data = np.empty((0, 0))
+        if data.ndim != 2 or data.size == 0:
+            x_values = np.linspace(-1.0, 1.0, size.width())
+            y_values = np.linspace(-1.0, 1.0, size.height())[:, None]
+            sampled = np.sin(3 * x_values) + np.cos(4 * y_values)
+        else:
+            y_indices = np.linspace(0, data.shape[0] - 1, size.height()).astype(int)
+            x_indices = np.linspace(0, data.shape[1] - 1, size.width()).astype(int)
+            sampled = data[np.ix_(y_indices, x_indices)]
+
+        finite = sampled[np.isfinite(sampled)]
+        if finite.size:
+            low = float(np.min(finite))
+            high = float(np.max(finite))
+            if high > low:
+                normalised = (sampled - low) / (high - low)
+            else:
+                normalised = np.full(sampled.shape, 0.5)
+        else:
+            normalised = np.zeros(sampled.shape)
+
+        name_getter = getattr(self.owner, "_current_colorbar_colormap_name", None)
+        name = str(name_getter()) if callable(name_getter) else "viridis"
+        color_map = _colorbar_colormap_for_name(name)
+        if not isinstance(color_map, pg.ColorMap):
+            color_map = _colorbar_colormap_for_name("viridis")
+        lookup = color_map.getLookupTable(nPts=256, alpha=True)
+        image = QtGui.QImage(
+            size.width(),
+            size.height(),
+            QtGui.QImage.Format.Format_ARGB32,
+        )
+        alpha = self.owner._heatmap_opacity(layer)
+        if not self.owner._heatmap_is_visible(layer):
+            alpha *= 0.35
+        for y_position in range(size.height()):
+            source_y = size.height() - y_position - 1
+            for x_position in range(size.width()):
+                value = normalised[source_y, x_position]
+                if not np.isfinite(value):
+                    image.setPixelColor(
+                        x_position,
+                        y_position,
+                        QtGui.QColor(0, 0, 0, 0),
+                    )
+                    continue
+                rgba = lookup[min(255, max(0, round(float(value) * 255)))]
+                color = QtGui.QColor(*[int(channel) for channel in rgba[:4]])
+                color.setAlphaF(alpha * color.alphaF())
+                image.setPixelColor(x_position, y_position, color)
+        return QtGui.QPixmap.fromImage(image)
+
+    def _selected_rows(self) -> list[int]:
+        model = self.table.selectionModel()
+        if model is None:
+            return []
+        rows = sorted({index.row() for index in model.selectedRows()})
+        current_row = self.table.currentRow()
+        if not rows and 0 <= current_row < self.table.rowCount():
+            return [current_row]
+        return rows
+
+    def _selected_keys(self) -> list[Any]:
+        keys = []
+        for row in self._selected_rows():
+            item = self.table.item(row, self._COL_ID)
+            if item is not None:
+                key = item.data(QtCore.Qt.ItemDataRole.UserRole)
+                if key in self.owner.heatmaps:
+                    keys.append(key)
+        return keys
+
+    def _key_for_row(self, row: int) -> Any:
+        item = self.table.item(row, self._COL_ID)
+        return (
+            None
+            if item is None
+            else item.data(QtCore.Qt.ItemDataRole.UserRole)
+        )
+
+    def select_heatmap(self, key: Any) -> bool:
+        for row in range(self.table.rowCount()):
+            if self._key_for_row(row) != key:
+                continue
+            self.table.clearSelection()
+            self.table.selectRow(row)
+            item = self.table.item(row, self._COL_ID)
+            if item is not None:
+                self.table.setCurrentItem(item)
+                self.table.scrollToItem(item)
+            return True
+        return False
+
+    def _move_rows_to_position(
+        self,
+        source_rows: list[int],
+        destination_row: int,
+    ) -> None:
+        keys = list(self.owner.heatmaps)
+        source_rows = sorted(
+            {row for row in source_rows if 0 <= row < len(keys)}
+        )
+        if not source_rows:
+            return
+        destination_row = max(0, min(destination_row, len(keys)))
+        selected = [keys[row] for row in source_rows]
+        destination_row -= sum(row < destination_row for row in source_rows)
+        remaining = [
+            key for row, key in enumerate(keys) if row not in source_rows
+        ]
+        reordered = (
+            remaining[:destination_row]
+            + selected
+            + remaining[destination_row:]
+        )
+        if reordered == keys:
+            return
+        heatmaps = self.owner.heatmaps
+        reordered_layers = [(key, heatmaps[key]) for key in reordered]
+        heatmaps.clear()
+        heatmaps.update(reordered_layers)
+        self.owner._sync_heatmap_layer_order()
+        self.refresh_rows()
+
+    def _sync_controls_from_selection(self) -> None:
+        if self._building:
+            return
+        keys = self._selected_keys()
+        if not keys:
+            self._update_control_enabled_states(False)
+            return
+        layer = self.owner.heatmaps[keys[0]]
+        self._building = True
+        try:
+            self.visible.setChecked(self.owner._heatmap_is_visible(layer))
+            self.opacity.setValue(
+                round(self.owner._heatmap_opacity(layer) * 100)
+            )
+            x_axis, y_axis = self.owner._heatmap_axis_sides(layer)
+            self.x_axis.setCurrentText(x_axis)
+            self.y_axis.setCurrentText(y_axis)
+        finally:
+            self._building = False
+        self._update_control_enabled_states(True)
+
+    def _update_control_enabled_states(self, has_selection: bool) -> None:
+        self.visible.setEnabled(has_selection)
+        self.opacity.setEnabled(has_selection)
+        self.opacity_slider.setEnabled(has_selection)
+        self.x_axis.setEnabled(has_selection)
+        self.y_axis.setEnabled(has_selection)
+        keys = self._selected_keys() if has_selection else []
+        self.remove_heatmap_button.setEnabled(
+            bool(keys) and self.owner._primary_heatmap_key not in keys
+        )
+
+    def _apply_selection(self, *_args: Any) -> None:
+        if self._building:
+            return
+        keys = self._selected_keys()
+        self._update_control_enabled_states(bool(keys))
+        for key in keys:
+            layer = self.owner.heatmaps[key]
+            self.owner._set_layer_visibility(layer, self.visible.isChecked())
+            self.owner._set_layer_opacity(layer, self.opacity.value() / 100)
+        self.refresh_rows()
+
+    def _apply_axis_selection(self, *_args: Any) -> None:
+        if self._building:
+            return
+        keys = self._selected_keys()
+        self._update_control_enabled_states(bool(keys))
+        for key in keys:
+            self.owner._set_layer_axes(
+                self.owner.heatmaps[key],
+                self.x_axis.currentText(),
+                self.y_axis.currentText(),
+            )
