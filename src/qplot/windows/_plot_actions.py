@@ -777,17 +777,15 @@ class PlotActionsMixin:
                 operation="exporting run data",
                 ):
             return
-        ds = self._dataset_for_plot_target()
-        if ds is None:
+        request = self._run_csv_export_request()
+        if request is None:
             return
-        try:
-            params = self._selected_measurement_params(ds)
-            if params is None:
-                return
-
-            self._export_measurement_csv(ds, params)
-        finally:
-            self._close_dataset_if_unowned(ds, context="CSV dataset cleanup failed")
+        dataset_key, parameter_names, run_id = request
+        self._export_measurement_csv(
+            dataset_key,
+            parameter_names,
+            run_id=run_id,
+        )
 
 
     @QtCore.pyqtSlot(str)
@@ -894,22 +892,48 @@ class PlotActionsMixin:
                     )
 
 
-    def _export_measurement_csv(self, ds, params):
-        if not params:
+    def _export_measurement_csv(
+            self,
+            dataset_key,
+            parameter_names,
+            *,
+            run_id=None,
+            ):
+        """Export a captured run request through a fresh read-only dataset."""
+        parameter_names = tuple(str(name) for name in parameter_names)
+        if not parameter_names:
             self.show_status("No plottable measurements to export for this run.", 5000)
             return
 
-        default_name = self._default_export_filename(ds, params)
+        default_name = self._default_run_csv_export_filename(
+            dataset_key,
+            parameter_names,
+            run_id=run_id,
+        )
         filename = self._choose_csv_export_filename(default_name)
         if filename is None:
             return
 
+        dataset = None
         try:
-            frame = self._measurement_dataframe(ds, params)
+            # The destination is approved before this action-owned view is
+            # opened, so a modal save dialog cannot retain an obsolete SQLite
+            # snapshot. The read layer also binds acquisition to the database
+            # identity captured in ``dataset_key``.
+            dataset = self._load_run_csv_dataset(dataset_key)
+            params = self._measurement_params_by_names(dataset, parameter_names)
+            frame = self._measurement_dataframe(dataset, params)
+            self._require_run_csv_source_current(dataset_key)
             write_export_atomically(
                 filename,
                 lambda temporary: frame.to_csv(temporary, index=False),
+                before_publish=(
+                    lambda: self._require_run_csv_source_current(dataset_key)
+                ),
             )
+        except DatabaseInstanceChangedError:
+            self._handle_run_csv_source_replaced(dataset_key)
+            return
         except Exception as err:
             log_exception("CSV export failed", err, __name__)
             self.show_error(
@@ -918,8 +942,61 @@ class PlotActionsMixin:
                 str(err),
             )
             return
+        finally:
+            if dataset is not None:
+                try:
+                    close_dataset_connection(dataset)
+                except Exception as err:
+                    log_exception("CSV dataset cleanup failed", err, __name__)
 
         self.show_status(f"Exported CSV: {filename}", 5000)
+
+
+    def _load_run_csv_dataset(self, dataset_key):
+        """Fresh-load one export view for an exact database instance."""
+        self._require_run_csv_source_current(dataset_key)
+        load_kwargs = {}
+        if dataset_key.database_identity is not None:
+            load_kwargs["expected_database_identity"] = (
+                dataset_key.database_identity
+            )
+        dataset = load_by_guid_read_only(
+            dataset_key.guid,
+            dataset_key.database_path,
+            **load_kwargs,
+        )
+        try:
+            self._require_run_csv_source_current(dataset_key)
+        except Exception:
+            try:
+                close_dataset_connection(dataset)
+            finally:
+                raise
+        return dataset
+
+
+    def _require_run_csv_source_current(self, dataset_key):
+        """Reject an export when its captured database instance was replaced."""
+        if not self._dataset_key_is_current(dataset_key):
+            raise DatabaseInstanceChangedError(
+                "The database was replaced while qPlot was exporting run data."
+            )
+
+
+    def _handle_run_csv_source_replaced(self, dataset_key):
+        """Request replacement recovery without reporting a generic CSV error."""
+        reload_if_changed = getattr(
+            self,
+            "_reload_if_database_instance_changed",
+            None,
+        )
+        if callable(reload_if_changed):
+            reload_if_changed(dataset_key.database_path)
+        self.show_status(
+            "CSV export stopped because the database was replaced; reloading "
+            "the source. No CSV was written.",
+            5000,
+        )
 
 
     def _choose_csv_export_filename(self, default_name):
@@ -1568,10 +1645,27 @@ class PlotActionsMixin:
 
         """
         params = [param for param in dataset.get_parameters() if param.depends_on != ""]
-        measurement = self.measurementBox.text().strip()
+        names = self._selected_measurement_names(
+            tuple(param.name for param in params),
+            dataset.run_id,
+        )
+        if names is None:
+            return None
+        selected_names = set(names)
+        return [param for param in params if param.name in selected_names]
+
+
+    def _selected_measurement_names(self, parameter_names, run_id):
+        """Apply the Measurement field to immutable parameter names."""
+        measurement_box = getattr(self, "measurementBox", None)
+        measurement = (
+            measurement_box.text().strip()
+            if measurement_box is not None
+            else "*"
+        )
 
         if measurement in ("", "*"):
-            return params
+            return tuple(parameter_names)
 
         try:
             index = int(measurement)
@@ -1579,14 +1673,114 @@ class PlotActionsMixin:
             self.show_status("Measurement must be a number or *.", 5000)
             return None
 
-        if index < 1 or index > len(params):
+        if index < 1 or index > len(parameter_names):
             self.show_status(
-                f"Run {dataset.run_id} has no measurement {index}.",
+                f"Run {run_id} has no measurement {index}.",
                 5000,
             )
             return None
 
-        return [params[index - 1]]
+        return (parameter_names[index - 1],)
+
+
+    def _run_csv_export_request(self):
+        """Capture a run key and names without opening an export dataset."""
+        database_path = self.fileTextbox.text()
+        if not database_path:
+            self.show_status("Load a database before plotting or exporting.", 5000)
+            return None
+
+        run_id = self.selected_run_id
+        if run_id is None:
+            self.show_status("Enter a Run ID before plotting or exporting.", 5000)
+            return None
+
+        reload_if_changed = getattr(
+            self,
+            "_reload_if_database_instance_changed",
+            None,
+        )
+        if callable(reload_if_changed) and reload_if_changed(database_path):
+            self.show_status(
+                "Database was replaced; reloading before exporting the run.",
+                5000,
+            )
+            return None
+
+        selected_dataset = getattr(self, "ds", None)
+        selected_key = getattr(self, "_selected_dataset_key", None)
+        if (
+                selected_dataset is not None
+                and getattr(selected_dataset, "run_id", None) == run_id
+                and selected_key is not None
+                and selected_key.database_path
+                == logical_database_path(database_path)
+                ):
+            try:
+                parameter_names = tuple(
+                    param.name
+                    for param in selected_dataset.get_parameters()
+                    if param.depends_on != ""
+                )
+            except Exception as error:
+                log_exception("Run parameter enumeration failed", error, __name__)
+                self.show_error(
+                    "Run Load Failed",
+                    "Could not read the selected run's measurements.",
+                    str(error),
+                )
+                return None
+            dataset_key = selected_key
+        else:
+            metadata = self._run_metadata_for_id(run_id)
+            guid = metadata.get("guid")
+            if not guid:
+                self.show_status(
+                    f"Run {run_id} is not available in the loaded database.",
+                    5000,
+                )
+                return None
+            dataset_key = self._current_dataset_key(str(guid))
+            parameter_names = tuple(
+                str(name)
+                for name in metadata.get("measure_parameters") or ()
+            )
+
+        requested_names = self._selected_measurement_names(
+            parameter_names,
+            run_id,
+        )
+        if requested_names is None:
+            return None
+        return dataset_key, requested_names, run_id
+
+
+    def _run_metadata_for_id(self, run_id):
+        """Return already-loaded run metadata without opening SQLite."""
+        run_list = getattr(self, "RunList", None)
+        all_run_metadata = getattr(run_list, "all_run_metadata", None)
+        if not callable(all_run_metadata):
+            return {}
+        runs = all_run_metadata()
+        metadata = runs.get(run_id)
+        if metadata is None:
+            metadata = runs.get(str(run_id))
+        return dict(metadata or {})
+
+
+    def _measurement_params_by_names(self, dataset, parameter_names):
+        """Resolve captured measurement names against a freshly loaded run."""
+        parameters = {param.name: param for param in dataset.get_parameters()}
+        resolved = []
+        for name in parameter_names:
+            param = parameters.get(name)
+            if param is None or param.depends_on == "":
+                raise ValueError(
+                    f"Measurement parameter {name!r} is not present in the "
+                    "freshly loaded run."
+                )
+            resolved.append(param)
+        return resolved
 
 
     def _dataset_for_plot_target(self):
@@ -1673,6 +1867,30 @@ class PlotActionsMixin:
         database_folder = os.path.dirname(self.fileTextbox.text())
         measurement = "all" if len(params) != 1 else params[0].name
         filename = self._safe_filename(f"run_{dataset.run_id}_{measurement}.csv")
+        return os.path.join(database_folder or os.getcwd(), filename)
+
+
+    def _default_run_csv_export_filename(
+            self,
+            dataset_key,
+            parameter_names,
+            *,
+            run_id=None,
+            ):
+        """Return a CSV suggestion from a captured export request."""
+        if run_id is None:
+            run_list = getattr(self, "RunList", None)
+            run_id_for_guid = getattr(run_list, "run_id_for_guid", None)
+            if callable(run_id_for_guid):
+                run_id = run_id_for_guid(dataset_key.guid)
+        run_identifier = dataset_key.guid if run_id is None else run_id
+        measurement = (
+            "all" if len(parameter_names) != 1 else parameter_names[0]
+        )
+        filename = self._safe_filename(
+            f"run_{run_identifier}_{measurement}.csv"
+        )
+        database_folder = os.path.dirname(dataset_key.database_path)
         return os.path.join(database_folder or os.getcwd(), filename)
 
 

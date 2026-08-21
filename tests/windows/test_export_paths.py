@@ -91,12 +91,29 @@ class _CsvFrame:
 class _CsvHarness(PlotActionsMixin):
     def __init__(self, selected_path: Path, *, fail: bool = False):
         self.selected_path = selected_path
+        self.dataset_key = DatasetKey(
+            str(selected_path.with_name(f"{selected_path.name}.source.db")),
+            "csv-export-guid",
+        )
         self.frame = _CsvFrame(fail=fail)
         self.status_messages = []
         self.errors = []
 
-    def _default_export_filename(self, dataset, params):
+    def _default_run_csv_export_filename(
+            self,
+            dataset_key,
+            parameter_names,
+            *,
+            run_id=None,
+            ):
         return str(self.selected_path)
+
+    def _load_run_csv_dataset(self, dataset_key):
+        assert dataset_key == self.dataset_key
+        return object()
+
+    def _measurement_params_by_names(self, dataset, parameter_names):
+        return [object()]
 
     def _measurement_dataframe(self, dataset, params):
         return self.frame
@@ -134,7 +151,7 @@ class _PdfHarness(PlotExportMixin):
 def _invoke_export(kind: str, selected_path: Path, *, fail: bool = False):
     if kind == "csv":
         harness = _CsvHarness(selected_path, fail=fail)
-        harness._export_measurement_csv(object(), [object()])
+        harness._export_measurement_csv(harness.dataset_key, ("signal",))
         return harness
 
     harness = _PdfHarness(selected_path, fail=fail)
@@ -423,7 +440,7 @@ def test_pdf_and_measurement_csv_routes_reject_their_loaded_database(
         patch.object(qtw.QMessageBox, "question") as question,
     ):
         if kind == "csv":
-            harness._export_measurement_csv(object(), [object()])
+            harness._export_measurement_csv(harness.dataset_key, ("signal",))
         else:
             assert not harness.save_plot_pdf()
 
