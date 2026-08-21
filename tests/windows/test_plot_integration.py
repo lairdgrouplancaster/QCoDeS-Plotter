@@ -991,6 +991,10 @@ def test_hiding_data_axes_preserves_heatmap_view_range(tmp_path, monkeypatch):
             "heatmapLayerRow",
         )
 
+        # Data axes are initially hidden; expose the dock so this test exercises
+        # the hide transition rather than the corresponding show transition.
+        heatmap_window.axes_dock.show()
+        wait_for(lambda: heatmap_window.axes_dock.isVisible())
         initial_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
         heatmap_window.axes_dock.toggleViewAction().trigger()
         wait_for(lambda: heatmap_window.axes_dock.isHidden())
