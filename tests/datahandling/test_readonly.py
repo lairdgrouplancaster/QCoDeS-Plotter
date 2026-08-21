@@ -1503,20 +1503,10 @@ def test_provenance_marked_live_wal_refreshes_see_new_rows_without_source_change
 
             assert _run_without_source_changes(tmp_path, direct_row_count) == 1
             assert _run_without_source_changes(tmp_path, qcodes_row_count) == 1
-            # The isolated probe deliberately rejects an unstable WAL view.
-            # A live Windows writer can briefly update its shared-memory state
-            # while producing no lasting source-file change, so retry the
-            # documented transient condition before treating it as a failure.
-            probe_error = _run_without_source_changes(
+            assert _run_without_source_changes(
                 tmp_path,
                 lambda: database_access_error(database_path),
-            )
-            if probe_error is not None:
-                probe_error = _run_without_source_changes(
-                    tmp_path,
-                    lambda: database_access_error(database_path),
-                )
-            assert probe_error is None
+                ) is None
 
             datasaver.add_result((setpoint, 2.0), (signal, 3.0))
             datasaver.flush_data_to_database(block=True)

@@ -1241,6 +1241,29 @@ def probe_read_only_database(
         if before.database is None:
             raise FileNotFoundError(source_path)
         if not before.stable:
+            # Windows can report transient metadata changes for a live WAL
+            # even while its bytes are suitable for a private snapshot.  This
+            # preflight is only an accessibility check: validate such a
+            # generated WAL through the same snapshot reader used by the real
+            # opener, which still performs its own consistency checks.
+            if (
+                    _check_sqlite_lock_bytes
+                    and generation_marker
+                    and before.wal is not None
+                    ):
+                conn = sqlite_read_only_connection(
+                    source_path,
+                    ignore_unpaired_wal=ignore_unpaired_wal,
+                    expected_database_identity=expected_database_identity,
+                    cancelled_callback=cancelled_callback,
+                    deadline=deadline,
+                    )
+                try:
+                    conn.execute("PRAGMA user_version").fetchone()
+                finally:
+                    conn.close()
+                _raise_if_read_interrupted(cancelled_callback, deadline)
+                return
             continue
 
         policy = _source_read_policy(
