@@ -323,6 +323,7 @@ class plot2d(
                 # The colour bar is created after the initial plot theme has
                 # been applied, so style its axes immediately as well.
                 self.config.theme.style_plotItem(self)
+                self.apply_axis_major_tick_count_preference()
                 if self._colorbar_manual_levels is None:
                     self.scaleColorbar()
                 else:

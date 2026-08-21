@@ -355,7 +355,12 @@ class config:
 
         preference_schema = self.schema["properties"]["user_preference"]["properties"]
         migrated = False
-        for key in ("colorbar_width", "axis_tick_width"):
+        # ``axis_tick_density`` was superseded by an explicit target because
+        # PyQtGraph clamps density values and cannot produce sparse axes.
+        if preferences.pop("axis_tick_density", None) is not None:
+            migrated = True
+
+        for key in ("colorbar_width", "axis_tick_width", "axis_major_tick_count"):
             if key not in preferences:
                 preferences[key] = deepcopy(preference_schema[key]["default"])
                 migrated = True

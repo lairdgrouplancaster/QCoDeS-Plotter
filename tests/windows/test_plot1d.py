@@ -23,6 +23,165 @@ from qplot.windows.plot1d import plot1d
 
 
 class SnapToTraceTestCase(unittest.TestCase):
+    def test_major_tick_count_preference_applies_to_plot_and_colorbar_axes(self):
+        class Axis:
+            def __init__(self):
+                self.picture = object()
+                self.logMode = False
+                self.tickSpacing = lambda *args: []
+                self.tickStrings = lambda values, scale, spacing: list(values)
+                self.styles = []
+                self.updates = 0
+
+            def setStyle(self, **style):
+                self.styles.append(style)
+
+            def update(self):
+                self.updates += 1
+
+        class AxisOwner:
+            def __init__(self):
+                self.axes = {side: Axis() for side in ("left", "bottom", "right", "top")}
+                self.updates = 0
+
+            def getAxis(self, side):
+                return self.axes[side]
+
+            def update(self):
+                self.updates += 1
+
+        class Viewport:
+            def __init__(self):
+                self.updates = 0
+
+            def update(self):
+                self.updates += 1
+
+        class Widget:
+            def __init__(self):
+                self.view = Viewport()
+
+            def viewport(self):
+                return self.view
+
+        class Config:
+            def get(self, key):
+                self.key = key
+                return 3
+
+        window = plotWidget.__new__(plotWidget)
+        window.plot = AxisOwner()
+        window.bar = AxisOwner()
+        window.widget = Widget()
+        window.config = Config()
+
+        window.apply_axis_major_tick_count_preference()
+
+        self.assertEqual(window.config.key, "user_preference.axis_major_tick_count")
+        for owner in (window.plot, window.bar):
+            for axis in owner.axes.values():
+                self.assertEqual(
+                    axis.styles,
+                    [{"maxTickLevel": 1, "maxTextLevel": 0}],
+                    )
+                self.assertIsNone(axis.picture)
+                self.assertEqual(axis.updates, 1)
+                self.assertEqual(
+                    axis.tickSpacing(-1, 1, 100),
+                    [(1.0, 0.0), (0.2, 0.0)],
+                    )
+                self.assertEqual(
+                    axis.tickStrings([-1.0, -2e-14, 1.0], 1.0, 1.0),
+                    ["-1", "0", "1"],
+                    )
+        self.assertEqual(window.plot.updates, 1)
+        self.assertEqual(window.widget.view.updates, 1)
+
+    def test_major_tick_spacing_uses_nice_values_and_keeps_minor_level(self):
+        axis = type("Axis", (), {"_qplot_major_tick_count": 3})()
+
+        self.assertEqual(
+            plotwin_module._major_tick_spacing(axis, -201, 201, 600),
+            [(200.0, 0.0), (50.0, 0.0)],
+            )
+        self.assertEqual(
+            plotwin_module._major_tick_spacing(axis, -9.33, 9.33, 600),
+            [(5.0, 0.0), (1.0, 0.0)],
+            )
+
+        axis._qplot_major_tick_count = 2
+        self.assertEqual(
+            plotwin_module._major_tick_spacing(axis, -201, 201, 600),
+            [(200.0, 0.0), (50.0, 0.0)],
+            )
+
+        axis._qplot_major_tick_count = 5
+        self.assertEqual(
+            plotwin_module._major_tick_spacing(axis, -9.33, 9.33, 600),
+            [(5.0, 0.0), (1.0, 0.0)],
+            )
+
+        axis._qplot_major_tick_count = 4
+        self.assertEqual(
+            plotwin_module._major_tick_spacing(axis, -1.5, 1.5, 600),
+            [(1.0, 0.0), (0.2, 0.0)],
+            )
+
+        axis._qplot_major_tick_count = 7
+        self.assertEqual(
+            plotwin_module._major_tick_spacing(axis, -9.33, 9.33, 600),
+            [(2.0, 0.0), (0.5, 0.0)],
+            )
+
+    def test_major_tick_spacing_tolerates_roundoff_at_nice_endpoints(self):
+        lower = -9.999999999999998
+        upper = 10.000000000000002
+        axis = type("Axis", (), {"_qplot_major_tick_count": 3})()
+
+        self.assertEqual(
+            plotwin_module._major_tick_spacing(axis, lower, upper, 600),
+            [(10.0, 0.0), (2.0, 0.0)],
+            )
+        self.assertEqual(
+            plotwin_module._tick_positions(lower, upper, 10.0, 0.0),
+            [-10.0, 0.0, 10.0],
+            )
+        self.assertEqual(
+            plotwin_module._tick_positions(-9.999999, 9.999999, 10.0, 0.0),
+            [0.0],
+            )
+
+        axis._qplot_major_tick_count = 4
+        self.assertEqual(
+            plotwin_module._major_tick_spacing(axis, lower, upper, 600),
+            [(5.0, 0.0), (1.0, 0.0)],
+            )
+
+    def test_horizontal_axis_target_counts_only_labels_that_fit(self):
+        widget = pg.PlotWidget()
+        self.addCleanup(widget.close)
+        widget.resize(600, 400)
+        widget.show()
+        plot = widget.getPlotItem()
+        plot.setXRange(-10.0, 10.0, padding=0)
+        axis = plot.getAxis("bottom")
+        image = QtGui.QImage(
+            800,
+            600,
+            QtGui.QImage.Format.Format_ARGB32,
+            )
+        painter = QtGui.QPainter(image)
+        self.addCleanup(painter.end)
+
+        for target, expected in (
+                (3, ["-5", "0", "5"]),
+                (4, ["-5", "0", "5"]),
+                ):
+            plotwin_module._configure_major_ticks(axis, target)
+            qtw.QApplication.processEvents()
+            specs = axis.generateDrawSpecs(painter)
+            self.assertEqual([spec[2] for spec in specs[2]], expected)
+
     def test_trace_scroll_area_does_not_lock_dock_width(self):
         host = Plot1DTraceMixin.__new__(Plot1DTraceMixin)
         host.lineScroll = qtw.QScrollArea()

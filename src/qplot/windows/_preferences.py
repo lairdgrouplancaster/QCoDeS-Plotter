@@ -40,11 +40,13 @@ COPY_PLOT_IMAGE_RESOLUTION_OPTIONS = (
 
 COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
 AXIS_TICK_WIDTH_KEY = "user_preference.axis_tick_width"
+AXIS_MAJOR_TICK_COUNT_KEY = "user_preference.axis_major_tick_count"
 
 PREFERENCE_KEYS = (
     "user_preference.theme",
     COLORBAR_WIDTH_KEY,
     AXIS_TICK_WIDTH_KEY,
+    AXIS_MAJOR_TICK_COUNT_KEY,
     "GUI.preview_size",
     MOUSE_MODE_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
@@ -154,6 +156,16 @@ class PreferencesDialog(qtw.QDialog):
             "including colour scales"
             )
         self._add_row(form, "Axis and tick &width:", self.axisTickWidthSpin)
+
+        self.axisMajorTickCountSpin = qtw.QSpinBox(tab)
+        self.axisMajorTickCountSpin.setObjectName("axisMajorTickCountPreferenceSpin")
+        self.axisMajorTickCountSpin.setAccessibleName("Major ticks per axis")
+        self.axisMajorTickCountSpin.setRange(2, 10)
+        self.axisMajorTickCountSpin.setToolTip(
+            "Target number of labelled major ticks on each axis, including "
+            "the heatmap colour scale"
+            )
+        self._add_row(form, "&Major ticks per axis:", self.axisMajorTickCountSpin)
 
         self.previewSizeSpin = qtw.QSpinBox(tab)
         self.previewSizeSpin.setObjectName("previewSizePreferenceSpin")
@@ -353,6 +365,7 @@ class PreferencesDialog(qtw.QDialog):
             self.themeCombo,
             self.colorbarWidthSpin,
             self.axisTickWidthSpin,
+            self.axisMajorTickCountSpin,
             self.previewSizeSpin,
             self.mouseModeCombo,
             self.copyPlotImageResolutionCombo,
@@ -372,6 +385,9 @@ class PreferencesDialog(qtw.QDialog):
 
             self.colorbarWidthSpin.setValue(int(values[COLORBAR_WIDTH_KEY]))
             self.axisTickWidthSpin.setValue(float(values[AXIS_TICK_WIDTH_KEY]))
+            self.axisMajorTickCountSpin.setValue(
+                int(values[AXIS_MAJOR_TICK_COUNT_KEY])
+                )
 
             self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
             mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
@@ -421,6 +437,7 @@ class PreferencesDialog(qtw.QDialog):
             "user_preference.theme": self.themeCombo.currentData(),
             COLORBAR_WIDTH_KEY: int(self.colorbarWidthSpin.value()),
             AXIS_TICK_WIDTH_KEY: float(self.axisTickWidthSpin.value()),
+            AXIS_MAJOR_TICK_COUNT_KEY: int(self.axisMajorTickCountSpin.value()),
             "GUI.preview_size": int(self.previewSizeSpin.value()),
             MOUSE_MODE_KEY: self.mouseModeCombo.currentData(),
             COPY_PLOT_IMAGE_RESOLUTION_KEY: (

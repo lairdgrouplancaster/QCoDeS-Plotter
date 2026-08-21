@@ -7,6 +7,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.configuration.config import config
 from qplot.windows import main as main_window
 from qplot.windows._preferences import (
+    AXIS_MAJOR_TICK_COUNT_KEY,
     AXIS_TICK_WIDTH_KEY,
     COLORBAR_WIDTH_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -28,6 +29,7 @@ class FakeConfig:
             "user_preference.theme": "light",
             COLORBAR_WIDTH_KEY: 15,
             AXIS_TICK_WIDTH_KEY: 2.0,
+            AXIS_MAJOR_TICK_COUNT_KEY: 3,
             "GUI.preview_size": 200,
             MOUSE_MODE_KEY: "pan",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
@@ -74,6 +76,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             "user_preference.theme": "dark",
             COLORBAR_WIDTH_KEY: 21,
             AXIS_TICK_WIDTH_KEY: 2.5,
+            AXIS_MAJOR_TICK_COUNT_KEY: 4,
             "GUI.preview_size": 300,
             MOUSE_MODE_KEY: "rect",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -92,6 +95,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertEqual(dialog.themeCombo.currentData(), "dark")
             self.assertEqual(dialog.colorbarWidthSpin.value(), 21)
             self.assertEqual(dialog.axisTickWidthSpin.value(), 2.5)
+            self.assertEqual(dialog.axisMajorTickCountSpin.value(), 4)
             self.assertEqual(dialog.previewSizeSpin.value(), 300)
             self.assertEqual(dialog.mouseModeCombo.currentData(), "rect")
             self.assertEqual(
@@ -125,6 +129,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             dialog.preferencesApplied.connect(lambda: applied.append(True))
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("pyqt"))
             dialog.colorbarWidthSpin.setValue(24)
+            dialog.axisMajorTickCountSpin.setValue(5)
             dialog.previewSizeSpin.setValue(500)
             dialog.mouseModeCombo.setCurrentIndex(
                 dialog.mouseModeCombo.findData("rect")
@@ -148,6 +153,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertEqual(cfg.updates, [
                 ("user_preference.theme", "pyqt"),
                 (COLORBAR_WIDTH_KEY, 24),
+                (AXIS_MAJOR_TICK_COUNT_KEY, 5),
                 ("GUI.preview_size", 500),
                 (MOUSE_MODE_KEY, "rect"),
                 (
@@ -271,6 +277,7 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
             dialog.colorbarWidthSpin.setValue(21)
             dialog.axisTickWidthSpin.setValue(2.5)
+            dialog.axisMajorTickCountSpin.setValue(5)
             dialog.previewSizeSpin.setValue(300)
             dialog.mouseModeCombo.setCurrentIndex(
                 dialog.mouseModeCombo.findData("rect")
@@ -295,6 +302,7 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
             self.assertEqual(reloaded.get("user_preference.theme"), "dark")
             self.assertEqual(reloaded.get(COLORBAR_WIDTH_KEY), 21)
             self.assertEqual(reloaded.get(AXIS_TICK_WIDTH_KEY), 2.5)
+            self.assertEqual(reloaded.get(AXIS_MAJOR_TICK_COUNT_KEY), 5)
             self.assertEqual(reloaded.get("GUI.preview_size"), 300)
             self.assertEqual(reloaded.get(MOUSE_MODE_KEY), "rect")
             self.assertEqual(

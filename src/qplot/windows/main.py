@@ -809,6 +809,13 @@ class MainWindow(
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
+            apply_major_ticks = getattr(
+                win,
+                "apply_axis_major_tick_count_preference",
+                None,
+                )
+            if callable(apply_major_ticks):
+                apply_major_ticks()
             apply_colorbar_width = getattr(win, "apply_colorbar_width_preference", None)
             if callable(apply_colorbar_width):
                 apply_colorbar_width()

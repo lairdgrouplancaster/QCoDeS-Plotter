@@ -1,5 +1,6 @@
-from math import floor, isfinite, log10
+from math import ceil, floor, isclose, isfinite, log10
 from os import path
+from types import MethodType
 from typing import TYPE_CHECKING
 
 import pyqtgraph as pg
@@ -34,6 +35,7 @@ from ._plot_marquee import PlotMarqueeMixin
 from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
 from ._preferences import (
+    AXIS_MAJOR_TICK_COUNT_KEY,
     MOUSE_MODE_KEY,
     PreferencesDialog,
     create_preferences_action,
@@ -90,6 +92,149 @@ _PLOT_AREA_RESIZE_PRESETS = (
         _SQUARE_PLOT_AREA_SIZE,
         ),
     )
+
+
+def _tick_positions(min_val, max_val, spacing, offset):
+    """Return the positions on one regular tick lattice inside a range."""
+
+    scale = max(abs(min_val), abs(max_val), abs(spacing), abs(offset))
+    tolerance = scale * 1e-12
+    first_index = ceil((min_val - offset - tolerance) / spacing)
+    last_index = floor((max_val - offset + tolerance) / spacing)
+    return [
+        (index * spacing) + offset
+        for index in range(first_index, last_index + 1)
+        ]
+
+
+def _visible_horizontal_tick_positions(axis, positions, min_val, max_val, size,
+                                       spacing):
+    """Return ticks whose labels fit completely within a horizontal axis."""
+
+    if getattr(axis, "orientation", None) not in ("bottom", "top") or size <= 0:
+        return positions
+
+    scale = axis.autoSIPrefixScale * axis.scale
+    strings = _clean_tick_strings(axis, positions, scale, spacing)
+    font = axis.style.get("tickFont") or qtw.QApplication.font()
+    metrics = QtGui.QFontMetricsF(font)
+    data_range = max_val - min_val
+    visible = []
+    for position, string in zip(positions, strings, strict=True):
+        pixel = ((position - min_val) / data_range) * size
+        half_width = metrics.boundingRect(string).width() / 2.0
+        if half_width <= pixel <= size - half_width:
+            visible.append(position)
+    return visible
+
+
+def _major_tick_spacing(axis, min_val, max_val, size):
+    """Choose a zero-aligned 1-2-5 interval nearest the requested tick count."""
+
+    min_val, max_val = sorted((min_val, max_val))
+    data_range = max_val - min_val
+    if data_range == 0:
+        return []
+
+    target = axis._qplot_major_tick_count
+    raw_spacing = data_range / max(1, target - 1)
+    base_exponent = floor(log10(raw_spacing))
+    candidates = []
+    for exponent in range(base_exponent - 2, base_exponent + 3):
+        decade = 10.0 ** exponent
+        for factor in (1.0, 2.0, 5.0):
+            spacing = factor * decade
+            for offset in (0.0,):
+                positions = _tick_positions(min_val, max_val, spacing, offset)
+                scored_positions = _visible_horizontal_tick_positions(
+                    axis,
+                    positions,
+                    min_val,
+                    max_val,
+                    size,
+                    spacing,
+                    )
+                count = len(scored_positions)
+                if count == 0:
+                    continue
+                coverage = (
+                    (scored_positions[-1] - scored_positions[0]) / data_range
+                    if count > 1
+                    else 0.0
+                    )
+                centre_error = abs(
+                    (scored_positions[0] + scored_positions[-1]) / 2.0
+                    - (min_val + max_val) / 2.0
+                    ) / data_range
+                candidates.append((
+                    abs(count - target),
+                    count < 2,
+                    -coverage,
+                    centre_error,
+                    abs(log10(spacing / raw_spacing)),
+                    spacing,
+                    offset,
+                    factor,
+                    ))
+
+    _, _, _, _, _, major_spacing, offset, factor = min(candidates)
+    subdivisions = {
+        1.0: 5,
+        2.0: 4,
+        5.0: 5,
+        }[factor]
+    return [
+        (major_spacing, offset),
+        (major_spacing / subdivisions, offset),
+        ]
+
+
+def _clean_tick_strings(axis, values, scale, spacing):
+    """Format nice intervals accurately and round-off near zero as zero."""
+
+    tolerance = max(abs(spacing) * 1e-10, 1e-15)
+    clean_values = [0.0 if abs(value) < tolerance else value for value in values]
+    if axis.logMode:
+        return axis._qplot_original_tick_strings(
+            clean_values,
+            scale,
+            spacing,
+            )
+
+    scaled_spacing = abs(spacing * scale)
+    places = max(0, ceil(-log10(scaled_spacing)))
+    while places < 12 and not isclose(
+            scaled_spacing,
+            round(scaled_spacing, places),
+            rel_tol=1e-12,
+            abs_tol=10.0 ** (-places - 12),
+            ):
+        places += 1
+
+    strings = []
+    for value in clean_values:
+        scaled_value = value * scale
+        if abs(scaled_value) < 0.001 or abs(scaled_value) >= 10_000:
+            strings.append(f"{scaled_value:g}")
+        else:
+            strings.append(f"{scaled_value:.{places}f}")
+    return strings
+
+
+def _configure_major_ticks(axis, count):
+    """Make an AxisItem use qPlot's sparse, range-aware major ticks."""
+
+    axis._qplot_major_tick_count = count
+    if not hasattr(axis, "_qplot_major_tick_spacing"):
+        axis._qplot_major_tick_spacing = axis.tickSpacing
+        axis.tickSpacing = MethodType(_major_tick_spacing, axis)
+    current_tick_strings = axis.tickStrings
+    if getattr(current_tick_strings, "__func__", None) is not _clean_tick_strings:
+        axis._qplot_original_tick_strings = current_tick_strings
+        axis.tickStrings = MethodType(_clean_tick_strings, axis)
+    axis.setStyle(maxTickLevel=1, maxTextLevel=0)
+    axis.picture = None
+    axis.update()
 
 
 def _plot_area_size_icon(size):
@@ -240,6 +385,7 @@ class plotWidget(
                 "right": _PowerScaledAxisItem("right"),
                 },
             )
+        self.apply_axis_major_tick_count_preference()
         self.vb.setParent(self.plot)
         self.vb.set_marquee_owner(self)
         self._init_marquee()
@@ -1073,6 +1219,7 @@ class plotWidget(
 
         """
         self.update_theme(self.config)
+        self.apply_axis_major_tick_count_preference()
         self.apply_mouse_mode_preference()
         apply_colorbar_width = getattr(self, "apply_colorbar_width_preference", None)
         if callable(apply_colorbar_width):
@@ -1081,6 +1228,32 @@ class plotWidget(
 
     def _configured_mouse_mode(self):
         return self.config.get(MOUSE_MODE_KEY)
+
+
+    def apply_axis_major_tick_count_preference(self):
+        """Apply the target number of labelled major ticks to every plot axis."""
+
+        for side in ("left", "bottom", "right", "top"):
+            _configure_major_ticks(
+                self.plot.getAxis(side),
+                self.config.get(AXIS_MAJOR_TICK_COUNT_KEY),
+                )
+
+        colorbar = getattr(self, "bar", None)
+        get_axis = getattr(colorbar, "getAxis", None)
+        if callable(get_axis):
+            for side in ("left", "bottom", "right", "top"):
+                axis = get_axis(side)
+                if axis is not None:
+                    _configure_major_ticks(
+                        axis,
+                        self.config.get(AXIS_MAJOR_TICK_COUNT_KEY),
+                        )
+
+        self.plot.update()
+        viewport = getattr(self.widget, "viewport", None)
+        if callable(viewport):
+            viewport().update()
 
 
     def apply_mouse_mode_preference(self):
