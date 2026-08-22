@@ -15,7 +15,9 @@ from qcodes.dataset import (
 from qcodes.parameters import ManualParameter
 
 from qplot.windows import main as main_window
+from qplot.windows._dataset_handle import DatasetHandle
 from qplot.windows._plot_actions import PlotActionsMixin
+from qplot.windows._widgets import treeWidgets
 
 
 class _Field:
@@ -24,6 +26,12 @@ class _Field:
 
     def text(self):
         return self.value
+
+    def blockSignals(self, _blocked):
+        return False
+
+    def setText(self, value):
+        self.value = str(value)
 
 
 class _ActionHarness(PlotActionsMixin):
@@ -110,7 +118,10 @@ def test_empty_qcodes_dataset_opens_the_waiting_plot_state(tmp_path, monkeypatch
     window = None
     try:
         database_path = Path(tmp_path) / "empty-plot.db"
-        initialise_or_create_database_at(str(database_path))
+        initialise_or_create_database_at(
+            str(database_path),
+            journal_mode="DELETE",
+        )
         experiment = load_or_create_experiment("empty_plot", sample_name="sample")
         x = ManualParameter("x")
         y = ManualParameter("y")
@@ -204,6 +215,209 @@ def test_selected_action_guards_keep_none_behavior(tmp_path):
     assert harness.plot_calls == []
     assert harness.export_calls == []
     assert len(harness.status_messages) == 3
+
+
+def test_non_single_selection_releases_an_action_owned_dataset_once(tmp_path):
+    class Connection:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    class Dataset:
+        guid = "action-owned"
+
+        def __init__(self):
+            self.conn = Connection()
+
+    class RunList:
+        def __init__(self):
+            self.signals_blocked = False
+            self.selection_cleared = False
+            self.current_item = object()
+
+        def blockSignals(self, blocked):
+            previous = self.signals_blocked
+            self.signals_blocked = blocked
+            return previous
+
+        def clearSelection(self):
+            self.selection_cleared = True
+
+        def setCurrentItem(self, item):
+            self.current_item = item
+
+    class InfoBox:
+        def __init__(self):
+            self.clear_calls = 0
+
+        def clear(self):
+            self.clear_calls += 1
+
+    dataset = Dataset()
+    harness = _ActionHarness(tmp_path / "action-owned.db", dataset)
+    harness.selected_run_id = 7
+    harness.run_idBox = _Field("7")
+    harness.RunList = RunList()
+    harness.infoBox = InfoBox()
+
+    harness.clear_non_single_run_selection()
+    harness.clear_non_single_run_selection()
+
+    assert dataset.conn.close_calls == 1
+    assert harness.ds is None
+    assert harness._selected_dataset_key is None
+    assert harness.selected_run_id is None
+    assert harness.run_idBox.text() == ""
+    assert harness.RunList.selection_cleared
+    assert harness.RunList.current_item is None
+    assert harness.infoBox.clear_calls == 2
+
+
+def test_non_single_selection_does_not_close_a_plot_held_dataset(tmp_path):
+    class Connection:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    class Dataset:
+        guid = "plot-held"
+
+        def __init__(self):
+            self.conn = Connection()
+
+    class RunList:
+        def blockSignals(self, _blocked):
+            return False
+
+        def clearSelection(self):
+            pass
+
+        def setCurrentItem(self, _item):
+            pass
+
+    class InfoBox:
+        def clear(self):
+            pass
+
+    dataset = Dataset()
+    harness = _ActionHarness(tmp_path / "plot-held.db", dataset)
+    dataset_key = harness._selected_dataset_key
+    harness.selected_run_id = 8
+    harness.run_idBox = _Field("8")
+    harness.RunList = RunList()
+    harness.infoBox = InfoBox()
+    harness.dataset_holder = {dataset_key: DatasetHandle(dataset)}
+
+    harness.clear_non_single_run_selection()
+
+    assert dataset.conn.close_calls == 0
+    assert harness.ds is None
+    assert harness._selected_dataset_key is None
+
+
+def test_non_single_run_list_selection_cannot_reuse_plot_or_export_target(tmp_path):
+    class Connection:
+        def close(self):
+            pass
+
+    class Dataset:
+        def __init__(self, guid, run_id):
+            self.guid = guid
+            self.run_id = run_id
+            self.conn = Connection()
+
+        def get_parameters(self):
+            return [
+                type(
+                    "Parameter",
+                    (),
+                    {"name": "signal", "depends_on": "x"},
+                )()
+            ]
+
+    class InfoBox:
+        def clear(self):
+            pass
+
+    old_isfile = treeWidgets.isfile
+    treeWidgets.isfile = lambda _: False
+    try:
+        first_dataset = Dataset("guid-1", 1)
+        harness = _ActionHarness(tmp_path / "selection.db", first_dataset)
+        harness.run_idBox = _Field("1")
+        harness.infoBox = InfoBox()
+        harness.selected_run_id = 1
+        harness._dataset_for_plot_target = lambda: first_dataset
+        harness._selected_measurement_params = lambda _dataset: []
+        exported = []
+        harness._export_measurement_csv = (
+            lambda dataset_key, parameter_names, **kwargs: exported.append(
+                (dataset_key, parameter_names, kwargs)
+            )
+            )
+
+        run_list = treeWidgets.RunList()
+        run_list.addRuns({
+            1: {"guid": "guid-1", "sweep_parameters": [], "measure_parameters": []},
+            2: {"guid": "guid-2", "sweep_parameters": [], "measure_parameters": []},
+            })
+        harness.RunList = run_list
+
+        def select_dataset(guid):
+            dataset = Dataset(guid, 1 if guid == "guid-1" else 2)
+            harness._replace_selected_dataset(
+                dataset,
+                harness._current_dataset_key(guid),
+                )
+            harness.selected_run_id = dataset.run_id
+            harness.run_idBox.setText(str(dataset.run_id))
+            harness._dataset_for_plot_target = lambda: dataset
+
+        run_list.selected.connect(select_dataset)
+        def clear_selection_target():
+            harness.clear_non_single_run_selection()
+            del harness._dataset_for_plot_target
+
+        run_list.nonSingleSelection.connect(clear_selection_target)
+        first = run_list.topLevelItem(0)
+        second = run_list.topLevelItem(1)
+
+        # A single row remains a valid action target.
+        run_list.setCurrentItem(first)
+        harness.open_selected_run_all()
+        harness.exportRunCsv()
+        assert len(harness.plot_calls) == 1
+        assert len(exported) == 1
+
+        # Empty selection drops the state, so neither action can use row 1.
+        run_list.clearSelection()
+        assert harness.ds is None
+        assert harness.selected_run_id is None
+        assert harness._selected_dataset_key is None
+        assert harness.run_idBox.text() == ""
+        harness.open_selected_run_all()
+        harness.exportRunCsv()
+        assert len(harness.plot_calls) == 1
+        assert len(exported) == 1
+
+        # Returning to one row restores normal operation; selecting a second
+        # row invalidates it again rather than retaining the first row.
+        run_list.setCurrentItem(first)
+        harness.open_selected_run_all()
+        run_list.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
+        second.setSelected(True)
+        assert harness.ds is None
+        assert harness.selected_run_id is None
+        harness.open_selected_run_all()
+        harness.exportRunCsv()
+        assert len(harness.plot_calls) == 2
+        assert len(exported) == 1
+    finally:
+        treeWidgets.isfile = old_isfile
 
 
 def test_run_preview_loads_its_requested_dataset_without_a_selection(tmp_path):

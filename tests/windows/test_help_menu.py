@@ -89,6 +89,8 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertEqual(dialog.objectName(), "qplotKeyboardShortcutsDialog")
             self.assertIn(command_spec("database.load").shortcut_display_text(), text)
             self.assertIn(command_spec("plot.export").shortcut_display_text(), text)
+            self.assertIn(command_spec("plot.print").status_tip, text)
+            self.assertIn(command_spec("plot.print").help_shortcut, text)
             self.assertIn("H", text)
             self.assertIn(dialog, window._help_dialogs)
         finally:

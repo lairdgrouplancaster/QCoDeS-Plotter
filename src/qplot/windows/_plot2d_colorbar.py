@@ -20,7 +20,13 @@ from ._colorbar import (
     _matplotlib_colorbar_colormap_subtype,
 )
 from ._plot2d_colorbar_dialog import ColorbarScaleDialogMixin
-from ._plot_axis_scaling import _axis_scale_power_text
+from ._plot_axis_scaling import (
+    _axis_scale_power_text,
+    _install_flush_axis_draw_specs,
+)
+
+COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
+DEFAULT_COLORBAR_WIDTH = 15
 
 
 class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
@@ -30,6 +36,30 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     This mixin owns color autoscaling, colorbar interaction handlers, color-map
     filtering, and the color scale dialog.
     """
+
+    def _configured_colorbar_width(self):
+        """Return the configured heatmap colour-scale width in pixels."""
+
+        return int(_config_value(
+            self.__dict__.get("config"),
+            COLORBAR_WIDTH_KEY,
+            DEFAULT_COLORBAR_WIDTH,
+            ))
+
+    def apply_colorbar_width_preference(self):
+        """Apply the configured width to an existing colour bar, if present."""
+
+        bar = self.__dict__.get("bar")
+        layout = getattr(bar, "layout", None)
+        if layout is None:
+            return
+
+        width = self._configured_colorbar_width()
+        if getattr(bar, "horizontal", False):
+            layout.setRowFixedHeight(1, width)
+        else:
+            layout.setColumnFixedWidth(1, width)
+
     if TYPE_CHECKING:
         plot: Any
 
@@ -98,18 +128,30 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         return None
 
     def _finite_data_colorbar_range(self):
-        """Return the finite data range without reducing an empty array."""
+        """Return the finite range across every heatmap sharing the colorbar."""
 
-        data = getattr(self, "dataGrid", None)
-        if data is None:
+        data_provider = getattr(self, "_heatmap_colorbar_data_arrays", None)
+        if callable(data_provider):
+            arrays = data_provider()
+        else:
+            data = getattr(self, "dataGrid", None)
+            arrays = () if data is None else (data,)
+
+        lower = None
+        upper = None
+        for data in arrays:
+            values = np.asarray(data)
+            finite_values = values[np.isfinite(values)]
+            if finite_values.size == 0:
+                continue
+            data_lower = float(np.min(finite_values))
+            data_upper = float(np.max(finite_values))
+            lower = data_lower if lower is None else min(lower, data_lower)
+            upper = data_upper if upper is None else max(upper, data_upper)
+
+        if lower is None or upper is None:
             return None
-
-        values = np.asarray(data)
-        finite_values = values[np.isfinite(values)]
-        if finite_values.size == 0:
-            return None
-
-        return float(np.min(finite_values)), float(np.max(finite_values))
+        return lower, upper
 
     def _data_colorbar_rounding(self):
         """Return a finite, positive colorbar interaction step."""
@@ -170,12 +212,25 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         if axis is None:
             return
 
+        layout = getattr(bar, "layout", None)
+        get_margins = getattr(layout, "getContentsMargins", None)
+        set_margins = getattr(layout, "setContentsMargins", None)
+        if callable(get_margins) and callable(set_margins):
+            left, _top, right, _bottom = get_margins()
+            set_margins(left, 0, right, 0)
+
+        get_axis = getattr(bar, "getAxis", None)
+        if callable(get_axis):
+            for side in ("left", "right", "top", "bottom"):
+                _install_flush_axis_draw_specs(get_axis(side))
+
         self._restore_colorbar_default_tick_formatter(axis)
         axis.autoSIPrefix = False
         axis.setWidth(70)
         axis.setStyle(tickTextWidth=60)
         self._set_colorbar_label_direction(bar)
         self._install_colorbar_axis_scale_sync(bar)
+        self._install_colorbar_mirrored_ticks(bar)
         self._sync_colorbar_axis_scaling()
         self._install_colorbar_scale_bar_handlers(bar)
         self._install_colorbar_scale_axis_handlers(axis)
@@ -201,6 +256,55 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
 
         axis.setRange = set_range
         axis._qplot_colorbar_scale_sync_installed = True
+
+    def _install_colorbar_mirrored_ticks(self, bar):
+        """Mirror vertical colour-bar ticks on the left without their labels."""
+
+        if getattr(bar, "horizontal", False):
+            return
+
+        get_axis = getattr(bar, "getAxis", None)
+        axis = getattr(bar, "axis", None)
+        if not callable(get_axis) or axis is None:
+            return
+
+        mirror = get_axis("left")
+        if mirror is None:
+            return
+
+        mirror.unlinkFromView()
+        mirror.setStyle(showValues=False)
+
+        def sync_ticks():
+            low, high = axis.range
+            mirror.setRange(low, high)
+            length = max(1, int(axis.height()))
+            tick_values = axis.tickValues(low, high, length)
+            mirror.setTicks([
+                [(value, "") for value in values]
+                for _spacing, values in tick_values
+                ])
+
+        sync_ticks()
+        if getattr(axis, "_qplot_colorbar_mirrored_ticks_installed", False):
+            return
+
+        previous_set_range = axis.setRange
+
+        def set_range(low, high, previous_set_range=previous_set_range):
+            previous_set_range(low, high)
+            sync_ticks()
+
+        previous_resize_event = getattr(axis, "resizeEvent", None)
+
+        def resize_event(event=None, previous_handler=previous_resize_event):
+            if previous_handler is not None:
+                previous_handler(event)
+            sync_ticks()
+
+        axis.setRange = set_range
+        axis.resizeEvent = resize_event
+        axis._qplot_colorbar_mirrored_ticks_installed = True
 
     def _sync_colorbar_axis_scaling(self):
         bar = self.__dict__.get("bar")

@@ -127,6 +127,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "&Quit qPlot",
         "Close the database and quit qPlot",
         _standard_shortcuts(QKeySequence.StandardKey.Quit, ["Ctrl+Q"]),
+        QtCore.Qt.ShortcutContext.ApplicationShortcut,
         help_section="General",
         help_shortcut="Ctrl+Q / Cmd+Q",
     ),
@@ -256,7 +257,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "plot.autoscale": CommandSpec(
         "plot.autoscale",
         "Autoscale",
-        "Autoscale the plot view",
+        "Return all plot axes to autoscale mode",
         "Ctrl+0",
         help_section="Plot Windows",
     ),
@@ -268,6 +269,15 @@ COMMANDS: dict[str, CommandSpec] = {
         object_name="copyPlotImageAction",
         help_section="Plot Windows",
         help_shortcut="Ctrl+C / Cmd+C",
+    ),
+    "plot.print": CommandSpec(
+        "plot.print",
+        "&Print Plot...",
+        "Print the visible plot area",
+        _standard_shortcuts(QKeySequence.StandardKey.Print, ["Ctrl+P"]),
+        object_name="printPlotAction",
+        help_section="Plot Windows",
+        help_shortcut="Ctrl+P / Cmd+P",
     ),
     "plot.export": CommandSpec(
         "plot.export",
@@ -299,8 +309,8 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "toolbar.axis_control": CommandSpec(
         "toolbar.axis_control",
-        "Line control",
-        "Show or hide the axis control panel",
+        "Data axes",
+        "Show or hide the data-axis panel",
         "Ctrl+Alt+A",
         help_section="Plot Windows",
     ),
@@ -385,7 +395,7 @@ def toolbar_toggle_command_spec(title: str) -> CommandSpec | None:
     by_title = {
         "Refresh Timer": "toolbar.refresh",
         "Co-ordinates": "toolbar.coordinates",
-        "Line control": "toolbar.axis_control",
+        "Data axes": "toolbar.axis_control",
         "Operations": "toolbar.operations",
     }
     command_id = by_title.get(title)

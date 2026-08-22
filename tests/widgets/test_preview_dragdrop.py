@@ -10,6 +10,7 @@ from qplot.windows._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
     )
+from qplot.windows._plotWin import plotWidget
 
 
 class RunPreviewDragDropTestCase(unittest.TestCase):
@@ -27,6 +28,124 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         self.assertFalse(preview_drop_is_compatible(("y",), payload))
         self.assertFalse(preview_drop_is_compatible(("x", "y"), payload))
         self.assertIsNone(run_preview_payload_from_mime(QtCore.QMimeData()))
+
+        heatmap_payload = run_preview_payload_from_mime(
+            make_run_preview_mime(
+                "heatmap-guid",
+                "conductance",
+                ["gate", "bias"],
+                )
+            )
+        self.assertTrue(
+            preview_drop_is_compatible(("gate", "bias"), heatmap_payload)
+            )
+        self.assertTrue(
+            preview_drop_is_compatible(("bias", "gate"), heatmap_payload)
+            )
+        self.assertFalse(
+            preview_drop_is_compatible(("gate", "field"), heatmap_payload)
+            )
+
+    def test_heatmap_drop_target_accepts_same_axes_in_either_order(self):
+        target = type(
+            "Target",
+            (),
+            {
+                "operation_kind": "plot2d",
+                "param": type(
+                    "Param",
+                    (),
+                    {"depends_on_": ("gate", "bias")},
+                    )(),
+            },
+        )()
+
+        same_order = {"axes": ["gate", "bias"]}
+        reversed_order = {"axes": ["bias", "gate"]}
+        mismatched = {"axes": ["gate", "field"]}
+
+        self.assertTrue(plotWidget.accepts_preview_trace_drop(target, same_order))
+        self.assertTrue(
+            plotWidget.accepts_preview_trace_drop(target, reversed_order)
+            )
+        self.assertFalse(plotWidget.accepts_preview_trace_drop(target, mismatched))
+
+    def test_incompatible_preview_drop_shows_reason_on_target_plot(self):
+        messages = []
+        target = type(
+            "Target",
+            (),
+            {
+                "operation_kind": "plot1d",
+                "param": type(
+                    "Param",
+                    (),
+                    {"depends_on_": ("gate",)},
+                    )(),
+                "accepts_preview_trace_drop": (
+                    plotWidget.accepts_preview_trace_drop
+                ),
+                "_preview_drop_rejection_message": (
+                    plotWidget._preview_drop_rejection_message
+                ),
+                "show_status": lambda _self, message, timeout: messages.append(
+                    (message, timeout)
+                ),
+            },
+        )()
+
+        class DropEvent:
+            def __init__(self):
+                self.ignored = False
+
+            def type(self):
+                return QtCore.QEvent.Type.Drop
+
+            def mimeData(self):
+                return make_run_preview_mime("source-guid", "signal", ["bias"])
+
+            def ignore(self):
+                self.ignored = True
+
+        event = DropEvent()
+
+        self.assertTrue(plotWidget._handle_preview_drag_drop(target, event))
+        self.assertTrue(event.ignored)
+        self.assertEqual(messages, [(
+            "Cannot add signal; line traces need the same independent variable.",
+            5000,
+        )])
+
+    def test_preview_drop_feedback_is_mirrored_to_target_plot(self):
+        main_messages = []
+        plot_messages = []
+
+        class StatusBar:
+            def showMessage(self, message, timeout):
+                main_messages.append((message, timeout))
+
+        target = type(
+            "Target",
+            (),
+            {
+                "show_status": lambda _self, message, timeout: plot_messages.append(
+                    (message, timeout)
+                ),
+            },
+        )()
+        harness = type(
+            "MainWindowHarness",
+            (),
+            {
+                "_preview_drop_feedback_window": target,
+                "statusBar": lambda _self: StatusBar(),
+            },
+        )()
+
+        main_window.MainWindow.show_status(harness, "Drop rejected", 5000)
+
+        self.assertEqual(main_messages, [("Drop rejected", 5000)])
+        self.assertEqual(plot_messages, [("Drop rejected", 5000)])
 
     def test_add_trace_to_plot_uses_existing_add_path(self):
         class Param:
@@ -263,3 +382,87 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
 
         self.assertTrue(added)
         self.assertTrue(source.closed)
+
+    def test_add_trace_dispatches_2d_source_to_heatmap_layer_path(self):
+        class Param:
+            def __init__(self, name, unit):
+                self.name = name
+                self.depends_on = "gate, bias"
+                self.depends_on_ = ("gate", "bias")
+                self.unit = unit
+
+        source_key = DatasetKey("database.db", "source-guid")
+        source_param = Param("conductance_b", "S")
+        source_display_param = type("DisplayParam", (), {"unit": "A/V"})()
+        source = type(
+            "Source",
+            (),
+            {
+                "_dataset_key": source_key,
+                "_trace_key": TraceKey(source_key, source_param.name),
+                "param": source_param,
+                "display_param": source_display_param,
+                "axis_options": {"x": "bias", "y": "gate"},
+                "param_dict": {
+                    "gate": type("Gate", (), {"unit": "V"})(),
+                    "bias": type("Bias", (), {"unit": "V"})(),
+                },
+                "label": "ID:2 conductance_b",
+                "visible": False,
+                "closed": False,
+                "close": lambda self: setattr(self, "closed", True),
+            },
+        )()
+
+        target_key = DatasetKey("database.db", "target-guid")
+        target_param = Param("conductance_a", "A")
+        target_display_param = type("DisplayParam", (), {"unit": "A/V"})()
+        added_sources = []
+        target = type(
+            "Target",
+            (),
+            {
+                "operation_kind": "plot2d",
+                "_trace_key": TraceKey(target_key, target_param.name),
+                "param": target_param,
+                "display_param": target_display_param,
+                "axis_options": {"x": "bias", "y": "gate"},
+                "param_dict": {
+                    "gate": type("Gate", (), {"unit": "V"})(),
+                    "bias": type("Bias", (), {"unit": "V"})(),
+                },
+                "label": "ID:1 conductance_a",
+                "heatmaps": {},
+                "add_heatmap": lambda self, window: (
+                    added_sources.append(window) or True
+                    ),
+            },
+        )()
+
+        class Harness:
+            add_trace_to_plot = main_window.MainWindow.add_trace_to_plot
+            add_heatmap_to_plot = main_window.MainWindow.add_heatmap_to_plot
+
+            def _plot_window_for_param(self, *_args, **_kwargs):
+                return source
+
+            def show_status(self, *_args):
+                pass
+
+            def show_error(self, *_args):
+                self.errors.append(_args)
+
+        harness = Harness()
+        harness.errors = []
+
+        added = harness.add_trace_to_plot(
+            target,
+            source_key,
+            source_param.name,
+            param=source_param,
+        )
+
+        self.assertTrue(added)
+        self.assertEqual(added_sources, [source])
+        self.assertTrue(source.closed)
+        self.assertEqual(harness.errors, [])

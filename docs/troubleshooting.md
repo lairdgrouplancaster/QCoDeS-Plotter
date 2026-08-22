@@ -125,12 +125,68 @@ If the database is being written by a running experiment, try again after a
 short wait. For persistent failures, use the `Database Information` button in
 the main window if the file can be opened far enough for diagnostics.
 
-For a live WAL database, qPlot reads a private database-and-WAL snapshot so it
-does not alter the source SQLite sidecars. A writer that commits continuously
-can prevent qPlot from obtaining a consistent copy. In that case qPlot reports
-that the WAL changed during the read-only snapshot; wait for a pause between
-commits and refresh. qPlot deliberately does not show an older immutable view
-when an uncheckpointed WAL is present.
+If qPlot reports that a WAL cannot be verified, it has first observed an
+ordinary QCoDeS database with uncheckpointed WAL data but no trustworthy
+lineage record. SQLite's WAL salts and checksums validate the WAL's own frames;
+they do not identify the main database to which those frames belong. A matching
+filename or a successful SQLite open is not enough to make that association
+safe, so qPlot refuses the read rather than showing potentially unrelated data
+or falling back to an older main-file view.
+
+Close every QCoDeS, SQLite, Python, and notebook connection that owns the
+database cleanly, then retry. SQLite normally checkpoints and removes the WAL
+when its final connection closes. If a WAL remains, use the owning application
+or writer to checkpoint it before retrying. Do not remove a live WAL manually.
+The current GUI snapshot loader never checkpoints or changes the source
+database, `-wal`, `-shm`, or `-journal` file.
+
+qPlot's non-default trusted live-reader API has one narrower rule: its main
+database, WAL, and rollback journal remain read-only, but SQLite may create or
+update the exact colocated `-shm` file as transient WAL coordination state. Its
+contents, size, or timestamps can therefore change during a live read. The
+reader still never checkpoints the database or writes experimental data, and it
+rejects network or otherwise unsupported filesystems. This API is not yet used
+by the GUI; see [Trusted live QCoDeS reader](trusted-live-reader.md).
+
+WALs for current qPlot-generated test databases can remain readable while live
+because they contain a unique generation token and a parent-linked random
+lineage chain. On private copies qPlot proves that the WAL head strictly
+descends from the exact main head and that every committed WAL transaction
+carries the lineage-state page. A different token, equal head, missing event,
+divergent clone, malformed WAL, or exhausted proof window is rejected by the
+same fail-closed policy. A writer that changes an otherwise trusted main or WAL
+throughout every snapshot attempt can also make the database temporarily
+unavailable; wait for a pause and retry.
+
+QCoDeS creates a new SQLite result table for each later measurement. Before any
+new experiment or measurement writes, call
+`qplot.testdata.enable_generation_provenance_for_writer(connection)` on the
+owner application's quiescent writable QCoDeS `AtomicConnection`. This installs
+coverage for the new table in its creation transaction, including when results
+will later be written in the background. The hook refuses a nonempty WAL so it
+cannot bless earlier uninstrumented frames. Use the owning writer to checkpoint
+that WAL with `TRUNCATE`, then enable the hook before the next measurement. The
+hook takes SQLite's writer lock before checking WAL quiescence, so concurrent
+writes cannot race that check. qPlot cannot safely repair or upgrade provenance
+while viewing the input.
+
+Older epoch-only generated databases remain readable without a live WAL. Their
+live WALs fail closed because an epoch cannot prove branch ancestry. To migrate,
+first make the owner database quiescent in rollback-journal mode, then call the
+writer hook; it rotates the token and seeds the current lineage format. If more
+than 65,536 lineage events accumulate after the main's last checkpoint, the
+retained proof window is exhausted and the owner must checkpoint before qPlot
+can safely accept another live WAL.
+
+For a rollback-format database, qPlot uses normal SQLite read-only locking while
+the database is quiescent. If a `-journal` is present, qPlot captures the main
+file and journal into a private snapshot and allows SQLite recovery only there.
+Cold PERSIST and zero-length TRUNCATE journals are valid and should load
+normally. If the main file or journal changes during every capture attempt, or
+their transaction state is ambiguous, qPlot reports that the database is busy
+or temporarily unavailable. Finish or pause the writing transaction and
+refresh; qPlot will not fall back to a source mode that could expose
+uncommitted pages or modify the database and its sidecars.
 
 ## A OneDrive Database Waits for Sync
 

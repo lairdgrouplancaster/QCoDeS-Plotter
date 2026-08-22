@@ -529,11 +529,34 @@ class PlotTheme:
         plot_item = plot_win.plot
         plot_win.widget.setBackground(cls.plot_background)
 
-        pen = pg.mkPen(cls.plot_foreground)
-        for side in ["left", "bottom", "right", "top"]:
-            axis = plot_item.getAxis(side)
+        width = plot_win.config.get("user_preference.axis_tick_width")
+        pen = pg.mkPen(cls.plot_foreground, width=width)
+
+        def style_axis(axis):
             axis.setPen(pen)
+            axis.setTickPen(pen)
             axis.setTextPen(pen)
+            # pyqtgraph otherwise halves the opacity at each successive tick
+            # level. Keep minor and subminor ticks visibly at the selected
+            # line weight rather than blending them into the heatmap.
+            axis.setStyle(tickAlpha=255)
+            # AxisItem clears its cached picture when its pens change, but
+            # does not schedule a repaint itself. This makes preference
+            # changes visible immediately, including minor tick levels.
+            axis.update()
+
+        for side in ["left", "bottom", "right", "top"]:
+            style_axis(plot_item.getAxis(side))
+
+        # A heatmap colour scale owns separate AxisItems from the plot. Style
+        # both the labelled axis and its mirrored tick-only axis when present.
+        colorbar = getattr(plot_win, "bar", None)
+        get_axis = getattr(colorbar, "getAxis", None)
+        if callable(get_axis):
+            for side in ["left", "bottom", "right", "top"]:
+                axis = get_axis(side)
+                if axis is not None:
+                    style_axis(axis)
 
         plot_item.vb.gridPen = pg.mkPen(color=cls.plot_grid)
         cls.set_line_colours(plot_item)

@@ -49,6 +49,23 @@ class OperationsPanelTestCase(unittest.TestCase):
             ]
         self.assertEqual(layout_warnings, [])
 
+    def test_operations_options_reserve_space_for_overlay_scrollbar(self):
+        main, widget = self._panel(operations_options_2d)
+        try:
+            scrollbar_extent = max(
+                widget.list_options.verticalScrollBar().sizeHint().width(),
+                widget.style().pixelMetric(
+                    qtw.QStyle.PixelMetric.PM_ScrollBarExtent,
+                    ),
+                )
+
+            self.assertGreaterEqual(
+                widget.list_options.viewportMargins().right(),
+                scrollbar_extent,
+                )
+        finally:
+            main.deleteLater()
+
     def test_operations_widget_uses_inherited_plot_kind(self):
         class Plot2DWindow(qtw.QMainWindow):
             operation_kind = "plot2d"

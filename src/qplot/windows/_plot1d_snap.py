@@ -54,9 +54,36 @@ class _SnapTraceSample:
     x_value: float
     y_value: float
     point_number: int
+    x_view_value: float = float("nan")
+    y_view_value: float = float("nan")
 
 
-_LineData = tuple[npt.ArrayLike, npt.ArrayLike]
+@dataclass(frozen=True)
+class _LineData:
+    x_view: npt.ArrayLike
+    y_view: npt.ArrayLike
+    x_raw: npt.ArrayLike
+    y_raw: npt.ArrayLike
+
+
+@dataclass(frozen=True)
+class _NearestTracePoint:
+    label: Any
+    x_value: float
+    y_value: float
+    viewbox: Any
+    point_number: int
+    x_view_value: float
+    y_view_value: float
+
+    def __iter__(self):
+        """Retain the historical five-value private-method unpacking API."""
+
+        yield self.label
+        yield self.x_value
+        yield self.y_value
+        yield self.viewbox
+        yield self.point_number
 
 
 def _nearest_trace_sample(
@@ -120,10 +147,20 @@ def _line_snap_data(line: object | None) -> _LineData | None:
     if not callable(get_data):
         return None
 
-    data = get_data()
-    if data is None or data[0] is None or data[1] is None:
+    view_data = get_data()
+    if view_data is None or view_data[0] is None or view_data[1] is None:
         return None
-    return data[0], data[1]
+
+    get_original = getattr(line, "getOriginalDataset", None)
+    raw_data = get_original() if callable(get_original) else view_data
+    if raw_data is None or raw_data[0] is None or raw_data[1] is None:
+        raw_data = view_data
+    return _LineData(
+        x_view=view_data[0],
+        y_view=view_data[1],
+        x_raw=raw_data[0],
+        y_raw=raw_data[1],
+    )
 
 
 def _scene_distance_squared(
@@ -150,6 +187,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self.trace_label = qtw.QLabel("")
         self.trace_label.setMinimumWidth(0)
         self.toolbarCo_ord.addWidget(self.trace_label)
+        self._update_coordinate_context()
 
         self.snap_to_trace_action = create_action(
             SNAP_TO_TRACE_COMMAND,
@@ -240,65 +278,127 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             self._set_cursor_index_label("")
             return
 
-        label, x_value, y_value, viewbox, point_number = nearest
-        self._set_cursor_index_label(f"[{point_number - 1}]")
-        self.pos_labels["x"].setText(f"x = {self.formatNum(x_value)};")
-        self.pos_labels["y"].setText(f"y = {self.formatNum(y_value)}")
-        self._show_snap_report(label, point_number)
-        self._show_snap_marker(x_value, y_value, viewbox)
+        self._set_cursor_index_label(f"[{nearest.point_number - 1}]")
+        self.pos_labels["x"].setText(f"x = {self.formatNum(nearest.x_value)};")
+        self.pos_labels["y"].setText(f"y = {self.formatNum(nearest.y_value)}")
+        self._show_snap_report(nearest.label, nearest.point_number)
+        self._show_snap_marker(
+            nearest.x_view_value,
+            nearest.y_view_value,
+            nearest.viewbox,
+        )
 
 
     def _show_snap_report(self, label, point_number):
         """
-        Shows the currently snapped run, trace, and point.
+        Shows the active run, plotted axes, and snapped point.
 
         """
-        if self.trace_label is None:
-            return
-
-        run_id, trace = self._snap_report_parts(label)
-        self.trace_label.setText(
-            f"Snapped to run {run_id}, trace {trace}, point {point_number}."
-            )
-        line = self.lines.get(label)
-        display_label = getattr(self, "_trace_display_label", None)
-        if callable(display_label):
-            label_text = display_label(label, line)
-        else:
-            source = getattr(line, "from_win", None)
-            label_text = str(getattr(source, "label", label))
-        self.trace_label.setToolTip(label_text)
-        self.trace_label.adjustSize()
-        self.trace_label.updateGeometry()
-        self.toolbarCo_ord.updateGeometry()
+        self._update_coordinate_context(label, point_number)
 
 
     def _clear_snap_report(self):
         """
-        Hides the snap status message.
+        Restores the persistent run and axis relationship message.
 
         """
+        self._update_coordinate_context()
+
+
+    def _update_coordinate_context(self, label=None, point_number=None):
+        """Show ``Run N: measurement vs setpoint`` and optional snap detail."""
+
         if self.trace_label is None:
             return
 
-        self.trace_label.clear()
-        self.trace_label.setToolTip("")
+        run_id, vertical, horizontal, tooltip = self._coordinate_context_parts(label)
+        message = f"Run {run_id}: {vertical} vs {horizontal}"
+        if point_number is not None:
+            message += f" (snapped to point {point_number - 1})"
+        self.trace_label.setText(message)
+        self.trace_label.setToolTip(tooltip)
         self.trace_label.adjustSize()
         self.trace_label.updateGeometry()
         self.toolbarCo_ord.updateGeometry()
 
 
-    def _snap_report_parts(self, label):
-        """
-        Returns run and trace names for the snap status message.
+    def _coordinate_context_parts(self, label=None):
+        """Return run and human-readable plotted-axis names for the message."""
 
-        """
-        line = self.lines.get(label)
+        line = self.lines.get(label) if label is not None else self.__dict__.get("line")
         source = getattr(line, "from_win", self)
-        run_id = getattr(source.ds, "run_id", "?")
-        trace = getattr(source.param, "name", str(label).split()[-1])
-        return run_id, trace
+        try:
+            dataset = source.ds
+        except (AttributeError, RuntimeError):
+            dataset = None
+        run_id = getattr(dataset, "run_id", "?")
 
+        host_options = self.__dict__.get("_axis_selection", {})
+        if not host_options:
+            try:
+                host_options = self.axis_options
+            except RuntimeError:
+                host_options = {}
+        horizontal_source = self
+        horizontal_axis = "x"
+        source_axis = "y"
+        if source is not self:
+            axis_order = getattr(line, "choose_from", None)
+            if axis_order is not None and len(axis_order) == 2:
+                horizontal_axis = axis_order[0]
+                source_axis = axis_order[1]
+            horizontal_source = source
+        source_options = (
+            host_options
+            if source is self
+            else getattr(source, "axis_options", {})
+            )
+        horizontal_name = source_options.get(horizontal_axis)
+        if horizontal_name is None:
+            horizontal_name = host_options.get("x", "x")
+            horizontal_source = self
+            horizontal_axis = "x"
+        horizontal = self._parameter_display_name(
+            horizontal_source,
+            horizontal_name,
+            horizontal_axis,
+            )
+        vertical_name = source_options.get(source_axis)
+        if vertical_name is None:
+            try:
+                source_param = source.param
+            except (AttributeError, RuntimeError):
+                source_param = None
+            vertical_name = getattr(source_param, "name", "y")
+        vertical = self._parameter_display_name(
+            source,
+            vertical_name,
+            source_axis,
+            )
+
+        display_label = getattr(self, "_trace_display_label", None)
+        if label is not None and callable(display_label):
+            tooltip = str(display_label(label, line))
+        else:
+            tooltip = str(getattr(source, "label", ""))
+        return run_id, vertical, horizontal, tooltip
+
+
+    @staticmethod
+    def _parameter_display_name(source, name, axis):
+        """Resolve a parameter label without discarding a useful name."""
+
+        param = getattr(source, "param_dict", {}).get(name)
+        if param is None:
+            axis_param = getattr(source, "axis_param", {})
+            candidate = axis_param.get(axis) if isinstance(axis_param, dict) else None
+            if getattr(candidate, "name", name) == name:
+                param = candidate
+        if param is None:
+            candidate = getattr(source, "param", None)
+            if getattr(candidate, "name", None) == name:
+                param = candidate
+        return str(getattr(param, "label", None) or getattr(param, "name", None) or name)
 
     def _nearest_trace_point(self, scene_pos):
         """
@@ -315,21 +415,25 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
             viewbox = self._viewbox_for_line(line)
             sample, distance = self._nearest_scene_trace_sample(
-                data[0],
-                data[1],
+                data.x_view,
+                data.y_view,
                 scene_pos,
                 viewbox,
+                data.x_raw,
+                data.y_raw,
                 )
             if sample is None:
                 continue
 
             if nearest_distance is None or distance < nearest_distance:
-                nearest = (
-                    label,
-                    sample.x_value,
-                    sample.y_value,
-                    viewbox,
-                    sample.point_number,
+                nearest = _NearestTracePoint(
+                    label=label,
+                    x_value=sample.x_value,
+                    y_value=sample.y_value,
+                    viewbox=viewbox,
+                    point_number=sample.point_number,
+                    x_view_value=sample.x_view_value,
+                    y_view_value=sample.y_view_value,
                     )
                 nearest_distance = distance
 
@@ -337,24 +441,51 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
 
     @staticmethod
-    def _nearest_scene_trace_sample(x_data, y_data, scene_pos, viewbox):
-        """Return the trace sample nearest to a scene position in screen space."""
+    def _nearest_scene_trace_sample(
+            x_data,
+            y_data,
+            scene_pos,
+            viewbox,
+            raw_x_data=None,
+            raw_y_data=None,
+            ):
+        """Return the nearest display sample with its aligned physical values."""
 
         x_data = np.asarray(x_data, dtype=float)
         y_data = np.asarray(y_data, dtype=float)
-        count = min(x_data.size, y_data.size)
+        if raw_x_data is None:
+            raw_x_data = x_data
+        if raw_y_data is None:
+            raw_y_data = y_data
+        raw_x_data = np.asarray(raw_x_data, dtype=float)
+        raw_y_data = np.asarray(raw_y_data, dtype=float)
+        count = min(
+            x_data.size,
+            y_data.size,
+            raw_x_data.size,
+            raw_y_data.size,
+        )
         if count == 0:
             return None, None
 
         x_data = x_data[:count]
         y_data = y_data[:count]
-        finite = np.isfinite(x_data) & np.isfinite(y_data)
+        raw_x_data = raw_x_data[:count]
+        raw_y_data = raw_y_data[:count]
+        finite = (
+            np.isfinite(x_data)
+            & np.isfinite(y_data)
+            & np.isfinite(raw_x_data)
+            & np.isfinite(raw_y_data)
+        )
         if not np.any(finite):
             return None, None
 
         finite_indices = np.flatnonzero(finite)
         x_values = x_data[finite]
         y_values = y_data[finite]
+        raw_x_values = raw_x_data[finite]
+        raw_y_values = raw_y_data[finite]
         origin = viewbox.mapViewToScene(QtCore.QPointF(0.0, 0.0))
         x_basis = viewbox.mapViewToScene(QtCore.QPointF(1.0, 0.0))
         y_basis = viewbox.mapViewToScene(QtCore.QPointF(0.0, 1.0))
@@ -373,9 +504,11 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             )
         index = int(np.argmin(distances))
         sample = _SnapTraceSample(
-            x_value=float(x_values[index]),
-            y_value=float(y_values[index]),
+            x_value=float(raw_x_values[index]),
+            y_value=float(raw_y_values[index]),
             point_number=int(finite_indices[index]) + 1,
+            x_view_value=float(x_values[index]),
+            y_view_value=float(y_values[index]),
             )
         return sample, float(distances[index])
 
@@ -385,6 +518,11 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         Returns the viewbox that owns a plotted line.
 
         """
+        get_viewbox = getattr(line, "getViewBox", None)
+        if callable(get_viewbox):
+            viewbox = get_viewbox()
+            if viewbox is not None:
+                return viewbox
         if getattr(line, "side", "left") == "right" and self.right_vb is not None:
             return self.right_vb
 
@@ -403,6 +541,10 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
                 pen=pg.mkPen("k", width=1),
                 brush=pg.mkBrush("w"),
                 )
+            # The marker follows the pointer and is often directly over the
+            # trace. Keep it behind plot lines so the line receives a
+            # double-click before the marker can consume it.
+            self.snap_marker.setZValue(-1)
 
         if self._snap_marker_view is not viewbox:
             self._hide_snap_marker()

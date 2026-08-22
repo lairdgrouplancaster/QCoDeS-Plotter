@@ -14,15 +14,27 @@ QCoDeS-Plotter requires Python 3.11 or newer.
 Runtime dependencies are declared in `pyproject.toml` and are installed
 automatically when qPlot is installed.
 
+Development and Git installs of the current beta compile a small native module
+for the non-default trusted live QCoDeS reader, so they also require a C compiler
+suitable for the selected Python. Release wheels include that module for their
+target platform.
+
 Windows and macOS are the currently supported and GUI-tested desktop
 platforms. A source installation may work on Linux, but Linux is not currently
 part of the GUI test or support matrix.
+
+The standalone trusted reader can inspect committed data still in a live WAL
+without copying or checkpointing it. Its main database, WAL, and rollback
+journal handles remain read-only. SQLite may update only the exact colocated
+`-shm` file as transient WAL coordination state, including its contents and
+metadata. This reader is not yet used by the GUI, preview, plotting, or refresh
+paths; see [Trusted live QCoDeS reader](docs/trusted-live-reader.md).
 
 ## Install
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
 The commands below install the latest full release, `1.5.0`. The current beta
-is `1.5.1-b2`; it is documented below but is not used for the default install.
+is `1.6.0-b1`; it is documented below but is not used for the default install.
 
 ### Prelude
 #### Windows
@@ -58,7 +70,7 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 
 To test the latest beta, execute:
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.1-b2
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.6.0-b1
 ```
 
 ### Troubleshooting

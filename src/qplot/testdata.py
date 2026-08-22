@@ -21,14 +21,23 @@ from time import perf_counter
 
 import numpy as np
 from qcodes.dataset import Measurement, new_experiment
+from qcodes.dataset.sqlite.connection import AtomicConnection
 from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
 
 from qplot.datahandling.file_identity import (
     QPLOT_GENERATED_DATABASE_APPLICATION_ID,
+    QPLOT_GENERATION_LINEAGE_FORMAT_VERSION,
+    QPLOT_GENERATION_LINEAGE_NONCE_BYTES,
+    QPLOT_GENERATION_LINEAGE_RING_TABLE,
+    QPLOT_GENERATION_LINEAGE_STATE_TABLE,
+    QPLOT_GENERATION_LINEAGE_WINDOW,
     QPLOT_GENERATION_PROVENANCE_TABLE,
     QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES,
+    QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX,
     database_publication_guard_path,
+    generation_lineage_transition_statements,
+    generation_provenance_trigger,
 )
 
 CSV_COLUMNS = (
@@ -45,12 +54,48 @@ CSV_COLUMNS = (
 )
 
 EXAMPLE_ROWS = (
-    ("1", "current", "Current", "nA", "-0.01", "0.01", "101", "", "", ""),
+    ("1", "current", "Current", "nA", "-0.1", "0.1", "501", "", "", ""),
     (
         "1",
         "conductance",
         "Conductance",
         "uS",
+        "-0.1",
+        "0.1",
+        "501",
+        "",
+        "",
+        "",
+    ),
+    (
+        "1",
+        "resistance",
+        "Resistance",
+        "kOhm",
+        "-0.1",
+        "0.1",
+        "501",
+        "",
+        "",
+        "",
+    ),
+    (
+        "1",
+        "transconductance",
+        "Transconductance",
+        "uS/V",
+        "-0.1",
+        "0.1",
+        "501",
+        "",
+        "",
+        "",
+    ),
+    (
+        "1",
+        "current",
+        "Current",
+        "nA",
         "-0.1",
         "0.1",
         "501",
@@ -72,15 +117,15 @@ EXAMPLE_ROWS = (
     ),
     (
         "2",
-        "conductance",
-        "Conductance",
-        "uS",
-        "-0.1",
-        "0.1",
-        "201",
-        "-3",
-        "3",
-        "101",
+        "current",
+        "Current",
+        "nA",
+        "-0.01",
+        "0.01",
+        "121",
+        "-1",
+        "1",
+        "81",
     ),
 )
 
@@ -105,6 +150,8 @@ _MAXIMUM_FREQUENCY = 4.0
 _SINUSOID_COMPONENT_COUNT = 2
 _RESULT_CHUNK_POINTS = 10_000
 _TEMPORARY_DATABASE_PREFIX = ".qplot-testdata-"
+_PROVENANCE_TRIGGER_PREFIX = QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX
+_PROVENANCE_WRITER_ENABLED_ATTRIBUTE = "_qplot_provenance_writer_enabled"
 _SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 _SQLITE_HEADER = b"SQLite format 3\x00"
 _SQLITE_ROLLBACK_JOURNAL_VERSIONS = b"\x01\x01"
@@ -354,13 +401,12 @@ def copy_instruction_collection(directory, overwrite=False):
                 f"to replace them: {', '.join(existing)}"
             )
 
-    resource_directory = resources.files("qplot").joinpath("resources", "testdata")
     try:
-        contents = tuple(
-            resource_directory.joinpath(name).read_bytes()
-            for name in INSTRUCTION_FILE_NAMES
-        )
-        for output_path, content in zip(output_paths, contents, strict=True):
+        for output_path, (_name, content) in zip(
+                output_paths,
+                instruction_collection_contents(),
+                strict=True,
+                ):
             mode = "wb" if overwrite else "xb"
             with output_path.open(mode) as handle:
                 handle.write(content)
@@ -370,6 +416,15 @@ def copy_instruction_collection(directory, overwrite=False):
         ) from error
 
     return output_paths
+
+
+def instruction_collection_contents():
+    """Return installed collection filenames and bytes without writing them."""
+    resource_directory = resources.files("qplot").joinpath("resources", "testdata")
+    return tuple(
+        (name, resource_directory.joinpath(name).read_bytes())
+        for name in INSTRUCTION_FILE_NAMES
+    )
 
 
 def _raise_if_cancelled(cancelled_callback):
@@ -392,6 +447,186 @@ def _quote_sqlite_identifier(identifier):
     return '"' + identifier.replace('"', '""') + '"'
 
 
+def _generation_provenance_trigger(table_name, operation):
+    """Return a stable trigger name and exact SQL for one table operation."""
+    return generation_provenance_trigger(table_name, operation)
+
+
+def _generation_provenance_user_tables(connection):
+    excluded_tables = (
+        QPLOT_GENERATION_PROVENANCE_TABLE,
+        QPLOT_GENERATION_LINEAGE_STATE_TABLE,
+        QPLOT_GENERATION_LINEAGE_RING_TABLE,
+    )
+    return [
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema "
+            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+            "AND name NOT IN (?, ?, ?) ORDER BY name",
+            excluded_tables,
+        )
+    ]
+
+
+def _ensure_generation_provenance_triggers(connection):
+    """Install exact provenance triggers for every table in this transaction."""
+    changed = False
+    existing_triggers = {
+        row[0]: (row[1], row[2])
+        for row in connection.execute(
+            "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'trigger'"
+        ).fetchall()
+    }
+    for table_name in _generation_provenance_user_tables(connection):
+        for operation in ("INSERT", "UPDATE", "DELETE"):
+            trigger_name, statement = _generation_provenance_trigger(
+                table_name,
+                operation,
+            )
+            trigger_row = existing_triggers.get(trigger_name)
+            if trigger_row is None:
+                connection.execute(statement)
+                existing_triggers[trigger_name] = (table_name, statement)
+                changed = True
+            elif trigger_row != (table_name, statement):
+                raise RuntimeError(
+                    "The generated database contains a conflicting qPlot "
+                    f"provenance trigger named {trigger_name!r}."
+                )
+    return changed
+
+
+def _create_generation_lineage(connection, token):
+    """Create and seed the bounded nonce ancestry chain at sequence zero."""
+    state_table = _quote_sqlite_identifier(QPLOT_GENERATION_LINEAGE_STATE_TABLE)
+    ring_table = _quote_sqlite_identifier(QPLOT_GENERATION_LINEAGE_RING_TABLE)
+    connection.execute(
+        f"CREATE TABLE {ring_table} ("
+        "slot INTEGER PRIMARY KEY, "
+        "sequence INTEGER NOT NULL UNIQUE CHECK (sequence >= 0), "
+        "parent_nonce BLOB, nonce BLOB NOT NULL UNIQUE, "
+        f"CHECK (slot = sequence % {QPLOT_GENERATION_LINEAGE_WINDOW}), "
+        "CHECK ((sequence = 0 AND parent_nonce IS NULL) OR "
+        f"(typeof(parent_nonce) = 'blob' AND length(parent_nonce) = "
+        f"{QPLOT_GENERATION_LINEAGE_NONCE_BYTES})), "
+        f"CHECK (typeof(nonce) = 'blob' AND length(nonce) = "
+        f"{QPLOT_GENERATION_LINEAGE_NONCE_BYTES})) WITHOUT ROWID"
+    )
+    connection.execute(
+        f"INSERT INTO {ring_table} VALUES "
+        f"(0, 0, NULL, randomblob({QPLOT_GENERATION_LINEAGE_NONCE_BYTES}))"
+    )
+    connection.execute(
+        f"CREATE TABLE {state_table} ("
+        "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+        "format_version INTEGER NOT NULL, generation_token TEXT NOT NULL, "
+        "head_sequence INTEGER NOT NULL CHECK (head_sequence >= 0), "
+        "head_nonce BLOB NOT NULL, window_size INTEGER NOT NULL, "
+        f"CHECK (format_version = {QPLOT_GENERATION_LINEAGE_FORMAT_VERSION}), "
+        f"CHECK (typeof(head_nonce) = 'blob' AND length(head_nonce) = "
+        f"{QPLOT_GENERATION_LINEAGE_NONCE_BYTES}), "
+        f"CHECK (window_size = {QPLOT_GENERATION_LINEAGE_WINDOW}))"
+    )
+    connection.execute(
+        f"INSERT INTO {state_table} "
+        "SELECT 1, ?, ?, 0, nonce, ? "
+        f"FROM {ring_table} WHERE sequence = 0",
+        (
+            QPLOT_GENERATION_LINEAGE_FORMAT_VERSION,
+            token,
+            QPLOT_GENERATION_LINEAGE_WINDOW,
+        ),
+    )
+
+
+def _advance_generation_lineage(connection):
+    for statement in generation_lineage_transition_statements():
+        connection.execute(statement)
+
+
+def _generation_lineage_state(connection):
+    """Return a validated v2 writer state, or ``None`` for legacy provenance."""
+    state_exists = connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?",
+        (QPLOT_GENERATION_LINEAGE_STATE_TABLE,),
+    ).fetchone()
+    ring_exists = connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?",
+        (QPLOT_GENERATION_LINEAGE_RING_TABLE,),
+    ).fetchone()
+    if state_exists is None and ring_exists is None:
+        return None
+    if state_exists is None or ring_exists is None:
+        raise ValueError("The qPlot generation lineage tables are incomplete.")
+
+    state_table = _quote_sqlite_identifier(QPLOT_GENERATION_LINEAGE_STATE_TABLE)
+    ring_table = _quote_sqlite_identifier(QPLOT_GENERATION_LINEAGE_RING_TABLE)
+    rows = connection.execute(
+        f"SELECT singleton, format_version, generation_token, head_sequence, "
+        f"head_nonce, window_size FROM {state_table}"
+    ).fetchall()
+    if len(rows) != 1:
+        raise ValueError("The qPlot generation lineage state is invalid.")
+    singleton, version, token, sequence, nonce, window = rows[0]
+    tip = connection.execute(
+        f"SELECT slot, parent_nonce, nonce FROM {ring_table} WHERE sequence = ?",
+        (sequence,),
+    ).fetchone()
+    if (
+        singleton != 1
+        or version != QPLOT_GENERATION_LINEAGE_FORMAT_VERSION
+        or not isinstance(token, str)
+        or not isinstance(sequence, int)
+        or sequence < 0
+        or not isinstance(nonce, bytes)
+        or len(nonce) != QPLOT_GENERATION_LINEAGE_NONCE_BYTES
+        or window != QPLOT_GENERATION_LINEAGE_WINDOW
+        or tip is None
+        or tip[0] != sequence % QPLOT_GENERATION_LINEAGE_WINDOW
+        or tip[2] != nonce
+    ):
+        raise ValueError("The qPlot generation lineage state is invalid.")
+    return token, sequence, nonce
+
+
+def _legacy_generation_provenance_triggers(connection):
+    """Return only structurally exact triggers written by legacy qPlot."""
+    legacy_triggers = []
+    pattern = re.compile(r"qplot_provenance_\d+_(insert|update|delete)\Z")
+    provenance_table = _quote_sqlite_identifier(QPLOT_GENERATION_PROVENANCE_TABLE)
+    for trigger_name, table_name, sql in connection.execute(
+        "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'trigger'"
+    ).fetchall():
+        match = pattern.fullmatch(trigger_name)
+        if match is None:
+            continue
+        operation = match.group(1).upper()
+        expected = (
+            f"CREATE TRIGGER {_quote_sqlite_identifier(trigger_name)} "
+            f"AFTER {operation} ON {_quote_sqlite_identifier(table_name)} BEGIN "
+            f"UPDATE {provenance_table} SET write_epoch = write_epoch + 1 "
+            "WHERE singleton = 1; END"
+        )
+        if sql != expected:
+            raise RuntimeError(
+                "The database contains a conflicting legacy qPlot provenance "
+                f"trigger named {trigger_name!r}."
+            )
+        legacy_triggers.append(trigger_name)
+    return legacy_triggers
+
+
+def _remove_legacy_generation_provenance_triggers(connection):
+    changed = False
+    for trigger_name in _legacy_generation_provenance_triggers(connection):
+        connection.execute(
+            f"DROP TRIGGER {_quote_sqlite_identifier(trigger_name)}"
+        )
+        changed = True
+    return changed
+
+
 def _install_generation_provenance(connection):
     """Make later WAL writes prove that they descend from this main file."""
     token = secrets.token_hex(QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES)
@@ -406,28 +641,151 @@ def _install_generation_provenance(connection):
         f"INSERT INTO {provenance_table} VALUES (1, ?, 0)",
         (token,),
     )
+    _create_generation_lineage(connection, token)
+    _ensure_generation_provenance_triggers(connection)
 
-    table_names = [
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_schema "
-            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
-            "AND name != ? ORDER BY name",
-            (QPLOT_GENERATION_PROVENANCE_TABLE,),
+
+def _require_generation_provenance_for_writer(connection):
+    application_id = connection.execute("PRAGMA application_id").fetchone()
+    try:
+        provenance_rows = connection.execute(
+            f"SELECT singleton, generation_token, write_epoch "
+            f"FROM {_quote_sqlite_identifier(QPLOT_GENERATION_PROVENANCE_TABLE)}"
+        ).fetchall()
+    except sqlite3.Error as error:
+        raise ValueError(
+            "This is not a qPlot-generated database with writable provenance."
+        ) from error
+
+    if len(provenance_rows) != 1:
+        raise ValueError(
+            "This is not a qPlot-generated database with writable provenance."
         )
-    ]
-    for table_number, table_name in enumerate(table_names):
-        quoted_table_name = _quote_sqlite_identifier(table_name)
-        for operation in ("INSERT", "UPDATE", "DELETE"):
-            trigger_name = _quote_sqlite_identifier(
-                f"qplot_provenance_{table_number}_{operation.lower()}"
+    singleton, token, epoch = provenance_rows[0]
+    try:
+        token_bytes = bytes.fromhex(token) if isinstance(token, str) else b""
+    except ValueError:
+        token_bytes = b""
+    if (
+        application_id != (QPLOT_GENERATED_DATABASE_APPLICATION_ID,)
+        or singleton != 1
+        or len(token_bytes) != QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES
+        or not isinstance(epoch, int)
+        or epoch < 0
+    ):
+        raise ValueError(
+            "This is not a qPlot-generated database with writable provenance."
+        )
+    lineage = _generation_lineage_state(connection)
+    if lineage is not None:
+        lineage_token, lineage_sequence, _lineage_nonce = lineage
+        if lineage_token != token or lineage_sequence != epoch:
+            raise ValueError("The qPlot generation lineage state is invalid.")
+    return lineage
+
+
+def enable_generation_provenance_for_writer(connection):
+    """Cover future QCoDeS result tables on an explicitly writable connection.
+
+    SQLite has no persistent database-wide write trigger.  A QCoDeS writer that
+    will create later runs must therefore opt into this connection hook before
+    it performs any new experiment or measurement writes.  The hook refuses a
+    nonempty WAL, installs table triggers before the outer QCoDeS transaction
+    commits, and extends a token-bound nonce chain.  Subsequent foreground or
+    background result writes therefore remain provable across checkpoints.
+
+    This function is exclusively for a connection deliberately opened by the
+    database owner for writing.  qPlot's viewer never calls it and never
+    installs metadata or triggers in an input database.
+    """
+    if not isinstance(connection, AtomicConnection):
+        raise TypeError(
+            "enable_generation_provenance_for_writer requires a writable "
+            "QCoDeS AtomicConnection"
+        )
+    if getattr(connection, _PROVENANCE_WRITER_ENABLED_ATTRIBUTE, False):
+        return connection
+    if connection.in_transaction:
+        raise RuntimeError(
+            "Enable qPlot generation provenance before starting a write "
+            "transaction."
+        )
+    if connection.isolation_level is None:
+        raise RuntimeError(
+            "Enable qPlot generation provenance before using autocommit mode."
+        )
+
+    original_commit = connection.commit
+    original_rollback = connection.rollback
+
+    def synchronize_triggers():
+        _ensure_generation_provenance_triggers(connection)
+        _advance_generation_lineage(connection)
+
+    def provenance_commit():
+        if not connection.in_transaction:
+            return original_commit()
+        try:
+            synchronize_triggers()
+            return original_commit()
+        except BaseException:
+            try:
+                original_rollback()
+            except sqlite3.Error:
+                pass
+            raise
+
+    # Acquire SQLite's writer lock before inspecting the lineage or WAL.  A
+    # second connection must not be able to park uninstrumented frames between
+    # the quiescence check and the first provenance event.
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        lineage = _require_generation_provenance_for_writer(connection)
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0].lower()
+        if journal_mode == "wal":
+            wal_path = Path(f"{connection.path_to_dbfile}-wal")
+            try:
+                wal_size = wal_path.stat().st_size
+            except FileNotFoundError:
+                wal_size = 0
+            if wal_size:
+                raise RuntimeError(
+                    "qPlot provenance refuses to bless writes already present in a "
+                    "WAL. On the owner connection, checkpoint the WAL with TRUNCATE, "
+                    "then enable provenance before creating a Measurement."
+                )
+        if lineage is None and journal_mode == "wal":
+            raise RuntimeError(
+                "This older qPlot-generated database must be migrated from a "
+                "quiescent rollback-journal connection. Checkpoint the WAL, switch "
+                "the owner connection to journal_mode=DELETE, then enable generation "
+                "provenance before creating a Measurement."
+            )
+        if lineage is None:
+            _remove_legacy_generation_provenance_triggers(connection)
+            migrated_token = secrets.token_hex(
+                QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES
             )
             connection.execute(
-                f"CREATE TRIGGER {trigger_name} AFTER {operation} "
-                f"ON {quoted_table_name} BEGIN "
-                f"UPDATE {provenance_table} "
-                "SET write_epoch = write_epoch + 1 WHERE singleton = 1; END"
+                f"UPDATE {_quote_sqlite_identifier(QPLOT_GENERATION_PROVENANCE_TABLE)} "
+                "SET generation_token = ?, write_epoch = 0 WHERE singleton = 1",
+                (migrated_token,),
             )
+            _create_generation_lineage(connection, migrated_token)
+        else:
+            _remove_legacy_generation_provenance_triggers(connection)
+        synchronize_triggers()
+        original_commit()
+    except BaseException:
+        try:
+            original_rollback()
+        except sqlite3.Error:
+            pass
+        raise
+
+    connection.commit = provenance_commit
+    setattr(connection, _PROVENANCE_WRITER_ENABLED_ATTRIBUTE, True)
+    return connection
 
 
 def _owned_temporary_artifacts(temporary_path, *, include_database=True):
@@ -1165,10 +1523,10 @@ def generate_database(
                         f"{perf_counter() - run_started:.2f} s."
                     )
                 # The marker identifies the provenance format; the unique token
-                # and write epoch let a fresh qPlot process distinguish a WAL
-                # written from this main from an unrelated sidecar. Triggers are
-                # installed only after generation so they do not penalise bulk
-                # creation of the synthetic runs.
+                # and nonce-linked branch history let a fresh qPlot process
+                # distinguish a WAL descending from this exact main from an
+                # unrelated or divergent sidecar. Triggers are installed only
+                # after generation so they do not penalise bulk creation.
                 connection.execute(
                     "PRAGMA application_id = "
                     f"{QPLOT_GENERATED_DATABASE_APPLICATION_ID}"

@@ -49,12 +49,18 @@ def test_demo_screenshot_workflow_generates_nonblank_images(tmp_path):
     repo_root = Path(__file__).resolve().parents[2]
     asset_dir = tmp_path / "assets"
     work_dir = tmp_path / "work"
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
     env = os.environ.copy()
     env["QPLOT_DEMO_ASSET_DIR"] = str(asset_dir)
     env["QPLOT_DEMO_WORKDIR"] = str(work_dir)
+    env["QPLOT_DEMO_VERIFY_CLEANUP"] = "1"
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["MPLCONFIGDIR"] = str(work_dir / "matplotlib")
     env["PYTHONPATH"] = str(repo_root / "src")
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    env["TMPDIR"] = str(temp_dir)
 
     result = subprocess.run(
         [sys.executable, "scripts/capture_demo_screenshots.py"],
@@ -66,6 +72,8 @@ def test_demo_screenshot_workflow_generates_nonblank_images(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
+    assert "PermissionError" not in result.stderr
+    assert not list(temp_dir.glob("qplot-readonly-*"))
     for filename, minimum_size in EXPECTED_SCREENSHOTS.items():
         path = asset_dir / filename
         assert path.exists(), f"{filename} was not generated"

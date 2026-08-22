@@ -1,6 +1,8 @@
 import json
 import math
 import os
+import sqlite3
+from time import monotonic
 from typing import Literal, NamedTuple
 
 from qcodes.dataset.sqlite.database import get_DB_location
@@ -13,14 +15,35 @@ class _StorageSize(NamedTuple):
     accuracy: Literal["exact", "estimated", "unavailable"]
 
 
-def _install_cancel_progress_handler(conn, cancelled_callback):
-    if cancelled_callback is None:
-        return
-    if cancelled_callback():
+def _raise_if_read_aborted(cancelled_callback=None, deadline=None):
+    if cancelled_callback is not None and cancelled_callback():
         raise InterruptedError("Database read cancelled.")
+    if deadline is not None and monotonic() >= deadline:
+        raise TimeoutError("Database read deadline exceeded.")
+
+
+def _install_cancel_progress_handler(
+        conn,
+        cancelled_callback,
+        deadline=None,
+        ):
+    if cancelled_callback is None and deadline is None:
+        return
+    _raise_if_read_aborted(cancelled_callback, deadline)
     set_progress_handler = getattr(conn, "set_progress_handler", None)
     if callable(set_progress_handler):
-        set_progress_handler(lambda: int(bool(cancelled_callback())), 1000)
+        set_progress_handler(
+            lambda: int(
+                bool(cancelled_callback is not None and cancelled_callback())
+                or bool(deadline is not None and monotonic() >= deadline)
+                ),
+            1000,
+            )
+
+
+def _translate_interrupted_read(error, cancelled_callback=None, deadline=None):
+    if _sql_was_interrupted(error):
+        _raise_if_read_aborted(cancelled_callback, deadline)
 
 
 def _notify_connection(connection_callback, connection):
@@ -28,11 +51,30 @@ def _notify_connection(connection_callback, connection):
         connection_callback(connection)
 
 
+def _read_only_connection(
+        database_path,
+        expected_database_identity,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    """Open a QCoDeS view while retaining optional abort controls."""
+    kwargs = {}
+    if expected_database_identity is not None:
+        kwargs["expected_database_identity"] = expected_database_identity
+    if cancelled_callback is not None:
+        kwargs["cancelled_callback"] = cancelled_callback
+    if deadline is not None:
+        kwargs["deadline"] = deadline
+    return qcodes_read_only_connection(database_path, **kwargs)
+
+
 def get_runs_via_sql(
         database_path=None,
         include_details=True,
         cancelled_callback=None,
         connection_callback=None,
+        expected_database_identity=None,
+        deadline=None,
         ):
     """
     Read from the currently initialised QCoDeS database and fetches all data to
@@ -46,16 +88,26 @@ def get_runs_via_sql(
             run_id : {column_name: column_data}
 
     """
-    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    conn = _read_only_connection(
+        database_path or get_DB_location(),
+        expected_database_identity,
+        cancelled_callback,
+        deadline,
+        )
     try:
         _notify_connection(connection_callback, conn)
-        _install_cancel_progress_handler(conn, cancelled_callback)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
-        return _fetch_run_rows(
+        rows = _fetch_run_rows(
             cursor,
             empty_as_none=False,
             include_details=include_details,
             )
+        _raise_if_read_aborted(cancelled_callback, deadline)
+        return rows
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        raise
     finally:
         try:
             _notify_connection(connection_callback, None)
@@ -67,6 +119,8 @@ def get_runs_basic_via_sql(
         database_path=None,
         cancelled_callback=None,
         connection_callback=None,
+        expected_database_identity=None,
+        deadline=None,
         ):
     """
     Read the run list without scanning result tables.
@@ -82,6 +136,8 @@ def get_runs_basic_via_sql(
         include_details=False,
         cancelled_callback=cancelled_callback,
         connection_callback=connection_callback,
+        expected_database_identity=expected_database_identity,
+        deadline=deadline,
         )
 
 
@@ -95,6 +151,8 @@ def iter_run_detail_batches_via_sql(
         include_read_setpoint_count=True,
         cancelled_callback=None,
         connection_callback=None,
+        expected_database_identity=None,
+        deadline=None,
         ):
     """
     Yield detailed run metadata in small batches.
@@ -104,18 +162,23 @@ def iter_run_detail_batches_via_sql(
 
     """
     run_ids = [run_id for run_id in run_ids if run_id is not None]
+    _raise_if_read_aborted(cancelled_callback, deadline)
     if not run_ids:
         return
 
     batch_size = max(1, int(batch_size or 1))
-    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    conn = _read_only_connection(
+        database_path or get_DB_location(),
+        expected_database_identity,
+        cancelled_callback,
+        deadline,
+        )
     try:
         _notify_connection(connection_callback, conn)
-        _install_cancel_progress_handler(conn, cancelled_callback)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
         for offset in range(0, len(run_ids), batch_size):
-            if cancelled_callback is not None and cancelled_callback():
-                raise InterruptedError("Database detail read cancelled.")
+            _raise_if_read_aborted(cancelled_callback, deadline)
             batch = run_ids[offset:offset + batch_size]
             placeholders = ", ".join("?" for _ in batch)
             rows = _fetch_run_rows(
@@ -128,8 +191,13 @@ def iter_run_detail_batches_via_sql(
                 include_storage_bytes=include_storage_bytes,
                 include_storage_estimate=include_storage_estimate,
                 include_read_setpoint_count=include_read_setpoint_count,
-                )
+            )
+            _raise_if_read_aborted(cancelled_callback, deadline)
             yield rows or {}
+        _raise_if_read_aborted(cancelled_callback, deadline)
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        raise
     finally:
         try:
             _notify_connection(connection_callback, None)
@@ -143,6 +211,8 @@ def iter_run_shape_batches_via_sql(
         batch_size=1,
         cancelled_callback=None,
         connection_callback=None,
+        expected_database_identity=None,
+        deadline=None,
         ):
     """
     Yield setpoint-shape metadata for runs that need result-table inference.
@@ -152,18 +222,23 @@ def iter_run_shape_batches_via_sql(
 
     """
     run_ids = [run_id for run_id in run_ids if run_id is not None]
+    _raise_if_read_aborted(cancelled_callback, deadline)
     if not run_ids:
         return
 
     batch_size = max(1, int(batch_size or 1))
-    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    conn = _read_only_connection(
+        database_path or get_DB_location(),
+        expected_database_identity,
+        cancelled_callback,
+        deadline,
+        )
     try:
         _notify_connection(connection_callback, conn)
-        _install_cancel_progress_handler(conn, cancelled_callback)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
         for offset in range(0, len(run_ids), batch_size):
-            if cancelled_callback is not None and cancelled_callback():
-                raise InterruptedError("Database shape read cancelled.")
+            _raise_if_read_aborted(cancelled_callback, deadline)
             batch = run_ids[offset:offset + batch_size]
             placeholders = ", ".join("?" for _ in batch)
             rows = _fetch_run_rows(
@@ -184,9 +259,14 @@ def iter_run_shape_batches_via_sql(
                     or metadata.get("point_shape")
                     or metadata.get("setpoint_count") is not None
                     )
-                }
+            }
             if rows:
+                _raise_if_read_aborted(cancelled_callback, deadline)
                 yield rows
+        _raise_if_read_aborted(cancelled_callback, deadline)
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        raise
     finally:
         try:
             _notify_connection(connection_callback, None)
@@ -200,6 +280,8 @@ def iter_run_storage_batches_via_sql(
         batch_size=25,
         cancelled_callback=None,
         connection_callback=None,
+        expected_database_identity=None,
+        deadline=None,
         ):
     """
     Yield per-run storage sizes after the cheap detail pass has completed.
@@ -210,14 +292,20 @@ def iter_run_storage_batches_via_sql(
 
     """
     run_ids = [run_id for run_id in run_ids if run_id is not None]
+    _raise_if_read_aborted(cancelled_callback, deadline)
     if not run_ids:
         return
 
     batch_size = max(1, int(batch_size or 1))
-    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    conn = _read_only_connection(
+        database_path or get_DB_location(),
+        expected_database_identity,
+        cancelled_callback,
+        deadline,
+        )
     try:
         _notify_connection(connection_callback, conn)
-        _install_cancel_progress_handler(conn, cancelled_callback)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
         run_tables = _run_storage_tables(cursor, run_ids)
         table_names = {
@@ -227,11 +315,11 @@ def iter_run_storage_batches_via_sql(
             }
         sizes = _table_storage_bytes_by_name(cursor, table_names)
         if not sizes:
+            _raise_if_read_aborted(cancelled_callback, deadline)
             return
 
         for offset in range(0, len(run_ids), batch_size):
-            if cancelled_callback is not None and cancelled_callback():
-                raise InterruptedError("Database storage read cancelled.")
+            _raise_if_read_aborted(cancelled_callback, deadline)
             rows = {}
             for run_id in run_ids[offset:offset + batch_size]:
                 metadata = run_tables.get(run_id)
@@ -248,7 +336,12 @@ def iter_run_storage_batches_via_sql(
                     "storage_bytes_estimated": False,
                     }
             if rows:
+                _raise_if_read_aborted(cancelled_callback, deadline)
                 yield rows
+        _raise_if_read_aborted(cancelled_callback, deadline)
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        raise
     finally:
         try:
             _notify_connection(connection_callback, None)
@@ -261,6 +354,8 @@ def find_new_runs(
         database_path=None,
         cancelled_callback=None,
         connection_callback=None,
+        expected_database_identity=None,
+        deadline=None,
         ):
     """
     Fetch all runs created after the last seen run ID.
@@ -280,13 +375,23 @@ def find_new_runs(
         Has layout: 
             run_id : {column_name: column_data}
     """
-    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    conn = _read_only_connection(
+        database_path or get_DB_location(),
+        expected_database_identity,
+        cancelled_callback,
+        deadline,
+        )
 
     try:
         _notify_connection(connection_callback, conn)
-        _install_cancel_progress_handler(conn, cancelled_callback)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
-        return _fetch_run_rows(cursor, "WHERE runs.run_id > ?", (last_run_id, ))
+        rows = _fetch_run_rows(cursor, "WHERE runs.run_id > ?", (last_run_id, ))
+        _raise_if_read_aborted(cancelled_callback, deadline)
+        return rows
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        raise
     finally:
         try:
             _notify_connection(connection_callback, None)
@@ -614,7 +719,9 @@ def _database_modified_timestamp(cursor):
     try:
         cursor.execute("PRAGMA database_list")
         databases = cursor.fetchall()
-    except Exception:
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
         return None
 
     for database in databases:
@@ -632,7 +739,9 @@ def _existing_run_columns(cursor, column_names):
     try:
         cursor.execute("PRAGMA table_info(runs)")
         columns = {row[1] for row in cursor.fetchall()}
-    except Exception:
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
         return []
 
     return [column for column in column_names if column in columns]
@@ -816,7 +925,9 @@ def _setpoint_observation(
           WHERE {conditions}
         """)
         shape = [int(count) for count in cursor.fetchone()]
-    except Exception:
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
         return {"shape": None, "count": observed_count}
 
     if any(count <= 0 for count in shape) or _shape_size(shape) != observed_count:
@@ -848,7 +959,9 @@ def _distinct_setpoint_count(
           ) AS qplot_distinct_setpoints
         """)
         count = int(cursor.fetchone()[0])
-    except Exception:
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
         return None
     return count if count > 0 else None
 
@@ -867,7 +980,9 @@ def _result_table_columns(cursor, quoted_table_name):
     try:
         cursor.execute(f"PRAGMA table_info({quoted_table_name})")
         return {row[1] for row in cursor.fetchall()}
-    except Exception:
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
         return set()
 
 
@@ -878,7 +993,9 @@ def _result_count(cursor, table_name):
     try:
         cursor.execute(f"SELECT COUNT(*) FROM {_sqlite_identifier(table_name)}")
         return cursor.fetchone()[0]
-    except Exception:
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
         return None
 
 
@@ -929,7 +1046,9 @@ def _run_storage_tables(cursor, run_ids):
               FROM runs
               WHERE run_id IN ({placeholders})
             """, tuple(batch))
-        except Exception:
+        except Exception as error:
+            if _sql_was_interrupted(error):
+                raise
             continue
 
         for run_id, guid, table_name in cursor.fetchall():
@@ -982,7 +1101,9 @@ def _estimated_table_storage_bytes(cursor, table_name, result_count=None):
     try:
         cursor.execute(f"PRAGMA table_info({quoted_table_name})")
         columns = cursor.fetchall()
-    except Exception:
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
         return None
 
     if not columns:
@@ -1019,15 +1140,22 @@ def get_run_status(
         include_storage_bytes=True,
         cancelled_callback=None,
         connection_callback=None,
+        expected_database_identity=None,
+        deadline=None,
         ):
     """
     Returns completion and result count information for one run.
 
     """
-    conn = qcodes_read_only_connection(database_path or get_DB_location())
+    conn = _read_only_connection(
+        database_path or get_DB_location(),
+        expected_database_identity,
+        cancelled_callback,
+        deadline,
+        )
     try:
         _notify_connection(connection_callback, conn)
-        _install_cancel_progress_handler(conn, cancelled_callback)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
         optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
         optional_select = "".join(
@@ -1050,6 +1178,7 @@ def get_run_status(
         """, (guid, ))
         value = cursor.fetchone()
         if value is None:
+            _raise_if_read_aborted(cancelled_callback, deadline)
             return {}
 
         status = {
@@ -1109,7 +1238,11 @@ def get_run_status(
                     )
             status["read_setpoint_count"] = observed_setpoints["count"]
 
+        _raise_if_read_aborted(cancelled_callback, deadline)
         return status
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        raise
     finally:
         try:
             _notify_connection(connection_callback, None)
@@ -1117,7 +1250,13 @@ def get_run_status(
             conn.close()
 
 
-def has_finished(guid) -> float | None:
+def has_finished(
+        guid,
+        expected_database_identity=None,
+        cancelled_callback=None,
+        connection_callback=None,
+        deadline=None,
+        ) -> float | None:
     """
     Checks if specific run (by guid) has finished running.
     If the run with guid has finished, returns the completed time. 
@@ -1135,9 +1274,16 @@ def has_finished(guid) -> float | None:
         run is present but unfinished, or when no matching run exists.
 
     """
-    conn = qcodes_read_only_connection(get_DB_location())
+    conn = _read_only_connection(
+        get_DB_location(),
+        expected_database_identity,
+        cancelled_callback,
+        deadline,
+        )
     
     try:
+        _notify_connection(connection_callback, conn)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
 
         cursor.execute("""
@@ -1149,7 +1295,15 @@ def has_finished(guid) -> float | None:
         """, (guid, ))
         row = cursor.fetchone()
         if row is None or row[0] is None:
+            _raise_if_read_aborted(cancelled_callback, deadline)
             return None
+        _raise_if_read_aborted(cancelled_callback, deadline)
         return float(row[0])
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        raise
     finally:
-        conn.close()
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            conn.close()

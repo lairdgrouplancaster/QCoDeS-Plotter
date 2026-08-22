@@ -10,8 +10,30 @@ def _subplot_axis_order(
         source_options: dict[str, str],
         *,
         source_is_cut: bool = False,
+        shared_parameter: str | None = None,
         ) -> tuple[str, str] | None:
     """Map source data axes onto a host plot, or reject incompatible axes."""
+
+    if shared_parameter:
+        parent_axes = [
+            axis for axis in ("x", "y")
+            if parent_options.get(axis) == shared_parameter
+        ]
+        source_axes = [
+            axis for axis in ("x", "y")
+            if source_options.get(axis) == shared_parameter
+        ]
+        if len(parent_axes) != 1 or len(source_axes) != 1:
+            return None
+
+        parent_axis = parent_axes[0]
+        source_axis = source_axes[0]
+        # A cut's axis_options['y'] is its fixed setpoint selection, while its
+        # axis_data['y'] remains the dependent cut values. It therefore cannot
+        # act as the shared coordinate.
+        if source_is_cut and source_axis != "x":
+            return None
+        return ("x", "y") if parent_axis == source_axis else ("y", "x")
 
     shared_x = parent_options.get("x")
     if not shared_x:
@@ -20,6 +42,22 @@ def _subplot_axis_order(
         return "x", "y"
     if not source_is_cut and shared_x == source_options.get("y"):
         return "y", "x"
+
+    return None
+
+
+def _subplot_shared_parameter(parent) -> str | None:
+    """Return the host plot's canonical 1D independent parameter name."""
+
+    default_names = getattr(parent, "_default_plot_axis_names", None)
+    if callable(default_names):
+        names = default_names()
+        if names is not None:
+            return names[0]
+
+    independent = tuple(getattr(getattr(parent, "param", None), "depends_on_", ()))
+    if len(independent) == 1:
+        return str(independent[0])
     return None
 
 
@@ -82,6 +120,7 @@ class subplot1d(pg.PlotDataItem):
             parent_options,
             from_win_options,
             source_is_cut=hasattr(from_win, "sweep_id"),
+            shared_parameter=_subplot_shared_parameter(parent),
             )
         if self.choose_from is None:
             self.setData(x=[], y=[])
@@ -112,6 +151,7 @@ class subplot1d(pg.PlotDataItem):
             self.parent.axis_options,
             self.from_win.axis_options,
             source_is_cut=hasattr(self.from_win, "sweep_id"),
+            shared_parameter=_subplot_shared_parameter(self.parent),
             )
         self.setData(x=[], y=[])
 
@@ -287,8 +327,9 @@ class custom_viewbox(pg.ViewBox):
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
         self._marquee_owner = None
-        self._shift_pan_axis_constraint = False
+        self._shift_pan_axis_constraint = True
         self._shift_pan_axis = None
+        self._main_moved_axis = None
         self.setAcceptHoverEvents(True)
 
 
@@ -439,11 +480,15 @@ class custom_viewbox(pg.ViewBox):
 
         super().mouseDragEvent(ev, axis=constrained_axis)
 
+        if axis is None:
+            self._main_moved_axis = constrained_axis
+            try:
+                self.main_moved.emit(ev)
+            finally:
+                self._main_moved_axis = None
+
         if ev.isFinish():
             self._shift_pan_axis = None
-        
-        if axis is None:
-            self.main_moved.emit(ev)
          
     def wheelEvent(self, ev, axis=None):
         super().wheelEvent(ev, axis=axis)

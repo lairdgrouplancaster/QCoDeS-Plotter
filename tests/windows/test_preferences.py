@@ -7,23 +7,29 @@ from PyQt6 import QtWidgets as qtw
 from qplot.configuration.config import config
 from qplot.windows import main as main_window
 from qplot.windows._preferences import (
+    AXIS_MAJOR_TICK_COUNT_KEY,
+    AXIS_TICK_WIDTH_KEY,
+    COLORBAR_WIDTH_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
     MOUSE_MODE_KEY,
     PreferencesDialog,
-    )
+)
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
-    )
+)
 
 
 class FakeConfig:
     def __init__(self):
         self.defaults = {
             "user_preference.theme": "light",
+            COLORBAR_WIDTH_KEY: 15,
+            AXIS_TICK_WIDTH_KEY: 2.0,
+            AXIS_MAJOR_TICK_COUNT_KEY: 3,
             "GUI.preview_size": 200,
             MOUSE_MODE_KEY: "pan",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
@@ -64,10 +70,54 @@ class FakeConfig:
 
 
 class PreferencesDialogTestCase(unittest.TestCase):
+    def test_successful_preferences_preview_size_sync_reprioritizes_once(self):
+        cfg = FakeConfig()
+
+        class InfoBox:
+            def __init__(self):
+                self.sizes = []
+
+            def set_preview_size(self, size):
+                self.sizes.append(size)
+
+        class Window:
+            _sync_preview_size_actions = main_window.MainWindow._sync_preview_size_actions
+            _apply_preview_size = main_window.MainWindow._apply_preview_size
+            _configured_preview_size = main_window.RunControlsMixin._configured_preview_size
+
+            def __init__(self):
+                self.config = cfg
+                self.preview_size = 200
+                self.infoBox = InfoBox()
+                self.previewSizeActions = []
+                self.prioritizations = 0
+
+            def _prioritize_preview_runs(self):
+                self.prioritizations += 1
+
+        window = Window()
+        dialog = PreferencesDialog(cfg)
+        try:
+            dialog.preferencesApplied.connect(window._sync_preview_size_actions)
+            dialog.previewSizeSpin.setValue(300)
+
+            self.assertTrue(dialog.apply_preferences())
+            self.assertEqual(window.infoBox.sizes, [300])
+            self.assertEqual(window.prioritizations, 1)
+
+            window._sync_preview_size_actions()
+            self.assertEqual(window.infoBox.sizes, [300])
+            self.assertEqual(window.prioritizations, 1)
+        finally:
+            dialog.deleteLater()
+
     def test_dialog_loads_current_config_values(self):
         cfg = FakeConfig()
         cfg.values.update({
             "user_preference.theme": "dark",
+            COLORBAR_WIDTH_KEY: 21,
+            AXIS_TICK_WIDTH_KEY: 2.5,
+            AXIS_MAJOR_TICK_COUNT_KEY: 4,
             "GUI.preview_size": 300,
             MOUSE_MODE_KEY: "rect",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -84,6 +134,9 @@ class PreferencesDialogTestCase(unittest.TestCase):
         dialog = PreferencesDialog(cfg)
         try:
             self.assertEqual(dialog.themeCombo.currentData(), "dark")
+            self.assertEqual(dialog.colorbarWidthSpin.value(), 21)
+            self.assertEqual(dialog.axisTickWidthSpin.value(), 2.5)
+            self.assertEqual(dialog.axisMajorTickCountSpin.value(), 4)
             self.assertEqual(dialog.previewSizeSpin.value(), 300)
             self.assertEqual(dialog.mouseModeCombo.currentData(), "rect")
             self.assertEqual(
@@ -98,6 +151,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
                 )
             self.assertEqual(dialog.defaultLoadPathEdit.text(), "C:/qcodes")
             self.assertEqual(dialog.refreshRateSpin.value(), 2.5)
+            self.assertEqual(dialog.refreshRateSpin.decimals(), 1)
             self.assertFalse(dialog.confirmCloseAllCheck.isChecked())
             self.assertFalse(dialog.confirmQuitCheck.isChecked())
             self.assertEqual(dialog.maxThreadsSpin.value(), 8)
@@ -115,6 +169,8 @@ class PreferencesDialogTestCase(unittest.TestCase):
         try:
             dialog.preferencesApplied.connect(lambda: applied.append(True))
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("pyqt"))
+            dialog.colorbarWidthSpin.setValue(24)
+            dialog.axisMajorTickCountSpin.setValue(5)
             dialog.previewSizeSpin.setValue(500)
             dialog.mouseModeCombo.setCurrentIndex(
                 dialog.mouseModeCombo.findData("rect")
@@ -137,6 +193,8 @@ class PreferencesDialogTestCase(unittest.TestCase):
 
             self.assertEqual(cfg.updates, [
                 ("user_preference.theme", "pyqt"),
+                (COLORBAR_WIDTH_KEY, 24),
+                (AXIS_MAJOR_TICK_COUNT_KEY, 5),
                 ("GUI.preview_size", 500),
                 (MOUSE_MODE_KEY, "rect"),
                 (
@@ -172,6 +230,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
         cfg = FakeConfig()
         cfg.values.update({
             "user_preference.theme": "dark",
+            COLORBAR_WIDTH_KEY: 24,
             "GUI.preview_size": 500,
             MOUSE_MODE_KEY: "rect",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -195,6 +254,7 @@ class PreferencesDialogTestCase(unittest.TestCase):
 
             self.assertNotEqual(cfg.values, cfg.defaults)
             self.assertEqual(dialog.themeCombo.currentData(), "light")
+            self.assertEqual(dialog.colorbarWidthSpin.value(), 15)
             self.assertEqual(dialog.previewSizeSpin.value(), 200)
             self.assertEqual(dialog.mouseModeCombo.currentData(), "pan")
             self.assertEqual(
@@ -256,6 +316,9 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
 
         try:
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
+            dialog.colorbarWidthSpin.setValue(21)
+            dialog.axisTickWidthSpin.setValue(2.5)
+            dialog.axisMajorTickCountSpin.setValue(5)
             dialog.previewSizeSpin.setValue(300)
             dialog.mouseModeCombo.setCurrentIndex(
                 dialog.mouseModeCombo.findData("rect")
@@ -278,6 +341,9 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
 
             reloaded = config()
             self.assertEqual(reloaded.get("user_preference.theme"), "dark")
+            self.assertEqual(reloaded.get(COLORBAR_WIDTH_KEY), 21)
+            self.assertEqual(reloaded.get(AXIS_TICK_WIDTH_KEY), 2.5)
+            self.assertEqual(reloaded.get(AXIS_MAJOR_TICK_COUNT_KEY), 5)
             self.assertEqual(reloaded.get("GUI.preview_size"), 300)
             self.assertEqual(reloaded.get(MOUSE_MODE_KEY), "rect")
             self.assertEqual(

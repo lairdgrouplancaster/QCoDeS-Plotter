@@ -6,7 +6,11 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from ._dragdrop import make_run_preview_mime
+from ._plot_appearance import (
+    CenteredPreviewDelegate,
+    ReorderAppearanceTable,
+    configure_appearance_table,
+)
 from ._plot_refresh import plot_refresh_required
 from ._subplots import subplot1d
 from ._widgets import picker_1d
@@ -45,6 +49,8 @@ if TYPE_CHECKING:
         plot: Any
         remove_dataset: Any
         right_vb: Any
+        top_right_vb: Any
+        top_vb: Any
         scrollWidget: qtw.QWidget
         spinBox: Any
         vb: Any
@@ -56,6 +62,8 @@ if TYPE_CHECKING:
         def update_theme(self, config: Any) -> None: ...
 
         def closeEvent(self, event: object) -> None: ...
+
+        def add_trace_from_dialog(self, label: str, trace_key: Any) -> None: ...
 else:
     class _Plot1DTraceBase:
         pass
@@ -78,6 +86,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         x_axis: str = "Bottom"
         y_axis: str = "Left"
         visible: bool = True
+        opacity: float = 1.0
         order: int = 0
 
     """Trace controls and secondary-axis handling for 1D plot windows."""
@@ -150,22 +159,285 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             if line is not None and line is not main_line
             ]
 
-    def _sync_right_axis_visibility(self) -> None:
-        """Show right-axis values exactly when a secondary trace uses them."""
+    def _ensure_trace_axis_viewboxes(
+            self,
+            *,
+            top: bool = False,
+            right: bool = False,
+            ) -> None:
+        """Create the overlay viewboxes needed by a trace's axis pair."""
+
+        if "vb" not in self.__dict__ or "plot" not in self.__dict__:
+            return
+
+        if top and right:
+            top = right = True
+
+        if right and self.__dict__.get("right_vb") is None:
+            self.right_vb = pg.ViewBox()
+            self.right_vb.setDefaultPadding(0)
+            self.plot.scene().addItem(self.right_vb)
+            self.plot.getAxis("right").linkToView(self.right_vb)
+            self.right_vb.setXLink(self.vb)
+
+        if top and self.__dict__.get("top_vb") is None:
+            self.top_vb = pg.ViewBox()
+            self.top_vb.setDefaultPadding(0)
+            self.plot.scene().addItem(self.top_vb)
+            self.plot.getAxis("top").linkToView(self.top_vb)
+            self.top_vb.setYLink(self.vb)
+
+        if (
+                top
+                and right
+                and self.__dict__.get("top_right_vb") is None
+                ):
+            self.top_right_vb = pg.ViewBox()
+            self.top_right_vb.setDefaultPadding(0)
+            self.plot.scene().addItem(self.top_right_vb)
+            self.top_right_vb.setXLink(self.top_vb)
+            self.top_right_vb.setYLink(self.right_vb)
+
+        if not self.__dict__.get("_trace_axis_viewboxes_connected", False):
+            self.vb.main_moved.connect(self.updateViews)
+            self.vb.sigResized.connect(self.updateViews)
+            self.plot.autoBtn.clicked.connect(self._trace_axis_auto_button_clicked)
+            self.vb.autoRange_triggered.connect(
+                self._trace_axis_auto_range_requested
+            )
+            self._trace_axis_viewboxes_connected = True
+
+        install_range_handlers = getattr(
+            self,
+            "_install_axis_scale_viewbox_range_handlers",
+            None,
+        )
+        if callable(install_range_handlers):
+            if self.__dict__.get("right_vb") is not None:
+                install_range_handlers(self.right_vb, y_axis="y2")
+            if self.__dict__.get("top_vb") is not None:
+                install_range_handlers(self.top_vb, x_axis="x2")
+
+        self.updateViews(None)
+
+    def _trace_axis_viewbox(self, style: _TraceStyle) -> Any:
+        """Return the viewbox representing one horizontal/vertical axis pair."""
+
+        uses_top = style.x_axis == "Top"
+        uses_right = style.y_axis == "Right"
+        if uses_top or uses_right:
+            self._ensure_trace_axis_viewboxes(top=uses_top, right=uses_right)
+        if uses_top and uses_right:
+            return self.top_right_vb
+        if uses_top:
+            return self.top_vb
+        if uses_right:
+            return self.right_vb
+        return self.vb
+
+    def _move_trace_to_axis_viewbox(self, line: Any, target: Any) -> None:
+        """Move a trace to its axis-pair viewbox without changing its data."""
+
+        get_viewbox = getattr(line, "getViewBox", None)
+        current = get_viewbox() if callable(get_viewbox) else None
+        if current is target:
+            return
+
+        if current is self.vb:
+            self.plot.removeItem(line)
+        elif current is not None:
+            current.removeItem(line)
+
+        if target is self.vb:
+            self.plot.addItem(line)
+        else:
+            target.addItem(line)
+
+    @QtCore.pyqtSlot()
+    def _trace_axis_auto_button_clicked(self) -> None:
+        """Mirror the plot auto button to every trace-axis viewbox."""
+
+        enabled = self.plot.autoBtn.mode == "auto"
+        if not enabled:
+            self.__dict__.get("_axis_scale_custom_auto_axes", set()).clear()
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.enableAutoRange(enable=enabled)
+
+    @QtCore.pyqtSlot()
+    def _trace_axis_auto_range_requested(self) -> None:
+        """Auto-range overlay viewboxes, then merge per-axis trace bounds."""
+
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.autoRange()
+        force_autoscale = getattr(self, "force_all_axes_autoscale", None)
+        if callable(force_autoscale):
+            force_autoscale()
+        else:
+            self._refresh_trace_axis_auto_ranges()
+
+    def _refresh_trace_axis_auto_ranges(self) -> None:
+        """Merge automatic bounds across every viewbox contributing to an axis."""
+
+        if "vb" not in self.__dict__:
+            return
+        axis_is_used = getattr(self, "_axis_scale_axis_is_used", None)
+        axis_viewbox = getattr(self, "_axis_scale_viewbox", None)
+        apply_filtered = getattr(self, "_apply_axis_scale_filtered_auto", None)
+        if not all(callable(method) for method in (
+                axis_is_used,
+                axis_viewbox,
+                apply_filtered,
+                )):
+            return
+
+        custom_axes = self.__dict__.get("_axis_scale_custom_auto_axes", set())
+        for axis in ("x", "y", "x2", "y2"):
+            if not axis_is_used(axis):
+                custom_axes.discard(axis)
+                continue
+            viewbox = axis_viewbox(axis)
+            axis_number = 0 if axis in ("x", "x2") else 1
+            auto_range = viewbox.getState(copy=False)["autoRange"][axis_number]
+            if axis in custom_axes or auto_range is not False:
+                apply_filtered(axis)
+
+    def _refresh_top_axis_auto_range(self) -> None:
+        """Compatibility wrapper for refreshing all linked trace axes."""
+
+        self._refresh_trace_axis_auto_ranges()
+
+    def _trace_axis_parameter(self, trace: Any, display_axis: str) -> Any:
+        """Return the parameter plotted on one display axis for ``trace``."""
+
+        host_axis_param = self.__dict__.get("axis_param", {})
+        if trace is self.__dict__.get("line"):
+            return host_axis_param.get(display_axis) or getattr(self, "param", None)
+
+        source = getattr(trace, "from_win", None)
+        if source is None:
+            return host_axis_param.get(display_axis)
+
+        source_axis = display_axis
+        choose_from = getattr(trace, "choose_from", None)
+        if choose_from is not None and len(choose_from) == 2:
+            source_axis = choose_from[0 if display_axis == "x" else 1]
+
+        source_axis_param = getattr(source, "axis_param", {})
+        if isinstance(source_axis_param, dict):
+            param = source_axis_param.get(source_axis)
+            if param is not None:
+                return param
+
+        try:
+            source_options = source.axis_options
+        except (AttributeError, RuntimeError):
+            source_options = {}
+        source_name = source_options.get(source_axis)
+        source_params = getattr(source, "param_dict", {})
+        param = source_params.get(source_name) if source_name is not None else None
+        if param is not None:
+            return param
+
+        # A regular 1D source's y parameter is its dependent measurement. If
+        # metadata is incomplete, a shared display axis is still described by
+        # the host parameter rather than by the wrong source measurement.
+        if source_axis == "y":
+            param = getattr(source, "param", None)
+            if param is not None:
+                return param
+        return host_axis_param.get(display_axis) or getattr(source, "param", None)
+
+    def _sync_vertical_axis_visibility(self, side: str) -> None:
+        """Synchronise one vertical axis with the traces assigned to it."""
 
         plot = self.__dict__.get("plot")
         if plot is None:
             return
 
-        main_line = self.__dict__.get("line")
+        axis_name = side.lower()
+        style_side = "Right" if axis_name == "right" else "Left"
         styles = self._ensure_trace_styles()
-        show_values = any(
-            line is not None
-            and line is not main_line
-            and styles.get(key, self._initial_trace_style()).y_axis == "Right"
+        traces = [
+            (key, line)
             for key, line in self.__dict__.get("lines", {}).items()
+            if line is not None
+            and styles.get(key, self._initial_trace_style()).y_axis == style_side
+        ]
+        axis = plot.getAxis(axis_name)
+        axis.setStyle(showValues=bool(traces))
+        if not traces:
+            axis.setLabel(text="", units="")
+        else:
+            trace_key, trace = traces[0]
+            param = self._trace_axis_parameter(trace, "y")
+            label = getattr(param, "label", None) or self._trace_measurement_name(
+                trace_key,
+                trace,
             )
-        plot.getAxis("right").setStyle(showValues=show_values)
+            unit = getattr(param, "unit", "") or ""
+            axis.setLabel(text=str(label), units=str(unit))
+
+        sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
+        if callable(sync_tabs):
+            sync_tabs()
+
+    def _sync_right_axis_visibility(self) -> None:
+        """Synchronise right-axis values and label with its active trace."""
+
+        self._sync_vertical_axis_visibility("right")
+
+    def _sync_left_axis_visibility(self) -> None:
+        """Synchronise left-axis values and label with its active trace."""
+
+        self._sync_vertical_axis_visibility("left")
+
+    def _sync_top_axis_visibility(self) -> None:
+        """Synchronise the linked top x-axis with traces assigned to it."""
+
+        plot = self.__dict__.get("plot")
+        if plot is None:
+            return
+
+        styles = self._ensure_trace_styles()
+        top_traces = [
+            (key, line)
+            for key, line in self.__dict__.get("lines", {}).items()
+            if line is not None
+            and styles.get(key, self._initial_trace_style()).x_axis == "Top"
+        ]
+        top_axis = plot.getAxis("top")
+        top_axis.setStyle(showValues=bool(top_traces))
+        if not top_traces:
+            top_axis.setLabel(text="", units="")
+            sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
+            if callable(sync_tabs):
+                sync_tabs()
+            self._refresh_top_axis_auto_range()
+            return
+
+        trace_key, trace = top_traces[0]
+        axis_param = self._trace_axis_parameter(trace, "x")
+        label = getattr(axis_param, "label", None) or getattr(axis_param, "name", "")
+        if not label:
+            label = self._trace_measurement_name(trace_key, trace)
+        unit = getattr(axis_param, "unit", "") or ""
+        top_axis.setLabel(text=str(label), units=str(unit))
+        sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
+        if callable(sync_tabs):
+            sync_tabs()
+        self._refresh_top_axis_auto_range()
+
+    def _set_param_axis_labels(self) -> None:
+        """Update primary labels, then restore any selected top trace axis."""
+
+        super()._set_param_axis_labels()
+        self._sync_left_axis_visibility()
+        self._sync_right_axis_visibility()
+        self._sync_top_axis_visibility()
 
     def _trace_display_label(self, key: Any, line: Any) -> str:
         """Return the unchanged user-facing label for an internally keyed trace."""
@@ -186,6 +458,41 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self._ensure_trace_styles().setdefault(self.label, self._initial_trace_style())
         if line is not None and callable(getattr(line, "setPen", None)):
             self._apply_trace_style(self.label, line)
+        self._install_trace_appearance_click_handler(self.label, line)
+        install_axis_handler = getattr(self, "_install_axis_scale_trace_handler", None)
+        if callable(install_axis_handler):
+            install_axis_handler(line)
+
+    def _install_trace_appearance_click_handler(self, trace_key: Any, line: Any) -> None:
+        """Open Trace Appearance for a trace when it is double-clicked."""
+
+        if line is None or getattr(line, "_qplot_trace_click_handler", False):
+            return
+
+        set_clickable = getattr(line, "setCurveClickable", None)
+        if not callable(set_clickable):
+            return
+
+        set_clickable(True, width=8)
+        signal = getattr(line, "sigClicked", None)
+        if signal is None or not callable(getattr(signal, "connect", None)):
+            return
+
+        signal.connect(
+            lambda _line, event, key=trace_key: self._trace_clicked(key, event)
+        )
+        line._qplot_trace_click_handler = True
+
+    def _trace_clicked(self, trace_key: Any, event: Any) -> None:
+        """Show the clicked trace's settings only for a left double-click."""
+
+        is_double_click = getattr(event, "double", lambda: False)()
+        is_left_click = (
+            getattr(event, "button", lambda: None)()
+            == QtCore.Qt.MouseButton.LeftButton
+        )
+        if is_double_click and is_left_click:
+            self.open_trace_appearance_dialog(trace_key)
 
     def initMenu(self) -> None:
         super().initMenu()
@@ -220,10 +527,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             label,
             self._initial_trace_style(),
             )
-        if self.__dict__.get("lines", {}).get(label) is self.__dict__.get("line"):
-            style.y_axis = "Left"
-            self._sync_trace_control(label)
-            return
         style.y_axis = "Right" if side.lower() == "right" else "Left"
         self._apply_trace_style(label, self.__dict__.get("lines", {}).get(label))
 
@@ -248,15 +551,21 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
     def initAxes(self) -> None:
         """
-        Adds to the base axis toolbar (left) to allow adding and removing 
-        secondary lines along with changing color.
+        Sets up the hidden 1D axis state and trace controls.
+
+        A 1D plot only has one independent/dependent axis pair. The visible
+        dropdown dock is therefore replaced by the Swap X/Y checkbox in Trace
+        Appearance. Two-dimensional plots continue to use the dock.
 
         """
         super().initAxes()
+
+        self.axes_dock.hide()
+        self.axes_dock.toggleViewAction().setVisible(False)
         
-        self.axes_dock.addWidget(qtw.QLabel("Line Control"))
-        
-        # Store all line data and boxes for later use
+        # Keep the legacy picker widgets only as an internal bridge for
+        # preview drops and hidden-source construction. Trace Appearance is
+        # the sole visible trace-control surface.
         self.lines = {}
         self._register_main_line()
         self.option_boxes = []
@@ -273,7 +582,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             qtw.QSizePolicy.Policy.Expanding,
             qtw.QSizePolicy.Policy.Expanding,
             )
-        self.axes_dock.addWidget(self.lineScroll)
+        self.lineScroll.hide()
         
         # QScrollArea can only take 1 widget. That widget holds the layout.
         self.scrollWidget = qtw.QWidget()
@@ -406,6 +715,55 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
                         [item.label for item in available],
                         item_data=[self._window_trace_key(item) for item in available],
                         )
+        dialog = self.__dict__.get("_trace_appearance_dialog")
+        if dialog is not None:
+            dialog.refresh_available_traces()
+
+    def add_trace_from_dialog(self, label: str, trace_key: Any) -> None:
+        """Add a trace selected in Trace Appearance."""
+
+        request = self.__dict__.get("_trace_add_request")
+        dataset_key = getattr(trace_key, "dataset_key", None)
+        parameter_name = getattr(trace_key, "parameter_name", None)
+        if callable(request) and dataset_key is not None and parameter_name:
+            request(dataset_key, parameter_name)
+            return
+
+        selected_box = next(
+            (
+                box
+                for box in self.option_boxes
+                if box.option_box.isEnabled()
+                and box.option_box.currentIndex() < 0
+            ),
+            None,
+        )
+        if selected_box is None:
+            self.add_option_box()
+            selected_box = self.option_boxes[-1]
+
+        selected_box.option_box.blockSignals(True)
+        try:
+            selected_box.option_box.clear()
+            selected_box.option_box.addItem(label, userData=trace_key)
+            selected_box.option_box.setCurrentIndex(0)
+            selected_box.option_box.setEnabled(False)
+            selected_box.del_box.setEnabled(True)
+        finally:
+            selected_box.option_box.blockSignals(False)
+
+        self.add_line(label, trace_key)
+
+    def available_trace_candidates(self) -> list[tuple[str, Any]]:
+        """Return database-backed traces eligible for Trace Appearance."""
+
+        provider = self.__dict__.get("_trace_candidate_provider")
+        if callable(provider):
+            return list(provider())
+        return [
+            (source.label, self._window_trace_key(source))
+            for source in getattr(self, "mergable", [])
+        ]
 
 
     def refresh_secondary_lines(self) -> None:
@@ -467,26 +825,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # Dedug line
         assert win is not None
         
-        # Initialise right axis if not already done. 
-        if not self.right_vb:
-            #Create viewbox for right axis and add viewbox to main plot widget
-            self.right_vb = pg.ViewBox()
-            self.right_vb.setDefaultPadding(0)
-            self.plot.scene().addItem(self.right_vb)
-            
-            self.plot.getAxis('right').linkToView(self.right_vb)
-            self.right_vb.setXLink(self.plot)
-            
-            #connect pan/scale signals
-            self.updateViews(None)
-            self.vb.main_moved.connect(self.updateViews) # main_moved in .tools.subplots
-            
-            # Connect bottom left autoscale button to right axis
-            self.plot.autoBtn.clicked.connect(
-                lambda: self.right_vb.enableAutoRange() if self.plot.autoBtn.mode == 'auto'
-                        else self.right_vb.disableAutoRange()
-                )
-            self.vb.autoRange_triggered.connect(self.right_vb.autoRange)
+        # Secondary traces may be assigned to the right axis immediately.
+        self._ensure_trace_axis_viewboxes(right=True)
             
         # Create and track new line
         self.make_ds.emit(win._dataset_key)
@@ -542,8 +882,14 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         style = styles.setdefault(trace_key, self._initial_trace_style(order=len(styles)))
         style.line_color = selected_box.color_box.color().name()
         style.y_axis = "Right" if selected_box.axis_side.currentText().lower() == "right" else "Left"
+        if self.plot_axes_swapped():
+            self._transpose_trace_axis_style(style)
         self._ensure_trace_controls()[trace_key] = selected_box
         self._apply_trace_style(trace_key, subplot)
+        self._install_trace_appearance_click_handler(trace_key, subplot)
+        install_axis_handler = getattr(self, "_install_axis_scale_trace_handler", None)
+        if callable(install_axis_handler):
+            install_axis_handler(subplot)
         
     
     @QtCore.pyqtSlot(bool)
@@ -595,6 +941,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             selected_key = option_key if option_key is not None else label
             side = option.axis_side.currentText()
             self.option_boxes.remove(option)
+            if option.parent() is not None:
+                option.setParent(None)
+                option.deleteLater()
             break
         assert side is not None
         assert selected_key is not None
@@ -611,11 +960,20 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             )
         if callable(disconnect_source_updates):
             disconnect_source_updates()
-        # Fetch correct viewbox to remove from
-        vb = self.plot if side.lower() == "left" else self.right_vb
-        vb.removeItem(line)
+        get_viewbox = getattr(line, "getViewBox", None)
+        viewbox = get_viewbox() if callable(get_viewbox) else None
+        if viewbox is self.vb:
+            self.plot.removeItem(line)
+        elif viewbox is not None:
+            viewbox.removeItem(line)
+        else:
+            # Compatibility fallback for lightweight test and plugin traces.
+            owner = self.plot if side.lower() == "left" else self.right_vb
+            owner.removeItem(line)
 
         self._sync_right_axis_visibility()
+        self._sync_left_axis_visibility()
+        self._sync_top_axis_visibility()
         
         # Remove track of window
         self.remove_dataset.emit(line.from_win._dataset_key)
@@ -627,6 +985,143 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         dialog = self.__dict__.get("_trace_appearance_dialog")
         if dialog is not None:
             dialog.refresh_rows()
+
+    def _default_plot_axis_names(self) -> tuple[str, str] | None:
+        """Return the independent/dependent axis pair for a 1D plot."""
+
+        independent = tuple(getattr(self.param, "depends_on_", ()))
+        dependent = getattr(self.param, "name", "")
+        if len(independent) != 1 or not dependent or independent[0] == dependent:
+            return None
+        return str(independent[0]), str(dependent)
+
+    def can_swap_plot_axes(self) -> bool:
+        """Return whether this window has a valid, reversible 1D axis pair."""
+
+        names = self._default_plot_axis_names()
+        dropdowns = self.__dict__.get("axis_dropdown", {})
+        if names is None or set(dropdowns) != {"x", "y"}:
+            return False
+
+        for dropdown in dropdowns.values():
+            if any(dropdown.findText(name) < 0 for name in names):
+                return False
+
+        axis_data = self.__dict__.get("axis_data")
+        if isinstance(axis_data, dict) and {"x", "y"}.issubset(axis_data):
+            try:
+                if len(axis_data["x"]) != len(axis_data["y"]):
+                    return False
+            except TypeError:
+                return False
+        return True
+
+    def plot_axes_swapped(self) -> bool:
+        """Return whether the dependent variable is currently horizontal."""
+
+        names = self._default_plot_axis_names()
+        if names is None:
+            return False
+        independent, dependent = names
+        options = self.axis_options
+        return options.get("x") == dependent and options.get("y") == independent
+
+    def set_plot_axes_swapped(self, swapped: bool) -> bool:
+        """Apply the requested 1D axis orientation and refresh the plot."""
+
+        if not self.can_swap_plot_axes():
+            return False
+
+        names = self._default_plot_axis_names()
+        assert names is not None
+        independent, dependent = names
+        target = (
+            {"x": dependent, "y": independent}
+            if swapped
+            else {"x": independent, "y": dependent}
+            )
+        previous = dict(self.axis_options)
+        if previous == target:
+            self._update_axis_context_message()
+            return True
+
+        for axis, name in target.items():
+            dropdown = self.axis_dropdown[axis]
+            was_blocked = dropdown.blockSignals(True)
+            try:
+                dropdown.setCurrentIndex(dropdown.findText(name))
+            finally:
+                dropdown.blockSignals(was_blocked)
+        self._axis_selection = dict(target)
+
+        if previous == {"x": target["y"], "y": target["x"]}:
+            self._transpose_trace_axis_assignments()
+            self._swap_loaded_plot_axes()
+        self._update_axis_context_message()
+
+        dialog = self.__dict__.get("_trace_appearance_dialog")
+        if dialog is not None:
+            dialog.sync_swap_axes_control()
+        self.refreshWindow(force=True)
+        return True
+
+    @staticmethod
+    def _transpose_trace_axis_style(style: _TraceStyle) -> None:
+        """Transpose a trace's physical axis sides in place."""
+
+        previous_x = style.x_axis
+        previous_y = style.y_axis
+        style.x_axis = "Bottom" if previous_y == "Left" else "Top"
+        style.y_axis = "Left" if previous_x == "Bottom" else "Right"
+
+    def _transpose_trace_axis_assignments(self) -> None:
+        """Keep every trace attached to the equivalent axis after X/Y swap."""
+
+        styles = self._ensure_trace_styles()
+        for style in styles.values():
+            self._transpose_trace_axis_style(style)
+        for trace_key, line in self.__dict__.get("lines", {}).items():
+            self._apply_trace_style(trace_key, line)
+
+    def _swap_loaded_plot_axes(self) -> None:
+        """Swap the displayed 1D arrays and labels before the reload finishes."""
+
+        axis_data = self.__dict__.get("axis_data")
+        axis_param = self.__dict__.get("axis_param")
+        if not (
+                isinstance(axis_data, dict)
+                and isinstance(axis_param, dict)
+                and {"x", "y"}.issubset(axis_data)
+                and {"x", "y"}.issubset(axis_param)
+                ):
+            return
+
+        axis_data["x"], axis_data["y"] = axis_data["y"], axis_data["x"]
+        axis_param["x"], axis_param["y"] = axis_param["y"], axis_param["x"]
+
+        line = self.__dict__.get("line")
+        if line is not None:
+            line.setData(x=axis_data["x"], y=axis_data["y"])
+
+        clear_marquee = getattr(self, "clear_marquee", None)
+        if self.__dict__.get("marquee") is not None and callable(clear_marquee):
+            clear_marquee()
+        hide_snap_marker = getattr(self, "_hide_snap_marker", None)
+        if callable(hide_snap_marker):
+            hide_snap_marker()
+
+        self.refresh_secondary_lines()
+        self._set_param_axis_labels()
+        trace_updated = getattr(self, "trace_updated", None)
+        if trace_updated is not None and callable(getattr(trace_updated, "emit", None)):
+            trace_updated.emit()
+
+    def _update_axis_context_message(self) -> None:
+        """Refresh the persistent axis relationship in the coordinates bar."""
+
+        update = getattr(self, "_update_coordinate_context", None)
+        if callable(update):
+            update()
     
     
     @QtCore.pyqtSlot(object)
@@ -640,20 +1135,41 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         ev : PyQt6.<something?>
             
         """
-        self.right_vb.setGeometry(self.vb.sceneBoundingRect())
+        geometry = self.vb.sceneBoundingRect()
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.setGeometry(geometry)
+        right_vb = self.__dict__.get("right_vb")
+        top_vb = self.__dict__.get("top_vb")
+        constrained_axis = getattr(self.vb, "_main_moved_axis", None)
         if ev is not None:
             if ev.__class__.__name__ == "QGraphicsSceneWheelEvent":
-                self.right_vb.wheelEvent(ev)
+                if right_vb is not None:
+                    right_vb.wheelEvent(ev, axis=1)
+                if top_vb is not None:
+                    top_vb.wheelEvent(ev, axis=0)
             elif ev.__class__.__name__ == "MouseDragEvent":
-                self.right_vb.mouseDragEvent(ev)
+                if right_vb is not None and constrained_axis in (None, 1):
+                    right_vb.mouseDragEvent(ev, axis=1)
+                if top_vb is not None and constrained_axis in (None, 0):
+                    top_vb.mouseDragEvent(ev, axis=0)
 
-        # Prevents lines from moving outside the axes.
-        self.right_vb.setGeometry(self.vb.sceneBoundingRect())
+        # Prevent lines in overlay viewboxes from escaping the plot rectangle.
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.setGeometry(geometry)
 
-    def open_trace_appearance_dialog(self) -> None:
-        if self._trace_appearance_dialog is None:
+    def open_trace_appearance_dialog(self, trace_key: Any = None) -> None:
+        if self.__dict__.get("_trace_appearance_dialog") is None:
             self._trace_appearance_dialog = _TraceAppearanceDialog(self)
+        get_mergables = getattr(self, "get_mergables", None)
+        if get_mergables is not None and callable(getattr(get_mergables, "emit", None)):
+            get_mergables.emit()
         self._trace_appearance_dialog.refresh_rows()
+        if trace_key is not None:
+            self._trace_appearance_dialog.select_trace(trace_key)
         self._trace_appearance_dialog.show()
         self._trace_appearance_dialog.raise_()
         self._trace_appearance_dialog.activateWindow()
@@ -703,14 +1219,41 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         )
         line.setSymbolSize(style.markers_size if style.markers_enabled else style.dots_size)
         line.setSymbol(style.markers_symbol if style.markers_enabled else ("o" if style.dots_enabled else None))
+        style.opacity = min(max(float(style.opacity), 0.0), 1.0)
+        set_opacity = getattr(line, "setOpacity", None)
+        set_graphics_effect = getattr(line, "setGraphicsEffect", None)
+        if callable(set_opacity) and callable(set_graphics_effect):
+            # PlotDataItem draws its curve and symbols as separate child items.
+            # Applying opacity to the parent makes them blend twice where they
+            # overlap, so composite the complete trace before fading it instead.
+            set_opacity(1.0)
+            opacity_effect = getattr(line, "_qplot_trace_opacity_effect", None)
+            if style.opacity < 1.0:
+                if opacity_effect is None:
+                    opacity_effect = qtw.QGraphicsOpacityEffect(line)
+                    set_graphics_effect(opacity_effect)
+                    line._qplot_trace_opacity_effect = opacity_effect
+                opacity_effect.setOpacity(style.opacity)
+            elif opacity_effect is not None:
+                set_graphics_effect(None)
+                line._qplot_trace_opacity_effect = None
+        elif callable(set_opacity):
+            set_opacity(style.opacity)
         line.setVisible(style.visible)
 
         target_side = "right" if style.y_axis == "Right" else "left"
-        current_side = getattr(line, "side", "left")
-        if hasattr(line, "set_side") and current_side != target_side:
-            line.set_side(target_side)
+        if hasattr(line, "side"):
+            line.side = target_side
+        if "vb" in self.__dict__ and "plot" in self.__dict__:
+            target_viewbox = self._trace_axis_viewbox(style)
+            self._move_trace_to_axis_viewbox(line, target_viewbox)
+            sync_log_mode = getattr(self, "_sync_axis_scale_line_log_mode", None)
+            if callable(sync_log_mode):
+                sync_log_mode(label, line)
 
+        self._sync_left_axis_visibility()
         self._sync_right_axis_visibility()
+        self._sync_top_axis_visibility()
 
         z = style.order
         set_z = getattr(line, "setZValue", None)
@@ -718,64 +1261,17 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             set_z(z)
 
 
-class _TracePreviewDelegate(qtw.QStyledItemDelegate):
-    """
-    Paint trace preview icons centered in their table cell.
-
-    """
-
-    def paint(self, painter, option, index):
-        icon = index.data(QtCore.Qt.ItemDataRole.DecorationRole)
-        if not isinstance(icon, QtGui.QIcon) or icon.isNull():
-            super().paint(painter, option, index)
-            return
-
-        opt = qtw.QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        opt.text = ""
-        opt.icon = QtGui.QIcon()
-
-        widget = opt.widget
-        style = widget.style() if widget else qtw.QApplication.style()
-        if style is None:
-            super().paint(painter, option, index)
-            return
-        style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
-
-        icon_size = icon.actualSize(opt.rect.size())
-        icon_rect = QtCore.QRect(QtCore.QPoint(), icon_size)
-        icon_rect.moveCenter(opt.rect.center())
-        icon.paint(painter, icon_rect, QtCore.Qt.AlignmentFlag.AlignCenter)
+class _TracePreviewDelegate(CenteredPreviewDelegate):
+    """Backward-compatible name for the shared preview delegate."""
 
 
-class _TraceTableWidget(qtw.QTableWidget):
-    """
-    Trace table with run-preview drag payloads.
+class _TraceTableWidget(ReorderAppearanceTable):
+    """Trace-specific instance of the shared appearance reorder table."""
 
-    """
+    _REORDER_MIME_TYPE = "application/x-qplot-trace-reorder"
 
     def __init__(self, dialog: "_TraceAppearanceDialog"):
-        super().__init__(0, 3, dialog)
-        self.dialog = dialog
-
-    def startDrag(self, supported_actions):
-        index = self.currentIndex()
-        if not index.isValid():
-            return
-
-        trace_key = self.dialog._trace_key_for_row(index.row())
-        mime_data = self.dialog._trace_mime_data(trace_key)
-        if mime_data is None:
-            return
-
-        style = self.dialog.owner._trace_styles.get(trace_key)
-        drag = QtGui.QDrag(self)
-        drag.setMimeData(mime_data)
-        if style is not None:
-            pixmap = self.dialog._trace_pixmap(style, QtCore.QSize(72, 26))
-            drag.setPixmap(pixmap)
-            drag.setHotSpot(QtCore.QPoint(pixmap.width() // 2, pixmap.height() // 2))
-        drag.exec(QtCore.Qt.DropAction.CopyAction)
+        super().__init__(dialog, mime_type=self._REORDER_MIME_TYPE)
 
 
 class _TraceAppearanceDialog(qtw.QDialog):
@@ -833,20 +1329,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 background-color: palette(base);
                 alternate-background-color: palette(alternate-base);
                 gridline-color: palette(midlight);
-                selection-background-color: palette(alternate-base);
-                selection-color: palette(text);
             }
             QTableWidget#traceAppearanceTable::item {
                 padding: 2px 6px;
                 border: none;
-            }
-            QTableWidget#traceAppearanceTable::item:selected {
-                background-color: palette(alternate-base);
-                color: palette(text);
-            }
-            QTableWidget#traceAppearanceTable::item:hover {
-                background-color: palette(window);
-                color: palette(text);
             }
             QTableWidget#traceAppearanceTable QHeaderView::section {
                 font-weight: normal;
@@ -862,111 +1348,51 @@ class _TraceAppearanceDialog(qtw.QDialog):
         body.setSpacing(10)
         main.addLayout(body, 1)
 
-        trace_group = qtw.QGroupBox("Traces", self)
+        trace_group = qtw.QGroupBox(self)
         trace_layout = qtw.QVBoxLayout(trace_group)
         trace_layout.setContentsMargins(8, 8, 8, 8)
         trace_layout.setSpacing(6)
 
         self.table = _TraceTableWidget(self)
-        self.table.setObjectName("traceAppearanceTable")
-        self.table.setHorizontalHeaderLabels(
-            ["ID", "Preview", "Measurement"]
-            )
-        self.table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
-        self.table.setWordWrap(False)
-        self.table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
-        self.table.setIconSize(QtCore.QSize(64, 22))
-        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.table.setDragEnabled(True)
-        self.table.setDragDropMode(qtw.QAbstractItemView.DragDropMode.DragOnly)
-        self.table.setDefaultDropAction(QtCore.Qt.DropAction.CopyAction)
-        self.table.setItemDelegateForColumn(
-            self._COL_PREVIEW,
-            _TracePreviewDelegate(self.table),
-            )
-        horizontal_header = self.table.horizontalHeader()
-        if horizontal_header is not None:
-            header_font = horizontal_header.font()
-            header_font.setBold(False)
-            horizontal_header.setFont(header_font)
-            for column in range(self.table.columnCount()):
-                header_item = self.table.horizontalHeaderItem(column)
-                if header_item is not None:
-                    item_font = header_item.font()
-                    item_font.setBold(False)
-                    header_item.setFont(item_font)
-            horizontal_header.setFixedHeight(24)
-            horizontal_header.setSectionResizeMode(
-                self._COL_ID,
-                qtw.QHeaderView.ResizeMode.ResizeToContents,
-                )
-            horizontal_header.setSectionResizeMode(
-                self._COL_PREVIEW,
-                qtw.QHeaderView.ResizeMode.ResizeToContents,
-                )
-            horizontal_header.setSectionResizeMode(
-                self._COL_MEASUREMENT,
-                qtw.QHeaderView.ResizeMode.Stretch,
-                )
-        vertical_header = self.table.verticalHeader()
-        if vertical_header is not None:
-            vertical_header.setVisible(False)
-            vertical_header.setDefaultSectionSize(28)
-            vertical_header.setMinimumSectionSize(24)
+        configure_appearance_table(
+            self.table,
+            self,
+            object_name="traceAppearanceTable",
+            item_name="trace",
+        )
         self.table.itemSelectionChanged.connect(self._sync_controls_from_selection)
 
-        table_tools = qtw.QHBoxLayout()
-        table_tools.setContentsMargins(0, 0, 0, 0)
-        table_tools.setSpacing(4)
-        table_tools.addStretch()
-        self.move_up_button = qtw.QToolButton(trace_group)
-        self.move_down_button = qtw.QToolButton(trace_group)
-        move_buttons = qtw.QWidget(trace_group)
-        move_buttons_layout = qtw.QVBoxLayout(move_buttons)
-        move_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        move_buttons_layout.setSpacing(0)
-        for button, pixmap, tooltip in (
-                (
-                    self.move_up_button,
-                    qtw.QStyle.StandardPixmap.SP_ArrowUp,
-                    "Move selected traces up",
-                    ),
-                (
-                    self.move_down_button,
-                    qtw.QStyle.StandardPixmap.SP_ArrowDown,
-                    "Move selected traces down",
-                    ),
-                ):
-            button.setAutoRaise(True)
-            button.setFixedSize(22, 15)
-            button.setToolTip(tooltip)
-            button.setAccessibleName(tooltip)
-            style = self.style()
-            if style is not None:
-                button.setIcon(style.standardIcon(pixmap))
-            move_buttons_layout.addWidget(button)
-        table_tools.addWidget(move_buttons)
-        self.move_up_button.clicked.connect(lambda: self._move_selected_rows(-1))
-        self.move_down_button.clicked.connect(lambda: self._move_selected_rows(1))
-
-        trace_layout.addLayout(table_tools)
         trace_layout.addWidget(self.table)
+        trace_actions = qtw.QHBoxLayout()
+        trace_actions.setContentsMargins(0, 0, 0, 0)
+        trace_actions.setSpacing(6)
+        self.add_trace_combo = qtw.QComboBox(self)
+        self.add_trace_combo.setObjectName("traceAppearanceAddCombo")
+        self.add_trace_combo.setMinimumContentsLength(18)
+        self.add_trace_combo.setSizeAdjustPolicy(
+            qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.add_trace_combo.setToolTip("Choose an available measurement to add.")
+        self.add_trace_button = qtw.QPushButton("Add Trace", self)
+        self.add_trace_button.setObjectName("traceAppearanceAddButton")
+        self.add_trace_button.setToolTip("Add the selected measurement to this plot.")
+        self.add_trace_button.setEnabled(False)
+        self.remove_trace_button = qtw.QPushButton("Remove Trace", self)
+        self.remove_trace_button.setObjectName("traceAppearanceRemoveButton")
+        self.remove_trace_button.setToolTip(
+            "Remove the selected secondary trace or traces from this plot."
+        )
+        self.remove_trace_button.setEnabled(False)
+        trace_actions.addWidget(self.add_trace_combo, 1)
+        trace_actions.addWidget(self.add_trace_button)
+        trace_actions.addWidget(self.remove_trace_button)
+        trace_layout.addLayout(trace_actions)
         body.addWidget(trace_group, 5)
 
         panel = qtw.QWidget(self)
         panel_layout = qtw.QVBoxLayout(panel)
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(8)
-
-        self.selection_summary = qtw.QLabel("No trace selected", panel)
-        self.selection_summary.setTextInteractionFlags(
-            QtCore.Qt.TextInteractionFlag.NoTextInteraction
-            )
-        panel_layout.addWidget(self.selection_summary)
 
         self.line_enable = qtw.QCheckBox("Line")
         self.line_color = qtw.QComboBox(); self._add_color_items(self.line_color, TRACE_COLOR_PALETTE)
@@ -979,8 +1405,21 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.marker_color = qtw.QComboBox(); self._add_color_items(self.marker_color, TRACE_COLOR_PALETTE)
         self.marker_symbol = qtw.QComboBox(); self._add_marker_symbol_items(self.marker_symbol)
         self.marker_size = qtw.QDoubleSpinBox(); self.marker_size.setRange(1, 30); self.marker_size.setValue(10); self.marker_size.setDecimals(1); self.marker_size.setSingleStep(1)
-        self.x_axis = qtw.QComboBox(); self.x_axis.addItems(["Bottom"])
+        self.opacity = qtw.QSpinBox(); self.opacity.setRange(0, 100); self.opacity.setValue(100); self.opacity.setSuffix("%")
+        self.opacity.setObjectName("traceAppearanceOpacity")
+        self.opacity.setToolTip("Trace opacity")
+        self.opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.opacity_slider.setObjectName("traceAppearanceOpacitySlider")
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(100)
+        self.opacity_slider.setToolTip("Trace opacity")
+        self.x_axis = qtw.QComboBox(); self.x_axis.addItems(["Bottom", "Top"])
         self.y_axis = qtw.QComboBox(); self.y_axis.addItems(["Left", "Right"])
+        self.swap_axes = qtw.QCheckBox("Swap X/Y")
+        self.swap_axes.setToolTip(
+            "Plot the dependent variable horizontally and the independent "
+            "variable vertically."
+            )
         self.visible = qtw.QCheckBox("Visible")
         self.visible.setChecked(True)
 
@@ -996,6 +1435,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         for spin in (self.line_width, self.dots_size, self.marker_size):
             spin.setObjectName("traceAppearanceSpin")
             spin.setFixedWidth(76)
+        self.opacity.setFixedWidth(68)
         style_symbol_width = 86
         self.line_style.setIconSize(QtCore.QSize(58, 16))
         self.line_style.setFixedWidth(style_symbol_width)
@@ -1011,7 +1451,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.x_axis.setFixedWidth(axis_combo_width)
         self.y_axis.setFixedWidth(axis_combo_width)
 
-        display_group = qtw.QGroupBox("Display", panel)
+        display_group = qtw.QGroupBox(panel)
         display_layout = qtw.QGridLayout(display_group)
         display_layout.setContentsMargins(8, 10, 8, 8)
         display_layout.setHorizontalSpacing(6)
@@ -1040,9 +1480,17 @@ class _TraceAppearanceDialog(qtw.QDialog):
         display_layout.setColumnStretch(5, 1)
         panel_layout.addWidget(display_group)
 
-        panel_layout.addWidget(self.visible)
+        visibility_layout = qtw.QHBoxLayout()
+        visibility_layout.setContentsMargins(0, 0, 0, 0)
+        visibility_layout.setSpacing(6)
+        visibility_layout.addWidget(self.visible)
+        visibility_layout.addSpacing(16)
+        visibility_layout.addWidget(qtw.QLabel("Opacity"))
+        visibility_layout.addWidget(self.opacity_slider, 1)
+        visibility_layout.addWidget(self.opacity)
+        panel_layout.addLayout(visibility_layout)
 
-        trace_settings = qtw.QGroupBox("Axes", panel)
+        trace_settings = qtw.QGroupBox("Trace axes", panel)
         trace_grid = qtw.QGridLayout(trace_settings)
         trace_grid.setContentsMargins(8, 10, 8, 8)
         trace_grid.setHorizontalSpacing(8)
@@ -1053,6 +1501,12 @@ class _TraceAppearanceDialog(qtw.QDialog):
         trace_grid.addWidget(self.y_axis, 1, 1)
         trace_grid.setColumnStretch(2, 1)
         panel_layout.addWidget(trace_settings)
+
+        plot_axes = qtw.QGroupBox("Plot axes", panel)
+        plot_axes_layout = qtw.QVBoxLayout(plot_axes)
+        plot_axes_layout.setContentsMargins(8, 10, 8, 8)
+        plot_axes_layout.addWidget(self.swap_axes)
+        panel_layout.addWidget(plot_axes)
         panel_layout.addStretch()
 
         body.addWidget(panel, 4)
@@ -1071,12 +1525,22 @@ class _TraceAppearanceDialog(qtw.QDialog):
             self.x_axis,
             self.y_axis,
             self.visible,
+            self.opacity_slider,
+            self.opacity,
             *self._line_controls,
             *self._dots_controls,
             *self._marker_controls,
             ]
         self.dots_enable.toggled.connect(self._dots_enabled_changed)
         self.marker_enable.toggled.connect(self._markers_enabled_changed)
+        self.opacity_slider.valueChanged.connect(self.opacity.setValue)
+        self.opacity.valueChanged.connect(self.opacity_slider.setValue)
+        self.add_trace_combo.currentIndexChanged.connect(
+            self._add_trace_selection_changed
+        )
+        self.add_trace_button.clicked.connect(self._add_selected_trace)
+        self.remove_trace_button.clicked.connect(self._remove_selected_traces)
+        self.swap_axes.toggled.connect(self._swap_axes_toggled)
         for _widget, signal in [
             (self.line_enable, self.line_enable.toggled), (self.line_color, self.line_color.currentIndexChanged),
             (self.line_width, self.line_width.valueChanged), (self.line_style, self.line_style.currentIndexChanged),
@@ -1084,10 +1548,103 @@ class _TraceAppearanceDialog(qtw.QDialog):
             (self.dots_size, self.dots_size.valueChanged), (self.marker_enable, self.marker_enable.toggled),
             (self.marker_color, self.marker_color.currentIndexChanged), (self.marker_symbol, self.marker_symbol.currentIndexChanged),
             (self.marker_size, self.marker_size.valueChanged), (self.x_axis, self.x_axis.currentTextChanged),
-            (self.y_axis, self.y_axis.currentTextChanged), (self.visible, self.visible.toggled),
+            (self.y_axis, self.y_axis.currentTextChanged), (self.visible, self.visible.toggled), (self.opacity, self.opacity.valueChanged),
         ]:
             signal.connect(self._apply_selection)
         self._update_control_enabled_states(False)
+        self.sync_swap_axes_control()
+
+    def sync_swap_axes_control(self) -> None:
+        """Synchronise the global Swap X/Y checkbox with the plot window."""
+
+        can_swap = getattr(self.owner, "can_swap_plot_axes", None)
+        is_swapped = getattr(self.owner, "plot_axes_swapped", None)
+        enabled = bool(callable(can_swap) and can_swap())
+        checked = bool(enabled and callable(is_swapped) and is_swapped())
+        was_blocked = self.swap_axes.blockSignals(True)
+        try:
+            self.swap_axes.setEnabled(enabled)
+            self.swap_axes.setChecked(checked)
+        finally:
+            self.swap_axes.blockSignals(was_blocked)
+
+    def _swap_axes_toggled(self, checked: bool) -> None:
+        """Apply a requested plot-axis orientation immediately."""
+
+        setter = getattr(self.owner, "set_plot_axes_swapped", None)
+        if not callable(setter) or not setter(checked):
+            self.sync_swap_axes_control()
+
+    def refresh_available_traces(self) -> None:
+        """Refresh measurements available to the Add Trace control."""
+
+        previous_key = self.add_trace_combo.currentData()
+        plotted_keys = set(self.owner.lines)
+        available = [
+            (label, trace_key)
+            for label, trace_key in self.owner.available_trace_candidates()
+            if trace_key not in plotted_keys
+        ]
+
+        self.add_trace_combo.blockSignals(True)
+        try:
+            self.add_trace_combo.clear()
+            self.add_trace_combo.addItem("Select a trace to add…", userData=None)
+            for label, trace_key in available:
+                self.add_trace_combo.addItem(
+                    label,
+                    userData=trace_key,
+                )
+            index = self.add_trace_combo.findData(previous_key)
+            self.add_trace_combo.setCurrentIndex(max(index, 0))
+        finally:
+            self.add_trace_combo.blockSignals(False)
+        self._add_trace_selection_changed(self.add_trace_combo.currentIndex())
+
+    def _add_trace_selection_changed(self, _index: int) -> None:
+        self.add_trace_button.setEnabled(
+            self.add_trace_combo.currentData() is not None
+        )
+
+    def _add_selected_trace(self, _checked: bool = False) -> None:
+        trace_key = self.add_trace_combo.currentData()
+        if trace_key is None:
+            return
+        try:
+            self.owner.add_trace_from_dialog(
+                self.add_trace_combo.currentText(),
+                trace_key,
+            )
+        except Exception as error:
+            qtw.QMessageBox.critical(
+                self,
+                "Could Not Add Trace",
+                f"The selected trace could not be added:\n{error}",
+            )
+            self.refresh_available_traces()
+            return
+
+        self.refresh_rows()
+        self.select_trace(trace_key)
+
+    def _remove_selected_traces(self, _checked: bool = False) -> None:
+        primary_line = self.owner.__dict__.get("line")
+        selected = [
+            (trace_key, self.owner.lines.get(trace_key))
+            for trace_key in self._selected_labels()
+        ]
+        removable = [
+            (trace_key, line)
+            for trace_key, line in selected
+            if line is not None and line is not primary_line
+        ]
+        if len(removable) != len(selected) or not removable:
+            return
+
+        for trace_key, line in removable:
+            label = self.owner._trace_display_label(trace_key, line)
+            self.owner.remove_line(label, trace_key)
+        self.refresh_rows()
 
     def _dots_enabled_changed(self, enabled: bool) -> None:
         if not enabled:
@@ -1288,7 +1845,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         pixmap.fill(QtCore.Qt.GlobalColor.transparent)
         painter = QtGui.QPainter(pixmap)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        painter.setOpacity(1.0 if style.visible else 0.35)
+        painter.setOpacity(style.opacity * (1.0 if style.visible else 0.35))
 
         points = [
             QtCore.QPointF(5, size.height() - 7),
@@ -1386,6 +1943,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         return QtGui.QIcon(self._trace_pixmap(style))
 
     def refresh_rows(self):
+        self.sync_swap_axes_control()
         selected = set(self._selected_labels())
         self._sync_plot_order_from_rows()
         self.table.blockSignals(True)
@@ -1396,7 +1954,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 label = self.owner._trace_display_label(trace_key, line)
                 trace_id = label.split()[0].replace("ID:", "") if label.startswith("ID:") else str(row + 1)
                 measurement = self.owner._trace_measurement_name(trace_key, line)
-                trace_is_draggable = self._trace_mime_data(trace_key) is not None
                 style = self.owner._trace_styles.setdefault(
                     trace_key,
                     self.owner._initial_trace_style(order=row),
@@ -1408,9 +1965,11 @@ class _TraceAppearanceDialog(qtw.QDialog):
                     }
                 for col, value in values.items():
                     item = qtw.QTableWidgetItem(value)
-                    flags = item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
-                    if not trace_is_draggable:
-                        flags &= ~QtCore.Qt.ItemFlag.ItemIsDragEnabled
+                    flags = (
+                        item.flags()
+                        & ~QtCore.Qt.ItemFlag.ItemIsEditable
+                        | QtCore.Qt.ItemFlag.ItemIsDragEnabled
+                        )
                     item.setFlags(flags)
                     if col == self._COL_ID:
                         item.setTextAlignment(
@@ -1428,14 +1987,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 preview_flags = (
                     preview_item.flags()
                     & ~QtCore.Qt.ItemFlag.ItemIsEditable
+                    & ~QtCore.Qt.ItemFlag.ItemIsDragEnabled
                     )
-                if trace_is_draggable:
-                    preview_flags |= QtCore.Qt.ItemFlag.ItemIsDragEnabled
-                    preview_item.setToolTip("Drag trace preview")
-                else:
-                    preview_flags &= ~QtCore.Qt.ItemFlag.ItemIsDragEnabled
-                    preview_item.setToolTip("This trace cannot be dragged between plots")
                 preview_item.setFlags(preview_flags)
+                preview_item.setToolTip("Trace preview")
                 self.table.setItem(row, self._COL_PREVIEW, preview_item)
 
                 label_item = self.table.item(row, self._COL_ID)
@@ -1448,10 +2003,11 @@ class _TraceAppearanceDialog(qtw.QDialog):
         finally:
             self.table.blockSignals(False)
 
-        if self.table.rowCount() and not selected:
+        if self.table.rowCount() and not self._selected_labels():
             self.table.selectRow(0)
         else:
             self._sync_controls_from_selection()
+        self.refresh_available_traces()
 
     def _sync_plot_order_from_rows(self) -> None:
         row_count = len(self.owner.lines)
@@ -1465,35 +2021,35 @@ class _TraceAppearanceDialog(qtw.QDialog):
             if callable(set_z):
                 set_z(style.order)
 
-    def _move_selected_rows(self, direction: int) -> None:
-        selected = set(self._selected_labels())
-        if not selected:
+    def _move_rows_to_position(
+            self,
+            source_rows: Sequence[int],
+            destination_row: int,
+            ) -> None:
+        labels = list(self.owner.lines)
+        source_rows = sorted({row for row in source_rows if 0 <= row < len(labels)})
+        if not source_rows:
             return
 
-        labels = list(self.owner.lines)
-        original = list(labels)
-        if direction < 0:
-            for index, label in enumerate(labels):
-                if index and label in selected and labels[index - 1] not in selected:
-                    labels[index - 1], labels[index] = labels[index], labels[index - 1]
-        elif direction > 0:
-            for index in range(len(labels) - 1, -1, -1):
-                label = labels[index]
-                if (
-                        index < len(labels) - 1
-                        and label in selected
-                        and labels[index + 1] not in selected
-                        ):
-                    labels[index + 1], labels[index] = labels[index], labels[index + 1]
-
-        if labels == original:
-            self._update_move_button_states()
+        destination_row = max(0, min(destination_row, len(labels)))
+        selected = [labels[row] for row in source_rows]
+        destination_row -= sum(row < destination_row for row in source_rows)
+        remaining = [
+            label for row, label in enumerate(labels)
+            if row not in source_rows
+            ]
+        reordered = (
+            remaining[:destination_row]
+            + selected
+            + remaining[destination_row:]
+            )
+        if reordered == labels:
             return
 
         old_lines = self.owner.lines
-        reordered = [(label, old_lines[label]) for label in labels]
+        reordered_lines = [(label, old_lines[label]) for label in reordered]
         old_lines.clear()
-        old_lines.update(reordered)
+        old_lines.update(reordered_lines)
         self._sync_plot_order_from_rows()
         self.refresh_rows()
 
@@ -1501,15 +2057,16 @@ class _TraceAppearanceDialog(qtw.QDialog):
         selection_model = self.table.selectionModel()
         if selection_model is None:
             return []
-        return sorted({idx.row() for idx in selection_model.selectedRows()})
+        rows = sorted({idx.row() for idx in selection_model.selectedRows()})
+        current_row = self.table.currentRow()
+        if not rows and 0 <= current_row < self.table.rowCount():
+            return [current_row]
+        return rows
 
     def _selected_labels(self) -> list[Any]:
         labels: list[Any] = []
-        selection_model = self.table.selectionModel()
-        if selection_model is None:
-            return labels
-        for idx in selection_model.selectedRows():
-            item = self.table.item(idx.row(), self._COL_ID)
+        for row in self._selected_rows():
+            item = self.table.item(row, self._COL_ID)
             if item is not None:
                 label = item.data(QtCore.Qt.ItemDataRole.UserRole)
                 if label in self.owner.lines:
@@ -1522,38 +2079,26 @@ class _TraceAppearanceDialog(qtw.QDialog):
             return None
         return item.data(QtCore.Qt.ItemDataRole.UserRole)
 
-    def _trace_mime_data(self, label: Any) -> QtCore.QMimeData | None:
-        line = self.owner.lines.get(label)
-        source = (
-            self.owner
-            if line is self.owner.__dict__.get("line")
-            else getattr(line, "from_win", None)
-            )
-        if source is None:
-            return None
+    def select_trace(self, trace_key: Any) -> bool:
+        """Select and reveal the row for ``trace_key`` if it is present."""
 
-        guid = getattr(source, "_guid", "")
-        param = getattr(source, "param", None)
-        parameter = getattr(param, "name", "")
-        if (
-                not guid
-                or not parameter
-                or len(getattr(param, "depends_on_", ())) != 1
-                ):
-            return None
-        return make_run_preview_mime(
-            guid,
-            parameter,
-            getattr(param, "depends_on_", ()),
-            getattr(getattr(source, "_dataset_key", None), "database_path", None),
-            )
+        for row in range(self.table.rowCount()):
+            if self._trace_key_for_row(row) != trace_key:
+                continue
+            self.table.clearSelection()
+            self.table.selectRow(row)
+            item = self.table.item(row, self._COL_ID)
+            if item is not None:
+                self.table.setCurrentItem(item)
+                self.table.scrollToItem(item)
+            return True
+        return False
 
     def _sync_controls_from_selection(self):
         if self._building:
             return
         labels = self._selected_labels()
         if not labels:
-            self.selection_summary.setText("No trace selected")
             self._update_control_enabled_states(False)
             return
         style = self.owner._trace_styles[labels[0]]
@@ -1562,15 +2107,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
             self.line_enable.setChecked(style.line_enabled); self._set_combo_value(self.line_color, style.line_color); self.line_width.setValue(style.line_width); self._set_combo_value(self.line_style, style.line_style)
             self.dots_enable.setChecked(style.dots_enabled); self._set_combo_value(self.dots_color, style.dots_color); self.dots_size.setValue(style.dots_size)
             self.marker_enable.setChecked(style.markers_enabled); self._set_combo_value(self.marker_color, style.markers_color); self._set_combo_value(self.marker_symbol, style.markers_symbol); self.marker_size.setValue(style.markers_size)
-            self.x_axis.setCurrentText(style.x_axis); self.y_axis.setCurrentText(style.y_axis); self.visible.setChecked(style.visible)
+            self.x_axis.setCurrentText(style.x_axis); self.y_axis.setCurrentText(style.y_axis); self.visible.setChecked(style.visible); self.opacity.setValue(round(style.opacity * 100))
         finally:
             self._building = False
 
-        if len(labels) == 1:
-            measurement = self.owner._trace_measurement_name(labels[0], self.owner.lines[labels[0]])
-            self.selection_summary.setText(f"Editing {measurement}")
-        else:
-            self.selection_summary.setText(f"Editing {len(labels)} traces")
         self._update_control_enabled_states(True)
 
     def _update_control_enabled_states(self, has_selection: bool) -> None:
@@ -1586,19 +2126,14 @@ class _TraceAppearanceDialog(qtw.QDialog):
             self.owner.lines.get(label)
             for label in self._selected_labels()
             ] if has_selection else []
-        self.y_axis.setEnabled(
-            has_selection
-            and all(line is not self.owner.__dict__.get("line") for line in selected_lines)
+        self.y_axis.setEnabled(has_selection)
+        self.remove_trace_button.setEnabled(
+            bool(selected_lines)
+            and all(
+                line is not None and line is not self.owner.__dict__.get("line")
+                for line in selected_lines
             )
-        self._update_move_button_states()
-
-    def _update_move_button_states(self) -> None:
-        rows = self._selected_rows()
-        self.move_up_button.setEnabled(bool(rows) and rows[0] > 0)
-        self.move_down_button.setEnabled(
-            bool(rows) and rows[-1] < self.table.rowCount() - 1
-            )
-
+        )
     def _apply_selection(self, *_args):
         if self._building:
             return
@@ -1615,9 +2150,9 @@ class _TraceAppearanceDialog(qtw.QDialog):
             style.dots_enabled = self.dots_enable.isChecked(); style.dots_color = self._combo_value(self.dots_color); style.dots_size = self.dots_size.value()
             style.markers_enabled = self.marker_enable.isChecked(); style.markers_color = self._combo_value(self.marker_color); style.markers_symbol = self._combo_value(self.marker_symbol); style.markers_size = self.marker_size.value()
             style.x_axis = self.x_axis.currentText()
-            if self.y_axis.isEnabled():
-                style.y_axis = self.y_axis.currentText()
+            style.y_axis = self.y_axis.currentText()
             style.visible = self.visible.isChecked()
+            style.opacity = self.opacity.value() / 100
             line = self.owner.lines.get(label)
             if line is not None:
                 self.owner._apply_trace_style(label, line)

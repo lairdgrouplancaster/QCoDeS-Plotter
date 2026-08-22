@@ -345,7 +345,14 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         # Run worker
         self.worker = worker
-        self.threadPool.start(worker)
+        worker_will_start = getattr(type(self), "_refresh_worker_will_start", None)
+        if callable(worker_will_start):
+            worker_will_start(self, worker)
+        try:
+            self.threadPool.start(worker)
+        except Exception:
+            worker.running = False
+            raise
 
         if wait_on_thread:
             hold_up.exec()  # The actual place the code waits for self.end_wait.emit
@@ -596,6 +603,13 @@ class PlotRefreshMixin(_PlotRefreshBase):
             # it is used, as the performace hit is neglible
             # Update text
             self._set_param_axis_labels()
+            update_coordinate_context = getattr(
+                self,
+                "_update_coordinate_context",
+                None,
+                )
+            if callable(update_coordinate_context):
+                update_coordinate_context()
             elapsed = perf_counter() - worker.started_at
 
             if getattr(worker, "loaded_from_sql_heatmap", False):

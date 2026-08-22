@@ -115,6 +115,24 @@
                     "type": "string",
                     "default": "viridis"
                 },
+                "colorbar_width": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                    "default": 15
+                },
+                "axis_tick_width": {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 10,
+                    "default": 2
+                },
+                "axis_major_tick_count": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 10,
+                    "default": 3
+                },
                 "bar_colour_include_cet": {
                     "type": "boolean",
                     "default": true
@@ -221,6 +239,9 @@
             "required": [
                 "theme",
                 "bar_colour",
+                "colorbar_width",
+                "axis_tick_width",
+                "axis_major_tick_count",
                 "bar_colour_include_cet",
                 "bar_colour_include_matplotlib",
                 "bar_colour_include_local",

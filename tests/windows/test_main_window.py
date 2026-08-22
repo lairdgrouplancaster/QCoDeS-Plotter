@@ -18,7 +18,10 @@ from qplot.datahandling.file_identity import (
     canonical_database_path,
     logical_database_path,
 )
-from qplot.datahandling.readonly import set_qcodes_database_location
+from qplot.datahandling.readonly import (
+    UnverifiableDatabaseWalError,
+    set_qcodes_database_location,
+)
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
 from qplot.windows._commands import command_spec
@@ -2230,6 +2233,19 @@ class DatabaseAccessProbeTestCase(unittest.TestCase):
         self.assertIn("Timed out after 0.5 s", error)
         self.assertIn("locked", error)
 
+    def test_structured_access_error_parser_skips_invalid_later_markers(self):
+        prefix = database_module._DATABASE_ACCESS_ERROR_PREFIX
+        output = "\n".join((
+            prefix + '{"type":"ExpectedError","message":"useful details"}',
+            prefix + "null",
+            prefix + "{malformed",
+        ))
+
+        error = database_module._database_access_error_message(output)
+
+        self.assertEqual(str(error), "useful details")
+        self.assertEqual(error.error_type, "ExpectedError")
+
 
 class DatabaseLoadUiTestCase(unittest.TestCase):
     class Field:
@@ -2554,7 +2570,11 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
             self.assertTrue(harness.load_file("database-b.db"))
 
-            self.assertEqual(self._database_view(harness), previous_view)
+            expected_view = dict(previous_view)
+            # A pending load intentionally pauses automatic refresh, while
+            # preserving the visible committed database view.
+            expected_view["monitor_stopped"] = True
+            self.assertEqual(self._database_view(harness), expected_view)
             self.assertEqual(get_DB_location(), "database-a.db")
             self.assertTrue(harness._database_load_active)
             self.assertEqual(harness._database_load_state["abspath"], "database-b.db")
@@ -2755,6 +2775,30 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 self.assertEqual(harness.error_messages[0][2], str(missing_database))
             finally:
                 set_qcodes_database_location(active_database)
+
+    def test_unverifiable_wal_load_shows_actionable_error(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            database_path = os.path.abspath(database.name)
+            harness = self.Harness()
+            self.assertTrue(harness.load_file(database_path))
+            error = UnverifiableDatabaseWalError(
+                "Standard SQLite WAL files contain no main-file lineage "
+                "identifier; close every owning writer cleanly, then refresh."
+            )
+
+            harness.database_load_finished(
+                harness._database_load_generation,
+                database_path,
+                {},
+                error,
+            )
+
+        self.assertEqual(len(harness.error_messages), 1)
+        title, message, details = harness.error_messages[0]
+        self.assertEqual(title, "Unverifiable Database WAL")
+        self.assertIn("Close every owning QCoDeS/SQLite connection", message)
+        self.assertIn("retry loading the database", message)
+        self.assertEqual(details, str(error))
 
     def test_successful_startup_load_commits_complete_database_view(self):
         active_database = get_DB_location()
@@ -2992,7 +3036,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
             harness.cancel_database_load()
 
-            self.assertEqual(self._database_view(harness), previous_view)
+            expected_view = dict(previous_view)
+            expected_view["monitor_stopped"] = True
+            self.assertEqual(self._database_view(harness), expected_view)
             self.assertEqual(get_DB_location(), "database-a.db")
             self.assertFalse(harness._database_load_active)
         finally:
@@ -3014,7 +3060,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 RuntimeError("broken database"),
                 )
 
-            self.assertEqual(self._database_view(harness), previous_view)
+            expected_view = dict(previous_view)
+            expected_view["monitor_stopped"] = True
+            self.assertEqual(self._database_view(harness), expected_view)
             self.assertEqual(get_DB_location(), "database-a.db")
             self.assertFalse(harness._database_load_active)
         finally:
@@ -4248,7 +4296,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_get_runs = database_module.get_runs_basic_via_sql
         calls = []
 
-        def access_error(database_path):
+        def access_error(database_path, **_kwargs):
             calls.append(("access", database_path))
             return None
 
@@ -4292,7 +4340,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
     def test_database_load_worker_reports_access_error(self):
         old_access_error = database_module.database_access_error
 
-        database_module.database_access_error = lambda _path: "locked database"
+        database_module.database_access_error = (
+            lambda _path, **_kwargs: "locked database"
+        )
         try:
             worker = main_window.DatabaseLoadWorker(3, "locked.db")
             finished = []
@@ -4307,13 +4357,71 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         self.assertIsInstance(finished[0][3], RuntimeError)
         self.assertIn("locked database", str(finished[0][3]))
 
+    def test_database_load_worker_preserves_unverifiable_wal_error_type(self):
+        old_access_error = database_module.database_access_error
+        access_error = database_module._DatabaseAccessErrorMessage(
+            "unverifiable WAL with owner-checkpoint guidance",
+            UnverifiableDatabaseWalError.__name__,
+        )
+        database_module.database_access_error = (
+            lambda _path, **_kwargs: access_error
+        )
+        try:
+            worker = main_window.DatabaseLoadWorker(3, "unverifiable.db")
+            finished = []
+            worker.signals.finished.connect(lambda *args: finished.append(args))
+
+            worker.run()
+        finally:
+            database_module.database_access_error = old_access_error
+
+        self.assertEqual(len(finished), 1)
+        self.assertIsInstance(finished[0][3], UnverifiableDatabaseWalError)
+        self.assertEqual(str(finished[0][3]), str(access_error))
+
+    def test_unverifiable_wal_skips_cloud_hydration_retry(self):
+        access_error = database_module._DatabaseAccessErrorMessage(
+            "unverifiable WAL with owner-checkpoint guidance",
+            UnverifiableDatabaseWalError.__name__,
+        )
+        with tempfile.NamedTemporaryFile(
+            prefix="OneDrive-",
+            suffix=".db",
+        ) as database:
+            with (
+                patch.object(
+                    database_module,
+                    "database_is_likely_cloud_placeholder",
+                    return_value=False,
+                ),
+                patch.object(
+                    database_module,
+                    "database_access_error",
+                    return_value=access_error,
+                ) as probe,
+                patch.object(
+                    database_module,
+                    "prefetch_database_file_with_timeout",
+                ) as prefetch,
+            ):
+                worker = main_window.DatabaseLoadWorker(4, database.name)
+                finished = []
+                worker.signals.finished.connect(lambda *args: finished.append(args))
+
+                worker.run()
+
+        probe.assert_called_once()
+        prefetch.assert_not_called()
+        self.assertEqual(len(finished), 1)
+        self.assertIsInstance(finished[0][3], UnverifiableDatabaseWalError)
+
     def test_failed_database_load_preserves_active_database(self):
         active_database = get_DB_location()
         old_access_error = database_module.database_access_error
         old_get_runs = database_module.get_runs_basic_via_sql
 
         set_qcodes_database_location("active.db")
-        database_module.database_access_error = lambda _path: None
+        database_module.database_access_error = lambda _path, **_kwargs: None
 
         def fail_to_get_runs(_database_path, cancelled_callback=None):
             self.assertTrue(callable(cancelled_callback))
@@ -4336,7 +4444,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_get_runs = database_module.get_runs_basic_via_sql
 
         set_qcodes_database_location("active.db")
-        database_module.database_access_error = lambda _path: None
+        database_module.database_access_error = lambda _path, **_kwargs: None
         try:
             worker = main_window.DatabaseLoadWorker(11, "cancelled.db")
 
@@ -4360,7 +4468,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_get_runs = database_module.get_runs_basic_via_sql
 
         set_qcodes_database_location("active.db")
-        database_module.database_access_error = lambda _path: None
+        database_module.database_access_error = lambda _path, **_kwargs: None
         database_module.get_runs_basic_via_sql = lambda _path, **_kwargs: {}
         try:
             harness = DatabaseLoadUiTestCase.Harness()
@@ -4385,7 +4493,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         runs = {1: {"guid": "guid-1", "run_timestamp": 123.0}}
 
         set_qcodes_database_location("active.db")
-        database_module.database_access_error = lambda _path: None
+        database_module.database_access_error = lambda _path, **_kwargs: None
         database_module.get_runs_basic_via_sql = lambda _path, **_kwargs: runs
         try:
             harness = DatabaseLoadUiTestCase.Harness()
@@ -4416,7 +4524,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         database_module.database_is_likely_cloud_placeholder = lambda _path: calls.append(
             "placeholder"
             )
-        database_module.database_access_error = lambda _path: calls.append("access")
+        database_module.database_access_error = (
+            lambda _path, **_kwargs: calls.append("access")
+        )
         try:
             worker = main_window.DatabaseLoadWorker(4, "example.db")
             finished = []
@@ -4448,7 +4558,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
         database_module.database_is_likely_cloud_placeholder = lambda _path: True
         database_module.prefetch_database_file_with_timeout = prefetch
-        database_module.database_access_error = lambda _path: calls.append("access")
+        database_module.database_access_error = (
+            lambda _path, **_kwargs: calls.append("access")
+        )
         try:
             worker = main_window.DatabaseLoadWorker(5, "cloud.db", 8)
             finished = []
@@ -4490,7 +4602,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
         access_results = iter(["timed out", None])
 
-        def access_error(database_path):
+        def access_error(database_path, **_kwargs):
             calls.append(("access", database_path))
             return next(access_results)
 

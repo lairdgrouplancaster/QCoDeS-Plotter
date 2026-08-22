@@ -17,29 +17,110 @@ You can also open a database directly from the command line:
 qplot path/to/database.db
 ```
 
-qPlot opens QCoDeS databases without changing the database file or any SQLite
-`-wal`, `-shm`, or `-journal` files beside it. A checkpointed database with no
-WAL is opened directly with SQLite's immutable read-only mode, so it can also
-be viewed when both the file and its directory are read-only.
+### Current GUI snapshot behavior
 
-When a WAL exists, qPlot never applies immutable mode to the source because
-that would hide committed rows which have not yet been checkpointed. Instead,
-it copies the database and WAL to a private system-temporary directory, checks
-that the source did not change while they were copied, and opens that snapshot.
-Every refresh makes a new snapshot, so committed rows added by a running
-QCoDeS measurement become visible. The source `-shm` is not opened by qPlot,
-and snapshot files are removed when their connection closes.
+The current qPlot GUI opens QCoDeS databases without changing the database file
+or any SQLite `-wal`, `-shm`, or `-journal` files beside it. When no sidecar is
+present, a rollback-format database is opened with SQLite's normal read-only
+locking. A checkpointed WAL-format database is copied to a private snapshot
+before using immutable read-only mode. Both paths work when the source file and
+its directory are read-only.
 
-Generated test databases also carry a unique lineage token. qPlot validates
-that token and its later write epoch before accepting a WAL beside a generated
-main file. If the WAL cannot be paired safely, qPlot refuses the read and asks
-for the owning SQLite/QCoDeS writer to checkpoint it; it never substitutes an
-older immutable value for an unverified committed WAL value.
+When a WAL exists, the GUI loader never applies immutable mode to the source
+because that would hide committed rows which have not yet been checkpointed. It
+accepts a database-and-WAL view only when it can establish that the WAL descends
+from the selected main file. An ordinary SQLite WAL contains page updates,
+salts, and checksums for its own frames, but no unique identity of the main
+database. Matching filenames, locations, timestamps, or file identities
+therefore cannot prove the pairing. If the GUI first observes an ordinary QCoDeS
+database with an uncheckpointed WAL, it fails closed instead of risking data
+from an unrelated database or silently showing the older main-file state.
 
-If a busy writer changes the files throughout every snapshot attempt, qPlot
-reports a read-only snapshot error and leaves the source untouched. It does not
-fall back to an immutable view that could silently show stale data. Refresh
-again after the writer has a sufficiently long pause between commits.
+A stably observed zero-byte WAL contains no frames and is treated as having no
+pending WAL data. qPlot still leaves that source sidecar untouched.
+
+To open such an ordinary QCoDeS database safely, close every QCoDeS, SQLite,
+Python, and notebook connection that owns it cleanly, then retry. SQLite
+normally checkpoints the WAL when the final connection closes. If the WAL
+remains, checkpoint it using the application or writer that owns the database
+before retrying. The GUI snapshot path never checkpoints, recovers, deletes, or
+otherwise changes an input database or any of its sidecars.
+
+An observed rollback `-journal` is handled the same way: qPlot copies it with
+the main database and any permitted WAL, then checks the source file identities
+and journal state before accepting the snapshot. SQLite may recover an active
+journal only on that private copy. A cold PERSIST journal with an invalidated
+header and a zero-length TRUNCATE journal are accepted normally; neither blocks
+a valid database or causes qPlot to alter the source artifact.
+
+Generated test databases carry explicit provenance that ordinary SQLite files
+lack: a unique generation token and a bounded chain of random, parent-linked
+lineage events. qPlot copies a candidate main and WAL to a private
+system-temporary directory, checks that the source did not change during
+capture, and accepts the WAL only when its chain is a strict descendant of the
+exact main-file chain head. A higher counter from a divergent clone is not
+enough. The source `-shm` is not opened by this GUI snapshot path, and private
+snapshot files are removed when their connection closes.
+
+### Non-default trusted live reader
+
+The package also contains a non-default trusted live-reader API for later
+application integration. Unlike the GUI snapshot path, it uses SQLite's real
+colocated WAL index: the main database, WAL, and rollback journal stay read-only,
+but SQLite may create or update the exact `-shm` file as transient coordination
+state. A trusted live read can therefore change SHM contents or metadata without
+checkpointing or writing experimental data. It accepts only supported same-host
+local filesystems and keeps read transactions intentionally short so writer
+checkpoints and WAL resets are not delayed. See
+[Trusted live QCoDeS reader](trusted-live-reader.md) for its boundary and current
+non-UI status.
+
+The private WAL checksum scan also requires every committed transaction to
+carry the lineage-state page. A later valid provenance commit therefore cannot
+bless earlier uninstrumented frames. If the valid WAL prefix is malformed or a
+transaction has no lineage event, qPlot fails closed with checkpoint guidance.
+
+SQLite has no persistent database-wide write trigger. If a QCoDeS script will
+add new measurements to a generated database, enable qPlot provenance on the
+writer's QCoDeS connection before creating the `Measurement`:
+
+```python
+from qcodes.dataset import load_or_create_experiment
+from qcodes.dataset.sqlite.database import connect
+from qplot.testdata import enable_generation_provenance_for_writer
+
+connection = connect(database_path)
+enable_generation_provenance_for_writer(connection)
+experiment = load_or_create_experiment("later runs", "sample", conn=connection)
+measurement = Measurement(exp=experiment)
+```
+
+The writer hook installs provenance triggers for each newly created result
+table before the same QCoDeS transaction commits. Later foreground and
+background result writes then extend the durable ancestry chain across
+checkpoints. Call the hook on a quiescent `AtomicConnection`, before any new
+experiment or measurement writes. It refuses a nonempty WAL so it cannot
+retroactively bless unknown frames. Checkpoint such a WAL with `TRUNCATE` on
+the owning writer first. Enablement holds SQLite's writer lock while checking
+that quiescent state, so a concurrent writer cannot slip frames between the
+check and the first lineage event. This is an explicit writer operation; the
+qPlot viewer never calls it.
+
+The retained chain covers 65,536 lineage events between checkpoints. If a very
+large uncheckpointed write overwrites that proof window, qPlot fails closed and
+asks the owner to checkpoint rather than inferring ancestry from filenames,
+timestamps, or successful SQLite replay.
+
+Process-local replacement history remains a separate safety mechanism. It can
+identify that a WAL is unpaired with a main file that replaced one qPlot had
+already observed, so qPlot can quarantine that WAL. This is negative evidence
+only: quarantine never turns an otherwise unknown WAL into a trusted one.
+
+If a busy writer changes the main file or sidecars throughout every snapshot
+attempt, or their transaction state cannot be proved safe, qPlot reports that
+the database is busy or temporarily unavailable and leaves the source
+untouched. It does not fall back to an immutable view that could expose stale
+or uncommitted data. Finish the transaction or refresh after the writer pauses.
 
 ### Opening Databases from the File Manager
 
@@ -198,6 +279,8 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog.
+* Use `Log Scale` in an axis-scaling tab to switch a line-plot axis between
+  linear and base-10 logarithmic scaling. Non-positive values are omitted.
 * Right-drag on the plot, or scroll over an axis, to fast scale an axis.
 * The bottom toolbar shows cursor coordinates and array indices.
 * The left panel controls assigned axes and plot-specific options.
@@ -222,7 +305,25 @@ When multiple traces use different Y axes:
 
 ### Heatmaps
 
-Heatmaps add color-scale controls and 1D cut extraction.
+Heatmaps support multiple compatible maps in one window. Drag a heatmap preview
+thumbnail from the run table onto an existing heatmap to add it as a layer.
+Layers must use the same two independent variables with matching axis units and
+the same currently displayed dependent-value unit; their coordinate ranges and
+grid sizes may differ. If the two axes are in the opposite order, qPlot
+transposes the added layer automatically. An operation that temporarily makes
+units incompatible hides that layer until its units match again.
+
+The left panel lists the heatmap layers. Added layers are translucent so that
+overlapping maps remain visible; use each layer's opacity control or remove
+button to adjust the composition. All layers share one colormap and color
+range, which is autoscaled across their combined finite values. A hidden source
+plot remains live while its layer is present, just as it does for an added line
+trace. Large hidden heatmap sources also follow the visible window's viewport
+when qPlot reloads zoomed data.
+
+Cursor readout, marquee statistics, color zoom, and 1D cut extraction continue
+to use the original heatmap in the window. Heatmaps also add the following
+color-scale and cut controls.
 
 Color-scale controls:
 
@@ -289,13 +390,22 @@ The main window can export measurement data as CSV:
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
 `Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or
-the plot context menu to save the rendered plot area as a PDF. Use
+the plot context menu to save a plot-sized PDF of the rendered plot area. Use
 `Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution
 is set in `Options -> Preferences...`: screen resolution preserves the current
 display pixels, while 300 dpi renders a higher-resolution clipboard image at the
 same logical plot size, and vector SVG copies editable SVG data for applications
 that accept SVG from the clipboard.
+
+Use `File -> Print Plot...`, `Ctrl+P`, or `Cmd+P` to open the system print
+dialog. Printing includes only the visible plot area, scales it to the printable
+page without stretching or cropping, and excludes the plot-window controls.
+When the system dialog exposes a concrete PDF destination, `Print Plot...` can
+also produce a page-formatted PDF. qPlot stages that file beside the selected
+destination and publishes it atomically only after rendering succeeds. Use
+`Save Plot as PDF...` instead when you want a plot-sized PDF without the printer
+page layout.
 
 ## Live Data
 
@@ -335,9 +445,10 @@ Plot-window shortcuts:
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+0` | Autoscale the plot view |
+| `Ctrl+0` | Return all plot axes to autoscale mode |
 | `Ctrl+C` / `Cmd+C` | Copy the plot image to the clipboard using the selected copy format/resolution |
 | `Ctrl+E` | Export the plot |
+| `Ctrl+P` / `Cmd+P` | Print the visible plot area |
 | `Ctrl+Alt+R` | Show or hide the refresh toolbar |
 | `Ctrl+Alt+C` | Show or hide the coordinate toolbar |
 | `Ctrl+Alt+A` | Show or hide the axis control panel |

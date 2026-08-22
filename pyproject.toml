@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=70.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "qplot"
-version = "1.5.1b2"
+version = "1.6.0b1"
 description = "PyQt-based viewer for completed and running QCoDeS database experiments"
 readme = "README.md"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"},{name="Edward Laird", email="e.a.laird@lancaster.ac.uk"}]
@@ -23,9 +23,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
+    "apsw==3.53.4.0",
     "jsonschema>=4.23.0",
     "numpy>=2.3.1",
     "pandas>=2.3.0",
@@ -40,6 +42,8 @@ dev = [
     "mypy>=1.14,<2.0",
     "pytest>=8.0",
     "pytest-cov>=6.0",
+    "pytest-timeout>=2.3",
+    "pytest-xdist>=3.8",
     "ruff>=0.8",
     "twine>=5.0",
 ]
@@ -63,6 +67,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "qplot" = ["**/*.csv", "**/*.json"]
+
+[tool.setuptools.exclude-package-data]
+"qplot.datahandling" = ["*.c", "*.h", "**/*.c", "**/*.h"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml"
@@ -109,6 +116,7 @@ files = [
     "src/qplot/datahandling/qcodes_cache.py",
     "src/qplot/datahandling/readSQL.py",
     "src/qplot/datahandling/readonly.py",
+    "src/qplot/datahandling/trusted_live.py",
     "src/qplot/diagnostics.py",
     "src/qplot/tools/__init__.py",
     "src/qplot/tools/general.py",
@@ -128,11 +136,13 @@ files = [
     "src/qplot/windows/_plot1d_traces.py",
     "src/qplot/windows/_plot2d_colorbar.py",
     "src/qplot/windows/_plot2d_colorbar_dialog.py",
+    "src/qplot/windows/_plot2d_layers.py",
     "src/qplot/windows/_plot2d_sweeps.py",
     "src/qplot/windows/_plot_axis_scaling.py",
     "src/qplot/windows/_plot_export.py",
     "src/qplot/windows/_plot_feedback.py",
     "src/qplot/windows/_plot_marquee.py",
+    "src/qplot/windows/_plot_appearance.py",
     "src/qplot/windows/_plot_refresh.py",
     "src/qplot/windows/_plot_state.py",
     "src/qplot/windows/_preferences.py",
@@ -157,3 +167,45 @@ ignore_missing_imports = true
 no_implicit_optional = true
 sqlite_cache = false
 warn_unused_ignores = true
+
+# Qt's Python stubs describe several runtime-composed widget attributes as
+# optional or absent. Keep mypy coverage for these modules while excluding only
+# the error categories produced by those dynamic Qt APIs.
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot_axis_scaling"
+disable_error_code = ["index", "misc", "override", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot1d_traces"
+disable_error_code = ["attr-defined", "misc", "override", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot_appearance"
+disable_error_code = ["override", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot2d_layers"
+disable_error_code = ["assignment", "attr-defined", "misc", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = [
+    "qplot.windows._widgets.operations",
+    "qplot.windows._widgets.treeWidgets",
+]
+disable_error_code = ["union-attr"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._window_controls"
+disable_error_code = ["arg-type", "var-annotated"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot_export"
+disable_error_code = ["assignment", "misc"]
+
+[[tool.mypy.overrides]]
+module = "qplot.windows._plot1d_snap"
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "qplot.testdata"
+disable_error_code = ["method-assign"]
