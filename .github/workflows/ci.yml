@@ -336,7 +336,6 @@ jobs:
             artifact-name: qplot-wheel-windows
 
     env:
-      MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
       QT_QPA_PLATFORM: offscreen
 
     steps:
@@ -374,6 +373,8 @@ jobs:
 
       - name: Validate and exercise the installed wheel
         if: runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
         run: python scripts/validate_distribution.py --wheel-only dist
 
       - name: Validate the installed wheel as a standard Windows user
