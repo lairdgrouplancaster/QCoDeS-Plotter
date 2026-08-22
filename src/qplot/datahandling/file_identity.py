@@ -7,10 +7,14 @@ from pathlib import Path
 from typing import TypeAlias
 
 DatabaseFileIdentity: TypeAlias = (
-    tuple[int, int]
-    | tuple[str, int, int]
-    | tuple[str, str, int]
+    tuple[int, int] | tuple[str, int, int] | tuple[str, str, int]
 )
+
+
+class FileIdentityHandleCloseError(OSError):
+    """Raised when a trusted Windows identity handle cannot be closed."""
+
+
 DATABASE_PUBLICATION_GUARD_SUFFIX = ".qplot-publishing"
 QPLOT_GENERATED_DATABASE_APPLICATION_ID = 0x51504C54
 QPLOT_GENERATION_PROVENANCE_TABLE = "qplot_generation_provenance"
@@ -58,9 +62,9 @@ def generation_lineage_transition_statements() -> tuple[str, str, str]:
 
 
 def generation_provenance_trigger(
-        table_name: str,
-        operation: str,
-        ) -> tuple[str, str]:
+    table_name: str,
+    operation: str,
+) -> tuple[str, str]:
     """Return the stable name and exact SQL for one lineage trigger."""
     table_digest = hashlib.sha256(
         table_name.encode("utf-8", errors="surrogatepass")
@@ -90,16 +94,18 @@ def canonical_database_path(database_path: str | os.PathLike[str]) -> str:
 
 
 def database_publication_guard_path(
-        database_path: str | os.PathLike[str],
-        ) -> Path:
+    database_path: str | os.PathLike[str],
+) -> Path:
     """Return qPlot's path-local guard for an in-flight main-file replacement."""
 
-    return Path(f"{logical_database_path(database_path)}{DATABASE_PUBLICATION_GUARD_SUFFIX}")
+    return Path(
+        f"{logical_database_path(database_path)}{DATABASE_PUBLICATION_GUARD_SUFFIX}"
+    )
 
 
 def database_has_qplot_generation_marker(
-        database_path: str | os.PathLike[str],
-        ) -> bool:
+    database_path: str | os.PathLike[str],
+) -> bool:
     """Return whether the main header marks a qPlot-generated database."""
     with open(database_path, "rb") as database_file:
         database_file.seek(_SQLITE_APPLICATION_ID_OFFSET)
@@ -126,8 +132,8 @@ class DatabaseInstance:
 
 
 def database_instance(
-        database_path: str | os.PathLike[str],
-        ) -> DatabaseInstance:
+    database_path: str | os.PathLike[str],
+) -> DatabaseInstance:
     """Capture the logical path, its resolved target, and that target's identity."""
 
     logical_path = logical_database_path(database_path)
@@ -144,9 +150,9 @@ def database_instance(
 
 
 def database_sidecar_identities(
-        database_path: str | os.PathLike[str],
-        resolved_database_path: str | os.PathLike[str] | None = None,
-        ) -> frozenset[DatabaseFileIdentity]:
+    database_path: str | os.PathLike[str],
+    resolved_database_path: str | os.PathLike[str] | None = None,
+) -> frozenset[DatabaseFileIdentity]:
     """Capture existing SQLite sidecars without opening the database.
 
     Both the user-selected path and its resolved target are checked because
@@ -168,9 +174,9 @@ def database_sidecar_identities(
 
 
 def database_instances_differ(
-        first: DatabaseInstance | None,
-        second: DatabaseInstance | None,
-        ) -> bool:
+    first: DatabaseInstance | None,
+    second: DatabaseInstance | None,
+) -> bool:
     """Return whether two observations prove that the file instance changed."""
 
     if first is None or second is None:
@@ -185,8 +191,8 @@ def database_instances_differ(
 
 
 def database_file_identity(
-        database_path: str | os.PathLike[str],
-        ) -> DatabaseFileIdentity | None:
+    database_path: str | os.PathLike[str],
+) -> DatabaseFileIdentity | None:
     """Return an identity that changes only when the file instance changes.
 
     Device and inode are the preferred cross-platform identity. Some Windows
@@ -227,8 +233,8 @@ def database_file_identity(
 
 
 def path_bound_file_identity(
-        database_path: str | os.PathLike[str],
-        ) -> DatabaseFileIdentity | None:
+    database_path: str | os.PathLike[str],
+) -> DatabaseFileIdentity | None:
     """Return an identity comparable with an already-open file descriptor."""
 
     canonical_path = canonical_database_path(database_path)
@@ -239,6 +245,24 @@ def path_bound_file_identity(
     return database_file_identity(canonical_path)
 
 
+def checked_path_bound_file_identity(
+    database_path: str | os.PathLike[str],
+) -> DatabaseFileIdentity | None:
+    """Return a path-bound identity and prove temporary handle cleanup.
+
+    The ordinary identity helpers deliberately remain best-effort because UI
+    refresh and export code treats an unavailable identity as a normal race.
+    The trusted live-reader boundary has a stronger lifecycle requirement: on
+    Windows it must surface both identity-inspection failures and an uncertain
+    ``CloseHandle`` result so the process can quarantine that reader session.
+    """
+
+    canonical_path = canonical_database_path(database_path)
+    if os.name == "nt":
+        return _checked_windows_file_identity(canonical_path)
+    return path_bound_file_identity(canonical_path)
+
+
 def open_file_identity(file_descriptor: int) -> DatabaseFileIdentity | None:
     """Return the stable identity of the exact file held by a descriptor."""
 
@@ -246,7 +270,10 @@ def open_file_identity(file_descriptor: int) -> DatabaseFileIdentity | None:
         try:
             import msvcrt
 
-            handle = msvcrt.get_osfhandle(file_descriptor)
+            get_osfhandle = getattr(msvcrt, "get_osfhandle", None)
+            if get_osfhandle is None:
+                return None
+            handle = get_osfhandle(file_descriptor)
         except (ImportError, OSError):
             return None
         return _windows_handle_identity(handle)
@@ -271,7 +298,10 @@ def _windows_file_identity(canonical_path: str) -> DatabaseFileIdentity | None:
     except (ImportError, AttributeError):
         return None
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        return None
+    kernel32 = win_dll("kernel32", use_last_error=True)
     create_file = kernel32.CreateFileW
     create_file.argtypes = [
         wintypes.LPCWSTR,
@@ -308,6 +338,80 @@ def _windows_file_identity(canonical_path: str) -> DatabaseFileIdentity | None:
         close_handle(handle)
 
 
+def _checked_windows_file_identity(
+    canonical_path: str,
+) -> DatabaseFileIdentity | None:
+    """Return Windows identity while treating every HANDLE close as fallible."""
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except (ImportError, AttributeError):
+        return None
+
+    win_dll = getattr(ctypes, "WinDLL", None)
+    get_last_error = getattr(ctypes, "get_last_error", None)
+    if win_dll is None or get_last_error is None:
+        return None
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    file_read_attributes = 0x0080
+    share_read_write_delete = 0x0001 | 0x0002 | 0x0004
+    open_existing = 3
+    handle = create_file(
+        canonical_path,
+        file_read_attributes,
+        share_read_write_delete,
+        None,
+        open_existing,
+        0,
+        None,
+    )
+    invalid_handle = wintypes.HANDLE(-1).value
+    if handle in (None, invalid_handle):
+        error_code = get_last_error()
+        raise OSError(
+            error_code,
+            f"CreateFileW could not inspect {canonical_path}",
+        )
+
+    identity: DatabaseFileIdentity | None = None
+    identity_error_code = 0
+    try:
+        identity = _windows_handle_identity(handle)
+        if identity is None:
+            identity_error_code = get_last_error()
+    finally:
+        if not close_handle(handle):
+            error_code = get_last_error()
+            raise FileIdentityHandleCloseError(
+                error_code,
+                f"CloseHandle could not release the identity handle for "
+                f"{canonical_path}",
+            )
+
+    if identity is None:
+        raise OSError(
+            identity_error_code,
+            f"GetFileInformationByHandle could not identify {canonical_path}",
+        )
+    return identity
+
+
 def _windows_handle_identity(handle) -> DatabaseFileIdentity | None:
     """Return Windows' volume/file-index identity for an existing handle."""
 
@@ -331,7 +435,10 @@ def _windows_handle_identity(handle) -> DatabaseFileIdentity | None:
             ("file_index_low", wintypes.DWORD),
         ]
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        return None
+    kernel32 = win_dll("kernel32", use_last_error=True)
     get_information = kernel32.GetFileInformationByHandle
     get_information.argtypes = [
         wintypes.HANDLE,
@@ -341,9 +448,8 @@ def _windows_handle_identity(handle) -> DatabaseFileIdentity | None:
     information = ByHandleFileInformation()
     if not get_information(handle, ctypes.byref(information)):
         return None
-    file_index = (
-        int(information.file_index_high) << 32
-        | int(information.file_index_low)
+    file_index = int(information.file_index_high) << 32 | int(
+        information.file_index_low
     )
     if file_index == 0:
         return None

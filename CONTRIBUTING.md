@@ -133,11 +133,14 @@ python scripts/validate_distribution.py dist
 python -m twine check dist/*
 ```
 
-The artifact validator checks the sdist against the tracked test suite and
-source-distribution policy, rejects ignored or stale build files, runs all tests
-from an extracted sdist in a fresh virtual environment, and installs the wheel
-into another fresh environment for import, version, resource, and console-script
-smoke checks.
+The artifact validator checks the sdist against the current source tree and
+source-distribution policy, requires the trusted-reader C source and header,
+rejects ignored files and stale compiled native binaries, and runs all tests
+from an extracted sdist in a fresh virtual environment. It installs the wheel
+into another fresh environment for version, resource, console-script, and native
+extension checks, then opens a temporary WAL database through
+`TrustedLiveReader`, queries committed data, rejects mutating SQL, and verifies
+that the protected database artifacts remain unchanged.
 
 The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `tests/conftest.py`; do not add per-test `QT_QPA_PLATFORM` setup or one-off
@@ -145,9 +148,13 @@ The test suite runs PyQt in headless mode. The shared Qt setup lives in
 shared setup.
 
 GitHub Actions runs the same Ruff, mypy, and pytest checks on Windows 2025 and
-macOS with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. It
-also builds and checks package artifacts once on Python 3.12. The workflow
-lives in `.github/workflows/ci.yml`.
+macOS with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. On
+Python 3.12 it validates the sdist and Linux wheel and separately builds and
+exercises installed macOS and Windows wheels. The workflow lives in
+`.github/workflows/ci.yml`. Because the trusted reader requires an unprivileged
+process, its Windows tests and wheel exercise run through a disposable local
+standard account; a separate probe confirms that the hosted runner's elevated
+token is rejected.
 
 ## Generated Files
 

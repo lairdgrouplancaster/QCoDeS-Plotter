@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=70.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -23,9 +23,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
+    "apsw==3.53.4.0",
     "jsonschema>=4.23.0",
     "numpy>=2.3.1",
     "pandas>=2.3.0",
@@ -65,6 +67,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "qplot" = ["**/*.csv", "**/*.json"]
+
+[tool.setuptools.exclude-package-data]
+"qplot.datahandling" = ["*.c", "*.h", "**/*.c", "**/*.h"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml"
@@ -111,6 +116,7 @@ files = [
     "src/qplot/datahandling/qcodes_cache.py",
     "src/qplot/datahandling/readSQL.py",
     "src/qplot/datahandling/readonly.py",
+    "src/qplot/datahandling/trusted_live.py",
     "src/qplot/diagnostics.py",
     "src/qplot/tools/__init__.py",
     "src/qplot/tools/general.py",

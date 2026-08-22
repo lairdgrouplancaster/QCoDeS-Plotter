@@ -4,6 +4,9 @@ include CONTRIBUTING.md
 include LICENSE
 include README.md
 include pyproject.toml
+include setup.py
+include src/qplot/datahandling/_trusted_vfs_native.c
+include src/qplot/datahandling/_trusted_vfs_sqlite_abi.h
 
 graft docs
 graft scripts
@@ -25,5 +28,9 @@ prune src/qplot.egg-info
 
 global-exclude .DS_Store
 global-exclude *.py[cod]
+global-exclude *.dll
+global-exclude *.dylib
+global-exclude *.pyd
+global-exclude *.so
 global-exclude .coverage
 global-exclude coverage.xml

@@ -137,8 +137,16 @@ Close every QCoDeS, SQLite, Python, and notebook connection that owns the
 database cleanly, then retry. SQLite normally checkpoints and removes the WAL
 when its final connection closes. If a WAL remains, use the owning application
 or writer to checkpoint it before retrying. Do not remove a live WAL manually.
-qPlot never checkpoints or changes the source database, `-wal`, `-shm`, or
-`-journal` file.
+The current GUI snapshot loader never checkpoints or changes the source
+database, `-wal`, `-shm`, or `-journal` file.
+
+qPlot's non-default trusted live-reader API has one narrower rule: its main
+database, WAL, and rollback journal remain read-only, but SQLite may create or
+update the exact colocated `-shm` file as transient WAL coordination state. Its
+contents, size, or timestamps can therefore change during a live read. The
+reader still never checkpoints the database or writes experimental data, and it
+rejects network or otherwise unsupported filesystems. This API is not yet used
+by the GUI; see [Trusted live QCoDeS reader](trusted-live-reader.md).
 
 WALs for current qPlot-generated test databases can remain readable while live
 because they contain a unique generation token and a parent-linked random

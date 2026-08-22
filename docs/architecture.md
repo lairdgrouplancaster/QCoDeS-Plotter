@@ -184,6 +184,25 @@ opened in a mode that can recover or change it. Ambiguous or continuously
 changing state fails closed, and every private snapshot is removed after
 failure or when its owning connection closes.
 
+The isolated, non-default Stage 2 trusted live reader uses SQLite's real WAL
+index and native locking against the selected source without copying the
+database. Its native VFS keeps the main database, WAL, and rollback journal
+physically read-only. SQLite may mutate only the exact colocated `-shm` file as
+transient WAL coordination state, so a live read can change that file's contents
+or metadata without writing experimental data or checkpointing the database.
+
+The reader proves source binding from retained proof handles and SQLite's actual
+file handles, using device/inode identity on POSIX and volume/file identity on
+Windows. It exposes only finite, materialised queries with bounded busy handling,
+deadlines, cancellation, and verified transaction cleanup. Any cleanup
+uncertainty fails closed and quarantines that process from opening another
+trusted session. Its full access policy and limits are documented in
+[Trusted live QCoDeS reader](trusted-live-reader.md).
+Application loading, preview, plotting, and refresh continue to use the snapshot
+path above; helper-process ownership and UI scheduling remain later stages. The
+WAL-provenance discussion below describes that snapshot path, not the trusted
+reader's native SQLite transaction view.
+
 SQLite's WAL format does not provide main-file provenance. Its header records
 the WAL format, page size, checkpoint sequence, salts, and checksums; frame
 headers repeat the salts and cumulatively checksum their page data. Those

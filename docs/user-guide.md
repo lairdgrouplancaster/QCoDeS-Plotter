@@ -17,22 +17,24 @@ You can also open a database directly from the command line:
 qplot path/to/database.db
 ```
 
-qPlot opens QCoDeS databases without changing the database file or any SQLite
-`-wal`, `-shm`, or `-journal` files beside it. When no sidecar is present, a
-rollback-format database is opened with SQLite's normal read-only locking. A
-checkpointed WAL-format database is copied to a private snapshot before using
-immutable read-only mode. Both paths work when the source file and its directory
-are read-only.
+### Current GUI snapshot behavior
 
-When a WAL exists, qPlot never applies immutable mode to the source because
-that would hide committed rows which have not yet been checkpointed. It accepts
-a database-and-WAL view only when it can establish that the WAL descends from
-the selected main file. An ordinary SQLite WAL contains page updates, salts,
-and checksums for its own frames, but no unique identity of the main database.
-Matching filenames, locations, timestamps, or file identities therefore cannot
-prove the pairing. If qPlot first observes an ordinary QCoDeS database with an
-uncheckpointed WAL, it fails closed instead of risking data from an unrelated
-database or silently showing the older main-file state.
+The current qPlot GUI opens QCoDeS databases without changing the database file
+or any SQLite `-wal`, `-shm`, or `-journal` files beside it. When no sidecar is
+present, a rollback-format database is opened with SQLite's normal read-only
+locking. A checkpointed WAL-format database is copied to a private snapshot
+before using immutable read-only mode. Both paths work when the source file and
+its directory are read-only.
+
+When a WAL exists, the GUI loader never applies immutable mode to the source
+because that would hide committed rows which have not yet been checkpointed. It
+accepts a database-and-WAL view only when it can establish that the WAL descends
+from the selected main file. An ordinary SQLite WAL contains page updates,
+salts, and checksums for its own frames, but no unique identity of the main
+database. Matching filenames, locations, timestamps, or file identities
+therefore cannot prove the pairing. If the GUI first observes an ordinary QCoDeS
+database with an uncheckpointed WAL, it fails closed instead of risking data
+from an unrelated database or silently showing the older main-file state.
 
 A stably observed zero-byte WAL contains no frames and is treated as having no
 pending WAL data. qPlot still leaves that source sidecar untouched.
@@ -41,8 +43,8 @@ To open such an ordinary QCoDeS database safely, close every QCoDeS, SQLite,
 Python, and notebook connection that owns it cleanly, then retry. SQLite
 normally checkpoints the WAL when the final connection closes. If the WAL
 remains, checkpoint it using the application or writer that owns the database
-before retrying. qPlot never checkpoints, recovers, deletes, or otherwise
-changes an input database or any of its sidecars.
+before retrying. The GUI snapshot path never checkpoints, recovers, deletes, or
+otherwise changes an input database or any of its sidecars.
 
 An observed rollback `-journal` is handled the same way: qPlot copies it with
 the main database and any permitted WAL, then checks the source file identities
@@ -57,8 +59,21 @@ lineage events. qPlot copies a candidate main and WAL to a private
 system-temporary directory, checks that the source did not change during
 capture, and accepts the WAL only when its chain is a strict descendant of the
 exact main-file chain head. A higher counter from a divergent clone is not
-enough. The source `-shm` is not opened by qPlot, and private snapshot files are
-removed when their connection closes.
+enough. The source `-shm` is not opened by this GUI snapshot path, and private
+snapshot files are removed when their connection closes.
+
+### Non-default trusted live reader
+
+The package also contains a non-default trusted live-reader API for later
+application integration. Unlike the GUI snapshot path, it uses SQLite's real
+colocated WAL index: the main database, WAL, and rollback journal stay read-only,
+but SQLite may create or update the exact `-shm` file as transient coordination
+state. A trusted live read can therefore change SHM contents or metadata without
+checkpointing or writing experimental data. It accepts only supported same-host
+local filesystems and keeps read transactions intentionally short so writer
+checkpoints and WAL resets are not delayed. See
+[Trusted live QCoDeS reader](trusted-live-reader.md) for its boundary and current
+non-UI status.
 
 The private WAL checksum scan also requires every committed transaction to
 carry the lineage-state page. A later valid provenance commit therefore cannot

@@ -7,6 +7,18 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+### Added
+
+- Add a complete, non-default trusted live-reader boundary that uses SQLite's
+  real WAL index and native locking without copying the selected QCoDeS
+  database. Main, WAL, and rollback-journal handles remain physically read-only;
+  only SQLite's exact colocated SHM coordination file may be updated. Operations
+  are bounded, cancellable, and identity-bound. The existing snapshot reader
+  remains the application path until later helper-process and UI stages.
+- Build the native boundary in explicit C11 mode with MSVC and exercise installed
+  reader wheels separately on ARM64 macOS, Intel macOS, Linux, and unprivileged
+  Windows CI hosts before cross-platform acceptance.
+
 ## 1.6.0-b1 - 2026-08-18
 
 ### Added
