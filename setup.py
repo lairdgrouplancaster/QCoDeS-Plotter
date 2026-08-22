@@ -30,7 +30,7 @@ setup(
             depends=["src/qplot/datahandling/_trusted_vfs_sqlite_abi.h"],
             define_macros=[("Py_LIMITED_API", "0x030B0000")],
             export_symbols=["sqlite3_qplot_trusted_vfs_init"],
-            libraries=[],
+            libraries=["advapi32"] if sys.platform == "win32" else [],
             py_limited_api=True,
         )
     ],
