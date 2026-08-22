@@ -330,6 +330,19 @@ def _reject_symlink_path_components(path: Path) -> None:
             )
 
 
+def _reject_windows_alternate_data_stream(path: Path) -> None:
+    """Reject NTFS stream syntax before opening any source-family handle."""
+
+    if os.name != "nt":
+        return
+    _drive, tail = os.path.splitdrive(os.fspath(path))
+    if ":" in tail:
+        raise TrustedLiveUnsupportedSourceError(
+            "Trusted live reading does not accept Windows alternate data "
+            f"stream paths: {path}"
+        )
+
+
 def _require_regular_file(path: Path, description: str) -> os.stat_result:
     try:
         status = path.lstat()
@@ -401,6 +414,7 @@ def _capture_database_instance_for_trusted_open(
     """Capture UI-comparable and native identities without unchecked handles."""
 
     selected_path = Path(os.path.abspath(os.fspath(database_path)))
+    _reject_windows_alternate_data_stream(selected_path)
     _reject_symlink_path_components(selected_path)
     logical_path = logical_database_path(database_path)
     resolved_path = canonical_database_path(logical_path)
@@ -1846,16 +1860,24 @@ class TrustedLiveReader:
             bootstrap, self._bootstrap = self._bootstrap, None
             if bootstrap is not None:
                 final_audit_captured = False
+                final_audit_verified = False
+                final_audit_error: BaseException | None = None
                 if self._native_session_attempted:
                     try:
                         final_audit = self._read_native_audit(bootstrap)
                         self._final_audit = final_audit
                         final_audit_captured = True
                         self._verify_final_audit(final_audit)
+                        final_audit_verified = True
                     except BaseException as error:
-                        errors.append(error)
+                        # xOpen can reject input before the native session is
+                        # configured.  Defer this error until release reports
+                        # whether a matching session actually existed.
+                        final_audit_error = error
                 if self._native_extension_loaded:
                     cursor: apsw.Cursor | None = None
+                    release_result: int | None = None
+                    release_error: BaseException | None = None
                     try:
                         cursor = bootstrap.cursor()
                         row = cursor.execute(
@@ -1867,21 +1889,56 @@ class TrustedLiveReader:
                             or len(row) != 1
                             or type(row[0]) is not int
                             or row[0] not in {0, 1}
-                            or (final_audit_captured and row[0] != 1)
                         ):
                             raise TrustedLiveCleanupError(
                                 "The native VFS returned an invalid release result."
                             )
-                        native_release_confirmed = True
-                        self._native_release_confirmed = True
+                        release_result = row[0]
                     except BaseException as error:
-                        errors.append(error)
+                        release_error = error
                     finally:
                         if cursor is not None:
                             try:
                                 cursor.close()
                             except BaseException as error:
                                 errors.append(error)
+                    if release_error is not None:
+                        if final_audit_error is not None:
+                            errors.append(final_audit_error)
+                        errors.append(release_error)
+                    elif release_result == 0:
+                        if final_audit_captured:
+                            errors.append(
+                                TrustedLiveCleanupError(
+                                    "The native VFS reported no session after "
+                                    "returning its audit."
+                                )
+                            )
+                        else:
+                            # A zero result authoritatively proves that xOpen
+                            # rejected the request before configuring native
+                            # state.  Its expected unknown-token audit error is
+                            # therefore not cleanup uncertainty.
+                            native_release_confirmed = True
+                            self._native_release_confirmed = True
+                    elif release_result == 1:
+                        native_release_confirmed = True
+                        self._native_release_confirmed = True
+                        if not self._native_session_attempted:
+                            errors.append(
+                                TrustedLiveCleanupError(
+                                    "The native VFS released an unexpected session."
+                                )
+                            )
+                        elif final_audit_error is not None:
+                            errors.append(final_audit_error)
+                        elif not final_audit_verified:
+                            errors.append(
+                                TrustedLiveCleanupError(
+                                    "The native VFS session was released without "
+                                    "a verified final audit."
+                                )
+                            )
                 try:
                     bootstrap.close(True)
                 except BaseException as error:

@@ -116,12 +116,22 @@ try {
         # Record before icacls runs so a partial recursive grant is also
         # removed if icacls reports an error partway through the tree.
         $grantedPaths.Add($grantPath)
+        # Give the disposable account effective access to every existing
+        # object.  Inheritance flags apply to directories, not leaf files, so
+        # this must be a separate recursive pass without (OI)/(CI).
         Invoke-IcaclsChecked -Arguments @(
             $grantPath,
             "/grant:r",
-            "${aclIdentity}:(OI)(CI)M",
+            "${aclIdentity}:M",
             "/T",
-            "/C",
+            "/Q"
+        )
+        # Add inheritance on the root after /grant:r so files and directories
+        # created by the child process receive the same access automatically.
+        Invoke-IcaclsChecked -Arguments @(
+            $grantPath,
+            "/grant",
+            "${aclIdentity}:(OI)(CI)M",
             "/Q"
         )
     }

@@ -1738,6 +1738,31 @@ def test_open_reader_rejects_hardlinked_shm_without_mutating_its_alias(
     assert _artifact_state(live_writer.database_path) == before
 
 
+def test_rejection_before_native_session_configuration_is_reusable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qplot.datahandling import trusted_live as trusted_live_module
+
+    database_path = tmp_path / "preconfiguration-rejection.db"
+    initialise_or_create_database_at(database_path, journal_mode="DELETE")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            trusted_live_module,
+            "_sqlite_uri_path",
+            lambda _path: "relative-native-temp",
+        )
+        with pytest.raises(
+            TrustedLiveUnsupportedSourceError,
+            match="unsupported|source|platform",
+        ):
+            TrustedLiveReader.open(database_path)
+
+    with TrustedLiveReader.open(database_path) as reader:
+        assert reader.query("SELECT count(*) FROM runs").rows == ((0,),)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="NTFS alternate streams are Windows-only")
 def test_open_reader_rejects_ntfs_alternate_data_stream(tmp_path: Path) -> None:
     database_path = tmp_path / "ordinary.db"
@@ -1755,6 +1780,8 @@ def test_open_reader_rejects_ntfs_alternate_data_stream(tmp_path: Path) -> None:
         TrustedLiveReader.open(stream_path)
 
     assert stream_path.read_bytes() == before
+    with TrustedLiveReader.open(database_path) as reader:
+        assert reader.query("SELECT count(*) FROM runs").rows == ((0,),)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX FIFO fixture")
