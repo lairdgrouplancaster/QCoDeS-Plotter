@@ -242,6 +242,7 @@ class RunList(qtw.QTreeWidget):
         )
 
     selected = QtCore.pyqtSignal([str])
+    nonSingleSelection = QtCore.pyqtSignal()
     plot = QtCore.pyqtSignal([str])
     previewPlotRequested = QtCore.pyqtSignal(str, str)
     previewExportRequested = QtCore.pyqtSignal(str, str)
@@ -1504,6 +1505,13 @@ class RunList(qtw.QTreeWidget):
             item = self.selectedItems()[0]
             if isinstance(item, SortableTreeWidgetItem):
                 self.selected.emit(item.guid)
+                return
+
+        # A zero- or multiple-row selection must explicitly invalidate the
+        # MainWindow's single-run action target.  Previously it emitted no
+        # signal, leaving the previous single selection available to plot and
+        # CSV actions even though it was no longer visible in the run list.
+        self.nonSingleSelection.emit()
 
 
     @QtCore.pyqtSlot(qtw.QTreeWidgetItem, int)
@@ -1596,6 +1604,12 @@ class moreInfo(qtw.QTabWidget):
         self.addTab(self.metadata, "Metadata")
         self.addTab(self.snapshot, "Snapshot")
         self.addTab(self.raw, "Raw key-value")
+        self.currentChanged.connect(self._preview_tab_changed)
+        self._preview_tab_changed(self.currentIndex())
+
+
+    def _preview_tab_changed(self, index):
+        self.preview.set_preview_active(self.widget(index) is self.preview)
 
 
     def set_preview_size(self, preview_size):

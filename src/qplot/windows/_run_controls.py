@@ -8,6 +8,11 @@ from PyQt6 import (
 )
 from PyQt6.QtGui import QIntValidator
 
+from qplot.datahandling.file_identity import (
+    database_instance,
+    database_instances_differ,
+)
+
 from ._commands import create_action, plot_measurement_command_spec
 from ._config_persistence import (
     persist_config_value,
@@ -49,15 +54,23 @@ class RunControlsMixin:
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setRange(0.0, 86_400.0)
         self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(3)
+        self.spinBox.setDecimals(1)
         self.spinBox.setSuffix(" s")
         self.spinBox.setFixedWidth(84)
         self.spinBox.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.spinBox.setToolTip("Refresh interval in seconds")
         self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
 
+        self._automatic_refresh_epoch = 0
+        self._automatic_refresh_load_generation = None
+        self._automatic_refresh_instance = None
+        self._automatic_refresh_shutdown = False
         self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
-        self.monitor.timeout.connect(self.refreshMain)
+        # Keep exactly one connection.  The timeout is deliberately routed
+        # through a lifecycle guard instead of directly to refreshMain:
+        # stopping a QTimer does not make a timeout already queued on the GUI
+        # event loop disappear.
+        self.monitor.timeout.connect(self._automatic_refresh_timeout)
 
         self.autoPlotBox = qtw.QCheckBox()
         self.autoPlotBox.setChecked(self.config.get(AUTO_PLOT_KEY))
@@ -154,6 +167,7 @@ class RunControlsMixin:
 
         self.RunList = RunList(config=self.config)
         self.RunList.selected.connect(self.updateSelected)
+        self.RunList.nonSingleSelection.connect(self.clear_non_single_run_selection)
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
         self.RunList.previewExportRequested.connect(self.export_run_preview_csv)
@@ -167,6 +181,9 @@ class RunControlsMixin:
         self.infoBox.preview.previewsReady.connect(self.RunList.set_run_previews)
         self.infoBox.preview.previewGenerationChanged.connect(
             self.RunList.set_run_preview_generating
+            )
+        self.infoBox.preview.databaseReplaced.connect(
+            self._reload_replaced_database
             )
         if self.fileTextbox.text() and self.RunList.topLevelItemCount():
             self.infoBox.preview.set_database_runs(
@@ -451,10 +468,13 @@ class RunControlsMixin:
 
     def _apply_refresh_interval(self, interval):
         """
-        Applies the current refresh interval to the main-window timer.
+        Reconcile the automatic-refresh timer with the committed DB lifecycle.
+
+        A positive preference is retained even when there is no database to
+        refresh.  It becomes active only after a DatabaseInstance has been
+        accepted by database_load_finished.
 
         """
-        self.monitor.stop()
         generation_gate = getattr(
             self,
             "_database_generation_transaction_blocks_path",
@@ -465,9 +485,113 @@ class RunControlsMixin:
             if state is not None:
                 state.monitor_was_active = interval > 0
                 state.monitor_interval_ms = max(1, round(interval * 1000))
+        RunControlsMixin._update_automatic_refresh_timer(self, interval)
+
+    def _committed_refresh_database_instance(self):
+        """Return the accepted source instance, never inferring it from text."""
+        instance = getattr(self, "_loaded_database_instance", None)
+        if instance is None or getattr(instance, "identity", None) is None:
+            return None
+        return instance
+
+    def _automatic_refresh_should_run(self, interval):
+        """Whether the main refresh timer is presently allowed to run."""
+        if (
+                interval <= 0
+                or RunControlsMixin._committed_refresh_database_instance(self)
+                is None
+                ):
+            return False
+        if getattr(self, "_automatic_refresh_shutdown", False):
+            return False
+        if (
+                getattr(self, "_shutdown_started", False)
+                or getattr(self, "_shutdown_ready", False)
+                or getattr(self, "_database_load_active", False)
+                or getattr(self, "_database_view_released_for_generation", False)
+                ):
+            return False
+        generation_gate = getattr(
+            self,
+            "_database_generation_transaction_blocks_path",
+            None,
+        )
+        return not (callable(generation_gate) and generation_gate())
+
+    def _stop_automatic_refresh_timer(self):
+        """Stop the timer and invalidate timeout events already queued."""
+        self._automatic_refresh_epoch = (
+            getattr(self, "_automatic_refresh_epoch", 0) + 1
+        )
+        self._automatic_refresh_load_generation = None
+        self._automatic_refresh_instance = None
+        monitor = getattr(self, "monitor", None)
+        stop = getattr(monitor, "stop", None)
+        if callable(stop):
+            stop()
+
+    def _update_automatic_refresh_timer(self, interval=None):
+        """Start or pause automatic refresh according to authoritative state."""
+        if interval is None:
+            interval = self._current_refresh_interval()
+        try:
+            interval = float(interval)
+        except (TypeError, ValueError):
+            interval = 0.0
+
+        RunControlsMixin._stop_automatic_refresh_timer(self)
+        if not RunControlsMixin._automatic_refresh_should_run(self, interval):
+            return False
+
+        instance = RunControlsMixin._committed_refresh_database_instance(self)
+        self._automatic_refresh_load_generation = getattr(
+            self,
+            "_database_load_generation",
+            0,
+        )
+        self._automatic_refresh_instance = instance
+        monitor = getattr(self, "monitor", None)
+        start = getattr(monitor, "start", None)
+        if not callable(start):
+            return False
+        start(max(1, round(interval * 1000)))
+        return True
+
+    @QtCore.pyqtSlot()
+    def _automatic_refresh_timeout(self):
+        """Refresh only if this timeout still belongs to the committed source."""
+        interval = self._current_refresh_interval()
+        expected_instance = getattr(self, "_automatic_refresh_instance", None)
+        if (
+                not RunControlsMixin._automatic_refresh_should_run(self, interval)
+                or expected_instance is None
+                or expected_instance
+                != RunControlsMixin._committed_refresh_database_instance(self)
+                or getattr(self, "_automatic_refresh_load_generation", None)
+                != getattr(self, "_database_load_generation", 0)
+                ):
+            RunControlsMixin._stop_automatic_refresh_timer(self)
             return
-        if interval > 0:
-            self.monitor.start(max(1, round(interval * 1000)))
+
+        # A file can disappear or be atomically replaced between timer ticks.
+        # Let the normal replacement lifecycle handle that, but never launch a
+        # refresh for the old instance.
+        database_path = expected_instance.logical_path
+        try:
+            current_instance = database_instance(database_path)
+        except OSError:
+            current_instance = None
+        if current_instance is None or database_instances_differ(
+                expected_instance,
+                current_instance,
+                ):
+            RunControlsMixin._stop_automatic_refresh_timer(self)
+            reload_database = getattr(self, "_reload_replaced_database", None)
+            if callable(reload_database):
+                reload_database(database_path)
+            return
+
+        self.refreshMain(automatic=True)
 
     def _save_refresh_interval(self, interval):
         """

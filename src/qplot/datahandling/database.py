@@ -13,12 +13,20 @@ import subprocess
 import sys
 import threading
 from datetime import datetime
-from time import perf_counter
+from time import monotonic, perf_counter
 
 from PyQt6 import QtCore
 
-from qplot.datahandling.file_identity import database_file_identity
+from qplot.datahandling.file_identity import (
+    DatabaseInstance,
+    database_file_identity,
+    database_instance,
+    database_instances_differ,
+)
 from qplot.datahandling.readonly import (
+    DatabaseInstanceChangedError,
+    UnverifiableDatabaseWalError,
+    quarantine_wal_for_replaced_database,
     replacement_wal_is_quarantined,
     sqlite_read_only_connection,
 )
@@ -47,7 +55,36 @@ WINDOWS_CLOUD_PLACEHOLDER_ATTRIBUTES = (
     getattr(stat, "FILE_ATTRIBUTE_OFFLINE", 0x00001000)
     | getattr(stat, "FILE_ATTRIBUTE_RECALL_ON_OPEN", 0x00040000)
     | getattr(stat, "FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS", 0x00400000)
-    )
+)
+_DATABASE_ACCESS_ERROR_PREFIX = "QPLOT_DATABASE_ACCESS_ERROR:"
+
+
+class _DatabaseAccessErrorMessage(str):
+    """Probe text retaining the remote exception type for the load worker."""
+
+    def __new__(cls, message, error_type=None):
+        instance = super().__new__(cls, message)
+        instance.error_type = error_type
+        return instance
+
+
+def _database_access_error_message(output):
+    """Decode a probe error without exposing its transport marker to users."""
+    output = (output or "").strip()
+    for line in reversed(output.splitlines()):
+        if not line.startswith(_DATABASE_ACCESS_ERROR_PREFIX):
+            continue
+        try:
+            payload = json.loads(line.removeprefix(_DATABASE_ACCESS_ERROR_PREFIX))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        message = payload.get("message")
+        error_type = payload.get("type")
+        if isinstance(message, str) and isinstance(error_type, str):
+            return _DatabaseAccessErrorMessage(message, error_type)
+    return _DatabaseAccessErrorMessage(output)
 
 
 def database_path_from_mime_data(mime_data):
@@ -73,7 +110,14 @@ def database_path_from_mime_data(mime_data):
     return None
 
 
-def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS):
+def database_access_error(
+        database_path,
+        timeout=DATABASE_ACCESS_TIMEOUT_SECONDS,
+        *,
+        expected_database_identity=None,
+        cancelled_callback=None,
+        deadline=None,
+        ):
     """
     Return an error message if a database cannot be opened promptly.
 
@@ -82,59 +126,123 @@ def database_access_error(database_path, timeout=DATABASE_ACCESS_TIMEOUT_SECONDS
     first so a stuck access check can be timed out without freezing qPlot.
 
     """
+    if cancelled_callback is not None and cancelled_callback():
+        raise InterruptedError("Database access check cancelled.")
+    if deadline is not None and monotonic() >= deadline:
+        raise TimeoutError("Database access check deadline exceeded.")
+
     # The child has a fresh replacement registry. Carry the identity observed
     # before its launch so it cannot combine a later main-file replacement
     # with a retained WAL sidecar.
-    expected_database_identity = database_file_identity(database_path)
+    if expected_database_identity is None:
+        expected_database_identity = database_file_identity(database_path)
     ignore_unpaired_wal = replacement_wal_is_quarantined(database_path)
+    timeout = float(timeout)
+    if deadline is not None:
+        timeout = min(timeout, max(0.0, float(deadline) - monotonic()))
     probe = (
         "import json\n"
         "import sys\n"
+        "from time import monotonic\n"
         "from qplot.datahandling.readonly import probe_read_only_database\n"
         "try:\n"
-        "    expected_database_identity = json.loads(sys.argv[3])\n"
+        "    expected_database_identity = json.loads(sys.argv[4])\n"
         "    if expected_database_identity is not None:\n"
         "        expected_database_identity = tuple(expected_database_identity)\n"
+        "    deadline = monotonic() + max(0.0, float(sys.argv[3]))\n"
         "    probe_read_only_database(\n"
         "        sys.argv[1],\n"
         "        ignore_unpaired_wal=(sys.argv[2] == '1'),\n"
         "        expected_database_identity=expected_database_identity,\n"
+        "        deadline=deadline,\n"
+        "        _check_sqlite_lock_bytes=True,\n"
         "    )\n"
         "except Exception as err:\n"
-        "    print(err, file=sys.stderr)\n"
+        "    payload = {'type': type(err).__name__, 'message': str(err)}\n"
+        f"    print('{_DATABASE_ACCESS_ERROR_PREFIX}' + json.dumps(payload), "
+        "file=sys.stderr)\n"
         "    raise SystemExit(1)\n"
         )
 
+    command = [
+        sys.executable,
+        "-c",
+        probe,
+        database_path,
+        "1" if ignore_unpaired_wal else "0",
+        repr(timeout),
+        json.dumps(expected_database_identity),
+    ]
+
     try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                probe,
-                database_path,
-                "1" if ignore_unpaired_wal else "0",
-                json.dumps(expected_database_identity),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-            )
+        if cancelled_callback is None:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                )
+            returncode = result.returncode
+            stdout = result.stdout
+            stderr = result.stderr
+        else:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                )
+            probe_started_at = perf_counter()
+            while True:
+                if cancelled_callback():
+                    process.kill()
+                    process.communicate()
+                    raise InterruptedError("Database access check cancelled.")
+                remaining = timeout - (perf_counter() - probe_started_at)
+                if remaining <= 0:
+                    process.kill()
+                    process.communicate()
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(
+                        timeout=min(0.05, remaining),
+                        )
+                except subprocess.TimeoutExpired:
+                    continue
+                returncode = process.returncode
+                break
+    except InterruptedError:
+        raise
     except subprocess.TimeoutExpired:
+        if deadline is not None and monotonic() >= deadline:
+            raise TimeoutError("Database access check deadline exceeded.") from None
         return (
             f"Timed out after {timeout:g} s while checking database access. "
             "The database may be locked by another qPlot, QCoDeS, Python, or "
             "notebook process, or blocked by cloud sync."
             )
     except OSError as err:
+        if cancelled_callback is not None and cancelled_callback():
+            raise InterruptedError("Database access check cancelled.") from err
         return str(err)
 
-    if result.returncode == 0:
+    if cancelled_callback is not None and cancelled_callback():
+        raise InterruptedError("Database access check cancelled.")
+
+    if returncode == 0:
         return None
 
-    details = (result.stderr or result.stdout or "").strip()
+    details = _database_access_error_message(stderr or stdout)
     if not details:
-        details = f"SQLite access probe exited with code {result.returncode}."
+        details = _DatabaseAccessErrorMessage(
+            f"SQLite access probe exited with code {returncode}."
+        )
+    if (
+            deadline is not None
+            and details.error_type == TimeoutError.__name__
+            ):
+        raise TimeoutError(str(details))
     return details
 
 
@@ -470,9 +578,88 @@ class DatabaseDetailSignals(QtCore.QObject):
 class _InterruptibleSqlWorker:
     """Allows the GUI thread to interrupt an active read-only SQLite query."""
 
+    def _init_database_binding(
+            self,
+            database_path,
+            expected_database_instance=None,
+            deadline=None,
+            ):
+        """Retain the exact database instance accepted by the scheduler."""
+        supplied_instance = expected_database_instance is not None
+        requested_database_path = os.fspath(database_path)
+        if expected_database_instance is None:
+            expected_database_instance = database_instance(requested_database_path)
+        elif not isinstance(expected_database_instance, DatabaseInstance):
+            raise TypeError(
+                "expected_database_instance must be a DatabaseInstance or None"
+            )
+
+        self.database_instance = expected_database_instance
+        self.database_path = expected_database_instance.logical_path
+        self.requested_database_path = requested_database_path
+        # Signals are matched against the paths stored by the UI, which are
+        # logical_database_path values.  Keeping the original spelling here
+        # makes an otherwise identical Windows path (for example ``D:`` vs
+        # ``d:``) look like a different database to signal consumers.
+        self._signal_database_path = requested_database_path
+        self._read_database_path = (
+            expected_database_instance.logical_path
+            if supplied_instance
+            else requested_database_path
+        )
+        self.logical_database_path = expected_database_instance.logical_path
+        self.resolved_database_path = expected_database_instance.resolved_path
+        self.database_identity = expected_database_instance.identity
+        self.sidecar_identities = expected_database_instance.sidecar_identities
+        self.deadline = deadline
+
+
+    def _expected_database_identity_kwargs(self):
+        """Keep legacy direct worker callers working when identity is unavailable."""
+        if self.database_identity is None:
+            return {}
+        return {"expected_database_identity": self.database_identity}
+
+
+    def _read_control_kwargs(self):
+        """Forward cancellation, identity, and an optional absolute deadline."""
+        kwargs = self._expected_database_identity_kwargs()
+        kwargs["cancelled_callback"] = self._cancelled.is_set
+        if self.deadline is not None:
+            kwargs["deadline"] = self.deadline
+        return kwargs
+
+
+    def _require_current_database_instance(self):
+        """Reject results if the worker's full logical source was replaced."""
+        current_instance = database_instance(self.database_instance.logical_path)
+        if not database_instances_differ(self.database_instance, current_instance):
+            return
+
+        quarantine_wal_for_replaced_database(self.database_instance.logical_path)
+        raise DatabaseInstanceChangedError(
+            "The database was replaced while qPlot was loading background metadata."
+        )
+
+
+    @staticmethod
+    def _close_batch_iterator(iterator):
+        """Close a suspended SQL generator immediately on every early exit."""
+        close = getattr(iterator, "close", None)
+        if callable(close):
+            close()
+
     def _init_sql_interrupt(self):
         self._sql_connection_lock = threading.Lock()
+        self._publication_lock = threading.RLock()
         self._sql_connection = None
+
+
+    def _cancel_read(self):
+        """Linearize cancellation against worker result publication."""
+        with self._publication_lock:
+            self._cancelled.set()
+        self._interrupt_sql()
 
 
     def _interrupt_sql(self):
@@ -501,11 +688,24 @@ class DatabaseRefreshSignals(QtCore.QObject):
 class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
     """Fetch new runs and live-run status without blocking the GUI thread."""
 
-    def __init__(self, generation, database_path, last_run_id, watched_runs):
+    def __init__(
+            self,
+            generation,
+            database_path,
+            last_run_id,
+            watched_runs,
+            *,
+            expected_database_instance=None,
+            deadline=None,
+            ):
         super().__init__()
         self.signals = DatabaseRefreshSignals()
         self.generation = generation
-        self.database_path = database_path
+        self._init_database_binding(
+            database_path,
+            expected_database_instance,
+            deadline,
+            )
         self.last_run_id = int(last_run_id or 0)
         self.watched_runs = list(watched_runs or [])
         self._cancelled = threading.Event()
@@ -513,8 +713,7 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
 
     def cancel(self):
-        self._cancelled.set()
-        self._interrupt_sql()
+        self._cancel_read()
 
 
     def run(self):
@@ -524,24 +723,34 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             if self._cancelled.is_set():
                 return
 
+            self._require_current_database_instance()
             new_runs = find_new_runs(
                 self.last_run_id,
-                database_path=self.database_path,
-                cancelled_callback=self._cancelled.is_set,
+                database_path=self._read_database_path,
                 connection_callback=self._set_sql_connection,
+                **self._read_control_kwargs(),
                 ) or {}
             for guid in self.watched_runs:
                 if self._cancelled.is_set():
                     return
+                self._require_current_database_instance()
                 status = get_run_status(
                     guid,
-                    database_path=self.database_path,
+                    database_path=self._read_database_path,
                     include_storage_bytes=False,
-                    cancelled_callback=self._cancelled.is_set,
                     connection_callback=self._set_sql_connection,
+                    **self._read_control_kwargs(),
                     )
                 if status:
                     statuses[guid] = status
+            self._require_current_database_instance()
+        except InterruptedError:
+            return
+        except DatabaseInstanceChangedError as err:
+            if self._cancelled.is_set():
+                return
+            self._emit_finished({}, {}, err)
+            return
         except Exception as err:
             if self._cancelled.is_set():
                 return
@@ -553,18 +762,31 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
 
     def _emit_finished(self, new_runs, statuses, error):
-        try:
-            self.signals.finished.emit(
-                self.generation,
-                self.database_path,
-                new_runs,
-                statuses,
-                error,
-                )
-        except RuntimeError as err:
-            message = str(err)
-            if not ("wrapped C/C++ object" in message and "has been deleted" in message):
-                raise
+        if not isinstance(error, DatabaseInstanceChangedError):
+            try:
+                self._require_current_database_instance()
+            except DatabaseInstanceChangedError as err:
+                new_runs = {}
+                statuses = {}
+                error = err
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            try:
+                self.signals.finished.emit(
+                    self.generation,
+                    self._signal_database_path,
+                    new_runs,
+                    statuses,
+                    error,
+                    )
+            except RuntimeError as err:
+                message = str(err)
+                if not (
+                        "wrapped C/C++ object" in message
+                        and "has been deleted" in message
+                        ):
+                    raise
 
 
 class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
@@ -582,11 +804,18 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             generation,
             database_path,
             cloud_sync_timeout=DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
+            *,
+            expected_database_instance=None,
+            deadline=None,
             ):
         super().__init__()
         self.signals = DatabaseLoadSignals()
         self.generation = generation
-        self.database_path = database_path
+        self._init_database_binding(
+            database_path,
+            expected_database_instance,
+            deadline,
+            )
         self.cloud_sync_timeout = cloud_sync_timeout
         self._cancelled = threading.Event()
         self._init_sql_interrupt()
@@ -597,8 +826,7 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         Marks this load as cancelled so later phases do not run.
 
         """
-        self._cancelled.set()
-        self._interrupt_sql()
+        self._cancel_read()
 
 
     def run(self):
@@ -606,42 +834,65 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             if self._is_cancelled():
                 return
 
-            if database_is_likely_cloud_placeholder(self.database_path):
+            self._require_current_database_instance()
+            if database_is_likely_cloud_placeholder(self._read_database_path):
                 self._prefetch_cloud_file()
             if self._is_cancelled():
                 return
+            self._require_current_database_instance()
 
             self._emit_status("Checking database access...")
-            access_error = database_access_error(self.database_path)
+            access_error = database_access_error(
+                self._read_database_path,
+                **self._read_control_kwargs(),
+                )
             if self._is_cancelled():
                 return
 
             if (
                     access_error
-                    and database_cloud_storage_label(self.database_path)
-                    and os.path.isfile(self.database_path)
+                    and getattr(access_error, "error_type", None) not in {
+                        DatabaseInstanceChangedError.__name__,
+                        UnverifiableDatabaseWalError.__name__,
+                        }
+                    and database_cloud_storage_label(self._read_database_path)
+                    and os.path.isfile(self._read_database_path)
                     ):
                 self._prefetch_cloud_file()
                 if self._is_cancelled():
                     return
                 self._emit_status("Checking database access...")
-                access_error = database_access_error(self.database_path)
+                access_error = database_access_error(
+                    self._read_database_path,
+                    **self._read_control_kwargs(),
+                    )
                 if self._is_cancelled():
                     return
 
             if access_error:
+                error_type = getattr(access_error, "error_type", None)
+                if error_type == DatabaseInstanceChangedError.__name__:
+                    raise DatabaseInstanceChangedError(access_error)
+                if error_type == UnverifiableDatabaseWalError.__name__:
+                    raise UnverifiableDatabaseWalError(access_error)
                 raise RuntimeError(access_error)
 
             self._emit_status("Opening database read-only...")
             self._emit_status("Loading basic run list...")
             runs = get_runs_basic_via_sql(
-                self.database_path,
-                cancelled_callback=self._is_cancelled,
+                self._read_database_path,
                 connection_callback=self._set_sql_connection,
+                **self._read_control_kwargs(),
                 ) or {}
             if self._is_cancelled():
                 return
+            self._require_current_database_instance()
         except InterruptedError:
+            return
+        except DatabaseInstanceChangedError as err:
+            if self._is_cancelled():
+                return
+            self._emit_finished({}, err)
             return
         except Exception as err:
             if self._is_cancelled():
@@ -658,19 +909,36 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
 
     def _emit_status(self, message):
-        try:
-            self.signals.status.emit(self.generation, message)
-        except RuntimeError as err:
-            if not self._qt_signal_was_deleted(err):
-                raise
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            try:
+                self.signals.status.emit(self.generation, message)
+            except RuntimeError as err:
+                if not self._qt_signal_was_deleted(err):
+                    raise
 
 
     def _emit_finished(self, runs, error):
-        try:
-            self.signals.finished.emit(self.generation, self.database_path, runs, error)
-        except RuntimeError as err:
-            if not self._qt_signal_was_deleted(err):
-                raise
+        if not isinstance(error, DatabaseInstanceChangedError):
+            try:
+                self._require_current_database_instance()
+            except DatabaseInstanceChangedError as err:
+                runs = {}
+                error = err
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            try:
+                self.signals.finished.emit(
+                    self.generation,
+                    self._signal_database_path,
+                    runs,
+                    error,
+                    )
+            except RuntimeError as err:
+                if not self._qt_signal_was_deleted(err):
+                    raise
 
 
     def _qt_signal_was_deleted(self, err):
@@ -679,9 +947,15 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
 
     def _prefetch_cloud_file(self):
+        timeout = self.cloud_sync_timeout
+        if self.deadline is not None:
+            remaining = self.deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Database load deadline exceeded.")
+            timeout = min(timeout, remaining)
         prefetch_database_file_with_timeout(
-            self.database_path,
-            timeout=self.cloud_sync_timeout,
+            self._read_database_path,
+            timeout=timeout,
             status_callback=self._emit_status,
             cancelled_callback=self._is_cancelled,
             )
@@ -693,11 +967,23 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
     """
 
-    def __init__(self, generation, database_path, run_ids):
+    def __init__(
+            self,
+            generation,
+            database_path,
+            run_ids,
+            *,
+            expected_database_instance=None,
+            deadline=None,
+            ):
         super().__init__()
         self.signals = DatabaseDetailSignals()
         self.generation = generation
-        self.database_path = database_path
+        self._init_database_binding(
+            database_path,
+            expected_database_instance,
+            deadline,
+            )
         self.run_ids = list(run_ids or [])
         self._default_run_order = {
             run_id: index
@@ -711,8 +997,7 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
 
     def cancel(self):
-        self._cancelled.set()
-        self._interrupt_sql()
+        self._cancel_read()
 
 
     def prioritize_run_ids(self, run_ids):
@@ -779,35 +1064,50 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
 
     def _emit_status(self, message):
-        try:
-            self.signals.status.emit(self.generation, message)
-        except RuntimeError as err:
-            if not self._qt_signal_was_deleted(err):
-                raise
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            try:
+                self.signals.status.emit(self.generation, message)
+            except RuntimeError as err:
+                if not self._qt_signal_was_deleted(err):
+                    raise
 
 
     def _emit_batch_ready(self, details):
-        try:
-            self.signals.batch_ready.emit(
-                self.generation,
-                self.database_path,
-                details,
-                )
-        except RuntimeError as err:
-            if not self._qt_signal_was_deleted(err):
-                raise
+        self._require_current_database_instance()
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            try:
+                self.signals.batch_ready.emit(
+                    self.generation,
+                    self._signal_database_path,
+                    details,
+                    )
+            except RuntimeError as err:
+                if not self._qt_signal_was_deleted(err):
+                    raise
 
 
     def _emit_finished(self, error):
-        try:
-            self.signals.finished.emit(
-                self.generation,
-                self.database_path,
-                error,
-                )
-        except RuntimeError as err:
-            if not self._qt_signal_was_deleted(err):
-                raise
+        if not isinstance(error, DatabaseInstanceChangedError):
+            try:
+                self._require_current_database_instance()
+            except DatabaseInstanceChangedError as err:
+                error = err
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            try:
+                self.signals.finished.emit(
+                    self.generation,
+                    self._signal_database_path,
+                    error,
+                    )
+            except RuntimeError as err:
+                if not self._qt_signal_was_deleted(err):
+                    raise
 
 
     def _qt_signal_was_deleted(self, err):
@@ -821,8 +1121,23 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
 
     """
 
-    def __init__(self, generation, database_path, run_ids, batch_size=1):
-        super().__init__(generation, database_path, run_ids)
+    def __init__(
+            self,
+            generation,
+            database_path,
+            run_ids,
+            batch_size=1,
+            *,
+            expected_database_instance=None,
+            deadline=None,
+            ):
+        super().__init__(
+            generation,
+            database_path,
+            run_ids,
+            expected_database_instance=expected_database_instance,
+            deadline=deadline,
+            )
         self.batch_size = max(1, int(batch_size or 1))
 
 
@@ -830,7 +1145,9 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
         total = len(self.run_ids)
         completed = 0
         try:
-            if total == 0 or self._is_cancelled():
+            if self._is_cancelled():
+                return
+            if total == 0:
                 self._emit_finished(None)
                 return
 
@@ -843,27 +1160,39 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
                 batch = self._next_priority_batch(done, self.batch_size)
                 if not batch:
                     break
-                for details in iter_run_detail_batches_via_sql(
-                        self.database_path,
+                self._require_current_database_instance()
+                batches = iter_run_detail_batches_via_sql(
+                        self._read_database_path,
                         batch,
                         batch_size=self.batch_size,
                         infer_missing_shapes=False,
                         include_storage_bytes=False,
                         include_storage_estimate=True,
                         include_read_setpoint_count=True,
-                        cancelled_callback=self._is_cancelled,
                         connection_callback=self._set_sql_connection,
-                        ):
-                    if self._is_cancelled():
-                        return
-                    if details:
-                        self._emit_batch_ready(details)
+                        **self._read_control_kwargs(),
+                        )
+                try:
+                    for details in batches:
+                        if self._is_cancelled():
+                            return
+                        if details:
+                            self._emit_batch_ready(details)
+                finally:
+                    self._close_batch_iterator(batches)
 
                 done.update(batch)
                 completed = len(done)
                 self._emit_status(
                     f"Loading run details... {min(completed, total)}/{total}"
                     )
+        except InterruptedError:
+            return
+        except DatabaseInstanceChangedError as err:
+            if self._is_cancelled():
+                return
+            self._emit_finished(err)
+            return
         except Exception as err:
             if self._is_cancelled():
                 return
@@ -880,15 +1209,32 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
 
     """
 
-    def __init__(self, generation, database_path, run_ids, batch_size=10):
-        super().__init__(generation, database_path, run_ids)
+    def __init__(
+            self,
+            generation,
+            database_path,
+            run_ids,
+            batch_size=10,
+            *,
+            expected_database_instance=None,
+            deadline=None,
+            ):
+        super().__init__(
+            generation,
+            database_path,
+            run_ids,
+            expected_database_instance=expected_database_instance,
+            deadline=deadline,
+            )
         self.batch_size = max(1, int(batch_size or 1))
 
 
     def run(self):
         total = len(self.run_ids)
         try:
-            if total == 0 or self._is_cancelled():
+            if self._is_cancelled():
+                return
+            if total == 0:
                 self._emit_finished(None)
                 return
 
@@ -905,18 +1251,23 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
                 if not batch:
                     break
 
-                for shapes in iter_run_shape_batches_via_sql(
-                        self.database_path,
+                self._require_current_database_instance()
+                batches = iter_run_shape_batches_via_sql(
+                        self._read_database_path,
                         batch,
                         batch_size=self.batch_size,
-                        cancelled_callback=self._is_cancelled,
                         connection_callback=self._set_sql_connection,
-                        ):
-                    if self._is_cancelled():
-                        return
+                        **self._read_control_kwargs(),
+                        )
+                try:
+                    for shapes in batches:
+                        if self._is_cancelled():
+                            return
 
-                    if shapes:
-                        self._emit_batch_ready(shapes)
+                        if shapes:
+                            self._emit_batch_ready(shapes)
+                finally:
+                    self._close_batch_iterator(batches)
 
                 shape_done.update(batch)
                 self._emit_status(
@@ -937,23 +1288,35 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
                 if not batch:
                     break
 
-                for storage in iter_run_storage_batches_via_sql(
-                        self.database_path,
+                self._require_current_database_instance()
+                batches = iter_run_storage_batches_via_sql(
+                        self._read_database_path,
                         batch,
                         batch_size=storage_batch_size,
-                        cancelled_callback=self._is_cancelled,
                         connection_callback=self._set_sql_connection,
-                        ):
-                    if self._is_cancelled():
-                        return
+                        **self._read_control_kwargs(),
+                        )
+                try:
+                    for storage in batches:
+                        if self._is_cancelled():
+                            return
 
-                    if storage:
-                        self._emit_batch_ready(storage)
+                        if storage:
+                            self._emit_batch_ready(storage)
+                finally:
+                    self._close_batch_iterator(batches)
 
                 storage_done.update(batch)
                 self._emit_status(
                     f"Loading exact run sizes... {len(storage_done)}/{total}"
                     )
+        except InterruptedError:
+            return
+        except DatabaseInstanceChangedError as err:
+            if self._is_cancelled():
+                return
+            self._emit_finished(err)
+            return
         except Exception as err:
             if self._is_cancelled():
                 return

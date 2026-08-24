@@ -627,6 +627,10 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         if bar is not None:
             bar.setColorMap(self._colorbar_colormap(name))
 
+        appearance_dialog = self.__dict__.get("_heatmap_appearance_dialog")
+        if appearance_dialog is not None:
+            appearance_dialog.refresh_color_scale()
+
         return True
 
     def setColorbarManualRange(self, vmin, vmax):

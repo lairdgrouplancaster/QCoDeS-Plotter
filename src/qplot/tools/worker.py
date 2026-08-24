@@ -8,6 +8,7 @@ from PyQt6 import QtCore
 
 from qplot.datahandling import load_param_data_from_db, load_param_data_from_db_prep
 from qplot.datahandling.dimensions import ensure_supported_plot_dimensions
+from qplot.datahandling.file_identity import database_sidecar_identities
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
     cache_dataset_completed,
@@ -66,6 +67,7 @@ class loader(QtCore.QRunnable):
                  heatmap_axis_ranges: dict | None = None,
                  heatmap_full_axis_ranges: dict | None = None,
                  database_identity=None,
+                 deadline=None,
                  ):
         """
         Sets up worker with required data for run()
@@ -96,11 +98,15 @@ class loader(QtCore.QRunnable):
         self.emitter = _emitter() # For signals
         self._cancelled = threading.Event()
         self._sql_connection_lock = threading.Lock()
+        self._publication_lock = threading.RLock()
         self._sql_connection = None
         
         # Required working data
         self.cache = cache
         self.table_name = cache_table_name(cache)
+        self.sidecar_identities = database_sidecar_identities(
+            cache_database_path(cache)
+        )
         self.param = param
         self.dataset_completed: bool | None = None
         self.display_param = copy(param)
@@ -114,6 +120,7 @@ class loader(QtCore.QRunnable):
         self.heatmap_axis_ranges = heatmap_axis_ranges
         self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
         self.database_identity = database_identity
+        self.deadline = deadline
         self.database_replaced = False
         self.sampled_heatmap_source = False
         self.aggregated_heatmap_source = False
@@ -134,13 +141,16 @@ class loader(QtCore.QRunnable):
         if not hasattr(self, "_sql_connection_lock"):
             self._sql_connection_lock = threading.Lock()
             self._sql_connection = None
+        if not hasattr(self, "_publication_lock"):
+            self._publication_lock = threading.RLock()
 
 
     def cancel(self) -> None:
         """Request cooperative cancellation and interrupt an active SQL read."""
 
         self._ensure_cancel_state()
-        self._cancelled.set()
+        with self._publication_lock:
+            self._cancelled.set()
         with self._sql_connection_lock:
             connection = self._sql_connection
         if connection is not None:
@@ -159,6 +169,20 @@ class loader(QtCore.QRunnable):
     def _check_cancelled(self) -> None:
         if self.is_cancelled():
             raise PlotWorkCancelled("Plot load cancelled.")
+
+
+    def _read_only_open_kwargs(self) -> dict[str, Any]:
+        """Return identity and abort controls for snapshot preparation."""
+        kwargs: dict[str, Any] = {
+            "cancelled_callback": self.is_cancelled,
+        }
+        database_identity = getattr(self, "database_identity", None)
+        if database_identity is not None:
+            kwargs["expected_database_identity"] = database_identity
+        deadline = getattr(self, "deadline", None)
+        if deadline is not None:
+            kwargs["deadline"] = deadline
+        return kwargs
 
 
     def _set_sql_connection(self, connection) -> None:
@@ -182,12 +206,20 @@ class loader(QtCore.QRunnable):
     def _emit_finished(self, finished: bool) -> None:
         """Emit completion unless Qt already deleted the receiver at shutdown."""
 
-        try:
-            self.emitter.finished.emit(finished)
-        except RuntimeError as err:
-            message = str(err)
-            if not ("wrapped C/C++ object" in message and "has been deleted" in message):
-                raise
+        self._ensure_cancel_state()
+        with self._publication_lock:
+            if finished and self._cancelled.is_set():
+                finished = False
+                self.running = False
+            try:
+                self.emitter.finished.emit(finished)
+            except RuntimeError as err:
+                message = str(err)
+                if not (
+                        "wrapped C/C++ object" in message
+                        and "has been deleted" in message
+                        ):
+                    raise
 
 
     def _finish_cancelled(self) -> None:
@@ -215,11 +247,7 @@ class loader(QtCore.QRunnable):
                 else:
                     completion_conn = qcodes_read_only_connection(
                         cache_database_path(cache),
-                        expected_database_identity=getattr(
-                            self,
-                            "database_identity",
-                            None,
-                        ),
+                        **self._read_only_open_kwargs(),
                         )
                     self._set_sql_connection(completion_conn)
                     try:
@@ -253,11 +281,7 @@ class loader(QtCore.QRunnable):
                         )
                     conn = qcodes_read_only_connection(
                         cache_database_path(cache),
-                        expected_database_identity=getattr(
-                            self,
-                            "database_identity",
-                            None,
-                        ),
+                        **self._read_only_open_kwargs(),
                     )
                     self._set_sql_connection(conn)
                     try:
@@ -450,7 +474,7 @@ class loader(QtCore.QRunnable):
 
         conn = sqlite_read_only_connection(
             cache_database_path(self.cache),
-            expected_database_identity=getattr(self, "database_identity", None),
+            **self._read_only_open_kwargs(),
         )
         self._set_sql_connection(conn)
         try:
@@ -490,7 +514,7 @@ class loader(QtCore.QRunnable):
     def _load_large_heatmap_from_sql(self):
         conn = sqlite_read_only_connection(
             cache_database_path(self.cache),
-            expected_database_identity=getattr(self, "database_identity", None),
+            **self._read_only_open_kwargs(),
         )
         self._set_sql_connection(conn)
         try:

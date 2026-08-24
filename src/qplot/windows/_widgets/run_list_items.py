@@ -34,6 +34,7 @@ class RunPreviewCell(qtw.QWidget):
         self.placeholder_count = max(0, int(count or 0))
         self.icon_size = int(icon_size)
         self._generating = False
+        self._has_rendered_previews = False
 
         self.content_layout = qtw.QHBoxLayout()
         self.content_layout.setContentsMargins(2, 0, 2, 0)
@@ -49,6 +50,7 @@ class RunPreviewCell(qtw.QWidget):
 
     def show_placeholders(self, count=None, generating=None):
         self._clear_layout()
+        self._has_rendered_previews = False
         if generating is not None:
             self._generating = bool(generating)
         placeholder_count = self.placeholder_count if count is None else max(0, int(count))
@@ -105,12 +107,16 @@ class RunPreviewCell(qtw.QWidget):
         for index in range(max(0, self.placeholder_count - preview_count)):
             self.content_layout.addWidget(self._placeholder_label(index))
         self.content_layout.addStretch()
+        self._has_rendered_previews = preview_count > 0
 
 
     def set_generating(self, generating):
         generating = bool(generating)
         if generating:
             if self._generating:
+                return
+            if self._has_rendered_previews:
+                self._generating = True
                 return
             self.show_placeholders(generating=True)
             return

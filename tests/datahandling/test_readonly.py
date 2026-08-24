@@ -3,7 +3,11 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
+import sys
+from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
 from types import SimpleNamespace
 
 import pytest
@@ -15,8 +19,10 @@ from qcodes.dataset import (
 )
 from qcodes.dataset.data_set_in_memory import DataSetInMem
 from qcodes.dataset.sqlite.connection import AtomicConnection
+from qcodes.dataset.sqlite.db_upgrades import _latest_available_version
 from qcodes.parameters import ManualParameter
 
+from qplot import testdata as testdata_module
 from qplot._repair import repair
 from qplot.datahandling import file_identity as file_identity_module
 from qplot.datahandling import readonly as readonly_module
@@ -36,6 +42,16 @@ from qplot.datahandling.readonly import (
 from qplot.datahandling.readSQL import get_runs_via_sql
 from qplot.testdata import RunSpecification, generate_database
 from qplot.windows._dataset_handle import DatasetHandle
+
+_ROLLBACK_RUN_COUNT = 26
+_COMMITTED_RUN_NAMES = tuple(
+    f"COMMITTED_{index:02d}" for index in range(_ROLLBACK_RUN_COUNT)
+)
+_UNCOMMITTED_RUN_NAMES = tuple(
+    f"UNCOMMITTED_{index:02d}" for index in range(_ROLLBACK_RUN_COUNT)
+)
+_ROLLBACK_JOURNAL_MAGIC = b"\xd9\xd5\x05\xf9 \xa1c\xd7"
+_SQLITE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
 
 
 def test_windows_file_index_is_used_when_stat_inode_is_zero(monkeypatch):
@@ -76,6 +92,285 @@ def test_unavailable_identity_does_not_fall_back_to_mutable_metadata(monkeypatch
     assert file_identity_module.database_file_identity("view.db") is None
 
 
+def test_wal_fallback_identity_change_marks_source_observation_unstable(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "fallback-identity.db"
+    connection = sqlite3.connect(database_path)
+    connection.close()
+    wal_path = readonly_module._wal_path(database_path)
+    wal_path.write_bytes(b"detached WAL placeholder")
+    real_path_bound_file_identity = readonly_module.path_bound_file_identity
+    wal_identities = iter(
+        (
+            ("windows-file-id", 17, 23),
+            ("windows-file-id", 17, 24),
+        )
+    )
+
+    def changing_wal_identity(path):
+        if Path(path) == wal_path:
+            return next(wal_identities)
+        return real_path_bound_file_identity(path)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        changing_wal_identity,
+    )
+
+    signature = readonly_module._source_signature(database_path)
+
+    assert signature.wal is not None
+    assert signature.wal_identity == ("windows-file-id", 17, 24)
+    assert not signature.stable
+
+
+def test_wal_stat_signature_is_used_when_file_identity_is_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "stat-fallback.db"
+    connection = sqlite3.connect(database_path)
+    connection.close()
+    wal_path = readonly_module._wal_path(database_path)
+    wal_path.write_bytes(b"detached WAL placeholder")
+    real_path_bound_file_identity = readonly_module.path_bound_file_identity
+
+    def unavailable_wal_identity(path):
+        if Path(path) == wal_path:
+            return None
+        return real_path_bound_file_identity(path)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        unavailable_wal_identity,
+    )
+
+    signature = readonly_module._source_signature(database_path)
+
+    assert signature.wal is not None
+    assert signature.wal_identity is None
+    assert signature.stable
+
+
+def test_path_and_descriptor_stat_fields_may_differ_for_same_file(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "different-stat-fields.db"
+    database_path.write_bytes(b"database contents")
+    stable_identity = ("windows-file-id", 17, 23)
+    signatures = iter(
+        (
+            (11, 101, 17, 200, 300),
+            (0, 0, 17, 200, 300),
+            (0, 0, 17, 200, 300),
+            (11, 101, 17, 200, 300),
+        )
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        lambda _path: stable_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "open_file_identity",
+        lambda _descriptor: stable_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_stat_signature",
+        lambda _stat_result: next(signatures),
+    )
+
+    signature, identity, prefix, trailer, stable = (
+        readonly_module._file_prefix_observation(database_path, 8)
+    )
+
+    assert signature == (11, 101, 17, 200, 300)
+    assert identity == stable_identity
+    assert prefix == b"database"
+    assert trailer == b""
+    assert stable
+
+
+def test_path_and_descriptor_identity_mismatch_is_unstable(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "replaced-during-open.db"
+    database_path.write_bytes(b"database contents")
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        lambda _path: ("windows-file-id", 17, 23),
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "open_file_identity",
+        lambda _descriptor: ("windows-file-id", 17, 24),
+    )
+
+    _signature, _identity, _prefix, _trailer, stable = (
+        readonly_module._file_prefix_observation(database_path, 8)
+    )
+
+    assert not stable
+
+
+@pytest.mark.parametrize(
+    ("descriptor_identity", "expected_current"),
+    [
+        (("windows-file-id", 17, 23), True),
+        (("windows-file-id", 17, 24), False),
+    ],
+)
+def test_bounded_artifact_compares_windows_path_and_handle_observations(
+    tmp_path,
+    monkeypatch,
+    descriptor_identity,
+    expected_current,
+):
+    artifact_path = tmp_path / "bounded-artifact.db-wal"
+    artifact_path.write_bytes(b"bounded artifact contents for both ends")
+    path_identity = ("windows-file-id", 17, 23)
+    path_signature = (11, 101, 39, 200, 300)
+    descriptor_signature = (0, 0, 39, 200, 300)
+    signatures = iter(
+        (
+            path_signature,
+            descriptor_signature,
+            descriptor_signature,
+            path_signature,
+        )
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        lambda _path: path_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "open_file_identity",
+        lambda _descriptor: descriptor_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_stat_signature",
+        lambda _stat_result: next(signatures),
+    )
+
+    assert readonly_module._bounded_artifact_is_current(
+        artifact_path,
+        path_signature,
+        path_identity,
+    ) is expected_current
+
+
+@pytest.mark.parametrize(
+    ("descriptor_identity", "expected_match"),
+    [
+        (("windows-file-id", 17, 23), True),
+        (("windows-file-id", 17, 24), False),
+    ],
+)
+def test_locked_source_compares_windows_path_and_handle_observations(
+    tmp_path,
+    monkeypatch,
+    descriptor_identity,
+    expected_match,
+):
+    database_path = tmp_path / "locked-windows-observation.db"
+    database_path.write_bytes(b"locked database contents")
+    source_state = _sqlite_artifact_state(database_path)
+    path_identity = ("windows-file-id", 17, 23)
+    path_signature = (11, 101, 24, 200, 300)
+    descriptor_signature = (0, 0, 24, 200, 300)
+    expected_source = readonly_module._SourceSignature(
+        database=path_signature,
+        database_identity=path_identity,
+        database_header=b"locked database contents",
+        wal=None,
+        wal_identity=None,
+        journal=None,
+        stable=True,
+    )
+    signatures = iter(
+        (
+            descriptor_signature,
+            path_signature,
+            descriptor_signature,
+            path_signature,
+        )
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "path_bound_file_identity",
+        lambda _path: path_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "open_file_identity",
+        lambda _descriptor: descriptor_identity,
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_stat_signature",
+        lambda _stat_result: next(signatures),
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_wal_observation",
+        lambda *_args, **_kwargs: (None, None, True),
+    )
+    monkeypatch.setattr(
+        readonly_module,
+        "_rollback_journal_observation",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with database_path.open("rb") as database_file:
+        assert readonly_module._source_matches_under_sqlite_lock(
+            database_path,
+            expected_source,
+            database_file,
+        ) is expected_match
+
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+def test_bounded_artifact_rejects_mutation_during_validation(tmp_path):
+    artifact_path = tmp_path / "mutation-race.db-wal"
+    artifact_path.write_bytes(b"A" * 4096)
+    expected_signature = readonly_module._file_signature(artifact_path)
+    expected_identity = readonly_module.path_bound_file_identity(artifact_path)
+    original_mtime_ns = artifact_path.stat().st_mtime_ns
+    checks = 0
+
+    def mutate_after_prefix_read():
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            os.utime(
+                artifact_path,
+                ns=(original_mtime_ns + 1_000_000_000,) * 2,
+            )
+        return False
+
+    assert not readonly_module._bounded_artifact_is_current(
+        artifact_path,
+        expected_signature,
+        expected_identity,
+        cancelled_callback=mutate_after_prefix_read,
+    )
+    assert checks >= 3
+    assert artifact_path.stat().st_mtime_ns != original_mtime_ns
+
+
 def _directory_state(directory):
     state = {}
     for path in directory.iterdir():
@@ -90,6 +385,271 @@ def _run_without_source_changes(directory, operation):
     result = operation()
     assert _directory_state(directory) == before
     return result
+
+
+def _sqlite_artifact_state(database_path):
+    """Capture exact source contents, identity, mtime, and sidecar presence."""
+    state = {}
+    for suffix in _SQLITE_ARTIFACT_SUFFIXES:
+        artifact_path = Path(f"{database_path}{suffix}")
+        try:
+            contents = artifact_path.read_bytes()
+            status = artifact_path.stat()
+        except FileNotFoundError:
+            state[suffix] = None
+            continue
+        state[suffix] = (
+            contents,
+            database_file_identity(artifact_path),
+            status.st_dev,
+            status.st_ino,
+            status.st_nlink,
+            status.st_size,
+            status.st_mtime_ns,
+        )
+    return state
+
+
+def _start_interactive_sqlite_process(database_path, script):
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(database_path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdout is not None
+    ready = process.stdout.readline().strip()
+    if ready != "ready":
+        _stdout, stderr = process.communicate(timeout=5)
+        raise AssertionError(f"SQLite helper did not become ready: {stderr}")
+    return process
+
+
+def _stop_interactive_sqlite_process(process):
+    if process.poll() is None:
+        assert process.stdin is not None
+        process.stdin.write("stop\n")
+        process.stdin.flush()
+    _stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
+
+
+def _run_names_from_connection(opener, database_path):
+    connection = opener(database_path)
+    try:
+        return tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM runs ORDER BY run_id"
+            ).fetchall()
+        )
+    finally:
+        connection.close()
+
+
+def _run_names_without_source_changes(opener, database_path):
+    before = _sqlite_artifact_state(database_path)
+    try:
+        return _run_names_from_connection(opener, database_path)
+    finally:
+        assert _sqlite_artifact_state(database_path) == before
+
+
+def _immutable_run_names(database_path):
+    connection = sqlite3.connect(
+        f"{Path(database_path).resolve().as_uri()}?mode=ro&immutable=1",
+        uri=True,
+    )
+    try:
+        return tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM runs ORDER BY run_id"
+            ).fetchall()
+        )
+    finally:
+        connection.close()
+
+
+@pytest.fixture(scope="module")
+def latest_schema_rollback_template(tmp_path_factory):
+    """Create one real latest-schema QCoDeS database for journal tests."""
+    database_path = tmp_path_factory.mktemp("rollback-template") / "latest.db"
+    original_database_path = qcodes.config.core.db_location
+    experiment = None
+    try:
+        initialise_or_create_database_at(database_path, journal_mode="DELETE")
+        experiment = load_or_create_experiment(
+            "rollback_journal",
+            sample_name="latest_schema",
+        )
+        setpoint = ManualParameter("rollback_setpoint")
+        signal = ManualParameter("rollback_signal")
+        for index, run_name in enumerate(_COMMITTED_RUN_NAMES):
+            measurement = Measurement(exp=experiment, name=run_name)
+            measurement.register_parameter(setpoint)
+            measurement.register_parameter(signal, setpoints=(setpoint,))
+            with measurement.run(write_in_background=False) as datasaver:
+                datasaver.add_result(
+                    (setpoint, float(index)),
+                    (signal, float(index + 1)),
+                )
+    finally:
+        if experiment is not None:
+            experiment.conn.close()
+        qcodes.config.core.db_location = original_database_path
+
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone() == (
+            _latest_available_version(),
+        )
+        connection.execute(
+            "CREATE TABLE qplot_rollback_spill ("
+            "sequence INTEGER PRIMARY KEY, payload BLOB)"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert _immutable_run_names(database_path) == _COMMITTED_RUN_NAMES
+    assert _sqlite_artifact_state(database_path)["-journal"] is None
+    return database_path
+
+
+def _copy_rollback_template(template_path, database_path):
+    shutil.copyfile(template_path, database_path)
+    assert _immutable_run_names(database_path) == _COMMITTED_RUN_NAMES
+
+
+def _begin_spilled_run_name_update(database_path, journal_mode):
+    """Leave all run-name pages spilled under an uncommitted transaction."""
+    writer = sqlite3.connect(database_path)
+    try:
+        selected_mode = writer.execute(
+            f"PRAGMA journal_mode = {journal_mode}"
+        ).fetchone()[0]
+        assert selected_mode == journal_mode.lower()
+        writer.execute("PRAGMA synchronous = FULL")
+        writer.execute("PRAGMA cache_size = 1")
+        writer.execute("PRAGMA cache_spill = 1")
+        writer.execute("BEGIN IMMEDIATE")
+        writer.executemany(
+            "UPDATE runs SET name = ? WHERE run_id = ?",
+            (
+                (run_name, run_id)
+                for run_id, run_name in enumerate(
+                    _UNCOMMITTED_RUN_NAMES,
+                    start=1,
+                )
+            ),
+        )
+        writer.executemany(
+            "INSERT INTO qplot_rollback_spill VALUES (?, ?)",
+            ((index, b"x" * 8192) for index in range(64)),
+        )
+
+        journal_path = readonly_module._journal_path(database_path)
+        journal_contents = journal_path.read_bytes()
+        assert journal_contents.startswith(_ROLLBACK_JOURNAL_MAGIC)
+        assert _immutable_run_names(database_path) == _UNCOMMITTED_RUN_NAMES
+        return writer
+    except Exception:
+        writer.rollback()
+        writer.close()
+        raise
+
+
+def _assert_clear_temporary_access_error(error):
+    message = str(error).lower()
+    assert "busy" in message or "temporar" in message or "changed continuously" in message
+
+
+def _track_readonly_snapshot_directories(monkeypatch):
+    real_temporary_directory = readonly_module.tempfile.TemporaryDirectory
+    snapshot_directories = []
+
+    def tracked_temporary_directory(*args, **kwargs):
+        snapshot = real_temporary_directory(*args, **kwargs)
+        snapshot_directories.append(Path(snapshot.name))
+        return snapshot
+
+    monkeypatch.setattr(
+        readonly_module.tempfile,
+        "TemporaryDirectory",
+        tracked_temporary_directory,
+    )
+    return snapshot_directories
+
+
+def _tracked_provisional_opener(
+    monkeypatch,
+    opener_kind,
+    connection_state,
+    *,
+    fail_snapshot_attachment=False,
+):
+    """Return an opener whose provisional connection closure is observable."""
+    records = []
+    if opener_kind == "sqlite":
+
+        class TrackingConnection(readonly_module._ManagedSQLiteConnection):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._qplot_test_record = SimpleNamespace(
+                    connection=self,
+                    close_count=0,
+                )
+                records.append(self._qplot_test_record)
+                connection_state["opened"] = True
+
+            def attach_snapshot(self, snapshot):
+                if fail_snapshot_attachment:
+                    raise RuntimeError("injected snapshot attachment failure")
+                return super().attach_snapshot(snapshot)
+
+            def close(self):
+                self._qplot_test_record.close_count += 1
+                return super().close()
+
+        def open_sqlite(database_path):
+            return sqlite_read_only_connection(
+                database_path,
+                factory=TrackingConnection,
+            )
+
+        return open_sqlite, records
+
+    assert opener_kind == "qcodes"
+    real_connect = readonly_module.connect
+
+    def tracked_connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        record = SimpleNamespace(connection=connection, close_count=0)
+        original_close = connection.close
+
+        def tracked_close():
+            record.close_count += 1
+            return original_close()
+
+        connection.close = tracked_close
+        records.append(record)
+        connection_state["opened"] = True
+        return connection
+
+    monkeypatch.setattr(readonly_module, "connect", tracked_connect)
+    if fail_snapshot_attachment:
+
+        def fail_attachment(*_args, **_kwargs):
+            raise RuntimeError("injected snapshot attachment failure")
+
+        monkeypatch.setattr(
+            readonly_module,
+            "_attach_snapshot_cleanup",
+            fail_attachment,
+        )
+    return qcodes_read_only_connection, records
 
 
 def _create_qcodes_run(database_path):
@@ -128,16 +688,210 @@ def _create_default_wal_run(database_path):
     return run_id, guid, table_name
 
 
+def _create_large_sparse_wal_header_database(database_path, logical_size):
+    """Create a valid tiny SQLite database with a very large sparse tail."""
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.execute("INSERT INTO probe VALUES ('readable')")
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert database_path.read_bytes()[18:20] == b"\x02\x02"
+    assert not readonly_module._wal_path(database_path).exists()
+    assert not Path(f"{database_path}-shm").exists()
+    _mark_file_sparse_on_windows(database_path)
+    _extend_sparse_file(database_path, logical_size)
+    allocated_size = _allocated_file_size(database_path)
+    assert allocated_size < logical_size // 16
+
+    connection = sqlite3.connect(
+        f"{database_path.resolve().as_uri()}?mode=ro&immutable=1",
+        uri=True,
+    )
+    try:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("SELECT value FROM probe").fetchone() == ("readable",)
+    finally:
+        connection.close()
+
+
+def _mark_file_sparse_on_windows(path):
+    """Tell NTFS to preserve holes before extending the logical file size."""
+    if os.name != "nt":
+        return
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    device_io_control = kernel32.DeviceIoControl
+    device_io_control.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPDWORD,
+        wintypes.LPVOID,
+    )
+    device_io_control.restype = wintypes.BOOL
+    bytes_returned = wintypes.DWORD()
+    with Path(path).open("r+b") as sparse_file:
+        handle = msvcrt.get_osfhandle(sparse_file.fileno())
+        if not device_io_control(
+            handle,
+            0x000900C4,  # FSCTL_SET_SPARSE
+            None,
+            0,
+            None,
+            0,
+            ctypes.byref(bytes_returned),
+            None,
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _extend_sparse_file(path, logical_size):
+    """Extend a sparse file without making the Windows CRT fill the gap."""
+    if os.name != "nt":
+        os.truncate(path, logical_size)
+        return
+
+    # ``os.truncate`` uses the Windows CRT's ``_chsize_s`` implementation,
+    # which can physically write the zero-filled extension even after NTFS has
+    # marked the file sparse.  A one-byte write at the target EOF goes through
+    # the sparse-aware Windows file handle and leaves the intervening range as
+    # an unallocated hole.
+    with Path(path).open("r+b") as sparse_file:
+        sparse_file.seek(logical_size - 1)
+        sparse_file.write(b"\0")
+        sparse_file.flush()
+
+
+def _allocated_file_size(path):
+    """Return allocated bytes so the large-file fixture can prove sparseness."""
+    status = Path(path).stat()
+    if os.name != "nt":
+        blocks = getattr(status, "st_blocks", None)
+        assert blocks is not None
+        return blocks * 512
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_compressed_file_size = kernel32.GetCompressedFileSizeW
+    get_compressed_file_size.argtypes = (wintypes.LPCWSTR, wintypes.LPDWORD)
+    get_compressed_file_size.restype = wintypes.DWORD
+    high_size = wintypes.DWORD()
+    ctypes.set_last_error(0)
+    low_size = get_compressed_file_size(str(path), ctypes.byref(high_size))
+    error_code = ctypes.get_last_error()
+    if low_size == 0xFFFFFFFF and error_code:
+        raise ctypes.WinError(error_code)
+    return (high_size.value << 32) | low_size
+
+
+def _sparse_database_state(database_path):
+    """Capture identity, metadata, sampled bytes, and exact sidecar presence."""
+    status = database_path.stat()
+    sample_size = 4096
+    with database_path.open("rb") as database_file:
+        prefix = database_file.read(sample_size)
+        database_file.seek(max(0, status.st_size // 2))
+        middle = database_file.read(sample_size)
+        database_file.seek(max(0, status.st_size - sample_size))
+        suffix = database_file.read(sample_size)
+    return (
+        database_file_identity(database_path),
+        status.st_dev,
+        status.st_ino,
+        status.st_nlink,
+        status.st_size,
+        status.st_mtime_ns,
+        getattr(status, "st_blocks", None),
+        prefix,
+        middle,
+        suffix,
+        tuple(
+            Path(f"{database_path}{sidecar_suffix}").exists()
+            for sidecar_suffix in ("-wal", "-shm", "-journal")
+        ),
+    )
+
+
+def _create_generated_wal_run(database_path):
+    generate_database(
+        [
+            RunSpecification(
+                1,
+                "wal_signal",
+                "WAL signal",
+                "V",
+                -1.0,
+                1.0,
+                2,
+            )
+        ],
+        database_path,
+    )
+    connection = sqlite3.connect(database_path)
+    try:
+        return connection.execute(
+            "SELECT run_id, guid, result_table_name FROM runs"
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def _install_test_generation_provenance(database_path):
+    """Add the same lineage record used by qPlot's generated databases."""
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute(
+            f"PRAGMA application_id = "
+            f"{file_identity_module.QPLOT_GENERATED_DATABASE_APPLICATION_ID}"
+        )
+        testdata_module._install_generation_provenance(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def _open_active_wal(database_path):
-    writer = sqlite3.connect(database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    testdata_module.enable_generation_provenance_for_writer(writer)
     assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
     writer.execute("PRAGMA wal_autocheckpoint = 0")
+    writer.execute("BEGIN IMMEDIATE")
     writer.execute("CREATE TABLE qplot_wal_marker (value INTEGER)")
     writer.execute("INSERT INTO qplot_wal_marker VALUES (1)")
+    writer.execute("UPDATE runs SET name = name")
     writer.commit()
     assert Path(f"{database_path}-wal").is_file()
     assert Path(f"{database_path}-shm").is_file()
     return writer
+
+
+@pytest.fixture(scope="module")
+def all_snapshot_components_source(tmp_path_factory):
+    """Keep one stable source that exercises every private-copy component."""
+    database_path = (
+        tmp_path_factory.mktemp("all-snapshot-components") / "all-components.db"
+    )
+    _create_generated_wal_run(database_path)
+    cold_journal = _create_cold_rollback_journal(database_path, "PERSIST")
+    writer = _open_active_wal(database_path)
+    readonly_module._journal_path(database_path).write_bytes(cold_journal)
+    try:
+        yield database_path
+    finally:
+        writer.close()
 
 
 def _load_read_only(loader_kind, run_id, guid, database_path):
@@ -220,6 +974,73 @@ def test_qcodes_read_only_connection_rejects_writes(tmp_path):
         conn.close()
 
 
+@pytest.mark.parametrize(
+    "interruption_kind",
+    ["cancellation", "deadline"],
+)
+def test_qcodes_open_is_promptly_interruptible_while_sqlite_is_exclusively_locked(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    interruption_kind,
+):
+    database_path = tmp_path / f"qcodes-{interruption_kind}-locked.db"
+    _copy_rollback_template(latest_schema_rollback_template, database_path)
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    writer_script = (
+        "import sqlite3, sys\n"
+        "connection = sqlite3.connect(sys.argv[1])\n"
+        "connection.execute('PRAGMA journal_mode = DELETE')\n"
+        "connection.execute('BEGIN EXCLUSIVE')\n"
+        "print('ready', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "connection.rollback()\n"
+        "connection.close()\n"
+    )
+    writer = _start_interactive_sqlite_process(database_path, writer_script)
+
+    controls = {}
+    busy_observed = []
+    if interruption_kind == "cancellation":
+        real_error_is_busy = readonly_module._sqlite_error_is_busy
+
+        def mark_first_busy_error(error):
+            is_busy = real_error_is_busy(error)
+            if is_busy:
+                busy_observed.append(True)
+            return is_busy
+
+        monkeypatch.setattr(
+            readonly_module,
+            "_sqlite_error_is_busy",
+            mark_first_busy_error,
+        )
+        controls["cancelled_callback"] = lambda: bool(busy_observed)
+        expected_error = readonly_module.ReadOnlyDatabaseCancelledError
+    else:
+        controls["deadline"] = readonly_module.time.monotonic() + 0.15
+        expected_error = TimeoutError
+
+    started = perf_counter()
+    try:
+        with pytest.raises(expected_error):
+            readonly_module.connect(
+                database_path,
+                read_only=True,
+                **controls,
+            )
+        assert perf_counter() - started < 1
+        assert writer.poll() is None
+        if interruption_kind == "cancellation":
+            assert busy_observed
+        assert snapshot_directories == []
+    finally:
+        _stop_interactive_sqlite_process(writer)
+
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
 @pytest.mark.parametrize("loader_kind", ["guid", "run_id"])
 def test_database_dataset_owns_connection_until_dataset_handle_closes(
     tmp_path,
@@ -230,7 +1051,7 @@ def test_database_dataset_owns_connection_until_dataset_handle_closes(
     original_database_path = qcodes.config.core.db_location
     writer = None
     try:
-        run_id, guid, _table_name = _create_default_wal_run(database_path)
+        run_id, guid, _table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         source_state = _directory_state(tmp_path)
         records = _track_explicit_qcodes_connections(monkeypatch)
@@ -267,9 +1088,10 @@ def test_missing_result_table_closes_non_owning_dataset_connection(
     original_database_path = qcodes.config.core.db_location
     writer = None
     try:
-        run_id, guid, table_name = _create_default_wal_run(database_path)
+        run_id, guid, table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         escaped_table_name = table_name.replace('"', '""')
+        writer.execute("BEGIN IMMEDIATE")
         writer.execute(f'DROP TABLE "{escaped_table_name}"')
         writer.commit()
         source_state = _directory_state(tmp_path)
@@ -324,7 +1146,8 @@ def test_exported_netcdf_closes_non_owning_dataset_connection(
         record = records[0]
         assert record.close_count == 1
         _assert_connection_closed(record.connection)
-        assert record.snapshot_directory is None
+        assert record.snapshot_directory is not None
+        assert not record.snapshot_directory.exists()
         assert _directory_state(tmp_path) == source_state
     finally:
         if writable_dataset is not None:
@@ -340,9 +1163,10 @@ def test_repeated_in_memory_loads_release_connections_and_wal_snapshots(
     original_database_path = qcodes.config.core.db_location
     writer = None
     try:
-        run_id, guid, table_name = _create_default_wal_run(database_path)
+        run_id, guid, table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         escaped_table_name = table_name.replace('"', '""')
+        writer.execute("BEGIN IMMEDIATE")
         writer.execute(f'DROP TABLE "{escaped_table_name}"')
         writer.commit()
         source_state = _directory_state(tmp_path)
@@ -381,7 +1205,7 @@ def test_loader_exception_closes_connection_and_wal_snapshot(
     original_database_path = qcodes.config.core.db_location
     writer = None
     try:
-        run_id, guid, _table_name = _create_default_wal_run(database_path)
+        run_id, guid, _table_name = _create_generated_wal_run(database_path)
         writer = _open_active_wal(database_path)
         source_state = _directory_state(tmp_path)
         records = _track_explicit_qcodes_connections(monkeypatch)
@@ -557,12 +1381,320 @@ def test_completed_default_wal_database_opens_from_read_only_directory(
         qcodes.config.core.db_location = original_database_path
 
 
-def test_live_wal_refreshes_see_new_rows_without_source_changes(tmp_path):
-    database_path = tmp_path / "live.db"
+@pytest.mark.parametrize(
+    "opener",
+    [sqlite_read_only_connection, qcodes_read_only_connection],
+    ids=["sqlite", "qcodes"],
+)
+def test_checkpointed_wal_format_uses_private_immutable_snapshot(
+    tmp_path,
+    monkeypatch,
+    opener,
+):
+    database_path = tmp_path / "checkpointed-wal.db"
     original_database_path = qcodes.config.core.db_location
     try:
+        _create_default_wal_run(database_path)
+        assert database_path.read_bytes()[18:20] == b"\x02\x02"
+        assert not readonly_module._wal_path(database_path).exists()
+        assert not readonly_module._journal_path(database_path).exists()
+
+        source_state = _sqlite_artifact_state(database_path)
+        snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+        connection = opener(database_path)
+        try:
+            opened_path = Path(
+                connection.execute("PRAGMA database_list").fetchone()[2]
+            ).resolve()
+            assert opened_path != database_path.resolve()
+            assert opened_path.parent in {
+                snapshot_directory.resolve()
+                for snapshot_directory in snapshot_directories
+            }
+            assert opened_path.is_file()
+            assert _sqlite_artifact_state(database_path) == source_state
+        finally:
+            connection.close()
+
+        assert all(not path.exists() for path in snapshot_directories)
+        assert _sqlite_artifact_state(database_path) == source_state
+    finally:
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_snapshot_copy_with_worker_controls_prefers_copy_on_write_clone(
+    tmp_path,
+    monkeypatch,
+):
+    source_path = tmp_path / "source.db"
+    destination_path = tmp_path / "snapshot.db"
+    source_path.write_bytes(b"private snapshot contents")
+    clone_calls = []
+    cancellation_checks = []
+
+    def clone_copy(source, destination):
+        clone_calls.append((Path(source), Path(destination)))
+        shutil.copyfile(source, destination)
+        return True
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        clone_copy,
+    )
+
+    result = readonly_module._copy_file_cooperatively(
+        source_path,
+        destination_path,
+        cancelled_callback=lambda: cancellation_checks.append(True) and False,
+    )
+
+    assert result == destination_path
+    assert clone_calls == [(source_path, destination_path)]
+    assert cancellation_checks == [True, True]
+    assert destination_path.read_bytes() == source_path.read_bytes()
+
+
+def test_copy_on_write_clone_is_an_independent_private_file(tmp_path):
+    source_path = tmp_path / "source.db"
+    destination_path = tmp_path / "snapshot.db"
+    source_path.write_bytes(b"source")
+
+    if not readonly_module._clone_file_if_supported(
+            source_path,
+            destination_path,
+            ):
+        pytest.skip("The test filesystem does not support copy-on-write clones")
+
+    destination_path.write_bytes(b"snapshot")
+
+    assert source_path.read_bytes() == b"source"
+    assert destination_path.read_bytes() == b"snapshot"
+    assert database_file_identity(source_path) != database_file_identity(
+        destination_path
+    )
+
+
+@pytest.mark.parametrize(
+    "destination_name",
+    [
+        "database.db",
+        "database-main.db",
+        "database.db-wal",
+        "database.db-journal",
+    ],
+    ids=["main", "retained-main", "wal", "journal"],
+)
+def test_cancellation_during_each_snapshot_component_cleans_partial_copy(
+    monkeypatch,
+    all_snapshot_components_source,
+    destination_name,
+):
+    database_path = all_snapshot_components_source
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        lambda *_args: False,
+    )
+
+    real_copy = readonly_module._copy_file_cooperatively
+    active_copy = {"destination": None, "checks": 0}
+    cancellation_checkpoints = []
+
+    def tracked_copy(source, destination, *args, **kwargs):
+        active_copy["destination"] = Path(destination).name
+        active_copy["checks"] = 0
+        try:
+            return real_copy(source, destination, *args, **kwargs)
+        finally:
+            active_copy["destination"] = None
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        tracked_copy,
+    )
+
+    def cancel_after_a_partial_chunk():
+        if active_copy["destination"] != destination_name:
+            return False
+        active_copy["checks"] += 1
+        # The helper checks before opening, before reading, after reading, and
+        # after writing. Its fifth check is therefore between chunks.
+        if active_copy["checks"] == 5:
+            cancellation_checkpoints.append(destination_name)
+            return True
+        return False
+
+    with pytest.raises(InterruptedError) as caught:
+        sqlite_read_only_connection(
+            database_path,
+            cancelled_callback=cancel_after_a_partial_chunk,
+        )
+
+    assert isinstance(
+        caught.value,
+        readonly_module.ReadOnlyDatabaseCancelledError,
+    )
+    assert cancellation_checkpoints == [destination_name]
+    assert len(snapshot_directories) == 1
+    assert all(not path.exists() for path in snapshot_directories)
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows does not permit replacing the copier's open source handle.",
+)
+def test_main_replacement_between_snapshot_chunks_is_rejected_without_source_writes(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "chunk-race.db"
+    replacement_path = tmp_path / "chunk-race-replacement.db"
+    _create_default_wal_run(database_path)
+    shutil.copy2(database_path, replacement_path)
+    expected_identity = database_file_identity(database_path)
+    assert expected_identity is not None
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        lambda *_args: False,
+    )
+    replacement_states = []
+    real_copy = readonly_module._copy_file_cooperatively
+    main_copy_checks = []
+
+    def tracked_copy(source, destination, *args, **kwargs):
+        if Path(destination).name == "database.db":
+            main_copy_checks.clear()
+        return real_copy(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        tracked_copy,
+    )
+
+    def replace_after_a_partial_chunk():
+        if replacement_states or not snapshot_directories:
+            return False
+        if not (snapshot_directories[-1] / "database.db").exists():
+            return False
+        main_copy_checks.append(True)
+        if len(main_copy_checks) != 4:
+            return False
+        os.replace(replacement_path, database_path)
+        replacement_states.append(_sqlite_artifact_state(database_path))
+        return False
+
+    with pytest.raises(DatabaseInstanceChangedError, match="replaced"):
+        sqlite_read_only_connection(
+            database_path,
+            expected_database_identity=expected_identity,
+            cancelled_callback=replace_after_a_partial_chunk,
+        )
+
+    assert len(main_copy_checks) >= 4
+    assert len(replacement_states) == 1
+    assert snapshot_directories
+    assert all(not path.exists() for path in snapshot_directories)
+    replacement_state = replacement_states[0]
+    assert _sqlite_artifact_state(database_path) == replacement_state
+    assert replacement_state[""][0] == source_state[""][0]
+    assert replacement_state[""][5:] == source_state[""][5:]
+    assert replacement_state[""][1] != source_state[""][1]
+    for suffix in _SQLITE_ARTIFACT_SUFFIXES[1:]:
+        assert replacement_state[suffix] == source_state[suffix]
+
+
+def test_access_probe_does_not_copy_large_sparse_wal_header_database(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "large-sparse-wal-header.db"
+    _create_large_sparse_wal_header_database(
+        database_path,
+        logical_size=8 * 1024**3,
+    )
+    source_state = _sparse_database_state(database_path)
+    full_snapshot_attempts = []
+
+    def reject_full_snapshot(*args, **kwargs):
+        full_snapshot_attempts.append((args, kwargs))
+        raise AssertionError("The bounded access probe attempted a full snapshot")
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_prepare_read_target",
+        reject_full_snapshot,
+    )
+
+    from qplot.datahandling import database as database_module
+
+    guard_directory = tmp_path / "subprocess-guard"
+    guard_directory.mkdir()
+    guard_marker = guard_directory / "active"
+    (guard_directory / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        "from qplot.datahandling import readonly\n"
+        f"Path({str(guard_marker)!r}).write_text('active', encoding='utf-8')\n"
+        "def reject_snapshot(*args, **kwargs):\n"
+        "    raise AssertionError('bounded probe attempted a full snapshot')\n"
+        "readonly._prepare_read_target = reject_snapshot\n",
+        encoding="utf-8",
+    )
+    real_subprocess_run = database_module.subprocess.run
+
+    def run_with_subprocess_snapshot_guard(command, **kwargs):
+        environment = os.environ.copy()
+        prior_pythonpath = environment.get("PYTHONPATH")
+        environment["PYTHONPATH"] = (
+            str(guard_directory)
+            if not prior_pythonpath
+            else f"{guard_directory}{os.pathsep}{prior_pythonpath}"
+        )
+        kwargs["env"] = environment
+        return real_subprocess_run(command, **kwargs)
+
+    monkeypatch.setattr(
+        database_module.subprocess,
+        "run",
+        run_with_subprocess_snapshot_guard,
+    )
+
+    readonly_module.probe_read_only_database(database_path)
+
+    assert full_snapshot_attempts == []
+    assert database_access_error(database_path) is None
+    assert guard_marker.read_text(encoding="utf-8") == "active"
+    assert _sparse_database_state(database_path) == source_state
+
+
+def test_provenance_marked_live_wal_refreshes_see_new_rows_without_source_changes(
+    tmp_path,
+):
+    database_path = tmp_path / "live.db"
+    original_database_path = qcodes.config.core.db_location
+    writer = None
+    try:
         initialise_or_create_database_at(database_path)
-        experiment = load_or_create_experiment("live_wal", sample_name="wal")
+        _install_test_generation_provenance(database_path)
+        writer = testdata_module._connect_writable_exact_path(database_path)
+        testdata_module.enable_generation_provenance_for_writer(writer)
+        assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        experiment = load_or_create_experiment(
+            "live_wal",
+            sample_name="wal",
+            conn=writer,
+        )
         setpoint = ManualParameter("live_setpoint")
         signal = ManualParameter("live_signal")
         measurement = Measurement(exp=experiment, name="live_wal_run")
@@ -661,6 +1793,8 @@ def test_live_wal_refreshes_see_new_rows_without_source_changes(tmp_path):
         dataset.conn.close()
         experiment.conn.close()
     finally:
+        if writer is not None:
+            writer.close()
         qcodes.config.core.db_location = original_database_path
 
 
@@ -949,6 +2083,371 @@ def test_database_access_probe_rejects_replacement_before_child_open(
             writer.close()
 
 
+def test_database_access_probe_rejects_genuinely_blocked_sqlite_reader(tmp_path):
+    database_path = tmp_path / "exclusive-lock.db"
+    writer = sqlite3.connect(database_path)
+    try:
+        writer.execute("PRAGMA journal_mode = DELETE")
+        writer.execute("CREATE TABLE probe (value TEXT)")
+        writer.execute("INSERT INTO probe VALUES ('committed')")
+        writer.commit()
+        source_state = _sqlite_artifact_state(database_path)
+        writer.execute("BEGIN EXCLUSIVE")
+        assert not readonly_module._journal_path(database_path).exists()
+
+        error = database_access_error(database_path, timeout=2.5)
+        after_probe_state = _sqlite_artifact_state(database_path)
+
+        assert error is not None
+        message = str(error).lower()
+        assert "locked" in message or "busy" in message or "timed out" in message
+        assert after_probe_state == source_state
+    finally:
+        if writer.in_transaction:
+            writer.rollback()
+        writer.close()
+
+
+def test_stable_rollback_mode_probe_succeeds_without_source_changes(tmp_path):
+    database_path = tmp_path / "stable-rollback.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute(
+            "PRAGMA journal_mode = DELETE"
+        ).fetchone() == ("delete",)
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.execute("INSERT INTO probe VALUES ('committed')")
+        connection.commit()
+    finally:
+        connection.close()
+    source_state = _sqlite_artifact_state(database_path)
+
+    readonly_module.probe_read_only_database(
+        database_path,
+        _check_sqlite_lock_bytes=True,
+    )
+    assert database_access_error(database_path) is None
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="This regression exercises POSIX process-associated fcntl locks.",
+)
+def test_locked_source_validation_keeps_shared_lock_until_context_exit(tmp_path):
+    database_path = tmp_path / "locked-validation.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.commit()
+    finally:
+        connection.close()
+
+    source_state = _sqlite_artifact_state(database_path)
+    source_signature = readonly_module._source_signature(database_path)
+    assert source_signature.stable
+    contender_script = (
+        "import sqlite3, sys\n"
+        "connection = sqlite3.connect(sys.argv[1], timeout=0)\n"
+        "try:\n"
+        "    connection.execute('BEGIN EXCLUSIVE')\n"
+        "except sqlite3.OperationalError:\n"
+        "    print('locked')\n"
+        "else:\n"
+        "    print('acquired')\n"
+        "    connection.rollback()\n"
+        "finally:\n"
+        "    connection.close()\n"
+    )
+
+    with readonly_module._sqlite_shared_lock_bytes(database_path) as database_file:
+        assert readonly_module._source_matches_under_sqlite_lock(
+            database_path,
+            source_signature,
+            database_file,
+        )
+        contender = subprocess.run(
+            [sys.executable, "-c", contender_script, str(database_path)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        assert contender.stdout.strip() == "locked"
+
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="The deterministic writer unlinks its open SHM on POSIX.",
+)
+def test_quick_probe_never_recreates_shm_during_delete_to_wal_race(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "probe-delete-to-wal.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.execute("INSERT INTO probe VALUES ('committed')")
+        connection.commit()
+    finally:
+        connection.close()
+
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    writer_script = (
+        "import os, sqlite3, sys\n"
+        "path = sys.argv[1]\n"
+        "connection = sqlite3.connect(path)\n"
+        "print('ready', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "assert connection.execute('PRAGMA journal_mode = WAL').fetchone()[0] "
+        "== 'wal'\n"
+        "connection.execute('PRAGMA wal_autocheckpoint = 0')\n"
+        "connection.execute(\"INSERT INTO probe VALUES ('wal')\")\n"
+        "connection.commit()\n"
+        "shm_path = path + '-shm'\n"
+        "if os.path.exists(shm_path):\n"
+        "    os.unlink(shm_path)\n"
+        "print('transitioned', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "connection.close()\n"
+    )
+    writer = _start_interactive_sqlite_process(database_path, writer_script)
+    real_probe = readonly_module._probe_sqlite_user_version
+    intentional_state = []
+
+    def transition_before_immutable_probe(*args, **kwargs):
+        if not intentional_state:
+            assert writer.stdin is not None
+            assert writer.stdout is not None
+            writer.stdin.write("transition\n")
+            writer.stdin.flush()
+            assert writer.stdout.readline().strip() == "transitioned"
+            state = _sqlite_artifact_state(database_path)
+            assert state["-wal"] is not None
+            assert state["-shm"] is None
+            intentional_state.append(state)
+        return real_probe(*args, **kwargs)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_probe_sqlite_user_version",
+        transition_before_immutable_probe,
+    )
+    try:
+        with pytest.raises(readonly_module.UnverifiableDatabaseWalError):
+            readonly_module.probe_read_only_database(database_path)
+
+        assert len(intentional_state) == 1
+        assert _sqlite_artifact_state(database_path) == intentional_state[0]
+        assert not Path(f"{database_path}-shm").exists()
+        assert snapshot_directories == []
+    finally:
+        _stop_interactive_sqlite_process(writer)
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="The deterministic writer unlinks its open SHM on POSIX.",
+)
+@pytest.mark.parametrize(
+    "opener",
+    [sqlite_read_only_connection, qcodes_read_only_connection],
+    ids=["sqlite", "qcodes"],
+)
+def test_full_opener_never_recreates_shm_during_delete_to_wal_race(
+    tmp_path,
+    monkeypatch,
+    opener,
+):
+    database_path = tmp_path / "opener-delete-to-wal.db"
+    _create_generated_wal_run(database_path)
+    setup_connection = sqlite3.connect(database_path)
+    try:
+        assert setup_connection.execute(
+            "PRAGMA journal_mode = DELETE"
+        ).fetchone() == ("delete",)
+    finally:
+        setup_connection.close()
+
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    writer_script = (
+        "import os, sqlite3, sys\n"
+        "path = sys.argv[1]\n"
+        "connection = sqlite3.connect(path)\n"
+        "print('ready', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "assert connection.execute('PRAGMA journal_mode = WAL').fetchone()[0] "
+        "== 'wal'\n"
+        "connection.execute('PRAGMA wal_autocheckpoint = 0')\n"
+        "connection.execute('UPDATE runs SET name = name')\n"
+        "connection.commit()\n"
+        "shm_path = path + '-shm'\n"
+        "if os.path.exists(shm_path):\n"
+        "    os.unlink(shm_path)\n"
+        "print('transitioned', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "connection.close()\n"
+    )
+    writer = _start_interactive_sqlite_process(database_path, writer_script)
+    real_copy = readonly_module._copy_file_cooperatively
+    intentional_state = []
+
+    def transition_before_first_main_copy(source, destination, **kwargs):
+        if Path(source).resolve() == database_path.resolve() and not intentional_state:
+            assert writer.stdin is not None
+            assert writer.stdout is not None
+            writer.stdin.write("transition\n")
+            writer.stdin.flush()
+            assert writer.stdout.readline().strip() == "transitioned"
+            state = _sqlite_artifact_state(database_path)
+            assert state["-wal"] is not None
+            assert state["-shm"] is None
+            intentional_state.append(state)
+        return real_copy(source, destination, **kwargs)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        transition_before_first_main_copy,
+    )
+    try:
+        connection = opener(database_path)
+        try:
+            assert connection.execute("SELECT COUNT(*) FROM runs").fetchone() == (1,)
+            assert len(intentional_state) == 1
+            assert _sqlite_artifact_state(database_path) == intentional_state[0]
+            assert not Path(f"{database_path}-shm").exists()
+            assert sum(path.exists() for path in snapshot_directories) == 1
+        finally:
+            connection.close()
+
+        assert snapshot_directories
+        assert all(not path.exists() for path in snapshot_directories)
+        assert _sqlite_artifact_state(database_path) == intentional_state[0]
+    finally:
+        _stop_interactive_sqlite_process(writer)
+
+
+def test_database_access_probe_cancellation_kills_and_reaps_blocked_child(
+    tmp_path,
+    monkeypatch,
+):
+    from qplot.datahandling import database as database_module
+
+    database_path = tmp_path / "cancel-blocked-probe.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("CREATE TABLE probe (value TEXT)")
+        connection.commit()
+    finally:
+        connection.close()
+    source_state = _sqlite_artifact_state(database_path)
+
+    class BlockedProcess:
+        def __init__(self):
+            self.returncode = None
+            self.kill_calls = 0
+            self.communicate_timeouts = []
+
+        def communicate(self, timeout=None):
+            self.communicate_timeouts.append(timeout)
+            if self.kill_calls:
+                self.returncode = -9
+                return "", ""
+            raise database_module.subprocess.TimeoutExpired(
+                ["blocked-probe"],
+                timeout,
+            )
+
+        def kill(self):
+            self.kill_calls += 1
+
+    blocked_process = BlockedProcess()
+    popen_calls = []
+
+    def open_blocked_process(command, **kwargs):
+        popen_calls.append((command, kwargs))
+        return blocked_process
+
+    monkeypatch.setattr(
+        database_module.subprocess,
+        "Popen",
+        open_blocked_process,
+    )
+    cancellation_checks = 0
+
+    def cancel_after_one_poll():
+        nonlocal cancellation_checks
+        cancellation_checks += 1
+        return bool(blocked_process.communicate_timeouts)
+
+    no_result = object()
+    result = no_result
+    cancel_started = perf_counter()
+    with pytest.raises(InterruptedError, match="cancelled"):
+        result = database_module.database_access_error(
+            database_path,
+            timeout=30,
+            cancelled_callback=cancel_after_one_poll,
+        )
+
+    assert perf_counter() - cancel_started < 1
+    assert result is no_result
+    assert len(popen_calls) == 1
+    assert cancellation_checks >= 3
+    assert blocked_process.kill_calls == 1
+    assert len(blocked_process.communicate_timeouts) == 2
+    poll_timeout, reap_timeout = blocked_process.communicate_timeouts
+    assert 0 < poll_timeout <= 0.05
+    assert reap_timeout is None
+    assert blocked_process.returncode == -9
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+def test_database_access_probe_propagates_child_deadline_timeout(
+    tmp_path,
+    monkeypatch,
+):
+    from qplot.datahandling import database as database_module
+
+    child_message = "Child probe deadline exceeded."
+    child_error = json.dumps({
+        "type": TimeoutError.__name__,
+        "message": child_message,
+    })
+    completed_probe = SimpleNamespace(
+        returncode=1,
+        stdout="",
+        stderr=f"{database_module._DATABASE_ACCESS_ERROR_PREFIX}{child_error}",
+    )
+    run_calls = []
+
+    def finish_with_child_timeout(command, **kwargs):
+        run_calls.append((command, kwargs))
+        return completed_probe
+
+    monkeypatch.setattr(
+        database_module.subprocess,
+        "run",
+        finish_with_child_timeout,
+    )
+    deadline = database_module.monotonic() + 10
+
+    with pytest.raises(TimeoutError, match=child_message):
+        database_module.database_access_error(
+            tmp_path / "deadline-probe.db",
+            deadline=deadline,
+        )
+
+    assert len(run_calls) == 1
+    assert 0 < run_calls[0][1]["timeout"] <= 3
+
+
 def test_unstable_live_wal_fails_instead_of_using_immutable_data(
     tmp_path,
     monkeypatch,
@@ -971,9 +2470,13 @@ def test_unstable_live_wal_fails_instead_of_using_immutable_data(
         def changing_signature(path):
             nonlocal signature_call
             signature_call += 1
-            database_signature, wal_signature = real_signature(path)
+            signature = real_signature(path)
+            wal_signature = signature.wal
             assert wal_signature is not None
-            return database_signature, (*wal_signature[:-1], signature_call)
+            return replace(
+                signature,
+                wal=(*wal_signature[:-1], signature_call),
+            )
 
         monkeypatch.setattr(readonly, "_source_signature", changing_signature)
         monkeypatch.setattr(readonly, "WAL_SNAPSHOT_ATTEMPTS", 2)
@@ -984,3 +2487,460 @@ def test_unstable_live_wal_fails_instead_of_using_immutable_data(
         assert _directory_state(tmp_path) == original_state
     finally:
         writer.close()
+
+
+@pytest.mark.parametrize("journal_mode", ["DELETE", "PERSIST", "TRUNCATE"])
+@pytest.mark.parametrize("outcome", ["rollback", "commit"])
+def test_spilled_rollback_journal_never_exposes_uncommitted_run_names(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    journal_mode,
+    outcome,
+):
+    database_path = tmp_path / f"{journal_mode.lower()}-{outcome}.db"
+    _copy_rollback_template(latest_schema_rollback_template, database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    writer = _begin_spilled_run_name_update(database_path, journal_mode)
+    try:
+        for opener in (
+            sqlite_read_only_connection,
+            qcodes_read_only_connection,
+        ):
+            try:
+                names = _run_names_without_source_changes(opener, database_path)
+            except ReadOnlyDatabaseAccessError as error:
+                _assert_clear_temporary_access_error(error)
+            else:
+                assert names == _COMMITTED_RUN_NAMES
+            assert all(not path.exists() for path in snapshot_directories)
+
+        if outcome == "rollback":
+            writer.rollback()
+            expected_names = _COMMITTED_RUN_NAMES
+        else:
+            writer.commit()
+            expected_names = _UNCOMMITTED_RUN_NAMES
+
+        journal_path = readonly_module._journal_path(database_path)
+        if journal_mode == "DELETE":
+            assert not journal_path.exists()
+        elif journal_mode == "PERSIST":
+            journal_contents = journal_path.read_bytes()
+            assert len(journal_contents) > 512
+            assert journal_contents[:8] == b"\x00" * 8
+        else:
+            assert journal_mode == "TRUNCATE"
+            assert journal_path.read_bytes() == b""
+
+        for opener in (
+            sqlite_read_only_connection,
+            qcodes_read_only_connection,
+        ):
+            assert (
+                _run_names_without_source_changes(opener, database_path)
+                == expected_names
+            )
+            assert all(not path.exists() for path in snapshot_directories)
+    finally:
+        if writer.in_transaction:
+            writer.rollback()
+        writer.close()
+
+
+def _install_detached_hot_rollback_journal(template_path, database_path):
+    """Install a genuine hot journal with no process retaining its file handle."""
+    _copy_rollback_template(template_path, database_path)
+    writer = _begin_spilled_run_name_update(database_path, "DELETE")
+    journal_path = readonly_module._journal_path(database_path)
+    journal_contents = journal_path.read_bytes()
+    writer.rollback()
+    writer.close()
+
+    assert not journal_path.exists()
+    assert _immutable_run_names(database_path) == _COMMITTED_RUN_NAMES
+    journal_path.write_bytes(journal_contents)
+    assert journal_path.read_bytes().startswith(_ROLLBACK_JOURNAL_MAGIC)
+    return journal_path
+
+
+@pytest.mark.parametrize("race_kind", ["mutate", "replace"])
+def test_continuously_changing_rollback_journal_fails_closed_and_cleans_snapshots(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    race_kind,
+):
+    database_path = tmp_path / f"changing-{race_kind}.db"
+    journal_path = _install_detached_hot_rollback_journal(
+        latest_schema_rollback_template,
+        database_path,
+    )
+    attempts = 2
+    replacement_paths = []
+    if race_kind == "replace":
+        for index in range(attempts):
+            replacement_path = tmp_path / f"journal-replacement-{index}"
+            shutil.copy2(journal_path, replacement_path)
+            replacement_paths.append(replacement_path)
+
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    real_copyfile = readonly_module._copy_file_cooperatively
+    injection_states = []
+    journal_copy_count = 0
+
+    def copyfile_then_change_journal(source, destination, *args, **kwargs):
+        nonlocal journal_copy_count
+        result = real_copyfile(source, destination, *args, **kwargs)
+        if Path(source) != journal_path:
+            return result
+
+        if race_kind == "mutate":
+            with journal_path.open("r+b") as journal_file:
+                journal_file.seek(100)
+                original_byte = journal_file.read(1)
+                assert original_byte
+                journal_file.seek(100)
+                journal_file.write(bytes((original_byte[0] ^ 1,)))
+                journal_file.flush()
+            status = journal_path.stat()
+            changed_mtime = status.st_mtime_ns + 1_000_000 + journal_copy_count
+            os.utime(
+                journal_path,
+                ns=(status.st_atime_ns, changed_mtime),
+            )
+        else:
+            os.replace(replacement_paths[journal_copy_count], journal_path)
+
+        journal_copy_count += 1
+        injection_states.append(_sqlite_artifact_state(database_path))
+        return result
+
+    monkeypatch.setattr(readonly_module, "WAL_SNAPSHOT_ATTEMPTS", attempts)
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        copyfile_then_change_journal,
+    )
+
+    with pytest.raises(ReadOnlyDatabaseAccessError) as caught:
+        sqlite_read_only_connection(database_path)
+
+    _assert_clear_temporary_access_error(caught.value)
+    assert journal_copy_count == attempts
+    assert len(snapshot_directories) == attempts
+    assert all(not path.exists() for path in snapshot_directories)
+    assert _sqlite_artifact_state(database_path) == injection_states[-1]
+    journal_states = [state["-journal"] for state in injection_states]
+    assert all(state is not None for state in journal_states)
+    if race_kind == "mutate":
+        assert len({state[0] for state in journal_states}) == attempts
+        assert len({state[1] for state in journal_states}) == 1
+    else:
+        assert len({state[0] for state in journal_states}) == 1
+        assert len({state[1] for state in journal_states}) == attempts
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    ["main_copy", "journal_copy", "private_recovery", "instance_validation"],
+)
+def test_rollback_snapshot_cleanup_on_failure(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    failure_stage,
+):
+    database_path = tmp_path / f"cleanup-{failure_stage}.db"
+    journal_path = _install_detached_hot_rollback_journal(
+        latest_schema_rollback_template,
+        database_path,
+    )
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+
+    if failure_stage in {"main_copy", "journal_copy"}:
+        real_copyfile = readonly_module._copy_file_cooperatively
+        failed_source = database_path if failure_stage == "main_copy" else journal_path
+
+        def fail_selected_copy(source, destination, *args, **kwargs):
+            if Path(source) == failed_source:
+                raise OSError(f"injected {failure_stage} failure")
+            return real_copyfile(source, destination, *args, **kwargs)
+
+        monkeypatch.setattr(
+            readonly_module,
+            "_copy_file_cooperatively",
+            fail_selected_copy,
+        )
+    elif failure_stage == "private_recovery":
+
+        def fail_private_recovery(*_args, **_kwargs):
+            raise ReadOnlyDatabaseAccessError("injected private recovery failure")
+
+        monkeypatch.setattr(
+            readonly_module,
+            "_recover_private_rollback_journal",
+            fail_private_recovery,
+        )
+    else:
+        assert failure_stage == "instance_validation"
+
+        def fail_instance_validation(*_args, **_kwargs):
+            raise DatabaseInstanceChangedError("injected instance validation failure")
+
+        monkeypatch.setattr(
+            readonly_module,
+            "_require_prepared_database_instance",
+            fail_instance_validation,
+        )
+
+    with pytest.raises(ReadOnlyDatabaseAccessError):
+        sqlite_read_only_connection(database_path)
+
+    assert len(snapshot_directories) == 1
+    assert all(not path.exists() for path in snapshot_directories)
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.parametrize("opener_kind", ["sqlite", "qcodes"])
+@pytest.mark.parametrize("source_event", ["replacement", "unlink"])
+def test_source_instance_change_after_connection_open_closes_provisional_connection(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    opener_kind,
+    source_event,
+):
+    database_path = tmp_path / f"post-open-{opener_kind}-{source_event}.db"
+    _copy_rollback_template(latest_schema_rollback_template, database_path)
+    source_state = _sqlite_artifact_state(database_path)
+    connection_state = {"opened": False}
+    opener, records = _tracked_provisional_opener(
+        monkeypatch,
+        opener_kind,
+        connection_state,
+    )
+    real_source_signature = readonly_module._source_signature
+    injected = []
+
+    def source_signature_with_instance_change(path):
+        signature = real_source_signature(path)
+        if connection_state["opened"] and not injected:
+            injected.append(source_event)
+            if source_event == "unlink":
+                return replace(
+                    signature,
+                    database=None,
+                    database_identity=None,
+                )
+            return replace(
+                signature,
+                database_identity=("test-replacement", 17, 23),
+            )
+        return signature
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_source_signature",
+        source_signature_with_instance_change,
+    )
+
+    with pytest.raises(DatabaseInstanceChangedError, match="replaced"):
+        opener(database_path)
+
+    assert injected == [source_event]
+    assert len(records) == 1
+    assert records[0].close_count == 1
+    _assert_connection_closed(records[0].connection)
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.parametrize("opener_kind", ["sqlite", "qcodes"])
+def test_post_open_source_signature_error_closes_connection_and_snapshot(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    opener_kind,
+):
+    database_path = tmp_path / f"post-open-signature-{opener_kind}.db"
+    _install_detached_hot_rollback_journal(
+        latest_schema_rollback_template,
+        database_path,
+    )
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    connection_state = {"opened": False}
+    opener, records = _tracked_provisional_opener(
+        monkeypatch,
+        opener_kind,
+        connection_state,
+    )
+    real_source_signature = readonly_module._source_signature
+
+    def fail_signature_after_open(path):
+        if connection_state["opened"]:
+            raise OSError("injected post-open signature failure")
+        return real_source_signature(path)
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_source_signature",
+        fail_signature_after_open,
+    )
+
+    with pytest.raises(
+        ReadOnlyDatabaseAccessError,
+        match="Could not validate the database instance and sidecars",
+    ) as caught:
+        opener(database_path)
+
+    assert isinstance(caught.value.__cause__, OSError)
+    assert len(records) == 1
+    assert records[0].close_count == 1
+    _assert_connection_closed(records[0].connection)
+    assert len(snapshot_directories) == 1
+    assert all(not path.exists() for path in snapshot_directories)
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.parametrize("opener_kind", ["sqlite", "qcodes"])
+def test_snapshot_attachment_failure_closes_connection_and_snapshot(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    opener_kind,
+):
+    database_path = tmp_path / f"attachment-failure-{opener_kind}.db"
+    _install_detached_hot_rollback_journal(
+        latest_schema_rollback_template,
+        database_path,
+    )
+    source_state = _sqlite_artifact_state(database_path)
+    snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+    connection_state = {"opened": False}
+    opener, records = _tracked_provisional_opener(
+        monkeypatch,
+        opener_kind,
+        connection_state,
+        fail_snapshot_attachment=True,
+    )
+
+    with pytest.raises(RuntimeError, match="snapshot attachment failure"):
+        opener(database_path)
+
+    assert len(records) == 1
+    assert records[0].close_count == 1
+    _assert_connection_closed(records[0].connection)
+    assert len(snapshot_directories) == 1
+    assert all(not path.exists() for path in snapshot_directories)
+    assert _sqlite_artifact_state(database_path) == source_state
+
+
+@pytest.mark.parametrize(
+    "opener",
+    [sqlite_read_only_connection, qcodes_read_only_connection],
+    ids=["sqlite", "qcodes"],
+)
+def test_simultaneous_hot_journal_and_wal_fails_closed(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    opener,
+):
+    database_path = tmp_path / "hot-journal-and-wal.db"
+    wal_source_path = tmp_path / "wal-source.db"
+    _install_detached_hot_rollback_journal(
+        latest_schema_rollback_template,
+        database_path,
+    )
+    _copy_rollback_template(latest_schema_rollback_template, wal_source_path)
+    wal_writer = sqlite3.connect(wal_source_path)
+    try:
+        assert wal_writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        wal_writer.execute("PRAGMA wal_autocheckpoint = 0")
+        wal_writer.execute("UPDATE runs SET name = 'WAL_COMMITTED'")
+        wal_writer.commit()
+        wal_source = readonly_module._wal_path(wal_source_path)
+        assert wal_source.is_file()
+        shutil.copyfile(wal_source, readonly_module._wal_path(database_path))
+
+        source_state = _sqlite_artifact_state(database_path)
+        snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+        with pytest.raises(
+            ReadOnlyDatabaseAccessError,
+            match="both an active-looking rollback journal and a WAL",
+        ):
+            opener(database_path)
+
+        assert snapshot_directories == []
+        assert _sqlite_artifact_state(database_path) == source_state
+    finally:
+        wal_writer.close()
+
+
+def _create_cold_rollback_journal(database_path, journal_mode):
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute(
+            f"PRAGMA journal_mode = {journal_mode}"
+        ).fetchone()[0] == journal_mode.lower()
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("UPDATE runs SET name = 'COLD_JOURNAL_SETUP'")
+        connection.rollback()
+    finally:
+        connection.close()
+
+    journal_path = readonly_module._journal_path(database_path)
+    journal_contents = journal_path.read_bytes()
+    if journal_mode == "PERSIST":
+        assert len(journal_contents) > 512
+        assert journal_contents[:8] == b"\x00" * 8
+    else:
+        assert journal_mode == "TRUNCATE"
+        assert journal_contents == b""
+    journal_path.unlink()
+    return journal_contents
+
+
+@pytest.mark.parametrize("journal_mode", ["PERSIST", "TRUNCATE"])
+def test_cold_rollback_journal_with_live_wal_remains_transaction_consistent(
+    tmp_path,
+    monkeypatch,
+    latest_schema_rollback_template,
+    journal_mode,
+):
+    database_path = tmp_path / f"cold-{journal_mode.lower()}-with-wal.db"
+    _copy_rollback_template(latest_schema_rollback_template, database_path)
+    _install_test_generation_provenance(database_path)
+    cold_journal = _create_cold_rollback_journal(database_path, journal_mode)
+    wal_writer = sqlite3.connect(database_path)
+    try:
+        assert wal_writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        wal_writer.execute("PRAGMA wal_autocheckpoint = 0")
+        wal_writer.executemany(
+            "UPDATE runs SET name = ? WHERE run_id = ?",
+            (
+                (run_name, run_id)
+                for run_id, run_name in enumerate(
+                    _UNCOMMITTED_RUN_NAMES,
+                    start=1,
+                )
+            ),
+        )
+        wal_writer.commit()
+        assert readonly_module._wal_path(database_path).is_file()
+        readonly_module._journal_path(database_path).write_bytes(cold_journal)
+
+        snapshot_directories = _track_readonly_snapshot_directories(monkeypatch)
+        for opener in (
+            sqlite_read_only_connection,
+            qcodes_read_only_connection,
+        ):
+            assert (
+                _run_names_without_source_changes(opener, database_path)
+                == _UNCOMMITTED_RUN_NAMES
+            )
+            assert all(not path.exists() for path in snapshot_directories)
+    finally:
+        wal_writer.close()

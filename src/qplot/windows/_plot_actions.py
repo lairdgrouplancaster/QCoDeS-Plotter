@@ -22,19 +22,24 @@ from qplot.diagnostics import log_exception
 from ._dataset_handle import (
     DatasetHandle,
     DatasetKey,
+    TraceKey,
     canonical_database_path,
     close_dataset_connection,
     database_file_identity,
 )
 from ._export_paths import choose_export_path, write_export_atomically
+from ._plot2d_layers import _heatmap_layer_compatibility
 from ._plot_refresh import plot_refresh_required
-from ._subplots.subplot1d import _subplot_axis_order
+from ._subplots.subplot1d import (
+    _subplot_axis_order,
+    _subplot_shared_parameter,
+)
 from .plot1d import plot1d
 from .plot2d import plot2d
 
 
 def _plot_has_trace_window(target, candidate):
-    """Return whether a source window is already represented on a 1D plot."""
+    """Return whether a source window is already represented on a plot."""
 
     checker = getattr(target, "_has_trace_window", None)
     if callable(checker):
@@ -249,6 +254,12 @@ class PlotActionsMixin:
             info_box.clear()
 
 
+    @QtCore.pyqtSlot()
+    def clear_non_single_run_selection(self):
+        """Drop the single-run action target for an empty or multi-selection."""
+        self._clear_selected_run_state()
+
+
     def _evict_dataset_handle(self, dataset_key):
         handle = self.dataset_holder.pop(dataset_key, None)
         if handle is None:
@@ -299,10 +310,10 @@ class PlotActionsMixin:
 
 
     def _detach_replaced_secondary_traces(self, database_source):
-        """Remove secondary lines whose source belongs to a replaced database.
+        """Remove secondary plots whose source belongs to a replaced database.
 
         A merged source can be closed and therefore absent from ``windows``
-        while its subplot still owns a dataset handle and keeps its monitor
+        while its layer still owns a dataset handle and keeps its monitor
         alive. Retire those consumers before evicting the source handle so a
         plot backed by another database cannot retain or refresh stale data.
         """
@@ -322,33 +333,47 @@ class PlotActionsMixin:
                     ):
                 continue
 
-            lines = getattr(host, "lines", None)
-            remove_line = getattr(host, "remove_line", None)
-            if not isinstance(lines, dict) or not callable(remove_line):
-                continue
+            for registry_name, main_item_name, remove_name in (
+                    ("lines", "line", "remove_line"),
+                    ("heatmaps", None, "remove_heatmap"),
+                    ):
+                registry = getattr(host, registry_name, None)
+                remover = getattr(host, remove_name, None)
+                if not isinstance(registry, dict) or not callable(remover):
+                    continue
 
-            main_line = getattr(host, "line", None)
-            stale_traces = [
-                (trace_key, line)
-                for trace_key, line in list(lines.items())
-                if (
-                    line is not None
-                    and line is not main_line
-                    and getattr(getattr(line, "from_win", None), "_dataset_key", None)
-                    is not None
-                    and source_matches(line.from_win._dataset_key)
+                main_item = host if main_item_name is None else getattr(
+                    host,
+                    main_item_name,
+                    None,
                     )
-                ]
-            for trace_key, line in stale_traces:
-                source = line.from_win
-                try:
-                    remove_line(getattr(source, "label", ""), trace_key=trace_key)
-                except Exception as err:
-                    log_exception(
-                        "Replaced database secondary-trace cleanup failed",
-                        err,
-                        __name__,
-                    )
+                stale_layers = [
+                    (trace_key, layer)
+                    for trace_key, layer in list(registry.items())
+                    if (
+                        layer is not None
+                        and layer is not main_item
+                        and getattr(
+                            getattr(layer, "from_win", None),
+                            "_dataset_key",
+                            None,
+                            ) is not None
+                        and source_matches(layer.from_win._dataset_key)
+                        )
+                    ]
+                for trace_key, layer in stale_layers:
+                    source = layer.from_win
+                    try:
+                        remover(
+                            getattr(source, "label", ""),
+                            trace_key=trace_key,
+                            )
+                    except Exception as err:
+                        log_exception(
+                            "Replaced database secondary-plot cleanup failed",
+                            err,
+                            __name__,
+                        )
 
 
     def _invalidate_database_runtime_state(self, database_source):
@@ -522,10 +547,33 @@ class PlotActionsMixin:
         if window_type == "plot1d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
             win.remove_dataset.connect(self.remove_ds_at)
+            win._trace_candidate_provider = (
+                lambda target_window=win: self._trace_candidates_for_plot(target_window)
+            )
+            win._trace_add_request = (
+                lambda source_key, parameter_name, target_window=win:
+                self.add_trace_to_plot(target_window, source_key, parameter_name)
+            )
 
         elif window_type == "plot2d":
             win.open_subplot.connect(self.openWin)
             win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
+            win._heatmap_candidate_provider = (
+                lambda target_window=win: self._heatmap_candidates_for_plot(
+                    target_window
+                )
+            )
+            win._heatmap_add_request = (
+                lambda source_key, parameter_name, target_window=win:
+                self.add_heatmap_to_plot(
+                    target_window,
+                    source_key,
+                    parameter_name,
+                )
+            )
+            remove_dataset = getattr(win, "remove_dataset", None)
+            if remove_dataset is not None:
+                remove_dataset.connect(self.remove_ds_at)
 
         elif window_type == "sweeper":
             win.merge_compatibility_changed.connect(self.post_admin)
@@ -748,17 +796,15 @@ class PlotActionsMixin:
                 operation="exporting run data",
                 ):
             return
-        ds = self._dataset_for_plot_target()
-        if ds is None:
+        request = self._run_csv_export_request()
+        if request is None:
             return
-        try:
-            params = self._selected_measurement_params(ds)
-            if params is None:
-                return
-
-            self._export_measurement_csv(ds, params)
-        finally:
-            self._close_dataset_if_unowned(ds, context="CSV dataset cleanup failed")
+        dataset_key, parameter_names, run_id = request
+        self._export_measurement_csv(
+            dataset_key,
+            parameter_names,
+            run_id=run_id,
+        )
 
 
     @QtCore.pyqtSlot(str)
@@ -865,22 +911,48 @@ class PlotActionsMixin:
                     )
 
 
-    def _export_measurement_csv(self, ds, params):
-        if not params:
+    def _export_measurement_csv(
+            self,
+            dataset_key,
+            parameter_names,
+            *,
+            run_id=None,
+            ):
+        """Export a captured run request through a fresh read-only dataset."""
+        parameter_names = tuple(str(name) for name in parameter_names)
+        if not parameter_names:
             self.show_status("No plottable measurements to export for this run.", 5000)
             return
 
-        default_name = self._default_export_filename(ds, params)
+        default_name = self._default_run_csv_export_filename(
+            dataset_key,
+            parameter_names,
+            run_id=run_id,
+        )
         filename = self._choose_csv_export_filename(default_name)
         if filename is None:
             return
 
+        dataset = None
         try:
-            frame = self._measurement_dataframe(ds, params)
+            # The destination is approved before this action-owned view is
+            # opened, so a modal save dialog cannot retain an obsolete SQLite
+            # snapshot. The read layer also binds acquisition to the database
+            # identity captured in ``dataset_key``.
+            dataset = self._load_run_csv_dataset(dataset_key)
+            params = self._measurement_params_by_names(dataset, parameter_names)
+            frame = self._measurement_dataframe(dataset, params)
+            self._require_run_csv_source_current(dataset_key)
             write_export_atomically(
                 filename,
                 lambda temporary: frame.to_csv(temporary, index=False),
+                before_publish=(
+                    lambda: self._require_run_csv_source_current(dataset_key)
+                ),
             )
+        except DatabaseInstanceChangedError:
+            self._handle_run_csv_source_replaced(dataset_key)
+            return
         except Exception as err:
             log_exception("CSV export failed", err, __name__)
             self.show_error(
@@ -889,24 +961,86 @@ class PlotActionsMixin:
                 str(err),
             )
             return
+        finally:
+            if dataset is not None:
+                try:
+                    close_dataset_connection(dataset)
+                except Exception as err:
+                    log_exception("CSV dataset cleanup failed", err, __name__)
 
         self.show_status(f"Exported CSV: {filename}", 5000)
 
 
-    def _choose_csv_export_filename(self, default_name):
-        filename = choose_export_path(
-            self,
-            caption="Export CSV",
-            suggested_path=default_name,
-            name_filter="CSV files (*.csv)",
-            required_suffix=".csv",
-            replace_title="Replace CSV File?",
-            file_description="CSV file",
+    def _load_run_csv_dataset(self, dataset_key):
+        """Fresh-load one export view for an exact database instance."""
+        self._require_run_csv_source_current(dataset_key)
+        load_kwargs = {}
+        if dataset_key.database_identity is not None:
+            load_kwargs["expected_database_identity"] = (
+                dataset_key.database_identity
+            )
+        dataset = load_by_guid_read_only(
+            dataset_key.guid,
+            dataset_key.database_path,
+            **load_kwargs,
         )
-        if not filename:
+        try:
+            self._require_run_csv_source_current(dataset_key)
+        except Exception:
+            try:
+                close_dataset_connection(dataset)
+            finally:
+                raise
+        return dataset
+
+
+    def _require_run_csv_source_current(self, dataset_key):
+        """Reject an export when its captured database instance was replaced."""
+        if not self._dataset_key_is_current(dataset_key):
+            raise DatabaseInstanceChangedError(
+                "The database was replaced while qPlot was exporting run data."
+            )
+
+
+    def _handle_run_csv_source_replaced(self, dataset_key):
+        """Request replacement recovery without reporting a generic CSV error."""
+        reload_if_changed = getattr(
+            self,
+            "_reload_if_database_instance_changed",
+            None,
+        )
+        if callable(reload_if_changed):
+            reload_if_changed(dataset_key.database_path)
+        self.show_status(
+            "CSV export stopped because the database was replaced; reloading "
+            "the source. No CSV was written.",
+            5000,
+        )
+
+
+    def _choose_csv_export_filename(self, default_name):
+        try:
+            destination = choose_export_path(
+                self,
+                caption="Export CSV",
+                suggested_path=default_name,
+                name_filter="CSV files (*.csv)",
+                required_suffix=".csv",
+                replace_title="Replace CSV File?",
+                file_description="CSV file",
+            )
+        except Exception as err:
+            log_exception("CSV export destination rejected", err, __name__)
+            self.show_error(
+                "CSV Export Failed",
+                "qPlot could not safely use the selected CSV destination.",
+                str(err),
+            )
+            return None
+        if destination is None:
             self.show_status("CSV export cancelled.", 3000)
             return None
-        return filename
+        return destination
 
 
     def _publish_preview_csv(self, frame, filename, dataset_key):
@@ -1155,17 +1289,42 @@ class PlotActionsMixin:
     @QtCore.pyqtSlot(object, object, str)
     def add_dropped_preview_to_plot(self, target_win, source_identity, parameter_name):
         """
-        Add a run-table preview trace to the plot it was dropped onto.
+        Add a run-table preview to the plot it was dropped onto.
 
         """
-        self.add_trace_to_plot(target_win, source_identity, parameter_name)
+        # The plot is normally in front of the main window when a drop occurs.
+        # Keep its status bar in sync with the main-window feedback produced by
+        # ``add_trace_to_plot`` so a post-drop rejection is visible where the
+        # user performed the action.
+        previous_target = getattr(self, "_preview_drop_feedback_window", None)
+        self._preview_drop_feedback_window = target_win
+        try:
+            return self.add_trace_to_plot(
+                target_win,
+                source_identity,
+                parameter_name,
+            )
+        finally:
+            self._preview_drop_feedback_window = previous_target
 
 
     def add_trace_to_plot(self, target_win, source_identity, parameter_name, param=None):
         """
-        Adds a plottable 1D parameter to an existing compatible 1D plot.
+        Add a compatible parameter to an existing plot.
+
+        The historical method name remains the entry point used by run-table
+        menus and preview drops. Heatmap targets dispatch to the corresponding
+        layer workflow; line targets retain the existing secondary-trace path.
 
         """
+        if getattr(target_win, "operation_kind", None) == "plot2d":
+            return self.add_heatmap_to_plot(
+                target_win,
+                source_identity,
+                parameter_name,
+                param=param,
+                )
+
         source_path = (
             source_identity.database_path
             if isinstance(source_identity, DatasetKey)
@@ -1249,6 +1408,217 @@ class PlotActionsMixin:
         return True
 
 
+    def _trace_candidates_for_plot(self, target_win):
+        """Return loaded-database 1D measurements compatible with a plot."""
+
+        target_axes = tuple(
+            getattr(getattr(target_win, "param", None), "depends_on_", ())
+        )
+        if len(target_axes) != 1:
+            return []
+
+        run_list = getattr(self, "RunList", None)
+        all_run_metadata = getattr(run_list, "all_run_metadata", None)
+        if not callable(all_run_metadata):
+            return []
+
+        candidates = []
+        primary_trace_key = TraceKey(target_win._dataset_key, target_win.param.name)
+        for run_id, metadata in all_run_metadata().items():
+            if tuple(metadata.get("sweep_parameters") or ()) != target_axes:
+                continue
+            guid = metadata.get("guid")
+            if not guid:
+                continue
+            source_key = self._current_dataset_key(guid)
+            for parameter_name in metadata.get("measure_parameters") or ():
+                trace_key = TraceKey(source_key, parameter_name)
+                if (
+                    trace_key == primary_trace_key
+                    or trace_key in getattr(target_win, "lines", {})
+                ):
+                    continue
+                candidates.append((f"ID:{run_id} {parameter_name}", trace_key))
+        return candidates
+
+
+    def _heatmap_candidates_for_plot(self, target_win):
+        """Return loaded-database 2D measurements compatible with a heatmap."""
+
+        target_axes = tuple(
+            getattr(getattr(target_win, "param", None), "depends_on_", ())
+        )
+        if len(target_axes) != 2:
+            return []
+
+        run_list = getattr(self, "RunList", None)
+        all_run_metadata = getattr(run_list, "all_run_metadata", None)
+        if not callable(all_run_metadata):
+            return []
+
+        candidates = []
+        primary_key = TraceKey(target_win._dataset_key, target_win.param.name)
+        plotted = getattr(target_win, "heatmaps", {})
+        for run_id, metadata in all_run_metadata().items():
+            axes = tuple(metadata.get("sweep_parameters") or ())
+            if len(axes) != 2 or set(axes) != set(target_axes):
+                continue
+            guid = metadata.get("guid")
+            if not guid:
+                continue
+            source_key = self._current_dataset_key(guid)
+            for parameter_name in metadata.get("measure_parameters") or ():
+                heatmap_key = TraceKey(source_key, parameter_name)
+                if heatmap_key == primary_key or heatmap_key in plotted:
+                    continue
+                candidates.append(
+                    (f"ID:{run_id} {parameter_name}", heatmap_key)
+                )
+        return candidates
+
+
+    def add_heatmap_to_plot(
+            self,
+            target_win,
+            source_identity,
+            parameter_name,
+            param=None,
+            ):
+        """Add a compatible 2D parameter as a layer on an existing heatmap."""
+
+        source_path = (
+            source_identity.database_path
+            if isinstance(source_identity, DatasetKey)
+            else None
+        )
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                source_path,
+                "adding a preview heatmap",
+                ):
+            return False
+
+        add_heatmap = getattr(target_win, "add_heatmap", None)
+        if (
+                target_win is None
+                or getattr(target_win, "operation_kind", None) != "plot2d"
+                or not callable(add_heatmap)
+                ):
+            self.show_status("Drop heatmaps onto a compatible heatmap plot.", 5000)
+            return False
+
+        if isinstance(source_identity, DatasetKey):
+            source_key = source_identity
+        else:
+            source_key = self._current_dataset_key(source_identity)
+        source_guid = source_key.guid
+
+        if param is None:
+            try:
+                param = self._parameter_from_key(source_key, parameter_name)
+            except Exception as err:
+                log_exception("Heatmap source run load failed", err, __name__)
+                self.show_error(
+                    "Run Load Failed",
+                    f"Could not load run with GUID {source_guid}.",
+                    str(err),
+                )
+                return False
+
+        if param is None or not getattr(param, "depends_on", ""):
+            self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+            return False
+
+        source_axes = tuple(getattr(param, "depends_on_", ()))
+        target_axes = tuple(getattr(target_win.param, "depends_on_", ()))
+        if len(source_axes) != 2:
+            self.show_status("Only 2D measurements can be added as heatmaps.", 5000)
+            return False
+        if len(target_axes) != 2 or set(source_axes) != set(target_axes):
+            self.show_status(
+                f"Cannot add {parameter_name}; the heatmap axes do not match.",
+                5000,
+            )
+            return False
+
+        source_trace_key = TraceKey(source_key, param.name)
+        heatmaps = getattr(target_win, "heatmaps", {})
+        if source_trace_key in heatmaps:
+            self.show_status(
+                f"Skipped {parameter_name}; that heatmap is already shown.",
+                5000,
+            )
+            return False
+        if source_trace_key == getattr(target_win, "_trace_key", None):
+            self.show_status(
+                f"Skipped {target_win.label}; source and target are the same.",
+                5000,
+            )
+            return False
+
+        from_win = self._plot_window_for_param(
+            source_key,
+            param,
+            operation_kind="plot2d",
+            )
+        if from_win == target_win:
+            self.show_status(
+                f"Skipped {target_win.label}; source and target are the same.",
+                5000,
+            )
+            return False
+
+        if from_win is None:
+            from_win = self._open_hidden_trace_window(source_key, param, target_win)
+            if from_win is None:
+                return False
+
+        _axis_order, compatibility_error = _heatmap_layer_compatibility(
+            target_win,
+            from_win,
+        )
+        if compatibility_error is not None:
+            self.show_status(
+                f"Cannot add {parameter_name}; {compatibility_error}.",
+                5000,
+            )
+            if not getattr(from_win, "visible", False):
+                from_win.close()
+            return False
+
+        try:
+            added = bool(add_heatmap(from_win))
+        except Exception as err:
+            log_exception("Heatmap layer construction failed", err, __name__)
+            self.show_error(
+                "Heatmap Add Failed",
+                f"Could not add {parameter_name} to the heatmap.",
+                str(err),
+            )
+            added = False
+
+        if not getattr(from_win, "visible", False):
+            from_win.close()
+
+        if not added:
+            self.show_status(
+                f"Cannot add {parameter_name}; it is already shown or incompatible.",
+                5000,
+            )
+            return False
+
+        sync_layer_views = getattr(
+            target_win,
+            "_sync_secondary_heatmap_view_ranges",
+            None,
+        )
+        if callable(sync_layer_views):
+            sync_layer_views()
+
+        self.show_status(f"Added {from_win.label} to {target_win.label}.", 3000)
+        return True
+
+
     def _parameter_from_guid(self, guid, parameter_name):
         return self._parameter_from_key(self._current_dataset_key(guid), parameter_name)
 
@@ -1282,10 +1652,22 @@ class PlotActionsMixin:
         return self._load_dataset(dataset_key)
 
 
-    def _plot_window_for_param(self, dataset_key, param):
+    def _plot_window_for_param(self, dataset_key, param, operation_kind=None):
         for win in self.windows:
             try:
-                if win._dataset_key == dataset_key and win.param.name == param.name:
+                window_kind = getattr(
+                    win,
+                    "operation_kind",
+                    win.__class__.__name__,
+                    )
+                if (
+                        win._dataset_key == dataset_key
+                        and win.param.name == param.name
+                        and (
+                            operation_kind is None
+                            or window_kind == operation_kind
+                            )
+                        ):
                     return win
             except AttributeError:
                 continue
@@ -1317,10 +1699,27 @@ class PlotActionsMixin:
 
         """
         params = [param for param in dataset.get_parameters() if param.depends_on != ""]
-        measurement = self.measurementBox.text().strip()
+        names = self._selected_measurement_names(
+            tuple(param.name for param in params),
+            dataset.run_id,
+        )
+        if names is None:
+            return None
+        selected_names = set(names)
+        return [param for param in params if param.name in selected_names]
+
+
+    def _selected_measurement_names(self, parameter_names, run_id):
+        """Apply the Measurement field to immutable parameter names."""
+        measurement_box = getattr(self, "measurementBox", None)
+        measurement = (
+            measurement_box.text().strip()
+            if measurement_box is not None
+            else "*"
+        )
 
         if measurement in ("", "*"):
-            return params
+            return tuple(parameter_names)
 
         try:
             index = int(measurement)
@@ -1328,14 +1727,114 @@ class PlotActionsMixin:
             self.show_status("Measurement must be a number or *.", 5000)
             return None
 
-        if index < 1 or index > len(params):
+        if index < 1 or index > len(parameter_names):
             self.show_status(
-                f"Run {dataset.run_id} has no measurement {index}.",
+                f"Run {run_id} has no measurement {index}.",
                 5000,
             )
             return None
 
-        return [params[index - 1]]
+        return (parameter_names[index - 1],)
+
+
+    def _run_csv_export_request(self):
+        """Capture a run key and names without opening an export dataset."""
+        database_path = self.fileTextbox.text()
+        if not database_path:
+            self.show_status("Load a database before plotting or exporting.", 5000)
+            return None
+
+        run_id = self.selected_run_id
+        if run_id is None:
+            self.show_status("Enter a Run ID before plotting or exporting.", 5000)
+            return None
+
+        reload_if_changed = getattr(
+            self,
+            "_reload_if_database_instance_changed",
+            None,
+        )
+        if callable(reload_if_changed) and reload_if_changed(database_path):
+            self.show_status(
+                "Database was replaced; reloading before exporting the run.",
+                5000,
+            )
+            return None
+
+        selected_dataset = getattr(self, "ds", None)
+        selected_key = getattr(self, "_selected_dataset_key", None)
+        if (
+                selected_dataset is not None
+                and getattr(selected_dataset, "run_id", None) == run_id
+                and selected_key is not None
+                and selected_key.database_path
+                == logical_database_path(database_path)
+                ):
+            try:
+                parameter_names = tuple(
+                    param.name
+                    for param in selected_dataset.get_parameters()
+                    if param.depends_on != ""
+                )
+            except Exception as error:
+                log_exception("Run parameter enumeration failed", error, __name__)
+                self.show_error(
+                    "Run Load Failed",
+                    "Could not read the selected run's measurements.",
+                    str(error),
+                )
+                return None
+            dataset_key = selected_key
+        else:
+            metadata = self._run_metadata_for_id(run_id)
+            guid = metadata.get("guid")
+            if not guid:
+                self.show_status(
+                    f"Run {run_id} is not available in the loaded database.",
+                    5000,
+                )
+                return None
+            dataset_key = self._current_dataset_key(str(guid))
+            parameter_names = tuple(
+                str(name)
+                for name in metadata.get("measure_parameters") or ()
+            )
+
+        requested_names = self._selected_measurement_names(
+            parameter_names,
+            run_id,
+        )
+        if requested_names is None:
+            return None
+        return dataset_key, requested_names, run_id
+
+
+    def _run_metadata_for_id(self, run_id):
+        """Return already-loaded run metadata without opening SQLite."""
+        run_list = getattr(self, "RunList", None)
+        all_run_metadata = getattr(run_list, "all_run_metadata", None)
+        if not callable(all_run_metadata):
+            return {}
+        runs = all_run_metadata()
+        metadata = runs.get(run_id)
+        if metadata is None:
+            metadata = runs.get(str(run_id))
+        return dict(metadata or {})
+
+
+    def _measurement_params_by_names(self, dataset, parameter_names):
+        """Resolve captured measurement names against a freshly loaded run."""
+        parameters = {param.name: param for param in dataset.get_parameters()}
+        resolved = []
+        for name in parameter_names:
+            param = parameters.get(name)
+            if param is None or param.depends_on == "":
+                raise ValueError(
+                    f"Measurement parameter {name!r} is not present in the "
+                    "freshly loaded run."
+                )
+            resolved.append(param)
+        return resolved
 
 
     def _dataset_for_plot_target(self):
@@ -1422,6 +1921,30 @@ class PlotActionsMixin:
         database_folder = os.path.dirname(self.fileTextbox.text())
         measurement = "all" if len(params) != 1 else params[0].name
         filename = self._safe_filename(f"run_{dataset.run_id}_{measurement}.csv")
+        return os.path.join(database_folder or os.getcwd(), filename)
+
+
+    def _default_run_csv_export_filename(
+            self,
+            dataset_key,
+            parameter_names,
+            *,
+            run_id=None,
+            ):
+        """Return a CSV suggestion from a captured export request."""
+        if run_id is None:
+            run_list = getattr(self, "RunList", None)
+            run_id_for_guid = getattr(run_list, "run_id_for_guid", None)
+            if callable(run_id_for_guid):
+                run_id = run_id_for_guid(dataset_key.guid)
+        run_identifier = dataset_key.guid if run_id is None else run_id
+        measurement = (
+            "all" if len(parameter_names) != 1 else parameter_names[0]
+        )
+        filename = self._safe_filename(
+            f"run_{run_identifier}_{measurement}.csv"
+        )
+        database_folder = os.path.dirname(dataset_key.database_path)
         return os.path.join(database_folder or os.getcwd(), filename)
 
 
@@ -1584,6 +2107,7 @@ class PlotActionsMixin:
                         getattr(item, "operation_kind", item.__class__.__name__)
                         == "sweeper"
                         ),
+                    shared_parameter=_subplot_shared_parameter(win),
                     )
                 if compatible is not None and not _plot_has_trace_window(win, item):
                     wins.append(item)

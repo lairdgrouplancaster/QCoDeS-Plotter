@@ -3,6 +3,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 
 from PyQt6 import QtCore, QtGui
@@ -25,6 +26,8 @@ from qplot.datahandling.file_identity import (
     logical_database_path,
 )
 from qplot.datahandling.readonly import (
+    DatabaseInstanceChangedError,
+    UnverifiableDatabaseWalError,
     quarantine_wal_for_replaced_database,
     replacement_wal_is_quarantined,
     set_qcodes_database_location,
@@ -32,8 +35,8 @@ from qplot.datahandling.readonly import (
 from qplot.diagnostics import log_event, log_exception
 from qplot.testdata import (
     GenerationCancelled,
-    copy_instruction_collection,
     generate_database,
+    instruction_collection_contents,
     read_specifications,
     write_example_csv,
 )
@@ -43,7 +46,11 @@ from ._dataset_handle import (
     canonical_database_path,
     database_file_identity,
 )
-from ._export_paths import choose_export_path, write_export_atomically
+from ._export_paths import (
+    choose_export_path,
+    prepare_export_destination,
+    write_export_atomically,
+)
 from ._widgets.details_tables import (
     CopyableTableWidget,
     copy_to_clipboard,
@@ -184,6 +191,13 @@ def reveal_file_in_file_manager(file_path):
 
     folder = os.path.dirname(file_path)
     return QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(folder))
+
+
+def _write_export_bytes(filename, content):
+    """Write one private staging file for the shared export transaction."""
+    with open(filename, "wb") as output_file:
+        output_file.write(content)
+    return True
 
 
 class TestDatabaseGenerationSignals(QtCore.QObject):
@@ -483,22 +497,21 @@ class DatabaseActionsMixin:
             self.database_open_directory(),
             "qplot-test-runs.csv",
         )
-        csv_path = choose_export_path(
-            self,
-            caption="Create Test Database CSV",
-            suggested_path=suggested_path,
-            name_filter="CSV Files (*.csv)",
-            required_suffix=".csv",
-            replace_title="Replace Example CSV?",
-            file_description="example CSV file",
-        )
-        if not csv_path:
-            self.show_status("Example CSV creation cancelled.", 3000)
-            return False
-
         try:
+            destination = choose_export_path(
+                self,
+                caption="Create Test Database CSV",
+                suggested_path=suggested_path,
+                name_filter="CSV Files (*.csv)",
+                required_suffix=".csv",
+                replace_title="Replace Example CSV?",
+                file_description="example CSV file",
+            )
+            if destination is None:
+                self.show_status("Example CSV creation cancelled.", 3000)
+                return False
             write_export_atomically(
-                csv_path,
+                destination,
                 lambda temporary: write_example_csv(temporary, overwrite=True),
             )
         except Exception as err:
@@ -510,6 +523,7 @@ class DatabaseActionsMixin:
             )
             return False
 
+        csv_path = destination.filename
         opened = reveal_file_in_file_manager(csv_path)
         if not opened:
             self.show_error(
@@ -537,7 +551,28 @@ class DatabaseActionsMixin:
 
         directory = os.path.abspath(directory)
         try:
-            output_paths = copy_instruction_collection(directory)
+            collection = instruction_collection_contents()
+            destinations = tuple(
+                prepare_export_destination(
+                    self,
+                    os.path.join(directory, filename),
+                )
+                for filename, _content in collection
+            )
+            for destination, (_filename, content) in zip(
+                    destinations,
+                    collection,
+                    strict=True,
+                    ):
+                write_export_atomically(
+                    destination,
+                    lambda temporary, data=content: (
+                        _write_export_bytes(temporary, data)
+                    ),
+                )
+            output_paths = tuple(
+                Path(destination.filename) for destination in destinations
+            )
         except Exception as err:
             log_exception("Test-data CSV collection export failed", err, __name__)
             self.show_error(
@@ -855,7 +890,11 @@ class DatabaseActionsMixin:
         if hasattr(self, "_hide_database_load_panel"):
             self._hide_database_load_panel()
 
-        self.monitor.stop()
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._main_refresh_interval())
+        else:
+            self.monitor.stop()
         self.fileTextbox.setText("")
         self.run_idBox.setText("")
         self.measurementBox.setText("*")
@@ -948,11 +987,20 @@ class DatabaseActionsMixin:
 
 
     @QtCore.pyqtSlot()
-    def refreshMain(self):
+    def refreshMain(self, automatic=False):
         """
         On self.monitor timer or force refresh, check for new runs in Database
 
         """
+        if automatic and getattr(self, "_loaded_database_instance", None) is None:
+            # The automatic path is silent: its lifecycle guard has already
+            # invalidated this timer, so do not turn a stale queued timeout
+            # into repeated "Load a database" status messages.
+            apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+            if callable(apply_refresh_interval):
+                apply_refresh_interval(self._main_refresh_interval())
+            return
+
         if not self.fileTextbox.text():
             self.show_status("Load a database before refreshing.", 5000)
             return
@@ -1002,6 +1050,7 @@ class DatabaseActionsMixin:
             database_path,
             self.RunList.maxRunId,
             watched_guids,
+            expected_database_instance=current_instance,
         )
         self._database_refresh_worker = worker
         worker.signals.finished.connect(
@@ -1033,6 +1082,10 @@ class DatabaseActionsMixin:
         try:
             if database_path != self.fileTextbox.text():
                 return
+            if isinstance(error, DatabaseInstanceChangedError):
+                DatabaseActionsMixin._cancel_database_refresh(self)
+                self._reload_replaced_database(database_path)
+                return
             refresh_identity = getattr(self, "_database_refresh_identity", None)
             refresh_instance = getattr(self, "_database_refresh_instance", None)
             current_instance = database_instance(database_path)
@@ -1052,6 +1105,15 @@ class DatabaseActionsMixin:
                 return
             if error is not None:
                 log_exception("Main-window refresh failed", error, __name__)
+                if isinstance(error, UnverifiableDatabaseWalError):
+                    self.show_error(
+                        "Unverifiable Database WAL",
+                        "qPlot cannot verify this database's WAL. Close every "
+                        "owning QCoDeS/SQLite connection cleanly, or checkpoint "
+                        "with the owning writer, then refresh.",
+                        str(error),
+                        )
+                    return
                 self.show_error(
                     "Refresh Failed",
                     "Could not refresh the run list.",
@@ -1126,16 +1188,19 @@ class DatabaseActionsMixin:
             database_path,
             *,
             generation_recovery=False,
+            load_started_at=None,
             ):
         """Invalidate one replaced database instance and force a safe reload."""
         if not generation_recovery:
             return self.load_file(
                 database_path,
+                load_started_at,
                 force=True,
                 replacement=True,
             )
         return self.load_file(
             database_path,
+            load_started_at,
             force=True,
             replacement=True,
             generation_recovery=True,
@@ -1167,6 +1232,32 @@ class DatabaseActionsMixin:
             return False
         self._reload_replaced_database(database_path)
         return True
+
+
+    def _reload_if_worker_database_instance_changed(
+            self,
+            database_path,
+            expected_instance,
+            ):
+        """Reject a metadata callback not bound to the accepted DB instance."""
+        if not isinstance(expected_instance, DatabaseInstance):
+            return DatabaseActionsMixin._reload_if_database_instance_changed(
+                self,
+                database_path,
+            )
+
+        current_instance = database_instance(expected_instance.logical_path)
+        loaded_instance = getattr(self, "_loaded_database_instance", None)
+        if (
+                database_instances_differ(expected_instance, current_instance)
+                or (
+                    isinstance(loaded_instance, DatabaseInstance)
+                    and database_instances_differ(loaded_instance, current_instance)
+                )
+                ):
+            self._reload_replaced_database(database_path)
+            return True
+        return False
 
 
     @QtCore.pyqtSlot()
@@ -1474,6 +1565,9 @@ class DatabaseActionsMixin:
             "replacement_reload": replacement,
             "generation_recovery": generation_recovery,
         }
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._main_refresh_interval())
 
         self._set_database_load_controls_enabled(False)
         self._show_database_load_panel(load_message)
@@ -1482,7 +1576,12 @@ class DatabaseActionsMixin:
             "runtime_settings.cloud_sync_timeout"
             )
 
-        worker = DatabaseLoadWorker(generation, abspath, cloud_sync_timeout)
+        worker = DatabaseLoadWorker(
+            generation,
+            abspath,
+            cloud_sync_timeout,
+            expected_database_instance=current_instance,
+        )
         self._database_load_worker = worker
         worker.signals.status.connect(self.database_load_status)
         worker.signals.finished.connect(self.database_load_finished)
@@ -1558,7 +1657,16 @@ class DatabaseActionsMixin:
     def _release_database_runtime_state(self, abspath):
         """Release database consumers without asserting that publication won."""
         old_instance = getattr(self, "_loaded_database_instance", None)
-        self.monitor.stop()
+        stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
+        if callable(stop_refresh_timer):
+            stop_refresh_timer()
+        else:
+            self.monitor.stop()
+        # Once consumers have been released, this is no longer a committed
+        # source even though the path remains displayed while replacement
+        # loading is in progress.
+        self._loaded_database_identity = None
+        self._loaded_database_instance = None
         DatabaseActionsMixin._cancel_database_refresh(self)
         self._cancel_database_detail_load()
 
@@ -1681,6 +1789,9 @@ class DatabaseActionsMixin:
         self._hide_database_load_panel()
         self.show_status("Database load cancelled.", 3000)
         DatabaseActionsMixin._resume_test_database_generation_recovery(self)
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._main_refresh_interval())
 
 
     @QtCore.pyqtSlot(int, str)
@@ -1720,32 +1831,65 @@ class DatabaseActionsMixin:
         load_instance = state.get("load_instance")
         current_instance = database_instance(abspath)
 
-        if _database_observations_differ(
-                load_instance or load_identity,
-                current_instance,
+        if (
+                isinstance(error, DatabaseInstanceChangedError)
+                or _database_observations_differ(
+                    load_instance or load_identity,
+                    current_instance,
+                )
                 ):
+            self._database_load_generation += 1
             self.show_status("Database changed while loading; retrying...", 0)
             generation_recovery = bool(state.get("generation_recovery"))
+            reload_replaced_database = getattr(
+                self,
+                "_reload_replaced_database",
+                None,
+            )
+            if not callable(reload_replaced_database):
+                reload_replaced_database = (
+                    lambda database_path, **kwargs:
+                    DatabaseActionsMixin._reload_replaced_database(
+                        self,
+                        database_path,
+                        **kwargs,
+                    )
+                )
             QtCore.QTimer.singleShot(
                 0,
-                lambda: self.load_file(
+                lambda: reload_replaced_database(
                     abspath,
-                    load_started_at,
-                    force=True,
-                    replacement=True,
                     generation_recovery=generation_recovery,
+                    load_started_at=load_started_at,
                 ),
             )
             return
 
         if error is not None:
             log_exception("Database load failed", error, __name__)
+            if isinstance(error, UnverifiableDatabaseWalError):
+                self.show_error(
+                    "Unverifiable Database WAL",
+                    "qPlot refused to load this database because its WAL "
+                    "cannot be verified. Close every owning QCoDeS/SQLite "
+                    "connection cleanly, or checkpoint with the owning writer, "
+                    "then retry loading the database.",
+                    str(error),
+                )
+                DatabaseActionsMixin._resume_test_database_generation_recovery(self)
+                apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+                if callable(apply_refresh_interval):
+                    apply_refresh_interval(self._main_refresh_interval())
+                return
             self.show_error(
                 "Database Load Failed",
                 f"Could not load database {abspath}.",
                 str(error),
             )
             DatabaseActionsMixin._resume_test_database_generation_recovery(self)
+            apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+            if callable(apply_refresh_interval):
+                apply_refresh_interval(self._main_refresh_interval())
             return
 
         self._cancel_database_detail_load()
@@ -1837,14 +1981,9 @@ class DatabaseActionsMixin:
         if callable(prioritize_previews):
             prioritize_previews()
         self._sync_empty_state()
-        if transaction_matches:
-            self.monitor.stop()
-            if replacement_state.monitor_was_active:
-                self.monitor.start(max(1, replacement_state.monitor_interval_ms))
-        else:
-            apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
-            if callable(apply_refresh_interval):
-                apply_refresh_interval(self._current_refresh_interval())
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._current_refresh_interval())
 
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)
@@ -1926,11 +2065,13 @@ class DatabaseActionsMixin:
             )
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_detail_instance = None
         self._database_expensive_detail_generation = (
             getattr(self, "_database_expensive_detail_generation", 0) + 1
             )
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_expensive_detail_instance = None
 
 
     def _start_database_detail_load(self, abspath, runs):
@@ -1954,7 +2095,19 @@ class DatabaseActionsMixin:
         expensive_generation = self._database_expensive_detail_generation
         self._database_expensive_detail_active = True
 
-        worker = DatabaseDetailWorker(generation, abspath, run_ids, batch_size=100)
+        detail_instance = getattr(self, "_loaded_database_instance", None)
+        if not isinstance(detail_instance, DatabaseInstance):
+            detail_instance = database_instance(abspath)
+        self._database_detail_instance = detail_instance
+        self._database_expensive_detail_instance = detail_instance
+
+        worker = DatabaseDetailWorker(
+            generation,
+            abspath,
+            run_ids,
+            batch_size=100,
+            expected_database_instance=detail_instance,
+        )
         self._database_detail_worker = worker
         priority_run_ids = self._database_detail_priority_run_ids()
         worker.prioritize_run_ids(priority_run_ids)
@@ -1973,6 +2126,7 @@ class DatabaseActionsMixin:
             abspath,
             run_ids,
             batch_size=100,
+            expected_database_instance=detail_instance,
             )
         self._database_expensive_detail_worker = expensive_worker
         expensive_worker.prioritize_run_ids(priority_run_ids)
@@ -2086,9 +2240,10 @@ class DatabaseActionsMixin:
             return
         if abspath != self.fileTextbox.text():
             return
-        if DatabaseActionsMixin._reload_if_database_instance_changed(
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
                 abspath,
+                getattr(self, "_database_detail_instance", None),
                 ):
             return
 
@@ -2118,9 +2273,10 @@ class DatabaseActionsMixin:
             return
         if abspath != self.fileTextbox.text():
             return
-        if DatabaseActionsMixin._reload_if_database_instance_changed(
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
                 abspath,
+                getattr(self, "_database_expensive_detail_instance", None),
                 ):
             return
 
@@ -2140,16 +2296,28 @@ class DatabaseActionsMixin:
             prioritize_previews()
         self._refresh_selected_run_details(updated_runs)
 
-
     @QtCore.pyqtSlot(int, str, object)
     def database_detail_finished(self, generation, abspath, error):
         if generation != getattr(self, "_database_detail_generation", 0):
             return
 
+        detail_instance = getattr(self, "_database_detail_instance", None)
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_detail_instance = None
 
         if abspath != self.fileTextbox.text():
+            return
+
+        if isinstance(error, DatabaseInstanceChangedError):
+            DatabaseActionsMixin._cancel_database_detail_load(self)
+            self._reload_replaced_database(abspath)
+            return
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
+            self,
+            abspath,
+            detail_instance,
+        ):
             return
 
         if error is not None:
@@ -2160,16 +2328,32 @@ class DatabaseActionsMixin:
         if not getattr(self, "_database_expensive_detail_active", False):
             self.show_status("Run details loaded.", 5000)
 
-
     @QtCore.pyqtSlot(int, str, object)
     def database_expensive_detail_finished(self, generation, abspath, error):
         if generation != getattr(self, "_database_expensive_detail_generation", 0):
             return
 
+        detail_instance = getattr(
+            self,
+            "_database_expensive_detail_instance",
+            None,
+        )
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_expensive_detail_instance = None
 
         if abspath != self.fileTextbox.text():
+            return
+
+        if isinstance(error, DatabaseInstanceChangedError):
+            DatabaseActionsMixin._cancel_database_detail_load(self)
+            self._reload_replaced_database(abspath)
+            return
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
+            self,
+            abspath,
+            detail_instance,
+        ):
             return
 
         if error is not None:

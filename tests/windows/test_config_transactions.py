@@ -59,6 +59,14 @@ class TransactionalGuiTestCase(unittest.TestCase):
                 self.spinBox = qtw.QDoubleSpinBox()
                 self.spinBox.setValue(1.0)
                 self.monitor = QtCore.QTimer()
+                # Refresh settings may arm the timer only for an accepted
+                # database instance; the persistence test supplies one.
+                self._loaded_database_instance = type(
+                    "CommittedInstance",
+                    (),
+                    {"identity": (1, 1)},
+                )()
+                self._database_load_generation = 0
                 self.errors = []
                 self.empty_state_syncs = 0
 
@@ -219,6 +227,7 @@ class TransactionalGuiTestCase(unittest.TestCase):
         class PreviewHarness:
             change_preview_size = main_window.MainWindow.change_preview_size
             _save_preview_size = main_window.MainWindow._save_preview_size
+            _apply_preview_size = main_window.MainWindow._apply_preview_size
             _configured_preview_size = RunControlsMixin._configured_preview_size
 
             def __init__(self, config_object):
@@ -227,6 +236,7 @@ class TransactionalGuiTestCase(unittest.TestCase):
                 self.infoBox = InfoBox()
                 self.errors = []
                 self.statuses = []
+                self.preview_prioritizations = 0
 
             def show_error(self, *args):
                 self.errors.append(args)
@@ -235,7 +245,7 @@ class TransactionalGuiTestCase(unittest.TestCase):
                 self.statuses.append(args)
 
             def _prioritize_preview_runs(self):
-                pass
+                self.preview_prioritizations += 1
 
         preview_harness = PreviewHarness(self.config)
         preview_group = QtGui.QActionGroup(None)
@@ -265,11 +275,13 @@ class TransactionalGuiTestCase(unittest.TestCase):
         self.assertEqual(self.config.get("GUI.preview_size"), 200)
         self.assertEqual(self.disk_value("GUI.preview_size"), 200)
         self.assertEqual(len(preview_harness.errors), 1)
+        self.assertEqual(preview_harness.preview_prioritizations, 0)
 
         preview_300.trigger()
         self.assertEqual(preview_harness.preview_size, 300)
         self.assertEqual(preview_harness.infoBox.preview_size, 300)
         self.assertEqual(self.disk_value("GUI.preview_size"), 300)
+        self.assertEqual(preview_harness.preview_prioritizations, 1)
 
     def test_confirmation_actions_rollback_without_recursion_or_duplicate_error(self):
         window = qtw.QMainWindow()

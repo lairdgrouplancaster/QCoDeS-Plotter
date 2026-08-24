@@ -68,9 +68,9 @@ surfacing worker failures.
 structure used by the main window and plot windows to track an open dataset,
 its active plot-window user count, and any delayed-release timer.
 
-`src/qplot/windows/_plot_export.py` contains shared plot export behavior:
-pyqtgraph export-dialog setup, PDF rendering, clipboard image copies, high-DPI
-copies, and SVG clipboard output.
+`src/qplot/windows/_plot_export.py` contains shared plot output behavior:
+native printing, pyqtgraph export-dialog setup, PDF rendering, clipboard image
+copies, high-DPI copies, and SVG clipboard output.
 
 `src/qplot/windows/_plot_feedback.py` contains shared plot-window status,
 state-overlay, error-dialog, and shortcut helpers. Keep common plot-window user
@@ -103,6 +103,11 @@ synchronization, and cleanup of hidden trace windows.
 
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
 owns heatmap rendering, hover pixel display, and marquee color scaling.
+
+`src/qplot/windows/_plot2d_layers.py` owns secondary heatmap layers added by
+preview drag-and-drop, including per-layer renderers and opacity controls,
+hidden source-window refresh ownership, shared-colorbar membership, and layer
+cleanup.
 
 `src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
 owns color autoscaling, colorbar interaction handlers, and color-map selection
@@ -163,15 +168,107 @@ diagnostic report generation.
 
 `src/qplot/datahandling/readonly.py` centralises enforced read-only database
 access. Use these helpers for QCoDeS and direct SQLite connections so qPlot does
-not initialise, upgrade, or write to loaded QCoDeS databases. The access policy
-has two paths: databases without a WAL use direct `mode=ro&immutable=1` access;
-databases with a WAL use a consistency-checked database-plus-WAL copy under the
-system temporary directory. Generated databases additionally validate a unique
-main-file lineage token and an advanced write epoch in that private WAL view;
-an unprovable pairing fails explicitly. Direct SQLite reads, QCoDeS
-`AtomicConnection` reads, dataset loading, refresh workers, metadata
-inspection, and the subprocess access probe all go through this policy. Never
-open an input database with SQLite or QCoDeS directly from viewer code.
+not initialise, upgrade, or write to loaded QCoDeS databases. A quiescent
+rollback-format source uses direct `mode=ro` access so SQLite retains its normal
+read locks. A checkpointed WAL-format source is copied first and is opened with
+`immutable=1` only at that private path.
+
+An accepted WAL or any observed rollback `-journal` routes access through a
+private snapshot. The main file is copied before the accepted sidecars, and
+main-file identity, header, sidecar identity, size, timestamps, and journal
+header/trailer state must remain stable across bounded retries. An observed
+journal is copied even when it is a cold PERSIST or zero-length TRUNCATE
+artifact. SQLite opens the private copy read-write only long enough to perform
+any permitted WAL inspection or rollback-journal recovery; the source is never
+opened in a mode that can recover or change it. Ambiguous or continuously
+changing state fails closed, and every private snapshot is removed after
+failure or when its owning connection closes.
+
+The isolated, non-default Stage 2 trusted live reader uses SQLite's real WAL
+index and native locking against the selected source without copying the
+database. Its native VFS keeps the main database, WAL, and rollback journal
+physically read-only. SQLite may mutate only the exact colocated `-shm` file as
+transient WAL coordination state, so a live read can change that file's contents
+or metadata without writing experimental data or checkpointing the database.
+
+The reader proves source binding from retained proof handles and SQLite's actual
+file handles, using device/inode identity on POSIX and volume/file identity on
+Windows. It exposes only finite, materialised queries with bounded busy handling,
+deadlines, cancellation, and verified transaction cleanup. Any cleanup
+uncertainty fails closed and quarantines that process from opening another
+trusted session. Its full access policy and limits are documented in
+[Trusted live QCoDeS reader](trusted-live-reader.md).
+Application loading, preview, plotting, and refresh continue to use the snapshot
+path above; helper-process ownership and UI scheduling remain later stages. The
+WAL-provenance discussion below describes that snapshot path, not the trusted
+reader's native SQLite transaction view.
+
+SQLite's WAL format does not provide main-file provenance. Its header records
+the WAL format, page size, checkpoint sequence, salts, and checksums; frame
+headers repeat the salts and cumulatively checksum their page data. Those
+fields bind frames to that WAL header, not to a unique main database. The main
+header has no reciprocal WAL identifier, and the ordinary latest QCoDeS schema
+has no database-level lineage token. Consequently, path agreement, directory,
+timestamps, inode or platform file identity, compatible pages, and SQLite's
+willingness to open a copied pair are continuity or consistency observations,
+not proof of lineage. An arbitrary first-observed ordinary WAL containing
+frames cannot be paired reliably and raises `UnverifiableDatabaseWalError`. A
+stably observed zero-byte WAL has no frames to associate and is omitted from
+the private view.
+
+Generated databases provide the missing provenance explicitly. Alongside the
+unique generation token they store a bounded ring of 256-bit nonce events;
+each event names its parent and the singleton state records the exact chain
+head. On private copies qPlot requires the combined main-and-WAL head to be a
+strict, contiguous descendant of the main-only head. A divergent clone can
+carry the same token and a numerically higher epoch, but it cannot reproduce
+the selected branch's random head, so it is rejected. The 65,536-event ring
+bounds storage; exceeding the retained proof window fails closed with owner
+checkpoint guidance.
+
+qPlot also checksum-scans the valid committed prefix of the private WAL and
+requires every committed transaction to contain the lineage-state root page.
+This prevents a later instrumented commit from retroactively authenticating an
+earlier uninstrumented transaction in the same WAL. Invalid or unsupported WAL
+structure and any commit without that page fail closed; parsing and SQLite
+recovery still occur only on private copies.
+
+Generation installs deterministic lineage triggers on every initial table.
+SQLite has no database-wide DML or DDL trigger, so a future QCoDeS writer must
+explicitly call `enable_generation_provenance_for_writer()` on a quiescent
+`AtomicConnection` before any new experiment or measurement writes. Its
+outer-commit hook discovers new tables, installs their triggers, and records a
+lineage event in the same creation transaction. Persisted row triggers cover
+foreground and background result connections. The hook refuses a nonempty WAL
+so it cannot retroactively authenticate frames written before coverage. It
+acquires SQLite's writer lock before checking WAL quiescence, closing the race
+with a concurrent writer. None of this migration or trigger work occurs in the
+viewer.
+
+An equal-epoch result-page WAL cannot be authenticated after the fact. Its WAL
+frame contains neither the generation token nor a reciprocal main-file
+identifier; an independent database can produce the same page transition.
+Append-only checks, integrity checks, root-page ownership, and successful
+SQLite replay are therefore not substituted for provenance. Such a state fails
+closed with owner-checkpoint and writer-integration guidance. A main-only older
+generated database remains readable, but its epoch-only live WAL cannot prove
+branch ancestry and is rejected. On a quiescent rollback-journal owner
+connection the writer hook can explicitly migrate that database, rotate its
+token, seed a fresh chain root, and install current triggers. The viewer never
+performs that migration.
+
+Process-local replacement quarantine is negative safety evidence only: it can
+prevent an unpaired WAL from being consumed after an observed main-file
+replacement, but it cannot establish that an unknown WAL belongs to the
+replacement. Ordinary QCoDeS input becomes readable after all owning
+connections close cleanly and SQLite checkpoints the WAL, or after the owning
+writer performs that checkpoint. qPlot never performs a source checkpoint
+itself.
+
+Direct SQLite reads, QCoDeS `AtomicConnection` reads, dataset loading, refresh
+workers, metadata inspection, and the subprocess access probe all go through
+this policy. Never open an input database with SQLite or QCoDeS directly from
+viewer code.
 
 `src/qplot/datahandling/LoadFromDB.py` adapts QCoDeS database loading for
 threaded refreshes.

@@ -15,12 +15,14 @@ import pytest
 import qcodes
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
+from pyqtgraph.exporters import CSVExporter
 from qcodes.dataset import (
     Measurement,
     initialise_or_create_database_at,
     load_by_id,
     load_or_create_experiment,
 )
+from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
 
 import qplot.tools.worker as worker_module
@@ -44,12 +46,14 @@ from qplot.testdata import (
     CSV_COLUMNS,
     GenerationCancelled,
     RunSpecification,
+    enable_generation_provenance_for_writer,
     generate_database,
 )
 from qplot.windows import _database_actions as database_actions_module
 from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows import main as main_window
 from qplot.windows._dataset_handle import database_file_identity
+from tests._window_lifecycle import close_main_window
 
 
 def configure_temp_qplot(monkeypatch, tmp_path):
@@ -71,7 +75,7 @@ def wait_for(predicate, timeout=12):
 
 
 def build_synthetic_database(db_path):
-    initialise_or_create_database_at(str(db_path))
+    initialise_or_create_database_at(str(db_path), journal_mode="DELETE")
     experiment = load_or_create_experiment("qplot_integration", sample_name="synthetic")
 
     gate = ManualParameter("gate", label="Gate voltage", unit="V")
@@ -108,9 +112,62 @@ def build_synthetic_database(db_path):
     return line_run_id, heatmap_run_id
 
 
+def append_nonuniform_heatmap_run():
+    experiment = load_or_create_experiment(
+        "qplot_csv_export",
+        sample_name="nonuniform",
+    )
+    gate = ManualParameter("offset_gate", label="Offset gate", unit="V")
+    bias = ManualParameter("uneven_bias", label="Uneven bias", unit="mV")
+    signal = ManualParameter("mapped_signal", label="Mapped signal", unit="uS")
+    measurement = Measurement(exp=experiment, name="nonuniform_csv_export")
+    measurement.register_parameter(gate)
+    measurement.register_parameter(bias)
+    measurement.register_parameter(signal, setpoints=(gate, bias))
+
+    missing_coordinate = (-0.25, 13.0)
+    with measurement.run() as datasaver:
+        for gate_value in (-2.0, -0.25, 4.5):
+            for bias_value in (7.0, 13.0, 28.0):
+                if (gate_value, bias_value) == missing_coordinate:
+                    continue
+                datasaver.add_result(
+                    (gate, gate_value),
+                    (bias, bias_value),
+                    (signal, gate_value * 1000.0 + bias_value),
+                )
+
+        return datasaver.dataset.run_id, missing_coordinate
+
+
+def export_real_plot_csv(monkeypatch, plot_window, target):
+    """Run qPlot's real exporter entry point with only the dialogs automated."""
+    monkeypatch.setattr(
+        qtw.QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(target), ""),
+    )
+    monkeypatch.setattr(
+        qtw.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
+    )
+    return plot_window._export_pyqtgraph_exporter(
+        CSVExporter(plot_window.plot)
+    )
+
+
+def csv_rows(csv_path):
+    with csv_path.open(newline="", encoding="utf-8") as csv_file:
+        return list(csv.reader(csv_file))
+
+
 def build_line_database(db_path, point_count, *, guid=None, journal_mode=None):
-    kwargs = {} if journal_mode is None else {"journal_mode": journal_mode}
-    initialise_or_create_database_at(str(db_path), **kwargs)
+    selected_journal_mode = "DELETE" if journal_mode is None else journal_mode
+    initialise_or_create_database_at(
+        str(db_path),
+        journal_mode=selected_journal_mode,
+    )
     experiment = load_or_create_experiment(
         f"qplot_replace_{db_path.stem}",
         sample_name="replacement",
@@ -145,15 +202,37 @@ def build_line_database(db_path, point_count, *, guid=None, journal_mode=None):
 
 
 def build_line_database_with_replayed_stale_wal(db_path):
-    """Create a completed QCoDeS run with a safely replayable old WAL.
+    """Create a generated run with a proven, safely replayable old WAL.
 
-    The sidecars are copied while an unrelated raw SQLite writer owns them and
-    restored only after that writer closes. This gives Windows the same
+    The generated main's token and advanced WAL epoch make the initial pairing
+    safe to load. The main and sidecars are copied while a raw SQLite writer
+    owns them and restored only after it closes. This gives Windows the same
     unpaired-WAL replacement scenario as POSIX without trying to rename a file
-    that SQLite has open.
+    that SQLite has open, while preserving qPlot's first-load trust policy.
     """
 
-    database_run = build_line_database(db_path, 1, journal_mode="WAL")
+    generate_database(
+        [
+            RunSpecification(
+                1,
+                "signal",
+                "Signal",
+                "nA",
+                0.0,
+                0.0,
+                1,
+            )
+        ],
+        db_path,
+    )
+    connection = sqlite3.connect(db_path)
+    try:
+        database_run = connection.execute(
+            "SELECT run_id, guid, result_table_name FROM runs"
+        ).fetchone()
+    finally:
+        connection.close()
+
     parked = {}
     writer = sqlite3.connect(db_path)
     try:
@@ -161,6 +240,8 @@ def build_line_database_with_replayed_stale_wal(db_path):
         writer.execute("PRAGMA wal_autocheckpoint = 0")
         writer.execute("UPDATE runs SET name = ?", ("stale_sidecar_run",))
         writer.commit()
+        parked_main = Path(f"{db_path}.parked-main")
+        shutil.copyfile(db_path, parked_main)
         for suffix in ("-wal", "-shm"):
             source = Path(f"{db_path}{suffix}")
             assert source.is_file()
@@ -170,6 +251,8 @@ def build_line_database_with_replayed_stale_wal(db_path):
     finally:
         writer.close()
 
+    shutil.copyfile(parked_main, db_path)
+    parked_main.unlink()
     for suffix, parked_path in parked.items():
         shutil.copyfile(parked_path, f"{db_path}{suffix}")
         parked_path.unlink()
@@ -177,23 +260,29 @@ def build_line_database_with_replayed_stale_wal(db_path):
     return database_run
 
 
+def prepare_generated_database_for_live_writes(db_path):
+    """Install qPlot lineage before a test starts a real live WAL writer."""
+    generate_database(
+        [
+            RunSpecification(
+                1,
+                "lineage_seed",
+                "Lineage seed",
+                "V",
+                0.0,
+                0.0,
+                1,
+            )
+        ],
+        db_path,
+    )
+
+
 def dependent_parameter(dataset, dimensions):
     for param in dataset.get_parameters():
         if param.depends_on and len(param.depends_on_) == dimensions:
             return param
     raise AssertionError(f"No {dimensions}D dependent parameter in run {dataset.run_id}")
-
-
-def close_main_window(window):
-    window.startupDatabaseTimer.stop()
-    window.monitor.stop()
-    window.close_plot_windows(confirm=False, status=False)
-    window.threadPool.waitForDone(1000)
-    window.databaseLoadThreadPool.waitForDone(1000)
-    window.hide()
-    window.deleteLater()
-    qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
-    qtw.QApplication.processEvents()
 
 
 def database_artifact_state(database_path):
@@ -498,7 +587,10 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
 
         line_dataset = load_by_id(line_run_id)
         line_param = dependent_parameter(line_dataset, 1)
-        window.ds = line_dataset
+        window._replace_selected_dataset(
+            line_dataset,
+            window._current_dataset_key(line_dataset.guid),
+        )
         window.openPlot(params=[line_param], show=True)
         line_window = window.windows[-1]
         wait_for(
@@ -519,7 +611,10 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
 
         heatmap_dataset = load_by_id(heatmap_run_id)
         heatmap_param = dependent_parameter(heatmap_dataset, 2)
-        window.ds = heatmap_dataset
+        window._replace_selected_dataset(
+            heatmap_dataset,
+            window._current_dataset_key(heatmap_dataset.guid),
+        )
         window.openPlot(params=[heatmap_param], show=False)
         heatmap_window = window.windows[-1]
         wait_for(
@@ -553,6 +648,521 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
         np.testing.assert_array_equal(vertical_cut.axis_data["x"], source_y)
         np.testing.assert_array_equal(vertical_cut.axis_data["y"], source_grid[:, 2])
         assert vertical_cut.sweep_id in heatmap_window.sweep_lines
+    finally:
+        close_main_window(window)
+
+
+def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = Path(tmp_path) / "plot-csv-export.db"
+    line_run_id, uniform_run_id = build_synthetic_database(database_path)
+    nonuniform_run_id, missing_coordinate = append_nonuniform_heatmap_run()
+
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(lambda: not window._database_load_active)
+
+        line_dataset = load_by_id(line_run_id)
+        line_param = dependent_parameter(line_dataset, 1)
+        window._replace_selected_dataset(
+            line_dataset,
+            window._current_dataset_key(line_dataset.guid),
+        )
+        window.openPlot(params=[line_param], show=False)
+        line_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(line_window, "axis_data")
+                and not getattr(line_window.worker, "running", False)
+            )
+        )
+
+        line_target = Path(tmp_path) / "line.csv"
+        monkeypatch.setattr(
+            line_window,
+            "_write_heatmap_csv_stage",
+            lambda *_args: pytest.fail("A line CSV used the heatmap serializer"),
+        )
+        assert export_real_plot_csv(monkeypatch, line_window, line_target)
+        line_rows = csv_rows(line_target)
+        assert len(line_rows) == line_window.axis_data["x"].size + 1
+        assert len(line_rows[0]) >= 2
+        assert len(line_rows[0]) % 2 == 0
+        expected_line = np.column_stack((
+            line_window.axis_data["x"],
+            line_window.axis_data["y"],
+        ))
+        populated_pairs = [
+            np.asarray([row[index:index + 2] for row in line_rows[1:]], dtype=float)
+            for index in range(0, len(line_rows[0]), 2)
+            if all(row[index] and row[index + 1] for row in line_rows[1:])
+        ]
+        assert any(
+            np.allclose(pair, expected_line, rtol=1e-9, atol=1e-12)
+            for pair in populated_pairs
+        )
+
+        uniform_dataset = load_by_id(uniform_run_id)
+        uniform_param = dependent_parameter(uniform_dataset, 2)
+        window._replace_selected_dataset(
+            uniform_dataset,
+            window._current_dataset_key(uniform_dataset.guid),
+        )
+        window.openPlot(params=[uniform_param], show=False)
+        uniform_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(uniform_window, "dataGrid")
+                and not getattr(uniform_window.worker, "running", False)
+            )
+        )
+        assert uniform_window._required_heatmap_geometry().is_uniform
+
+        uniform_target = Path(tmp_path) / "uniform.csv"
+        assert export_real_plot_csv(monkeypatch, uniform_window, uniform_target)
+        uniform_rows = csv_rows(uniform_target)
+        assert uniform_rows[0] == [
+            uniform_window.axis_param["x"].name,
+            uniform_window.axis_param["y"].name,
+            uniform_window.display_param.name,
+        ]
+        expected_uniform = [
+            (x_value, y_value, uniform_window.dataGrid[y_index, x_index])
+            for y_index, y_value in enumerate(uniform_window.axis_data["y"])
+            for x_index, x_value in enumerate(uniform_window.axis_data["x"])
+        ]
+        np.testing.assert_allclose(
+            np.asarray(uniform_rows[1:], dtype=float),
+            expected_uniform,
+        )
+
+        nonuniform_dataset = load_by_id(nonuniform_run_id)
+        nonuniform_param = dependent_parameter(nonuniform_dataset, 2)
+        window._replace_selected_dataset(
+            nonuniform_dataset,
+            window._current_dataset_key(nonuniform_dataset.guid),
+        )
+        window.openPlot(params=[nonuniform_param], show=False)
+        nonuniform_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(nonuniform_window, "dataGrid")
+                and not getattr(nonuniform_window.worker, "running", False)
+            )
+        )
+        assert not nonuniform_window._required_heatmap_geometry().is_uniform
+        assert np.isnan(nonuniform_window.dataGrid).sum() == 1
+
+        nonuniform_target = Path(tmp_path) / "nonuniform.csv"
+        assert export_real_plot_csv(
+            monkeypatch,
+            nonuniform_window,
+            nonuniform_target,
+        )
+        nonuniform_rows = csv_rows(nonuniform_target)
+        header = nonuniform_rows[0]
+        assert header == [
+            nonuniform_window.axis_param["x"].name,
+            nonuniform_window.axis_param["y"].name,
+            nonuniform_window.display_param.name,
+        ]
+        exported = np.asarray(nonuniform_rows[1:], dtype=float)
+        expected_nonuniform = np.asarray([
+            (x_value, y_value, nonuniform_window.dataGrid[y_index, x_index])
+            for y_index, y_value in enumerate(nonuniform_window.axis_data["y"])
+            for x_index, x_value in enumerate(nonuniform_window.axis_data["x"])
+        ])
+        np.testing.assert_allclose(exported, expected_nonuniform, equal_nan=True)
+
+        gate_column = header.index("offset_gate")
+        bias_column = header.index("uneven_bias")
+        value_column = header.index("mapped_signal")
+        missing_rows = exported[
+            (exported[:, gate_column] == missing_coordinate[0])
+            & (exported[:, bias_column] == missing_coordinate[1])
+        ]
+        assert missing_rows.shape == (1, 3)
+        assert np.isnan(missing_rows[0, value_column])
+
+        subtract_row_mean = next(
+            nonuniform_window.oper_widget.list_options.item(index)
+            for index in range(nonuniform_window.oper_widget.list_options.count())
+            if nonuniform_window.oper_widget.list_options.item(index).label
+            == "Subtract Row Mean"
+        )
+        before_operation = np.asarray(nonuniform_window.dataGrid).copy()
+        previous_worker = nonuniform_window.worker
+        subtract_row_mean.input.setChecked(True)
+        nonuniform_window.refreshWindow(force=True)
+        wait_for(
+            lambda: (
+                nonuniform_window.worker is not previous_worker
+                and not getattr(nonuniform_window.worker, "running", False)
+            )
+        )
+        assert not np.allclose(
+            nonuniform_window.dataGrid,
+            before_operation,
+            equal_nan=True,
+        )
+
+        operated_target = Path(tmp_path) / "operated.csv"
+        assert export_real_plot_csv(
+            monkeypatch,
+            nonuniform_window,
+            operated_target,
+        )
+        operated_rows = np.asarray(csv_rows(operated_target)[1:], dtype=float)
+        np.testing.assert_allclose(
+            operated_rows[:, 2].reshape(nonuniform_window.dataGrid.shape),
+            nonuniform_window.dataGrid,
+            equal_nan=True,
+        )
+
+        preserved_target = Path(tmp_path) / "preserved.csv"
+        preserved_contents = "existing export sentinel\n"
+        preserved_target.write_text(preserved_contents, encoding="utf-8")
+        valid_grid = nonuniform_window.dataGrid
+        nonuniform_window.dataGrid = valid_grid[:-1, :]
+        failure_statuses = []
+        monkeypatch.setattr(
+            nonuniform_window,
+            "show_status",
+            lambda message, *_args: failure_statuses.append(message),
+        )
+        try:
+            assert not export_real_plot_csv(
+                monkeypatch,
+                nonuniform_window,
+                preserved_target,
+            )
+        finally:
+            nonuniform_window.dataGrid = valid_grid
+        assert preserved_target.read_text(encoding="utf-8") == preserved_contents
+        assert "Could not export plot." in failure_statuses
+        assert "Could not safely export the plot." in failure_statuses
+
+        empty_target = Path(tmp_path) / "preserved-empty.csv"
+        empty_target.write_text(preserved_contents, encoding="utf-8")
+        valid_axis_data = nonuniform_window.axis_data
+        nonuniform_window.axis_data = {
+            "x": np.asarray([], dtype=float),
+            "y": np.asarray([], dtype=float),
+        }
+        nonuniform_window.dataGrid = np.empty((0, 0))
+        try:
+            assert not export_real_plot_csv(
+                monkeypatch,
+                nonuniform_window,
+                empty_target,
+            )
+        finally:
+            nonuniform_window.axis_data = valid_axis_data
+            nonuniform_window.dataGrid = valid_grid
+        assert empty_target.read_text(encoding="utf-8") == preserved_contents
+    finally:
+        close_main_window(window)
+
+
+def test_real_plot2d_csv_exports_only_current_downsampled_grid(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = Path(tmp_path) / "downsampled-csv-export.db"
+    _line_run_id, heatmap_run_id = build_synthetic_database(database_path)
+
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.config.config["runtime_settings"]["max_full_heatmap_points"] = 4
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(lambda: not window._database_load_active)
+
+        heatmap_dataset = load_by_id(heatmap_run_id)
+        heatmap_param = dependent_parameter(heatmap_dataset, 2)
+        window._replace_selected_dataset(
+            heatmap_dataset,
+            window._current_dataset_key(heatmap_dataset.guid),
+        )
+        window.openPlot(params=[heatmap_param], show=False)
+        heatmap_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(heatmap_window, "dataGrid")
+                and not getattr(heatmap_window.worker, "running", False)
+            )
+        )
+
+        full_grid = np.asarray(heatmap_window.dataGrid).copy()
+        full_x = np.asarray(heatmap_window.axis_data["x"]).copy()
+        full_y = np.asarray(heatmap_window.axis_data["y"]).copy()
+
+        # Install the same kind of canonical state committed by a completed
+        # viewport/detail reload. Export must snapshot it without reloading the
+        # full source grid or expanding omitted cells.
+        current_x = full_x[::2]
+        current_y = full_y[::2]
+        current_grid = full_grid[::2, ::2]
+        heatmap_window.axis_data = {"x": current_x, "y": current_y}
+        heatmap_window.dataGrid = current_grid
+        heatmap_window._update_heatmap_geometry()
+        heatmap_window._render_heatmap()
+        heatmap_window._large_heatmap_sql_mode = True
+        heatmap_window._heatmap_downsample_info = {
+            "source_grid_columns": full_x.size,
+            "source_grid_rows": full_y.size,
+            "grid_columns": current_x.size,
+            "grid_rows": current_y.size,
+            "grid_binned": True,
+            "axis_ranges": {
+                "x": (float(current_x[0]), float(current_x[-1])),
+                "y": (float(current_y[0]), float(current_y[-1])),
+            },
+        }
+
+        assert current_grid.size == current_x.size * current_y.size
+        assert current_grid.size < full_grid.size
+
+        target = Path(tmp_path) / "current-resolution.csv"
+        assert export_real_plot_csv(monkeypatch, heatmap_window, target)
+        rows = np.asarray(csv_rows(target)[1:], dtype=float)
+        assert rows.shape == (current_grid.size, 3)
+        expected = np.asarray([
+            (x_value, y_value, current_grid[y_index, x_index])
+            for y_index, y_value in enumerate(current_y)
+            for x_index, x_value in enumerate(current_x)
+        ])
+        np.testing.assert_allclose(rows, expected, equal_nan=True)
+    finally:
+        close_main_window(window)
+
+
+def test_hiding_data_axes_preserves_heatmap_view_range(tmp_path, monkeypatch):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = Path(tmp_path) / "data-axes-view-range.db"
+    _line_run_id, heatmap_run_id = build_synthetic_database(database_path)
+
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and window.RunList.topLevelItemCount() >= 2
+            )
+        )
+
+        heatmap_dataset = load_by_id(heatmap_run_id)
+        heatmap_param = dependent_parameter(heatmap_dataset, 2)
+        window._replace_selected_dataset(
+            heatmap_dataset,
+            window._current_dataset_key(heatmap_dataset.guid),
+        )
+        window.openPlot(params=[heatmap_param], show=True)
+        heatmap_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(heatmap_window, "dataGrid")
+                and not getattr(heatmap_window.worker, "running", False)
+            )
+        )
+        qtw.QApplication.processEvents()
+
+        assert heatmap_window.axes_dock.windowTitle() == "Data axes"
+        assert not heatmap_window.axes_dock.findChildren(
+            qtw.QWidget,
+            "heatmapLayerRow",
+        )
+
+        # Data axes are initially hidden; expose the dock so this test exercises
+        # the hide transition rather than the corresponding show transition.
+        heatmap_window.axes_dock.show()
+        wait_for(lambda: heatmap_window.axes_dock.isVisible())
+        initial_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
+        heatmap_window.axes_dock.toggleViewAction().trigger()
+        wait_for(lambda: heatmap_window.axes_dock.isHidden())
+        qtw.QApplication.processEvents()
+
+        np.testing.assert_allclose(heatmap_window.vb.viewRange(), initial_range)
+    finally:
+        close_main_window(window)
+
+
+def test_main_window_close_releases_private_wal_snapshot_before_qt_cleanup(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    database_path = Path(tmp_path) / "close-private-snapshot.db"
+    build_line_database_with_replayed_stale_wal(database_path)
+    source_artifacts = database_artifact_state(database_path)
+    window = main_window.MainWindow()
+    closed = False
+
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+                and window.ds is not None
+            )
+        )
+        window.monitor.stop()
+
+        dataset = window.ds
+        connection = dataset.conn
+        snapshot_path = Path(
+            connection.execute("PRAGMA database_list").fetchone()[2]
+        )
+        snapshot_directory = snapshot_path.parent
+        assert snapshot_directory.name.startswith("qplot-readonly-")
+        assert snapshot_directory.is_dir()
+
+        close_main_window(window)
+        closed = True
+
+        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+            connection.cursor()
+        assert not snapshot_directory.exists()
+        assert database_artifact_state(database_path) == source_artifacts
+    finally:
+        if not closed:
+            close_main_window(window)
+        qcodes.config.core.db_location = original_database_path
+
+
+def test_main_window_close_completes_promptly_while_snapshot_copy_is_cancelled(
+    tmp_path,
+    monkeypatch,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = Path(tmp_path) / "close-during-snapshot-copy.db"
+    build_line_database(database_path, 8)
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
+    finally:
+        connection.close()
+    assert database_path.read_bytes()[18:20] == b"\x02\x02"
+    source_artifacts = database_artifact_state(database_path)
+    accepted_instance = database_instance(database_path)
+    window = main_window.MainWindow()
+    worker = database_module.DatabaseLoadWorker(
+        1,
+        str(database_path),
+        expected_database_instance=accepted_instance,
+    )
+    snapshot_directories = []
+    real_temporary_directory = readonly_module.tempfile.TemporaryDirectory
+
+    def tracked_temporary_directory(*args, **kwargs):
+        snapshot = real_temporary_directory(*args, **kwargs)
+        snapshot_directories.append(Path(snapshot.name))
+        return snapshot
+
+    monkeypatch.setattr(
+        readonly_module.tempfile,
+        "TemporaryDirectory",
+        tracked_temporary_directory,
+    )
+    monkeypatch.setattr(readonly_module, "SNAPSHOT_COPY_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(
+        readonly_module,
+        "_clone_file_if_supported",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(database_module, "database_access_error", lambda *_a, **_k: None)
+    real_copy = readonly_module._copy_file_cooperatively
+    copy_checkpoint = threading.Event()
+
+    def controlled_copy(
+        source,
+        destination,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+    ):
+        assert callable(cancelled_callback)
+        destination = Path(destination)
+        copy_checks = 0
+
+        def pause_after_partial_chunk():
+            nonlocal copy_checks
+            cancelled = bool(cancelled_callback())
+            if not cancelled and destination.name == "database.db":
+                copy_checks += 1
+                if copy_checks == 5:
+                    copy_checkpoint.set()
+                    worker._cancelled.wait(2)
+                    cancelled = bool(cancelled_callback())
+            return cancelled
+
+        return real_copy(
+            source,
+            destination,
+            cancelled_callback=pause_after_partial_chunk,
+            deadline=deadline,
+        )
+
+    monkeypatch.setattr(
+        readonly_module,
+        "_copy_file_cooperatively",
+        controlled_copy,
+    )
+
+    try:
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window._database_load_generation = 1
+        window._database_load_active = True
+        window._database_load_state = {
+            "abspath": str(database_path),
+            "load_instance": accepted_instance,
+        }
+        window._database_load_worker = worker
+        window.databaseLoadThreadPool.start(worker)
+        assert copy_checkpoint.wait(2), "Load never reached a partial snapshot copy"
+
+        close_started = time.monotonic()
+        window.close()
+        wait_for(
+            lambda: (
+                window._shutdown_ready
+                and window.databaseLoadThreadPool.activeThreadCount() == 0
+            ),
+            timeout=2,
+        )
+
+        assert time.monotonic() - close_started < 1
+        assert worker._cancelled.is_set()
+        assert snapshot_directories
+        assert all(not path.exists() for path in snapshot_directories)
+        assert database_artifact_state(database_path) == source_artifacts
     finally:
         close_main_window(window)
 
@@ -1168,8 +1778,15 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
     configure_temp_qplot(monkeypatch, tmp_path)
     original_database_path = qcodes.config.core.db_location
     database_path = Path(tmp_path) / "live-wal.db"
+    prepare_generated_database_for_live_writes(database_path)
     initialise_or_create_database_at(str(database_path), journal_mode="WAL")
-    experiment = load_or_create_experiment("live_wal", sample_name="same_instance")
+    writer_connection = connect(database_path)
+    enable_generation_provenance_for_writer(writer_connection)
+    experiment = load_or_create_experiment(
+        "live_wal",
+        sample_name="same_instance",
+        conn=writer_connection,
+    )
     gate = ManualParameter("gate")
     signal = ManualParameter("signal")
     measurement = Measurement(exp=experiment, name="live_wal")
@@ -1183,6 +1800,7 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
         guid = datasaver.dataset.guid
 
         window = main_window.MainWindow()
+        original_load_file = window.load_file
         try:
             window.startupDatabaseTimer.stop()
             window.monitor.stop()
@@ -1216,8 +1834,6 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             assert database_file_identity(database_path) == loaded_identity
 
             replacement_loads = []
-            original_load_file = window.load_file
-
             def record_load(*args, **kwargs):
                 replacement_loads.append((args, kwargs))
                 return original_load_file(*args, **kwargs)
@@ -1257,10 +1873,14 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
     database_path = source_directory / "live-preview.db"
     selected_export_path = export_directory / "selected-preview.csv"
     run_export_path = export_directory / "run-preview.csv"
+    prepare_generated_database_for_live_writes(database_path)
     initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+    writer_connection = connect(database_path)
+    enable_generation_provenance_for_writer(writer_connection)
     experiment = load_or_create_experiment(
         "live_preview_export",
         sample_name="same_instance",
+        conn=writer_connection,
     )
     gate = ManualParameter("gate")
     signal = ManualParameter("signal")
@@ -1760,7 +2380,8 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
         assert errors
         assert errors[-1][0] == "Run Load Failed"
         assert "replaced" in errors[-1][2].lower()
-        assert opened_connections
+        # The replacement may now be rejected before SQLite is opened. If it
+        # happens after opening, every provisional connection must be closed.
         for connection in opened_connections:
             with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
                 connection.cursor()
@@ -1909,7 +2530,10 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
             ["stale preview"],
             None,
         )
-        window.spinBox.setValue(4.125)
+        # The production control represents tenths of a second, so keep the
+        # test input representable while checking the conversion explicitly.
+        window.spinBox.setValue(4.1)
+        expected_monitor_interval = 4100
         assert_same_path_generation_consumers_released(window)
         assert window.testDatabaseGenerationThreadPool.activeThreadCount() == 1
         assert window.loadDatabaseButton.isEnabled()
@@ -1940,7 +2564,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         assert window._test_database_replacement_state is None
         assert window.generateTestDatabaseAction.isEnabled()
         assert window.monitor.isActive()
-        assert window.monitor.interval() == 4125
+        assert window.monitor.interval() == expected_monitor_interval
         assert window.ds is not None
         if outcome == "success":
             assert database_instance(database_path) != original_instance
@@ -2103,10 +2727,11 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
                 and not window._database_expensive_detail_active
             )
         )
-        window.spinBox.setValue(2.375)
+        window.spinBox.setValue(2.4)
+        expected_monitor_interval = 2400
         selected_run_id = select_nondefault_run_and_finish_previews(window)
         assert window.monitor.isActive()
-        assert window.monitor.interval() == 2375
+        assert window.monitor.interval() == expected_monitor_interval
         assert not replacement_wal_is_quarantined(database_path)
 
         original_instance = database_instance(database_path)
@@ -2175,12 +2800,30 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
     original_database_path = qcodes.config.core.db_location
     database_path = Path(tmp_path) / "live-wal-generation-failure.db"
     csv_path = Path(tmp_path) / "replacement.csv"
-    first_run_id, _first_guid, _first_table = build_line_database(
+    generate_database(
+        [
+            RunSpecification(
+                1,
+                "first_signal",
+                "First signal",
+                "nA",
+                0.0,
+                1.0,
+                2,
+            ),
+            RunSpecification(
+                1,
+                "second_signal",
+                "Second signal",
+                "nA",
+                0.0,
+                2.0,
+                3,
+            ),
+        ],
         database_path,
-        2,
-        journal_mode="DELETE",
     )
-    build_line_database(database_path, 3, journal_mode="DELETE")
+    first_run_id = 1
     write_small_generation_specification(csv_path)
     writer = sqlite3.connect(database_path)
     window = None
@@ -2188,6 +2831,7 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
     injected_error = RuntimeError("injected failure before database publication")
 
     try:
+        assert writer.execute("PRAGMA journal_mode = DELETE").fetchone()[0] == "delete"
         writer.execute("UPDATE runs SET name = 'OLD_MAIN'")
         writer.commit()
         assert writer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
@@ -2217,11 +2861,12 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
                 and not window._database_expensive_detail_active
             )
         )
-        window.spinBox.setValue(2.375)
+        window.spinBox.setValue(2.4)
+        expected_monitor_interval = 2400
         selected_run_id = select_nondefault_run_and_finish_previews(window)
         assert window.ds.name == "NEW_WAL"
         assert window.monitor.isActive()
-        assert window.monitor.interval() == 2375
+        assert window.monitor.interval() == expected_monitor_interval
         assert not replacement_wal_is_quarantined(database_path)
 
         original_instance = database_instance(database_path)
@@ -2317,7 +2962,8 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
                 and not window._database_expensive_detail_active
             )
         )
-        window.spinBox.setValue(2.375)
+        window.spinBox.setValue(2.4)
+        expected_monitor_interval = 2400
         parameter = dependent_parameter(window.ds, 1)
         window.openPlot(params=[parameter], show=False)
         old_plot = window.windows[-1]
@@ -2355,7 +3001,7 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         assert not window._test_database_generation_active
         assert window._test_database_generation_worker is None
         assert window.monitor.isActive()
-        assert window.monitor.interval() == 2375
+        assert window.monitor.interval() == expected_monitor_interval
         assert errors == []
     finally:
         if window is not None:
@@ -2475,14 +3121,19 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
     writer_state = {}
     writer_errors = []
     window = None
+    prepare_generated_database_for_live_writes(database_path)
 
     def write_measurement():
         writer_dataset = None
+        writer_connection = None
         try:
             initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+            writer_connection = connect(database_path)
+            enable_generation_provenance_for_writer(writer_connection)
             experiment = load_or_create_experiment(
                 "threaded_live_run",
                 sample_name="completion_race",
+                conn=writer_connection,
                 )
             gate = ManualParameter("gate")
             signal_a = ManualParameter("signal_a")
@@ -2521,8 +3172,8 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
             initial_row_written.set()
             writer_completed.set()
         finally:
-            if writer_dataset is not None:
-                writer_dataset.conn.close()
+            if writer_connection is not None:
+                writer_connection.close()
 
     writer_thread = threading.Thread(target=write_measurement)
     writer_thread.start()
@@ -2851,14 +3502,19 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
     writer_state = {}
     writer_errors = []
     window = None
+    prepare_generated_database_for_live_writes(database_path)
 
     def write_measurement():
         writer_dataset = None
+        writer_connection = None
         try:
             initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+            writer_connection = connect(database_path)
+            enable_generation_provenance_for_writer(writer_connection)
             experiment = load_or_create_experiment(
                 "threaded_live_heatmap",
                 sample_name="direct_sql_completion",
+                conn=writer_connection,
                 )
             x_param = ManualParameter("x_param")
             y_param = ManualParameter("y_param")
@@ -2897,8 +3553,8 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
             initial_row_written.set()
             writer_completed.set()
         finally:
-            if writer_dataset is not None:
-                writer_dataset.conn.close()
+            if writer_connection is not None:
+                writer_connection.close()
 
     writer_thread = threading.Thread(target=write_measurement)
     writer_thread.start()

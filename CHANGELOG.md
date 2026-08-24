@@ -9,6 +9,24 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ### Added
 
+- Add a complete, non-default trusted live-reader boundary that uses SQLite's
+  real WAL index and native locking without copying the selected QCoDeS
+  database. Main, WAL, and rollback-journal handles remain physically read-only;
+  only SQLite's exact colocated SHM coordination file may be updated. Operations
+  are bounded, cancellable, and identity-bound. The existing snapshot reader
+  remains the application path until later helper-process and UI stages.
+- Build the native boundary in explicit C11 mode with MSVC and exercise installed
+  reader wheels separately on ARM64 macOS, Intel macOS, Linux, and unprivileged
+  Windows CI hosts before cross-platform acceptance.
+
+## 1.6.0-b1 - 2026-08-18
+
+### Added
+
+- Print the visible plot area through the system print dialog, including
+  page-formatted PDFs when it exposes a concrete PDF destination. PDF file
+  output is staged and atomically published; Save Plot as PDF remains the
+  plot-sized output path.
 - Make every run-table column optional and persistent from the header menu,
   including Experiment, Sample, Name, Completed, and GUID, with horizontal
   scrolling for wider layouts.
@@ -19,6 +37,22 @@ installation commands and release validation, see `docs/distribution.md`.
   the new major version. Older or incomplete settings files are backed up and
   reset to current defaults, and the recent-database list is now the single
   source for restoring the last opened database.
+
+### Fixed
+
+- Bind generated-database WAL provenance to the exact checkpointed branch with
+  a bounded parent-linked nonce chain. Provenance-aware QCoDeS writers cover
+  later result tables, background writes, repeated checkpoints, and fresh qPlot
+  processes, while equal-lineage WALs and higher-counter divergent clone WALs
+  remain fail-closed. Every committed private-WAL transaction must carry its
+  lineage-state page, so a later valid commit cannot bless earlier unknown
+  frames, and writer enablement checks WAL quiescence while holding the SQLite
+  writer lock.
+- Refuse a first-observed nonempty ordinary SQLite WAL when its association
+  with the selected QCoDeS main database cannot be proved. qPlot-generated
+  databases remain readable with a live WAL only when its retained chain
+  descends from the selected main; all inspection and recovery stays on private
+  copies without checkpointing or changing input files.
 
 ## 1.5.1-b2 - 2026-08-13
 

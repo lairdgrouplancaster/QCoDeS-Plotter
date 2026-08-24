@@ -49,6 +49,7 @@ from ._run_controls import RunControlsMixin
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
+    add_application_quit_action,
     add_restore_defaults_option,
     add_standard_window_controls,
     ask_confirmation_with_dont_ask_again,
@@ -160,9 +161,11 @@ class MainWindow(
         self._database_detail_generation = 0
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_detail_instance = None
         self._database_expensive_detail_generation = 0
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_expensive_detail_instance = None
         self._database_refresh_generation = 0
         self._database_refresh_active = False
         self._database_refresh_pending = False
@@ -227,6 +230,9 @@ class MainWindow(
         self.show() 
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowType.WindowStaysOnTopHint) 
         self.show()
+        startup_warning = getattr(self.config, "startup_warning", None)
+        if startup_warning:
+            self.show_status(startup_warning, 10_000)
         self.startupDatabaseTimer.start(0)
 
 
@@ -304,9 +310,7 @@ class MainWindow(
         closeAction.triggered.connect(self.close)
         fileMenu.addAction(closeAction)
 
-        quitAction = create_action("app.quit", self)
-        quitAction.triggered.connect(self.quit_application)
-        fileMenu.addAction(quitAction)
+        add_application_quit_action(self, fileMenu, self.quit_application)
 
         add_standard_window_controls(self)
         
@@ -489,6 +493,13 @@ class MainWindow(
                 event.ignore()
                 return
 
+        # Mark the refresh lifecycle as shut down before cancelling workers.
+        # This also invalidates a QTimer timeout that was already queued.
+        self._automatic_refresh_shutdown = True
+        stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
+        if callable(stop_refresh_timer):
+            stop_refresh_timer()
+
         preview = getattr(getattr(self, "infoBox", None), "preview", None)
         if preview is not None:
             preview.shutdown()
@@ -522,11 +533,13 @@ class MainWindow(
             )
         self._database_detail_active = False
         self._database_detail_worker = None
+        self._database_detail_instance = None
         self._database_expensive_detail_generation = (
             getattr(self, "_database_expensive_detail_generation", 0) + 1
             )
         self._database_expensive_detail_active = False
         self._database_expensive_detail_worker = None
+        self._database_expensive_detail_instance = None
         self._database_refresh_generation = (
             getattr(self, "_database_refresh_generation", 0) + 1
             )
@@ -534,11 +547,16 @@ class MainWindow(
         self._database_refresh_pending = False
         self._database_refresh_worker = None
         self._database_refresh_identity = None
+        self._database_refresh_instance = None
         self._test_database_generation_active = False
         self._test_database_generation_worker = None
         self._test_database_replacement_state = None
         self._database_view_released_for_generation = False
-        self.monitor.stop()
+        stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
+        if callable(stop_refresh_timer):
+            stop_refresh_timer()
+        else:
+            self.monitor.stop()
         self.close_plot_windows(confirm=False, status=False)
         self.close_database(status=False)
 
@@ -735,14 +753,7 @@ class MainWindow(
         if not self._save_preview_size(preview_size):
             return False
 
-        self.preview_size = preview_size
-        if hasattr(self, "infoBox"):
-            self.infoBox.set_preview_size(preview_size)
-            prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
-            if callable(prioritize_previews):
-                prioritize_previews()
-            if hasattr(self, "runInfoSplitter"):
-                self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+        self._apply_preview_size(preview_size)
         self.show_status(f"Preview size set to {preview_size} px.", 3000)
         return True
 
@@ -810,6 +821,16 @@ class MainWindow(
         self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
+            apply_major_ticks = getattr(
+                win,
+                "apply_axis_major_tick_count_preference",
+                None,
+                )
+            if callable(apply_major_ticks):
+                apply_major_ticks()
+            apply_colorbar_width = getattr(win, "apply_colorbar_width_preference", None)
+            if callable(apply_colorbar_width):
+                apply_colorbar_width()
         self._sync_mouse_mode_settings()
 
 
@@ -822,16 +843,33 @@ class MainWindow(
 
 
     def _sync_preview_size_actions(self):
-        self.preview_size = self._configured_preview_size()
+        self._apply_preview_size(self._configured_preview_size())
+
+
+    def _apply_preview_size(self, preview_size):
+        """Apply a persisted preview size to the live UI once.
+
+        Persistence is intentionally kept outside this method.  This lets menu
+        actions, Preferences, and resetting settings share the same runtime
+        cache invalidation and visible-row regeneration path.
+        """
+        preview_size = int(preview_size)
+        size_changed = preview_size != self.preview_size
+        self.preview_size = preview_size
         for action in getattr(self, "previewSizeActions", []):
             action.blockSignals(True)
             action.setChecked(action.data() == self.preview_size)
             action.blockSignals(False)
 
-        if hasattr(self, "infoBox"):
+        if size_changed and hasattr(self, "infoBox"):
             self.infoBox.set_preview_size(self.preview_size)
+            prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
+            if callable(prioritize_previews):
+                prioritize_previews()
             if hasattr(self, "runInfoSplitter"):
                 self.runInfoSplitter.setSizes([380, self._details_pane_height()])
+
+        return size_changed
 
 
     def _sync_thread_pool_settings(self):
@@ -884,6 +922,15 @@ class MainWindow(
         """
         status_bar = cast(qtw.QStatusBar, self.statusBar())
         status_bar.showMessage(message, timeout)
+
+        # A preview-drop action is initiated in a separate plot window, which
+        # can cover the main window and its status bar.  Mirror feedback to
+        # that plot for the duration of the action so rejected drops have an
+        # immediately visible explanation.
+        target = getattr(self, "_preview_drop_feedback_window", None)
+        target_show_status = getattr(target, "show_status", None)
+        if callable(target_show_status):
+            target_show_status(message, timeout)
 
 
     def show_error(self, title : str, message : str, details : str | None = None):

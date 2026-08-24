@@ -1,4 +1,6 @@
-from PyQt6 import QtGui
+from collections import Counter
+
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._commands import create_action
@@ -10,6 +12,56 @@ from ._config_persistence import (
 CONFIRM_CLOSE_ALL_KEY = "user_preference.confirm_close_all"
 CONFIRM_QUIT_KEY = "user_preference.confirm_close"
 DO_NOT_ASK_AGAIN_LABEL = "Don't ask again"
+
+_WINDOW_LIST_ACTIONS_ATTRIBUTE = "_qplot_window_list_actions"
+_WINDOW_LIST_ENTRY_PROPERTY = "qplotWindowListEntry"
+_WINDOW_KIND_LABELS = {
+    "plot1d": "1D",
+    "plot2d": "2D",
+    "sweeper": "Cut",
+    }
+
+
+class _ApplicationQuitShortcutFilter(QtCore.QObject):
+    """Deliver Quit while a modal dialog blocks its owner window."""
+
+    def __init__(self, quit_action, parent):
+        super().__init__(parent)
+        self.quit_action = quit_action
+
+    def eventFilter(self, watched, event):
+        if (
+                event.type() != QtCore.QEvent.Type.KeyPress
+                or not isinstance(event, QtGui.QKeyEvent)
+                or event.isAutoRepeat()
+                ):
+            return False
+
+        key_sequence = QtGui.QKeySequence(event.keyCombination())
+        if any(
+                key_sequence.matches(shortcut)
+                == QtGui.QKeySequence.SequenceMatch.ExactMatch
+                for shortcut in self.quit_action.shortcuts()
+                ):
+            self.quit_action.trigger()
+            return True
+
+        return False
+
+
+def _install_application_quit_shortcut_filter(action_owner, quit_action):
+    """Install the modal-dialog fallback for qPlot's Quit action."""
+    if getattr(action_owner, "_qplot_quit_shortcut_filter", None) is not None:
+        return
+
+    app = qtw.QApplication.instance()
+    if app is None:
+        return
+
+    shortcut_filter = _ApplicationQuitShortcutFilter(quit_action, action_owner)
+    app.installEventFilter(shortcut_filter)
+    action_owner._qplot_quit_shortcut_filter = shortcut_filter
+
 
 def add_standard_window_controls(window):
     """
@@ -36,7 +88,111 @@ def add_standard_window_controls(window):
     fullscreen_action.triggered.connect(lambda: toggle_fullscreen(window))
     window_menu.addAction(fullscreen_action)
 
+    # Plot windows are registered by the main window only after they have been
+    # constructed. Rebuild this section immediately before display so every
+    # Window menu reflects the currently open qPlot windows.
+    window_menu.aboutToShow.connect(
+        lambda: populate_available_window_actions(window, window_menu)
+        )
+
     return window_menu
+
+
+def add_application_quit_action(window, menu, fallback_handler):
+    """
+    Add qPlot's single application-wide Quit action to a File menu.
+
+    A shared action prevents Qt from treating identical application shortcuts
+    in the main and plot windows as ambiguous, while still exposing Quit in
+    every window's File menu.
+    """
+    main_window = main_window_for(window)
+    action_owner = main_window if main_window is not None else window
+    quit_action = getattr(action_owner, "_qplot_quit_action", None)
+
+    if not isinstance(quit_action, QtGui.QAction):
+        quit_action = create_action("app.quit", action_owner)
+        quit_handler = getattr(action_owner, "quit_application", fallback_handler)
+        quit_action.triggered.connect(quit_handler)
+        action_owner._qplot_quit_action = quit_action
+
+    _install_application_quit_shortcut_filter(action_owner, quit_action)
+    menu.addAction(quit_action)
+    return quit_action
+
+
+def populate_available_window_actions(window, window_menu):
+    """Add the current qPlot windows to the bottom of a Window menu."""
+
+    _remove_available_window_actions(window_menu)
+
+    main_window = main_window_for(window)
+    if main_window is None:
+        return
+
+    plot_windows = tuple(getattr(main_window, "windows", ()) or ())
+    labels = [_plot_window_menu_label(plot_window) for plot_window in plot_windows]
+    label_counts = Counter(labels)
+    label_indexes = Counter()
+
+    actions = [window_menu.addSeparator()]
+    actions.append(_add_window_menu_action(window_menu, main_window, "qPlot"))
+    for plot_window, label in zip(plot_windows, labels, strict=True):
+        label_indexes[label] += 1
+        if label_counts[label] > 1:
+            label = f"{label} ({label_indexes[label]})"
+        actions.append(_add_window_menu_action(window_menu, plot_window, label))
+
+    setattr(window_menu, _WINDOW_LIST_ACTIONS_ATTRIBUTE, actions)
+
+
+def _remove_available_window_actions(window_menu):
+    """Remove actions generated during the previous Window-menu opening."""
+
+    for action in getattr(window_menu, _WINDOW_LIST_ACTIONS_ATTRIBUTE, ()):
+        window_menu.removeAction(action)
+        action.deleteLater()
+    setattr(window_menu, _WINDOW_LIST_ACTIONS_ATTRIBUTE, ())
+
+
+def _plot_window_menu_label(plot_window):
+    """Return a concise, recognisable label for a qPlot graph window."""
+
+    operation_kind = getattr(plot_window, "operation_kind", None)
+    kind_label = _WINDOW_KIND_LABELS.get(operation_kind)
+    label = str(getattr(plot_window, "label", "")).strip()
+    if not label:
+        window_title = getattr(plot_window, "windowTitle", None)
+        label = str(window_title()).strip() if callable(window_title) else "Plot"
+
+    return f"{kind_label} — {label}" if kind_label is not None else label
+
+
+def _add_window_menu_action(menu, target_window, text):
+    """Create a checked-as-active menu action that focuses ``target_window``."""
+
+    action = QtGui.QAction(text, menu)
+    action.setCheckable(True)
+    action.setChecked(target_window.isActiveWindow())
+    action.setProperty(_WINDOW_LIST_ENTRY_PROPERTY, True)
+    action.setStatusTip(f"Show {text}")
+    action.triggered.connect(
+        lambda _checked=False: focus_qplot_window(target_window)
+        )
+    menu.addAction(action)
+    return action
+
+
+def focus_qplot_window(target_window):
+    """Restore, raise, and activate a qPlot window selected from the menu."""
+
+    if target_window.isMinimized():
+        target_window.showNormal()
+    elif not target_window.isVisible():
+        target_window.show()
+
+    target_window.raise_()
+    target_window.activateWindow()
 
 
 def add_confirmation_options(window, menu):

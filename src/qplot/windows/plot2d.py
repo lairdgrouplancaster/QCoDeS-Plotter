@@ -15,7 +15,9 @@ from qplot.tools.heatmap_geometry import (
 from . import _colorbar
 from ._commands import command_spec, create_action
 from ._plot2d_colorbar import Plot2DColorbarMixin
+from ._plot2d_layers import Plot2DLayerMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
+from ._plot_axis_scaling import _install_flush_axis_draw_specs
 from ._plotWin import plotWidget
 
 _COLORBAR_COLORMAPS = _colorbar._COLORBAR_COLORMAPS
@@ -23,7 +25,12 @@ _HEATMAP_VIEW_RELOAD_DEBOUNCE_MS = 450
 _HEATMAP_VIEW_RELOAD_MIN_FRACTION = 0.95
 
 
-class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
+class plot2d(
+        Plot2DSweepMixin,
+        Plot2DColorbarMixin,
+        Plot2DLayerMixin,
+        plotWidget,
+        ):
     """
     Plot window for 2d and higher plots, aka Heatmaps.
     Inherits and wraps several functions from qplot.windows._plotWin.plotWidget.
@@ -38,6 +45,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
     open_subplot = QtCore.pyqtSignal([object, object, tuple])
     sweep_moved = QtCore.pyqtSignal([int, float])
     close_sweeps_requested = QtCore.pyqtSignal([object, object])
+    remove_dataset = QtCore.pyqtSignal([object])
     
     def __init__(
             self,
@@ -69,6 +77,10 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             self._reload_visible_heatmap_data
             )
         self._connect_heatmap_range_controls()
+        self._install_axes_dock_view_range_preserver()
+
+        for side in ("left", "right", "top", "bottom"):
+            _install_flush_axis_draw_specs(self.plot.getAxis(side))
 
         self.image = pg.ImageItem(axisOrder='row-major')
         self.image.setZValue(0) # Like *Send to back*
@@ -86,6 +98,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
         self.hover_pixel_outline.setZValue(10)
         self.hover_pixel_outline.hide()
         self.plot.addItem(self.hover_pixel_outline)
+        self._init_heatmap_layers()
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
@@ -102,8 +115,69 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             )
 
 
+    def _install_axes_dock_view_range_preserver(self) -> None:
+        """Keep a heatmap's viewport stable while its side dock is relaid out."""
+
+        axes_dock = self.__dict__.get("axes_dock")
+        if axes_dock is not None:
+            axes_dock.installEventFilter(self)
+
+
+    def _preserve_heatmap_view_range_after_axes_dock_layout(self) -> None:
+        """Restore the viewport after the Data axes dock changes visibility."""
+
+        try:
+            viewbox = self._primary_heatmap_viewbox()
+            view_range = viewbox.viewRange()
+            saved_range = (
+                tuple(float(value) for value in view_range[0]),
+                tuple(float(value) for value in view_range[1]),
+                )
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return
+
+        token = self.__dict__.get("_axes_dock_view_range_token", 0) + 1
+        self.__dict__["_axes_dock_view_range_token"] = token
+
+        def restore() -> None:
+            if self.__dict__.get("_axes_dock_view_range_token") != token:
+                return
+            try:
+                current_range = viewbox.viewRange()
+            except (AttributeError, TypeError):
+                return
+            if np.allclose(current_range, saved_range, rtol=1e-12, atol=1e-12):
+                return
+            viewbox.setRange(
+                xRange=saved_range[0],
+                yRange=saved_range[1],
+                padding=0,
+                disableAutoRange=False,
+                )
+            self._sync_secondary_heatmap_view_ranges()
+
+        QtCore.QTimer.singleShot(0, restore)
+
+
     def _view_range_changed_programmatically(self) -> None:
         self._schedule_visible_heatmap_reload()
+
+
+    def _emit_heatmap_trace_updated(self) -> None:
+        """Publish a completed heatmap render when Qt is fully initialised."""
+
+        try:
+            self.trace_updated.emit()
+        except RuntimeError:
+            # A few focused geometry tests construct plot2d with ``__new__``
+            # and deliberately omit QMainWindow initialisation.
+            return
+
+
+    @QtCore.pyqtSlot(bool)
+    def closeEvent(self, event: object) -> None:
+        self.close_secondary_heatmaps()
+        super().closeEvent(event)
       
 
     def initRefresh(self, refresh: Any) -> None:
@@ -201,8 +275,10 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
         try:
             self._update_large_heatmap_state(plot_worker)
+            self.refresh_secondary_heatmaps()
             if not self._has_plottable_heatmap_data():
                 self._invalidate_heatmap_geometry()
+                self._emit_heatmap_trace_updated()
                 self.show_status(
                     f"Waiting for plottable data for {self.param.name}...",
                     5000,
@@ -219,6 +295,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 self._update_heatmap_geometry()
             except (TypeError, ValueError) as error:
                 self._invalidate_heatmap_geometry()
+                self._emit_heatmap_trace_updated()
                 self.show_status(f"Cannot display heatmap: {error}", 10_000)
                 self.show_plot_state(
                     "Invalid heatmap geometry",
@@ -232,13 +309,22 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
             # Produce color bar on first run
             if not hasattr(self, "bar"):
+                colorbar_items = self._heatmap_colorbar_items()
                 self.bar = self.plot.addColorBar(
-                    self._heatmap_colorbar_items(),
+                    colorbar_items,
                     colorMap=self._colorbar_colormap(),
                     rounding=self._data_colorbar_rounding(),
+                    width=self._configured_colorbar_width(),
                     colorMapMenu=False,
                     )
+                self._heatmap_colorbar_item_ids = tuple(
+                    id(item) for item in colorbar_items
+                    )
                 self._set_colorbar_tick_formatter()
+                # The colour bar is created after the initial plot theme has
+                # been applied, so style its axes immediately as well.
+                self.config.theme.style_plotItem(self)
+                self.apply_axis_major_tick_count_preference()
                 if self._colorbar_manual_levels is None:
                     self.scaleColorbar()
                 else:
@@ -254,6 +340,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
                 self._set_colorbar_levels(*self._colorbar_manual_levels)
             
             self._restore_heatmap_interactions()
+            self._emit_heatmap_trace_updated()
             self._mark_display_synchronized(plot_worker)
         finally:
             # Allow new workers after empty live loads or display errors.
@@ -352,6 +439,15 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
 
     def eventFilter(self, source, event):
+        if (
+                source is self.__dict__.get("axes_dock")
+                and event.type() in {
+                    QtCore.QEvent.Type.Show,
+                    QtCore.QEvent.Type.Hide,
+                    }
+                ):
+            self._preserve_heatmap_view_range_after_axes_dock_layout()
+
         if (
                 event.type() == QtCore.QEvent.Type.Resize
                 and source is self.__dict__.get("_heatmap_downsample_button_parent")
@@ -914,21 +1010,24 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
     def _zoom_large_heatmap_to_all(self) -> None:
         if not self._large_heatmap_sql_mode:
+            self._sync_secondary_heatmap_view_ranges()
             return
 
         full_axis_ranges = self._heatmap_full_axis_ranges
         if full_axis_ranges is None:
+            self._sync_secondary_heatmap_view_ranges()
             return
 
         self._heatmap_view_reload_timer.stop()
         view_ranges = self._heatmap_full_view_ranges or full_axis_ranges
-        self.vb.setRange(
+        self._primary_heatmap_viewbox().setRange(
             xRange=view_ranges["x"],
             yRange=view_ranges["y"],
             padding=0,
             )
 
         self._reload_full_heatmap_data()
+        self._sync_secondary_heatmap_view_ranges()
 
 
     def _reload_full_heatmap_data(self) -> bool:
@@ -950,6 +1049,9 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
 
 
     def _schedule_visible_heatmap_reload(self, *_args: Any) -> None:
+        if not self.__dict__.get("_heatmap_layer_view_sync_active", False):
+            self._sync_secondary_heatmap_view_ranges()
+
         if not self._large_heatmap_sql_mode:
             return
 
@@ -988,7 +1090,7 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             return None
 
         try:
-            view_x, view_y = self.vb.viewRange()
+            view_x, view_y = self._primary_heatmap_viewbox().viewRange()
         except Exception:
             return None
 
@@ -1132,6 +1234,10 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
     def _render_heatmap(self) -> None:
         """Render uniform grids as images and rectilinear grids as meshes."""
 
+        if not self.__dict__.get("_primary_heatmap_visible", True):
+            self._hide_heatmap_renderers()
+            return
+
         geometry = self._required_heatmap_geometry()
         data_grid = np.asarray(self.dataGrid)
         if geometry.is_uniform:
@@ -1159,10 +1265,6 @@ class plot2d(Plot2DSweepMixin, Plot2DColorbarMixin, plotWidget):
             )
         self.image.hide()
         self.heatmap_mesh.show()
-
-
-    def _heatmap_colorbar_items(self) -> list[Any]:
-        return [self.image, self.heatmap_mesh]
 
 
     def _hide_heatmap_renderers(self) -> None:

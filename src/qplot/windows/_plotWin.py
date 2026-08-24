@@ -1,6 +1,7 @@
-from math import floor, isfinite, log10
+from math import ceil, floor, isclose, isfinite, log10, ulp
 from os import path
-from typing import TYPE_CHECKING
+from types import MethodType
+from typing import TYPE_CHECKING, cast
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -34,6 +35,7 @@ from ._plot_marquee import PlotMarqueeMixin
 from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
 from ._preferences import (
+    AXIS_MAJOR_TICK_COUNT_KEY,
     MOUSE_MODE_KEY,
     PreferencesDialog,
     create_preferences_action,
@@ -45,6 +47,7 @@ from ._widgets import (
     operations_widget,
 )
 from ._window_controls import (
+    add_application_quit_action,
     add_standard_window_controls,
     main_window_for,
 )
@@ -56,6 +59,8 @@ if TYPE_CHECKING:
 
 
 _axis_scale_power_text = _plot_axis_scaling._axis_scale_power_text
+
+_MAX_TICK_POSITIONS = 2048
 
 _A4_LANDSCAPE_PLOT_AREA_SIZE = QtCore.QSize(1123, 794)
 _A4_PORTRAIT_PLOT_AREA_SIZE = QtCore.QSize(794, 1123)
@@ -89,6 +94,266 @@ _PLOT_AREA_RESIZE_PRESETS = (
         _SQUARE_PLOT_AREA_SIZE,
         ),
     )
+
+
+def _tick_positions(min_val, max_val, spacing, offset):
+    """Return the positions on one regular tick lattice inside a range."""
+
+    min_val, max_val = sorted((min_val, max_val))
+    if (
+            not all(isfinite(value) for value in (min_val, max_val, spacing, offset))
+            or spacing <= 0
+            ):
+        return []
+
+    data_range = max_val - min_val
+    span_tolerance = data_range * 1e-12 if isfinite(data_range) else 0.0
+    coordinate_precision = max(ulp(min_val), ulp(max_val))
+    if spacing < coordinate_precision:
+        return []
+    tolerance = max(
+        span_tolerance,
+        spacing * 1e-12,
+        coordinate_precision,
+        ulp(offset),
+        )
+    ratio_tolerance = tolerance / spacing
+    if not isfinite(ratio_tolerance):
+        return []
+
+    if isfinite(data_range):
+        estimated_count = (data_range / spacing) + (2.0 * ratio_tolerance) + 2.0
+    else:
+        estimated_count = (
+            (max_val / spacing)
+            - (min_val / spacing)
+            + (2.0 * ratio_tolerance)
+            + 2.0
+            )
+    if not isfinite(estimated_count) or estimated_count > _MAX_TICK_POSITIONS:
+        return []
+
+    lower_ratio = (min_val - offset) / spacing
+    upper_ratio = (max_val - offset) / spacing
+    if not isfinite(lower_ratio) or not isfinite(upper_ratio):
+        return []
+    first_index = ceil(lower_ratio - ratio_tolerance)
+    last_index = floor(upper_ratio + ratio_tolerance)
+    count = last_index - first_index + 1
+    if count <= 0 or count > _MAX_TICK_POSITIONS:
+        return []
+
+    positions = []
+    for index in range(first_index, last_index + 1):
+        try:
+            position = (index * spacing) + offset
+        except OverflowError:
+            continue
+        if not isfinite(position):
+            continue
+        if position < min_val and min_val - position > tolerance:
+            continue
+        if position > max_val and position - max_val > tolerance:
+            continue
+        if not positions or position != positions[-1]:
+            positions.append(position)
+    return positions
+
+
+def _visible_horizontal_tick_positions(axis, positions, min_val, max_val, size,
+                                       spacing):
+    """Return ticks whose labels fit completely within a horizontal axis."""
+
+    if getattr(axis, "orientation", None) not in ("bottom", "top") or size <= 0:
+        return positions
+
+    scale = axis.autoSIPrefixScale * axis.scale
+    strings = _clean_tick_strings(axis, positions, scale, spacing)
+    font = axis.style.get("tickFont") or qtw.QApplication.font()
+    metrics = QtGui.QFontMetricsF(font)
+    data_range = max_val - min_val
+    visible = []
+    for position, string in zip(positions, strings, strict=True):
+        pixel = ((position - min_val) / data_range) * size
+        half_width = metrics.boundingRect(string).width() / 2.0
+        if half_width <= pixel <= size - half_width:
+            visible.append(position)
+    return visible
+
+
+def _major_tick_spacing(axis, min_val, max_val, size):
+    """Choose a zero-aligned 1-2-5 interval nearest the requested tick count."""
+
+    min_val, max_val = sorted((min_val, max_val))
+    if not isfinite(min_val) or not isfinite(max_val):
+        return []
+    data_range = max_val - min_val
+    if data_range == 0:
+        return []
+
+    target = axis._qplot_major_tick_count
+    divisor = max(1, target - 1)
+    raw_spacing = (max_val / divisor) - (min_val / divisor)
+    if not isfinite(raw_spacing):
+        raw_spacing = max(abs(min_val), abs(max_val))
+    if raw_spacing == 0.0 and isfinite(data_range):
+        raw_spacing = data_range
+    if not isfinite(raw_spacing) or raw_spacing <= 0.0:
+        return []
+
+    base_exponent = floor(log10(raw_spacing))
+    visible_candidates = []
+    fallback_candidates = []
+    for exponent in range(base_exponent - 2, base_exponent + 3):
+        try:
+            decade = 10.0 ** exponent
+        except OverflowError:
+            continue
+        if not isfinite(decade) or decade <= 0.0:
+            continue
+        for factor in (1.0, 2.0, 5.0):
+            spacing = factor * decade
+            if not isfinite(spacing) or spacing <= 0.0:
+                continue
+            for offset in (0.0,):
+                positions = _tick_positions(min_val, max_val, spacing, offset)
+                if not positions:
+                    continue
+                fallback_candidates.append((
+                    abs(len(positions) - target),
+                    len(positions) < 2,
+                    abs(log10(spacing) - log10(raw_spacing)),
+                    spacing,
+                    offset,
+                    factor,
+                    ))
+                scored_positions = _visible_horizontal_tick_positions(
+                    axis,
+                    positions,
+                    min_val,
+                    max_val,
+                    size,
+                    spacing,
+                    )
+                count = len(scored_positions)
+                if count == 0:
+                    continue
+                if isfinite(data_range):
+                    coverage = (
+                        (scored_positions[-1] - scored_positions[0]) / data_range
+                        if count > 1
+                        else 0.0
+                        )
+                    centre_error = abs(
+                        (
+                            (scored_positions[0] - min_val)
+                            + (scored_positions[-1] - max_val)
+                        ) / 2.0
+                        ) / data_range
+                else:
+                    scale = max(abs(min_val), abs(max_val))
+                    scaled_range = (max_val / scale) - (min_val / scale)
+                    coverage = (
+                        (
+                            (scored_positions[-1] / scale)
+                            - (scored_positions[0] / scale)
+                        ) / scaled_range
+                        if count > 1
+                        else 0.0
+                        )
+                    tick_centre = (
+                        (scored_positions[0] / scale) / 2.0
+                        + (scored_positions[-1] / scale) / 2.0
+                        )
+                    range_centre = (
+                        (min_val / scale) / 2.0
+                        + (max_val / scale) / 2.0
+                        )
+                    centre_error = abs(tick_centre - range_centre) / scaled_range
+                visible_candidates.append((
+                    abs(count - target),
+                    count < 2,
+                    -coverage,
+                    centre_error,
+                    abs(log10(spacing) - log10(raw_spacing)),
+                    spacing,
+                    offset,
+                    factor,
+                    ))
+
+    if visible_candidates:
+        _, _, _, _, _, major_spacing, offset, factor = min(visible_candidates)
+    elif fallback_candidates:
+        _, _, _, major_spacing, offset, factor = min(fallback_candidates)
+    else:
+        major_spacing = raw_spacing
+        offset = 0.0
+        factor = 1.0
+    subdivisions = {
+        1.0: 5,
+        2.0: 4,
+        5.0: 5,
+        }[factor]
+    levels = [(major_spacing, offset)]
+    minor_spacing = major_spacing / subdivisions
+    if isfinite(minor_spacing) and 0.0 < minor_spacing < major_spacing:
+        levels.append((minor_spacing, offset))
+    return levels
+
+
+def _clean_tick_strings(axis, values, scale, spacing):
+    """Format nice intervals accurately and round-off near zero as zero."""
+
+    if axis.logMode and spacing is None:
+        return axis._qplot_original_tick_strings(
+            values,
+            scale,
+            spacing,
+            )
+
+    tolerance = max(abs(spacing) * 1e-10, 1e-15)
+    clean_values = [0.0 if abs(value) < tolerance else value for value in values]
+    if axis.logMode:
+        return axis._qplot_original_tick_strings(
+            clean_values,
+            scale,
+            spacing,
+            )
+
+    scaled_spacing = abs(spacing * scale)
+    places = max(0, ceil(-log10(scaled_spacing)))
+    while places < 12 and not isclose(
+            scaled_spacing,
+            round(scaled_spacing, places),
+            rel_tol=1e-12,
+            abs_tol=10.0 ** (-places - 12),
+            ):
+        places += 1
+
+    strings = []
+    for value in clean_values:
+        scaled_value = value * scale
+        if abs(scaled_value) < 0.001 or abs(scaled_value) >= 10_000:
+            strings.append(f"{scaled_value:g}")
+        else:
+            strings.append(f"{scaled_value:.{places}f}")
+    return strings
+
+
+def _configure_major_ticks(axis, count):
+    """Make an AxisItem use qPlot's sparse, range-aware major ticks."""
+
+    axis._qplot_major_tick_count = count
+    if not hasattr(axis, "_qplot_major_tick_spacing"):
+        axis._qplot_major_tick_spacing = axis.tickSpacing
+        axis.tickSpacing = MethodType(_major_tick_spacing, axis)
+    current_tick_strings = axis.tickStrings
+    if getattr(current_tick_strings, "__func__", None) is not _clean_tick_strings:
+        axis._qplot_original_tick_strings = current_tick_strings
+        axis.tickStrings = MethodType(_clean_tick_strings, axis)
+    axis.setStyle(maxTickLevel=1, maxTextLevel=0)
+    axis.picture = None
+    axis.update()
 
 
 def _plot_area_size_icon(size):
@@ -222,6 +487,9 @@ class plotWidget(
         
         ### WIDGETS
         self._window_layout = qtw.QVBoxLayout()
+        # The graphics widget supplies its own canvas background.  Avoid
+        # exposing the window background as an unintended surround around it.
+        self._window_layout.setContentsMargins(0, 0, 0, 0)
         
         self.widget = pg.GraphicsLayoutWidget()
         self.plot_state_overlay = PlotStateOverlay(self.widget)
@@ -235,8 +503,11 @@ class plotWidget(
             axisItems={
                 "bottom": _PowerScaledAxisItem("bottom"),
                 "left": _PowerScaledAxisItem("left"),
+                "top": _PowerScaledAxisItem("top"),
+                "right": _PowerScaledAxisItem("right"),
                 },
             )
+        self.apply_axis_major_tick_count_preference()
         self.vb.setParent(self.plot)
         self.vb.set_marquee_owner(self)
         self._init_marquee()
@@ -335,6 +606,8 @@ class plotWidget(
             return False
 
         if not self.accepts_preview_trace_drop(payload):
+            if event.type() == QtCore.QEvent.Type.Drop:
+                self.show_status(self._preview_drop_rejection_message(payload), 5000)
             event.ignore()
             return True
 
@@ -359,13 +632,30 @@ class plotWidget(
 
 
     def accepts_preview_trace_drop(self, payload):
-        if not hasattr(self, "option_boxes"):
+        operation_kind = getattr(self, "operation_kind", None)
+        if operation_kind not in {"plot1d", "plot2d"}:
             return False
 
-        return preview_drop_is_compatible(
-            getattr(self.param, "depends_on_", ()),
-            payload
+        target_axes = tuple(getattr(self.param, "depends_on_", ()))
+        return preview_drop_is_compatible(target_axes, payload)
+
+
+    def _preview_drop_rejection_message(self, payload):
+        """Explain why a preview cannot be added to this plot."""
+
+        parameter_name = str(payload.get("parameter") or "this measurement")
+        operation_kind = getattr(self, "operation_kind", None)
+        if operation_kind == "plot1d":
+            return (
+                f"Cannot add {parameter_name}; line traces need the same "
+                "independent variable."
             )
+        if operation_kind == "plot2d":
+            return (
+                f"Cannot add {parameter_name}; heatmaps need the same two "
+                "independent variables."
+            )
+        return "Drop previews onto a compatible line plot or heatmap."
 
 
 
@@ -423,7 +713,7 @@ class plotWidget(
         self.spinBox = qtw.QDoubleSpinBox()
         self.spinBox.setRange(0.0, 86_400.0)
         self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(3)
+        self.spinBox.setDecimals(1)
 
         self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
@@ -493,6 +783,13 @@ class plotWidget(
         self.savePlotPdfAction.setStatusTip("Save the visible plot area as a PDF")
         self.savePlotPdfAction.triggered.connect(self.save_plot_pdf)
 
+        self.printPlotAction = create_action("plot.print", self)
+        self.register_shortcut(
+            self.printPlotAction,
+            command_spec("plot.print"),
+            )
+        self.printPlotAction.triggered.connect(self.print_plot)
+
         self.copyPlotImageAction = create_action("plot.copy_image", self)
         self.register_shortcut(
             self.copyPlotImageAction,
@@ -516,6 +813,9 @@ class plotWidget(
             if action.text() == "View All":
                 self.register_shortcut(action, command_spec("plot.autoscale"))
                 action.setText(command_spec("plot.autoscale").text)
+                action.triggered.connect(
+                    lambda _checked=False: self.force_all_axes_autoscale()
+                )
                 break
         
         x_action = actions[1]
@@ -544,18 +844,21 @@ class plotWidget(
 
     def _remove_scene_export_context_menu(self):
         """
-        Removes pyqtgraph's scene-level export action from right-click menus.
+        Removes every scene-level generic action and owns its exporter cache.
 
         """
         scene = self.widget.scene()
-        context_menu = getattr(scene, "contextMenu", None)
-        if context_menu is None:
-            return
-
-        scene.contextMenu = [
-            action for action in context_menu
-            if action.text().replace("&", "") != "Export..."
-            ]
+        # PyQtGraph's default list currently contains only its direct Export
+        # action. Clearing the list by identity-independent ownership is safer
+        # than matching translated display text.
+        scene.contextMenu = []
+        install_dialog = getattr(
+            self,
+            "_install_safe_pyqtgraph_export_dialog",
+            None,
+        )
+        if callable(install_dialog):
+            install_dialog()
 
 
     def _context_menu_action(self, text):
@@ -737,7 +1040,7 @@ class plotWidget(
         
     def initAxes(self):
         """
-        Sets up left toolbar.
+        Sets up the Data axes dock.
         Sets up which axis parameters are placed on for both 1d, 2d and more.
         
         Refresh fetches the text of the dropdown menu to deciede which data to
@@ -753,8 +1056,9 @@ class plotWidget(
             self.param_dict[param_spec.name] = param_spec
         
         # Use of QDockWidget over QToolbar to allow proper widget placement
-        self.axes_dock = QDock_context("Line control", self)
+        self.axes_dock = QDock_context("Data axes", self)
         self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.axes_dock)
+        self.axes_dock.setVisible(False)
         
         # Widget production
         x_layout = self.axes_dock.addLayout()
@@ -853,7 +1157,18 @@ class plotWidget(
         if save_plot_pdf_action is not None:
             file_menu.addAction(save_plot_pdf_action)
 
-        if export_plot_action is not None or save_plot_pdf_action is not None:
+        print_plot_action = getattr(self, "printPlotAction", None)
+        if print_plot_action is not None:
+            file_menu.addAction(print_plot_action)
+
+        if any(
+                action is not None
+                for action in (
+                    export_plot_action,
+                    save_plot_pdf_action,
+                    print_plot_action,
+                    )
+                ):
             file_menu.addSeparator()
 
         copy_plot_image_action = getattr(self, "copyPlotImageAction", None)
@@ -877,9 +1192,11 @@ class plotWidget(
         closeAction.triggered.connect(self.close)
         file_menu.addAction(closeAction)
 
-        quitAction = create_action("app.quit", self)
-        quitAction.triggered.connect(self.request_application_quit)
-        file_menu.addAction(quitAction)
+        add_application_quit_action(
+            self,
+            file_menu,
+            self.request_application_quit,
+            )
 
         window_menu = add_standard_window_controls(self)
         self._add_plot_area_resize_menu(window_menu)
@@ -1025,11 +1342,41 @@ class plotWidget(
 
         """
         self.update_theme(self.config)
+        self.apply_axis_major_tick_count_preference()
         self.apply_mouse_mode_preference()
+        apply_colorbar_width = getattr(self, "apply_colorbar_width_preference", None)
+        if callable(apply_colorbar_width):
+            apply_colorbar_width()
 
 
     def _configured_mouse_mode(self):
         return self.config.get(MOUSE_MODE_KEY)
+
+
+    def apply_axis_major_tick_count_preference(self):
+        """Apply the target number of labelled major ticks to every plot axis."""
+
+        for side in ("left", "bottom", "right", "top"):
+            _configure_major_ticks(
+                self.plot.getAxis(side),
+                self.config.get(AXIS_MAJOR_TICK_COUNT_KEY),
+                )
+
+        colorbar = getattr(self, "bar", None)
+        get_axis = getattr(colorbar, "getAxis", None)
+        if callable(get_axis):
+            for side in ("left", "bottom", "right", "top"):
+                axis = get_axis(side)
+                if axis is not None:
+                    _configure_major_ticks(
+                        axis,
+                        self.config.get(AXIS_MAJOR_TICK_COUNT_KEY),
+                        )
+
+        self.plot.update()
+        viewport = getattr(self.widget, "viewport", None)
+        if callable(viewport):
+            viewport().update()
 
 
     def apply_mouse_mode_preference(self):
@@ -1266,6 +1613,13 @@ class plotWidget(
         Unused but required by slot.
 
         """
+        dispose_export_dialog = getattr(
+            self,
+            "_dispose_plot_export_dialog",
+            None,
+        )
+        if callable(dispose_export_dialog):
+            dispose_export_dialog()
         if self.__dict__.get("_merged_trace_users", 0) <= 0:
             self.monitor.stop()
             self._refresh_pending = False
@@ -1309,12 +1663,36 @@ class plotWidget(
             return
     
         # get x, y values.
-        mousePoint = self.plot.vb.mapSceneToView(pos)
+        try:
+            viewbox_getter = getattr(self, "_primary_heatmap_viewbox", None)
+        except RuntimeError:
+            viewbox_getter = None
+        coordinate_viewbox = (
+            viewbox_getter() if callable(viewbox_getter) else self.plot.vb
+        )
+        if coordinate_viewbox is None:
+            coordinate_viewbox = self.plot.vb
+        mousePoint = coordinate_viewbox.mapSceneToView(pos)
+        try:
+            semantic_axes_getter = getattr(
+                self,
+                "_primary_heatmap_semantic_axes",
+                None,
+            )
+        except RuntimeError:
+            semantic_axes_getter = None
+        semantic_x, semantic_y = (
+            semantic_axes_getter()
+            if callable(semantic_axes_getter)
+            else ("x", "y")
+        )
+        physical_x = cast(float, self.view_to_data(semantic_x, mousePoint.x()))
+        physical_y = cast(float, self.view_to_data(semantic_y, mousePoint.y()))
         
         # Format text into a easy to read format
         index_txt = ""
-        x_txt = f"x = {self.formatNum(mousePoint.x())};"
-        y_txt = f"y = {self.formatNum(mousePoint.y())}"
+        x_txt = f"x = {self.formatNum(physical_x)};"
+        y_txt = f"y = {self.formatNum(physical_y)}"
         
         # For 2d plots.
         if self.pos_labels.get("z", 0):

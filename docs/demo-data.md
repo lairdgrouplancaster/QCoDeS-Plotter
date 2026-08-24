@@ -17,8 +17,11 @@ responsive.
 For performance and scaling tests, use
 `File -> Generate Test Data -> Export CSV Collection...`. The ten installed
 instruction files form a cumulative series: every file contains all the runs
-from its predecessor, followed by three larger 2D runs. The nominal database
-sizes and largest grids are:
+from its predecessor, followed by three larger 2D runs. Each file starts with
+five 1D traces (current, conductance, resistance, transconductance, and charge
+sensor) with the same `V_SD` range and sampling, so trace addition, removal,
+reordering, and secondary axes can be tested even with the smallest database.
+The nominal database sizes and largest grids are:
 
 | File | Approximate database size | Largest 2D run |
 | --- | ---: | ---: |
@@ -75,12 +78,18 @@ generation refuses publication if the destination changed while generation was
 running or if a `-wal`, `-shm`, or `-journal` sidecar is present. Close the
 application using that database, or choose another output path; qPlot never
 removes or modifies those destination sidecars. Every generated test database
-carries a unique internal generation token and write epoch. Later writes to
-its existing tables advance that epoch, allowing a fresh qPlot process to prove
-that a WAL belongs to the published main and show its committed values. A WAL
-with a different or unadvanced lineage is refused with recovery instructions
-instead of being silently ignored. If a sidecar is detected before the atomic
-swap completes, qPlot restores the old main and retains an explicit
+carries a unique internal generation token and a bounded parent-linked nonce
+chain. Later writes to covered tables extend that chain, allowing a fresh qPlot
+process to prove that a WAL descends from the exact published main and show its
+committed values. A QCoDeS script that creates later measurements must first
+call `qplot.testdata.enable_generation_provenance_for_writer` on a quiescent
+writable connection, before creating the experiment or measurement; this
+persists coverage for each new result table before its creation transaction
+commits. A nonempty pre-existing WAL, divergent branch, missing chain, or
+exhausted proof window is refused with owner-checkpoint instructions instead of
+being silently trusted. If
+a sidecar is detected before the atomic swap completes, qPlot restores the old
+main and retains an explicit
 `.qplot-publishing` safety guard until the owning SQLite application has
 resolved the sidecars.
 
