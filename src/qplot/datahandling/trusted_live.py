@@ -50,8 +50,33 @@ _SQLITE_HEADER_PREFIX_BYTES = 100
 _SQLITE_ROLLBACK_FORMAT = 1
 _SQLITE_WAL_FORMAT = 2
 DEFAULT_TRUSTED_OPERATION_TIMEOUT_SECONDS = 5.0
+TRUSTED_LIVE_MAX_REPLY_BYTES = 32 * 1024 * 1024
+TRUSTED_LIVE_MAX_BATCH_QUERIES = 128
+TRUSTED_LIVE_MAX_COLUMNS_PER_RESULT = 4_096
+TRUSTED_LIVE_MAX_ROWS_PER_RESULT = 250_000
+TRUSTED_LIVE_MAX_CELLS_PER_REPLY = 1_000_000
+TRUSTED_LIVE_MAX_SCALAR_BYTES = 4 * 1024 * 1024
+TRUSTED_LIVE_MAX_COLUMN_NAME_BYTES = 1_024
+TRUSTED_LIVE_MAX_TRANSIENT_RAW_ROW_BYTES = 8 * 1024 * 1024
+# APSW returns ordinary SQLite values in a Python tuple.  Four is the maximum
+# UTF-8-to-PEP-393 payload expansion.  The per-column allowance covers the
+# scalar object/header/terminator, a tuple reference, and fixed-size SQLite
+# integer/float/NULL objects on supported 64-bit CPython; the fixed allowance
+# covers the tuple's logical object size.  This is a conservative logical
+# Python-object/payload envelope, not a bound on allocator-reserved bytes,
+# size-class rounding, process RSS, arenas, fragmentation, or SQLite VM memory.
+# The statement limit also satisfies the independent raw-payload bound.
+_TRUSTED_LIVE_PYTHON_TEXT_EXPANSION = 4
+_TRUSTED_LIVE_PYTHON_FIXED_BYTES_PER_COLUMN = 512
+_TRUSTED_LIVE_PYTHON_ROW_FIXED_BYTES = 4 * 1024
+TRUSTED_LIVE_MAX_TRANSIENT_PYTHON_ROW_BYTES = 32 * 1024 * 1024
 _BUSY_RETRY_QUANTUM_SECONDS = 0.01
 _PROGRESS_HANDLER_STEPS = 1_000
+_RESULT_FRAME_ENVELOPE_RESERVE_BYTES = 512
+_RESULT_WIRE_CONTAINER_BUDGET_BYTES = 32
+_RESULT_WIRE_FIELD_BUDGET_BYTES = 16
+_SQLITE_INTEGER_MIN = -(1 << 63)
+_SQLITE_INTEGER_MAX = (1 << 63) - 1
 _PROCESS_SESSION_MUTEX = threading.Lock()
 _PROCESS_SESSION_OWNER: object | None = None
 _PROCESS_SESSION_QUARANTINE_REASON: str | None = None
@@ -89,6 +114,10 @@ class TrustedLiveSqlRejectedError(TrustedLiveReaderError):
 
 class TrustedLiveQueryError(TrustedLiveReaderError):
     """Raised when an allowed query cannot be prepared or executed."""
+
+
+class TrustedLiveResultLimitError(TrustedLiveReaderError):
+    """Raised before a query result can exceed its materialisation budget."""
 
 
 class TrustedLiveBusyTimeoutError(TrustedLiveReaderError):
@@ -210,6 +239,282 @@ class _TrustedOperationControl:
     native_sequence: int = 0
     abort_reason: str | None = None
     policy_denied: bool = False
+    operation_result_length_limit: int | None = None
+    result_length_limit: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TrustedSqliteLengthLimit:
+    """One temporary, verified SQLite length-limit installation."""
+
+    previous: int
+    effective: int
+
+
+def _trusted_statement_length_limit(
+    operation_baseline: int,
+    column_count: int,
+) -> int:
+    """Return the per-value cap for the raw and logical Python-row envelopes."""
+
+    width = max(1, column_count)
+    raw_payload_limit = TRUSTED_LIVE_MAX_TRANSIENT_RAW_ROW_BYTES // width
+    python_payload_room = (
+        TRUSTED_LIVE_MAX_TRANSIENT_PYTHON_ROW_BYTES
+        - _TRUSTED_LIVE_PYTHON_ROW_FIXED_BYTES
+        - (_TRUSTED_LIVE_PYTHON_FIXED_BYTES_PER_COLUMN * width)
+    )
+    if python_payload_room <= 0:
+        raise TrustedLiveResultLimitError(
+            "The trusted query result is too wide for the logical Python-row "
+            "materialisation budget."
+        )
+    python_payload_limit = python_payload_room // (
+        _TRUSTED_LIVE_PYTHON_TEXT_EXPANSION * width
+    )
+    effective = min(
+        operation_baseline,
+        TRUSTED_LIVE_MAX_SCALAR_BYTES,
+        raw_payload_limit,
+        python_payload_limit,
+    )
+    if effective < 1:
+        raise TrustedLiveResultLimitError(
+            "The trusted query result is too wide for a positive SQLite "
+            "result-length limit."
+        )
+    return effective
+
+
+@dataclass(slots=True)
+class _TrustedResultBudget:
+    """Incrementally bound one batch before retaining each SQLite row."""
+
+    maximum_wire_bytes: int
+    used_wire_bytes: int
+    total_cells: int = 0
+    abort_check: Callable[[], None] | None = None
+
+    @classmethod
+    def for_query_batch(cls) -> _TrustedResultBudget:
+        budget = cls(
+            maximum_wire_bytes=TRUSTED_LIVE_MAX_REPLY_BYTES,
+            used_wire_bytes=0,
+        )
+        budget.consume(
+            _RESULT_FRAME_ENVELOPE_RESERVE_BYTES,
+            "The protocol envelope",
+        )
+        budget.consume(
+            _RESULT_WIRE_CONTAINER_BUDGET_BYTES,
+            "Query results",
+        )
+        return budget
+
+    def consume(self, amount: int, description: str) -> None:
+        if amount < 0 or amount > self.maximum_wire_bytes - self.used_wire_bytes:
+            raise TrustedLiveResultLimitError(
+                f"{description} exceeds the aggregate "
+                f"{self.maximum_wire_bytes}-byte result wire budget."
+            )
+        self.used_wire_bytes += amount
+
+    def start_result(self, description: Sequence[Sequence[Any]]) -> tuple[str, ...]:
+        if len(description) > TRUSTED_LIVE_MAX_COLUMNS_PER_RESULT:
+            raise TrustedLiveResultLimitError(
+                "A trusted query result has more than "
+                f"{TRUSTED_LIVE_MAX_COLUMNS_PER_RESULT} columns."
+            )
+        self.consume(_RESULT_WIRE_CONTAINER_BUDGET_BYTES, "Query results")
+        columns: list[str] = []
+        for column_description in description:
+            if self.abort_check is not None:
+                self.abort_check()
+            if not column_description or not isinstance(column_description[0], str):
+                raise TrustedLiveQueryError(
+                    "SQLite returned a result column without a valid text name."
+                )
+            column = column_description[0]
+            _utf8_bytes, json_bytes = _trusted_text_sizes(
+                column,
+                description="A trusted query result column name",
+                maximum_utf8_bytes=TRUSTED_LIVE_MAX_COLUMN_NAME_BYTES,
+                abort_check=self.abort_check,
+            )
+            self.consume(
+                _RESULT_WIRE_FIELD_BUDGET_BYTES + json_bytes,
+                "Query result columns",
+            )
+            columns.append(column)
+        return tuple(columns)
+
+    def retain_row(
+        self,
+        row: Sequence[Any],
+        *,
+        column_count: int,
+        retained_row_count: int,
+    ) -> tuple[Any, ...]:
+        if retained_row_count >= TRUSTED_LIVE_MAX_ROWS_PER_RESULT:
+            raise TrustedLiveResultLimitError(
+                "A trusted query result has more than "
+                f"{TRUSTED_LIVE_MAX_ROWS_PER_RESULT} rows."
+            )
+        if len(row) != column_count:
+            raise TrustedLiveQueryError(
+                "SQLite returned a result row with the wrong number of columns."
+            )
+        if column_count > TRUSTED_LIVE_MAX_CELLS_PER_REPLY - self.total_cells:
+            raise TrustedLiveResultLimitError(
+                "A trusted query batch has more than "
+                f"{TRUSTED_LIVE_MAX_CELLS_PER_REPLY} result cells."
+            )
+
+        self.consume(
+            _RESULT_WIRE_CONTAINER_BUDGET_BYTES
+            + (_RESULT_WIRE_FIELD_BUDGET_BYTES * column_count),
+            "Query result rows",
+        )
+        retained_values: list[Any] = []
+        for value in row:
+            if self.abort_check is not None:
+                self.abort_check()
+            scalar, wire_bytes = _trusted_result_scalar(
+                value,
+                abort_check=self.abort_check,
+            )
+            self.consume(wire_bytes, "Query result values")
+            retained_values.append(scalar)
+        self.total_cells += column_count
+        return tuple(retained_values)
+
+
+def _trusted_text_sizes(
+    value: str,
+    *,
+    description: str,
+    maximum_utf8_bytes: int,
+    abort_check: Callable[[], None] | None = None,
+) -> tuple[int, int]:
+    """Size UTF-8 and canonical JSON text without allocating either form."""
+
+    utf8_bytes = 0
+    json_bytes = 2  # Opening and closing JSON quotes.
+    for character_index, character in enumerate(value):
+        if character_index % 4_096 == 0 and abort_check is not None:
+            abort_check()
+        codepoint = ord(character)
+        if 0xD800 <= codepoint <= 0xDFFF:
+            raise TrustedLiveQueryError(
+                f"{description} contains text that is not valid Unicode."
+            )
+        if codepoint <= 0x7F:
+            character_bytes = 1
+        elif codepoint <= 0x7FF:
+            character_bytes = 2
+        elif codepoint <= 0xFFFF:
+            character_bytes = 3
+        else:
+            character_bytes = 4
+        utf8_bytes += character_bytes
+        if utf8_bytes > maximum_utf8_bytes:
+            raise TrustedLiveResultLimitError(
+                f"{description} exceeds the {maximum_utf8_bytes}-byte limit."
+            )
+        if character in {'"', "\\"}:
+            json_bytes += 2
+        elif codepoint <= 0x1F:
+            json_bytes += 2 if character in "\b\t\n\f\r" else 6
+        else:
+            json_bytes += character_bytes
+    return utf8_bytes, json_bytes
+
+
+def _trusted_result_scalar(
+    value: Any,
+    *,
+    abort_check: Callable[[], None] | None = None,
+) -> tuple[Any, int]:
+    """Validate, normalise, and conservatively size one live SQLite scalar."""
+
+    if value is None:
+        return None, 8
+    if isinstance(value, bool):
+        return value, 16
+    if isinstance(value, int):
+        if value < _SQLITE_INTEGER_MIN or value > _SQLITE_INTEGER_MAX:
+            raise TrustedLiveQueryError(
+                "SQLite returned an integer outside its signed 64-bit range."
+            )
+        return value, 16 + len(str(value))
+    if isinstance(value, float):
+        # SQLite can deliberately return infinities.  They are represented by
+        # a canonical tagged hexadecimal string at the IPC layer rather than
+        # as a non-finite JSON number.
+        return value, 16 + len(value.hex())
+    if isinstance(value, str):
+        _utf8_bytes, json_bytes = _trusted_text_sizes(
+            value,
+            description="A SQLite text result",
+            maximum_utf8_bytes=TRUSTED_LIVE_MAX_SCALAR_BYTES,
+            abort_check=abort_check,
+        )
+        return value, 16 + json_bytes
+    if isinstance(value, memoryview):
+        blob_size = value.nbytes
+    elif isinstance(value, (bytes, bytearray)):
+        blob_size = len(value)
+    else:
+        raise TrustedLiveQueryError(
+            "SQLite returned a value outside its null, integer, real, text, "
+            "and blob scalar types."
+        )
+    if blob_size > TRUSTED_LIVE_MAX_SCALAR_BYTES:
+        raise TrustedLiveResultLimitError(
+            "A SQLite blob result exceeds the "
+            f"{TRUSTED_LIVE_MAX_SCALAR_BYTES}-byte limit."
+        )
+    blob = value if isinstance(value, bytes) else bytes(value)
+    base64_bytes = 4 * ((blob_size + 2) // 3)
+    return blob, 16 + base64_bytes
+
+
+def preflight_trusted_query_results(
+    results: Sequence[TrustedQueryResult],
+) -> None:
+    """Apply the live reader's exact aggregate result budget to existing rows.
+
+    The helper protocol calls this as a defensive second check.  Normal live
+    queries use the same budget incrementally, before each row is retained.
+    """
+
+    if isinstance(results, (str, bytes, bytearray, memoryview)):
+        raise TrustedLiveQueryError("Trusted query results must be a sequence.")
+    result_count = len(results)
+    if not 1 <= result_count <= TRUSTED_LIVE_MAX_BATCH_QUERIES:
+        raise TrustedLiveResultLimitError(
+            "A trusted query batch must contain between 1 and "
+            f"{TRUSTED_LIVE_MAX_BATCH_QUERIES} results."
+        )
+    budget = _TrustedResultBudget.for_query_batch()
+    for index in range(result_count):
+        result = results[index]
+        if not isinstance(result, TrustedQueryResult):
+            raise TrustedLiveQueryError(
+                "A trusted query batch contains a non-result object."
+            )
+        description = tuple((column,) for column in result.columns)
+        columns = budget.start_result(description)
+        if columns != result.columns:
+            raise TrustedLiveQueryError(
+                "A trusted query result has invalid column metadata."
+            )
+        for row_index, row in enumerate(result.rows):
+            budget.retain_row(
+                row,
+                column_count=len(columns),
+                retained_row_count=row_index,
+            )
 
 
 def _claim_process_session(owner: object) -> None:
@@ -628,6 +933,7 @@ class TrustedLiveReader:
         operation_timeout_seconds: float = (DEFAULT_TRUSTED_OPERATION_TIMEOUT_SECONDS),
         _test_race_artifact: str | None = None,
         _test_cleanup_fault: str | None = None,
+        _test_statement_limit_fault: str | None = None,
         _test_pre_open_callback: (
             Callable[[TrustedLiveReaderToken, Path], None] | None
         ) = None,
@@ -652,6 +958,10 @@ class TrustedLiveReader:
         self._resource_cleanup_complete = False
         self._resource_cleanup_error: TrustedLiveCleanupError | None = None
         self._preflight_cleanup_error: OSError | None = None
+        # Arm the private statement-limit fault only after construction's
+        # bootstrap operations have completed.
+        self._test_statement_limit_fault: str | None = None
+        self._test_statement_limit_fault_consumed = False
         self._default_operation_timeout_seconds = self._validated_duration(
             operation_timeout_seconds,
             description="default trusted-reader operation timeout",
@@ -679,6 +989,17 @@ class TrustedLiveReader:
             raise ValueError(
                 "_test_cleanup_fault must be None, 'proof_close', "
                 "'shm_unmap', or 'base_close'."
+            )
+        if _test_statement_limit_fault not in {
+            None,
+            "statement_limit_install",
+            "statement_limit_verify",
+            "statement_limit_restore",
+        }:
+            raise ValueError(
+                "_test_statement_limit_fault must be None, "
+                "'statement_limit_install', 'statement_limit_verify', or "
+                "'statement_limit_restore'."
             )
         if _test_pre_open_callback is not None and not callable(
             _test_pre_open_callback
@@ -824,6 +1145,11 @@ class TrustedLiveReader:
                 apsw.SQLITE_DBCONFIG_TRUSTED_SCHEMA,
                 0,
             )
+            # The raw/logical pre-yield row proof owns APSW's standard
+            # tuple/scalar conversion path.  A row trace or JSONB converter
+            # could replace a bounded SQLite value with an arbitrary object.
+            self._connection.row_trace = None
+            self._connection.convert_jsonb = None
             # Each finite operation installs its own deadline-aware busy
             # handler.  There must be no independent unbounded SQLite wait.
             self._connection.set_busy_timeout(0)
@@ -840,6 +1166,7 @@ class TrustedLiveReader:
             # native expected-main proof is still part of construction.
             self.data_version()
             self.query("SELECT name FROM sqlite_schema LIMIT 1")
+            self._test_statement_limit_fault = _test_statement_limit_fault
         except apsw.Error as error:
             translated = self._translate_sqlite_error(error, native_sequence=None)
             self._closed = True
@@ -880,6 +1207,7 @@ class TrustedLiveReader:
         operation_timeout_seconds: float = (DEFAULT_TRUSTED_OPERATION_TIMEOUT_SECONDS),
         _test_race_artifact: str | None = None,
         _test_cleanup_fault: str | None = None,
+        _test_statement_limit_fault: str | None = None,
         _test_pre_open_callback: (
             Callable[[TrustedLiveReaderToken, Path], None] | None
         ) = None,
@@ -896,6 +1224,7 @@ class TrustedLiveReader:
             operation_timeout_seconds=operation_timeout_seconds,
             _test_race_artifact=_test_race_artifact,
             _test_cleanup_fault=_test_cleanup_fault,
+            _test_statement_limit_fault=_test_statement_limit_fault,
             _test_pre_open_callback=_test_pre_open_callback,
         )
 
@@ -1238,10 +1567,244 @@ class TrustedLiveReader:
         if body_error is not None:
             raise body_error.with_traceback(body_traceback)
 
+    def _install_result_length_limit(
+        self,
+        connection: apsw.Connection,
+        control: _TrustedOperationControl,
+    ) -> _TrustedSqliteLengthLimit:
+        """Install and verify the operation's absolute SQLite scalar cap."""
+
+        self._raise_if_operation_aborted(control)
+        try:
+            previous = connection.limit(apsw.SQLITE_LIMIT_LENGTH)
+        except BaseException as error:
+            raise TrustedLiveCleanupError(
+                "The trusted reader could not inspect SQLite's prior "
+                "result-length limit; the connection must be retired."
+            ) from error
+        effective = min(previous, TRUSTED_LIVE_MAX_SCALAR_BYTES)
+        try:
+            observed_previous = connection.limit(
+                apsw.SQLITE_LIMIT_LENGTH,
+                effective,
+            )
+            observed_effective = connection.limit(apsw.SQLITE_LIMIT_LENGTH)
+        except BaseException as error:
+            setup_error = TrustedLiveCleanupError(
+                "The trusted reader could not install its SQLite result-length "
+                "limit; the connection must be retired."
+            )
+            try:
+                connection.limit(apsw.SQLITE_LIMIT_LENGTH, previous)
+                restored = connection.limit(apsw.SQLITE_LIMIT_LENGTH)
+            except BaseException as restore_error:
+                setup_error.add_note(
+                    f"SQLite limit restoration also failed: {restore_error!r}"
+                )
+            else:
+                if restored != previous:
+                    setup_error.add_note(
+                        "SQLite did not confirm restoration of its prior length limit."
+                    )
+            raise setup_error from error
+        if observed_previous != previous or observed_effective != effective:
+            try:
+                connection.limit(apsw.SQLITE_LIMIT_LENGTH, previous)
+            except BaseException as restore_error:
+                cleanup_failure = TrustedLiveCleanupError(
+                    "The trusted reader could neither verify nor restore its "
+                    "SQLite result-length limit."
+                )
+                cleanup_failure.add_note(
+                    f"SQLite limit restoration also failed: {restore_error!r}"
+                )
+                raise cleanup_failure from restore_error
+            raise TrustedLiveCleanupError(
+                "The trusted reader could not verify its SQLite result-length "
+                "limit; the connection must be retired."
+            )
+        control.operation_result_length_limit = effective
+        control.result_length_limit = effective
+        return _TrustedSqliteLengthLimit(previous=previous, effective=effective)
+
+    def _consume_statement_limit_fault(self, phase: str) -> bool:
+        if (
+            not self._test_statement_limit_fault_consumed
+            and self._test_statement_limit_fault == phase
+        ):
+            self._test_statement_limit_fault_consumed = True
+            return True
+        return False
+
+    @staticmethod
+    def _note_best_effort_limit_restore(
+        connection: apsw.Connection,
+        target: int,
+        setup_error: TrustedLiveCleanupError,
+    ) -> None:
+        """Try to regain a known limit after uncertain statement setup."""
+
+        try:
+            connection.limit(apsw.SQLITE_LIMIT_LENGTH, target)
+            restored = connection.limit(apsw.SQLITE_LIMIT_LENGTH)
+        except BaseException as restore_error:
+            setup_error.add_note(
+                f"SQLite limit restoration also failed: {restore_error!r}"
+            )
+        else:
+            if restored != target:
+                setup_error.add_note(
+                    "SQLite did not confirm restoration of the operation-wide "
+                    "length limit."
+                )
+
+    def _install_statement_result_length_limit(
+        self,
+        connection: apsw.Connection,
+        control: _TrustedOperationControl,
+        column_count: int,
+    ) -> _TrustedSqliteLengthLimit:
+        """Install the width-derived cap before APSW can produce one row."""
+
+        self._raise_if_operation_aborted(control)
+        baseline = control.operation_result_length_limit
+        if baseline is None:
+            raise TrustedLiveCleanupError(
+                "The trusted reader lost its operation-wide SQLite result-length "
+                "baseline; the connection must be retired."
+            )
+        try:
+            observed_baseline = connection.limit(apsw.SQLITE_LIMIT_LENGTH)
+            row_trace = connection.row_trace
+            convert_jsonb = connection.convert_jsonb
+        except BaseException as error:
+            raise TrustedLiveCleanupError(
+                "The trusted reader could not inspect the SQLite row-conversion "
+                "and result-length state; the connection must be retired."
+            ) from error
+        if observed_baseline != baseline:
+            raise TrustedLiveCleanupError(
+                "SQLite did not retain the verified operation-wide result-length "
+                "baseline; the connection must be retired."
+            )
+        if row_trace is not None or convert_jsonb is not None:
+            raise TrustedLiveCleanupError(
+                "APSW's standard tuple/scalar row conversion was not active; "
+                "the raw/logical pre-yield row bounds could not be proved."
+            )
+
+        effective = _trusted_statement_length_limit(baseline, column_count)
+        self._raise_if_operation_aborted(control)
+        if self._consume_statement_limit_fault("statement_limit_install"):
+            raise TrustedLiveCleanupError(
+                "Injected per-statement SQLite result-length installation "
+                "failure; the connection must be retired."
+            )
+        try:
+            observed_previous = connection.limit(
+                apsw.SQLITE_LIMIT_LENGTH,
+                effective,
+            )
+            observed_effective = connection.limit(apsw.SQLITE_LIMIT_LENGTH)
+        except BaseException as error:
+            setup_error = TrustedLiveCleanupError(
+                "The trusted reader could not install its per-statement SQLite "
+                "result-length limit; the connection must be retired."
+            )
+            self._note_best_effort_limit_restore(connection, baseline, setup_error)
+            raise setup_error from error
+
+        verification_fault = self._consume_statement_limit_fault(
+            "statement_limit_verify"
+        )
+        if (
+            verification_fault
+            or observed_previous != baseline
+            or observed_effective != effective
+        ):
+            setup_error = TrustedLiveCleanupError(
+                "The trusted reader could not verify its per-statement SQLite "
+                "result-length limit; the connection must be retired."
+            )
+            self._note_best_effort_limit_restore(connection, baseline, setup_error)
+            raise setup_error
+
+        control.result_length_limit = effective
+        return _TrustedSqliteLengthLimit(previous=baseline, effective=effective)
+
+    def _restore_statement_result_length_limit(
+        self,
+        connection: apsw.Connection,
+        control: _TrustedOperationControl,
+        installed: _TrustedSqliteLengthLimit,
+    ) -> TrustedLiveCleanupError | None:
+        """Restore and verify the operation baseline after one statement."""
+
+        if self._consume_statement_limit_fault("statement_limit_restore"):
+            return TrustedLiveCleanupError(
+                "Injected per-statement SQLite result-length restoration "
+                "failure; the connection must be retired."
+            )
+        try:
+            observed_effective = connection.limit(
+                apsw.SQLITE_LIMIT_LENGTH,
+                installed.previous,
+            )
+            observed_baseline = connection.limit(apsw.SQLITE_LIMIT_LENGTH)
+        except BaseException as error:
+            return TrustedLiveCleanupError(
+                "The trusted reader could not restore the operation-wide SQLite "
+                f"result-length baseline: {error}"
+            )
+        if (
+            observed_effective != installed.effective
+            or observed_baseline != installed.previous
+        ):
+            return TrustedLiveCleanupError(
+                "The trusted reader could not verify restoration of the "
+                "operation-wide SQLite result-length baseline."
+            )
+        control.result_length_limit = installed.previous
+        return None
+
+    def _restore_result_length_limit(
+        self,
+        connection: apsw.Connection,
+        control: _TrustedOperationControl,
+        installed: _TrustedSqliteLengthLimit,
+    ) -> TrustedLiveCleanupError | None:
+        """Restore and verify SQLite's prior runtime length limit."""
+
+        try:
+            observed_effective = connection.limit(
+                apsw.SQLITE_LIMIT_LENGTH,
+                installed.previous,
+            )
+            observed_previous = connection.limit(apsw.SQLITE_LIMIT_LENGTH)
+        except BaseException as error:
+            return TrustedLiveCleanupError(
+                "The trusted reader could not restore its prior SQLite "
+                f"result-length limit: {error}"
+            )
+        if (
+            observed_effective != installed.effective
+            or observed_previous != installed.previous
+        ):
+            return TrustedLiveCleanupError(
+                "The trusted reader could not verify restoration of its prior "
+                "SQLite result-length limit."
+            )
+        control.operation_result_length_limit = None
+        control.result_length_limit = None
+        return None
+
     def _query_spec_in_transaction(
         self,
         connection: apsw.Connection,
         query: TrustedQuery,
+        result_budget: _TrustedResultBudget,
+        control: _TrustedOperationControl,
+        operation_cleanup_errors: list[BaseException],
     ) -> TrustedQueryResult:
         sql = query.sql
         bindings = query.bindings
@@ -1260,17 +1823,54 @@ class TrustedLiveReader:
                 "The trusted reader accepts exactly one ordinary read-only "
                 "SELECT or PRAGMA data_version statement."
             )
+        columns = result_budget.start_result(details.description)
         cursor: apsw.Cursor | None = None
+        statement_length_limit: _TrustedSqliteLengthLimit | None = None
         body_error: BaseException | None = None
+        body_cause: BaseException | None = None
         body_traceback: TracebackType | None = None
         result: TrustedQueryResult | None = None
         try:
+            try:
+                statement_length_limit = self._install_statement_result_length_limit(
+                    connection,
+                    control,
+                    len(columns),
+                )
+            except TrustedLiveCleanupError:
+                operation_cleanup_errors.append(
+                    TrustedLiveCleanupError(
+                        "Per-statement SQLite result-limit setup was not proved "
+                        "safe; the reader connection must be retired."
+                    )
+                )
+                raise
+            self._raise_if_operation_aborted(control)
             cursor = connection.cursor()
+            cursor.row_trace = None
             cursor.execute(details.first_query, bindings)
-            description = cursor.get_description()
-            columns = tuple(column[0] for column in description)
-            rows = tuple(tuple(row) for row in cursor)
-            result = TrustedQueryResult(columns=columns, rows=rows)
+            if cursor.get_description() != details.description:
+                raise TrustedLiveQueryError(
+                    "SQLite result metadata changed between validation and execution."
+                )
+            retained_rows: list[tuple[Any, ...]] = []
+            for row in cursor:
+                self._raise_if_operation_aborted(control)
+                retained_row = result_budget.retain_row(
+                    row,
+                    column_count=len(columns),
+                    retained_row_count=len(retained_rows),
+                )
+                retained_rows.append(retained_row)
+            result = TrustedQueryResult(columns=columns, rows=tuple(retained_rows))
+        except apsw.Error as error:
+            body_error = self._translate_sqlite_error(
+                error,
+                native_sequence=control.native_sequence,
+                control=control,
+            )
+            body_cause = error
+            body_traceback = body_error.__traceback__
         except BaseException as error:
             body_error = error
             body_traceback = error.__traceback__
@@ -1279,6 +1879,7 @@ class TrustedLiveReader:
                 try:
                     cursor.close()
                 except BaseException as close_error:
+                    operation_cleanup_errors.append(close_error)
                     if body_error is None:
                         body_error = close_error
                         body_traceback = close_error.__traceback__
@@ -1286,7 +1887,36 @@ class TrustedLiveReader:
                         body_error.add_note(
                             f"SQLite cursor cleanup also failed: {close_error!r}"
                         )
+            if statement_length_limit is not None:
+                restore_error = self._restore_statement_result_length_limit(
+                    connection,
+                    control,
+                    statement_length_limit,
+                )
+                if restore_error is not None:
+                    operation_cleanup_errors.append(
+                        TrustedLiveCleanupError(
+                            "Per-statement SQLite result-limit restoration was "
+                            "not proved safe; the reader connection must be retired."
+                        )
+                    )
+                    if body_error is None:
+                        body_error = restore_error
+                        body_traceback = restore_error.__traceback__
+                    else:
+                        body_error.add_note(
+                            "SQLite statement-limit cleanup also failed: "
+                            f"{restore_error!r}"
+                        )
+            if body_error is None:
+                try:
+                    self._raise_if_operation_aborted(control)
+                except BaseException as error:
+                    body_error = error
+                    body_traceback = error.__traceback__
         if body_error is not None:
+            if body_cause is not None:
+                raise body_error.with_traceback(body_traceback) from body_cause
             raise body_error.with_traceback(body_traceback)
         if result is None:
             raise TrustedLiveQueryError(
@@ -1471,6 +2101,13 @@ class TrustedLiveReader:
             return TrustedLiveInvalidDatabaseError(
                 f"The selected database is corrupt or invalid: {error}"
             )
+        if isinstance(error, apsw.TooBigError) and (
+            control is not None and control.result_length_limit is not None
+        ):
+            return TrustedLiveResultLimitError(
+                "SQLite stopped producing a text or blob result at qPlot's "
+                f"{control.result_length_limit}-byte runtime length limit."
+            )
         if policy_denied:
             return TrustedLiveSqlRejectedError(
                 f"The trusted reader rejected the SQL statement: {error}"
@@ -1507,7 +2144,6 @@ class TrustedLiveReader:
                 apsw.RangeError,
                 apsw.SchemaChangeError,
                 apsw.SQLError,
-                apsw.TooBigError,
             ),
         ):
             return TrustedLiveQueryError(f"The trusted read-only query failed: {error}")
@@ -1527,12 +2163,13 @@ class TrustedLiveReader:
         transaction_started: bool,
         handlers_installed: bool,
         publication_pending: bool,
+        prior_cleanup_errors: Sequence[BaseException] = (),
     ) -> TrustedLiveReaderError | None:
         with self._operation_mutex:
             if self._active_operation is control:
                 self._active_operation = None
 
-        cleanup_errors: list[BaseException] = []
+        cleanup_errors = list(prior_cleanup_errors)
         if handlers_installed:
             cleanup_errors.extend(self._remove_operation_handlers(connection, control))
         if transaction_started:
@@ -1633,20 +2270,29 @@ class TrustedLiveReader:
             raise TrustedLiveSqlRejectedError(
                 "A trusted query batch must contain at least one statement."
             )
+        if len(specifications) > TRUSTED_LIVE_MAX_BATCH_QUERIES:
+            raise TrustedLiveResultLimitError(
+                "A trusted query batch contains more than "
+                f"{TRUSTED_LIVE_MAX_BATCH_QUERIES} statements."
+            )
         if not all(isinstance(query, TrustedQuery) for query in specifications):
             raise TypeError("query_batch accepts only TrustedQuery specifications.")
 
+        result_budget = _TrustedResultBudget.for_query_batch()
         connection, control = self._start_operation(
             timeout=timeout,
             deadline=deadline,
             cancel_event=cancel_event,
         )
+        result_budget.abort_check = lambda: self._raise_if_operation_aborted(control)
         transaction_started = False
         handlers_installed = False
         body_error: BaseException | None = None
         body_cause: BaseException | None = None
         body_traceback: TracebackType | None = None
         results: tuple[TrustedQueryResult, ...] | None = None
+        result_length_limit: _TrustedSqliteLengthLimit | None = None
+        operation_cleanup_errors: list[BaseException] = []
         try:
             self._raise_if_operation_aborted(control)
             status = self._read_native_status()
@@ -1656,6 +2302,20 @@ class TrustedLiveReader:
             handlers_installed = True
             self._install_operation_handlers(connection, control)
             try:
+                result_length_limit = self._install_result_length_limit(
+                    connection,
+                    control,
+                )
+            except TrustedLiveCleanupError as error:
+                operation_cleanup_errors.append(
+                    TrustedLiveCleanupError(
+                        "SQLite result-limit setup was not proved safe; the "
+                        "reader connection must be retired."
+                    )
+                )
+                raise error
+            self._raise_if_operation_aborted(control)
+            try:
                 self._execute_transaction_control("BEGIN")
             finally:
                 # If BEGIN itself completed but explicit cursor cleanup failed,
@@ -1664,7 +2324,15 @@ class TrustedLiveReader:
             materialised: list[TrustedQueryResult] = []
             for query in specifications:
                 self._raise_if_operation_aborted(control)
-                materialised.append(self._query_spec_in_transaction(connection, query))
+                materialised.append(
+                    self._query_spec_in_transaction(
+                        connection,
+                        query,
+                        result_budget,
+                        control,
+                        operation_cleanup_errors,
+                    )
+                )
             self._raise_if_operation_aborted(control)
             results = tuple(materialised)
         except apsw.Error as error:
@@ -1678,6 +2346,15 @@ class TrustedLiveReader:
         except BaseException as error:
             body_error = error
             body_traceback = error.__traceback__
+        finally:
+            if result_length_limit is not None:
+                restore_error = self._restore_result_length_limit(
+                    connection,
+                    control,
+                    result_length_limit,
+                )
+                if restore_error is not None:
+                    operation_cleanup_errors.append(restore_error)
 
         cleanup_error = self._finish_operation(
             connection,
@@ -1685,10 +2362,11 @@ class TrustedLiveReader:
             transaction_started=transaction_started,
             handlers_installed=handlers_installed,
             publication_pending=body_error is None,
+            prior_cleanup_errors=operation_cleanup_errors,
         )
         if body_error is not None:
             if cleanup_error is not None:
-                if isinstance(cleanup_error, TrustedLiveCleanupError):
+                if isinstance(cleanup_error, TrustedLiveCleanupError) or self._closed:
                     preserved_body_error = body_error.with_traceback(body_traceback)
                     if body_cause is not None:
                         preserved_body_error.__cause__ = body_cause

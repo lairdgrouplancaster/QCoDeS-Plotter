@@ -36,6 +36,8 @@ class CommandRegistryTestCase(unittest.TestCase):
     def test_database_close_and_platform_quit_commands_are_registered(self):
         close_action = command_spec("database.close")
         quit_action = command_spec("app.quit")
+        resolved_shortcuts = quit_action.resolved_shortcuts()
+        fallback = QtGui.QKeySequence("Ctrl+Q")
 
         self.assertEqual(close_action.text, "&Close Database")
         self.assertEqual(close_action.object_name, "closeDatabaseAction")
@@ -44,14 +46,22 @@ class CommandRegistryTestCase(unittest.TestCase):
             quit_action.shortcut_context,
             QtCore.Qt.ShortcutContext.ApplicationShortcut,
         )
-        self.assertTrue(
-            any(
-                shortcut in quit_action.resolved_shortcuts()
-                for shortcut in QtGui.QKeySequence.keyBindings(
-                    QtGui.QKeySequence.StandardKey.Quit
-                )
-            )
+        self.assertEqual(resolved_shortcuts[0], fallback)
+
+        window = qtw.QMainWindow()
+        try:
+            action = create_action(quit_action, window)
+            self.assertEqual(action.shortcut(), fallback)
+            self.assertEqual(action.shortcuts(), resolved_shortcuts)
+        finally:
+            window.deleteLater()
+
+        standard_bindings = QtGui.QKeySequence.keyBindings(
+            QtGui.QKeySequence.StandardKey.Quit
         )
+        if standard_bindings:
+            for shortcut in standard_bindings:
+                self.assertIn(shortcut, resolved_shortcuts)
 
     def test_dynamic_measurement_command_uses_expected_number(self):
         spec = plot_measurement_command_spec(2)
@@ -68,11 +78,13 @@ class CommandRegistryTestCase(unittest.TestCase):
         self.assertEqual(spec.status_tip, "Show or hide the operations dock")
 
     def test_operations_panel_has_one_canonical_shortcut(self):
-        self.assertEqual(command_spec("plot.toggle_operations").resolved_shortcuts(), [])
+        self.assertEqual(
+            command_spec("plot.toggle_operations").resolved_shortcuts(), []
+        )
         self.assertEqual(
             command_spec("toolbar.operations").resolved_shortcuts()[0].toString(),
             "Ctrl+Alt+O",
-            )
+        )
 
     def test_print_plot_uses_platform_standard_shortcut(self):
         spec = command_spec("plot.print")

@@ -184,24 +184,95 @@ opened in a mode that can recover or change it. Ambiguous or continuously
 changing state fails closed, and every private snapshot is removed after
 failure or when its owning connection closes.
 
-The isolated, non-default Stage 2 trusted live reader uses SQLite's real WAL
-index and native locking against the selected source without copying the
-database. Its native VFS keeps the main database, WAL, and rollback journal
-physically read-only. SQLite may mutate only the exact colocated `-shm` file as
-transient WAL coordination state, so a live read can change that file's contents
-or metadata without writing experimental data or checkpointing the database.
+The non-default Stage 2 trusted live reader uses SQLite's real WAL index and
+native locking against the selected source without copying the database. Its
+native VFS keeps the main database, WAL, and rollback journal physically
+read-only. SQLite may mutate only the exact colocated `-shm` file as transient
+WAL coordination state, so a live read can change that file's contents or
+metadata without writing experimental data or checkpointing the database.
 
 The reader proves source binding from retained proof handles and SQLite's actual
 file handles, using device/inode identity on POSIX and volume/file identity on
 Windows. It exposes only finite, materialised queries with bounded busy handling,
-deadlines, cancellation, and verified transaction cleanup. Any cleanup
-uncertainty fails closed and quarantines that process from opening another
-trusted session. Its full access policy and limits are documented in
+deadlines, cancellation, and verified transaction cleanup. Columns, rows,
+reply-wide cells, scalars, and a batch-shared conservative wire budget are
+checked while the live cursor advances and before each row is retained. A
+verified operation-wide SQLite `SQLITE_LIMIT_LENGTH` first preserves the 4 MiB
+absolute scalar ceiling. After statement metadata reveals `w` result columns,
+the reader installs a stricter per-value ceiling before execution: the minimum
+of that baseline, `floor(8 MiB / max(1, w))`, and the width-dependent term that
+keeps a conservative logical Python-object/payload accounting envelope for the
+ordinary APSW tuple/scalar row at or below 32 MiB after worst-case Unicode and
+logical object overhead. This is not an allocator-reserved-byte, RSS, arena,
+fragmentation, or SQLite VM/intermediate-memory bound. It closes the cursor and
+restores and verifies the operation baseline after every statement, then
+restores SQLite's original limit during final operation cleanup. A clean
+`TrustedLiveResultLimitError` remains reusable only after both restorations,
+rollback, and all other cleanup are proved. Limit lifecycle uncertainty retires
+the reader and, in Stage 3, the exact helper incarnation; only unproved final
+native resource release quarantines the direct-reader process from opening a
+new session. These limits bound result materialisation and IPC, not arbitrary
+internal SQLite virtual-machine memory use. The full derivation and access
+policy are documented in
 [Trusted live QCoDeS reader](trusted-live-reader.md).
+
+Stage 3 places that reader behind
+`qplot.datahandling.trusted_live_supervisor.TrustedLiveReaderSupervisor`. Each
+supervisor owns one persistent helper process for one database and explicitly
+uses multiprocessing `spawn` on every platform. The package-level helper target
+constructs, queries, rolls back, and closes `TrustedLiveReader` on its main
+thread. Its control thread may only signal generation-bound cancellation and
+call the reader's cross-thread-safe `interrupt()` method.
+
+Parent and child communicate through a bounded, explicitly versioned protocol
+containing only validated primitive values. All application startup
+configuration is carried in the same session-bound, generation-zero `startup`
+frame; spawn bootstrap arguments are limited to the unavoidable pipe handles,
+that bytes frame, and fixed private test plumbing. Every later request and reply
+is bound to the helper incarnation and a monotonically increasing job
+generation. Conservative aggregate wire budgets reject oversized text, blobs,
+base64, and nested values before constructing amplified payloads, followed by
+an exact final frame cap. A query-batch success is accepted only when it has one
+result for every submitted statement. Strict generic JSON decoding rejects
+duplicate keys, more than 4,500,000 aggregate collection items, and untagged
+non-finite numbers, including exponent overflow. SQLite reals instead use an
+explicit tagged canonical representation.
+
+One persistent receiver thread per incarnation exclusively owns the raw reply
+connection and publishes only complete bounded frames or terminal failures into
+a one-slot inbox. This is necessary because `Connection.poll()` can report
+a readable partial length header or body without making `recv_bytes()` safe to
+call synchronously. Public startup, job, cancellation, shutdown, close, restart,
+destructor, and `atexit` paths obtain reply data only from that inbox and
+otherwise retain finite waits. Retirement closes endpoints, escalates through
+terminate and kill when necessary, and boundedly joins both the helper process
+and receiver. If either cannot be proved stopped, the incarnation is
+quarantined and no replacement can start until later zero-time joins prove both
+have exited.
+Partial-frame timeouts therefore cannot reuse or replay the affected generation.
+
+Cancellation is cooperative first and uses a monotonic, generation-scoped
+control tombstone. An exact cancellation may arrive before its command or once
+after that job completed without affecting a newer generation; stale,
+duplicate, wrong-session, and out-of-order control frames fail closed. Each
+child operation has its own finite reader deadline and each parent wait is
+bounded. `close()` enters a closing state before releasing the supervisor lock,
+so no new job or replacement spawn can race teardown while the captured active
+job is cancelled and finished.
+
+If cancellation grace expires, the supervisor performs that bounded retirement.
+Bounded `atexit` cleanup retries retirement before multiprocessing shutdown;
+daemonic process status is only a final interpreter-exit fallback. Crashes,
+source replacement, protocol violations, and cleanup quarantine discard the
+incarnation without silently replaying a query. Every replacement helper must
+match the originally accepted main `DatabaseInstance`; after that check, the
+public source identity is refreshed with the helper's current journal mode and
+WAL/SHM identities.
+
 Application loading, preview, plotting, and refresh continue to use the snapshot
-path above; helper-process ownership and UI scheduling remain later stages. The
-WAL-provenance discussion below describes that snapshot path, not the trusted
-reader's native SQLite transaction view.
+path above; UI scheduling and integration remain later stages. The WAL-provenance
+discussion below describes that snapshot path, not the trusted reader's native
+SQLite transaction view.
 
 SQLite's WAL format does not provide main-file provenance. Its header records
 the WAL format, page size, checkpoint sequence, salts, and checksums; frame

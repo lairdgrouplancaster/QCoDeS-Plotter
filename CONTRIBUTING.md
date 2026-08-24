@@ -138,9 +138,25 @@ source-distribution policy, requires the trusted-reader C source and header,
 rejects ignored files and stale compiled native binaries, and runs all tests
 from an extracted sdist in a fresh virtual environment. It installs the wheel
 into another fresh environment for version, resource, console-script, and native
-extension checks, then opens a temporary WAL database through
-`TrustedLiveReader`, queries committed data, rejects mutating SQL, and verifies
-that the protected database artifacts remain unchanged.
+extension checks. From outside the repository it then runs a real guarded Python
+script that opens a temporary WAL database through
+`TrustedLiveReaderSupervisor`. This exercises the installed package-level helper
+target with multiprocessing `spawn`, queries committed data while the writer
+remains open, observes a later writer commit through the same helper, rejects
+mutating SQL, rejects an oversized nine-column live SQLite row with the distinct
+result-limit error, and proves that the same clean helper remains usable after
+both length-limit tiers are restored. It then injects uncertain per-statement
+limit restoration, proves that helper incarnation is retired, and recovers only
+through a fresh explicit helper. It also confirms writer checkpoint progress
+and verifies that the protected database artifacts remain unchanged during
+reader-only phases.
+
+The reader's 32 MiB pre-yield row figure is a conservative logical
+Python-object/payload accounting envelope for standard APSW tuple/scalar
+conversion, not an allocator-reserved-byte, RSS, fragmentation, arena, or
+SQLite VM-memory ceiling. Result-limit regressions may use `sys.getsizeof` for
+that logical envelope but must not assert allocator size or process RSS. The
+independent aggregate raw text/blob-payload bound is 8 MiB.
 
 The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `tests/conftest.py`; do not add per-test `QT_QPA_PLATFORM` setup or one-off
@@ -154,7 +170,9 @@ exercises installed macOS and Windows wheels. The workflow lives in
 `.github/workflows/ci.yml`. Because the trusted reader requires an unprivileged
 process, its Windows tests and wheel exercise run through a disposable local
 standard account; a separate probe confirms that the hosted runner's elevated
-token is rejected.
+token is rejected. Configuring these jobs is not cross-platform acceptance for
+a source revision: its Linux, ARM64 macOS, Intel macOS, and unprivileged Windows
+hosted jobs must all finish successfully for that exact revision.
 
 ## Generated Files
 
