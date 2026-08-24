@@ -304,6 +304,7 @@ def wheel_smoke_code() -> str:
     return """
 import importlib
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -315,9 +316,13 @@ from pathlib import Path
 import apsw
 import qplot
 from qplot.datahandling.trusted_live import (
-    TrustedLiveReader,
+    TRUSTED_LIVE_MAX_SCALAR_BYTES,
+    TrustedLiveCleanupError,
+    TrustedLiveResultLimitError,
     TrustedLiveSqlRejectedError,
+    TrustedQuery,
 )
+from qplot.datahandling.trusted_live_supervisor import TrustedLiveReaderSupervisor
 
 
 ARTIFACT_AUDIT_CODE = r'''\
@@ -403,9 +408,21 @@ try:
     connection.execute("CREATE TABLE smoke(value TEXT NOT NULL)")
     connection.execute("INSERT INTO smoke(value) VALUES('committed in WAL')")
     print(json.dumps({"ready": True}), flush=True)
-    command = sys.stdin.readline().strip()
-    if command != "close":
-        raise AssertionError(f"unexpected writer command: {command!r}")
+    while True:
+        command = sys.stdin.readline().strip()
+        if command == "commit":
+            connection.execute("INSERT INTO smoke(value) VALUES('later commit')")
+            print(json.dumps({"committed": True}), flush=True)
+        elif command == "checkpoint":
+            checkpoint = connection.execute(
+                "PRAGMA wal_checkpoint(PASSIVE)"
+            ).fetchone()
+            assert checkpoint is not None
+            print(json.dumps({"checkpoint": list(checkpoint)}), flush=True)
+        elif command == "close":
+            break
+        else:
+            raise AssertionError(f"unexpected writer command: {command!r}")
 finally:
     connection.close(True)
 print(json.dumps({"closed": True}), flush=True)
@@ -446,134 +463,200 @@ def assert_source_policy(before, after, database_path):
         )
 
 
-PROHIBITED_AUDIT_KEYS = {
-    "source_open_readwrite",
-    "source_open_create",
-    "source_open_delete_on_close",
-    "source_write",
-    "source_truncate",
-    "source_sync",
-    "source_delete",
-    "source_fetch",
-    "source_writable_map",
-    "shm_map_rejected",
-    "identity_rejected",
-    "proof_close_error",
-    "shm_unmap_error",
-    "shm_unmap_delete_forwarded",
-    "stale_callback_rejected",
-    "partial_open_cleanup",
-    "base_close_error",
-}
+def assert_installed_package():
+    expected_version = sys.argv[1]
+    resource_paths = json.loads(sys.argv[2])
+    expected_scripts = json.loads(sys.argv[3])
+    expected_apsw_version = sys.argv[4]
+    native_module_name = sys.argv[5]
+    native_file_names = set(json.loads(sys.argv[6]))
+    assert qplot.__version__ == expected_version == version("qplot")
+    assert version("apsw") == expected_apsw_version
+    assert apsw.apsw_version() == expected_apsw_version
+    native_module = importlib.import_module(native_module_name)
+    native_file = Path(native_module.__file__).resolve()
+    assert native_file.is_file(), native_file
+    assert native_file.name in native_file_names, native_file
+    for resource_path in resource_paths:
+        resource = files("qplot").joinpath(*resource_path.split("/"))
+        assert resource.is_file(), resource_path
+        assert resource.read_bytes(), resource_path
+    scripts = {
+        entry.name: entry.value
+        for entry in distribution("qplot").entry_points
+        if entry.group == "console_scripts"
+    }
+    assert scripts == expected_scripts
+    for entry in distribution("qplot").entry_points:
+        if entry.group == "console_scripts":
+            assert callable(entry.load()), entry.name
 
 
-def assert_safe_audit(counters, *, closed):
-    assert all(counters[key] == 0 for key in PROHIBITED_AUDIT_KEYS), counters
-    assert counters["source_open_readonly"] >= 2, counters
-    assert counters["source_open_flags_stripped"] > 0, counters
-    assert counters["source_read"] > 0, counters
-    assert counters["source_read_bytes"] > 0, counters
-    assert counters["shm_map_readonly"] == 0, counters
-    assert counters["shm_map_writable"] > 0, counters
-    assert counters["shm_lock"] > 0, counters
-    assert counters["identity_verified"] >= 3, counters
-    assert counters["proof_open"] >= 3, counters
-    assert counters["proof_close"] <= counters["proof_open"], counters
-    assert 0 <= counters["proof_active"] <= counters["proof_peak"], counters
-    if closed:
-        assert counters["proof_active"] == 0, counters
-        assert counters["proof_open"] == counters["proof_close"], counters
-
-expected_version = sys.argv[1]
-resource_paths = json.loads(sys.argv[2])
-expected_scripts = json.loads(sys.argv[3])
-expected_apsw_version = sys.argv[4]
-native_module_name = sys.argv[5]
-native_file_names = set(json.loads(sys.argv[6]))
-assert qplot.__version__ == expected_version == version("qplot")
-assert version("apsw") == expected_apsw_version
-assert apsw.apsw_version() == expected_apsw_version
-native_module = importlib.import_module(native_module_name)
-native_file = Path(native_module.__file__).resolve()
-assert native_file.is_file(), native_file
-assert native_file.name in native_file_names, native_file
-for resource_path in resource_paths:
-    resource = files("qplot").joinpath(*resource_path.split("/"))
-    assert resource.is_file(), resource_path
-    assert resource.read_bytes(), resource_path
-scripts = {
-    entry.name: entry.value
-    for entry in distribution("qplot").entry_points
-    if entry.group == "console_scripts"
-}
-assert scripts == expected_scripts
-for entry in distribution("qplot").entry_points:
-    if entry.group == "console_scripts":
-        assert callable(entry.load()), entry.name
-
-with tempfile.TemporaryDirectory(prefix="qplot-wheel-smoke-") as temporary:
-    # macOS may spell the temporary root through the /var -> /private/var
-    # system symlink. Exercise the reader with the canonical local path.
-    database_path = Path(temporary).resolve() / "trusted-live.db"
-    writer = subprocess.Popen(
-        [sys.executable, "-I", "-u", "-c", WRITER_CODE, str(database_path)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        assert writer.stdout is not None
-        ready_line = writer.stdout.readline()
-        if not ready_line:
-            assert writer.stderr is not None
-            raise AssertionError(
-                f"WAL writer failed before its barrier: {writer.stderr.read()}"
-            )
-        assert json.loads(ready_line) == {"ready": True}
-
-        wal_path = Path(f"{database_path}-wal")
-        shm_path = Path(f"{database_path}-shm")
-        assert wal_path.is_file() and wal_path.stat().st_size > 0
-        assert shm_path.is_file()
-        before = protected_artifact_state(database_path)
-
-        with TrustedLiveReader.open(database_path) as reader:
-            result = reader.query("SELECT value FROM smoke")
-            assert result.columns == ("value",)
-            assert result.rows == (("committed in WAL",),)
-            try:
-                reader.query("INSERT INTO smoke(value) VALUES('forbidden')")
-            except TrustedLiveSqlRejectedError:
-                pass
-            else:
-                raise AssertionError("trusted reader accepted mutating SQL")
-            assert reader.query("SELECT count(*) FROM smoke").rows == ((1,),)
-            assert_safe_audit(reader.audit().counters, closed=False)
-
-        assert_safe_audit(reader.audit().counters, closed=True)
-        after = protected_artifact_state(database_path)
-        assert_source_policy(before, after, database_path)
-        assert shm_path.is_file()
-    finally:
-        if writer.poll() is None:
-            assert writer.stdin is not None
-            writer.stdin.write("close\\n")
-            writer.stdin.flush()
+def exercise_spawned_supervisor():
+    with tempfile.TemporaryDirectory(prefix="qplot-wheel-smoke-") as temporary:
+        # macOS may spell the temporary root through the /var -> /private/var
+        # system symlink. Exercise the reader with the canonical local path.
+        database_path = Path(temporary).resolve() / "trusted-live.db"
+        writer = subprocess.Popen(
+            [sys.executable, "-I", "-u", "-c", WRITER_CODE, str(database_path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         try:
-            stdout, stderr = writer.communicate(timeout=15)
-        except subprocess.TimeoutExpired as error:
-            writer.kill()
-            _stdout, stderr = writer.communicate()
-            raise AssertionError(f"WAL writer did not close: {stderr}") from error
-        assert writer.returncode == 0, stderr
-        if stdout:
-            assert json.loads(stdout.splitlines()[-1]) == {"closed": True}
+            assert writer.stdout is not None
+            ready_line = writer.stdout.readline()
+            if not ready_line:
+                assert writer.stderr is not None
+                raise AssertionError(
+                    f"WAL writer failed before its barrier: {writer.stderr.read()}"
+                )
+            assert json.loads(ready_line) == {"ready": True}
 
-print(
-    f"qplot {qplot.__version__}: import, native extension, resources, "
-    "entry points, and installed trusted WAL reader passed"
-)
+            wal_path = Path(f"{database_path}-wal")
+            shm_path = Path(f"{database_path}-shm")
+            assert wal_path.is_file() and wal_path.stat().st_size > 0
+            assert shm_path.is_file()
+            before = protected_artifact_state(database_path)
+
+            with TrustedLiveReaderSupervisor.open(database_path) as supervisor:
+                helper_pid = supervisor.helper_pid
+                assert helper_pid is not None and helper_pid != os.getpid()
+                assert supervisor.helper_alive
+                before_version = supervisor.data_version()
+                result = supervisor.query("SELECT value FROM smoke")
+                assert result.columns == ("value",)
+                assert result.rows == (("committed in WAL",),)
+                try:
+                    supervisor.query(
+                        "INSERT INTO smoke(value) VALUES('forbidden')"
+                    )
+                except TrustedLiveSqlRejectedError:
+                    pass
+                else:
+                    raise AssertionError("trusted supervisor accepted mutating SQL")
+                try:
+                    wide_sql = "SELECT " + ", ".join(
+                        f"zeroblob(?) AS payload_{index}" for index in range(9)
+                    )
+                    supervisor.query(
+                        wide_sql,
+                        (TRUSTED_LIVE_MAX_SCALAR_BYTES,) * 9,
+                    )
+                except TrustedLiveResultLimitError:
+                    pass
+                else:
+                    raise AssertionError(
+                        "trusted supervisor materialised an oversized live result"
+                    )
+                assert supervisor.query("SELECT count(*) FROM smoke").rows == ((1,),)
+                assert supervisor.helper_pid == helper_pid
+
+                after_initial_reads = protected_artifact_state(database_path)
+                assert_source_policy(before, after_initial_reads, database_path)
+                assert writer.stdin is not None
+                writer.stdin.write("commit\\n")
+                writer.stdin.flush()
+                commit_line = writer.stdout.readline()
+                if not commit_line:
+                    assert writer.stderr is not None
+                    raise AssertionError(
+                        f"WAL writer failed before commit: {writer.stderr.read()}"
+                    )
+                assert json.loads(commit_line) == {"committed": True}
+                after_writer_commit = protected_artifact_state(database_path)
+
+                later = supervisor.query("SELECT value FROM smoke ORDER BY rowid")
+                assert later.rows == (
+                    ("committed in WAL",),
+                    ("later commit",),
+                )
+                assert supervisor.data_version() > before_version
+                assert supervisor.helper_pid == helper_pid
+                after_later_reads = protected_artifact_state(database_path)
+                assert_source_policy(
+                    after_writer_commit,
+                    after_later_reads,
+                    database_path,
+                )
+
+                writer.stdin.write("checkpoint\\n")
+                writer.stdin.flush()
+                checkpoint_line = writer.stdout.readline()
+                if not checkpoint_line:
+                    assert writer.stderr is not None
+                    raise AssertionError(
+                        "WAL writer failed before checkpoint: "
+                        f"{writer.stderr.read()}"
+                    )
+                checkpoint = json.loads(checkpoint_line)["checkpoint"]
+                assert len(checkpoint) == 3
+                assert checkpoint[0] == 0
+                assert checkpoint[1] == checkpoint[2]
+                assert checkpoint[2] > 0
+                after_writer_checkpoint = protected_artifact_state(database_path)
+
+            assert not supervisor.helper_alive
+            with TrustedLiveReaderSupervisor.open(
+                database_path,
+                _test_fault="statement_limit_restore",
+            ) as fault_supervisor:
+                faulted_pid = fault_supervisor.helper_pid
+                faulted_incarnation = fault_supervisor.incarnation
+                assert faulted_pid is not None
+                try:
+                    fault_supervisor.query_batch(
+                        (
+                            TrustedQuery("SELECT 1 AS unpublished_value"),
+                            TrustedQuery("SELECT 2 AS unreachable_value"),
+                        )
+                    )
+                except TrustedLiveCleanupError:
+                    pass
+                else:
+                    raise AssertionError(
+                        "uncertain statement-limit restoration was reusable"
+                    )
+                assert not fault_supervisor.helper_alive
+                assert fault_supervisor.query("SELECT 3").rows == ((3,),)
+                replacement_pid = fault_supervisor.helper_pid
+                assert replacement_pid is not None
+                assert replacement_pid != faulted_pid
+                assert fault_supervisor.incarnation != faulted_incarnation
+
+            assert not fault_supervisor.helper_alive
+            after = protected_artifact_state(database_path)
+            assert_source_policy(after_writer_checkpoint, after, database_path)
+            assert shm_path.is_file()
+        finally:
+            if writer.poll() is None:
+                assert writer.stdin is not None
+                writer.stdin.write("close\\n")
+                writer.stdin.flush()
+            try:
+                stdout, stderr = writer.communicate(timeout=15)
+            except subprocess.TimeoutExpired as error:
+                writer.kill()
+                _stdout, stderr = writer.communicate()
+                raise AssertionError(f"WAL writer did not close: {stderr}") from error
+            assert writer.returncode == 0, stderr
+            if stdout:
+                assert json.loads(stdout.splitlines()[-1]) == {"closed": True}
+
+
+def main():
+    assert_installed_package()
+    exercise_spawned_supervisor()
+    print(
+        f"qplot {qplot.__version__}: import, native extension, resources, "
+        "entry points, installed spawned trusted WAL helper, result-limit "
+        "recovery, fail-closed limit cleanup, and writer checkpoint passed"
+    )
+
+
+if __name__ == "__main__":
+    main()
 """
 
 
@@ -597,12 +680,15 @@ def smoke_test_wheel(
     )
     smoke_directory = temporary / "wheel-smoke"
     smoke_directory.mkdir()
+    if smoke_directory.resolve().is_relative_to(repository.resolve()):
+        raise AssertionError("installed-wheel smoke must run outside the repository")
+    smoke_script = smoke_directory / "installed_wheel_smoke.py"
+    smoke_script.write_text(wheel_smoke_code(), encoding="utf-8")
     run(
         [
             str(python),
             "-I",
-            "-c",
-            wheel_smoke_code(),
+            str(smoke_script),
             version,
             json.dumps(resources),
             json.dumps(CONSOLE_SCRIPTS),

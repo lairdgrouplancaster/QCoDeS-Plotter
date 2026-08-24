@@ -14,10 +14,40 @@ installation commands and release validation, see `docs/distribution.md`.
   database. Main, WAL, and rollback-journal handles remain physically read-only;
   only SQLite's exact colocated SHM coordination file may be updated. Operations
   are bounded, cancellable, and identity-bound. The existing snapshot reader
-  remains the application path until later helper-process and UI stages.
+  remains the application path until later UI integration stages.
+- Isolate the trusted live reader in a persistent, explicitly spawned helper
+  process. Startup and job IPC is bounded and versioned, with conservative
+  allocation preflight and exact query-batch result cardinality. Monotonic
+  generation-bound cancellation, a closing gate, bounded exit cleanup with a
+  daemon fallback, unreaped-process quarantine, and source-bound fresh-process
+  recovery prevent stale or failed work from leaking into a later job. This is
+  non-Qt infrastructure and does not change qPlot's run-table, metadata,
+  preview, thumbnail, plotting, or refresh paths.
 - Build the native boundary in explicit C11 mode with MSVC and exercise installed
   reader wheels separately on ARM64 macOS, Intel macOS, Linux, and unprivileged
   Windows CI hosts before cross-platform acceptance.
+
+### Fixed
+
+- Keep every spawned-helper reply path deadline-bounded when a peer sends only
+  part of a multiprocessing frame. One persistent receiver per incarnation now
+  owns raw reply reads and feeds a one-slot inbox; timed-out startup, job, and
+  shutdown frames retire the exact process and receiver without replay, while
+  unreaped resources remain quarantined.
+- Enforce trusted-query column, row, reply-wide cell, scalar, and shared batch
+  wire limits while consuming the live SQLite cursor. A temporary verified
+  SQLite length baseline preserves the 4 MiB absolute scalar ceiling, while a
+  width-derived per-statement limit caps aggregate raw row payload at 8 MiB and
+  a conservative logical Python-object/payload accounting envelope for the
+  ordinary APSW tuple/scalar row at 32 MiB before it is yielded. Allocator
+  rounding and reservation, RSS, fragmentation, arenas, and SQLite VM memory
+  are explicitly outside that logical bound. Clean result-limit failures remain
+  reusable only after rollback and both limit restorations are proved;
+  installation, verification, or restoration uncertainty aborts the batch and
+  retires the helper incarnation.
+- Reject exponent-overflow and other untagged non-finite JSON numbers at the
+  generic IPC boundary, with regressions for duplicate keys and aggregate
+  collection limits while preserving tagged SQLite-real round trips.
 
 ## 1.6.0-b1 - 2026-08-18
 

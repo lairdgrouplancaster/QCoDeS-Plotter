@@ -214,6 +214,10 @@ jobs:
           --timeout=90 --timeout-method=thread --durations=20
           tests/datahandling/test_readonly.py
           tests/datahandling/test_trusted_live.py
+          tests/datahandling/test_trusted_live_partial_frames.py
+          tests/datahandling/test_trusted_live_protocol.py
+          tests/datahandling/test_trusted_live_result_limits.py
+          tests/datahandling/test_trusted_live_supervisor.py
           tests/windows/test_heatmap_layer_integration.py
           tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots
 
@@ -229,6 +233,10 @@ jobs:
             "--timeout=90", "--timeout-method=thread", "--durations=20",
             "tests/datahandling/test_readonly.py",
             "tests/datahandling/test_trusted_live.py",
+            "tests/datahandling/test_trusted_live_partial_frames.py",
+            "tests/datahandling/test_trusted_live_protocol.py",
+            "tests/datahandling/test_trusted_live_result_limits.py",
+            "tests/datahandling/test_trusted_live_supervisor.py",
             "tests/windows/test_heatmap_layer_integration.py",
             "tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots"
           )
