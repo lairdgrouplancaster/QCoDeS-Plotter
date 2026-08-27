@@ -506,9 +506,17 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
 } catch {
     $primaryError = $_
 } finally {
+    # Publish the regular-file snapshot before any OS/account teardown that
+    # might itself be slow on a failing runner.
+    Publish-ChildLog -Path $stdoutPath -Destination ([Console]::Out)
+    Publish-ChildLog -Path $stderrPath -Destination ([Console]::Error)
+
     # Closing the job handle kills every remaining descendant and therefore
     # closes inherited output handles before reader and account cleanup.
-    if ($null -ne $processJob) {
+    # A timed-out job has already received TerminateJobObject. Leave its final
+    # handle close to immediate PowerShell process exit rather than re-entering
+    # synchronous kill-on-close processing here.
+    if ($null -ne $processJob -and -not $processJob.TimedOut) {
         try {
             $processJob.Dispose()
         } catch {
@@ -525,8 +533,6 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
             Write-Warning "Could not terminate the uncontained child: $_"
         }
     }
-    Publish-ChildLog -Path $stdoutPath -Destination ([Console]::Out)
-    Publish-ChildLog -Path $stderrPath -Destination ([Console]::Error)
     if ($userCreated) {
         for ($index = $grantedPaths.Count - 1; $index -ge 0; $index--) {
             try {
