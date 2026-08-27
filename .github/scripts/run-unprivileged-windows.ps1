@@ -139,6 +139,31 @@ public sealed class QPlotProcessJob : IDisposable
         }
     }
 
+    public uint ActiveProcessCount
+    {
+        get
+        {
+            lock (sync)
+            {
+                if (handle == IntPtr.Zero)
+                {
+                    return 0;
+                }
+                var information = new JobObjectBasicAccountingInformation();
+                if (!QueryInformationJobObject(
+                    handle,
+                    1,
+                    ref information,
+                    (uint)Marshal.SizeOf<JobObjectBasicAccountingInformation>(),
+                    IntPtr.Zero))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                return information.ActiveProcesses;
+            }
+        }
+    }
+
     public void Dispose()
     {
         lock (sync)
@@ -205,6 +230,19 @@ public sealed class QPlotProcessJob : IDisposable
         public UIntPtr PeakJobMemoryUsed;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectBasicAccountingInformation
+    {
+        public long TotalUserTime;
+        public long TotalKernelTime;
+        public long ThisPeriodTotalUserTime;
+        public long ThisPeriodTotalKernelTime;
+        public uint TotalPageFaultCount;
+        public uint TotalProcesses;
+        public uint ActiveProcesses;
+        public uint TotalTerminatedProcesses;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr CreateJobObject(
         IntPtr jobAttributes,
@@ -216,6 +254,14 @@ public sealed class QPlotProcessJob : IDisposable
         int informationClass,
         ref JobObjectExtendedLimitInformation information,
         uint informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(
+        IntPtr job,
+        int informationClass,
+        ref JobObjectBasicAccountingInformation information,
+        uint informationLength,
+        IntPtr returnLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AssignProcessToJobObject(
@@ -508,6 +554,27 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
         # still alive. Terminate the contained tree before managed cleanup,
         # but retain pytest's exact nonzero exit code for the Actions result.
         $processJob.RequestTermination()
+    } elseif ($processJob.ActiveProcessCount -gt 0) {
+        # Closing a populated job can wait indefinitely in managed cleanup.
+        # Match kill-on-close semantics explicitly, then observe the whole job
+        # rather than only the Python executable initially passed to Process.
+        $processJob.RequestTermination()
+        $jobExitDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        if ($jobExitDeadline -gt $processDeadline) {
+            $jobExitDeadline = $processDeadline
+        }
+        while (
+            $processJob.ActiveProcessCount -gt 0 -and
+            [DateTime]::UtcNow -lt $jobExitDeadline
+        ) {
+            Start-Sleep -Milliseconds 100
+        }
+        if ($processJob.ActiveProcessCount -gt 0) {
+            throw (
+                "The unprivileged qPlot CI process tree did not terminate " +
+                "within its $TimeoutSeconds-second deadline."
+            )
+        }
     }
 } catch {
     $primaryError = $_
