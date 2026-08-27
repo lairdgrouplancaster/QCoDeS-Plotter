@@ -1606,6 +1606,26 @@ def _kqueue_child_exit_observed(
         raise ShutdownSupervisorError(
             "POSIX child observation requires waitid or kqueue"
         )
+    try:
+        constants = {
+            name: int(getattr(select, name))
+            for name in (
+                "KQ_FILTER_PROC",
+                "KQ_EV_ADD",
+                "KQ_EV_ENABLE",
+                "KQ_EV_ONESHOT",
+                "KQ_NOTE_EXIT",
+            )
+        }
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ShutdownSupervisorError(
+            "POSIX child observation requires kqueue process-exit constants"
+        ) from error
+    kq_filter_proc = constants["KQ_FILTER_PROC"]
+    kq_ev_add = constants["KQ_EV_ADD"]
+    kq_ev_enable = constants["KQ_EV_ENABLE"]
+    kq_ev_oneshot = constants["KQ_EV_ONESHOT"]
+    kq_note_exit = constants["KQ_NOTE_EXIT"]
     while True:
         if deadline is not None and time.monotonic() >= deadline:
             return None
@@ -1615,9 +1635,9 @@ def _kqueue_child_exit_observed(
             queue = kqueue_factory()
             change = kevent_factory(
                 int(child.pid),
-                filter=select.KQ_FILTER_PROC,
-                flags=(select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_ONESHOT),
-                fflags=select.KQ_NOTE_EXIT,
+                filter=kq_filter_proc,
+                flags=(kq_ev_add | kq_ev_enable | kq_ev_oneshot),
+                fflags=kq_note_exit,
             )
             events = queue.control([change], 1, 0.0)
         except InterruptedError:
@@ -1631,8 +1651,7 @@ def _kqueue_child_exit_observed(
         if deadline is not None and time.monotonic() >= deadline:
             return None
         return any(
-            int(event.ident) == int(child.pid)
-            and int(event.fflags) & int(select.KQ_NOTE_EXIT)
+            int(event.ident) == int(child.pid) and int(event.fflags) & kq_note_exit
             for event in events
         )
 
