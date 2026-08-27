@@ -14,6 +14,33 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+
+public static class QPlotActionsConsoleForwarder
+{
+    public static readonly DataReceivedEventHandler Output = ForwardOutput;
+    public static readonly DataReceivedEventHandler Error = ForwardError;
+
+    private static void ForwardOutput(object sender, DataReceivedEventArgs eventArgs)
+    {
+        if (eventArgs.Data != null)
+        {
+            Console.Out.WriteLine(eventArgs.Data);
+        }
+    }
+
+    private static void ForwardError(object sender, DataReceivedEventArgs eventArgs)
+    {
+        if (eventArgs.Data != null)
+        {
+            Console.Error.WriteLine(eventArgs.Data);
+        }
+    }
+}
+'@
+
 function Assert-PathWithin {
     param(
         [Parameter(Mandatory = $true)]
@@ -199,18 +226,8 @@ try {
     # completion depend on pipe EOF. A failed subprocess regression can leave
     # a descendant holding an inherited pipe after pytest has already exited;
     # ReadToEndAsync would then hide the traceback until the Actions timeout.
-    $outputHandler = [System.Diagnostics.DataReceivedEventHandler] {
-        param($sender, $eventArgs)
-        if ($null -ne $eventArgs.Data) {
-            [Console]::Out.WriteLine($eventArgs.Data)
-        }
-    }
-    $errorHandler = [System.Diagnostics.DataReceivedEventHandler] {
-        param($sender, $eventArgs)
-        if ($null -ne $eventArgs.Data) {
-            [Console]::Error.WriteLine($eventArgs.Data)
-        }
-    }
+    $outputHandler = [QPlotActionsConsoleForwarder]::Output
+    $errorHandler = [QPlotActionsConsoleForwarder]::Error
     $process.add_OutputDataReceived($outputHandler)
     $process.add_ErrorDataReceived($errorHandler)
     $process.BeginOutputReadLine()

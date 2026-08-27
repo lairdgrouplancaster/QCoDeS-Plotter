@@ -600,7 +600,9 @@ def test_different_explicit_deadlines_remain_exact_after_earlier_cancellation(
     )
     first_job = harness.supervisor.wait_until_started("page:0:5")
     time.sleep(0.12)
-    survivor_deadline = time.monotonic() + 0.45
+    # Keep the deadlines observably distinct even when a loaded runner delays
+    # the second worker transition before the earlier deadline assertion.
+    survivor_deadline = time.monotonic() + 0.90
     survivor = harness.service.submit_basic_page(
         0,
         5,
