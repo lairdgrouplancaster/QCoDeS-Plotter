@@ -24,28 +24,6 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-public static class QPlotActionsConsoleForwarder
-{
-    public static readonly DataReceivedEventHandler Output = ForwardOutput;
-    public static readonly DataReceivedEventHandler Error = ForwardError;
-
-    private static void ForwardOutput(object sender, DataReceivedEventArgs eventArgs)
-    {
-        if (eventArgs.Data != null)
-        {
-            Console.Out.WriteLine(eventArgs.Data);
-        }
-    }
-
-    private static void ForwardError(object sender, DataReceivedEventArgs eventArgs)
-    {
-        if (eventArgs.Data != null)
-        {
-            Console.Error.WriteLine(eventArgs.Data);
-        }
-    }
-}
-
 public sealed class QPlotProcessJob : IDisposable
 {
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
@@ -263,6 +241,23 @@ function Invoke-IcaclsChecked {
     }
 }
 
+function Publish-ChildLog {
+    param(
+        [string] $Path,
+        [Parameter(Mandatory = $true)]
+        [System.IO.TextWriter] $Destination
+    )
+
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    try {
+        $Destination.Write([System.IO.File]::ReadAllText($Path))
+    } catch {
+        Write-Warning "Could not publish child diagnostics from '$Path': $_"
+    }
+}
+
 if ($env:RUNNER_OS -ne "Windows") {
     throw "This helper is only supported on GitHub-hosted Windows runners."
 }
@@ -297,8 +292,8 @@ $primaryError = $null
 $process = $null
 $processJob = $null
 $processContained = $false
-$outputHandler = $null
-$errorHandler = $null
+$stdoutPath = $null
+$stderrPath = $null
 
 try {
     $localUser = New-LocalUser `
@@ -374,21 +369,53 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
 
+    $stdoutPath = Join-Path $unprivilegedTemp "child-stdout.txt"
+    $stderrPath = Join-Path $unprivilegedTemp "child-stderr.txt"
+    $pythonArguments = ConvertTo-Json -Compress -InputObject @($ArgumentList)
+    $pythonBootstrap = @'
+import json
+import os
+import runpy
+import sys
+
+stdout_path = os.environ["QPLOT_CI_STDOUT_PATH"]
+stderr_path = os.environ["QPLOT_CI_STDERR_PATH"]
+stdout_file = open(stdout_path, "w", encoding="utf-8", buffering=1)
+stderr_file = open(stderr_path, "w", encoding="utf-8", buffering=1)
+os.dup2(stdout_file.fileno(), 1, inheritable=True)
+os.dup2(stderr_file.fileno(), 2, inheritable=True)
+sys.stdout = open(1, "w", encoding="utf-8", buffering=1, closefd=False)
+sys.stderr = open(2, "w", encoding="utf-8", buffering=1, closefd=False)
+
+arguments = json.loads(os.environ["QPLOT_CI_PYTHON_ARGUMENTS"])
+if not arguments:
+    raise SystemExit("The unprivileged Python command has no target.")
+if arguments[0] == "-m":
+    if len(arguments) < 2:
+        raise SystemExit("The unprivileged Python -m command has no module.")
+    target = arguments[1]
+    sys.argv = [target, *arguments[2:]]
+    runpy.run_module(target, run_name="__main__", alter_sys=False)
+else:
+    target = arguments[0]
+    sys.argv = [target, *arguments[1:]]
+    runpy.run_path(target, run_name="__main__")
+'@
+
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $resolvedExecutable
     $startInfo.WorkingDirectory = $workingPath
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
+    $startInfo.RedirectStandardOutput = $false
+    $startInfo.RedirectStandardError = $false
     $startInfo.UserName = $userName
     $startInfo.Domain = $env:COMPUTERNAME
     $startInfo.Password = $securePassword
     $startInfo.LoadUserProfile = $true
 
-    foreach ($argument in $ArgumentList) {
-        [void] $startInfo.ArgumentList.Add($argument)
-    }
+    [void] $startInfo.ArgumentList.Add("-c")
+    [void] $startInfo.ArgumentList.Add($pythonBootstrap)
 
     $startInfo.Environment.Clear()
     foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
@@ -407,6 +434,10 @@ try {
     $startInfo.Environment["PIP_CACHE_DIR"] = Join-Path $unprivilegedTemp "pip-cache"
     $startInfo.Environment["MPLCONFIGDIR"] = Join-Path $unprivilegedTemp "matplotlib"
     $startInfo.Environment["QPLOT_UNPRIVILEGED_TEMP"] = $unprivilegedTemp
+    $startInfo.Environment["QPLOT_CI_STDOUT_PATH"] = $stdoutPath
+    $startInfo.Environment["QPLOT_CI_STDERR_PATH"] = $stderrPath
+    $startInfo.Environment["QPLOT_CI_PYTHON_ARGUMENTS"] = $pythonArguments
+    $startInfo.Environment["PYTHONUNBUFFERED"] = "1"
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -418,25 +449,10 @@ try {
     $processContained = $true
     $processJob.ArmTimeout($TimeoutSeconds * 1000)
 
-    # Forward complete lines as they arrive, but never make direct-process
-    # completion depend on pipe EOF. A failed subprocess regression can leave
-    # a descendant holding an inherited pipe after pytest has already exited;
-    # ReadToEndAsync would then hide the traceback until the Actions timeout.
-    $outputHandler = [QPlotActionsConsoleForwarder]::Output
-    $errorHandler = [QPlotActionsConsoleForwarder]::Error
-    $process.add_OutputDataReceived($outputHandler)
-    $process.add_ErrorDataReceived($errorHandler)
-    $process.BeginOutputReadLine()
-    $process.BeginErrorReadLine()
-    # Use only the timed overload here. The parameterless overload also waits
-    # for asynchronous output handlers to observe pipe EOF, which may never
-    # arrive when a failed subprocess regression leaves a descendant holding
-    # an inherited stdout or stderr handle after pytest itself has exited.
+    # Poll only the direct Python process. Its bootstrap redirected fd 1/2 to
+    # regular files, so descendants cannot create an anonymous-pipe EOF wait.
     while (-not $process.WaitForExit(250)) {
-        # Poll only the direct pytest process; diagnostics keep streaming via
-        # the DataReceived handlers above.
     }
-    Start-Sleep -Milliseconds 250
     $childExitCode = $process.ExitCode
     if ($processJob.TimedOut) {
         throw (
@@ -466,24 +482,8 @@ try {
             Write-Warning "Could not terminate the uncontained child: $_"
         }
     }
-    if ($null -ne $process) {
-        if ($null -ne $outputHandler) {
-            try {
-                $process.CancelOutputRead()
-            } catch {
-                Write-Warning "Could not stop reading child stdout: $_"
-            }
-            $process.remove_OutputDataReceived($outputHandler)
-        }
-        if ($null -ne $errorHandler) {
-            try {
-                $process.CancelErrorRead()
-            } catch {
-                Write-Warning "Could not stop reading child stderr: $_"
-            }
-            $process.remove_ErrorDataReceived($errorHandler)
-        }
-    }
+    Publish-ChildLog -Path $stdoutPath -Destination ([Console]::Out)
+    Publish-ChildLog -Path $stderrPath -Destination ([Console]::Error)
     if ($userCreated) {
         for ($index = $grantedPaths.Count - 1; $index -ge 0; $index--) {
             try {
