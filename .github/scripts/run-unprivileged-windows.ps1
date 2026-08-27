@@ -232,7 +232,15 @@ try {
     $process.add_ErrorDataReceived($errorHandler)
     $process.BeginOutputReadLine()
     $process.BeginErrorReadLine()
-    $process.WaitForExit()
+    # Use only the timed overload here. The parameterless overload also waits
+    # for asynchronous output handlers to observe pipe EOF, which may never
+    # arrive when a failed subprocess regression leaves a descendant holding
+    # an inherited stdout or stderr handle after pytest itself has exited.
+    while (-not $process.WaitForExit(250)) {
+        # Poll only the direct pytest process; diagnostics keep streaming via
+        # the DataReceived handlers above.
+    }
+    Start-Sleep -Milliseconds 250
     $childExitCode = $process.ExitCode
 } catch {
     $primaryError = $_
