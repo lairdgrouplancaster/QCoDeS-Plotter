@@ -8,7 +8,10 @@ param(
     [AllowEmptyCollection()]
     [string[]] $ArgumentList,
 
-    [string] $WorkingDirectory = $env:GITHUB_WORKSPACE
+    [string] $WorkingDirectory = $env:GITHUB_WORKSPACE,
+
+    [ValidateRange(1, 3600)]
+    [int] $TimeoutSeconds = 420
 )
 
 $ErrorActionPreference = "Stop"
@@ -236,9 +239,22 @@ try {
     # for asynchronous output handlers to observe pipe EOF, which may never
     # arrive when a failed subprocess regression leaves a descendant holding
     # an inherited stdout or stderr handle after pytest itself has exited.
+    $processDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while (-not $process.WaitForExit(250)) {
         # Poll only the direct pytest process; diagnostics keep streaming via
         # the DataReceived handlers above.
+        if ([DateTime]::UtcNow -ge $processDeadline) {
+            try {
+                $process.Kill($true)
+                [void] $process.WaitForExit(5000)
+            } catch {
+                Write-Warning "Could not terminate timed-out child tree: $_"
+            }
+            throw (
+                "The unprivileged qPlot CI process exceeded its " +
+                "$TimeoutSeconds-second direct-process deadline."
+            )
+        }
     }
     Start-Sleep -Milliseconds 250
     $childExitCode = $process.ExitCode
