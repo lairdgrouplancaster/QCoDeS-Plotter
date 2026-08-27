@@ -503,6 +503,12 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
             "$TimeoutSeconds-second direct-process deadline."
         )
     }
+    if ($childExitCode -ne 0) {
+        # pytest-timeout can return while a failed regression's descendant is
+        # still alive. Terminate the contained tree before managed cleanup,
+        # but retain pytest's exact nonzero exit code for the Actions result.
+        $processJob.RequestTermination()
+    }
 } catch {
     $primaryError = $_
 } finally {
