@@ -32,6 +32,7 @@ public sealed class QPlotProcessJob : IDisposable
     private IntPtr handle;
     private ManualResetEvent deadlineCancelled;
     private Thread deadlineThread;
+    private bool terminationRequested;
     private bool timedOut;
 
     public QPlotProcessJob()
@@ -116,6 +117,11 @@ public sealed class QPlotProcessJob : IDisposable
                 return;
             }
             timedOut = true;
+            if (terminationRequested)
+            {
+                return;
+            }
+            terminationRequested = true;
             activeHandle = handle;
         }
         TerminateJobObject(activeHandle, 1);
@@ -131,6 +137,11 @@ public sealed class QPlotProcessJob : IDisposable
                 return;
             }
             timedOut = true;
+            if (terminationRequested)
+            {
+                return;
+            }
+            terminationRequested = true;
             activeHandle = handle;
         }
         if (!TerminateJobObject(activeHandle, 1))
