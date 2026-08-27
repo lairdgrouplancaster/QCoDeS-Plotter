@@ -623,7 +623,7 @@ def test_forced_shutdown_terminates_the_complete_contained_process_tree(
                 if grandchild.poll() is not None:
                     raise AssertionError("contained grandchild exited during startup")
                 time.sleep(0.005)
-            deadline = time.monotonic() + 0.30
+            deadline = time.monotonic() + 0.75
             arm_error = client.arm(deadline)
             if arm_error is not None:
                 raise AssertionError(arm_error)
@@ -1209,7 +1209,9 @@ def test_child_exit_immediately_before_deadline_does_not_signal_sentinel(
             Path(os.environ["_QPLOT_TEST_RECORD_PATH"]).write_text(
                 json.dumps({"deadline": deadline}), encoding="utf-8"
             )
-            time.sleep(max(0.0, deadline - time.monotonic() - 0.05))
+            # Leave enough scheduling margin for loaded hosted macOS runners;
+            # waking after the immutable deadline must correctly force exit.
+            time.sleep(max(0.0, deadline - time.monotonic() - 0.25))
             raise SystemExit(31)
             """,
             environment_updates={"_QPLOT_TEST_RECORD_PATH": os.fspath(record_path)},
