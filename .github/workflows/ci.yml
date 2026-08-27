@@ -177,6 +177,14 @@ jobs:
           '@
           python -c $guardCode
 
+      - name: Verify unprivileged Windows deadline containment
+        if: runner.os == 'Windows' && matrix.python-version == '3.12'
+        shell: pwsh
+        run: |
+          $python = (Get-Command python).Source
+          & "$env:GITHUB_WORKSPACE\.github\scripts\check-unprivileged-windows-deadline.ps1" `
+            -FilePath $python
+
       - name: Run full test suite
         if: matrix.suite == 'full' && runner.os != 'Windows'
         env:

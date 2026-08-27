@@ -377,6 +377,7 @@ $stdoutPath = $null
 $stderrPath = $null
 
 try {
+    Write-Host "qPlot Windows wrapper phase: create-account"
     $localUser = New-LocalUser `
         -Name $userName `
         -Password $securePassword `
@@ -432,6 +433,7 @@ try {
             "/Q"
         )
     }
+    Write-Host "qPlot Windows wrapper phase: access-granted"
 
     $homePath = Join-Path $unprivilegedTemp "home"
     $roamingPath = Join-Path $homePath "AppData\Roaming"
@@ -537,6 +539,7 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
     $processJob.Assign($process)
     $processContained = $true
     $processJob.ArmTimeout($TimeoutSeconds * 1000)
+    Write-Host "qPlot Windows wrapper phase: child-deadline-armed"
 
     # Poll only the direct Python process. sitecustomize redirected fd 1/2 to
     # regular files, so descendants cannot create an anonymous-pipe EOF wait.
@@ -554,6 +557,7 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
         }
     }
     $childExitCode = $process.ExitCode
+    Write-Host "qPlot Windows wrapper phase: direct-child-exited"
     if ($processJob.TimedOut) {
         throw (
             "The unprivileged qPlot CI process exceeded its " +
@@ -589,11 +593,14 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
     }
 } catch {
     $primaryError = $_
+    Write-Host "qPlot Windows wrapper phase: caught-error"
 } finally {
+    Write-Host "qPlot Windows wrapper phase: publish-diagnostics"
     # Publish the regular-file snapshot before any OS/account teardown that
     # might itself be slow on a failing runner.
     Publish-ChildLog -Path $stdoutPath -Destination ([Console]::Out)
     Publish-ChildLog -Path $stderrPath -Destination ([Console]::Error)
+    Write-Host "qPlot Windows wrapper phase: diagnostics-published"
 
     # Closing the job handle kills every remaining descendant and therefore
     # closes inherited output handles before reader and account cleanup.
@@ -620,6 +627,10 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
     if ($userCreated) {
         for ($index = $grantedPaths.Count - 1; $index -ge 0; $index--) {
             try {
+                Write-Host (
+                    "qPlot Windows wrapper phase: remove-access " +
+                    $grantedPaths[$index]
+                )
                 $aclRemovalArguments = @(
                     $grantedPaths[$index],
                     "/remove:g",
@@ -639,12 +650,15 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
                     $aclRemovalArguments += @("/T", "/C")
                 }
                 Invoke-IcaclsChecked -Arguments $aclRemovalArguments
+                Write-Host "qPlot Windows wrapper phase: access-removed"
             } catch {
                 Write-Warning "Could not remove the qPlot CI ACL: $_"
             }
         }
         try {
+            Write-Host "qPlot Windows wrapper phase: remove-account"
             Remove-LocalUser -Name $userName
+            Write-Host "qPlot Windows wrapper phase: account-removed"
         } catch {
             Write-Warning "Could not remove the disposable qPlot CI account: $_"
         }
