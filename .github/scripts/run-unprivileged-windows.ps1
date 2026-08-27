@@ -108,6 +108,7 @@ public sealed class QPlotProcessJob : IDisposable
         {
             return;
         }
+        IntPtr activeHandle;
         lock (sync)
         {
             if (handle == IntPtr.Zero)
@@ -115,9 +116,26 @@ public sealed class QPlotProcessJob : IDisposable
                 return;
             }
             timedOut = true;
-            IntPtr ownedHandle = handle;
-            handle = IntPtr.Zero;
-            CloseHandle(ownedHandle);
+            activeHandle = handle;
+        }
+        TerminateJobObject(activeHandle, 1);
+    }
+
+    public void RequestTermination()
+    {
+        IntPtr activeHandle;
+        lock (sync)
+        {
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+            timedOut = true;
+            activeHandle = handle;
+        }
+        if (!TerminateJobObject(activeHandle, 1))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
         }
     }
 
@@ -203,6 +221,11 @@ public sealed class QPlotProcessJob : IDisposable
     private static extern bool AssignProcessToJobObject(
         IntPtr job,
         IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateJobObject(
+        IntPtr job,
+        uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
@@ -463,7 +486,7 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
     $processDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while (-not $process.WaitForExit(250)) {
         if ([DateTime]::UtcNow -ge $processDeadline) {
-            $processJob.Dispose()
+            $processJob.RequestTermination()
             if (-not $process.WaitForExit(5000)) {
                 $process.Kill()
             }
