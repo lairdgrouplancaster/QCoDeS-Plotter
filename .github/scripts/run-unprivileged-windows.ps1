@@ -290,6 +290,7 @@ $aclIdentity = $null
 $childExitCode = $null
 $primaryError = $null
 $process = $null
+$processStarted = $false
 $processJob = $null
 $processContained = $false
 $stdoutPath = $null
@@ -401,6 +402,12 @@ else:
     sys.argv = [target, *arguments[1:]]
     runpy.run_path(target, run_name="__main__")
 '@
+    $bootstrapPath = Join-Path $unprivilegedTemp "run-python-command.py"
+    [System.IO.File]::WriteAllText(
+        $bootstrapPath,
+        $pythonBootstrap,
+        [System.Text.UTF8Encoding]::new($false)
+    )
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $resolvedExecutable
@@ -414,8 +421,7 @@ else:
     $startInfo.Password = $securePassword
     $startInfo.LoadUserProfile = $true
 
-    [void] $startInfo.ArgumentList.Add("-c")
-    [void] $startInfo.ArgumentList.Add($pythonBootstrap)
+    [void] $startInfo.ArgumentList.Add($bootstrapPath)
 
     $startInfo.Environment.Clear()
     foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
@@ -445,6 +451,7 @@ else:
     if (-not $process.Start()) {
         throw "Windows did not start the unprivileged qPlot CI process."
     }
+    $processStarted = $true
     $processJob.Assign($process)
     $processContained = $true
     $processJob.ArmTimeout($TimeoutSeconds * 1000)
@@ -472,7 +479,7 @@ else:
             Write-Warning "Could not close the unprivileged process job: $_"
         }
     }
-    if (-not $processContained -and $null -ne $process) {
+    if (-not $processContained -and $processStarted -and $null -ne $process) {
         try {
             if (-not $process.HasExited) {
                 $process.Kill()
