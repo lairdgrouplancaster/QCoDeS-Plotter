@@ -68,6 +68,10 @@ $wrapper = Join-Path $PSScriptRoot "run-unprivileged-windows.ps1"
 $wrapperLiteral = ConvertTo-SingleQuotedPowerShellLiteral $wrapper
 $fileLiteral = ConvertTo-SingleQuotedPowerShellLiteral $FilePath
 $workingLiteral = ConvertTo-SingleQuotedPowerShellLiteral $WorkingDirectory
+$phaseLogPath = Join-Path (
+    if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+) "qplot-bounded-wrapper-$([Guid]::NewGuid().ToString('N')).txt"
+$phaseLogLiteral = ConvertTo-SingleQuotedPowerShellLiteral $phaseLogPath
 $argumentLiterals = @(
     $ArgumentList | ForEach-Object {
         ConvertTo-SingleQuotedPowerShellLiteral $_
@@ -79,7 +83,7 @@ $wrapperCommand = @"
     -FilePath $fileLiteral ``
     -ArgumentList $argumentExpression ``
     -WorkingDirectory $workingLiteral ``
-    -TimeoutSeconds $TimeoutSeconds
+    -TimeoutSeconds $TimeoutSeconds *> $phaseLogLiteral
 "@
 $encodedCommand = [Convert]::ToBase64String(
     [Text.Encoding]::Unicode.GetBytes($wrapperCommand)
@@ -100,20 +104,32 @@ $process.StartInfo = $startInfo
 if (-not $process.Start()) {
     throw "Windows did not start the bounded unprivileged qPlot wrapper."
 }
-$outerTimeoutMilliseconds = ($TimeoutSeconds + $CleanupGraceSeconds) * 1000
-if (-not $process.WaitForExit($outerTimeoutMilliseconds)) {
+$outerLifetimeSeconds = $TimeoutSeconds + $CleanupGraceSeconds
+$outerDeadline = [DateTime]::UtcNow.AddSeconds($outerLifetimeSeconds)
+Write-Host (
+    "The bounded unprivileged wrapper started with a " +
+    "$outerLifetimeSeconds-second outer deadline."
+)
+while (-not $process.WaitForExit(250)) {
+    if ([DateTime]::UtcNow -lt $outerDeadline) {
+        continue
+    }
+    Write-Host "The bounded unprivileged wrapper reached its outer deadline."
     # The inner wrapper is the sole owner of a kill-on-close Job handle.
     # Terminating that one process closes the handle in the kernel and
     # contains the entire standard-user child tree without enumerating it.
     $process.Kill()
+    Write-Host "The bounded unprivileged wrapper termination call returned."
     [void] $process.WaitForExit(5000)
+    Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
     Publish-PersistedChildLogs
     throw (
         "The unprivileged qPlot wrapper exceeded its bounded " +
-        "$($TimeoutSeconds + $CleanupGraceSeconds)-second lifetime."
+        "$outerLifetimeSeconds-second lifetime."
     )
 }
 if ($process.ExitCode -ne 0) {
+    Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
     Publish-PersistedChildLogs
 }
 exit $process.ExitCode
