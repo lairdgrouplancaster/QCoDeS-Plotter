@@ -3992,6 +3992,12 @@ def _run_public_api_launcher() -> None:
             )
         channel.settimeout(_API_RESULT_IO_TIMEOUT_SECONDS)
         channel.sendall(encoded_outcome)
+        # Commit the complete result and FIN to Winsock before the immediate
+        # hard exit.  Otherwise ExitProcess can reset the TCP connection and
+        # discard a frame that ``sendall`` had only queued locally.  The
+        # caller still waits for both this EOF and the retained launcher
+        # process handle, so EOF is not treated as process termination alone.
+        channel.shutdown(socket.SHUT_WR)
     except BaseException as error:
         _report_launcher_failure(
             _exact_error("public-API launcher result publication", error)
