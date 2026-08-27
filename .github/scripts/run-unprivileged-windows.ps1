@@ -386,14 +386,15 @@ try {
 import os
 import sys
 
-stdout_path = os.environ["QPLOT_CI_STDOUT_PATH"]
-stderr_path = os.environ["QPLOT_CI_STDERR_PATH"]
-stdout_file = open(stdout_path, "a", encoding="utf-8", buffering=1)
-stderr_file = open(stderr_path, "a", encoding="utf-8", buffering=1)
-os.dup2(stdout_file.fileno(), 1, inheritable=True)
-os.dup2(stderr_file.fileno(), 2, inheritable=True)
-sys.stdout = open(1, "w", encoding="utf-8", buffering=1, closefd=False)
-sys.stderr = open(2, "w", encoding="utf-8", buffering=1, closefd=False)
+if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
+    stdout_path = os.environ["QPLOT_CI_STDOUT_PATH"]
+    stderr_path = os.environ["QPLOT_CI_STDERR_PATH"]
+    stdout_file = open(stdout_path, "a", encoding="utf-8", buffering=1)
+    stderr_file = open(stderr_path, "a", encoding="utf-8", buffering=1)
+    os.dup2(stdout_file.fileno(), 1, inheritable=True)
+    os.dup2(stderr_file.fileno(), 2, inheritable=True)
+    sys.stdout = open(1, "w", encoding="utf-8", buffering=1, closefd=False)
+    sys.stderr = open(2, "w", encoding="utf-8", buffering=1, closefd=False)
 '@
     $siteCustomizePath = Join-Path $unprivilegedTemp "sitecustomize.py"
     [System.IO.File]::WriteAllText(
@@ -437,6 +438,7 @@ sys.stderr = open(2, "w", encoding="utf-8", buffering=1, closefd=False)
     $startInfo.Environment["QPLOT_UNPRIVILEGED_TEMP"] = $unprivilegedTemp
     $startInfo.Environment["QPLOT_CI_STDOUT_PATH"] = $stdoutPath
     $startInfo.Environment["QPLOT_CI_STDERR_PATH"] = $stderrPath
+    $startInfo.Environment["QPLOT_CI_REDIRECT_ONCE"] = "1"
     $startInfo.Environment["PYTHONUNBUFFERED"] = "1"
     $existingPythonPath = $startInfo.Environment["PYTHONPATH"]
     $startInfo.Environment["PYTHONPATH"] = if ($existingPythonPath) {
