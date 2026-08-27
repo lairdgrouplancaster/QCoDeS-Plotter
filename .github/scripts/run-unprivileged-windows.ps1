@@ -19,7 +19,9 @@ Set-StrictMode -Version Latest
 
 Add-Type -TypeDefinition @'
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 public static class QPlotActionsConsoleForwarder
 {
@@ -41,6 +43,123 @@ public static class QPlotActionsConsoleForwarder
             Console.Error.WriteLine(eventArgs.Data);
         }
     }
+}
+
+public sealed class QPlotProcessJob : IDisposable
+{
+    private const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    private const int JobObjectExtendedLimitInformationClass = 9;
+    private IntPtr handle;
+
+    public QPlotProcessJob()
+    {
+        handle = CreateJobObject(IntPtr.Zero, null);
+        if (handle == IntPtr.Zero)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        var information = new JobObjectExtendedLimitInformation();
+        information.BasicLimitInformation.LimitFlags =
+            JobObjectLimitKillOnJobClose;
+        if (!SetInformationJobObject(
+            handle,
+            JobObjectExtendedLimitInformationClass,
+            ref information,
+            (uint)Marshal.SizeOf<JobObjectExtendedLimitInformation>()))
+        {
+            int error = Marshal.GetLastWin32Error();
+            Dispose();
+            throw new Win32Exception(error);
+        }
+    }
+
+    public void Assign(Process process)
+    {
+        if (!AssignProcessToJobObject(handle, process.Handle))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+    }
+
+    public void Dispose()
+    {
+        if (handle == IntPtr.Zero)
+        {
+            return;
+        }
+        IntPtr ownedHandle = handle;
+        handle = IntPtr.Zero;
+        if (!CloseHandle(ownedHandle))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        GC.SuppressFinalize(this);
+    }
+
+    ~QPlotProcessJob()
+    {
+        if (handle != IntPtr.Zero)
+        {
+            CloseHandle(handle);
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectBasicLimitInformation
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectExtendedLimitInformation
+    {
+        public JobObjectBasicLimitInformation BasicLimitInformation;
+        public IoCounters IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateJobObject(
+        IntPtr jobAttributes,
+        string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(
+        IntPtr job,
+        int informationClass,
+        ref JobObjectExtendedLimitInformation information,
+        uint informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(
+        IntPtr job,
+        IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
 }
 '@
 
@@ -108,6 +227,8 @@ $aclIdentity = $null
 $childExitCode = $null
 $primaryError = $null
 $process = $null
+$processJob = $null
+$processContained = $false
 $outputHandler = $null
 $errorHandler = $null
 
@@ -221,9 +342,12 @@ try {
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $processJob = [QPlotProcessJob]::new()
     if (-not $process.Start()) {
         throw "Windows did not start the unprivileged qPlot CI process."
     }
+    $processJob.Assign($process)
+    $processContained = $true
 
     # Forward complete lines as they arrive, but never make direct-process
     # completion depend on pipe EOF. A failed subprocess regression can leave
@@ -245,10 +369,11 @@ try {
         # the DataReceived handlers above.
         if ([DateTime]::UtcNow -ge $processDeadline) {
             try {
-                $process.Kill($true)
-                [void] $process.WaitForExit(5000)
+                # Kill pytest here; closing the containing job in finally
+                # terminates every remaining redirected descendant.
+                $process.Kill()
             } catch {
-                Write-Warning "Could not terminate timed-out child tree: $_"
+                Write-Warning "Could not terminate timed-out pytest: $_"
             }
             throw (
                 "The unprivileged qPlot CI process exceeded its " +
@@ -261,6 +386,43 @@ try {
 } catch {
     $primaryError = $_
 } finally {
+    # Closing the job handle kills every remaining descendant and therefore
+    # closes inherited output handles before reader and account cleanup.
+    if ($null -ne $processJob) {
+        try {
+            $processJob.Dispose()
+        } catch {
+            Write-Warning "Could not close the unprivileged process job: $_"
+        }
+    }
+    if (-not $processContained -and $null -ne $process) {
+        try {
+            if (-not $process.HasExited) {
+                $process.Kill()
+                [void] $process.WaitForExit(5000)
+            }
+        } catch {
+            Write-Warning "Could not terminate the uncontained child: $_"
+        }
+    }
+    if ($null -ne $process) {
+        if ($null -ne $outputHandler) {
+            try {
+                $process.CancelOutputRead()
+            } catch {
+                Write-Warning "Could not stop reading child stdout: $_"
+            }
+            $process.remove_OutputDataReceived($outputHandler)
+        }
+        if ($null -ne $errorHandler) {
+            try {
+                $process.CancelErrorRead()
+            } catch {
+                Write-Warning "Could not stop reading child stderr: $_"
+            }
+            $process.remove_ErrorDataReceived($errorHandler)
+        }
+    }
     if ($userCreated) {
         for ($index = $grantedPaths.Count - 1; $index -ge 0; $index--) {
             try {
@@ -281,25 +443,6 @@ try {
         } catch {
             Write-Warning "Could not remove the disposable qPlot CI account: $_"
         }
-    }
-    if ($null -ne $process) {
-        if ($null -ne $outputHandler) {
-            try {
-                $process.CancelOutputRead()
-            } catch {
-                Write-Warning "Could not stop reading child stdout: $_"
-            }
-            $process.remove_OutputDataReceived($outputHandler)
-        }
-        if ($null -ne $errorHandler) {
-            try {
-                $process.CancelErrorRead()
-            } catch {
-                Write-Warning "Could not stop reading child stderr: $_"
-            }
-            $process.remove_ErrorDataReceived($errorHandler)
-        }
-        $process.Dispose()
     }
     if ($null -ne $securePassword) {
         $securePassword.Dispose()
