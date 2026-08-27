@@ -125,6 +125,7 @@ class _ProcessShutdownFailSafe:
         self._persistence_io_lock = threading.Lock()
         self._cancelled = threading.Event()
         self._fallback_diagnostic_started = threading.Event()
+        self._fallback_diagnostic_completed = threading.Event()
         self._armed = False
         self._started_at = 0.0
         self._diagnostic_deadline = 0.0
@@ -163,6 +164,7 @@ class _ProcessShutdownFailSafe:
             self._persistence_active = False
             self._cancelled.clear()
             self._fallback_diagnostic_started.clear()
+            self._fallback_diagnostic_completed.clear()
 
         if self._startup_diagnostic is not None:
             self._append_supervisor_diagnostic(self._startup_diagnostic)
@@ -299,9 +301,19 @@ class _ProcessShutdownFailSafe:
         # instead of scheduling a second daemon so the hard-deadline watchdog
         # cannot overtake diagnostic publication merely because that extra
         # thread has not yet been scheduled.
-        self.persist_now()
+        try:
+            self.persist_now()
+        finally:
+            self._fallback_diagnostic_completed.set()
 
     def _fallback_termination_watchdog(self):
+        # Prefer a completed diagnostic snapshot before termination without
+        # ever allowing slow or blocked diagnostic I/O to extend the immutable
+        # hard deadline. This also prevents the two fallback threads racing at
+        # the deadline after ordinary, fast persistence has already started.
+        self._fallback_diagnostic_completed.wait(
+            max(0.0, self._hard_deadline - monotonic())
+        )
         if self._cancelled.wait(max(0.0, self._hard_deadline - monotonic())):
             return
         self._force_exit(_APPLICATION_FORCED_SHUTDOWN_EXIT_CODE)

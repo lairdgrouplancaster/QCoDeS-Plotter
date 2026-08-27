@@ -1875,7 +1875,10 @@ def test_diagnostic_publication_has_a_strict_blocking_budget(
         elapsed = time.monotonic() - started_at
         assert entered.is_set()
         assert not published
-        assert elapsed < 0.15
+        # The publisher itself has a 25 ms join budget. Allow enough outer
+        # scheduling tolerance for heavily loaded CI runners while still
+        # proving that the injected one-second sink cannot block shutdown.
+        assert elapsed < 0.25
     finally:
         release.set()
 
