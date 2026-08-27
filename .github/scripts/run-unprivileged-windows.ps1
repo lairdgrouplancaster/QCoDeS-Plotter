@@ -52,7 +52,8 @@ public sealed class QPlotProcessJob : IDisposable
     private const int JobObjectExtendedLimitInformationClass = 9;
     private readonly object sync = new object();
     private IntPtr handle;
-    private Timer deadlineTimer;
+    private ManualResetEvent deadlineCancelled;
+    private Thread deadlineThread;
     private bool timedOut;
 
     public QPlotProcessJob()
@@ -109,20 +110,26 @@ public sealed class QPlotProcessJob : IDisposable
             {
                 throw new ObjectDisposedException(nameof(QPlotProcessJob));
             }
-            if (deadlineTimer != null)
+            if (deadlineThread != null)
             {
                 throw new InvalidOperationException("The job deadline is already armed.");
             }
-            deadlineTimer = new Timer(
-                TerminateAtDeadline,
-                null,
-                timeoutMilliseconds,
-                Timeout.Infinite);
+            deadlineCancelled = new ManualResetEvent(false);
+            deadlineThread = new Thread(WaitForDeadline);
+            deadlineThread.IsBackground = true;
+            deadlineThread.Name = "qplot-Windows-test-deadline";
+            deadlineThread.Start(timeoutMilliseconds);
         }
     }
 
-    private void TerminateAtDeadline(object state)
+    private void WaitForDeadline(object state)
     {
+        int timeoutMilliseconds = (int)state;
+        ManualResetEvent cancelled = deadlineCancelled;
+        if (cancelled.WaitOne(timeoutMilliseconds))
+        {
+            return;
+        }
         lock (sync)
         {
             if (handle == IntPtr.Zero)
@@ -132,11 +139,6 @@ public sealed class QPlotProcessJob : IDisposable
             timedOut = true;
             IntPtr ownedHandle = handle;
             handle = IntPtr.Zero;
-            if (deadlineTimer != null)
-            {
-                deadlineTimer.Dispose();
-                deadlineTimer = null;
-            }
             CloseHandle(ownedHandle);
         }
     }
@@ -149,10 +151,9 @@ public sealed class QPlotProcessJob : IDisposable
             {
                 return;
             }
-            if (deadlineTimer != null)
+            if (deadlineCancelled != null)
             {
-                deadlineTimer.Dispose();
-                deadlineTimer = null;
+                deadlineCancelled.Set();
             }
             IntPtr ownedHandle = handle;
             handle = IntPtr.Zero;
