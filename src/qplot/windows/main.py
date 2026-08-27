@@ -124,6 +124,7 @@ class _ProcessShutdownFailSafe:
         self._lock = threading.Lock()
         self._persistence_io_lock = threading.Lock()
         self._cancelled = threading.Event()
+        self._fallback_diagnostic_started = threading.Event()
         self._armed = False
         self._started_at = 0.0
         self._diagnostic_deadline = 0.0
@@ -161,6 +162,7 @@ class _ProcessShutdownFailSafe:
             self._fallback_active = False
             self._persistence_active = False
             self._cancelled.clear()
+            self._fallback_diagnostic_started.clear()
 
         if self._startup_diagnostic is not None:
             self._append_supervisor_diagnostic(self._startup_diagnostic)
@@ -290,6 +292,7 @@ class _ProcessShutdownFailSafe:
             return self._armed and self._supervisor_acknowledged
 
     def _fallback_diagnostic_watchdog(self):
+        self._fallback_diagnostic_started.set()
         if self._cancelled.wait(max(0.0, self._diagnostic_deadline - monotonic())):
             return
         # This watchdog already runs away from the GUI thread.  Persist here
@@ -320,6 +323,14 @@ class _ProcessShutdownFailSafe:
         ):
             try:
                 threading.Thread(target=target, name=name, daemon=True).start()
+                if target == self._fallback_diagnostic_watchdog:
+                    readiness_deadline = min(
+                        self._diagnostic_deadline,
+                        self._hard_deadline,
+                    )
+                    self._fallback_diagnostic_started.wait(
+                        max(0.0, readiness_deadline - monotonic())
+                    )
             except BaseException as error:
                 self._append_supervisor_diagnostic(
                     "process shutdown local fallback setup raised "

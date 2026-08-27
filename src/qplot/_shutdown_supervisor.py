@@ -1015,6 +1015,25 @@ def _timeout_within(deadline: float) -> float:
     return max(0.0, deadline - time.monotonic())
 
 
+def _supervised_child_claimed_pid() -> int:
+    """Return the PID retained by the direct launcher process handle.
+
+    CPython's Windows virtual-environment executable is a redirector that
+    remains as the direct child while the base interpreter runs qPlot as its
+    descendant.  That interpreter must authenticate the redirector PID so the
+    launcher's retained process handle and the protocol identify the same
+    contained process.
+    """
+
+    if os.name == "nt" and sys.prefix != sys.base_prefix:
+        base_executable = getattr(sys, "_base_executable", None)
+        if base_executable is not None and os.path.normcase(
+            os.path.abspath(os.fsdecode(base_executable))
+        ) != os.path.normcase(os.path.abspath(sys.executable)):
+            return os.getppid()
+    return os.getpid()
+
+
 class ShutdownSupervisorClient:
     """GUI-side endpoint for the launcher's single authenticated ARM message."""
 
@@ -1133,13 +1152,14 @@ class ShutdownSupervisorClient:
             timeout=self._bootstrap.startup_timeout,
         )
         self._channel = channel
+        claimed_pid = _supervised_child_claimed_pid()
         hello_nonce = secrets.token_bytes(_NONCE_BYTES)
         hello = _encode_frame(
             _HELLO,
             authentication_key=self._bootstrap.authentication_key,
             session_nonce=self._bootstrap.session_nonce,
             message_nonce=hello_nonce,
-            payload=_PID_PAYLOAD.pack(os.getpid()),
+            payload=_PID_PAYLOAD.pack(claimed_pid),
         )
         try:
             channel.settimeout(_timeout_within(deadline))
@@ -1158,7 +1178,7 @@ class ShutdownSupervisorClient:
                 raise ShutdownSupervisorError(
                     "supervisor startup acknowledgement nonce does not match"
                 )
-            if _PID_PAYLOAD.unpack(payload)[0] != os.getpid():
+            if _PID_PAYLOAD.unpack(payload)[0] != claimed_pid:
                 raise ShutdownSupervisorError(
                     "supervisor startup acknowledgement PID does not match"
                 )

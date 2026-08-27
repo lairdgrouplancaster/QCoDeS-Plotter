@@ -434,6 +434,25 @@ def test_launcher_setup_failure_before_popen_is_exact(
     )
 
 
+def test_windows_venv_child_authenticates_its_retained_redirector_pid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(supervisor.os, "name", "nt")
+    monkeypatch.setattr(supervisor.sys, "prefix", "C:/venv")
+    monkeypatch.setattr(supervisor.sys, "base_prefix", "C:/Python")
+    monkeypatch.setattr(supervisor.sys, "executable", "C:/venv/Scripts/python.exe")
+    monkeypatch.setattr(
+        supervisor.sys,
+        "_base_executable",
+        "C:/Python/python.exe",
+        raising=False,
+    )
+    monkeypatch.setattr(supervisor.os, "getppid", lambda: 4312)
+    monkeypatch.setattr(supervisor.os, "getpid", lambda: 8765)
+
+    assert supervisor._supervised_child_claimed_pid() == 4312
+
+
 def test_launcher_popen_failure_is_exact(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
