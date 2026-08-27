@@ -52,6 +52,18 @@ function Publish-PersistedLog {
     }
 }
 
+function Publish-PersistedChildLogs {
+    if (-not $env:QPLOT_UNPRIVILEGED_TEMP) {
+        return
+    }
+    Publish-PersistedLog `
+        -Path (Join-Path $env:QPLOT_UNPRIVILEGED_TEMP "child-stdout.txt") `
+        -Destination ([Console]::Out)
+    Publish-PersistedLog `
+        -Path (Join-Path $env:QPLOT_UNPRIVILEGED_TEMP "child-stderr.txt") `
+        -Destination ([Console]::Error)
+}
+
 $wrapper = Join-Path $PSScriptRoot "run-unprivileged-windows.ps1"
 $wrapperLiteral = ConvertTo-SingleQuotedPowerShellLiteral $wrapper
 $fileLiteral = ConvertTo-SingleQuotedPowerShellLiteral $FilePath
@@ -95,17 +107,13 @@ if (-not $process.WaitForExit($outerTimeoutMilliseconds)) {
     # contains the entire standard-user child tree without enumerating it.
     $process.Kill()
     [void] $process.WaitForExit(5000)
-    if ($env:QPLOT_UNPRIVILEGED_TEMP) {
-        Publish-PersistedLog `
-            -Path (Join-Path $env:QPLOT_UNPRIVILEGED_TEMP "child-stdout.txt") `
-            -Destination ([Console]::Out)
-        Publish-PersistedLog `
-            -Path (Join-Path $env:QPLOT_UNPRIVILEGED_TEMP "child-stderr.txt") `
-            -Destination ([Console]::Error)
-    }
+    Publish-PersistedChildLogs
     throw (
         "The unprivileged qPlot wrapper exceeded its bounded " +
         "$($TimeoutSeconds + $CleanupGraceSeconds)-second lifetime."
     )
+}
+if ($process.ExitCode -ne 0) {
+    Publish-PersistedChildLogs
 }
 exit $process.ExitCode
