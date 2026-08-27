@@ -78,6 +78,8 @@ $aclIdentity = $null
 $childExitCode = $null
 $primaryError = $null
 $process = $null
+$outputHandler = $null
+$errorHandler = $null
 
 try {
     $localUser = New-LocalUser `
@@ -158,12 +160,8 @@ try {
     $startInfo.WorkingDirectory = $workingPath
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    # Keep the child attached to the Actions console. Buffering both streams in
-    # this wrapper hides the actual failure if a failed subprocess test leaves
-    # a descendant holding an inherited pipe: ReadToEndAsync then waits until
-    # the job timeout and GitHub never receives the buffered traceback.
-    $startInfo.RedirectStandardOutput = $false
-    $startInfo.RedirectStandardError = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     $startInfo.UserName = $userName
     $startInfo.Domain = $env:COMPUTERNAME
     $startInfo.Password = $securePassword
@@ -197,6 +195,26 @@ try {
         throw "Windows did not start the unprivileged qPlot CI process."
     }
 
+    # Forward complete lines as they arrive, but never make direct-process
+    # completion depend on pipe EOF. A failed subprocess regression can leave
+    # a descendant holding an inherited pipe after pytest has already exited;
+    # ReadToEndAsync would then hide the traceback until the Actions timeout.
+    $outputHandler = [System.Diagnostics.DataReceivedEventHandler] {
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [Console]::Out.WriteLine($eventArgs.Data)
+        }
+    }
+    $errorHandler = [System.Diagnostics.DataReceivedEventHandler] {
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            [Console]::Error.WriteLine($eventArgs.Data)
+        }
+    }
+    $process.add_OutputDataReceived($outputHandler)
+    $process.add_ErrorDataReceived($errorHandler)
+    $process.BeginOutputReadLine()
+    $process.BeginErrorReadLine()
     $process.WaitForExit()
     $childExitCode = $process.ExitCode
 } catch {
@@ -224,6 +242,22 @@ try {
         }
     }
     if ($null -ne $process) {
+        if ($null -ne $outputHandler) {
+            try {
+                $process.CancelOutputRead()
+            } catch {
+                Write-Warning "Could not stop reading child stdout: $_"
+            }
+            $process.remove_OutputDataReceived($outputHandler)
+        }
+        if ($null -ne $errorHandler) {
+            try {
+                $process.CancelErrorRead()
+            } catch {
+                Write-Warning "Could not stop reading child stderr: $_"
+            }
+            $process.remove_ErrorDataReceived($errorHandler)
+        }
         $process.Dispose()
     }
     if ($null -ne $securePassword) {
