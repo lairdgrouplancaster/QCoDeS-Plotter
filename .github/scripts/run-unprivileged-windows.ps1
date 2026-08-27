@@ -460,7 +460,18 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
 
     # Poll only the direct Python process. sitecustomize redirected fd 1/2 to
     # regular files, so descendants cannot create an anonymous-pipe EOF wait.
+    $processDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while (-not $process.WaitForExit(250)) {
+        if ([DateTime]::UtcNow -ge $processDeadline) {
+            $processJob.Dispose()
+            if (-not $process.WaitForExit(5000)) {
+                $process.Kill()
+            }
+            throw (
+                "The unprivileged qPlot CI process exceeded its " +
+                "$TimeoutSeconds-second direct-process deadline."
+            )
+        }
     }
     $childExitCode = $process.ExitCode
     if ($processJob.TimedOut) {
