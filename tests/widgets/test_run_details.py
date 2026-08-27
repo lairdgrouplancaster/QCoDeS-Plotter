@@ -1,16 +1,41 @@
+import json
 import os
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from unittest.mock import patch
 
 import numpy as np
 from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.trusted_live_queries import (
+    TrustedParameterView,
+    TrustedRunRecord,
+    TrustedSelectedRunDetail,
+    TrustedSetpointSummary,
+    bounded_parameter_presentation,
+    bounded_setpoint_presentation,
+)
+from qplot.datahandling.trusted_presentation import (
+    TRUSTED_PRESENTATION_MAX_KEY_BYTES,
+    TRUSTED_PRESENTATION_MAX_RENDERED_NODES,
+    TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
+    TRUSTED_PRESENTATION_MAX_VALUE_BYTES,
+    build_selected_run_presentation,
+)
+from qplot.datahandling.trusted_snapshot import (
+    TRUSTED_SNAPSHOT_MAX_NODE_VALUE_BYTES,
+    TRUSTED_SNAPSHOT_MAX_RENDERED_NODES,
+    normalize_trusted_snapshot,
+)
 from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
@@ -27,6 +52,476 @@ from qplot.windows._widgets.preview import (
 
 
 class RunDetailsTabsTestCase(unittest.TestCase):
+    @staticmethod
+    def _trusted_detail():
+        return TrustedSelectedRunDetail(
+            run=TrustedRunRecord(
+                7,
+                (
+                    ("exp_name", "Trusted experiment"),
+                    ("sample_name", "sample A"),
+                    ("name", "trusted run"),
+                    ("guid", "trusted-guid-7"),
+                    ("run_timestamp", 1_000.0),
+                    ("completed_timestamp", 1_012.0),
+                    ("is_completed", True),
+                    ("result_count", 6),
+                    ("measure_parameters", ("signal", "standalone")),
+                    ("sweep_parameters", ("gate",)),
+                    ),
+                ),
+            parameters=(
+                TrustedParameterView("gate", "Gate", "V", (), "numeric"),
+                TrustedParameterView(
+                    "signal",
+                    "Current",
+                    "A",
+                    ("gate",),
+                    "numeric",
+                    ),
+                TrustedParameterView(
+                    "standalone",
+                    "Temperature",
+                    "K",
+                    (),
+                    "numeric",
+                    ),
+                ),
+            metadata=(
+                ("operator", "Ada"),
+                ("tags", ("alpha", "beta")),
+                ),
+            snapshot=normalize_trusted_snapshot(
+                json.dumps({
+                    "station": {
+                        "parameters": {
+                            "gate": {
+                                "full_name": "gate",
+                                "post_delay": 0.02,
+                                "instrument_name": "dac",
+                                }
+                            }
+                        }
+                    })
+                ),
+            setpoint_summaries=(
+                TrustedSetpointSummary("gate", -1.0, 1.0, 3),
+                ),
+            presentation=build_selected_run_presentation(
+                run_fields={
+                    "run_id": 7,
+                    "exp_name": "Trusted experiment",
+                    "sample_name": "sample A",
+                    "name": "trusted run",
+                    "guid": "trusted-guid-7",
+                    "run_timestamp": 1_000.0,
+                    "completed_timestamp": 1_012.0,
+                    "is_completed": True,
+                    "result_count": 6,
+                    "measure_parameters": ("signal", "standalone"),
+                    "sweep_parameters": ("gate",),
+                },
+                metadata_fields={"operator": "Ada", "tags": ("alpha", "beta")},
+                parameters=(
+                    {"name": "gate", "label": "Gate", "unit": "V"},
+                    {"name": "signal", "label": "Current", "unit": "A"},
+                    {
+                        "name": "standalone",
+                        "label": "Temperature",
+                        "unit": "K",
+                    },
+                ),
+                snapshot_summary={"Status": "available"},
+                setpoint_summaries=(
+                    {"name": "gate", "from": -1.0, "to": 1.0, "steps": 3},
+                ),
+                unavailable_fields=(),
+            ),
+            )
+
+    def test_trusted_detail_renders_plain_view_without_database_or_dataset_io(self):
+        widget = treeWidgets.moreInfo()
+        detail = self._trusted_detail()
+
+        with (
+                patch.object(
+                    treeWidgets,
+                    "sqlite_read_only_connection",
+                    side_effect=AssertionError("trusted details queried SQLite"),
+                    create=True,
+                    ),
+                patch.object(
+                    widget.preview,
+                    "set_current_run",
+                    side_effect=AssertionError("trusted details loaded a dataset"),
+                    ),
+                ):
+            widget.set_trusted_run_detail(detail)
+
+        overview = {
+            widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
+            for row in range(widget.overview.rowCount())
+            }
+        self.assertEqual(overview["Status"], "Completed")
+        self.assertEqual(overview["Data points"], "6")
+        self.assertEqual(overview["Measured parameters"], "signal, standalone")
+        self.assertEqual(overview["Setpoints"], "gate")
+        self.assertEqual(overview["Experiment"], "Trusted experiment")
+        self.assertEqual(overview["Sample"], "sample A")
+        self.assertEqual(overview["Name"], "trusted run")
+        self.assertEqual(overview["GUID"], "trusted-guid-7")
+
+        self.assertEqual(widget.parameters.rowCount(), 5)
+        self.assertEqual(widget.parameters.item(1, 0).text(), "gate")
+        self.assertEqual(widget.parameters.item(1, 3).text(), "-1")
+        self.assertEqual(widget.parameters.item(1, 4).text(), "1")
+        self.assertEqual(widget.parameters.item(1, 5).text(), "3")
+        self.assertEqual(widget.parameters.item(1, 6).text(), "0.02")
+        self.assertEqual(widget.parameters.item(1, 7).text(), "dac")
+        self.assertEqual(widget.parameters.item(3, 0).text(), "signal")
+        self.assertEqual(widget.parameters.item(4, 0).text(), "standalone")
+
+        self.assertEqual(widget.metadata.topLevelItem(0).text(0), "operator")
+        self.assertEqual(widget.metadata.topLevelItem(0).text(1), "Ada")
+        metadata_tags = widget.metadata.topLevelItem(1)
+        self.assertEqual(metadata_tags.text(0), "tags")
+        self.assertEqual(metadata_tags.child(0).text(1), "alpha")
+        self.assertEqual(metadata_tags.child(1).text(1), "beta")
+        self.assertEqual(widget.snapshot.topLevelItem(0).text(0), "station")
+        self.assertEqual(widget.raw.topLevelItem(0).text(0), "Run")
+
+        preview_message = widget.preview.content_layout.itemAt(0).widget()
+        self.assertIsInstance(preview_message, qtw.QLabel)
+        self.assertIn("deferred", preview_message.text().lower())
+        self.assertIsNone(widget.preview.current_guid)
+
+    def test_snapshot_decode_finishes_off_gui_and_qt_builds_only_bounded_model(self):
+        widget = treeWidgets.moreInfo()
+        gui_thread_id = threading.get_ident()
+        deep_json = '{"child":' * 10_000 + "0" + "}" * 10_000
+
+        def decode_off_thread(snapshot_json):
+            return threading.get_ident(), normalize_trusted_snapshot(snapshot_json)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            base_detail = executor.submit(self._trusted_detail).result(timeout=2)
+            decoder_thread_id, view = executor.submit(
+                decode_off_thread,
+                deep_json,
+                ).result(timeout=2)
+        self.assertNotEqual(decoder_thread_id, gui_thread_id)
+        self.assertEqual(view.status, "truncated")
+
+        detail = replace(base_detail, snapshot=view)
+        with patch.object(
+                json,
+                "loads",
+                side_effect=AssertionError("Qt attempted to decode snapshot JSON"),
+                ):
+            widget.set_trusted_run_detail(detail)
+
+        pending = [
+            widget.snapshot.topLevelItem(index)
+            for index in range(widget.snapshot.topLevelItemCount())
+            ]
+        rendered = []
+        while pending:
+            item = pending.pop()
+            rendered.append(item)
+            pending.extend(item.child(index) for index in range(item.childCount()))
+
+        self.assertLessEqual(len(rendered), TRUSTED_SNAPSHOT_MAX_RENDERED_NODES)
+        self.assertTrue(any(item.text(0) == "[truncated]" for item in rendered))
+        self.assertTrue(all(
+            len(item.toolTip(1).encode("utf-8"))
+            <= TRUSTED_SNAPSHOT_MAX_NODE_VALUE_BYTES
+            for item in rendered
+            ))
+
+        malformed = '{"secret":"' + "x" * (2 * 1024 * 1024)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            _thread_id, malformed_view = executor.submit(
+                decode_off_thread,
+                malformed,
+                ).result(timeout=5)
+        widget.set_trusted_run_detail(
+            replace(base_detail, snapshot=malformed_view)
+            )
+        diagnostic = widget.snapshot.topLevelItem(0)
+        self.assertEqual(diagnostic.text(0), "Snapshot unavailable")
+        self.assertNotIn("x" * 100, diagnostic.text(1))
+        self.assertNotIn("x" * 100, diagnostic.toolTip(1))
+
+    def test_selected_presentation_bounds_all_qt_cells_before_publication(self):
+        widget = treeWidgets.moreInfo()
+        base_detail = self._trusted_detail()
+        huge_run_description = "run-description-secret-" * 150_000
+        huge_metadata = "metadata-secret-" * 150_000
+        nested: object = "leaf"
+        for _index in range(2_000):
+            nested = {"child": nested}
+        wide = {f"dynamic-{index}": index for index in range(20_000)}
+
+        def normalize_off_thread():
+            raw_parameters = tuple(
+                TrustedParameterView(
+                    f"parameter-{index}",
+                    huge_metadata,
+                    huge_metadata,
+                    tuple(f"axis-{axis}" for axis in range(100)),
+                    huge_metadata,
+                )
+                for index in range(300)
+            )
+            parameters, parameters_truncated = bounded_parameter_presentation(
+                raw_parameters
+            )
+            summaries, _summaries_truncated = bounded_setpoint_presentation(
+                (
+                    TrustedSetpointSummary(
+                        "parameter-0",
+                        huge_metadata,
+                        huge_metadata,
+                        1,
+                    ),
+                )
+            )
+            presentation = build_selected_run_presentation(
+                run_fields={
+                    "run_id": 7,
+                    "guid": "trusted-guid-7",
+                    "name": huge_metadata,
+                    "run_description": huge_run_description,
+                    "measure_parameters": tuple(
+                        parameter.name for parameter in parameters
+                    ),
+                },
+                metadata_fields={
+                    "large": huge_metadata,
+                    "deep": nested,
+                    "wide": wide,
+                },
+                parameters=tuple(
+                    {
+                        "name": parameter.name,
+                        "label": parameter.label,
+                        "unit": parameter.unit,
+                        "depends_on": parameter.depends_on,
+                        "type": parameter.paramtype,
+                    }
+                    for parameter in parameters
+                ),
+                snapshot_summary={"Status": "available"},
+                setpoint_summaries=tuple(
+                    {
+                        "name": summary.name,
+                        "from": summary.first,
+                        "to": summary.last,
+                        "steps": summary.steps,
+                    }
+                    for summary in summaries
+                ),
+                unavailable_fields=("parameters.presentation",),
+                parameters_truncated=parameters_truncated,
+            )
+            return parameters, summaries, presentation
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            parameters, summaries, presentation = executor.submit(
+                normalize_off_thread
+            ).result(timeout=5)
+        detail = replace(
+            base_detail,
+            run=TrustedRunRecord(7, presentation.run_fields),
+            parameters=parameters,
+            metadata=presentation.metadata_fields,
+            setpoint_summaries=summaries,
+            presentation=presentation,
+        )
+        self.assertNotIn(huge_run_description, repr(detail))
+        self.assertNotIn(huge_metadata, repr(detail))
+
+        started = time.monotonic()
+        widget.set_trusted_run_detail(detail)
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 2.0)
+
+        for tree in (widget.metadata, widget.raw):
+            pending = [
+                tree.topLevelItem(index)
+                for index in range(tree.topLevelItemCount())
+            ]
+            rendered = []
+            while pending:
+                item = pending.pop()
+                rendered.append(item)
+                pending.extend(
+                    item.child(index) for index in range(item.childCount())
+                )
+            self.assertLessEqual(
+                len(rendered), TRUSTED_PRESENTATION_MAX_RENDERED_NODES
+            )
+            self.assertTrue(
+                any(item.text(0) == "[truncated]" for item in rendered)
+            )
+            self.assertTrue(all(
+                len(item.text(0).encode("utf-8"))
+                <= TRUSTED_PRESENTATION_MAX_KEY_BYTES
+                for item in rendered
+            ))
+            self.assertTrue(all(
+                len(item.text(1).encode("utf-8"))
+                <= TRUSTED_PRESENTATION_MAX_VALUE_BYTES
+                for item in rendered
+            ))
+            self.assertTrue(all(
+                len(item.toolTip(1).encode("utf-8"))
+                <= TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
+                for item in rendered
+            ))
+
+        self.assertLessEqual(widget.parameters.rowCount(), 259)
+        for row in range(widget.parameters.rowCount()):
+            for column in range(widget.parameters.columnCount()):
+                item = widget.parameters.item(row, column)
+                if item is not None:
+                    self.assertLessEqual(
+                        len(item.toolTip().encode("utf-8")),
+                        512,
+                    )
+
+    def test_snapshot_basic_only_state_uses_allowed_guid_preview_api(self):
+        widget = treeWidgets.moreInfo()
+        detail = self._trusted_detail()
+
+        with (
+                patch.object(
+                    widget.preview,
+                    "set_current_run",
+                    side_effect=AssertionError("snapshot detail used a DataSet"),
+                    ),
+                patch.object(widget.preview, "set_current_guid") as set_guid,
+                patch.object(
+                    treeWidgets,
+                    "sqlite_read_only_connection",
+                    side_effect=AssertionError("snapshot basics opened SQLite"),
+                    create=True,
+                ),
+                ):
+            widget.set_snapshot_run_unavailable(detail.run)
+
+        set_guid.assert_called_once_with("trusted-guid-7")
+        self.assertEqual(
+            widget.parameters.item(0, 0).text(),
+            "Detailed run metadata unavailable",
+        )
+        self.assertIn(
+            "deferred in snapshot fallback",
+            widget.metadata.topLevelItem(0).text(1),
+        )
+
+    def test_trusted_detail_loading_error_and_clear_states_retain_basic_run(self):
+        widget = treeWidgets.moreInfo()
+        run = self._trusted_detail().run
+        loading_metadata = run.as_dict()
+        loading_metadata["run_id"] = run.run_id
+
+        widget.set_trusted_run_loading(loading_metadata)
+
+        overview = {
+            widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
+            for row in range(widget.overview.rowCount())
+            }
+        self.assertEqual(overview["Name"], "trusted run")
+        self.assertEqual(overview["GUID"], "trusted-guid-7")
+        self.assertEqual(widget.parameters.rowCount(), 1)
+        self.assertEqual(widget.parameters.item(0, 0).text(), "Loading run details...")
+        self.assertEqual(widget.parameters.columnSpan(0, 0), 8)
+        self.assertEqual(widget.metadata.topLevelItem(0).text(0), "Status")
+
+        widget.set_trusted_run_error(RuntimeError("bounded detail failure"), run)
+
+        self.assertEqual(widget.parameters.item(0, 0).text(), "Run details unavailable")
+        self.assertEqual(widget.metadata.topLevelItem(0).text(0), "Error")
+        self.assertEqual(
+            widget.metadata.topLevelItem(0).text(1),
+            "bounded detail failure",
+            )
+        self.assertEqual(widget.raw.topLevelItem(1).text(0), "Error")
+
+        widget.clear()
+        self.assertEqual(widget.overview.rowCount(), 0)
+        self.assertEqual(widget.parameters.rowCount(), 0)
+        self.assertEqual(widget.metadata.topLevelItemCount(), 0)
+
+    def test_loading_unavailable_and_error_views_bound_raw_rows_and_tooltips(self):
+        widget = treeWidgets.moreInfo()
+        marker = "placeholder-private-value-" * 100_000
+        parameter_names = tuple(
+            f"parameter-{index}-" + "x" * 600 for index in range(10_000)
+        )
+        raw_run = {
+            "run_id": 7,
+            "guid": "trusted-guid-7",
+            "name": marker,
+            "run_description": marker,
+            "snapshot": marker,
+            "parameters": marker,
+            "parent_datasets": marker,
+            "measure_parameters": parameter_names,
+        }
+        huge_error = RuntimeError("placeholder-private-error-" * 100_000)
+        states = (
+            (widget.set_trusted_run_loading, (raw_run,)),
+            (widget.set_snapshot_run_loading, (raw_run,)),
+            (widget.set_snapshot_run_unavailable, (raw_run,)),
+            (widget.set_trusted_run_error, (huge_error, raw_run)),
+            (widget.set_snapshot_run_error, (huge_error, raw_run)),
+        )
+
+        for setter, args in states:
+            with self.subTest(setter=setter.__name__):
+                started = time.monotonic()
+                setter(*args)
+                self.assertLess(time.monotonic() - started, 2.0)
+
+                rendered = []
+                for tree in (widget.metadata, widget.snapshot, widget.raw):
+                    tree_rendered = []
+                    pending = [
+                        tree.topLevelItem(index)
+                        for index in range(tree.topLevelItemCount())
+                    ]
+                    while pending:
+                        item = pending.pop()
+                        tree_rendered.append(item)
+                        pending.extend(
+                            item.child(index) for index in range(item.childCount())
+                        )
+                    rendered.extend(tree_rendered)
+                    self.assertLessEqual(
+                        len(tree_rendered),
+                        TRUSTED_PRESENTATION_MAX_RENDERED_NODES,
+                    )
+
+                self.assertNotIn(marker, "".join(
+                    item.text(0) + item.text(1) + item.toolTip(1)
+                    for item in rendered
+                ))
+                self.assertTrue(all(
+                    len(item.toolTip(1).encode("utf-8"))
+                    <= TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
+                    for item in rendered
+                ))
+                for row in range(widget.overview.rowCount()):
+                    for column in range(widget.overview.columnCount()):
+                        item = widget.overview.item(row, column)
+                        if item is not None:
+                            self.assertLessEqual(
+                                len(item.toolTip().encode("utf-8")),
+                                TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
+                            )
+
     def test_overview_status_matches_the_run_table_label(self):
         widget = treeWidgets.moreInfo()
         states = [
@@ -288,7 +783,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             qtw.QHeaderView.ResizeMode.Stretch
             )
 
-    def test_run_details_populates_set_parameter_sweep_summary_from_result_table(self):
+    def test_run_details_renders_precomputed_setpoint_summaries_without_db_io(self):
         class Param:
             def __init__(self, name, label, unit, axes=()):
                 self.name = name
@@ -310,40 +805,13 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             def get_parameter_data(self, name):
                 raise AssertionError("Details pane should not load parameter data")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            database_path = os.path.join(temp_dir, "details.db")
-            conn = sqlite3.connect(database_path)
-            cursor = None
-            try:
-                cursor = conn.cursor()
-                cursor.execute("""
-                  CREATE TABLE "results-1-1" (
-                      dac_ch1 REAL,
-                      dac_ch2 REAL,
-                      dmm_v1 REAL
-                  )
-                """)
-                cursor.executemany(
-                    'INSERT INTO "results-1-1" VALUES (?, ?, ?)',
-                    [
-                        (-1.0, -2.0, 1.0),
-                        (-1.0, -0.5, 2.0),
-                        (-1.0, 1.0, 3.0),
-                        (0.0, -2.0, 4.0),
-                        (0.0, -0.5, 5.0),
-                        (0.0, 1.0, 6.0),
-                        (1.0, -2.0, 7.0),
-                        (1.0, -0.5, 8.0),
-                        (1.0, 1.0, 9.0),
-                        ]
-                    )
-                conn.commit()
-            finally:
-                if cursor is not None:
-                    cursor.close()
-                conn.close()
-
-            widget = treeWidgets.moreInfo()
+        widget = treeWidgets.moreInfo()
+        with patch.object(
+                treeWidgets,
+                "sqlite_read_only_connection",
+                side_effect=AssertionError("details widget opened SQLite"),
+                create=True,
+                ):
             widget.setInfo(
                 {
                     "Data Structure": {
@@ -377,7 +845,10 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     "result_table_name": "results-1-1",
                     "result_count": 9,
                     },
-                database_path=database_path,
+                setpoint_summaries={
+                    "dac_ch1": {"from": -1.0, "to": 1.0, "steps": 3},
+                    "dac_ch2": {"from": -2.0, "to": 1.0, "steps": 3},
+                    },
                 )
 
         self.assertEqual(widget.parameters.item(1, 0).text(), "dac_ch1")

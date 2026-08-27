@@ -2,12 +2,70 @@ import json
 import math
 import os
 import sqlite3
+import stat
+from itertools import islice
 from time import monotonic
 from typing import Literal, NamedTuple
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.datahandling.readonly import qcodes_read_only_connection
+from qplot.datahandling.readonly import (
+    qcodes_read_only_connection,
+    sqlite_read_only_connection,
+)
+from qplot.datahandling.trusted_presentation import (
+    TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES,
+    TRUSTED_PRESENTATION_MAX_PARAMETER_TEXT_BYTES,
+    TRUSTED_PRESENTATION_MAX_PARAMETERS,
+    bounded_presentation_text,
+)
+
+MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS = 100_000
+MAX_SELECTED_RUN_SETPOINT_SUMMARY_SCALAR_BYTES = 64 * 1024
+MAX_SELECTED_RUN_SETPOINT_SUMMARY_SOURCE_BYTES = 8 * 1024 * 1024
+MAX_SNAPSHOT_SELECTED_RUN_COLUMNS = 256
+MAX_SNAPSHOT_SELECTED_RUN_SCALAR_BYTES = 1024 * 1024
+MAX_SNAPSHOT_SELECTED_RUN_TOTAL_BYTES = 4 * 1024 * 1024
+MAX_SNAPSHOT_SELECTED_OBSERVATION_BYTES = 64 * 1024
+MAX_SNAPSHOT_SELECTED_LAYOUT_ROWS = 4_096
+MAX_SNAPSHOT_SELECTED_PARAMETERS = 256
+MAX_SNAPSHOT_SELECTED_SETPOINTS = 32
+MAX_RUN_DESCRIPTION_SHAPE_DIMENSIONS = 32
+_SNAPSHOT_SELECTED_LAYOUT_TEXT_BYTES = 512
+_SNAPSHOT_STANDARD_RUN_COLUMNS = frozenset({
+    "run_id",
+    "exp_id",
+    "name",
+    "result_table_name",
+    "result_counter",
+    "run_timestamp",
+    "completed_timestamp",
+    "is_completed",
+    "parameters",
+    "guid",
+    "run_description",
+    "snapshot",
+    "parent_datasets",
+    "captured_run_id",
+    "captured_counter",
+    })
+_SNAPSHOT_OBSERVATION_FIELDS = frozenset({
+    "database_modified_timestamp",
+    "expected_results",
+    "expected_results_source",
+    "measure_parameters",
+    "measurement_exception",
+    "point_shape",
+    "read_setpoint_count",
+    "result_count",
+    "setpoint_count",
+    "setpoint_count_source",
+    "setpoint_shape",
+    "setpoint_shape_source",
+    "storage_bytes",
+    "storage_bytes_estimated",
+    "sweep_parameters",
+    })
 
 
 class _StorageSize(NamedTuple):
@@ -66,6 +124,763 @@ def _read_only_connection(
     if deadline is not None:
         kwargs["deadline"] = deadline
     return qcodes_read_only_connection(database_path, **kwargs)
+
+
+def get_selected_run_setpoint_summaries(
+        database_path,
+        result_table_name,
+        setpoint_names,
+        result_count,
+        *,
+        setpoint_shape=None,
+        expected_database_identity=None,
+        cancelled_callback=None,
+        connection_callback=None,
+        deadline=None,
+        ):
+    """Return bounded, plain summaries for snapshot-mode run details.
+
+    Result-table grouping is deliberately limited to runs whose already-known
+    row count is at most ``MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS``.  Unknown
+    and larger runs retain any cheap shape-derived step counts without opening
+    SQLite.  This function is part of the data layer so Qt widgets only render
+    the mapping supplied by their controller.
+    """
+    names = tuple(dict.fromkeys(
+        str(name)
+        for name in setpoint_names or ()
+        if str(name)
+        ))
+    summaries = {}
+    try:
+        bounded_result_count = (
+            int(result_count)
+            if result_count is not None
+            else None
+            )
+    except (TypeError, ValueError, OverflowError):
+        bounded_result_count = None
+
+    if (
+            database_path
+            and result_table_name
+            and names
+            and bounded_result_count is not None
+            and 0 <= bounded_result_count
+            <= MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
+            ):
+        summaries.update(_read_selected_run_setpoint_summaries(
+            database_path,
+            result_table_name,
+            names,
+            expected_database_identity=expected_database_identity,
+            cancelled_callback=cancelled_callback,
+            connection_callback=connection_callback,
+            deadline=deadline,
+            ))
+
+    for name, steps in zip(names, setpoint_shape or (), strict=False):
+        if steps is None or steps == "":
+            continue
+        summaries.setdefault(name, {}).setdefault("steps", steps)
+    return {
+        name: dict(summary)
+        for name, summary in summaries.items()
+        }
+
+
+def _read_selected_run_setpoint_summaries(
+        database_path,
+        result_table_name,
+        setpoint_names,
+        *,
+        expected_database_identity=None,
+        cancelled_callback=None,
+        connection_callback=None,
+        deadline=None,
+        ):
+    """Read one bounded snapshot summary batch, degrading to empty on error."""
+    conn = None
+    cursor = None
+    try:
+        conn = sqlite_read_only_connection(
+            database_path,
+            timeout=2,
+            expected_database_identity=expected_database_identity,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+            )
+        _notify_connection(connection_callback, conn)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
+        cursor = conn.cursor()
+        summaries = _selected_run_setpoint_summaries_from_cursor(
+            cursor,
+            result_table_name,
+            setpoint_names,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+            )
+        _raise_if_read_aborted(cancelled_callback, deadline)
+        return summaries
+    except (InterruptedError, TimeoutError):
+        raise
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        return {}
+    except Exception:
+        return {}
+    finally:
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                conn.close()
+
+
+def _selected_run_setpoint_summaries_from_cursor(
+        cursor,
+        result_table_name,
+        setpoint_names,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+    ):
+    """Return bounded summaries using an already guarded snapshot connection."""
+    quoted_table = _sqlite_identifier(result_table_name)
+    _raise_if_read_aborted(cancelled_callback, deadline)
+    if not _selected_summary_source_within_byte_limit(cursor):
+        return {}
+    _raise_if_read_aborted(cancelled_callback, deadline)
+    high_watermark = _result_table_integer_pk_high_watermark(
+        cursor,
+        quoted_table,
+    )
+    if (
+            high_watermark is None
+            or high_watermark > MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
+            ):
+        return {}
+    columns = _result_table_columns(cursor, quoted_table)
+    summaries = {}
+    for name in setpoint_names:
+        _raise_if_read_aborted(cancelled_callback, deadline)
+        if name not in columns:
+            continue
+        summary = _selected_run_setpoint_summary(cursor, quoted_table, name)
+        if summary:
+            summaries[name] = summary
+    return summaries
+
+
+def _selected_summary_source_within_byte_limit(cursor):
+    """Fail closed unless the whole private SQLite view is at most 8 MiB.
+
+    A small row count does not bound the bytes sorted by ``GROUP BY``: one
+    setpoint can be a multi-gigabyte BLOB, and a sparse database can have a
+    tiny logical page count but a huge file length.  Check both SQLite's main
+    page extent and the exact private main/sidecar file lengths before any
+    result-table aggregate.  Snapshot-mode connections own stable private
+    files, so these preflights remain valid for the following statement.
+    """
+    limit = MAX_SELECTED_RUN_SETPOINT_SUMMARY_SOURCE_BYTES
+    try:
+        cursor.execute("PRAGMA main.page_size")
+        page_size_row = cursor.fetchone()
+        cursor.execute("PRAGMA main.page_count")
+        page_count_row = cursor.fetchone()
+        if (
+                page_size_row is None
+                or page_count_row is None
+                or len(page_size_row) != 1
+                or len(page_count_row) != 1
+                ):
+            return False
+        page_size = page_size_row[0]
+        page_count = page_count_row[0]
+        if (
+                type(page_size) is not int
+                or type(page_count) is not int
+                or page_size <= 0
+                or page_count < 0
+                or page_count > limit // page_size
+                ):
+            return False
+
+        cursor.execute("PRAGMA database_list")
+        main_paths = [
+            str(row[2])
+            for row in cursor.fetchall()
+            if len(row) >= 3 and str(row[1]) == "main" and row[2]
+        ]
+        if len(main_paths) != 1:
+            return False
+
+        total_bytes = 0
+        for suffix in ("", "-wal", "-journal", "-shm"):
+            path = f"{main_paths[0]}{suffix}"
+            try:
+                file_stat = os.stat(path)
+            except FileNotFoundError:
+                if not suffix:
+                    return False
+                continue
+            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size < 0:
+                return False
+            total_bytes += file_stat.st_size
+            if total_bytes > limit:
+                return False
+        return True
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
+        return False
+
+
+def _result_table_integer_pk_high_watermark(cursor, quoted_table):
+    """Return a conservative QCoDeS result-table row bound.
+
+    QCoDeS result tables use one ``id INTEGER PRIMARY KEY``. ``MAX(id)`` is a
+    bounded index lookup and safely overestimates the number of current rows
+    after deletions. Unknown or non-current schemas fail closed so an obsolete
+    controller ``result_count`` can never authorize an unbounded GROUP BY.
+    """
+    try:
+        cursor.execute(f"PRAGMA table_info({quoted_table})")
+        primary_keys = [
+            row
+            for row in cursor.fetchall()
+            if len(row) >= 6 and row[5]
+        ]
+        if len(primary_keys) != 1:
+            return None
+        primary_key = primary_keys[0]
+        if (
+                str(primary_key[1]) != "id"
+                or str(primary_key[2] or "").strip().upper() != "INTEGER"
+                or primary_key[5] != 1
+                ):
+            return None
+        quoted_id = _sqlite_identifier(primary_key[1])
+        cursor.execute(f"SELECT MAX({quoted_id}) FROM {quoted_table}")
+        row = cursor.fetchone()
+        if row is None or len(row) != 1:
+            return None
+        value = row[0]
+        if value is None:
+            return 0
+        if type(value) is not int or value < 0:
+            return None
+        return value
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
+        return None
+
+
+def get_snapshot_selected_run_detail(
+        database_path,
+        run_id,
+        guid,
+        run_metadata=None,
+        *,
+        expected_database_identity=None,
+        cancelled_callback=None,
+        connection_callback=None,
+        deadline=None,
+        ):
+    """Return a bounded immutable detail view without constructing a DataSet.
+
+    Every SQLite operation is finite and cancellable. Result-table values are
+    never materialised; only the existing bounded setpoint aggregates may
+    inspect a modest, already-counted result table.
+    """
+    from qplot.datahandling.trusted_live_queries import (
+        TrustedRunRecord,
+        TrustedSelectedRunDetail,
+        TrustedSetpointSummary,
+        bounded_parameter_presentation,
+        bounded_parameter_views_from_run_metadata,
+        bounded_setpoint_presentation,
+        freeze_primitive_fields,
+    )
+    from qplot.datahandling.trusted_presentation import (
+        bounded_presentation_names,
+        build_selected_run_presentation,
+    )
+    from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
+
+    try:
+        run_id = int(run_id)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError("run_id must be a positive integer") from error
+    guid = str(guid or "")
+    if run_id <= 0 or not guid:
+        raise ValueError("run_id and guid must identify one selected run")
+
+    conn = _read_only_connection(
+        database_path or get_DB_location(),
+        expected_database_identity,
+        cancelled_callback,
+        deadline,
+        )
+    try:
+        _notify_connection(connection_callback, conn)
+        _install_cancel_progress_handler(conn, cancelled_callback, deadline)
+        cursor = conn.cursor()
+        columns = _snapshot_selected_run_columns(cursor)
+        values, unavailable, snapshot_omission = _bounded_snapshot_selected_run_values(
+            cursor,
+            run_id,
+            guid,
+            columns,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+            )
+        if values is None:
+            raise LookupError(
+                f"Run {run_id} with GUID {guid} is no longer available."
+            )
+        if str(values.get("guid") or "") != guid:
+            raise LookupError(
+                f"Run {run_id} no longer has the selected GUID {guid}."
+            )
+
+        database_values = {
+            name: value
+            for name, value in values.items()
+            if name in _SNAPSHOT_STANDARD_RUN_COLUMNS
+        }
+        database_values.pop("run_id", None)
+        materialized = materialize_run_basic_fields(database_values)
+        source_metadata = run_metadata or {}
+        for name in _SNAPSHOT_OBSERVATION_FIELDS:
+            if name not in source_metadata:
+                continue
+            value = source_metadata[name]
+            bounded = _snapshot_plain_value(value)
+            if bounded is not _SNAPSHOT_VALUE_UNAVAILABLE:
+                materialized[name] = bounded
+        materialized.update(
+            _snapshot_selected_experiment_fields(
+                cursor,
+                values.get("exp_id"),
+            )
+        )
+        materialized["guid"] = guid
+        materialized["run_id"] = run_id
+        try:
+            materialized["database_modified_timestamp"] = os.path.getmtime(
+                database_path
+            )
+        except OSError:
+            materialized.setdefault("database_modified_timestamp", None)
+
+        layout_rows, layout_unavailable = _snapshot_selected_layout_rows(
+            cursor,
+            run_id,
+        )
+        parameters, source_parameters_truncated = (
+            bounded_parameter_views_from_run_metadata(
+                materialized,
+                layout_rows,
+            )
+        )
+
+        setpoint_names_list: list[str] = []
+        setpoint_names_seen: set[str] = set()
+        setpoint_names_truncated = False
+        for parameter in parameters:
+            for name in parameter.depends_on:
+                if not name or name in setpoint_names_seen:
+                    continue
+                if len(setpoint_names_list) >= MAX_SNAPSHOT_SELECTED_SETPOINTS:
+                    setpoint_names_truncated = True
+                    break
+                setpoint_names_list.append(name)
+                setpoint_names_seen.add(name)
+            if setpoint_names_truncated:
+                break
+        setpoint_names = tuple(setpoint_names_list)
+        if not setpoint_names:
+            fallback_setpoints = materialized.get("sweep_parameters", ())
+            if isinstance(fallback_setpoints, (list, tuple)):
+                for index, name in enumerate(
+                    islice(fallback_setpoints, MAX_SNAPSHOT_SELECTED_SETPOINTS + 1)
+                ):
+                    if index >= MAX_SNAPSHOT_SELECTED_SETPOINTS:
+                        setpoint_names_truncated = True
+                        break
+                    if isinstance(name, str) and name:
+                        setpoint_names_list.append(name)
+                setpoint_names = tuple(dict.fromkeys(setpoint_names_list))
+            elif fallback_setpoints:
+                setpoint_names_truncated = True
+        if setpoint_names_truncated:
+            unavailable = (*unavailable, "setpoint_summaries")
+        summary_values = _snapshot_selected_summary_values(
+            cursor,
+            materialized,
+            setpoint_names,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+        )
+        summaries = tuple(
+            TrustedSetpointSummary(
+                name,
+                summary.get("from"),
+                summary.get("to"),
+                _snapshot_positive_int(summary.get("steps")),
+            )
+            for name, summary in summary_values.items()
+        )
+        parameters, parameters_truncated = bounded_parameter_presentation(parameters)
+        parameters_truncated = bool(
+            parameters_truncated
+            or source_parameters_truncated
+            or materialized.get("parameters_truncated")
+        )
+        summaries, summaries_truncated = bounded_setpoint_presentation(summaries)
+        metadata = {
+            name: value
+            for name, value in values.items()
+            if (
+                name not in _SNAPSHOT_STANDARD_RUN_COLUMNS
+                and value is not None
+            )
+        }
+        snapshot = normalize_trusted_snapshot(
+            values.get("snapshot"),
+            omission=snapshot_omission,
+        )
+        unavailable_fields = tuple(dict.fromkeys(
+            (
+                *unavailable,
+                *layout_unavailable,
+                *(("parameters.presentation",) if parameters_truncated else ()),
+                *(
+                    ("setpoint_summaries.presentation",)
+                    if summaries_truncated
+                    else ()
+                ),
+            )
+        ))
+        public_unavailable_fields, _unavailable_truncated = (
+            bounded_presentation_names(unavailable_fields)
+        )
+        presentation = build_selected_run_presentation(
+            run_fields={**materialized, "run_id": run_id},
+            metadata_fields=metadata,
+            parameters=tuple(
+                {
+                    "name": parameter.name,
+                    "label": parameter.label,
+                    "unit": parameter.unit,
+                    "depends_on": parameter.depends_on,
+                    "type": parameter.paramtype,
+                }
+                for parameter in parameters
+            ),
+            snapshot_summary={
+                "Status": snapshot.status,
+                "Message": snapshot.message,
+                "Input bytes": snapshot.input_bytes,
+                "Rendered nodes": len(snapshot.nodes),
+            },
+            setpoint_summaries=tuple(
+                {
+                    "name": summary.name,
+                    "from": summary.first,
+                    "to": summary.last,
+                    "steps": summary.steps,
+                }
+                for summary in summaries
+            ),
+            unavailable_fields=public_unavailable_fields,
+            parameters_truncated=parameters_truncated,
+        )
+        _raise_if_read_aborted(cancelled_callback, deadline)
+        return TrustedSelectedRunDetail(
+            run=TrustedRunRecord(
+                run_id,
+                freeze_primitive_fields(dict(presentation.run_fields)),
+                public_unavailable_fields,
+            ),
+            parameters=parameters,
+            metadata=freeze_primitive_fields(dict(presentation.metadata_fields)),
+            snapshot=snapshot,
+            setpoint_summaries=summaries,
+            presentation=presentation,
+            unavailable_fields=public_unavailable_fields,
+        )
+    except sqlite3.OperationalError as error:
+        _translate_interrupted_read(error, cancelled_callback, deadline)
+        raise
+    finally:
+        try:
+            _notify_connection(connection_callback, None)
+        finally:
+            conn.close()
+
+
+_SNAPSHOT_VALUE_UNAVAILABLE = object()
+
+
+def _snapshot_plain_value(value):
+    bounded, _size = _snapshot_plain_scalar(value)
+    if bounded is not _SNAPSHOT_VALUE_UNAVAILABLE:
+        return bounded
+    if not isinstance(value, (list, tuple)) or len(value) > 256:
+        return _SNAPSHOT_VALUE_UNAVAILABLE
+
+    items = []
+    total_bytes = 0
+    for item in value:
+        bounded, item_bytes = _snapshot_plain_scalar(item)
+        if bounded is _SNAPSHOT_VALUE_UNAVAILABLE:
+            return _SNAPSHOT_VALUE_UNAVAILABLE
+        total_bytes += item_bytes
+        if total_bytes > MAX_SNAPSHOT_SELECTED_OBSERVATION_BYTES:
+            return _SNAPSHOT_VALUE_UNAVAILABLE
+        items.append(bounded)
+    return tuple(items)
+
+
+def _snapshot_plain_scalar(value):
+    if value is None or isinstance(value, (bool, int, float)):
+        return value, 8
+    if isinstance(value, str):
+        value_bytes = len(value.encode("utf-8", errors="surrogatepass"))
+        if value_bytes <= MAX_SNAPSHOT_SELECTED_OBSERVATION_BYTES:
+            return value, value_bytes
+        return _SNAPSHOT_VALUE_UNAVAILABLE, 0
+    if isinstance(value, bytes):
+        if len(value) <= MAX_SNAPSHOT_SELECTED_OBSERVATION_BYTES:
+            return value, len(value)
+        return _SNAPSHOT_VALUE_UNAVAILABLE, 0
+    return _SNAPSHOT_VALUE_UNAVAILABLE, 0
+
+
+def _snapshot_selected_run_columns(cursor):
+    cursor.execute('SELECT * FROM "runs" WHERE 0')
+    columns = tuple(description[0] for description in cursor.description or ())
+    if (
+            not {"run_id", "guid"}.issubset(columns)
+            or len(columns) > MAX_SNAPSHOT_SELECTED_RUN_COLUMNS
+            ):
+        raise RuntimeError(
+            "The selected QCoDeS run schema exceeds the bounded detail plan."
+        )
+    return columns
+
+
+def _bounded_snapshot_selected_run_values(
+        cursor,
+        run_id,
+        guid,
+        columns,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    from qplot.datahandling.trusted_snapshot import TrustedSnapshotOmission
+
+    values: dict[str, object] = {}
+    unavailable = []
+    accepted_bytes = 0
+    snapshot_omission = None
+    for name in columns:
+        _raise_if_read_aborted(cancelled_callback, deadline)
+        quoted = _sqlite_identifier(name)
+        cursor.execute(
+            f"SELECT typeof({quoted}), length(CAST({quoted} AS BLOB)) "
+            'FROM "runs" WHERE "run_id" = ? AND "guid" = ? LIMIT 1',
+            (run_id, guid),
+        )
+        preflight = cursor.fetchone()
+        if preflight is None:
+            return None, (), None
+        value_type, value_bytes = preflight
+        if value_type == "null" and value_bytes is None:
+            values[name] = None
+            continue
+        if (
+                value_type not in {"integer", "real", "text", "blob"}
+                or type(value_bytes) is not int
+                or value_bytes < 0
+                ):
+            raise RuntimeError(
+                "A selected-run scalar preflight returned invalid metadata."
+            )
+        if (
+                value_bytes > MAX_SNAPSHOT_SELECTED_RUN_SCALAR_BYTES
+                or accepted_bytes + value_bytes
+                > MAX_SNAPSHOT_SELECTED_RUN_TOTAL_BYTES
+                ):
+            values[name] = None
+            unavailable.append(name)
+            if name == "snapshot":
+                snapshot_omission = TrustedSnapshotOmission(
+                    (
+                        "payload_limit"
+                        if value_bytes > MAX_SNAPSHOT_SELECTED_RUN_SCALAR_BYTES
+                        else "detail_budget"
+                    ),
+                    value_bytes,
+                )
+            continue
+        cursor.execute(
+            "SELECT CASE WHEN "
+            f"typeof({quoted}) = ? AND length(CAST({quoted} AS BLOB)) = ? "
+            f"THEN {quoted} ELSE NULL END "
+            'FROM "runs" WHERE "run_id" = ? AND "guid" = ? LIMIT 1',
+            (value_type, value_bytes, run_id, guid),
+        )
+        fetched = cursor.fetchone()
+        if fetched is None:
+            return None, (), None
+        value = fetched[0]
+        values[name] = value
+        if value is None:
+            unavailable.append(name)
+            if name == "snapshot":
+                snapshot_omission = TrustedSnapshotOmission(
+                    "changed_during_read",
+                    value_bytes,
+                )
+        else:
+            accepted_bytes += value_bytes
+    return values, tuple(unavailable), snapshot_omission
+
+
+def _snapshot_selected_experiment_fields(cursor, exp_id):
+    if exp_id is None:
+        return {}
+    limit = _SNAPSHOT_SELECTED_LAYOUT_TEXT_BYTES
+    cursor.execute(
+        "SELECT "
+        "CASE WHEN length(CAST(name AS BLOB)) <= ? THEN name END, "
+        "CASE WHEN length(CAST(sample_name AS BLOB)) <= ? THEN sample_name END "
+        "FROM experiments WHERE exp_id = ? LIMIT 1",
+        (limit, limit, exp_id),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return {}
+    return {"exp_name": row[0], "sample_name": row[1]}
+
+
+def _snapshot_selected_layout_rows(cursor, run_id):
+    limit = _SNAPSHOT_SELECTED_LAYOUT_TEXT_BYTES
+    cursor.execute(
+        "SELECT layout_id, "
+        "CASE WHEN length(CAST(parameter AS BLOB)) <= ? THEN parameter END, "
+        "CASE WHEN length(CAST(label AS BLOB)) <= ? THEN label END, "
+        "CASE WHEN length(CAST(unit AS BLOB)) <= ? THEN unit END, "
+        "CASE WHEN length(CAST(inferred_from AS BLOB)) <= ? THEN inferred_from END "
+        "FROM layouts WHERE run_id = ? ORDER BY layout_id LIMIT ?",
+        (
+            limit,
+            limit,
+            limit,
+            limit,
+            run_id,
+            MAX_SNAPSHOT_SELECTED_LAYOUT_ROWS + 1,
+        ),
+    )
+    rows = tuple(tuple(row) for row in cursor.fetchall())
+    if len(rows) <= MAX_SNAPSHOT_SELECTED_LAYOUT_ROWS:
+        return rows, ()
+    return rows[:MAX_SNAPSHOT_SELECTED_LAYOUT_ROWS], ("layouts",)
+
+
+def _snapshot_selected_summary_values(
+        cursor,
+        metadata,
+        setpoint_names,
+        *,
+        cancelled_callback=None,
+        deadline=None,
+        ):
+    result_count = _snapshot_positive_int(metadata.get("result_count"))
+    summaries = {}
+    if (
+            result_count is not None
+            and result_count <= MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
+            and metadata.get("result_table_name")
+            and setpoint_names
+            ):
+        summaries.update(_selected_run_setpoint_summaries_from_cursor(
+            cursor,
+            metadata["result_table_name"],
+            setpoint_names,
+            cancelled_callback=cancelled_callback,
+            deadline=deadline,
+        ))
+    shape = metadata.get("setpoint_shape") or metadata.get("point_shape") or ()
+    for name, steps in zip(setpoint_names, shape, strict=False):
+        summaries.setdefault(name, {}).setdefault("steps", steps)
+    return summaries
+
+
+def _snapshot_positive_int(value):
+    try:
+        value = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return value if value > 0 else None
+
+
+def _selected_run_setpoint_summary(cursor, quoted_table, parameter):
+    """Return first, last, and distinct count for one setpoint column."""
+    column = _sqlite_identifier(parameter)
+    try:
+        cursor.execute(f"""
+          WITH distinct_values(value, first_rowid) AS (
+              SELECT {column}, MIN(rowid)
+              FROM {quoted_table}
+              WHERE {column} IS NOT NULL
+              GROUP BY {column}
+          ), summary_values(first_value, last_value, steps) AS (
+              SELECT
+                  (
+                      SELECT value
+                      FROM distinct_values
+                      ORDER BY first_rowid ASC
+                      LIMIT 1
+                  ),
+                  (
+                      SELECT value
+                      FROM distinct_values
+                      ORDER BY first_rowid DESC
+                      LIMIT 1
+                  ),
+                  (SELECT COUNT(*) FROM distinct_values)
+          )
+          SELECT
+              CASE WHEN length(CAST(first_value AS BLOB)) <=
+                  {MAX_SELECTED_RUN_SETPOINT_SUMMARY_SCALAR_BYTES}
+                  THEN first_value END,
+              CASE WHEN length(CAST(last_value AS BLOB)) <=
+                  {MAX_SELECTED_RUN_SETPOINT_SUMMARY_SCALAR_BYTES}
+                  THEN last_value END,
+              steps
+          FROM summary_values
+        """)
+        first_value, last_value, count = cursor.fetchone()
+        count = int(count or 0)
+    except Exception as error:
+        if _sql_was_interrupted(error):
+            raise
+        return {}
+    if count <= 0 or first_value is None or last_value is None:
+        return {}
+    return {
+        "from": first_value,
+        "to": last_value,
+        "steps": count,
+        }
 
 
 def get_runs_via_sql(
@@ -447,7 +1262,7 @@ def _fetch_run_rows(
     for row in values:
         metadata = dict(zip(column_names[1:], row[1:], strict=False))
         metadata["database_modified_timestamp"] = database_modified_timestamp
-        _add_run_basic_fields(metadata)
+        metadata = materialize_run_basic_fields(metadata)
         if include_details:
             _add_run_detail_fields(
                 cursor,
@@ -465,27 +1280,115 @@ def _fetch_run_rows(
 
 def _add_run_basic_fields(metadata):
     run_description = _json_dict(metadata.get("run_description"))
-    measure_parameters, sweep_parameters = _parameter_roles(
+    measure_parameters, sweep_parameters, parameters_truncated = (
+        _bounded_parameter_roles(
+            run_description,
+            metadata.get("parameters"),
+        )
+    )
+
+    point_shape, shape_truncated = _bounded_point_shape(
         run_description,
-        metadata.get("parameters")
+        measure_parameters,
         )
 
     metadata["measure_parameters"] = measure_parameters
     metadata["sweep_parameters"] = sweep_parameters
-    metadata["point_shape"] = _point_shape(run_description, measure_parameters)
+    metadata["parameters_truncated"] = bool(
+        parameters_truncated or shape_truncated
+    )
+    metadata["point_shape"] = point_shape
     metadata["setpoint_shape"] = metadata["point_shape"]
     shape_source = "planned" if metadata["setpoint_shape"] else None
     metadata["setpoint_shape_source"] = shape_source
-    expected_results = _expected_results_from_shapes(
-        run_description,
-        measure_parameters,
+    expected_results, expected_shape_truncated = (
+        _bounded_expected_results_from_shapes(
+            run_description,
+            measure_parameters,
         )
+    )
+    metadata["parameters_truncated"] = bool(
+        metadata["parameters_truncated"] or expected_shape_truncated
+    )
     metadata["expected_results"] = expected_results
     metadata["expected_results_source"] = (
         "planned" if expected_results is not None else None
         )
     metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
     metadata["setpoint_count_source"] = shape_source
+
+
+def materialize_run_basic_fields(metadata):
+    """Return one run mapping with qPlot's shared derived basic fields.
+
+    Snapshot readers and the trusted fixed-query adapter deliberately share
+    this transformation.  Keeping it independent of cursors, connections,
+    QCoDeS objects, and filesystem access prevents the two read paths from
+    drifting while allowing the trusted path to materialise only primitive
+    query results.
+    """
+    materialized = dict(metadata or {})
+    _add_run_basic_fields(materialized)
+    return materialized
+
+
+def materialize_run_observation(
+        metadata,
+        *,
+        result_count=None,
+        setpoint_shape=None,
+        setpoint_count=None,
+        storage_bytes=None,
+        storage_bytes_estimated=None,
+        read_setpoint_count=None,
+        ):
+    """Return shared detail fields from already-bounded observations.
+
+    All database work happens before this function.  The snapshot path can
+    continue collecting observations with cursors, while the trusted adapter
+    supplies the same values from fixed supervisor queries.
+    """
+    materialized = materialize_run_basic_fields(metadata)
+    if result_count is not None:
+        materialized["result_count"] = int(result_count)
+    elif "result_count" not in materialized:
+        materialized["result_count"] = None
+
+    if setpoint_count is not None or setpoint_shape is not None:
+        normalized_shape = (
+            [int(size) for size in setpoint_shape]
+            if setpoint_shape
+            else None
+        )
+        materialized["setpoint_shape"] = normalized_shape
+        materialized["point_shape"] = _point_shape_from_setpoint_shape(
+            normalized_shape,
+            materialized.get("measure_parameters"),
+            materialized.get("result_count"),
+        )
+        materialized["setpoint_shape_source"] = (
+            "observed" if normalized_shape else None
+        )
+        materialized["setpoint_count"] = (
+            int(setpoint_count) if setpoint_count is not None else None
+        )
+        materialized["setpoint_count_source"] = (
+            "observed" if setpoint_count is not None else None
+        )
+        materialized["expected_results"] = None
+        materialized["expected_results_source"] = None
+
+    if read_setpoint_count is not None:
+        materialized["read_setpoint_count"] = int(read_setpoint_count)
+
+    if storage_bytes is not None or storage_bytes_estimated is not None:
+        materialized["storage_bytes"] = (
+            int(storage_bytes) if storage_bytes is not None else None
+        )
+        materialized["storage_bytes_estimated"] = storage_bytes_estimated
+
+    _add_completed_observed_result_count(materialized)
+    return materialized
 
 
 def _add_run_detail_fields(
@@ -603,78 +1506,203 @@ def _json_dict(value):
 
     try:
         decoded = json.loads(value)
-    except (TypeError, json.JSONDecodeError):
+    except (TypeError, json.JSONDecodeError, RecursionError):
         return {}
 
     return decoded if isinstance(decoded, dict) else {}
 
 
 def _parameter_roles(run_description, parameter_text):
-    dependencies = _parameter_dependencies(run_description)
+    measure, sweep, _truncated = _bounded_parameter_roles(
+        run_description,
+        parameter_text,
+    )
+    return measure, sweep
 
-    measure_parameters = list(dependencies.keys())
-    sweep_parameters = []
-    for dependents in dependencies.values():
+
+def _bounded_parameter_roles(run_description, parameter_text):
+    dependencies, truncated = _bounded_parameter_dependencies(run_description)
+    measure_parameters: list[str] = []
+    sweep_parameters: list[str] = []
+    measure_seen: set[str] = set()
+    sweep_seen: set[str] = set()
+    all_seen: set[str] = set()
+
+    def add(target, seen, name):
+        nonlocal truncated
+        if name in seen:
+            return
+        if (
+            name not in all_seen
+            and len(all_seen) >= TRUSTED_PRESENTATION_MAX_PARAMETERS
+        ):
+            truncated = True
+            return
+        target.append(name)
+        seen.add(name)
+        all_seen.add(name)
+
+    for parameter, dependents in dependencies.items():
+        add(measure_parameters, measure_seen, parameter)
         for name in dependents:
-            if name not in sweep_parameters:
-                sweep_parameters.append(name)
+            add(sweep_parameters, sweep_seen, name)
 
-    parameters = [
-        parameter.strip()
-        for parameter in (parameter_text or "").split(",")
-        if parameter.strip()
-        ]
-    for parameter in parameters:
-        if parameter not in sweep_parameters and parameter not in measure_parameters:
-            measure_parameters.append(parameter)
+    if isinstance(parameter_text, str):
+        raw_parameters = parameter_text.split(",", TRUSTED_PRESENTATION_MAX_PARAMETERS)
+        if len(raw_parameters) > TRUSTED_PRESENTATION_MAX_PARAMETERS:
+            truncated = True
+            raw_parameters.pop()
+        for raw_parameter in raw_parameters:
+            parameter, was_truncated = _bounded_parameter_identifier(
+                raw_parameter.strip()
+            )
+            truncated = truncated or was_truncated
+            if parameter and parameter not in sweep_seen:
+                add(measure_parameters, measure_seen, parameter)
+    elif parameter_text:
+        truncated = True
 
-    return measure_parameters, sweep_parameters
+    return measure_parameters, sweep_parameters, truncated
 
 
 def _parameter_dependencies(run_description):
+    dependencies, _truncated = _bounded_parameter_dependencies(run_description)
+    return dependencies
+
+
+def _bounded_parameter_dependencies(run_description):
+    truncated = False
+    interdependencies = run_description.get("interdependencies_")
+    if not isinstance(interdependencies, dict):
+        interdependencies = {}
     dependencies = (
-        run_description
-        .get("interdependencies_", {})
-        .get("dependencies", {})
-        )
+        interdependencies.get("dependencies", {})
+    )
     if not isinstance(dependencies, dict) or not dependencies:
-        dependencies = _legacy_dependencies(run_description)
+        return _bounded_legacy_dependencies(run_description)
 
-    if not isinstance(dependencies, dict):
-        return {}
-
-    return {
-        parameter: list(setpoints)
-        for parameter, setpoints in dependencies.items()
-        if isinstance(setpoints, (list, tuple)) and setpoints
-        }
+    output: dict[str, list[str]] = {}
+    items = islice(
+        dependencies.items(),
+        TRUSTED_PRESENTATION_MAX_PARAMETERS + 1,
+    )
+    for index, (raw_parameter, setpoints) in enumerate(items):
+        if index >= TRUSTED_PRESENTATION_MAX_PARAMETERS:
+            truncated = True
+            break
+        parameter, name_truncated = _bounded_parameter_identifier(raw_parameter)
+        truncated = truncated or name_truncated
+        if not parameter or not isinstance(setpoints, (list, tuple)):
+            truncated = truncated or bool(setpoints)
+            continue
+        bounded_setpoints = []
+        seen = set()
+        for dependency_index, raw_setpoint in enumerate(
+            islice(
+                setpoints,
+                TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES + 1,
+            )
+        ):
+            if dependency_index >= TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES:
+                truncated = True
+                break
+            setpoint, dependency_truncated = _bounded_parameter_identifier(
+                raw_setpoint
+            )
+            truncated = truncated or dependency_truncated
+            if setpoint and setpoint not in seen:
+                bounded_setpoints.append(setpoint)
+                seen.add(setpoint)
+        if bounded_setpoints:
+            output[parameter] = bounded_setpoints
+    return output, truncated
 
 
 def _legacy_dependencies(run_description):
-    out = {}
-    paramspecs = run_description.get("interdependencies", {}).get("paramspecs", [])
-    for paramspec in paramspecs:
+    dependencies, _truncated = _bounded_legacy_dependencies(run_description)
+    return dependencies
+
+
+def _bounded_legacy_dependencies(run_description):
+    out: dict[str, list[str]] = {}
+    truncated = False
+    interdependencies = run_description.get("interdependencies")
+    paramspecs = (
+        interdependencies.get("paramspecs", [])
+        if isinstance(interdependencies, dict)
+        else []
+    )
+    if not isinstance(paramspecs, (list, tuple)):
+        return out, bool(paramspecs)
+    for index, paramspec in enumerate(
+        islice(paramspecs, TRUSTED_PRESENTATION_MAX_PARAMETERS + 1)
+    ):
+        if index >= TRUSTED_PRESENTATION_MAX_PARAMETERS:
+            truncated = True
+            break
         if not isinstance(paramspec, dict):
+            truncated = True
             continue
         depends_on = paramspec.get("depends_on") or []
-        name = paramspec.get("name")
-        if name and depends_on:
-            out[name] = depends_on
-    return out
+        name, name_truncated = _bounded_parameter_identifier(paramspec.get("name"))
+        truncated = truncated or name_truncated
+        if not name or not isinstance(depends_on, (list, tuple)):
+            truncated = truncated or bool(depends_on)
+            continue
+        bounded_dependencies = []
+        seen = set()
+        for dependency_index, raw_dependency in enumerate(
+            islice(
+                depends_on,
+                TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES + 1,
+            )
+        ):
+            if dependency_index >= TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES:
+                truncated = True
+                break
+            dependency, dependency_truncated = _bounded_parameter_identifier(
+                raw_dependency
+            )
+            truncated = truncated or dependency_truncated
+            if dependency and dependency not in seen:
+                bounded_dependencies.append(dependency)
+                seen.add(dependency)
+        if bounded_dependencies:
+            out[name] = bounded_dependencies
+    return out, truncated
+
+
+def _bounded_parameter_identifier(value):
+    if not isinstance(value, str):
+        return "", value is not None
+    return bounded_presentation_text(
+        value,
+        limit=TRUSTED_PRESENTATION_MAX_PARAMETER_TEXT_BYTES,
+    )
 
 
 def _point_shape(run_description, measure_parameters):
+    shape, _truncated = _bounded_point_shape(run_description, measure_parameters)
+    return shape
+
+
+def _bounded_point_shape(run_description, measure_parameters):
     shapes = run_description.get("shapes")
     if not isinstance(shapes, dict):
-        return None
+        return None, False
 
     best_shape = None
     best_size = 0
+    truncated = False
     for parameter in measure_parameters:
         shape = shapes.get(parameter)
         if isinstance(shape, list) and shape:
+            dimensions = list(islice(shape, MAX_RUN_DESCRIPTION_SHAPE_DIMENSIONS + 1))
+            if len(dimensions) > MAX_RUN_DESCRIPTION_SHAPE_DIMENSIONS:
+                truncated = True
+                continue
             try:
-                point_shape = [int(size) for size in shape]
+                point_shape = [int(size) for size in dimensions]
             except (TypeError, ValueError):
                 continue
 
@@ -683,26 +1711,40 @@ def _point_shape(run_description, measure_parameters):
                 best_shape = point_shape
                 best_size = size
 
-    return best_shape
+    return best_shape, truncated
 
 
 def _expected_results_from_shapes(run_description, measure_parameters):
+    expected, _truncated = _bounded_expected_results_from_shapes(
+        run_description,
+        measure_parameters,
+    )
+    return expected
+
+
+def _bounded_expected_results_from_shapes(run_description, measure_parameters):
     shapes = run_description.get("shapes")
     if not isinstance(shapes, dict) or not measure_parameters:
-        return None
+        return None, False
 
     sizes = []
+    truncated = False
     for parameter in measure_parameters:
         shape = shapes.get(parameter)
         if not isinstance(shape, list) or not shape:
-            return None
+            return None, truncated
 
-        size = _shape_size(shape)
+        dimensions = list(islice(shape, MAX_RUN_DESCRIPTION_SHAPE_DIMENSIONS + 1))
+        if len(dimensions) > MAX_RUN_DESCRIPTION_SHAPE_DIMENSIONS:
+            truncated = True
+            return None, truncated
+
+        size = _shape_size(dimensions)
         if size is None:
-            return None
+            return None, truncated
         sizes.append(size)
 
-    return sum(sizes) if sizes else None
+    return (sum(sizes) if sizes else None), truncated
 
 
 def _shape_size(shape):
@@ -710,7 +1752,10 @@ def _shape_size(shape):
         return None
 
     try:
-        return math.prod(int(size) for size in shape)
+        dimensions = list(islice(iter(shape), MAX_RUN_DESCRIPTION_SHAPE_DIMENSIONS + 1))
+        if len(dimensions) > MAX_RUN_DESCRIPTION_SHAPE_DIMENSIONS:
+            return None
+        return math.prod(int(size) for size in dimensions)
     except (TypeError, ValueError):
         return None
 

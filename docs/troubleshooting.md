@@ -121,36 +121,45 @@ Check the following first:
 * The file is a QCoDeS SQLite database.
 * The file is not stored in a folder where another process blocks access.
 
-If the database is being written by a running experiment, try again after a
-short wait. For persistent failures, use the `Database Information` button in
-the main window if the file can be opened far enough for diagnostics.
+An ordinary running QCoDeS experiment on a supported same-host local filesystem
+should load through trusted live access without waiting for its WAL to be
+checkpointed. qPlot attempts that bounded open and its basic run query before
+the legacy access probe. For persistent failures, use the `Database
+Information` button if the file can be opened far enough for diagnostics.
 
-If qPlot reports that a WAL cannot be verified, it has first observed an
-ordinary QCoDeS database with uncheckpointed WAL data but no trustworthy
-lineage record. SQLite's WAL salts and checksums validate the WAL's own frames;
-they do not identify the main database to which those frames belong. A matching
-filename or a successful SQLite open is not enough to make that association
-safe, so qPlot refuses the read rather than showing potentially unrelated data
-or falling back to an older main-file view.
+Snapshot fallback is deliberately narrow. It is considered only when the exact
+type of the initial trusted-open failure reports that the pinned native backend
+is genuinely unavailable or the source or filesystem is explicitly
+unsupported. The legacy probe must still prove a safe snapshot. Cancellation,
+deadline or busy expiry, source replacement, invalid database, source I/O, SQL
+or result-limit failure, helper or protocol failure, forced termination, and
+uncertain cleanup never become fallback and are never silently replayed.
 
-Close every QCoDeS, SQLite, Python, and notebook connection that owns the
-database cleanly, then retry. SQLite normally checkpoints and removes the WAL
-when its final connection closes. If a WAL remains, use the owning application
-or writer to checkpoint it before retrying. Do not remove a live WAL manually.
-The current GUI snapshot loader never checkpoints or changes the source
-database, `-wal`, `-shm`, or `-journal` file.
+If qPlot reports that a WAL cannot be verified, trusted access was unavailable
+or an explicit plot/CSV action reached the retained snapshot path. SQLite's WAL
+salts and checksums validate the WAL's own frames; they do not identify the main
+database to which those frames belong. A matching filename or successful SQLite
+open is not enough, so qPlot refuses the snapshot rather than showing unrelated
+data or an older main-file-only view.
 
-qPlot's non-default trusted live-reader API has one narrower rule: its main
-database, WAL, and rollback journal remain read-only, but SQLite may create or
-update the exact colocated `-shm` file as transient WAL coordination state. Its
-contents, size, or timestamps can therefore change during a live read. The
-reader still never checkpoints the database or writes experimental data, and it
-rejects network or otherwise unsupported filesystems. This API is not yet used
-by the GUI; see [Trusted live QCoDeS reader](trusted-live-reader.md).
+For that snapshot-only failure, close every QCoDeS, SQLite, Python, and notebook
+connection that owns the database cleanly, then retry the action. SQLite
+normally checkpoints the WAL when its final connection closes. If it remains,
+use the owning application or writer to checkpoint it. Do not remove a live WAL
+manually.
 
-WALs for current qPlot-generated test databases can remain readable while live
-because they contain a unique generation token and a parent-linked random
-lineage chain. On private copies qPlot proves that the WAL head strictly
+During trusted live access, main-database, WAL, and rollback-journal handles are
+physically read-only. SQLite may create or update only the exact colocated
+`-shm` file as transient WAL coordination state, so its contents, size,
+timestamps, or permission mode can change. qPlot never checkpoints the source
+or writes experimental data. Network and other unsupported filesystems can take
+snapshot fallback only if the legacy probe verifies them safely; otherwise the
+load fails with actionable guidance. See
+[Trusted live QCoDeS reader](trusted-live-reader.md).
+
+WALs for current qPlot-generated test databases can remain readable by snapshot
+consumers because they contain a unique generation token and a parent-linked
+random lineage chain. On private copies qPlot proves that the WAL head strictly
 descends from the exact main head and that every committed WAL transaction
 carries the lineage-state page. A different token, equal head, missing event,
 divergent clone, malformed WAL, or exhausted proof window is rejected by the
@@ -158,8 +167,9 @@ same fail-closed policy. A writer that changes an otherwise trusted main or WAL
 throughout every snapshot attempt can also make the database temporarily
 unavailable; wait for a pause and retry.
 
-QCoDeS creates a new SQLite result table for each later measurement. Before any
-new experiment or measurement writes, call
+QCoDeS creates a new SQLite result table for each later measurement. If those
+runs must be readable by snapshot fallback or a deferred snapshot consumer
+before the WAL is checkpointed, call
 `qplot.testdata.enable_generation_provenance_for_writer(connection)` on the
 owner application's quiescent writable QCoDeS `AtomicConnection`. This installs
 coverage for the new table in its creation transaction, including when results
@@ -170,8 +180,9 @@ hook takes SQLite's writer lock before checking WAL quiescence, so concurrent
 writes cannot race that check. qPlot cannot safely repair or upgrade provenance
 while viewing the input.
 
-Older epoch-only generated databases remain readable without a live WAL. Their
-live WALs fail closed because an epoch cannot prove branch ancestry. To migrate,
+Older epoch-only generated databases remain readable by the snapshot path
+without a live WAL. Their live WALs fail closed on that path because an epoch
+cannot prove branch ancestry. To migrate,
 first make the owner database quiescent in rollback-journal mode, then call the
 writer hook; it rotates the token and seeds the current lineage format. If more
 than 65,536 lineage events accumulate after the main's last checkpoint, the
@@ -191,18 +202,30 @@ uncommitted pages or modify the database and its sidecars.
 ## A OneDrive Database Waits for Sync
 
 On macOS, OneDrive and other cloud providers can leave a `.db` file as an
-online-only placeholder until an application reads it. When qPlot detects this
-kind of cloud-backed path, or when the first database access check fails for a
-cloud-backed path, it reads the file in the background to trigger the provider's
-Files On-Demand download. The database loading strip and status bar show
-progress such as `Waiting for OneDrive sync...`, and the load can be cancelled
-without closing qPlot. If the provider does not make the file available within
-the configured timeout, qPlot stops waiting and reports a database-load error.
+online-only placeholder until an application reads it. During initial path
+handling, qPlot hydrates a detected cloud placeholder before attempting the
+trusted open; it does not run the legacy snapshot access probe first. The
+database loading strip and status bar show progress such as `Waiting for
+OneDrive sync...`, and the load can be cancelled without closing qPlot. If the
+provider does not make the file available within the configured timeout, qPlot
+stops waiting and reports a database-load error.
 
 If the message stays visible for a long time, check that OneDrive is running,
 signed in, and allowed to download the file. You can also mark important
 database folders as always available in Finder. The timeout can be changed with
 `qplot-cfg -set_value runtime_settings.cloud_sync_timeout 180`.
+
+## Trusted Run Details Have No Preview Image
+
+This is the deliberate Stage 4 boundary. Loading, automatic default selection,
+scrolling, and progressive metadata do not launch legacy snapshot-backed
+preview or thumbnail workers in a trusted live session. Snapshot fallback
+sessions may retain those previews, but ordinary fallback selection otherwise
+shows cached run-list basics and starts no additional selected-detail snapshot.
+Fallback metadata and retained preview paths can still create private
+snapshots. Use an explicit run-table plot or CSV action when you need the
+underlying dataset; the trusted preview/thumbnail scheduler and disk-backed
+cache remain Stage 5 work.
 
 ## Plot Windows Look Empty
 
@@ -221,11 +244,17 @@ If the window stays empty:
 
 Main-window refresh and plot-window refresh are separate.
 
-* The main-window refresh interval checks for new runs in the database.
-* Each plot window's refresh interval checks for new data in that run.
+* The main-window broker checks `data_version` through its persistent helper. An
+  unchanged value avoids redundant metadata work; a change discovers later run
+  IDs and refreshes the selected run plus watched unfinished runs, with visible
+  watched rows first.
+* Each plot window remains a separate action-owned dataset consumer and checks
+  for new data in that run.
 
 Set the relevant refresh interval above `0.0 s`, or refresh manually with `R`.
-If a database is locked by another process, wait and refresh again.
+Overlapping main-window timer requests are coalesced. If qPlot reports that the
+accepted database or one of its sidecars was replaced, reload it so a fresh
+helper incarnation can establish a new identity and `data_version` baseline.
 
 ## Configuration Problems
 

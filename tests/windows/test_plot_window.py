@@ -1229,7 +1229,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
 
 class RunListParentLookupTestCase(unittest.TestCase):
     def test_main_window_lookup_works_through_splitter(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
         main = None
 
@@ -1254,7 +1254,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 main.deleteLater()
 
     def test_run_context_menu_keeps_plot_actions_without_add_actions(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         old_exec = qtw.QMenu.exec
         treeWidgets.isfile = lambda _: False
         captured = []

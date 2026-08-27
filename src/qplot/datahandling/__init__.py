@@ -1,6 +1,8 @@
 __all__ = [
     "get_runs_basic_via_sql",
     "get_runs_via_sql",
+    "get_selected_run_setpoint_summaries",
+    "get_snapshot_selected_run_detail",
     "find_new_runs",
     "get_run_status",
     "has_finished",
@@ -14,6 +16,8 @@ __all__ = [
 _EXPORT_MODULES = {
     "get_runs_basic_via_sql": ".readSQL",
     "get_runs_via_sql": ".readSQL",
+    "get_selected_run_setpoint_summaries": ".readSQL",
+    "get_snapshot_selected_run_detail": ".readSQL",
     "find_new_runs": ".readSQL",
     "get_run_status": ".readSQL",
     "has_finished": ".readSQL",

@@ -9,15 +9,18 @@ __all__ = [
     "run",
     "config",
     "__version__",
-    ]
+]
 
 
 def run(*args, **kwargs):
     """
-    Start qPlot without importing GUI modules during plain package import.
+    Start qPlot through its dedicated public-API launcher.
+
+    Plain package import still avoids importing GUI modules. Passing
+    ``return_objects=True`` remains the explicit caller-owned exception.
 
     """
-    from .__main__ import run as _run
+    from .__main__ import run_public as _run
 
     return _run(*args, **kwargs)
 

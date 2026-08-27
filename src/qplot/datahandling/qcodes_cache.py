@@ -5,9 +5,25 @@ qPlot needs per-parameter refreshes that QCoDeS does not expose as a stable
 public API. Keep those private-attribute touches in this module so future
 QCoDeS upgrades have one place to adapt.
 """
+from dataclasses import dataclass
 from threading import Lock, RLock
+from typing import Any
 
 _CACHE_LOCK_CREATION = Lock()
+
+
+@dataclass(frozen=True)
+class CacheParameterPublicationState:
+    """Rollback state for one GUI-thread cache publication."""
+
+    read_present: bool
+    read_status: Any
+    write_present: bool
+    write_status: Any
+    data_present: bool
+    data: Any
+    dataset_completed: bool
+    synchronized: bool
 
 
 def cache_lock(cache):
@@ -140,6 +156,76 @@ def snapshot_cache_parameter_state(cache, parameter_name):
             dict(cache_read_status(cache)),
             {parameter_name: parameter_data},
             )
+
+
+def snapshot_cache_parameter_publication_state(cache, parameter_name):
+    """Capture the exact cache slots mutated by a refresh callback."""
+
+    with cache_lock(cache):
+        read_status = cache_read_status(cache)
+        write_status = cache_write_status(cache)
+        data = cache_data(cache)
+        synchronized = getattr(cache, "_qplot_synchronized_parameters", ())
+        return CacheParameterPublicationState(
+            read_present=parameter_name in read_status,
+            read_status=read_status.get(parameter_name),
+            write_present=parameter_name in write_status,
+            write_status=write_status.get(parameter_name),
+            data_present=parameter_name in data,
+            data=data.get(parameter_name),
+            dataset_completed=bool(
+                getattr(cache_dataset(cache), "_completed", False)
+            ),
+            synchronized=parameter_name in synchronized,
+        )
+
+
+def restore_cache_parameter_publication_state(
+        cache,
+        parameter_name,
+        prior_state,
+        committed_state,
+        ):
+    """Rollback one stale callback unless another callback superseded it."""
+
+    with cache_lock(cache):
+        current_state = snapshot_cache_parameter_publication_state(
+            cache,
+            parameter_name,
+        )
+        if (
+                current_state.read_present != committed_state.read_present
+                or current_state.read_status != committed_state.read_status
+                or current_state.write_present != committed_state.write_present
+                or current_state.write_status != committed_state.write_status
+                or current_state.data_present != committed_state.data_present
+                or current_state.data is not committed_state.data
+                or current_state.dataset_completed
+                != committed_state.dataset_completed
+                or current_state.synchronized != committed_state.synchronized
+                ):
+            return False
+
+        for mapping, present, value in (
+                (cache_read_status(cache), prior_state.read_present, prior_state.read_status),
+                (
+                    cache_write_status(cache),
+                    prior_state.write_present,
+                    prior_state.write_status,
+                ),
+                (cache_data(cache), prior_state.data_present, prior_state.data),
+                ):
+            if present:
+                mapping[parameter_name] = value
+            else:
+                mapping.pop(parameter_name, None)
+        cache_dataset(cache)._completed = prior_state.dataset_completed
+        set_cache_parameter_synchronized(
+            cache,
+            parameter_name,
+            prior_state.synchronized,
+        )
+        return True
 
 
 def update_cache_parameter_data(

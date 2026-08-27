@@ -872,28 +872,21 @@ class TemporaryConfigTestCase(unittest.TestCase):
                 app.setApplicationDisplayName(old_display_name)
 
     def test_run_returns_qt_event_loop_exit_status(self):
-        class Application:
-            def setApplicationName(self, _name):
-                pass
-
-            def setApplicationDisplayName(self, _name):
-                pass
-
-            def exec(self):
-                return 7
-
-        application = Application()
+        arguments = ["qplot", "-platform", "offscreen", "example.db"]
         with (
-            patch.object(qplot_main.qtw, "QApplication", return_value=application),
-            patch.object(qplot_main, "MainWindow", return_value=object()),
-            patch.object(qplot_main, "configure_logging"),
-            patch.object(qplot_main, "install_excepthook"),
-            patch.object(qplot_main, "log_event"),
-            redirect_stdout(io.StringIO()),
-            ):
+            patch.object(qplot_main.sys, "argv", arguments),
+            patch(
+                "qplot._shutdown_supervisor.launch_gui",
+                return_value=7,
+            ) as launch_gui,
+        ):
             exit_status = qplot_main.run(database_path="example.db")
 
         self.assertEqual(exit_status, 7)
+        launch_gui.assert_called_once_with(
+            original_argv=arguments,
+            database_path="example.db",
+        )
 
     def test_main_window_uses_configured_default_refresh_rate(self):
         cfg = config()

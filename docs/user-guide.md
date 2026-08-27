@@ -17,63 +17,92 @@ You can also open a database directly from the command line:
 qplot path/to/database.db
 ```
 
-### Current GUI snapshot behavior
+### Trusted-first loading and progressive metadata
 
-The current qPlot GUI opens QCoDeS databases without changing the database file
-or any SQLite `-wal`, `-shm`, or `-journal` files beside it. When no sidecar is
-present, a rollback-format database is opened with SQLite's normal read-only
-locking. A checkpointed WAL-format database is copied to a private snapshot
-before using immutable read-only mode. Both paths work when the source file and
-its directory are read-only.
+For a supported same-host local database, qPlot first opens the trusted live
+reader. One application broker keeps one persistent helper for the exact
+accepted database instance. It publishes the basic run list before querying any
+result table, checks the same helper for later commits, and fills cheap and
+expensive metadata progressively in the background. The selected run is loaded
+first, then visible rows in viewport order, then the remaining table. If the
+window is left undisturbed, every safely bounded run field completes. Large
+descriptions and parameter metadata are deferred from the first run-list page;
+an individual field that exceeds the fixed detail budget is left unavailable
+rather than causing the trusted read to fail and retry.
 
-When a WAL exists, the GUI loader never applies immutable mode to the source
-because that would hide committed rows which have not yet been checkpointed. It
-accepts a database-and-WAL view only when it can establish that the WAL descends
-from the selected main file. An ordinary SQLite WAL contains page updates,
-salts, and checksums for its own frames, but no unique identity of the main
-database. Matching filenames, locations, timestamps, or file identities
-therefore cannot prove the pairing. If the GUI first observes an ordinary QCoDeS
-database with an uncheckpointed WAL, it fails closed instead of risking data
-from an unrelated database or silently showing the older main-file state.
+Selecting a run performs no synchronous database or snapshot read. In a
+trusted session, qPlot shows cached basic values and loading placeholders
+immediately, then applies a plain detail view only if the database instance,
+selection generation, and GUID are still current. Reselecting an unchanged run
+can use that exact-instance cache, and trusted sessions obtain missing detail
+through their broker. Snapshot-fallback
+sessions stop at cached run-list basics and an unavailable detail state: row
+selection starts no selected-detail reader, prepares no additional
+selected-detail snapshot, and creates no QCoDeS `DataSet`. This applies only to
+ordinary selection: fallback metadata and retained preview paths can still
+create private snapshots. Rich fallback details remain deferred until a later
+stage; explicit plot and CSV actions still materialise their action-owned
+snapshots.
+For a very large or actively changing result source, qPlot prefers its planned
+shape and labels storage as estimated. An observed shape or distinct step count
+that would require a whole-table scan can remain unknown; this keeps each live
+reader transaction short enough for the acquisition's checkpoints to progress.
 
-A stably observed zero-byte WAL contains no frames and is treated as having no
-pending WAL data. qPlot still leaves that source sidecar untouched.
+Trusted live access uses SQLite's real colocated WAL index, so committed rows
+that exist only in an active WAL are visible without copying or checkpointing
+the database. Main-database, WAL, and rollback-journal handles remain physically
+read-only. SQLite may create or update only the exact colocated `-shm` file as
+transient WAL coordination state; its contents, size, timestamps, or permission
+mode may therefore change. Transactions are short so the owning QCoDeS writer
+can continue committing and checkpointing.
 
-To open such an ordinary QCoDeS database safely, close every QCoDeS, SQLite,
-Python, and notebook connection that owns it cleanly, then retry. SQLite
-normally checkpoints the WAL when the final connection closes. If the WAL
-remains, checkpoint it using the application or writer that owns the database
-before retrying. The GUI snapshot path never checkpoints, recovers, deletes, or
-otherwise changes an input database or any of its sidecars.
+After path validation, identity capture, and any required cloud hydration,
+qPlot attempts the trusted open and basic query before the legacy access probe.
+Snapshot fallback is considered only when the exact type of that initial-open
+failure says the pinned native backend is genuinely unavailable or the source
+or filesystem is explicitly unsupported. The old probe must then verify that a
+safe snapshot can be taken. Cancellation, timeout, busy state, source
+replacement, invalid database, source I/O, rejected or failed SQL, result-limit
+failure, helper crash, protocol failure, forced termination, and uncertain
+cleanup are reported directly and never trigger a silent retry or fallback.
 
-An observed rollback `-journal` is handled the same way: qPlot copies it with
-the main database and any permitted WAL, then checks the source file identities
-and journal state before accepting the snapshot. SQLite may recover an active
-journal only on that private copy. A cold PERSIST journal with an invalidated
-header and a zero-length TRUNCATE journal are accepted normally; neither blocks
-a valid database or causes qPlot to alter the source artifact.
+If trusted access is unavailable for an ordinary active WAL and the snapshot
+probe cannot prove the WAL belongs to the selected main file, qPlot reports an
+actionable error. It never hides WAL-only commits by showing the older main-file
+state.
 
-Generated test databases carry explicit provenance that ordinary SQLite files
-lack: a unique generation token and a bounded chain of random, parent-linked
-lineage events. qPlot copies a candidate main and WAL to a private
-system-temporary directory, checks that the source did not change during
-capture, and accepts the WAL only when its chain is a strict descendant of the
-exact main-file chain head. A higher counter from a divergent clone is not
-enough. The source `-shm` is not opened by this GUI snapshot path, and private
-snapshot files are removed when their connection closes.
+### Snapshot fallback and deferred actions
 
-### Non-default trusted live reader
+The retained snapshot path is used for the narrow fallback above, explicit plot
+or CSV actions that still need a QCoDeS `DataSet`, and the deferred Database
+Information diagnostic. A quiescent
+rollback-format source can use SQLite's normal read-only locking. A checkpointed
+WAL-format source is copied to a private snapshot before immutable read-only
+mode is used. An observed rollback `-journal` is copied with the main database
+and any permitted WAL, and SQLite may recover it only on that private copy.
+Source identities and journal state must remain stable throughout capture.
 
-The package also contains a non-default trusted live-reader API for later
-application integration. Unlike the GUI snapshot path, it uses SQLite's real
-colocated WAL index: the main database, WAL, and rollback journal stay read-only,
-but SQLite may create or update the exact `-shm` file as transient coordination
-state. A trusted live read can therefore change SHM contents or metadata without
-checkpointing or writing experimental data. It accepts only supported same-host
-local filesystems and keeps read transactions intentionally short so writer
-checkpoints and WAL resets are not delayed. See
-[Trusted live QCoDeS reader](trusted-live-reader.md) for its boundary and current
-non-UI status.
+When a WAL must be copied, qPlot accepts it only when the snapshot path can
+prove that it descends from the selected main file. An ordinary SQLite WAL has
+frame salts and checksums but no unique identity for its main database, so
+matching names, directories, timestamps, or file identities are not proof. A
+stably observed zero-byte WAL contains no frames and is treated as having no
+pending WAL data. The source database and sidecars are left untouched, and all
+private files are removed when their owning connection closes.
+
+Automatic default selection, scrolling, and metadata completion do not launch
+legacy preview or thumbnail snapshot workers during a trusted live session.
+Snapshot fallback sessions may retain their current preview behavior. The
+trusted preview/thumbnail scheduler and disk-backed cache are deliberately
+deferred to Stage 5. Explicit plot and CSV actions remain available through
+their action-owned snapshots and the selected GUID and exact database instance.
+
+Generated test databases carry provenance for snapshot consumers that ordinary
+SQLite files lack: a unique generation token and a bounded chain of random,
+parent-linked lineage events. On a private copy qPlot accepts the WAL only when
+its chain is a strict descendant of the exact main-file chain head; a higher
+counter from a divergent clone is not enough. The source `-shm` is not opened by
+the snapshot path.
 
 The private WAL checksum scan also requires every committed transaction to
 carry the lineage-state page. A later valid provenance commit therefore cannot
@@ -81,8 +110,9 @@ bless earlier uninstrumented frames. If the valid WAL prefix is malformed or a
 transaction has no lineage event, qPlot fails closed with checkpoint guidance.
 
 SQLite has no persistent database-wide write trigger. If a QCoDeS script will
-add new measurements to a generated database, enable qPlot provenance on the
-writer's QCoDeS connection before creating the `Measurement`:
+add new measurements to a generated database and those writes must remain
+available to snapshot consumers before checkpointing, enable qPlot provenance
+on the writer's QCoDeS connection before creating the `Measurement`:
 
 ```python
 from qcodes.dataset import load_or_create_experiment
@@ -191,8 +221,13 @@ progress.
 
 The run table gives a compact view of each run, including measurements,
 setpoints, start time, completion state, duration, and estimated size. The
-details pane shows the selected run's overview, parameters, preview images, and
-raw metadata.
+details pane fills the selected run's overview, parameters, bounded setpoint
+summary, snapshot fields, and raw metadata progressively. During a trusted live
+session its preview area remains deferred rather than starting an automatic
+snapshot worker. In snapshot fallback, ordinary selection shows cached run-list
+basics rather than starting an additional selected-detail snapshot. Fallback
+metadata and the separately retained legacy-preview path can still create
+private snapshots.
 
 Right-click the run-table header and open **Columns** to show or hide any
 column, including Experiment, Sample, Name, Completed, and GUID. Column choices
@@ -236,17 +271,21 @@ Common actions:
   on macOS and `Ctrl+Q` on Windows and Linux.
 * The refresh interval controls how often qPlot checks for new runs. Set it to
   `0.0 s` to disable automatic checks.
-* `Auto-plot` opens newly detected runs automatically. When enabled while a run
-  is already in progress, it also opens the newest running run immediately.
+* `Auto-plot` retains its existing behavior for snapshot fallback sessions.
+  Trusted live Stage 4 does not materialise an action-owned plot dataset
+  automatically; use an explicit plot action instead.
 
-The selected-run preview tab can plot or export individual measurements through
-double-click and context-menu actions.
+Where a legacy preview is available, its double-click and context-menu actions
+can still request a plot or export. Trusted live sessions do not generate those
+previews automatically in Stage 4; use the run-table plot action or the run and
+measurement controls instead.
 
 ## Plotting a Measurement
 
 There are several ways to open plots:
 
-* Double-click a preview image in the run table or selected-run preview tab.
+* Double-click a preview image when one is available in a snapshot fallback
+  session.
 * Right-click a run in the run table and choose a plot action.
 * Enter a run ID and measurement number at the top of the main window, then
   press the plot button.
@@ -258,6 +297,11 @@ with two independent variables open as heatmaps. Measurements with three or
 more independent variables are not projected or averaged implicitly: qPlot
 shows an `nD` unsupported placeholder in the run table and leaves the data
 available for CSV export. Create an explicit 1D/2D slice before plotting it.
+
+Plot and CSV requests are the deliberate Stage 4 boundary: the action addresses
+the selected GUID and exact database instance, then acquires an action-owned
+snapshot and materialises the QCoDeS dataset. Merely loading, selecting, or
+scrolling a trusted live database does not do this work or copy the database.
 
 Plot windows may appear before their data has finished loading. Check the plot
 window status bar; unless qPlot stops responding or shows an error, wait for the
@@ -289,9 +333,9 @@ Common plot controls:
 
 ### Line Plots
 
-Line plots support multiple compatible traces in one window. To add a trace,
-drag a preview thumbnail from the run table onto an existing line plot. You can
-also use the left panel.
+Line plots support multiple compatible traces in one window. When a snapshot
+fallback session supplies a preview thumbnail, drag it from the run table onto
+an existing line plot to add a trace. You can also use the left panel.
 
 Compatible plots are matched by independent variable name. The source plot
 window for an added trace can be closed after the trace is added. Live updates
@@ -305,13 +349,14 @@ When multiple traces use different Y axes:
 
 ### Heatmaps
 
-Heatmaps support multiple compatible maps in one window. Drag a heatmap preview
-thumbnail from the run table onto an existing heatmap to add it as a layer.
-Layers must use the same two independent variables with matching axis units and
-the same currently displayed dependent-value unit; their coordinate ranges and
-grid sizes may differ. If the two axes are in the opposite order, qPlot
-transposes the added layer automatically. An operation that temporarily makes
-units incompatible hides that layer until its units match again.
+Heatmaps support multiple compatible maps in one window. When a snapshot
+fallback session supplies a heatmap preview thumbnail, drag it from the run
+table onto an existing heatmap to add it as a layer. Layers must use the same
+two independent variables with matching axis units and the same currently
+displayed dependent-value unit; their coordinate ranges and grid sizes may
+differ. If the two axes are in the opposite order, qPlot transposes the added
+layer automatically. An operation that temporarily makes units incompatible
+hides that layer until its units match again.
 
 The left panel lists the heatmap layers. Added layers are translucent so that
 overlapping maps remain visible; use each layer's opacity control or remove
@@ -386,7 +431,8 @@ choose `Apply/Refresh`.
 The main window can export measurement data as CSV:
 
 * Select a run and use the CSV button.
-* Right-click a preview and choose the export action.
+* In a snapshot fallback session, right-click a preview and choose the export
+  action.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
 `Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or

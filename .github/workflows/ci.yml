@@ -212,14 +212,24 @@ jobs:
         run: >-
           python -m pytest --no-cov --maxfail=1
           --timeout=90 --timeout-method=thread --durations=20
+          tests/datahandling/test_read_sql.py
           tests/datahandling/test_readonly.py
           tests/datahandling/test_trusted_live.py
           tests/datahandling/test_trusted_live_partial_frames.py
           tests/datahandling/test_trusted_live_protocol.py
+          tests/datahandling/test_trusted_live_queries.py
           tests/datahandling/test_trusted_live_result_limits.py
+          tests/datahandling/test_trusted_live_service.py
+          tests/datahandling/test_trusted_live_stage4_integration.py
           tests/datahandling/test_trusted_live_supervisor.py
+          tests/datahandling/test_trusted_live_worker_integration.py
+          tests/datahandling/test_trusted_presentation.py
+          tests/datahandling/test_trusted_snapshot.py
+          tests/widgets/test_run_details.py
+          tests/windows/test_bounded_shutdown.py
           tests/windows/test_heatmap_layer_integration.py
           tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots
+          tests/windows/test_trusted_live_ui.py
 
       - name: Run compatibility test suite as a standard Windows user
         if: matrix.suite == 'compatibility' && runner.os == 'Windows'
@@ -231,14 +241,24 @@ jobs:
           $arguments = @(
             "-m", "pytest", "--no-cov", "--maxfail=1",
             "--timeout=90", "--timeout-method=thread", "--durations=20",
+            "tests/datahandling/test_read_sql.py",
             "tests/datahandling/test_readonly.py",
             "tests/datahandling/test_trusted_live.py",
             "tests/datahandling/test_trusted_live_partial_frames.py",
             "tests/datahandling/test_trusted_live_protocol.py",
+            "tests/datahandling/test_trusted_live_queries.py",
             "tests/datahandling/test_trusted_live_result_limits.py",
+            "tests/datahandling/test_trusted_live_service.py",
+            "tests/datahandling/test_trusted_live_stage4_integration.py",
             "tests/datahandling/test_trusted_live_supervisor.py",
+            "tests/datahandling/test_trusted_live_worker_integration.py",
+            "tests/datahandling/test_trusted_presentation.py",
+            "tests/datahandling/test_trusted_snapshot.py",
+            "tests/widgets/test_run_details.py",
+            "tests/windows/test_bounded_shutdown.py",
             "tests/windows/test_heatmap_layer_integration.py",
-            "tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots"
+            "tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots",
+            "tests/windows/test_trusted_live_ui.py"
           )
           & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
             -FilePath $python `

@@ -1,26 +1,25 @@
-import os
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from qplot.datahandling.file_identity import (
-    canonical_database_path,
-    database_file_identity,
-)
 from qplot.datahandling.qcodes_cache import (
     cache_has_no_written_data,
     cache_is_live,
     cache_parameter_is_synchronized,
+    restore_cache_parameter_publication_state,
     set_cache_dataset_completed,
     set_cache_parameter_synchronized,
+    snapshot_cache_parameter_publication_state,
     update_cache_parameter_data,
 )
 from qplot.datahandling.readonly import quarantine_wal_for_replaced_database
 from qplot.diagnostics import log_exception
 from qplot.tools import loader
 from qplot.tools.operation_registry import OperationValidationError
+
+from ._dataset_handle import DatasetKey, dataset_key_matches_current_source
 
 if TYPE_CHECKING:
     class _PlotRefreshBase(qtw.QMainWindow):
@@ -103,32 +102,23 @@ class PlotRefreshMixin(_PlotRefreshBase):
         return handle is not None and getattr(handle, "users", 0) > 0
 
 
-    def _source_database_is_current(self) -> bool:
-        """Stop this plot before a replaced main file can be read as its source."""
-
+    def _source_database_matches_key(self) -> bool:
+        """Return whether the retained key still exactly names its source."""
         dataset_key = self.__dict__.get("_dataset_key")
-        expected_identity = getattr(dataset_key, "database_identity", None)
+        if not isinstance(dataset_key, DatasetKey):
+            return True
         database_path = getattr(dataset_key, "database_path", None)
-        expected_resolved_path = getattr(
-            dataset_key,
-            "resolved_database_path",
-            None,
-        )
         if not database_path:
             return True
-        current_resolved_path = canonical_database_path(database_path)
-        current_identity = database_file_identity(database_path)
-        if (
-                expected_identity is None
-                and current_identity is None
-                and not os.path.isfile(database_path)
-                ):
-            return True
-        if (
-                expected_identity is not None
-                and current_identity == expected_identity
-                and current_resolved_path == expected_resolved_path
-                ):
+        return dataset_key_matches_current_source(dataset_key)
+
+
+    def _source_database_is_current(self) -> bool:
+        """Stop before a replaced main, WAL, or SHM can back this plot."""
+
+        dataset_key = self.__dict__.get("_dataset_key")
+        database_path = getattr(dataset_key, "database_path", None)
+        if self._source_database_matches_key():
             return True
 
         quarantine_wal_for_replaced_database(database_path)
@@ -140,7 +130,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
         monitor = self.__dict__.get("monitor")
         if monitor is not None:
             monitor.stop()
-        self.show_status("Database was replaced; reloading source data.", 5000)
+        self.show_status(
+            "Database or SQLite sidecar was replaced; reloading source data.",
+            5000,
+        )
         self.show_plot_state(
             "Database replaced",
             "qPlot is reloading the replacement before this plot can refresh.",
@@ -151,6 +144,141 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if callable(emit):
             emit(str(database_path))
         return False
+
+
+    def _begin_refresh_publication(self, worker: Any) -> None:
+        """Capture the cache and plot fields a callback may mutate."""
+
+        publication_generation = (
+            self.__dict__.get("_qplot_publication_generation", 0) + 1
+        )
+        self._qplot_publication_generation = publication_generation
+        cache = getattr(self.ds, "cache", None)
+        parameter_name = self.param.name
+        fields = {}
+        for name in (
+                "_live",
+                "_qplot_display_synchronized",
+                "_qplot_display_uses_direct_sql",
+                "axis_data",
+                "axis_param",
+                "dataGrid",
+                "display_param",
+                "last_ds_len",
+                ):
+            fields[name] = (name in self.__dict__, self.__dict__.get(name))
+        try:
+            prior_cache = (
+                snapshot_cache_parameter_publication_state(
+                    cache,
+                    parameter_name,
+                )
+                if cache is not None
+                else None
+            )
+        except AttributeError:
+            # Narrow legacy/test cache doubles may not expose QCoDeS' private
+            # status mappings. They cannot receive the shared-cache mutation
+            # guarded here, but their plot fields still need rollback state.
+            prior_cache = None
+        worker._qplot_publication_snapshot = {
+            "cache": cache,
+            "parameter_name": parameter_name,
+            "prior_cache": prior_cache,
+            "committed_cache": None,
+            "fields": fields,
+            "generation": publication_generation,
+        }
+        worker._qplot_source_rejected = False
+
+
+    @staticmethod
+    def _record_refresh_cache_publication(worker: Any) -> None:
+        snapshot = getattr(worker, "_qplot_publication_snapshot", None)
+        if (
+                not isinstance(snapshot, dict)
+                or snapshot.get("prior_cache") is None
+                ):
+            return
+        snapshot["committed_cache"] = snapshot_cache_parameter_publication_state(
+            snapshot["cache"],
+            snapshot["parameter_name"],
+        )
+
+
+    def _rollback_refresh_publication(self, worker: Any) -> None:
+        """Remove stale cache/axis state before replacement recovery runs."""
+
+        snapshot = getattr(worker, "_qplot_publication_snapshot", None)
+        if not isinstance(snapshot, dict):
+            return
+        owns_publication = bool(
+            self.__dict__.get("_qplot_publication_generation")
+            == snapshot.get("generation")
+            and worker is self.__dict__.get("worker")
+        )
+        if not owns_publication:
+            worker._qplot_display_commit_ready = False
+            worker._qplot_source_rejected = True
+            worker._qplot_publication_snapshot = None
+            return
+        committed_cache = snapshot.get("committed_cache")
+        if committed_cache is not None:
+            restore_cache_parameter_publication_state(
+                snapshot["cache"],
+                snapshot["parameter_name"],
+                snapshot["prior_cache"],
+                committed_cache,
+            )
+        for name, (present, value) in snapshot["fields"].items():
+            if present:
+                self.__dict__[name] = value
+            else:
+                self.__dict__.pop(name, None)
+        worker._qplot_display_commit_ready = False
+        worker._qplot_source_rejected = True
+        worker._qplot_publication_snapshot = None
+
+
+    def _refresh_publication_source_is_current(
+            self,
+            worker: Any,
+            *,
+            clear_display=None,
+            ) -> bool:
+        """Guard one cache/display publication boundary and fail closed."""
+
+        snapshot = getattr(worker, "_qplot_publication_snapshot", None)
+        if isinstance(snapshot, dict):
+            owns_publication = bool(
+                self.__dict__.get("_qplot_publication_generation")
+                == snapshot.get("generation")
+                and worker is self.__dict__.get("worker")
+            )
+            if not owns_publication:
+                # A nested same-source callback already owns the plot.  The
+                # older callback must stop harmlessly: rollback or renderer
+                # clearing here would corrupt the newer accepted publication.
+                worker._qplot_display_commit_ready = False
+                worker._qplot_publication_snapshot = None
+                return False
+        elif worker is not self.__dict__.get("worker"):
+            return False
+
+        if self._source_database_matches_key():
+            return True
+        self._rollback_refresh_publication(worker)
+        if callable(clear_display):
+            clear_display()
+        self._source_database_is_current()
+        return False
+
+
+    @staticmethod
+    def _commit_refresh_publication(worker: Any) -> None:
+        """Release rollback state after the concrete display committed."""
+
+        worker._qplot_publication_snapshot = None
 
     def _refresh_monitor_required(self, dataset: Any | None = None) -> bool:
         """Keep polling until this plot has committed its terminal display."""
@@ -216,6 +344,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if worker is None or worker is not self.__dict__.get("worker"):
             return False
         if getattr(worker, "is_cancelled", lambda: False)():
+            return False
+        if not self._refresh_publication_source_is_current(worker):
             return False
         if not getattr(worker, "_qplot_display_commit_ready", False):
             return False
@@ -301,6 +431,14 @@ class PlotRefreshMixin(_PlotRefreshBase):
             self.axis_options,
             **loader_kwargs,
             )
+        dataset_key = getattr(self, "_dataset_key", None)
+        if dataset_key is not None:
+            worker.expected_database_path = dataset_key.database_path
+            worker.expected_resolved_database_path = (
+                dataset_key.resolved_database_path
+            )
+            worker.expected_sidecar_identities = dataset_key.sidecar_identities
+            worker.sidecar_identities = dataset_key.sidecar_identities
         worker.dataset_length_at_start = self.ds.number_of_results
 
         if status_message is not None:
@@ -544,6 +682,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     )
                 return False
 
+            self._begin_refresh_publication(worker)
             # Update qcodes dataset variables if db read happened
             if worker.read_data:
                 cache = self.ds.cache
@@ -562,11 +701,16 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         ),
                     )
                 if not cache_updated:
+                    worker._qplot_publication_snapshot = None
                     self._queue_pending_refresh()
                     self.show_status(
                         "A newer refresh finished first; synchronising this plot...",
                         5000,
                         )
+                    return False
+
+                self._record_refresh_cache_publication(worker)
+                if not self._refresh_publication_source_is_current(worker):
                     return False
 
                 if not cache_has_no_written_data(cache):
@@ -660,22 +804,51 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         )
                     )
                 )
+            self._record_refresh_cache_publication(worker)
+            if not self._refresh_publication_source_is_current(worker):
+                return False
             return True
 
         except AttributeError as err:
             # If worker starts too quickly, overwrites data and spits out error.
             # This should no longer be possible so making error soft error.
+            # Keep the publication snapshot until the accepted source and this
+            # worker's ownership have both been revalidated.  In particular,
+            # an AttributeError after cache/axis mutation must not turn a
+            # simultaneous database replacement into a committed stale view.
+            if not self._refresh_publication_source_is_current(worker):
+                return False
             self.show_status(f"Refresh skipped: {err}", 10_000)
             self.show_plot_state("Refresh skipped", str(err), kind="error")
+            if not self._refresh_publication_source_is_current(worker):
+                return False
+            worker._qplot_publication_snapshot = None
             return None
+
+        except Exception:
+            # The concrete 1D/2D callback is not entered when the base
+            # publication raises.  Roll back an owned partial publication here;
+            # a source mismatch performs the same rollback and recovery inside
+            # the guard, while lost ownership leaves the newer callback alone.
+            if isinstance(
+                    getattr(worker, "_qplot_publication_snapshot", None),
+                    dict,
+                    ):
+                if self._refresh_publication_source_is_current(worker):
+                    self._rollback_refresh_publication(worker)
+            raise
 
         finally:  # Allow code to move on from wait_on_thread
             if worker is self.worker:
                 worker.running = False
                 self.end_wait.emit()
-                if not getattr(worker, "_qplot_display_commit_ready", False):
+                if (
+                        not getattr(worker, "_qplot_display_commit_ready", False)
+                        and not getattr(worker, "_qplot_source_rejected", False)
+                        ):
                     self._ensure_refresh_monitor()
-                self._schedule_pending_refresh()
+                if not getattr(worker, "_qplot_source_rejected", False):
+                    self._schedule_pending_refresh()
 
 
     @QtCore.pyqtSlot(Exception)

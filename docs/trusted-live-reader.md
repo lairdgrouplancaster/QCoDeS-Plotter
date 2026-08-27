@@ -7,11 +7,19 @@ process boundary around that reader. It sees the latest committed transaction,
 including pages that exist only in the WAL, and never exposes an APSW connection
 or cursor to its caller.
 
-The boundary is deliberately not connected to qPlot's application loading,
-workers, previews, plots, refresh scheduler, or thumbnail pipeline. Those paths
-continue to use `readonly.py` and its private snapshots. Stage 3 provides the
-persistent helper and hard process-level recovery infrastructure only; UI
-scheduling and application integration remain later stages.
+Stage 4 connects that boundary to qPlot through one Qt-independent application
+read broker per accepted database instance. Basic run loading, incremental
+refresh, progressive run metadata, and the selected run's plain detail view use
+the broker's one persistent supervisor and helper. The broker serialises finite
+jobs and keeps every blocking wait, cancellation, close, and process join away
+from the GUI thread.
+
+The integration remains deliberately narrower than the complete application.
+Explicit plot and CSV actions still acquire action-owned private snapshots.
+Automatic preview and thumbnail work is disabled for trusted live sessions;
+their broker scheduler and disk-backed cache remain Stage 5 work. A narrowly
+eligible snapshot fallback session may retain the existing snapshot preview
+behavior.
 
 ## Source-file boundary
 
@@ -284,6 +292,240 @@ also retire it. Every replacement helper must report the originally accepted
 main `DatabaseInstance`; after that match, `source_identity` is refreshed to
 report the replacement helper's current journal mode and WAL/SHM identities.
 
+## Stage 4 application broker and query adapter
+
+The broker owns exactly one `TrustedLiveReaderSupervisor` for one accepted
+`DatabaseInstance`. It does not run a blocking `supervisor.wait()` in a Qt event
+loop. An off-GUI execution path serialises startup, query, wait, cooperative
+cancellation, forced retirement, close, and join. Public cancellation marks or
+removes an exact queued request promptly while that control path performs any
+synchronous supervisor cleanup.
+
+Each request carries the database/session generation, a request identity,
+priority, finite deadline, and cancellation state. The queue is bounded, applies
+backpressure, coalesces deadline-compatible duplicates, and can promote
+unfinished work when the selection or viewport changes. Default-deadline
+duplicates share the first operation's bounded deadline; explicitly supplied
+deadlines coalesce only when they are equal. Results are consumed through
+request handles; the service exposes no completion callback or callback thread
+whose lifetime could delay retirement. Public cancellation and asynchronous
+close therefore only update bounded broker state and wake its control path. The
+scheduling heap is compacted to one entry per queued operation, so physical
+queue storage remains subject to backpressure as well as logical requests.
+The control path expires queued subscribers at their own monotonic deadlines
+even while the query dispatcher is waiting on another job. Initial supervisor
+startup receives a copied option set whose startup timeout is capped by the
+active request's remaining deadline. A failed, cancelled, timed-out,
+pre-empted, or protocol-invalid request is complete; a retry is a new explicit
+request rather than a replay of the old one.
+
+`qplot.datahandling.trusted_live_queries.TrustedMetadataQueryAdapter` is the
+fixed-query boundary above the supervisor. It uses only `query()`,
+`query_batch()`, and `data_version()` and returns immutable primitive records.
+It is parallel to, rather than a replacement for, the cursor-based snapshot
+functions in `readSQL.py`. Pure metadata transformations are shared so both
+paths produce compatible run dictionaries without pretending that the
+supervisor is a DB-API connection.
+
+The adapter targets the current QCoDeS database specification. It quotes every
+database-derived identifier and validates the known schema with allowed
+zero-row `SELECT` statements against the known tables and, where required, a
+run's result table. It does not use `PRAGMA table_info`, `PRAGMA database_list`,
+or a DB-API cursor. Several dependent results use `query_batch()` when they
+must share a repeatable-read transaction. Basic-run pages advance by `run_id`;
+selected-run layout pages advance through a captured `layout_id` watermark.
+The at-most-1,000-row basic page omits `parameters` and `run_description` and
+caps its six display-text fields before returning them. Per-run enrichment uses
+`octet_length` preflight plus type/length-guarded statement groups, with one
+4 MiB raw budget for the complete public detail. Selected layouts cap displayed
+text, total accepted bytes, and rows; omitted oversized fields are named in the
+plain view's `unavailable_fields` instead of triggering a result-limit replay.
+Result-table rows are never fetched merely to calculate metadata, counts,
+shapes, storage, or small setpoint summaries.
+
+Expensive metadata uses the current QCoDeS result-table contract: an append-only
+`id INTEGER PRIMARY KEY`. A primary-key `MAX(id)` captures a stable result
+prefix without scanning its payload. Whole-prefix distinct/shape aggregates run
+only when two consecutive filesystem-metadata observations agree and the
+combined main/WAL/journal source is at most 8 MiB with at most 100,000 result
+IDs; batches contain at most four statements so checkpoints can proceed between
+them. Larger or changing sources keep planned shapes, read first/last setpoint
+values only through fixed 4,096-ID edge windows (at most 32 per edge), group at
+most eight scalar-capped parameters per transaction, and mark their locally
+calculated storage size as estimated. The maximum edge-plan fanout is therefore
+256 transactions. They never scan `dbstat` or the full result table. If a large
+run has no valid planned shape, qPlot leaves the observed shape or distinct-step
+count unknown instead of opening an unbounded reader transaction.
+
+### Loading, scheduling, and refresh
+
+After necessary path validation, identity capture, and cloud-file hydration,
+qPlot attempts a bounded trusted open and basic query before invoking the legacy
+database access probe. Successful Stage 3 startup is the direct-access proof.
+Snapshot fallback is eligible only when the exact type of the initial-open
+failure reports that the native backend is genuinely unavailable or that the
+source or filesystem is explicitly unsupported. It then still requires the
+legacy probe to establish a safe snapshot view. The chosen access mode is
+retained with the accepted database for diagnostics and tests.
+
+Cancellation, deadline expiry, busy timeout, source replacement, SQL rejection,
+query or result-limit failure, source I/O, invalid database, helper crash,
+partial frame, protocol failure, forced termination, and cleanup quarantine are
+not fallback eligible. They are reported without silently replaying work or
+showing a stale main-file-only view. An ordinary active WAL that is unsupported
+by trusted access and cannot pass the legacy snapshot proof produces actionable
+owner/checkpoint guidance instead of omitting WAL-only commits.
+
+The basic run list has the highest priority and is published before any result
+table is queried. Pagination first captures a maximum-`run_id` watermark and
+reads only through that watermark. The first incremental refresh begins after
+it, so a commit during bootstrap is found once without being lost or duplicated.
+Subsequent priority is lightweight commit discovery; selected-run cheap then
+expensive detail; visible runs in viewport order; and all remaining runs in
+stable table order. Promotion does not submit duplicate work, and the stable
+drain ensures all metadata finishes when interaction stops. After at most eight
+foreground dispatches, the oldest queued background operation receives a real
+supervisor transaction. Between transactions, a multi-query background adapter
+call may cooperatively run one strictly higher-priority queued operation on the
+same dispatcher, then resumes its original stack without replay.
+
+The same helper supplies `PRAGMA data_version`. If it is unchanged and the
+application has accepted every discovered page, refresh avoids redundant
+metadata queries. The application's accepted `run_id` cursor is passed back to
+the adapter, so a page cancelled or rejected before GUI publication is
+reconciled even when `data_version` is unchanged. If the version changes, qPlot
+fetches only runs after that accepted cursor and refreshes the selected run plus
+watched unfinished runs; visible watched rows retain viewport priority. Schema
+facts are invalidated and revalidated after a version or helper-incarnation
+change. `data_version` is scoped to a helper incarnation: replacement starts a
+fresh baseline and explicit targeted reconciliation. Refresh samples the
+incarnation immediately before and after `data_version`, so an idle helper that
+is replaced while that probe is submitted cannot make an equal numeric version
+look unchanged.
+
+Ordinary selection performs no synchronous database access and no direct
+QCoDeS-dataset or snapshot I/O. It updates the selected GUID and run ID from the
+basic cache, displays basic values and loading placeholders immediately, then
+submits an asynchronous plain-detail request in a trusted session. That work is
+promoted through the broker, and its immutable view is applied only if the
+database instance, exact sidecars, selection generation, and GUID still match.
+Detail views are cached by that exact source and run identity.
+
+Snapshot-fallback selection is deliberately basic-only. It displays cached
+run-list fields and an unavailable detail state without starting a
+selected-detail worker, opening SQLite for detail, or preparing an additional
+selected-detail snapshot. This narrow guarantee applies only to ordinary row
+selection: fallback metadata and retained preview paths can still create
+private snapshots. Plotting and CSV export address the selected identity
+directly and materialise a QCoDeS dataset only after the explicit action.
+
+### Pending, active, and retired services
+
+When database B is loaded while A is displayed, A and its broker remain active
+until B succeeds. B owns a separate pending broker. Failure, cancellation, or a
+stale B completion closes that pending broker and leaves A usable; a successful
+load revalidates B, atomically promotes its broker and UI generation, and then
+retires A. A stale callback still owns and retires its pending service before it
+returns.
+
+Retired brokers remain strongly owned while asynchronous shutdown finishes.
+Close, reload, source/sidecar replacement, synthetic database generation, and
+application quit invalidate the correct broker and prevent late results from
+crossing instances. Shutdown liveness includes query-dispatch and control
+threads, the helper process and receiver, every parent pipe endpoint,
+quarantined/unreaped incarnations, and outstanding requests. Broker `closed`
+means query dispatch has ended; it is not sufficient to release ownership while
+`resource_cleanup_pending` remains true. A 100 ms runtime timer performs only
+zero-wait reaps while the retired set is non-empty and stops itself when cleanup
+finishes. Application quit has one 15-second monotonic overall deadline. Its
+first deferred poll repeats cancellation and zero-wait cleanup. The last 250 ms
+of the same bound is reserved for diagnostic persistence. Escalation exceptions
+remain separate from the newest liveness scan so neither can overwrite the
+other. Diagnostic log persistence runs on an independent pre-deadline path, so
+blocked logging or fsync cannot delay process termination. A lightweight
+launcher establishes full qPlot-tree containment before Qt or reader helpers
+can start. The CLI process is itself that launcher; public `qplot.run()` first
+starts a dedicated Python launcher so the acquisition caller, its writer thread,
+and unrelated children remain outside qPlot's termination boundary. POSIX gives
+the GUI a dedicated session/process group and retains its
+unreaped leader; Windows atomically assigns the suspended GUI to a retained
+kill-on-close Job Object at process creation and keeps the job and process
+handles. Signal guards and the bounded absolute startup interval are installed
+before spawn. A setup, containment, authentication, or never-`HELLO` failure
+before authenticated `READY` tears down and reaps that contained tree without
+extending the startup bound. After `READY`, pre-`ARM` EOF or malformed traffic
+is observe-only.
+
+After confirmation, the GUI sends one authenticated `ARM` message carrying the
+unchanged absolute deadline. The launcher commits the first authenticated
+finite deadline immediately after decoding it, before acknowledgement
+construction or transmission, and has no `DISARM` transition. After that
+commit, EOF, invalid or duplicate traffic, and a lost or unconstructable
+acknowledgement cannot cancel or extend the deadline. Exact startup, protocol,
+termination, and reap errors remain present alongside the newest final resource
+state whenever diagnostics can be written.
+
+The launcher stays armed across `app.exec()` return and explicit destruction of
+qPlot's window, owned thread pools, and application after a fresh complete
+liveness scan proves normal cleanup. An exhausted deadline or non-quiescent
+final scan reaches the process-boundary wait before any potentially blocking Qt
+destructor. Otherwise the launcher kills first and then reaps the same child at
+the original 15-second total deadline rather than relying on
+`QApplication.quit()`. POSIX kills only the dedicated group, retains its
+unreaped leader through every positive-signal retry, reaps the leader's exact
+status, and thereafter uses only signal-zero observation until the group is gone.
+Windows terminates only through the retained job/process handles and closes
+them only after the direct process is signalled and the job is empty. Neither
+path releases live containment after a transient kill or reap failure. The
+GUI's same-deadline `_exit` fallback is a backstop, while the independent
+launcher remains the guarantee when native Qt code indefinitely holds the
+Python GIL. POSIX launcher termination signals are re-raised after tree cleanup
+so the launcher keeps true signal semantics. QCoDeS writers and test sentinels
+created outside the qPlot group or job remain outside its termination boundary.
+
+The public launcher authenticates a separate bounded result channel before it
+can spawn the GUI. No GUI or helper inherits its endpoint. It publishes the
+normal status, forced status 70, retained diagnostics, or a non-destructive
+negative POSIX signal number only after whole-tree cleanup, then keeps the
+endpoint open until launcher process death. EOF therefore remains authoritative
+when a caller thread has already reaped the launcher with `waitpid(-1)`. A
+protocol or unexpected-launcher failure returns 70 rather than signalling or
+hard-exiting the QCoDeS acquisition process.
+
+That channel also has one authenticated caller-to-launcher control direction.
+If the API caller is interrupted while waiting, its first `KeyboardInterrupt`,
+`SystemExit`, or other control-flow exception is retained while an immutable
+cancellation record causes the existing group/Job owner to terminate and reap
+the GUI and trusted-reader helper. Repeated interruption cannot release
+containment or replace the first exception, including during cancellation lock
+entry, deadline setup, partial sending, EOF fallback, result processing,
+launcher waiting, or final diagnostic publication. One dedicated writer owns
+the cancellation direction. A serialized one-time lifecycle makes concurrent
+cleanup and result-reader requests share one worker object/start attempt, or one
+committed EOF fallback when startup fails. It persists its send offset and
+resolves to a full authenticated record or irreversible write-side EOF without
+holding its lifecycle lock during socket I/O. The temporary SIGINT guard saves
+the exact caller handler once and transactionally verifies both installation and
+restoration if interruption lands after the real signal side effect. The
+exception is re-raised only after an authenticated final outcome, launcher EOF,
+and exit/reap observation; caller disappearance
+before the outcome is equivalent to cancellation. Pre-`READY` POSIX cleanup
+closes the listener and waits for the bounded bootstrap self-exit without
+signalling a potentially stale PID.
+
+`qplot.run(return_objects=True)` is intentionally different: it runs inside the
+caller's process and returns caller-owned Qt objects. It does not acquire this
+launcher containment or process hard-deadline guarantee.
+
+### Stage 5 boundary
+
+Trusted live loading, automatic default selection, scrolling, and metadata
+completion do not launch legacy snapshot-backed preview or thumbnail workers.
+Snapshot fallback sessions may retain their current preview behavior. Stage 4
+does not add preview or thumbnail work categories to the broker and does not
+create a disk-backed derived-data cache. Integrating those paths, scheduling
+their rendering, and adding that cache are the precise Stage 5 work left undone.
+
 ## Finite operations and errors
 
 `TrustedLiveReader.open()` returns an owner-thread-bound reader with a finite
@@ -346,7 +588,9 @@ the allowed SHM coordination operations used by tests and diagnostics.
 - The native control channel permits one trusted reader per process. Close that
   reader before opening another. Each Stage 3 helper owns exactly that one
   reader, and each supervisor serialises its finite jobs. Independent supervisors
-  provide isolation in independent helper processes.
+  provide isolation in independent helper processes. Stage 4 creates exactly one
+  supervisor for each pending or active application broker and serialises all
+  access to it.
 - The supervisor does not silently replay a job after cancellation, timeout,
   crash, source replacement, cleanup quarantine, or a protocol error. Recovery
   requires a later explicit operation or session, which starts a fresh process

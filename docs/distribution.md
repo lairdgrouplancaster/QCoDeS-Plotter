@@ -93,18 +93,44 @@ source inventory, so omitting any helper module fails validation. The helper is
 not a console entry point; the supervisor starts its package-level target with
 the multiprocessing `spawn` context.
 
+The Stage 4 fixed-query adapter and application read broker are ordinary
+installed Python modules as well. The same exact source-inventory comparison
+requires them in every wheel, while `graft src` and `graft tests` require all
+Stage 4 modules, tests, and fixtures in the sdist. Mypy lists new application
+modules explicitly. The Qt-free `_shutdown_supervisor` module is packaged by
+the same inventory and runs behind the existing `qplot` entry point: the
+entry-point process establishes complete qPlot-tree containment before the GUI
+imports Qt or starts helpers. POSIX uses a dedicated child session/process group
+anchored by its retained unreaped leader. The installed
+`_windows_shutdown_job` module instead uses retained handles and atomically
+assigns the suspended GUI to a kill-on-close Job Object as part of process
+creation. Stage 4 changes no console entry-point declaration or version
+metadata.
+Its trusted-first run list, refresh, progressive metadata, and selected plain
+view share one broker-owned supervisor. Snapshot fallback remains a narrow
+initial-open outcome; ordinary fallback selection is basic-only and starts no
+selected-detail worker or additional selected-detail snapshot. Fallback
+metadata and retained preview paths can still create private snapshots.
+Explicit plot/CSV snapshots remain deferred DataSet consumers. Existing
+fallback previews remain separately permitted, while the trusted Stage 5
+preview/thumbnail scheduler and disk cache are not packaged as implemented
+features.
+
 The CI workflow is configured to build from clean checkouts on Python 3.12. The
 Linux package job builds the sdist and Linux wheel, compares their contents with
 the source tree, runs the extracted sdist's complete test suite in an isolated
 virtual environment, and installs and exercises the wheel in another
 environment. Dedicated ARM64 macOS, Intel macOS, and Windows jobs build their
-platform wheels from source and run the same installed-wheel helper smoke test.
+platform wheels from source and run the same installed-wheel smoke tests. The
+Python 3.12 and 3.13 compatibility subsets include focused Stage 4 coverage in
+addition to the retained Stage 2/3 files.
+
 The validator writes a real `if __name__ == "__main__"`-guarded smoke script
 into a temporary directory outside the repository and runs it with isolated
-Python. The script keeps a temporary WAL writer open and uses
-`TrustedLiveReaderSupervisor` to read committed WAL-only data, has that same
-persistent helper observe a later writer commit, checks that mutating SQL is
-rejected, rejects a nine-column oversized live SQLite row with the distinct
+Python. The retained direct Stage 3 exercise keeps a temporary WAL writer open
+and uses `TrustedLiveReaderSupervisor` to read committed WAL-only data, has that
+same persistent helper observe a later writer commit, checks that mutating SQL
+is rejected, rejects a nine-column oversized live SQLite row with the distinct
 result-limit error before it can cross IPC, and proves that the same helper
 remains usable after clean rollback and both length-limit restorations. It also
 injects uncertain per-statement limit restoration, proves that exact helper is
@@ -114,13 +140,53 @@ phase that the main database, WAL, and rollback journal were not changed; SHM
 coordination changes are allowed. Running a real guarded script makes the
 package-level helper target and Windows `spawn` startup part of the test rather
 than relying on source-tree imports or a `python -c` main module.
+
+The same outside-repository script separately exercises the installed Stage 4
+application adapter against a writer-held, current-schema QCoDeS-shaped WAL
+fixture. It reads a basic run page and cheap metadata, observes a later commit
+through the same broker-owned helper, keeps accepted source A alive until source
+B has opened and read its basic page, then proves A retires while B remains
+usable. It also permits writer checkpoint progress and audits protected
+artifacts through the application boundary. The source test suite additionally
+proves GUI publication ordering and atomic pending/active database switching.
+This extends rather than replaces the direct supervisor smoke.
+
+The installed-wheel checks also invoke the installed shutdown launcher rather
+than substituting a source-tree module. They exercise both the unchanged CLI
+launcher and the actual public `qplot.run()` dedicated-launcher boundary. They
+require a normal GUI child status of 17 to pass through unchanged even when a
+foreign POSIX `waitpid(-1)` thread collects the API launcher, verify
+non-destructive signal and protocol-EOF mappings, force a deadline while the GUI
+holds the GIL, and run a real stuck `TrustedLiveReaderSupervisor` helper inside
+the API boundary. They also deliver a first caller control-flow exception and a
+second exception after the temporary SIGINT guard's real installation side
+effect while that helper is stuck. A separate installed concurrency probe races
+two requesters through worker lookup, creation, assignment, and start and
+requires one worker, one start, one sending thread, and one exact cancellation
+frame. The smoke then kills a disposable API caller after launcher `READY`.
+Authenticated cancellation and caller-channel EOF must remove the launcher,
+GUI, and helper while preserving the exact first caller exception and its
+`SystemExit.code`. The acquisition
+caller and its active writer must survive,
+commit afterward, and retain its unrelated sentinel. Launcher completion
+must mean that the GUI and its complete contained helper tree have disappeared;
+printing that `app.exec()` returned is not process-termination evidence. The
+same smoke keeps an external sentinel and WAL writer outside the group or Job
+Object and proves they survive containment cleanup, continue making writer
+progress, and leave the protected main database, WAL, and rollback journal
+unchanged under the reader policy (with only exact SHM coordination changes
+permitted). A separate delegation check calls the actual installed `qplot`
+entry point.
+
 The Windows test suites and installed-wheel smoke run under a disposable local
 standard account because the trusted reader rejects the hosted runner's
 elevated token; CI separately verifies that elevated context is refused.
+
 The 32 MiB pre-yield result-row figure exercised by these checks is a logical
 Python-object/payload accounting envelope for standard APSW conversion, not an
 allocator-reserved-byte or process-RSS limit; the separate raw text/blob-payload
 bound is 8 MiB.
+
 Every artifact receives a `twine check` before upload. CI does not publish to
 PyPI or attach artifacts to GitHub releases. Cross-platform acceptance applies
 only after the Linux, ARM64 macOS, Intel macOS, and unprivileged Windows jobs
@@ -144,8 +210,8 @@ Before creating a tagged release:
 7. Run `python -m build`.
 8. Run `python scripts/validate_distribution.py dist`.
 9. Run `python -m twine check dist/*`.
-10. Confirm the validator ran the extracted sdist tests and installed spawned
-    trusted-WAL-helper wheel smoke check.
+10. Confirm the validator ran the extracted sdist tests, the installed direct
+    trusted-WAL-helper smoke, and the Stage 4 application-adapter smoke.
 11. Confirm unprivileged Windows, ARM64 macOS, Intel macOS, and Linux wheel jobs
     passed for the exact source.
 12. Run the manual GUI check from `CONTRIBUTING.md`.

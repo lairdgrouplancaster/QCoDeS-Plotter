@@ -196,8 +196,19 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
             return
 
         try:
+            clear_display = lambda: self.line.setData([], [])
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
             if not self._has_plottable_line_data():
                 self.line.setData([], [])
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
                 self.show_status(
                     f"Waiting for plottable data for {self.param.name}...",
                     5000,
@@ -206,9 +217,25 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
                     "Waiting for plottable data",
                     f"{self.param.name} has no finite line data yet.",
                     kind="empty",
-                    )
+                )
                 self.trace_updated.emit()
-                self._mark_display_synchronized(plot_worker)
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+                display_synchronized = self._mark_display_synchronized(
+                    plot_worker,
+                )
+                if (
+                    getattr(plot_worker, "dataset_completed", None) is True
+                    and not display_synchronized
+                ):
+                    return
+                if getattr(plot_worker, "_qplot_source_rejected", False):
+                    clear_display()
+                    return
+                self._commit_refresh_publication(plot_worker)
                 return
 
             # Main line
@@ -216,13 +243,41 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
                 x=self.axis_data["x"],
                 y=self.axis_data["y"],
                 )
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
             if self.marquee is not None:
                 self.set_marquee_rect(self.marquee)
 
             self.trace_updated.emit()
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
             self.refresh_secondary_lines()
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
             self._mark_display_synchronized(plot_worker)
+            if getattr(plot_worker, "_qplot_source_rejected", False):
+                clear_display()
+                return
+            self._commit_refresh_publication(plot_worker)
         finally:
+            if isinstance(
+                    getattr(plot_worker, "_qplot_publication_snapshot", None),
+                    dict,
+                    ):
+                if self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    self._commit_refresh_publication(plot_worker)
             plot_worker.running = False
             self._ensure_refresh_monitor()
 

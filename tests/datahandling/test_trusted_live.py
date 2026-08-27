@@ -685,6 +685,7 @@ def _posix_exclusive_lock_probe_process(
     start: int,
     length: int,
     control: Connection,
+    probe_now: Any | None = None,
 ) -> None:
     """Report whether a separate process can take one exclusive range lock."""
     descriptor = -1
@@ -692,6 +693,10 @@ def _posix_exclusive_lock_probe_process(
         import errno
         import fcntl
 
+        if probe_now is not None:
+            control.send(("ready", None))
+            if not probe_now.wait(30):
+                raise TimeoutError("deferred exclusive-lock probe was not released")
         descriptor = os.open(file_path, os.O_RDWR)
         try:
             fcntl.lockf(
@@ -1232,6 +1237,18 @@ def test_committed_qcodes_wal_rows_refresh_on_one_persistent_reader(
             (1, "later", 17),
         )
         _assert_safe_audit(reader.audit().counters)
+
+
+def test_zero_row_select_retains_validated_result_columns(
+    live_writer: _QcodesWalWriter,
+) -> None:
+    with TrustedLiveReader.open(live_writer.database_path) as reader:
+        result = reader.query(
+            "SELECT run_id, guid FROM runs WHERE 0",
+        )
+
+        assert result.columns == ("run_id", "guid")
+        assert result.rows == ()
 
 
 def test_wal_and_shm_may_appear_between_finite_reader_operations(
@@ -2157,7 +2174,10 @@ def test_long_query_interruption_rolls_back_and_releases_locks(
 def test_sparse_large_database_is_read_directly_without_a_full_size_copy(
     tmp_path: Path,
 ) -> None:
-    sparse_size = 64 * 1024**2 if os.name == "nt" else 32 * 1024**3
+    # Keep the native no-copy integration fixture physically modest on every
+    # platform.  Logical 32-GiB arithmetic is covered by stat/payload proxies in
+    # test_trusted_live_queries.py, without creating a 32-GiB filesystem path.
+    sparse_size = 64 * 1024**2
     writer = _QcodesWalWriter.start(
         tmp_path / "sparse.db",
         sparse_size=sparse_size,
@@ -2369,40 +2389,75 @@ def test_process_session_is_exclusive_and_reusable_after_close(
 @pytest.mark.skipif(os.name == "nt", reason="POSIX fcntl main-lock proof")
 def test_rejected_second_reader_does_not_drop_first_reader_main_lock(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database_path = tmp_path / "exclusive-rollback.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
+    context = multiprocessing.get_context("spawn")
+    parent_control, child_control = context.Pipe(duplex=True)
+    probe_now = context.Event()
+    process = context.Process(
+        target=_posix_exclusive_lock_probe_process,
+        args=(
+            str(database_path),
+            _SQLITE_UNIX_SHARED_FIRST_BYTE,
+            _SQLITE_UNIX_SHARED_BYTE_COUNT,
+            child_control,
+            probe_now,
+        ),
+        name="qplot-test-deferred-exclusive-lock-probe",
+    )
+    process.start()
+    child_control.close()
+    try:
+        assert parent_control.poll(60), "Deferred DMS lock probe did not start"
+        kind, payload = parent_control.recv()
+        assert kind == "ready", f"Deferred DMS lock probe failed:\n{payload}"
 
-    with TrustedLiveReader.open(database_path) as first:
-        outcomes: list[type[BaseException] | bool] = []
+        with TrustedLiveReader.open(database_path) as first:
+            outcomes: list[bool] = []
+            original_progress_handler = first._progress_handler
 
-        def reject_second_and_probe_lock() -> None:
-            time.sleep(0.05)
-            with pytest.raises(
-                TrustedLiveReaderUnavailableError,
-                match="existing trusted reader",
-            ):
-                TrustedLiveReader.open(database_path)
-            outcomes.append(
-                _posix_exclusive_lock_is_available(
-                    database_path,
-                    start=_SQLITE_UNIX_SHARED_FIRST_BYTE,
-                    length=_SQLITE_UNIX_SHARED_BYTE_COUNT,
+            def reject_second_and_probe_lock(control: Any) -> bool:
+                abort_requested = original_progress_handler(control)
+                if abort_requested or outcomes:
+                    return abort_requested
+                with pytest.raises(
+                    TrustedLiveReaderUnavailableError,
+                    match="existing trusted reader",
+                ):
+                    TrustedLiveReader.open(database_path)
+                probe_now.set()
+                assert parent_control.poll(30), "Deferred DMS lock probe timed out"
+                probe_kind, probe_payload = parent_control.recv()
+                assert probe_kind == "ok", (
+                    f"Deferred DMS lock probe failed:\n{probe_payload}"
                 )
-            )
+                outcomes.append(bool(probe_payload))
+                return original_progress_handler(control)
 
-        probe_thread = threading.Thread(target=reject_second_and_probe_lock)
-        probe_thread.start()
-        result = first.query(
-            "WITH RECURSIVE values_(n) AS ("
-            "SELECT 1 UNION ALL SELECT n + 1 FROM values_ WHERE n < 5000000"
-            ") SELECT (SELECT count(*) FROM runs), sum(n) FROM values_",
-            timeout=4.0,
-        )
-        probe_thread.join(10)
-        assert not probe_thread.is_alive()
-        assert result.rows[0][0] == 0
-        assert outcomes == [False]
+            monkeypatch.setattr(
+                first,
+                "_progress_handler",
+                reject_second_and_probe_lock,
+            )
+            result = first.query(
+                "WITH RECURSIVE values_(n, run_count) AS ("
+                "SELECT 1, (SELECT count(*) FROM runs) "
+                "UNION ALL SELECT n + 1, run_count FROM values_ WHERE n < 100000"
+                ") SELECT max(run_count), sum(n) FROM values_",
+                timeout=45.0,
+            )
+            assert result.rows[0][0] == 0
+            assert outcomes == [False]
+    finally:
+        probe_now.set()
+        process.join(10)
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
+        parent_control.close()
+    assert process.exitcode == 0
 
 
 def test_abandoned_reader_finalizer_releases_session_and_temp_directory(

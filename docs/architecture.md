@@ -158,38 +158,94 @@ reusable UI controls used inside plot windows.
 
 ## Data Loading
 
-`src/qplot/datahandling/readSQL.py` reads run metadata directly from the current
-QCoDeS SQLite database. It also computes summary fields used by the run table,
-including status, point counts, and storage size estimates.
+`src/qplot/datahandling/readSQL.py` contains the cursor-based snapshot query
+path and the pure metadata transformations shared with trusted access. Snapshot
+callers still use its dynamic cursor and QCoDeS-compatible operations; the
+trusted reader is not presented as a DB-API connection.
+
+`src/qplot/datahandling/trusted_live_queries.py` contains Stage 4's parallel
+fixed-query plans and primitive-result materialisation. Basic runs are paged by
+increasing `run_id`; selected-run layouts are paged through a captured
+`layout_id` watermark. The basic page defers large description/parameter
+scalars; per-run and layout values are byte-preflighted, guarded, cumulatively
+budgeted, and explicitly marked unavailable when they cannot safely cross the
+fixed public-detail envelope. Database-derived identifiers are quoted, and
+related reads use `query_batch()` when they need one repeatable-read
+transaction. Plans
+validate the current known QCoDeS schema with zero-row `SELECT` statements
+against the known tables (and result tables where needed); they do not issue
+`PRAGMA table_info`, return cursors or QCoDeS objects, or read result-table rows
+when counts, shapes, storage, or bounded setpoint summaries are sufficient.
+For current QCoDeS append-only result tables, expensive reads capture the
+integer-primary-key `id` watermark. Full-prefix aggregates are restricted to a
+small, twice-stable main/WAL/journal size and split into batches of at most four
+statements. Large or changing sources use planned shapes, fixed ID-window edge
+summaries grouped eight parameters at a time, and explicitly estimated storage;
+they do not run whole-table
+`COUNT`/`DISTINCT`/`GROUP BY` or `dbstat` scans.
 
 `src/qplot/datahandling/database.py` contains database-file access helpers,
 cloud-storage hydration, background main-window load workers, and database
 diagnostic report generation.
 
-`src/qplot/datahandling/readonly.py` centralises enforced read-only database
-access. Use these helpers for QCoDeS and direct SQLite connections so qPlot does
-not initialise, upgrade, or write to loaded QCoDeS databases. A quiescent
-rollback-format source uses direct `mode=ro` access so SQLite retains its normal
-read locks. A checkpointed WAL-format source is copied first and is opened with
-`immutable=1` only at that private path.
+The Stage 4 application read broker is Qt-independent and belongs to one exact
+accepted `DatabaseInstance`. It owns exactly one
+`TrustedLiveReaderSupervisor` and persistent helper, serialises all operations,
+and carries database/session generation, request identity, priority, deadline,
+and cancellation state with each bounded request. Its queue is bounded,
+coalesces deadline-compatible duplicates, promotes unfinished requests, applies
+backpressure, compacts its scheduling heap to the live queued operations, and
+publishes results only through request handles. It exposes no completion
+callback facility or callback thread that could hold retirement open. The
+deadline-aware control path expires queued requests while query dispatch is
+blocked. Blocking open, query, wait, cancel, close, and join work stays on
+broker/control threads, not the GUI thread. Initial helper startup is capped by
+the active request's remaining deadline.
 
-An accepted WAL or any observed rollback `-journal` routes access through a
-private snapshot. The main file is copied before the accepted sidecars, and
-main-file identity, header, sidecar identity, size, timestamps, and journal
-header/trailer state must remain stable across bounded retries. An observed
-journal is copied even when it is a cold PERSIST or zero-length TRUNCATE
-artifact. SQLite opens the private copy read-write only long enough to perform
-any permitted WAL inspection or rollback-journal recovery; the source is never
-opened in a mode that can recover or change it. Ambiguous or continuously
-changing state fails closed, and every private snapshot is removed after
-failure or when its owning connection closes.
+Broker priority is basic run-list bootstrap, lightweight commit discovery,
+selected-run cheap then expensive detail, visible rows in viewport order, and
+the remaining rows in stable table order. Promotion does not duplicate work,
+and stable-order draining prevents starvation when interaction stops. A bounded
+foreground burst advances the oldest background item even under recurring
+refresh, while job-free adapter transaction boundaries allow newly selected
+work to overtake a multi-transaction background operation without replaying it.
+Trusted ordinary selection renders cached basic values and loading placeholders
+immediately, then consumes an immutable plain detail view after
+database-instance, selection-generation, and GUID checks. It does not construct
+a fake or eager QCoDeS `DataSet`; the trusted session obtains that view through
+the broker.
+Snapshot-fallback sessions instead stop at cached run-list basics and an
+unavailable detail state: ordinary selection starts no selected-detail worker
+and prepares no additional selected-detail snapshot. This is a property of the
+selection action, not the whole fallback session: fallback metadata and retained
+preview paths can still create private snapshots. Only explicit plot and CSV
+actions materialise a DataSet.
 
-The non-default Stage 2 trusted live reader uses SQLite's real WAL index and
-native locking against the selected source without copying the database. Its
-native VFS keeps the main database, WAL, and rollback journal physically
-read-only. SQLite may mutate only the exact colocated `-shm` file as transient
-WAL coordination state, so a live read can change that file's contents or
-metadata without writing experimental data or checkpointing the database.
+`src/qplot/datahandling/readonly.py` centralises the retained snapshot path.
+Use these helpers for explicitly deferred QCoDeS/dataset consumers and the
+narrow snapshot fallback so qPlot does not initialise, upgrade, or write to a
+loaded source. A quiescent rollback-format source uses direct `mode=ro` access
+so SQLite retains its normal read locks. A checkpointed WAL-format source is
+copied first and is opened with `immutable=1` only at that private path.
+
+A WAL accepted by that retained snapshot policy, or any observed rollback
+`-journal`, routes the snapshot consumer through a private copy. The main file
+is copied before the accepted sidecars, and main-file identity, header, sidecar
+identity, size, timestamps, and journal header/trailer state must remain stable
+across bounded retries. An observed journal is copied even when it is a cold
+PERSIST or zero-length TRUNCATE artifact. SQLite opens the private copy
+read-write only long enough to perform any permitted WAL inspection or
+rollback-journal recovery; the source is never opened in a mode that can
+recover or change it. Ambiguous or continuously changing state fails closed,
+and every private snapshot is removed after failure or when its owning
+connection closes.
+
+The Stage 2 trusted live reader uses SQLite's real WAL index and native locking
+against the selected source without copying the database. Its native VFS keeps
+the main database, WAL, and rollback journal physically read-only. SQLite may
+mutate only the exact colocated `-shm` file as transient WAL coordination state,
+so a live read can change that file's contents or metadata without writing
+experimental data or checkpointing the database.
 
 The reader proves source binding from retained proof handles and SQLite's actual
 file handles, using device/inode identity on POSIX and volume/file identity on
@@ -269,9 +325,152 @@ match the originally accepted main `DatabaseInstance`; after that check, the
 public source identity is refreshed with the helper's current journal mode and
 WAL/SHM identities.
 
-Application loading, preview, plotting, and refresh continue to use the snapshot
-path above; UI scheduling and integration remain later stages. The WAL-provenance
-discussion below describes that snapshot path, not the trusted reader's native
+Stage 4 attempts trusted startup after only path validation, identity capture,
+and any necessary cloud-file hydration. A successful helper startup and basic
+query are the direct-access proof; the legacy access probe is not run first.
+Only a genuinely unavailable native backend or an explicitly unsupported
+source or filesystem is eligible for snapshot fallback, and fallback still
+requires the legacy probe to establish a safe snapshot view. Cancellation,
+deadline or busy expiry, source replacement, SQL/query/result-limit failure,
+invalid database or source I/O, helper exit, protocol failure, forced
+termination, and cleanup quarantine are terminal for that trusted attempt and
+are never silently retried, replayed, or converted to a snapshot.
+
+Basic runs are published before any result table is inspected. Pagination
+captures a bootstrap maximum-`run_id` watermark; the first incremental refresh
+reconciles commits made while those pages were being read. The same persistent
+helper supplies `PRAGMA data_version`. An unchanged value avoids redundant
+metadata work; a changed value fetches only later run IDs and refreshes only
+the selected run plus watched unfinished runs, with visible watched rows kept
+ahead of the remaining watched rows. A new helper
+incarnation establishes a new baseline and triggers explicit targeted
+reconciliation instead of comparing unrelated `data_version` values. Sampling
+the incarnation on both sides of the probe also catches replacement during the
+`data_version` submission itself.
+
+Loading a second database uses separate pending and active brokers. The active
+database remains committed until the pending database finishes successfully.
+Failure, cancellation, or a stale callback retires the pending broker; success
+revalidates and promotes it atomically before retiring the old one. Retired
+brokers remain owned until asynchronous shutdown proves their query/control
+threads, helper process, receiver, pipes, and requests have all finished. A
+100 ms zero-wait reaper runs only while retired brokers remain. Application
+shutdown repeats cancellation/cleanup once and uses one 15-second monotonic
+overall deadline. The final 250 ms diagnostic grace is inside, not after, that
+bound. A lightweight launcher starts a bounded absolute startup interval before
+setup and installs its termination-signal guards before process creation. The
+`qplot` and `python -m qplot` command-line process serves directly as that
+launcher. Public `qplot.run()` first starts a dedicated Python launcher, making
+that process—not the API caller—the sole GUI parent, reaper, and containment
+owner. On POSIX it creates the GUI in a new session and dedicated process group,
+retaining the unreaped group leader as its identity anchor. On Windows it creates a retained
+kill-on-close Job Object and uses the process-creation attribute list to assign
+the suspended GUI to that job atomically, before resuming its initial thread.
+It keeps the original process and job handles. Both mechanisms establish
+whole-qPlot-tree kill authority before the GUI can import Qt or spawn a reader
+helper. A QCoDeS writer or test sentinel started outside that group or job is
+outside the boundary and is never a termination target.
+
+Before the public launcher can create the GUI, it authenticates a private
+loopback result channel to its API caller within one bounded absolute startup
+interval. Only that launcher retains the descendant-side endpoint: the GUI and
+reader helpers cannot inherit it. The launcher sends a bounded authenticated
+outcome only after its existing supervision has proved the complete GUI tree
+gone, then exits without closing the endpoint early. Consequently EOF proves
+launcher death even when a caller-owned `waitpid(-1, WNOHANG)` thread collected
+its status first; result delivery does not depend on obtaining that wait status.
+Normal and forced statuses pass through unchanged. A POSIX signal is returned
+to the API caller non-destructively as `-signal_number`; only command-line or
+dedicated launcher processes may reproduce a signal or use a hard exit. Channel,
+protocol, or launcher failure returns 70 with retained diagnostics and never
+signals or hard-exits the API caller.
+
+The private API channel is full-duplex with exactly one reader in each
+direction. A caller-side result reader owns all launcher framing, so a main
+thread `KeyboardInterrupt`, `SystemExit`, or other control-flow exception
+cannot corrupt a partially received outcome. The caller sends one fixed,
+authenticated cancellation record through a dedicated sole writer. That writer
+has a serialized `NOT_STARTED`/`STARTING`/`RUNNING`/`EOF_FALLBACK`/`COMPLETE`
+lifecycle, so concurrent cleanup and result-reader requests can create one
+thread object and attempt its start only once. A failed create/start transition
+commits one synchronous EOF owner. The owner identity, creation attempt, worker
+object, and start attempt are durable before their respective transitions, so
+an interruption after a commit is resumed by that same requester while peers
+wait. A worker also handshakes through the lifecycle condition before socket
+I/O, preventing a late uncertain start from racing the committed EOF fallback.
+Neither lifecycle lock is held during bounded socket I/O; the writer records
+progress before any interruptible post-send work and resolves to either the
+complete frame or irreversible write-side EOF. The
+caller retains the exact first exception while later interruptions are absorbed
+through cancellation, outcome/EOF processing, launcher exit/reap observation,
+channel closure, and diagnostic publication. Its temporary SIGINT guard keeps a
+stable absorber reference, captures the caller's original handler exactly once,
+and separately verifies installation and restoration around interrupted
+`signal.signal` side effects. A launcher-side reader
+commits that cancellation, or authenticated-channel EOF when the caller
+disappears, into an immutable event. The existing supervision owner then makes
+whole-group or whole-Job termination its next external action. It sends the
+final outcome only after the tree is gone and keeps the endpoint open until
+launcher death; only after authenticated outcome, EOF, and exit/reap ownership
+are all observed does the API caller re-raise its original exception.
+Malformed, duplicate, unauthenticated, or late records cannot disarm or extend
+an existing GUI deadline. Before API-launcher `READY`, the caller closes the
+listener and relies on the launcher's bounded bootstrap self-exit; POSIX never
+targets a potentially stale numeric PID after a foreign reaper may have
+collected it.
+
+Only after containment and the child's authenticated `HELLO` does the launcher
+send `READY`. Setup, spawn, containment, authentication, never-`HELLO`, and
+other failures before `READY` retain exact diagnostics and terminate and reap
+the contained tree within the startup bound. Once `READY` has been committed,
+EOF or malformed traffic before `ARM` is observe-only: the launcher keeps
+ownership and waits for the GUI's real status instead of killing it. After quit
+confirmation the GUI sends one nonce-authenticated `ARM` carrying the already
+fixed absolute deadline. The launcher irrevocably stores the first finite
+authenticated deadline immediately after decoding it, before allocating or
+encoding the acknowledgement. There is no `DISARM` transition. A failed
+acknowledgement, EOF, and invalid or duplicate later traffic cannot cancel or
+extend the deadline. Exact startup, protocol, termination, and reap diagnostics
+remain separate from, and do not replace, the newest resource-liveness scan.
+
+At the hard deadline the launcher first terminates the contained process tree;
+it performs no logging, snapshot I/O, cleanup, or resource-liveness work before
+that kill attempt. POSIX operations address only the dedicated process group,
+retry group signals while the unreaped leader still anchors every positive
+signal decision, and then reap its exact status. After that reap the launcher
+uses signal-zero observation only until the killed group is absent. Windows operations use
+only the retained job and process handles, retry failed termination or
+observation, and do not close them until the direct process is signalled and the
+job is empty. Ownership is not silently released while the tree may still be
+live. Diagnostic publication remains independent of tree termination. If the
+launcher receives an ordinary POSIX termination signal, it first cleans and
+reaps the group and then terminates itself with that same signal so its real
+shell-visible signal status is preserved.
+
+The launcher remains armed after the Qt event loop returns and throughout
+potentially blocking destruction of a freshly proven-quiescent main window, its
+owned `QThreadPool` objects, and the application. A final non-quiescent scan or
+exhausted deadline instead reaches the process-boundary wait before any such Qt
+destructor. The GUI also keeps a same-deadline in-process `_exit` backstop, but
+the independent launcher remains the guarantee when native Qt code holds the
+Python GIL. Exceptional termination lets the OS release read-only
+database/WAL/journal handles and permitted SHM coordination state.
+
+`qplot.run(return_objects=True)` deliberately bypasses the dedicated launcher and runs in
+the caller's process so it can return the `QApplication` and `MainWindow`. The
+caller owns those objects and their cleanup; this mode does not promise the
+launcher's whole-tree containment or process hard deadline.
+
+Trusted live load, automatic default selection, scrolling, and metadata
+completion do not start snapshot-backed preview or thumbnail workers. Explicit
+plot and CSV actions remain action-owned snapshot consumers addressed by the
+selected GUID and exact `DatabaseInstance`. Snapshot fallback sessions may keep
+their existing preview behavior. Integrating previews and thumbnails with a
+dedicated scheduler and disk-backed derived-data cache is the deliberate Stage
+5 boundary and is not part of Stage 4.
+
+The WAL-provenance discussion below describes the retained snapshot path used
+by fallback and explicitly deferred consumers, not the trusted reader's native
 SQLite transaction view.
 
 SQLite's WAL format does not provide main-file provenance. Its header records
@@ -336,10 +535,10 @@ connections close cleanly and SQLite checkpoints the WAL, or after the owning
 writer performs that checkpoint. qPlot never performs a source checkpoint
 itself.
 
-Direct SQLite reads, QCoDeS `AtomicConnection` reads, dataset loading, refresh
-workers, metadata inspection, and the subprocess access probe all go through
-this policy. Never open an input database with SQLite or QCoDeS directly from
-viewer code.
+Deferred direct SQLite reads, QCoDeS `AtomicConnection` reads, and dataset
+loading go through the snapshot policy. Trusted run-list, refresh, and metadata
+work goes through the Stage 4 broker and fixed-query layer. Never open an input
+database with SQLite or QCoDeS directly from viewer or widget code.
 
 `src/qplot/datahandling/LoadFromDB.py` adapts QCoDeS database loading for
 threaded refreshes.

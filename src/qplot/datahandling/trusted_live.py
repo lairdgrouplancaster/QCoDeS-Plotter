@@ -1849,7 +1849,16 @@ class TrustedLiveReader:
             cursor = connection.cursor()
             cursor.row_trace = None
             cursor.execute(details.first_query, bindings)
-            if cursor.get_description() != details.description:
+            try:
+                execution_description = cursor.get_description()
+            except apsw.ExecutionCompleteError:
+                # APSW releases the completed statement before exposing its
+                # description when a valid SELECT produces zero rows.  The
+                # exact same statement was prepared, authorised, and bounded
+                # immediately above by query_info(), so its validated
+                # description remains the authoritative zero-row metadata.
+                execution_description = details.description
+            if execution_description != details.description:
                 raise TrustedLiveQueryError(
                     "SQLite result metadata changed between validation and execution."
                 )

@@ -83,6 +83,19 @@ def _database_artifact_state(database_path):
     return state
 
 
+def _assert_reader_artifact_invariant(database_path, original_artifacts):
+    current_artifacts = _database_artifact_state(database_path)
+    for suffix in ("", "-wal", "-journal"):
+        assert current_artifacts[suffix] == original_artifacts[suffix]
+
+    # The pinned trusted reader may use SQLite's exact colocated WAL shared-
+    # memory file.  Its creation and contents are the sole viewing exception.
+    shm_path = Path(f"{database_path}-shm")
+    if current_artifacts["-shm"] is not None:
+        assert shm_path.is_file()
+        assert not shm_path.is_symlink()
+
+
 def _build_two_heatmap_database(database_path):
     initialise_or_create_database_at(str(database_path))
     experiment = load_or_create_experiment(
@@ -178,20 +191,16 @@ def test_preview_drop_adds_and_removes_real_secondary_heatmap(
                 not window._database_load_active
                 and not window._database_detail_active
                 and not window._database_expensive_detail_active
-                and window.ds is not None
             )
         )
         window.monitor.stop()
-        assert window.ds.guid == guid
+        assert window.ds is None
+        assert window._selected_run_guid == guid
 
-        parameters = {
-            parameter.name: parameter
-            for parameter in window.ds.get_parameters()
-            if parameter.depends_on
-        }
-        primary_parameter = parameters["signal_a"]
-        secondary_parameter = parameters["signal_b"]
-        window.openPlot(params=[primary_parameter], show=False)
+        # Stage 4 keeps ordinary trusted selection DB-free.  The explicit plot
+        # action materialises only the requested trace against the accepted
+        # database instance.
+        window.open_preview_plot("signal_a")
         target = window.windows[-1]
         _wait_for(
             lambda: (
@@ -200,6 +209,15 @@ def test_preview_drop_adds_and_removes_real_secondary_heatmap(
                 and not getattr(target.worker, "running", False)
             )
         )
+
+        parameters = {
+            parameter.name: parameter
+            for parameter in target.ds.get_parameters()
+            if parameter.depends_on
+        }
+        primary_parameter = parameters["signal_a"]
+        secondary_parameter = parameters["signal_b"]
+        assert target.param == primary_parameter
 
         np.testing.assert_allclose(target.dataGrid, expected_primary)
         primary_grid_object = target.dataGrid
@@ -262,10 +280,10 @@ def test_preview_drop_adds_and_removes_real_secondary_heatmap(
         assert dataset_handle.users == primary_owner_count
         np.testing.assert_array_equal(target.dataGrid, primary_grid)
         assert target._heatmap_geometry() is primary_geometry
-        assert _database_artifact_state(database_path) == original_artifacts
+        _assert_reader_artifact_invariant(database_path, original_artifacts)
     finally:
         if window is not None:
             close_main_window(window)
         qcodes.config.core.db_location = original_database_path
 
-    assert _database_artifact_state(database_path) == original_artifacts
+    _assert_reader_artifact_invariant(database_path, original_artifacts)

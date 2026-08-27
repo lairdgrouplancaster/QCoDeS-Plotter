@@ -3,6 +3,8 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,11 +18,15 @@ from qplot.datahandling import database as database_module
 from qplot.datahandling.file_identity import (
     DatabaseInstance,
     canonical_database_path,
+    database_instance,
     logical_database_path,
 )
 from qplot.datahandling.readonly import (
     UnverifiableDatabaseWalError,
     set_qcodes_database_location,
+)
+from qplot.datahandling.trusted_live_supervisor import (
+    TrustedLiveReaderSupervisor,
 )
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
@@ -100,6 +106,104 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
         self.assertEqual(Path(filename).name, "run_7_gate_current.csv")
         self.assertEqual(Path(filename).parent, Path("C:/data"))
 
+    def test_run_csv_sidecar_replacement_in_destination_dialog_prevents_load(self):
+        class Harness(PlotActionsMixin):
+            def __init__(self, wal_path, replacement_wal, export_path):
+                self.wal_path = wal_path
+                self.replacement_wal = replacement_wal
+                self.export_path = export_path
+                self.load_attempted = False
+                self.replacement_handled = False
+
+            def _default_run_csv_export_filename(self, *_args, **_kwargs):
+                return str(self.export_path)
+
+            def _choose_csv_export_filename(self, _default_name):
+                os.replace(self.replacement_wal, self.wal_path)
+                return str(self.export_path)
+
+            def _load_run_csv_dataset(self, dataset_key):
+                self.load_attempted = True
+                self._require_run_csv_source_current(dataset_key)
+                self.fail("A replaced sidecar must be rejected before dataset load")
+
+            def _handle_run_csv_source_replaced(self, _dataset_key):
+                self.replacement_handled = True
+
+            def fail(self, message):
+                raise AssertionError(message)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            wal_path = Path(f"{database_path}-wal")
+            replacement_wal = Path(temp_dir) / "replacement-wal"
+            export_path = Path(temp_dir) / "export.csv"
+            database_path.write_bytes(b"main")
+            wal_path.write_bytes(b"accepted wal")
+            replacement_wal.write_bytes(b"replacement wal")
+            dataset_key = DatasetKey(database_path, "guid")
+            harness = Harness(wal_path, replacement_wal, export_path)
+
+            harness._export_measurement_csv(dataset_key, ("signal",), run_id=1)
+
+            self.assertFalse(harness.load_attempted)
+            self.assertTrue(harness.replacement_handled)
+            self.assertFalse(export_path.exists())
+
+    def test_run_csv_sidecar_replacement_after_materialisation_prevents_publish(self):
+        class Connection:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Harness(PlotActionsMixin):
+            def __init__(self, dataset, wal_path, replacement_wal, export_path):
+                self.dataset = dataset
+                self.wal_path = wal_path
+                self.replacement_wal = replacement_wal
+                self.export_path = export_path
+                self.replacement_handled = False
+
+            def _default_run_csv_export_filename(self, *_args, **_kwargs):
+                return str(self.export_path)
+
+            def _choose_csv_export_filename(self, _default_name):
+                return str(self.export_path)
+
+            def _load_run_csv_dataset(self, dataset_key):
+                self._require_run_csv_source_current(dataset_key)
+                return self.dataset
+
+            def _measurement_params_by_names(self, _dataset, _parameter_names):
+                return (object(),)
+
+            def _measurement_dataframe(self, _dataset, _params):
+                os.replace(self.replacement_wal, self.wal_path)
+                return object()
+
+            def _handle_run_csv_source_replaced(self, _dataset_key):
+                self.replacement_handled = True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            wal_path = Path(f"{database_path}-wal")
+            replacement_wal = Path(temp_dir) / "replacement-wal"
+            export_path = Path(temp_dir) / "export.csv"
+            database_path.write_bytes(b"main")
+            wal_path.write_bytes(b"accepted wal")
+            replacement_wal.write_bytes(b"replacement wal")
+            dataset_key = DatasetKey(database_path, "guid")
+            dataset = SimpleNamespace(conn=Connection())
+            harness = Harness(dataset, wal_path, replacement_wal, export_path)
+
+            harness._export_measurement_csv(dataset_key, ("signal",), run_id=1)
+
+            self.assertTrue(harness.replacement_handled)
+            self.assertTrue(dataset.conn.closed)
+            self.assertFalse(export_path.exists())
+
 
 class PreviewExportLifecycleTestCase(unittest.TestCase):
     class Connection:
@@ -161,7 +265,7 @@ class PreviewExportLifecycleTestCase(unittest.TestCase):
             self.status_messages = []
             self.error_messages = []
 
-        def _load_dataset(self, dataset_key):
+        def _load_run_csv_dataset(self, dataset_key):
             self.loaded_keys.append(dataset_key)
             return self.local_dataset
 
@@ -272,6 +376,241 @@ class DatasetHandleTestCase(unittest.TestCase):
             )
             self.assertFalse(PlotActionsMixin._dataset_key_is_current(old_key))
             self.assertNotEqual(old_key, DatasetKey(view_path, "shared-guid"))
+
+    def test_dataset_key_distinguishes_explicit_empty_sidecar_baseline(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            wal_path = Path(f"{database_path}-wal")
+            database_path.write_bytes(b"main")
+            wal_path.write_bytes(b"wal")
+
+            captured = DatasetKey(database_path, "captured-guid")
+            explicitly_empty = DatasetKey(
+                database_path,
+                "empty-guid",
+                sidecar_identities=frozenset(),
+            )
+
+            self.assertTrue(captured.sidecar_identities)
+            self.assertEqual(explicitly_empty.sidecar_identities, frozenset())
+            self.assertTrue(
+                PlotActionsMixin._dataset_key_is_current(explicitly_empty)
+            )
+
+    def test_dataset_key_rejects_accepted_sidecar_removal_or_replacement(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            wal_path = Path(f"{database_path}-wal")
+            replacement_wal = Path(temp_dir) / "replacement-wal"
+            database_path.write_bytes(b"main")
+            wal_path.write_bytes(b"accepted wal")
+            replacement_wal.write_bytes(b"replacement wal")
+            accepted = DatasetKey(database_path, "guid")
+
+            self.assertTrue(PlotActionsMixin._dataset_key_is_current(accepted))
+            wal_path.unlink()
+            self.assertFalse(PlotActionsMixin._dataset_key_is_current(accepted))
+            os.replace(replacement_wal, wal_path)
+            self.assertFalse(PlotActionsMixin._dataset_key_is_current(accepted))
+
+    def test_current_dataset_key_uses_loaded_sidecars_without_recapturing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            database_path.write_bytes(b"main")
+            accepted = database_instance(database_path)
+            Path(f"{database_path}-wal").write_bytes(b"later wal")
+
+            harness = type("Harness", (PlotActionsMixin,), {})()
+            harness.fileTextbox = type(
+                "Field",
+                (),
+                {"text": lambda _self: str(database_path)},
+            )()
+            harness._loaded_database_instance = accepted
+
+            key = harness._current_dataset_key("guid")
+
+            self.assertEqual(key.sidecar_identities, frozenset())
+
+    def test_plot_target_uses_guid_and_rejects_sidecar_swap_during_load(self):
+        class Connection:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Harness(PlotActionsMixin):
+            def __init__(self, database_path, accepted):
+                self.fileTextbox = SimpleNamespace(text=lambda: str(database_path))
+                self.selected_run_id = 7
+                self.RunList = SimpleNamespace(
+                    all_run_metadata=lambda: {7: {"guid": "selected-guid"}}
+                )
+                self._loaded_database_instance = accepted
+                self._loaded_database_identity = accepted.identity
+                self.dataset_holder = {}
+                self.ds = None
+                self.reload_checks = []
+                self.status_messages = []
+                self.error_messages = []
+
+            def _reload_if_database_instance_changed(self, path):
+                self.reload_checks.append(path)
+                return False
+
+            def show_status(self, *args):
+                self.status_messages.append(args)
+
+            def show_error(self, *args):
+                self.error_messages.append(args)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            wal_path = Path(f"{database_path}-wal")
+            replacement_wal = Path(temp_dir) / "replacement-wal"
+            database_path.write_bytes(b"main")
+            wal_path.write_bytes(b"accepted wal")
+            replacement_wal.write_bytes(b"replacement wal")
+            accepted = database_instance(database_path)
+            harness = Harness(database_path, accepted)
+            connection = Connection()
+            loaded = SimpleNamespace(
+                guid="selected-guid",
+                run_id=7,
+                conn=connection,
+            )
+
+            def load_and_replace(guid, path, **kwargs):
+                self.assertEqual(guid, "selected-guid")
+                self.assertEqual(path, logical_database_path(database_path))
+                self.assertEqual(
+                    kwargs["expected_database_identity"],
+                    accepted.identity,
+                )
+                os.replace(replacement_wal, wal_path)
+                return loaded
+
+            with patch(
+                "qplot.windows._plot_actions.load_by_guid_read_only",
+                side_effect=load_and_replace,
+            ) as guid_loader:
+                result = harness._dataset_for_plot_target()
+
+            self.assertIsNone(result)
+            guid_loader.assert_called_once()
+            self.assertTrue(connection.closed)
+            self.assertTrue(harness.reload_checks)
+            self.assertIn("replaced", harness.status_messages[-1][0].lower())
+            self.assertEqual(harness.error_messages, [])
+
+    def test_open_run_rechecks_plot_source_after_parameter_enumeration(self):
+        class Harness(PlotActionsMixin):
+            def __init__(self, dataset, dataset_key, wal_path, replacement_wal):
+                self.dataset = dataset
+                self._plot_target_dataset_key = dataset_key
+                self.wal_path = wal_path
+                self.replacement_wal = replacement_wal
+                self.replaced_datasets = []
+                self.opened = []
+                self.closed = []
+                self.reload_checks = []
+                self.status_messages = []
+
+            def _dataset_for_plot_target(self):
+                return self.dataset
+
+            def _selected_measurement_params(self, _dataset):
+                os.replace(self.replacement_wal, self.wal_path)
+                return (object(),)
+
+            def _replace_selected_dataset(self, *args):
+                self.replaced_datasets.append(args)
+
+            def openPlot(self, *args, **kwargs):
+                self.opened.append((args, kwargs))
+
+            def _close_dataset_if_unowned(self, dataset, **_kwargs):
+                self.closed.append(dataset)
+
+            def _reload_if_database_instance_changed(self, path):
+                self.reload_checks.append(path)
+                return False
+
+            def show_status(self, *args):
+                self.status_messages.append(args)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            wal_path = Path(f"{database_path}-wal")
+            replacement_wal = Path(temp_dir) / "replacement-wal"
+            database_path.write_bytes(b"main")
+            wal_path.write_bytes(b"accepted wal")
+            replacement_wal.write_bytes(b"replacement wal")
+            dataset_key = DatasetKey(database_path, "selected-guid")
+            dataset = SimpleNamespace(guid="selected-guid", run_id=7)
+            harness = Harness(
+                dataset,
+                dataset_key,
+                wal_path,
+                replacement_wal,
+            )
+
+            harness.openRun()
+
+            self.assertEqual(harness.replaced_datasets, [])
+            self.assertEqual(harness.opened, [])
+            self.assertEqual(harness.closed, [dataset])
+            self.assertTrue(harness.reload_checks)
+            self.assertIn("replaced", harness.status_messages[-1][0].lower())
+
+    def test_open_preview_plot_keeps_the_guarded_plot_target_key(self):
+        class Harness(PlotActionsMixin):
+            def __init__(self, dataset, dataset_key, wal_path, replacement_wal):
+                self.ds = None
+                self.dataset = dataset
+                self._plot_target_dataset_key = dataset_key
+                self.wal_path = wal_path
+                self.replacement_wal = replacement_wal
+                self.replaced_datasets = []
+                self.closed = []
+                self.reload_checks = []
+                self.status_messages = []
+
+            def _dataset_for_plot_target(self):
+                os.replace(self.replacement_wal, self.wal_path)
+                return self.dataset
+
+            def _replace_selected_dataset(self, *args):
+                self.replaced_datasets.append(args)
+
+            def _close_dataset_if_unowned(self, dataset, **_kwargs):
+                self.closed.append(dataset)
+
+            def _reload_if_database_instance_changed(self, path):
+                self.reload_checks.append(path)
+                return False
+
+            def show_status(self, *args):
+                self.status_messages.append(args)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "database.db"
+            wal_path = Path(f"{database_path}-wal")
+            replacement_wal = Path(temp_dir) / "replacement-wal"
+            database_path.write_bytes(b"main")
+            wal_path.write_bytes(b"accepted wal")
+            replacement_wal.write_bytes(b"replacement wal")
+            dataset_key = DatasetKey(database_path, "selected-guid")
+            dataset = SimpleNamespace(guid="selected-guid", run_id=7)
+            harness = Harness(dataset, dataset_key, wal_path, replacement_wal)
+
+            harness.open_preview_plot("signal")
+
+            self.assertEqual(harness.replaced_datasets, [])
+            self.assertEqual(harness.closed, [dataset])
+            self.assertTrue(harness.reload_checks)
+            self.assertIn("replaced", harness.status_messages[-1][0].lower())
 
     def test_close_is_idempotent_and_closes_backing_connection(self):
         class Connection:
@@ -820,33 +1159,41 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         self.assertIs(harness.dataset_holder[key_a].dataset, dataset_a)
         self.assertIs(harness.dataset_holder[key_b].dataset, dataset_b)
 
-    def test_current_database_selection_cannot_return_other_database_dataset(self):
+    def test_snapshot_selection_dispatches_plain_controller_path(self):
         harness = type("Harness", (PlotActionsMixin,), {})()
-        harness.fileTextbox = self.Field("database-b.db")
-        harness.run_idBox = self.Field("")
-        harness.infoBox = type("InfoBox", (), {"setInfo": lambda *args, **kwargs: None})()
-        harness.ds = None
-        harness.selected_run_id = None
-        harness.show_status = lambda *args, **kwargs: None
-        harness.show_error = lambda *args, **kwargs: self.fail("selection load failed")
-        key_a = DatasetKey("database-a.db", "shared-guid")
-        dataset_a = self.Dataset("A")
-        dataset_b = self.Dataset("B")
-        harness.dataset_holder = {key_a: DatasetHandle(dataset_a)}
-
-        with patch(
-            "qplot.windows._plot_actions.load_by_guid_read_only",
-            return_value=dataset_b,
-        ) as load_dataset:
-            harness.updateSelected("shared-guid")
-
-        self.assertIs(harness.ds, dataset_b)
-        load_dataset.assert_called_once_with(
-            "shared-guid",
-            DatasetKey("database-b.db", "x").database_path,
+        harness._database_access_mode = database_actions.SNAPSHOT_FALLBACK_MODE
+        harness.dispatched = []
+        harness._update_snapshot_selected_run = harness.dispatched.append
+        harness._load_dataset = lambda *_args: self.fail(
+            "ordinary snapshot selection loaded a QCoDeS DataSet"
         )
+        harness.show_error = lambda *args, **kwargs: self.fail(str(args))
 
-    def test_failed_selection_clears_previous_dataset_and_selected_row(self):
+        harness.updateSelected("snapshot-guid")
+
+        self.assertEqual(harness.dispatched, ["snapshot-guid"])
+
+    def test_unknown_selection_modes_never_materialize_dataset(self):
+        for access_mode in (None, "unknown-reader-mode"):
+            with self.subTest(access_mode=access_mode):
+                harness = type("Harness", (PlotActionsMixin,), {})()
+                harness._database_access_mode = access_mode
+                errors = []
+                harness.show_error = lambda *args, errors=errors: errors.append(args)
+                harness._load_dataset = lambda *_args: self.fail(
+                    "unrecognized selection mode loaded a QCoDeS DataSet"
+                )
+
+                with patch(
+                    "qplot.windows._plot_actions.load_by_guid_read_only",
+                    side_effect=AssertionError("selection opened QCoDeS"),
+                ) as load_dataset:
+                    harness.updateSelected("shared-guid")
+
+                load_dataset.assert_not_called()
+                self.assertEqual(errors[0][0], "Selection Unavailable")
+
+    def test_clear_selected_run_state_releases_previous_selected_row(self):
         class RunList:
             def __init__(self):
                 self.signals_blocked = False
@@ -882,15 +1229,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         harness._selected_dataset_key = old_key
         harness.selected_run_id = 7
         harness.dataset_holder = {old_key: DatasetHandle(old_dataset)}
-        harness._load_dataset = lambda _key: (_ for _ in ()).throw(
-            RuntimeError("broken run")
-        )
-        harness.status_messages = []
-        harness.error_messages = []
-        harness.show_status = lambda *args: harness.status_messages.append(args)
-        harness.show_error = lambda *args: harness.error_messages.append(args)
-
-        harness.updateSelected("new-guid")
+        harness._clear_selected_run_state()
 
         self.assertIsNone(harness.ds)
         self.assertIsNone(harness._selected_dataset_key)
@@ -899,7 +1238,6 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         self.assertTrue(harness.RunList.selection_cleared)
         self.assertIsNone(harness.RunList.current_item)
         self.assertTrue(harness.infoBox.cleared)
-        self.assertEqual(harness.error_messages[0][0], "Run Load Failed")
         self.assertIn(old_key, harness.dataset_holder)
 
     def test_same_guid_and_parameter_plots_in_different_databases_coexist(self):
@@ -1865,6 +2203,86 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             main_window.MainWindow._shutdown_background_work_active(harness)
         )
 
+    def test_shutdown_waits_for_retained_supervisor_resources(self):
+        class Service:
+            def __init__(self):
+                self.resource_cleanup_pending = True
+
+            def liveness(self):
+                return type(
+                    "Liveness",
+                    (),
+                    {
+                        "dispatcher_alive": False,
+                        "control_alive": False,
+                        "helper_alive": False,
+                        "resource_cleanup_pending": self.resource_cleanup_pending,
+                        "outstanding_requests": 0,
+                        "closed": True,
+                    },
+                )()
+
+        service = Service()
+        preview = type("Preview", (), {"_workers": {}})()
+        harness = type(
+            "Harness",
+            (),
+            {
+                "_retired_trusted_read_services": {service},
+                "infoBox": type("InfoBox", (), {"preview": preview})(),
+            },
+        )()
+
+        self.assertTrue(
+            main_window.MainWindow._shutdown_background_work_active(harness)
+        )
+        service.resource_cleanup_pending = False
+        self.assertFalse(
+            main_window.MainWindow._shutdown_background_work_active(harness)
+        )
+
+    def test_shutdown_poll_does_not_wait_for_supervisor_close_lock(self):
+        supervisor = TrustedLiveReaderSupervisor("not-opened.db")
+        lock_held = threading.Event()
+        release_lock = threading.Event()
+
+        def hold_supervisor_lock():
+            with supervisor._lock:
+                lock_held.set()
+                release_lock.wait(1.0)
+
+        class Service:
+            def liveness(self):
+                snapshot = supervisor.resource_liveness()
+                return SimpleNamespace(
+                    dispatcher_alive=False,
+                    control_alive=False,
+                    helper_alive=snapshot.process_alive,
+                    resource_cleanup_pending=snapshot.resources_owned,
+                    outstanding_requests=0,
+                    closed=snapshot.closed,
+                )
+
+        holder = threading.Thread(target=hold_supervisor_lock)
+        holder.start()
+        self.assertTrue(lock_held.wait(1.0))
+        harness = SimpleNamespace(
+            _retired_trusted_read_services={Service()},
+            infoBox=SimpleNamespace(preview=SimpleNamespace(_workers={})),
+        )
+        started = time.monotonic()
+        try:
+            active = main_window.MainWindow._shutdown_background_work_active(harness)
+            elapsed = time.monotonic() - started
+        finally:
+            release_lock.set()
+            holder.join(timeout=1.0)
+            supervisor.close()
+
+        self.assertLess(elapsed, 0.25)
+        self.assertFalse(holder.is_alive())
+        self.assertTrue(active)
+
     def test_shutdown_cancels_all_plot_workers_and_discards_queued_work(self):
         class Worker:
             def __init__(self):
@@ -2336,9 +2754,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         def clear(self):
             self.runs = {}
 
-        def addRuns(self, runs):
+        def addRuns(self, runs, *, continue_loading=None):
+            if callable(continue_loading) and not continue_loading():
+                return False
             self.runs = runs
             self.maxRunId = max(runs, default=0)
+            return True
 
         def scrollToTop(self):
             self.scrolled = True
@@ -3647,10 +4068,9 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
                         },
                     "MetaData": self.ds.metadata,
                     "Snapshot": self.ds.snapshot,
-                    },
+                },
                 self.ds,
                 run_metadata=initial_metadata,
-                database_path="loaded.db",
                 )
 
         def _sync_empty_state(self):
@@ -3838,6 +4258,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             self.plotted_guids = []
             self.sync_count = 0
             self.databaseRefreshThreadPool = RefreshMainEmptyDatabaseTestCase.ThreadPool()
+            self._database_access_mode = database_actions.SNAPSHOT_FALLBACK_MODE
 
         def _sync_empty_state(self):
             self.sync_count += 1
@@ -3906,6 +4327,16 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             ("Found 1 new run.", 5000),
             )
 
+    def test_trusted_refresh_never_auto_materializes_plot_dataset(self):
+        new_runs = {
+            11: {"guid": "guid-11", "run_timestamp": 11.0},
+            }
+        harness = self.Harness(auto_plot_checked=True)
+        harness._database_access_mode = database_actions.TRUSTED_LIVE_MODE
+        harness._apply_database_refresh_result(new_runs, {})
+
+        self.assertEqual(harness.plotted_guids, [])
+
 
 class AutoPlotToggleTestCase(unittest.TestCase):
     class Config:
@@ -3933,10 +4364,11 @@ class AutoPlotToggleTestCase(unittest.TestCase):
             main_window.MainWindow._auto_plot_current_running_run
             )
 
-        def __init__(self, metadata, auto_plot=False):
+        def __init__(self, metadata, auto_plot=False, access_mode=None):
             self.config = AutoPlotToggleTestCase.Config(auto_plot)
             self.RunList = AutoPlotToggleTestCase.RunList(metadata)
             self.plotted_guids = []
+            self._database_access_mode = access_mode
 
         def openPlot(self, guid):
             self.plotted_guids.append(guid)
@@ -3980,6 +4412,23 @@ class AutoPlotToggleTestCase(unittest.TestCase):
         harness._auto_plot_changed(False)
 
         self.assertEqual(harness.config.updates, [(AUTO_PLOT_KEY, False)])
+        self.assertEqual(harness.plotted_guids, [])
+
+    def test_enabling_auto_plot_does_not_open_trusted_running_run(self):
+        harness = self.Harness(
+            {
+                1: {
+                    "guid": "running",
+                    "run_timestamp": 10.0,
+                    "is_completed": False,
+                    },
+                },
+            access_mode=database_actions.TRUSTED_LIVE_MODE,
+            )
+
+        harness._auto_plot_changed(True)
+
+        self.assertEqual(harness.config.updates, [(AUTO_PLOT_KEY, True)])
         self.assertEqual(harness.plotted_guids, [])
 
 
@@ -4290,6 +4739,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         worker.cancel()
 
         self.assertEqual(connection.interrupts, 1)
+        self.assertTrue(worker.trusted_service.wait_closed(5))
 
     def test_database_load_worker_opens_database_read_only_and_returns_runs(self):
         old_access_error = database_module.database_access_error
@@ -4329,8 +4779,9 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             ("basic_runs", "example.db"),
             ])
         self.assertEqual(statuses, [
-            (7, "Checking database access..."),
-            (7, "Opening database read-only..."),
+            (7, "Opening trusted live database..."),
+            (7, "Checking database access for snapshot fallback..."),
+            (7, "Opening snapshot fallback read-only..."),
             (7, "Loading basic run list..."),
             ])
         self.assertEqual(finished, [
@@ -4354,8 +4805,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
         self.assertEqual(len(finished), 1)
         self.assertEqual(finished[0][:3], (3, "locked.db", {}))
-        self.assertIsInstance(finished[0][3], RuntimeError)
-        self.assertIn("locked database", str(finished[0][3]))
+        self.assertEqual(finished[0][3], "locked database")
 
     def test_database_load_worker_preserves_unverifiable_wal_error_type(self):
         old_access_error = database_module.database_access_error
@@ -4568,6 +5018,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
             worker.run()
         finally:
+            worker.cancel()
+            self.assertTrue(worker.trusted_service.wait_closed(5))
             database_module.database_is_likely_cloud_placeholder = old_placeholder
             database_module.prefetch_database_file_with_timeout = old_prefetch
             database_module.database_access_error = old_access_error
@@ -4591,6 +5043,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
 
         worker._emit_status("Checking database access...")
         worker._emit_finished({}, None)
+        worker.cancel()
+        self.assertTrue(worker.trusted_service.wait_closed(5))
 
     def test_database_load_worker_waits_for_cloud_sync_and_retries_probe(self):
         old_access_error = database_module.database_access_error

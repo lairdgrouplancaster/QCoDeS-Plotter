@@ -3,6 +3,17 @@ from typing import Any, cast
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.trusted_presentation import (
+    TRUSTED_PRESENTATION_MAX_RENDERED_NODES,
+    TRUSTED_PRESENTATION_MAX_RENDERED_TEXT_BYTES,
+    TrustedPresentationView,
+)
+from qplot.datahandling.trusted_snapshot import (
+    TRUSTED_SNAPSHOT_MAX_RENDERED_NODES,
+    TRUSTED_SNAPSHOT_MAX_RENDERED_TEXT_BYTES,
+    TrustedSnapshotView,
+)
+
 from .._commands import command_spec
 
 COPY_SELECTION_SHORTCUTS = command_spec("copy.selection").resolved_shortcuts()
@@ -129,6 +140,66 @@ class infoTree(qtw.QTreeWidget):
 
         if self.expand_all:
             self.expandAll()
+        header = self.header()
+        if header is not None:
+            header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
+        cast(Any, self).doItemsLayout()
+
+
+    def setBoundedView(
+            self,
+            view: TrustedSnapshotView | TrustedPresentationView,
+            ) -> None:
+        """Construct one pre-bounded tree without Python recursion."""
+        if isinstance(view, TrustedSnapshotView):
+            max_nodes = TRUSTED_SNAPSHOT_MAX_RENDERED_NODES
+            max_text_bytes = TRUSTED_SNAPSHOT_MAX_RENDERED_TEXT_BYTES
+        elif isinstance(view, TrustedPresentationView):
+            max_nodes = TRUSTED_PRESENTATION_MAX_RENDERED_NODES
+            max_text_bytes = TRUSTED_PRESENTATION_MAX_RENDERED_TEXT_BYTES
+        else:
+            raise TypeError("view must be a trusted bounded tree view")
+
+        self.clear()
+        if not view.nodes:
+            self.addTopLevelItem(qtw.QTreeWidgetItem(["No data", ""]))
+            return
+
+        qt_items: list[qtw.QTreeWidgetItem] = []
+        rendered_bytes = 0
+        for node_index, node in enumerate(view.nodes[:max_nodes]):
+            node = cast(Any, node)
+            rendered_bytes += len(node.key.encode("utf-8")) + len(
+                node.value.encode("utf-8")
+                )
+            if rendered_bytes > max_text_bytes:
+                break
+            item = qtw.QTreeWidgetItem([node.key, node.value])
+            item.setToolTip(1, getattr(node, "tooltip", node.value))
+            parent_index = node.parent_index
+            if (
+                    parent_index is None
+                    or parent_index < 0
+                    or parent_index >= node_index
+                    or parent_index >= len(qt_items)
+                    ):
+                self.addTopLevelItem(item)
+            else:
+                qt_items[parent_index].addChild(item)
+            qt_items.append(item)
+
+        if not qt_items:
+            self.addTopLevelItem(
+                qtw.QTreeWidgetItem(
+                    ["Snapshot unavailable", "The bounded view model is empty."]
+                    )
+                )
+            return
+
+        if self.expand_all:
+            for item in qt_items:
+                item.setExpanded(True)
         header = self.header()
         if header is not None:
             header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)

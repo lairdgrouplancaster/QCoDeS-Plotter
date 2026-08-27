@@ -8,7 +8,11 @@ from PyQt6 import QtCore
 
 from qplot.datahandling import load_param_data_from_db, load_param_data_from_db_prep
 from qplot.datahandling.dimensions import ensure_supported_plot_dimensions
-from qplot.datahandling.file_identity import database_sidecar_identities
+from qplot.datahandling.file_identity import (
+    canonical_database_path,
+    database_file_identity,
+    database_sidecar_identities,
+)
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
     cache_dataset_completed,
@@ -173,6 +177,7 @@ class loader(QtCore.QRunnable):
 
     def _read_only_open_kwargs(self) -> dict[str, Any]:
         """Return identity and abort controls for snapshot preparation."""
+        self._require_expected_source_current()
         kwargs: dict[str, Any] = {
             "cancelled_callback": self.is_cancelled,
         }
@@ -183,6 +188,45 @@ class loader(QtCore.QRunnable):
         if deadline is not None:
             kwargs["deadline"] = deadline
         return kwargs
+
+
+    def _require_expected_source_current(self) -> None:
+        """Validate the exact retained-plot main and sidecar identities."""
+
+        expected_sidecars = getattr(self, "expected_sidecar_identities", None)
+        if expected_sidecars is None:
+            return
+        database_path = getattr(self, "expected_database_path", None)
+        if database_path is None:
+            database_path = cache_database_path(self.cache)
+        expected_resolved_path = getattr(
+            self,
+            "expected_resolved_database_path",
+            None,
+        )
+        if (
+                expected_resolved_path is not None
+                and canonical_database_path(database_path)
+                != expected_resolved_path
+                ):
+            raise DatabaseInstanceChangedError(
+                "The retained plot database path resolved to another source."
+            )
+        expected_identity = getattr(self, "database_identity", None)
+        if (
+                expected_identity is not None
+                and database_file_identity(database_path) != expected_identity
+                ):
+            raise DatabaseInstanceChangedError(
+                "The retained plot database was replaced."
+            )
+        if database_sidecar_identities(
+                database_path,
+                expected_resolved_path,
+                ) != frozenset(expected_sidecars):
+            raise DatabaseInstanceChangedError(
+                "A retained plot SQLite sidecar was replaced."
+            )
 
 
     def _set_sql_connection(self, connection) -> None:
@@ -201,6 +245,7 @@ class loader(QtCore.QRunnable):
             connection.close()
         finally:
             self._set_sql_connection(None)
+        self._require_expected_source_current()
 
 
     def _emit_finished(self, finished: bool) -> None:
@@ -230,6 +275,7 @@ class loader(QtCore.QRunnable):
     def run(self):
         try:
             self._check_cancelled()
+            self._require_expected_source_current()
             ensure_supported_plot_dimensions(
                 getattr(self.param, "name", "Measurement"),
                 getattr(self.param, "depends_on_", ()),
@@ -395,11 +441,30 @@ class loader(QtCore.QRunnable):
         except PlotWorkCancelled:
             self._finish_cancelled()
             return
+        except DatabaseInstanceChangedError as err:
+            self.database_replaced = True
+            if self.is_cancelled():
+                self._finish_cancelled()
+                return
+            self.emitter.errorOccurred.emit(err)
+            self._emit_finished(False)
+            return
         except Exception as err:
             if self.is_cancelled():
                 self._finish_cancelled()
                 return
             log_exception("Plot processing failed", err, __name__)
+            self.emitter.errorOccurred.emit(err)
+            self._emit_finished(False)
+            return
+
+        try:
+            self._require_expected_source_current()
+        except DatabaseInstanceChangedError as err:
+            self.database_replaced = True
+            if self.is_cancelled():
+                self._finish_cancelled()
+                return
             self.emitter.errorOccurred.emit(err)
             self._emit_finished(False)
             return

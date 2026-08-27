@@ -185,6 +185,47 @@ class TrustedLiveJob(Generic[_T]):
 
 
 @dataclass(frozen=True, slots=True)
+class TrustedLiveSupervisorLiveness:
+    """Conservative snapshot of every resource owned by one supervisor."""
+
+    helper_pid: int | None
+    process_alive: bool
+    receiver_alive: bool
+    open_endpoints: int
+    active_incarnation: bool
+    unreaped_incarnation: bool
+    active_job: bool
+    closing: bool
+    closed: bool
+
+    @property
+    def resources_owned(self) -> bool:
+        """Return whether any helper-side resource remains strongly owned."""
+
+        return bool(
+            self.active_incarnation
+            or self.unreaped_incarnation
+            or self.active_job
+            or self.process_alive
+            or self.receiver_alive
+            or self.open_endpoints
+        )
+
+
+_LOCK_CONTENTION_LIVENESS = TrustedLiveSupervisorLiveness(
+    helper_pid=None,
+    process_alive=True,
+    receiver_alive=True,
+    open_endpoints=1,
+    active_incarnation=True,
+    unreaped_incarnation=True,
+    active_job=True,
+    closing=True,
+    closed=False,
+)
+
+
+@dataclass(frozen=True, slots=True)
 class _ReplyReceiveFailure:
     """One terminal raw-pipe failure published by the sole receiver."""
 
@@ -599,6 +640,96 @@ class TrustedLiveReaderSupervisor:
         with self._lock:
             helper = self._helper
             return helper is not None and helper.process.is_alive()
+
+    def resource_liveness(self) -> TrustedLiveSupervisorLiveness:
+        """Describe active and quarantined resources without waiting for them."""
+
+        if not self._lock.acquire(blocking=False):
+            # ``close()`` intentionally owns this lock while it performs its
+            # bounded helper shutdown.  GUI-side shutdown polling must not
+            # inherit that deadline.  Lock contention therefore means only
+            # "cleanup is still pending", never "cleanup is complete".
+            return _LOCK_CONTENTION_LIVENESS
+        try:
+            return self._resource_liveness_locked()
+        finally:
+            self._lock.release()
+
+    def reap_closed_resources(self) -> TrustedLiveSupervisorLiveness:
+        """Zero-wait reap a closed supervisor's quarantined incarnation.
+
+        A bounded ``close()`` may have to leave a process handle or reply
+        receiver quarantined.  Owners can poll this method off the GUI thread;
+        it never terminates an active incarnation and never waits for one.
+        """
+
+        if not self._lock.acquire(blocking=False):
+            return _LOCK_CONTENTION_LIVENESS
+        try:
+            if self._closed and not self._closing:
+                try:
+                    self._reap_quarantined_helper_locked()
+                except TrustedLiveHelperForcedTerminationError:
+                    pass
+            snapshot = self._resource_liveness_locked()
+            if snapshot.closed and not snapshot.resources_owned:
+                self._unregister_atexit_locked()
+            return snapshot
+        finally:
+            self._lock.release()
+
+    def _resource_liveness_locked(self) -> TrustedLiveSupervisorLiveness:
+        helpers = tuple(
+            helper
+            for helper in (self._helper, self._unreaped_helper)
+            if helper is not None
+        )
+        process_alive = False
+        receiver_alive = False
+        open_endpoints = 0
+        helper_pid: int | None = None
+        for helper in helpers:
+            if helper_pid is None:
+                try:
+                    helper_pid = helper.process.pid
+                except (AssertionError, OSError, ValueError):
+                    pass
+            try:
+                process_alive = process_alive or helper.process.is_alive()
+            except (AssertionError, OSError, ValueError):
+                # An incarnation is still owned, so an uninspectable process
+                # handle must conservatively keep shutdown pending.
+                process_alive = True
+            if helper.reply_receiver_started:
+                try:
+                    receiver_alive = receiver_alive or helper.reply_receiver.is_alive()
+                except (AssertionError, RuntimeError):
+                    receiver_alive = True
+            for connection in (
+                helper.command_send,
+                helper.reply_connection,
+                helper.control_send,
+                helper.test_notify_receive,
+            ):
+                if connection is None:
+                    continue
+                try:
+                    is_open = not connection.closed
+                except (AttributeError, OSError, ValueError):
+                    is_open = True
+                open_endpoints += int(is_open)
+        active_job = self._active_job
+        return TrustedLiveSupervisorLiveness(
+            helper_pid=helper_pid,
+            process_alive=process_alive,
+            receiver_alive=receiver_alive,
+            open_endpoints=open_endpoints,
+            active_incarnation=self._helper is not None,
+            unreaped_incarnation=self._unreaped_helper is not None,
+            active_job=active_job is not None and not active_job.done,
+            closing=self._closing,
+            closed=self._closed,
+        )
 
     @property
     def active_job(self) -> TrustedLiveJob[Any] | None:
@@ -1888,13 +2019,15 @@ class TrustedLiveReaderSupervisor:
         if lock is None:
             return
         with lock:
-            if self._helper is not None or self._unreaped_helper is not None:
-                return
-            if not self._atexit_registered:
-                return
-            self._atexit_registered = False
-            callback = self._atexit_callback
-        atexit.unregister(callback)
+            self._unregister_atexit_locked()
+
+    def _unregister_atexit_locked(self) -> None:
+        if self._helper is not None or self._unreaped_helper is not None:
+            return
+        if not self._atexit_registered:
+            return
+        self._atexit_registered = False
+        atexit.unregister(self._atexit_callback)
 
     def _cleanup_at_exit(self) -> None:
         """Best-effort bounded cleanup before multiprocessing's exit hook."""
@@ -2024,4 +2157,5 @@ __all__ = [
     "TrustedLiveReaderSupervisor",
     "TrustedLiveSupervisorClosedError",
     "TrustedLiveSupervisorError",
+    "TrustedLiveSupervisorLiveness",
 ]

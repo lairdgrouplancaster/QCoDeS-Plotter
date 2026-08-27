@@ -54,8 +54,9 @@ def test_database_workers_retain_sidecar_identities(tmp_path):
     expected = database_sidecar_identities(database_path)
     original_state = _artifact_state(database_path)
 
+    load_worker = DatabaseLoadWorker(1, str(database_path))
     workers = (
-        DatabaseLoadWorker(1, str(database_path)),
+        load_worker,
         DatabaseRefreshWorker(1, str(database_path), 0, []),
         DatabaseDetailWorker(1, str(database_path), [1]),
         DatabaseExpensiveDetailWorker(1, str(database_path), [1]),
@@ -67,6 +68,8 @@ def test_database_workers_retain_sidecar_identities(tmp_path):
     assert expected
     assert database_sidecar_identities(database_path).isdisjoint(expected)
     assert all(worker.sidecar_identities == expected for worker in workers)
+    load_worker.cancel()
+    assert load_worker.trusted_service.wait_closed(5)
 
 
 def test_preview_and_plot_workers_retain_sidecar_identities(tmp_path):
