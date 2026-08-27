@@ -379,12 +379,18 @@ def test_unavailable_supervisor_uses_original_deadline_local_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forced = ThreadEvent()
+    persistence_recorded = ThreadEvent()
     forced_codes = []
     persisted = []
+
+    def record_persistence(**kwargs):
+        persisted.append(kwargs)
+        persistence_recorded.set()
+
     monkeypatch.setattr(
         main_window,
         "_persist_shutdown_diagnostics",
-        lambda **kwargs: persisted.append(kwargs),
+        record_persistence,
     )
     process_fail_safe = main_window._ProcessShutdownFailSafe(
         startup_diagnostic="exact shutdown launcher startup failure",
@@ -403,7 +409,7 @@ def test_unavailable_supervisor_uses_original_deadline_local_fallback(
     assert not forced.wait(0.03)
     assert forced.wait(0.3)
     assert forced_codes == [main_window._APPLICATION_FORCED_SHUTDOWN_EXIT_CODE]
-    assert persisted
+    assert persistence_recorded.wait(0.3)
     assert "exact shutdown launcher startup failure" in persisted[-1]["diagnostics"]
     assert "final resource_cleanup_pending=True" in persisted[-1]["diagnostics"]
     process_fail_safe.disarm()
@@ -413,7 +419,12 @@ def test_supervisor_arm_failure_is_exact_and_keeps_local_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forced = ThreadEvent()
+    persistence_recorded = ThreadEvent()
     persisted = []
+
+    def record_persistence(**kwargs):
+        persisted.append(kwargs)
+        persistence_recorded.set()
 
     class FailingClient:
         def arm(self, _hard_deadline):
@@ -422,7 +433,7 @@ def test_supervisor_arm_failure_is_exact_and_keeps_local_fallback(
     monkeypatch.setattr(
         main_window,
         "_persist_shutdown_diagnostics",
-        lambda **kwargs: persisted.append(kwargs),
+        record_persistence,
     )
     process_fail_safe = main_window._ProcessShutdownFailSafe(
         FailingClient(),
@@ -441,7 +452,7 @@ def test_supervisor_arm_failure_is_exact_and_keeps_local_fallback(
         "process shutdown supervisor ARM raised OSError: exact ARM transport failure"
     )
     assert forced.wait(0.25)
-    assert persisted
+    assert persistence_recorded.wait(0.3)
     assert arm_diagnostic in persisted[-1]["diagnostics"]
     assert "final receiver_alive=True" in persisted[-1]["diagnostics"]
     process_fail_safe.disarm()

@@ -22,6 +22,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 public static class QPlotActionsConsoleForwarder
 {
@@ -49,7 +50,10 @@ public sealed class QPlotProcessJob : IDisposable
 {
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
     private const int JobObjectExtendedLimitInformationClass = 9;
+    private readonly object sync = new object();
     private IntPtr handle;
+    private Timer deadlineTimer;
+    private bool timedOut;
 
     public QPlotProcessJob()
     {
@@ -82,17 +86,80 @@ public sealed class QPlotProcessJob : IDisposable
         }
     }
 
+    public bool TimedOut
+    {
+        get
+        {
+            lock (sync)
+            {
+                return timedOut;
+            }
+        }
+    }
+
+    public void ArmTimeout(int timeoutMilliseconds)
+    {
+        if (timeoutMilliseconds < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
+        }
+        lock (sync)
+        {
+            if (handle == IntPtr.Zero)
+            {
+                throw new ObjectDisposedException(nameof(QPlotProcessJob));
+            }
+            if (deadlineTimer != null)
+            {
+                throw new InvalidOperationException("The job deadline is already armed.");
+            }
+            deadlineTimer = new Timer(
+                TerminateAtDeadline,
+                null,
+                timeoutMilliseconds,
+                Timeout.Infinite);
+        }
+    }
+
+    private void TerminateAtDeadline(object state)
+    {
+        lock (sync)
+        {
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+            timedOut = true;
+            IntPtr ownedHandle = handle;
+            handle = IntPtr.Zero;
+            if (deadlineTimer != null)
+            {
+                deadlineTimer.Dispose();
+                deadlineTimer = null;
+            }
+            CloseHandle(ownedHandle);
+        }
+    }
+
     public void Dispose()
     {
-        if (handle == IntPtr.Zero)
+        lock (sync)
         {
-            return;
-        }
-        IntPtr ownedHandle = handle;
-        handle = IntPtr.Zero;
-        if (!CloseHandle(ownedHandle))
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+            if (deadlineTimer != null)
+            {
+                deadlineTimer.Dispose();
+                deadlineTimer = null;
+            }
+            IntPtr ownedHandle = handle;
+            handle = IntPtr.Zero;
+            if (!CloseHandle(ownedHandle))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
         }
         GC.SuppressFinalize(this);
     }
@@ -348,6 +415,7 @@ try {
     }
     $processJob.Assign($process)
     $processContained = $true
+    $processJob.ArmTimeout($TimeoutSeconds * 1000)
 
     # Forward complete lines as they arrive, but never make direct-process
     # completion depend on pipe EOF. A failed subprocess regression can leave
@@ -363,26 +431,18 @@ try {
     # for asynchronous output handlers to observe pipe EOF, which may never
     # arrive when a failed subprocess regression leaves a descendant holding
     # an inherited stdout or stderr handle after pytest itself has exited.
-    $processDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while (-not $process.WaitForExit(250)) {
         # Poll only the direct pytest process; diagnostics keep streaming via
         # the DataReceived handlers above.
-        if ([DateTime]::UtcNow -ge $processDeadline) {
-            try {
-                # Kill pytest here; closing the containing job in finally
-                # terminates every remaining redirected descendant.
-                $process.Kill()
-            } catch {
-                Write-Warning "Could not terminate timed-out pytest: $_"
-            }
-            throw (
-                "The unprivileged qPlot CI process exceeded its " +
-                "$TimeoutSeconds-second direct-process deadline."
-            )
-        }
     }
     Start-Sleep -Milliseconds 250
     $childExitCode = $process.ExitCode
+    if ($processJob.TimedOut) {
+        throw (
+            "The unprivileged qPlot CI process exceeded its " +
+            "$TimeoutSeconds-second direct-process deadline."
+        )
+    }
 } catch {
     $primaryError = $_
 } finally {
