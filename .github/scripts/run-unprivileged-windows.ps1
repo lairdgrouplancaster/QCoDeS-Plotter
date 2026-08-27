@@ -158,8 +158,12 @@ try {
     $startInfo.WorkingDirectory = $workingPath
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
+    # Keep the child attached to the Actions console. Buffering both streams in
+    # this wrapper hides the actual failure if a failed subprocess test leaves
+    # a descendant holding an inherited pipe: ReadToEndAsync then waits until
+    # the job timeout and GitHub never receives the buffered traceback.
+    $startInfo.RedirectStandardOutput = $false
+    $startInfo.RedirectStandardError = $false
     $startInfo.UserName = $userName
     $startInfo.Domain = $env:COMPUTERNAME
     $startInfo.Password = $securePassword
@@ -193,17 +197,7 @@ try {
         throw "Windows did not start the unprivileged qPlot CI process."
     }
 
-    $standardOutput = $process.StandardOutput.ReadToEndAsync()
-    $standardError = $process.StandardError.ReadToEndAsync()
     $process.WaitForExit()
-    $outputText = $standardOutput.GetAwaiter().GetResult()
-    $errorText = $standardError.GetAwaiter().GetResult()
-    if ($outputText) {
-        [Console]::Out.Write($outputText)
-    }
-    if ($errorText) {
-        [Console]::Error.Write($errorText)
-    }
     $childExitCode = $process.ExitCode
 } catch {
     $primaryError = $_
