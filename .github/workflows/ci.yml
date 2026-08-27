@@ -209,7 +209,7 @@ jobs:
             "-n", "2", "--dist=loadfile",
             "--timeout=90", "--timeout-method=thread", "--durations=20"
           )
-          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+          & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
             -ArgumentList $arguments
 
@@ -268,7 +268,7 @@ jobs:
             "tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots",
             "tests/windows/test_trusted_live_ui.py"
           )
-          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+          & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
             -ArgumentList $arguments
 
