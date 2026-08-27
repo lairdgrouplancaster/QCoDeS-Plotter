@@ -68,9 +68,14 @@ $wrapper = Join-Path $PSScriptRoot "run-unprivileged-windows.ps1"
 $wrapperLiteral = ConvertTo-SingleQuotedPowerShellLiteral $wrapper
 $fileLiteral = ConvertTo-SingleQuotedPowerShellLiteral $FilePath
 $workingLiteral = ConvertTo-SingleQuotedPowerShellLiteral $WorkingDirectory
-$phaseLogPath = Join-Path (
-    if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
-) "qplot-bounded-wrapper-$([Guid]::NewGuid().ToString('N')).txt"
+$phaseLogRoot = if ($env:RUNNER_TEMP) {
+    $env:RUNNER_TEMP
+} else {
+    [IO.Path]::GetTempPath()
+}
+$phaseLogPath = Join-Path `
+    $phaseLogRoot `
+    "qplot-bounded-wrapper-$([Guid]::NewGuid().ToString('N')).txt"
 $phaseLogLiteral = ConvertTo-SingleQuotedPowerShellLiteral $phaseLogPath
 $argumentLiterals = @(
     $ArgumentList | ForEach-Object {
