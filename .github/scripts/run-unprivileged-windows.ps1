@@ -620,14 +620,25 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
     if ($userCreated) {
         for ($index = $grantedPaths.Count - 1; $index -ge 0; $index--) {
             try {
-                Invoke-IcaclsChecked -Arguments @(
+                $aclRemovalArguments = @(
                     $grantedPaths[$index],
                     "/remove:g",
                     $aclIdentity,
-                    "/T",
-                    "/C",
                     "/Q"
                 )
+                if (-not [string]::Equals(
+                    $grantedPaths[$index],
+                    $unprivilegedTemp,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) {
+                    # The source workspace existed before the grant, so remove
+                    # its explicit per-object ACEs recursively. The standard-
+                    # user temp tree was empty and received access through its
+                    # root's inheritable ACE; traversing the populated pytest
+                    # tree here can defeat the wrapper's process deadline.
+                    $aclRemovalArguments += @("/T", "/C")
+                }
+                Invoke-IcaclsChecked -Arguments $aclRemovalArguments
             } catch {
                 Write-Warning "Could not remove the qPlot CI ACL: $_"
             }
