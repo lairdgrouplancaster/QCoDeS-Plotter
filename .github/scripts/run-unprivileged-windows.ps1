@@ -372,41 +372,33 @@ try {
 
     $stdoutPath = Join-Path $unprivilegedTemp "child-stdout.txt"
     $stderrPath = Join-Path $unprivilegedTemp "child-stderr.txt"
-    $pythonArguments = ConvertTo-Json -Compress -InputObject @($ArgumentList)
-    $pythonBootstrap = @'
-import json
+    [System.IO.File]::WriteAllText(
+        $stdoutPath,
+        "",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllText(
+        $stderrPath,
+        "",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $siteCustomize = @'
 import os
-import runpy
 import sys
 
 stdout_path = os.environ["QPLOT_CI_STDOUT_PATH"]
 stderr_path = os.environ["QPLOT_CI_STDERR_PATH"]
-stdout_file = open(stdout_path, "w", encoding="utf-8", buffering=1)
-stderr_file = open(stderr_path, "w", encoding="utf-8", buffering=1)
+stdout_file = open(stdout_path, "a", encoding="utf-8", buffering=1)
+stderr_file = open(stderr_path, "a", encoding="utf-8", buffering=1)
 os.dup2(stdout_file.fileno(), 1, inheritable=True)
 os.dup2(stderr_file.fileno(), 2, inheritable=True)
 sys.stdout = open(1, "w", encoding="utf-8", buffering=1, closefd=False)
 sys.stderr = open(2, "w", encoding="utf-8", buffering=1, closefd=False)
-sys.path.insert(0, os.getcwd())
-
-arguments = json.loads(os.environ["QPLOT_CI_PYTHON_ARGUMENTS"])
-if not arguments:
-    raise SystemExit("The unprivileged Python command has no target.")
-if arguments[0] == "-m":
-    if len(arguments) < 2:
-        raise SystemExit("The unprivileged Python -m command has no module.")
-    target = arguments[1]
-    sys.argv = [target, *arguments[2:]]
-    runpy.run_module(target, run_name="__main__", alter_sys=False)
-else:
-    target = arguments[0]
-    sys.argv = [target, *arguments[1:]]
-    runpy.run_path(target, run_name="__main__")
 '@
-    $bootstrapPath = Join-Path $unprivilegedTemp "run-python-command.py"
+    $siteCustomizePath = Join-Path $unprivilegedTemp "sitecustomize.py"
     [System.IO.File]::WriteAllText(
-        $bootstrapPath,
-        $pythonBootstrap,
+        $siteCustomizePath,
+        $siteCustomize,
         [System.Text.UTF8Encoding]::new($false)
     )
 
@@ -422,7 +414,9 @@ else:
     $startInfo.Password = $securePassword
     $startInfo.LoadUserProfile = $true
 
-    [void] $startInfo.ArgumentList.Add($bootstrapPath)
+    foreach ($argument in $ArgumentList) {
+        [void] $startInfo.ArgumentList.Add($argument)
+    }
 
     $startInfo.Environment.Clear()
     foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
@@ -443,8 +437,13 @@ else:
     $startInfo.Environment["QPLOT_UNPRIVILEGED_TEMP"] = $unprivilegedTemp
     $startInfo.Environment["QPLOT_CI_STDOUT_PATH"] = $stdoutPath
     $startInfo.Environment["QPLOT_CI_STDERR_PATH"] = $stderrPath
-    $startInfo.Environment["QPLOT_CI_PYTHON_ARGUMENTS"] = $pythonArguments
     $startInfo.Environment["PYTHONUNBUFFERED"] = "1"
+    $existingPythonPath = $startInfo.Environment["PYTHONPATH"]
+    $startInfo.Environment["PYTHONPATH"] = if ($existingPythonPath) {
+        $unprivilegedTemp + [System.IO.Path]::PathSeparator + $existingPythonPath
+    } else {
+        $unprivilegedTemp
+    }
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -457,7 +456,7 @@ else:
     $processContained = $true
     $processJob.ArmTimeout($TimeoutSeconds * 1000)
 
-    # Poll only the direct Python process. Its bootstrap redirected fd 1/2 to
+    # Poll only the direct Python process. sitecustomize redirected fd 1/2 to
     # regular files, so descendants cannot create an anonymous-pipe EOF wait.
     while (-not $process.WaitForExit(250)) {
     }
