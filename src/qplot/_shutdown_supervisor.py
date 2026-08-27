@@ -3081,12 +3081,13 @@ def _connect_public_api_result_channel(
     )
     channel.set_inheritable(False)
     hello_nonce = secrets.token_bytes(_NONCE_BYTES)
+    claimed_pid = _supervised_child_claimed_pid()
     hello = _encode_frame(
         _API_LAUNCHER_HELLO,
         authentication_key=bootstrap.authentication_key,
         session_nonce=bootstrap.session_nonce,
         message_nonce=hello_nonce,
-        payload=_PID_PAYLOAD.pack(os.getpid()),
+        payload=_PID_PAYLOAD.pack(claimed_pid),
     )
     try:
         remaining = _timeout_within(bootstrap.startup_deadline)
@@ -3114,7 +3115,7 @@ def _connect_public_api_result_channel(
             raise ShutdownSupervisorError(
                 "public-API launcher startup acknowledgement nonce does not match"
             )
-        if _PID_PAYLOAD.unpack(payload)[0] != os.getpid():
+        if _PID_PAYLOAD.unpack(payload)[0] != claimed_pid:
             raise ShutdownSupervisorError(
                 "public-API launcher startup acknowledgement PID does not match"
             )

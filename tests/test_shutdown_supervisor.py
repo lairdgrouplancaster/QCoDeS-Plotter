@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -451,6 +452,67 @@ def test_windows_venv_child_authenticates_its_retained_redirector_pid(
     monkeypatch.setattr(supervisor.os, "getpid", lambda: 8765)
 
     assert supervisor._supervised_child_claimed_pid() == 4312
+
+
+def test_public_api_launcher_authenticates_retained_child_pid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind((supervisor._LOOPBACK_HOST, 0))
+    listener.listen(1)
+    authentication_key = secrets.token_bytes(supervisor._AUTHENTICATION_BYTES)
+    session_nonce = secrets.token_bytes(supervisor._NONCE_BYTES)
+    claimed_pid = 4312
+    observed_pids: list[int] = []
+
+    def acknowledge_launcher() -> None:
+        channel, _address = listener.accept()
+        try:
+            hello = supervisor._receive_exact(channel, supervisor._FRAME_SIZE)
+            frame_type, hello_nonce, payload = supervisor._decode_frame(
+                hello,
+                authentication_key=authentication_key,
+                session_nonce=session_nonce,
+            )
+            assert frame_type == supervisor._API_LAUNCHER_HELLO
+            observed_pids.append(supervisor._PID_PAYLOAD.unpack(payload)[0])
+            channel.sendall(
+                supervisor._encode_frame(
+                    supervisor._API_LAUNCHER_READY,
+                    authentication_key=authentication_key,
+                    session_nonce=session_nonce,
+                    message_nonce=hello_nonce,
+                    payload=supervisor._PID_PAYLOAD.pack(claimed_pid),
+                )
+            )
+        finally:
+            channel.close()
+
+    bootstrap = supervisor._ApiLauncherBootstrap(
+        host=supervisor._LOOPBACK_HOST,
+        port=listener.getsockname()[1],
+        authentication_key=authentication_key,
+        session_nonce=session_nonce,
+        startup_deadline=time.monotonic() + 2.0,
+        caller_pid=os.getpid(),
+        child_argv=(sys.executable,),
+        database_path=None,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_supervised_child_claimed_pid",
+        lambda: claimed_pid,
+    )
+    server = threading.Thread(target=acknowledge_launcher)
+    server.start()
+    try:
+        channel = supervisor._connect_public_api_result_channel(bootstrap)
+        channel.close()
+        server.join(timeout=2.0)
+        assert not server.is_alive()
+        assert observed_pids == [claimed_pid]
+    finally:
+        listener.close()
 
 
 def test_launcher_popen_failure_is_exact(
