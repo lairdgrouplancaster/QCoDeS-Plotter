@@ -1539,8 +1539,9 @@ def exercise_installed_shutdown_supervision(database_path, writer, temporary):
         normal_script,
         normal_record_path,
     )
-    normal_record = json.loads(normal_record_path.read_text(encoding="utf-8"))
     assert normal_result["returncode"] == 17, normal_result
+    assert normal_record_path.is_file(), normal_result
+    normal_record = json.loads(normal_record_path.read_text(encoding="utf-8"))
     assert normal_record["arm_acknowledged"] is True
     assert normal_result["completed_at"] < normal_record["hard_deadline"]
     assert not process_is_running(normal_record["gui_pid"]), (

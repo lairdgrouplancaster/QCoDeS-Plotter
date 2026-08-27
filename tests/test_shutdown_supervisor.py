@@ -1174,6 +1174,64 @@ def test_deadline_race_preserves_an_already_exited_child_status() -> None:
     assert child.returncode == 31
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX child-observation regression")
+def test_posix_child_observation_uses_kqueue_when_waitid_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = []
+
+    class Child:
+        pid = 4312
+
+    class Event:
+        ident = Child.pid
+        fflags = 0x80000000
+
+    class Queue:
+        def control(self, changes, max_events, timeout):
+            events.append((changes, max_events, timeout))
+            return [Event()]
+
+        def close(self):
+            events.append("closed")
+
+    def kevent(ident, **kwargs):
+        return (ident, kwargs)
+
+    monkeypatch.delattr(supervisor.os, "waitid", raising=False)
+    monkeypatch.setattr(supervisor.select, "kqueue", Queue, raising=False)
+    monkeypatch.setattr(supervisor.select, "kevent", kevent, raising=False)
+    monkeypatch.setattr(supervisor.select, "KQ_FILTER_PROC", -5, raising=False)
+    monkeypatch.setattr(supervisor.select, "KQ_EV_ADD", 1, raising=False)
+    monkeypatch.setattr(supervisor.select, "KQ_EV_ENABLE", 4, raising=False)
+    monkeypatch.setattr(supervisor.select, "KQ_EV_ONESHOT", 16, raising=False)
+    monkeypatch.setattr(
+        supervisor.select,
+        "KQ_NOTE_EXIT",
+        Event.fflags,
+        raising=False,
+    )
+
+    assert supervisor._posix_child_exit_observed(
+        Child(),
+        supervisor._LauncherSignalState(),
+    )
+    assert events[-1] == "closed"
+    changes, max_events, timeout = events[0]
+    assert changes == [
+        (
+            Child.pid,
+            {
+                "filter": -5,
+                "flags": 21,
+                "fflags": Event.fflags,
+            },
+        )
+    ]
+    assert max_events == 1
+    assert timeout == 0.0
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX zombie-group regression")
 def test_known_child_exit_accepts_darwin_eperm_during_group_stabilization(
     monkeypatch: pytest.MonkeyPatch,

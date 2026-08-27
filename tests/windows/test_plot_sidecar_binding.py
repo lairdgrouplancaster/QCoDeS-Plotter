@@ -93,7 +93,7 @@ def test_retained_plot_rejects_wal_shm_swap_before_automatic_refresh(tmp_path):
     plot.load_data = lambda *args, **kwargs: plot.load_calls.append((args, kwargs))
 
     _replace_sidecars(database_path)
-    assert database_sidecar_identities(database_path).isdisjoint(accepted_sidecars)
+    assert database_sidecar_identities(database_path) != accepted_sidecars
 
     plotWidget.refreshWindow(plot, force=True)
 

@@ -52,6 +52,39 @@ from qplot.windows._window_controls import (
 from qplot.windows.plot1d import plot1d
 
 
+class _FailedTrustedRequest:
+    def __init__(self, error):
+        self.error = error
+
+    def wait(self):
+        raise self.error
+
+
+class _RejectedTrustedService:
+    """Deterministically select the legacy snapshot-fallback test path."""
+
+    accepted = False
+    close_error = None
+
+    def __init__(self):
+        self.closed = False
+
+    def submit_bootstrap(self, *, deadline=None):
+        del deadline
+        return _FailedTrustedRequest(
+            database_module.TrustedLiveUnsupportedSourceError(
+                "trusted live reading is unavailable in this snapshot test"
+            )
+        )
+
+    def close_async(self):
+        self.closed = True
+
+    def wait_closed(self, timeout):
+        del timeout
+        return self.closed
+
+
 class MeasurementExportDataFrameTestCase(unittest.TestCase):
     def test_measurement_dataframe_flattens_and_prefixes_multiple_parameters(self):
         class Param:
@@ -4854,7 +4887,11 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                     "prefetch_database_file_with_timeout",
                 ) as prefetch,
             ):
-                worker = main_window.DatabaseLoadWorker(4, database.name)
+                worker = main_window.DatabaseLoadWorker(
+                    4,
+                    database.name,
+                    trusted_service=_RejectedTrustedService(),
+                )
                 finished = []
                 worker.signals.finished.connect(lambda *args: finished.append(args))
 
@@ -5078,7 +5115,12 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         database_module.get_runs_basic_via_sql = lambda _path, **_kwargs: {}
         try:
             with tempfile.NamedTemporaryFile(suffix=".db") as database:
-                worker = main_window.DatabaseLoadWorker(9, database.name, 12)
+                worker = main_window.DatabaseLoadWorker(
+                    9,
+                    database.name,
+                    12,
+                    trusted_service=_RejectedTrustedService(),
+                )
                 statuses = []
                 finished = []
                 worker.signals.status.connect(lambda *args: statuses.append(args))

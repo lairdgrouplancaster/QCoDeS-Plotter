@@ -292,7 +292,11 @@ class _ProcessShutdownFailSafe:
     def _fallback_diagnostic_watchdog(self):
         if self._cancelled.wait(max(0.0, self._diagnostic_deadline - monotonic())):
             return
-        self.persist_async()
+        # This watchdog already runs away from the GUI thread.  Persist here
+        # instead of scheduling a second daemon so the hard-deadline watchdog
+        # cannot overtake diagnostic publication merely because that extra
+        # thread has not yet been scheduled.
+        self.persist_now()
 
     def _fallback_termination_watchdog(self):
         if self._cancelled.wait(max(0.0, self._hard_deadline - monotonic())):
@@ -306,12 +310,12 @@ class _ProcessShutdownFailSafe:
             self._fallback_active = True
         for name, target in (
             (
-                "qplot-shutdown-process-fallback",
-                self._fallback_termination_watchdog,
-            ),
-            (
                 "qplot-shutdown-diagnostic-fallback",
                 self._fallback_diagnostic_watchdog,
+            ),
+            (
+                "qplot-shutdown-process-fallback",
+                self._fallback_termination_watchdog,
             ),
         ):
             try:

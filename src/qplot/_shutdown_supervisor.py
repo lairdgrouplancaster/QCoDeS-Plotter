@@ -1552,13 +1552,20 @@ def _posix_child_exit_observed(
 ) -> bool | None:
     """Peek at a POSIX child without reaping its PID/process-group anchor."""
 
+    waitid = getattr(os, "waitid", None)
+    if waitid is None:
+        return _kqueue_child_exit_observed(
+            child,
+            signal_state,
+            deadline=deadline,
+        )
     options = os.WEXITED | os.WNOHANG | os.WNOWAIT
     while True:
         if deadline is not None and time.monotonic() >= deadline:
             return None
         _raise_if_launcher_signalled(signal_state)
         try:
-            result = os.waitid(os.P_PID, int(child.pid), options)
+            result = waitid(os.P_PID, int(child.pid), options)
         except InterruptedError:
             continue
         except ChildProcessError:
@@ -1583,6 +1590,51 @@ def _posix_child_exit_observed(
         if deadline is not None and time.monotonic() >= deadline:
             return None
         return result is not None and int(result.si_pid) == int(child.pid)
+
+
+def _kqueue_child_exit_observed(
+    child: Any,
+    signal_state: _LauncherSignalState,
+    *,
+    deadline: float | None = None,
+) -> bool | None:
+    """Retain a Darwin child as a zombie when Python lacks ``os.waitid``."""
+
+    kqueue_factory = getattr(select, "kqueue", None)
+    kevent_factory = getattr(select, "kevent", None)
+    if kqueue_factory is None or kevent_factory is None:
+        raise ShutdownSupervisorError(
+            "POSIX child observation requires waitid or kqueue"
+        )
+    while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            return None
+        _raise_if_launcher_signalled(signal_state)
+        queue = None
+        try:
+            queue = kqueue_factory()
+            change = kevent_factory(
+                int(child.pid),
+                filter=select.KQ_FILTER_PROC,
+                flags=(select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_ONESHOT),
+                fflags=select.KQ_NOTE_EXIT,
+            )
+            events = queue.control([change], 1, 0.0)
+        except InterruptedError:
+            continue
+        finally:
+            if queue is not None:
+                try:
+                    queue.close()
+                except OSError:
+                    pass
+        if deadline is not None and time.monotonic() >= deadline:
+            return None
+        return any(
+            int(event.ident) == int(child.pid)
+            and int(event.fflags) & int(select.KQ_NOTE_EXIT)
+            for event in events
+        )
 
 
 def _child_exit_observed(
