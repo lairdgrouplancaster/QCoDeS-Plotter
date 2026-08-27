@@ -1399,7 +1399,7 @@ def test_posix_observation_retry_cannot_cross_deadline_before_group_kill(
         return original_materialize(*args, **kwargs)
 
     monkeypatch.setattr(supervisor, "time", clock)
-    monkeypatch.setattr(supervisor.os, "waitid", failing_waitid)
+    monkeypatch.setattr(supervisor.os, "waitid", failing_waitid, raising=False)
     monkeypatch.setattr(
         supervisor.os,
         "waitpid",
@@ -1470,7 +1470,7 @@ def test_posix_live_observation_rechecks_deadline_before_sleep(
         return original_materialize(*args, **kwargs)
 
     monkeypatch.setattr(supervisor, "time", clock)
-    monkeypatch.setattr(supervisor.os, "waitid", delayed_live_waitid)
+    monkeypatch.setattr(supervisor.os, "waitid", delayed_live_waitid, raising=False)
     monkeypatch.setattr(
         supervisor.os,
         "waitpid",
