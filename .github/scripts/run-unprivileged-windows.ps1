@@ -387,6 +387,7 @@ os.dup2(stdout_file.fileno(), 1, inheritable=True)
 os.dup2(stderr_file.fileno(), 2, inheritable=True)
 sys.stdout = open(1, "w", encoding="utf-8", buffering=1, closefd=False)
 sys.stderr = open(2, "w", encoding="utf-8", buffering=1, closefd=False)
+sys.path.insert(0, os.getcwd())
 
 arguments = json.loads(os.environ["QPLOT_CI_PYTHON_ARGUMENTS"])
 if not arguments:
