@@ -178,7 +178,7 @@ jobs:
           python -c $guardCode
 
       - name: Verify unprivileged Windows deadline containment
-        if: runner.os == 'Windows' && matrix.python-version == '3.12'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $python = (Get-Command python).Source
