@@ -29,19 +29,29 @@ if ($env:RUNNER_OS -ne "Windows") {
 
 Add-Type -TypeDefinition @'
 using System;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 public sealed class QPlotOuterDeadline : IDisposable
 {
     private readonly ManualResetEvent cancelled = new ManualResetEvent(false);
+    private readonly IntPtr processHandle;
     private readonly Thread thread;
 
-    public QPlotOuterDeadline(int timeoutMilliseconds)
+    public QPlotOuterDeadline(IntPtr processHandle, int timeoutMilliseconds)
     {
+        if (processHandle == IntPtr.Zero)
+        {
+            throw new ArgumentException(
+                "The nested wrapper process handle is invalid.",
+                nameof(processHandle)
+            );
+        }
         if (timeoutMilliseconds < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
         }
+        this.processHandle = processHandle;
         thread = new Thread(WaitForDeadline);
         thread.IsBackground = true;
         thread.Name = "qplot-Windows-CI-outer-deadline";
@@ -58,6 +68,13 @@ public sealed class QPlotOuterDeadline : IDisposable
         Console.Error.WriteLine(
             "The bounded unprivileged qPlot wrapper reached its outer deadline."
         );
+        if (!TerminateProcess(processHandle, 1))
+        {
+            Console.Error.WriteLine(
+                "Native termination of the nested wrapper returned Windows error " +
+                Marshal.GetLastWin32Error() + "."
+            );
+        }
         Environment.Exit(1);
     }
 
@@ -66,6 +83,12 @@ public sealed class QPlotOuterDeadline : IDisposable
         cancelled.Set();
         GC.SuppressFinalize(this);
     }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(
+        IntPtr processHandle,
+        uint exitCode
+    );
 }
 '@
 
@@ -156,12 +179,22 @@ $process.StartInfo = $startInfo
 if (-not $process.Start()) {
     throw "Windows did not start the bounded unprivileged qPlot wrapper."
 }
+if ($env:QPLOT_CI_OUTER_WRAPPER_PID_PATH) {
+    [System.IO.File]::WriteAllText(
+        $env:QPLOT_CI_OUTER_WRAPPER_PID_PATH,
+        [string] $process.Id,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+}
 $outerLifetimeSeconds = if ($OuterTimeoutSeconds -gt 0) {
     $OuterTimeoutSeconds
 } else {
     $TimeoutSeconds + $CleanupGraceSeconds
 }
-$outerDeadline = [QPlotOuterDeadline]::new($outerLifetimeSeconds * 1000)
+$outerDeadline = [QPlotOuterDeadline]::new(
+    $process.Handle,
+    $outerLifetimeSeconds * 1000
+)
 Write-Host (
     "The bounded unprivileged wrapper started with a " +
     "$outerLifetimeSeconds-second outer deadline."

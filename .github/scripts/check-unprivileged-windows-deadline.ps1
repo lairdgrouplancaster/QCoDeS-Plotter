@@ -44,6 +44,10 @@ $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.FileName = (Get-Command pwsh).Source
 $startInfo.UseShellExecute = $false
 $startInfo.CreateNoWindow = $true
+$innerPidPath = Join-Path `
+    $env:RUNNER_TEMP `
+    "qplot-deadline-inner-$([Guid]::NewGuid().ToString('N')).pid"
+$startInfo.Environment["QPLOT_CI_OUTER_WRAPPER_PID_PATH"] = $innerPidPath
 [void] $startInfo.ArgumentList.Add("-NoLogo")
 [void] $startInfo.ArgumentList.Add("-NoProfile")
 [void] $startInfo.ArgumentList.Add("-NonInteractive")
@@ -65,7 +69,36 @@ $stopwatch.Stop()
 if ($process.ExitCode -eq 0) {
     throw "The deliberately sleeping deadline probe unexpectedly succeeded."
 }
+$pidDeadline = [DateTime]::UtcNow.AddSeconds(5)
+while (
+    -not (Test-Path -LiteralPath $innerPidPath) -and
+    [DateTime]::UtcNow -lt $pidDeadline
+) {
+    Start-Sleep -Milliseconds 50
+}
+if (-not (Test-Path -LiteralPath $innerPidPath)) {
+    throw "The deadline probe did not record its nested wrapper process ID."
+}
+$innerPidText = [System.IO.File]::ReadAllText($innerPidPath).Trim()
+$innerPid = 0
+if (-not [int]::TryParse($innerPidText, [ref] $innerPid)) {
+    throw "The deadline probe recorded an invalid nested wrapper process ID."
+}
+$innerExitDeadline = [DateTime]::UtcNow.AddSeconds(5)
+while (
+    $null -ne (Get-Process -Id $innerPid -ErrorAction SilentlyContinue) -and
+    [DateTime]::UtcNow -lt $innerExitDeadline
+) {
+    Start-Sleep -Milliseconds 50
+}
+if ($null -ne (Get-Process -Id $innerPid -ErrorAction SilentlyContinue)) {
+    throw (
+        "The independent deadline left nested wrapper process " +
+        "$innerPid alive."
+    )
+}
 Write-Host (
     "The unprivileged Windows deadline probe returned exit code " +
-    "$($process.ExitCode) in $([Math]::Round($stopwatch.Elapsed.TotalSeconds, 2)) seconds."
+    "$($process.ExitCode) in $([Math]::Round($stopwatch.Elapsed.TotalSeconds, 2)) seconds " +
+    "and terminated nested wrapper process $innerPid."
 )
