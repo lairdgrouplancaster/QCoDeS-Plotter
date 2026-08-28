@@ -321,53 +321,6 @@ function Invoke-IcaclsChecked {
     }
 }
 
-function Publish-ChildLog {
-    param(
-        [string] $Path,
-        [Parameter(Mandatory = $true)]
-        [System.IO.TextWriter] $Destination
-    )
-
-    $maximumBytes = 32768
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return
-    }
-    $stream = $null
-    try {
-        $stream = [System.IO.File]::Open(
-            $Path,
-            [System.IO.FileMode]::Open,
-            [System.IO.FileAccess]::Read,
-            [System.IO.FileShare]::ReadWrite
-        )
-        $length = [int] [Math]::Min($stream.Length, $maximumBytes)
-        if ($stream.Length -gt $length) {
-            $Destination.WriteLine(
-                "[qPlot diagnostics truncated to the final $length bytes]"
-            )
-        }
-        [void] $stream.Seek(-$length, [System.IO.SeekOrigin]::End)
-        $buffer = [byte[]]::new($length)
-        $totalRead = 0
-        while ($totalRead -lt $length) {
-            $read = $stream.Read($buffer, $totalRead, $length - $totalRead)
-            if ($read -eq 0) {
-                break
-            }
-            $totalRead += $read
-        }
-        $Destination.Write(
-            [System.Text.Encoding]::UTF8.GetString($buffer, 0, $totalRead)
-        )
-    } catch {
-        Write-Warning "Could not publish child diagnostics from '$Path': $_"
-    } finally {
-        if ($null -ne $stream) {
-            $stream.Dispose()
-        }
-    }
-}
-
 if ($env:RUNNER_OS -ne "Windows") {
     throw "This helper is only supported on GitHub-hosted Windows runners."
 }
@@ -625,13 +578,6 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
     $primaryError = $_
     Write-Host "qPlot Windows wrapper phase: caught-error"
 } finally {
-    Write-Host "qPlot Windows wrapper phase: publish-diagnostics"
-    # Publish the regular-file snapshot before any OS/account teardown that
-    # might itself be slow on a failing runner.
-    Publish-ChildLog -Path $stdoutPath -Destination ([Console]::Out)
-    Publish-ChildLog -Path $stderrPath -Destination ([Console]::Error)
-    Write-Host "qPlot Windows wrapper phase: diagnostics-published"
-
     # Closing the job handle kills every remaining descendant and therefore
     # closes inherited output handles before reader and account cleanup.
     # A timed-out job has already received TerminateJobObject. Leave its final
