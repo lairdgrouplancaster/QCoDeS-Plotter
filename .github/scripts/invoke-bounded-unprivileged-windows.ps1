@@ -122,22 +122,18 @@ while (-not $process.WaitForExit(250)) {
         continue
     }
     Write-Host "The bounded unprivileged wrapper reached its outer deadline."
-    # The inner wrapper is the sole owner of a kill-on-close Job handle.
-    # Terminating that one process closes the handle in the kernel and
-    # contains the entire standard-user child tree without enumerating it.
-    $process.Kill()
-    Write-Host "The bounded unprivileged wrapper termination call returned."
-    [void] $process.WaitForExit(5000)
     Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
     Publish-PersistedChildLogs
     Write-Error (
         "The unprivileged qPlot wrapper exceeded its bounded " +
         "$outerLifetimeSeconds-second lifetime."
     )
-    # Do not re-enter Process.Dispose(), PowerShell unwinding, or asynchronous
-    # EOF accounting here. A native cleanup utility may still own the private
-    # redirected pipe's write end; the OS process boundary closes our read end
-    # without waiting and, crucially, no descendant owns an Actions pipe.
+    # Do not synchronously terminate or dispose the nested PowerShell process
+    # here. It owns the inner kill-on-close Job, and closing that populated Job
+    # is the operation this independent outer boundary exists to escape. The
+    # nested process and every native cleanup utility own only private output
+    # handles, so the Actions step can return and the runner's normal orphan
+    # cleanup can terminate them without waiting for inherited Actions EOF.
     [Environment]::Exit(1)
 }
 $wrapperExitCode = $process.ExitCode
