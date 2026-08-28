@@ -1103,7 +1103,8 @@ def test_initial_supervisor_startup_is_bounded_by_request_deadline(
         factory_hook=delay_for_bound,
     )
     started = time.monotonic()
-    request = harness.service.submit_bootstrap(deadline=started + 0.08)
+    deadline = started + 0.08
+    request = harness.service.submit_bootstrap(deadline=deadline)
 
     with pytest.raises(TrustedReadRequestDeadlineError):
         request.wait(0.5)
@@ -1115,7 +1116,7 @@ def test_initial_supervisor_startup_is_bounded_by_request_deadline(
     assert len(harness.factory_options) == 1
     startup_timeout = harness.factory_options[0]["startup_timeout_seconds"]
     assert isinstance(startup_timeout, float)
-    assert 0 < startup_timeout <= 0.08
+    assert 0 < startup_timeout <= deadline - started
     assert harness.factory_options[0]["reply_timeout_seconds"] == 4.0
     assert harness.supervisor.labels_submitted() == []
 
