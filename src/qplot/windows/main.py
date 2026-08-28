@@ -34,7 +34,7 @@ from qplot.datahandling.database import (
 from qplot.datahandling.database import (
     database_path_from_mime_data as database_path_from_mime_data,
 )
-from qplot.diagnostics import get_logger, log_user_error
+from qplot.diagnostics import get_logger, log_bounded_shutdown, log_user_error
 
 from ._commands import create_action
 from ._config_persistence import (
@@ -94,9 +94,9 @@ def _persist_shutdown_diagnostics(*, started_at, total_timeout, diagnostics):
         diagnostics = ("background work remained active without diagnostics",)
     details = f"elapsed={elapsed:.3f}s\n" + "\n".join(diagnostics)
     try:
-        log_user_error(
-            "Bounded Application Shutdown",
-            f"The {total_timeout:g}-second monotonic shutdown deadline was "
+        log_bounded_shutdown(
+            "Bounded Application Shutdown: "
+            f"the {total_timeout:g}-second monotonic shutdown deadline was "
             "exhausted; qPlot will terminate at the process boundary if "
             "Qt-owned work still cannot be destroyed.",
             details,

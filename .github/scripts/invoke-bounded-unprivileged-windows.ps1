@@ -98,6 +98,8 @@ $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.FileName = (Get-Command pwsh).Source
 $startInfo.UseShellExecute = $false
 $startInfo.CreateNoWindow = $true
+$startInfo.RedirectStandardOutput = $true
+$startInfo.RedirectStandardError = $true
 [void] $startInfo.ArgumentList.Add("-NoLogo")
 [void] $startInfo.ArgumentList.Add("-NoProfile")
 [void] $startInfo.ArgumentList.Add("-NonInteractive")
@@ -109,32 +111,45 @@ $process.StartInfo = $startInfo
 if (-not $process.Start()) {
     throw "Windows did not start the bounded unprivileged qPlot wrapper."
 }
-$outerLifetimeSeconds = $TimeoutSeconds + $CleanupGraceSeconds
-$outerDeadline = [DateTime]::UtcNow.AddSeconds($outerLifetimeSeconds)
-Write-Host (
-    "The bounded unprivileged wrapper started with a " +
-    "$outerLifetimeSeconds-second outer deadline."
-)
-while (-not $process.WaitForExit(250)) {
-    if ([DateTime]::UtcNow -lt $outerDeadline) {
-        continue
-    }
-    Write-Host "The bounded unprivileged wrapper reached its outer deadline."
-    # The inner wrapper is the sole owner of a kill-on-close Job handle.
-    # Terminating that one process closes the handle in the kernel and
-    # contains the entire standard-user child tree without enumerating it.
-    $process.Kill()
-    Write-Host "The bounded unprivileged wrapper termination call returned."
-    [void] $process.WaitForExit(5000)
-    Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
-    Publish-PersistedChildLogs
-    throw (
-        "The unprivileged qPlot wrapper exceeded its bounded " +
-        "$outerLifetimeSeconds-second lifetime."
+$stdoutDrain = $process.StandardOutput.ReadToEndAsync()
+$stderrDrain = $process.StandardError.ReadToEndAsync()
+$wrapperExitCode = $null
+try {
+    $outerLifetimeSeconds = $TimeoutSeconds + $CleanupGraceSeconds
+    $outerDeadline = [DateTime]::UtcNow.AddSeconds($outerLifetimeSeconds)
+    Write-Host (
+        "The bounded unprivileged wrapper started with a " +
+        "$outerLifetimeSeconds-second outer deadline."
     )
+    while (-not $process.WaitForExit(250)) {
+        if ([DateTime]::UtcNow -lt $outerDeadline) {
+            continue
+        }
+        Write-Host "The bounded unprivileged wrapper reached its outer deadline."
+        # The inner wrapper is the sole owner of a kill-on-close Job handle.
+        # Terminating that one process closes the handle in the kernel and
+        # contains the entire standard-user child tree without enumerating it.
+        $process.Kill()
+        Write-Host "The bounded unprivileged wrapper termination call returned."
+        [void] $process.WaitForExit(5000)
+        Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
+        Publish-PersistedChildLogs
+        throw (
+            "The unprivileged qPlot wrapper exceeded its bounded " +
+            "$outerLifetimeSeconds-second lifetime."
+        )
+    }
+    $wrapperExitCode = $process.ExitCode
+    if ($wrapperExitCode -ne 0) {
+        Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
+        Publish-PersistedChildLogs
+    }
+} finally {
+    # The nested wrapper and any native process it happens to be cleaning up
+    # must never inherit the GitHub runner's own stdout/stderr pipe handles.
+    # Closing these private drain pipes is therefore sufficient for the
+    # Actions step to return even if an uncontained cleanup utility outlives
+    # the nested PowerShell process.
+    $process.Dispose()
 }
-if ($process.ExitCode -ne 0) {
-    Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
-    Publish-PersistedChildLogs
-}
-exit $process.ExitCode
+exit $wrapperExitCode

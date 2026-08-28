@@ -795,7 +795,7 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
         mode = __MODE__
         main_window._APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = 0.12
         records = []
-        main_window.log_user_error = (
+        main_window.log_bounded_shutdown = (
             lambda *args, **kwargs: records.append((args, kwargs))
         )
 

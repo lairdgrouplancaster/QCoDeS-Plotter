@@ -23,7 +23,7 @@ function ConvertTo-SingleQuotedPowerShellLiteral {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
-$wrapper = Join-Path $PSScriptRoot "run-unprivileged-windows.ps1"
+$wrapper = Join-Path $PSScriptRoot "invoke-bounded-unprivileged-windows.ps1"
 $wrapperLiteral = ConvertTo-SingleQuotedPowerShellLiteral $wrapper
 $fileLiteral = ConvertTo-SingleQuotedPowerShellLiteral $FilePath
 $workingLiteral = ConvertTo-SingleQuotedPowerShellLiteral $WorkingDirectory
@@ -32,7 +32,8 @@ $probeCommand = @"
     -FilePath $fileLiteral ``
     -ArgumentList @('-c', 'import time; time.sleep(30)') ``
     -WorkingDirectory $workingLiteral ``
-    -TimeoutSeconds 2
+    -TimeoutSeconds 2 ``
+    -CleanupGraceSeconds 10
 "@
 $encodedCommand = [Convert]::ToBase64String(
     [Text.Encoding]::Unicode.GetBytes($probeCommand)

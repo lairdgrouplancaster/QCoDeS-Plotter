@@ -40,7 +40,7 @@ class DiagnosticsTestCase(unittest.TestCase):
         self.assertIn("Traceback", text)
         self.assertIn("RuntimeError: broken measurement", text)
 
-    def test_user_visible_error_is_logged_with_details(self):
+    def test_user_visible_error_omits_sensitive_details_from_log(self):
         log_file = self.temp_path / "qplot.log"
         diagnostics.configure_logging(log_file=log_file, force=True)
 
@@ -52,7 +52,22 @@ class DiagnosticsTestCase(unittest.TestCase):
 
         text = log_file.read_text(encoding="utf-8")
         self.assertIn("Database Load Failed: Could not load database.", text)
-        self.assertIn("Details: locked database", text)
+        self.assertIn("Details: omitted from persistent log", text)
+        self.assertNotIn("locked database", text)
+
+    def test_bounded_shutdown_diagnostics_are_persisted_exactly(self):
+        log_file = self.temp_path / "qplot.log"
+        diagnostics.configure_logging(log_file=log_file, force=True)
+
+        diagnostics.log_bounded_shutdown(
+            "Bounded Application Shutdown: deadline exhausted",
+            "pool threadPool: active_threads=1\nexact escalation diagnostic",
+        )
+
+        text = log_file.read_text(encoding="utf-8")
+        self.assertIn("Bounded Application Shutdown: deadline exhausted", text)
+        self.assertIn("pool threadPool: active_threads=1", text)
+        self.assertIn("exact escalation diagnostic", text)
 
     def test_excepthook_logs_uncaught_exception(self):
         log_file = self.temp_path / "qplot.log"
