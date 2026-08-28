@@ -551,14 +551,22 @@ class plotWidget(
 
 
     def _install_preview_drop_target(self):
+        """Receive preview drops at the window, outside pyqtgraph's view.
+
+        ``GraphicsLayoutWidget`` is a ``QGraphicsView``.  Consuming its
+        drag-enter event in an event filter prevents the view from recording
+        the enter, but it can still receive the matching drag-leave.  Besides
+        producing Qt's "drag leave received before drag enter" warning, that
+        leaves the view's drag state inconsistent.  Leave the graphics view
+        out of this event sequence and let Qt deliver the drag to this
+        accepting parent window instead.
+        """
         self.setAcceptDrops(True)
-        self.widget.setAcceptDrops(True)
-        self.widget.installEventFilter(self)
 
         viewport = self.widget.viewport() if hasattr(self.widget, "viewport") else None
+        self.widget.setAcceptDrops(False)
         if viewport is not None:
-            viewport.setAcceptDrops(True)
-            viewport.installEventFilter(self)
+            viewport.setAcceptDrops(False)
 
 
     def _set_param_axis_label(self, axis, param):
@@ -568,19 +576,6 @@ class plotWidget(
     def _set_param_axis_labels(self):
         self._set_param_axis_label("bottom", self.axis_param["x"])
         self._set_param_axis_label("left", self.axis_param["y"])
-
-
-    def eventFilter(self, source, event):
-        if event.type() in (
-            QtCore.QEvent.Type.DragEnter,
-            QtCore.QEvent.Type.DragMove,
-            QtCore.QEvent.Type.Drop,
-            ):
-            if self._handle_preview_drag_drop(event):
-                return True
-
-        return super().eventFilter(source, event)
-
 
     def dragEnterEvent(self, event):
         if self._handle_preview_drag_drop(event):

@@ -14,6 +14,37 @@ from qplot.windows._plotWin import plotWidget
 
 
 class RunPreviewDragDropTestCase(unittest.TestCase):
+    def test_preview_drop_target_keeps_pyqtgraph_view_out_of_drag_delivery(self):
+        class DropState:
+            def __init__(self):
+                self.accept_drops = None
+
+            def setAcceptDrops(self, value):
+                self.accept_drops = value
+
+            def installEventFilter(self, _filter):
+                raise AssertionError("The graphics view must not be filtered")
+
+        viewport = DropState()
+        widget = DropState()
+        widget.viewport = lambda: viewport
+        target = type(
+            "Target",
+            (),
+            {
+                "widget": widget,
+                "setAcceptDrops": lambda self, value: setattr(
+                    self, "accept_drops", value
+                ),
+            },
+        )()
+
+        plotWidget._install_preview_drop_target(target)
+
+        self.assertTrue(target.accept_drops)
+        self.assertFalse(widget.accept_drops)
+        self.assertFalse(viewport.accept_drops)
+
     def test_run_preview_drag_payload_round_trips_and_checks_axes(self):
         payload = run_preview_payload_from_mime(
             make_run_preview_mime("run-guid", "signal", ["x"])
