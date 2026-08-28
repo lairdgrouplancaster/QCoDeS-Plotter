@@ -24,6 +24,48 @@ if ($env:RUNNER_OS -ne "Windows") {
     throw "This helper is only supported on GitHub-hosted Windows runners."
 }
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Threading;
+
+public sealed class QPlotOuterDeadline : IDisposable
+{
+    private readonly ManualResetEvent cancelled = new ManualResetEvent(false);
+    private readonly Thread thread;
+
+    public QPlotOuterDeadline(int timeoutMilliseconds)
+    {
+        if (timeoutMilliseconds < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
+        }
+        thread = new Thread(WaitForDeadline);
+        thread.IsBackground = true;
+        thread.Name = "qplot-Windows-CI-outer-deadline";
+        thread.Start(timeoutMilliseconds);
+    }
+
+    private void WaitForDeadline(object state)
+    {
+        int timeoutMilliseconds = (int)state;
+        if (cancelled.WaitOne(timeoutMilliseconds))
+        {
+            return;
+        }
+        Console.Error.WriteLine(
+            "The bounded unprivileged qPlot wrapper reached its outer deadline."
+        );
+        Environment.Exit(1);
+    }
+
+    public void Dispose()
+    {
+        cancelled.Set();
+        GC.SuppressFinalize(this);
+    }
+}
+'@
+
 function ConvertTo-SingleQuotedPowerShellLiteral {
     param(
         [Parameter(Mandatory = $true)]
@@ -112,30 +154,17 @@ if (-not $process.Start()) {
     throw "Windows did not start the bounded unprivileged qPlot wrapper."
 }
 $outerLifetimeSeconds = $TimeoutSeconds + $CleanupGraceSeconds
-$outerDeadline = [DateTime]::UtcNow.AddSeconds($outerLifetimeSeconds)
+$outerDeadline = [QPlotOuterDeadline]::new($outerLifetimeSeconds * 1000)
 Write-Host (
     "The bounded unprivileged wrapper started with a " +
     "$outerLifetimeSeconds-second outer deadline."
 )
 while (-not $process.WaitForExit(250)) {
-    if ([DateTime]::UtcNow -lt $outerDeadline) {
-        continue
-    }
-    Write-Host "The bounded unprivileged wrapper reached its outer deadline."
-    Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
-    Publish-PersistedChildLogs
-    Write-Error (
-        "The unprivileged qPlot wrapper exceeded its bounded " +
-        "$outerLifetimeSeconds-second lifetime."
-    )
-    # Do not synchronously terminate or dispose the nested PowerShell process
-    # here. It owns the inner kill-on-close Job, and closing that populated Job
-    # is the operation this independent outer boundary exists to escape. The
-    # nested process and every native cleanup utility own only private output
-    # handles, so the Actions step can return and the runner's normal orphan
-    # cleanup can terminate them without waiting for inherited Actions EOF.
-    [Environment]::Exit(1)
+    # Process observation is deliberately subordinate to the independent
+    # compiled deadline thread. If this call, PowerShell, or populated-Job
+    # cleanup blocks, that thread exits this outer process without unwinding.
 }
+$outerDeadline.Dispose()
 $wrapperExitCode = $process.ExitCode
 if ($wrapperExitCode -ne 0) {
     Publish-PersistedLog -Path $phaseLogPath -Destination ([Console]::Out)
