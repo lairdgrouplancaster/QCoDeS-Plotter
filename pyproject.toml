@@ -124,6 +124,7 @@ files = [
     "src/qplot/datahandling/trusted_live_queries.py",
     "src/qplot/datahandling/trusted_live_service.py",
     "src/qplot/datahandling/trusted_live_supervisor.py",
+    "src/qplot/datahandling/trusted_work_scheduler.py",
     "src/qplot/datahandling/trusted_presentation.py",
     "src/qplot/datahandling/trusted_snapshot.py",
     "src/qplot/diagnostics.py",
