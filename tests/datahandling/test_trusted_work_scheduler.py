@@ -521,11 +521,11 @@ def test_relative_linux_cache_environment_uses_absolute_home_fallback(
 ) -> None:
     result = trusted_derived_cache_root(
         environment={"XDG_CACHE_HOME": cache_value},
-        home=Path("/users/test"),
+        home=PurePosixPath("/users/test"),
         platform="linux",
     )
 
-    assert result == Path("/users/test/.cache/qplot/trusted-derived")
+    assert result == PurePosixPath("/users/test/.cache/qplot/trusted-derived")
     assert result.is_absolute()
 
 
