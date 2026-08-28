@@ -1573,6 +1573,67 @@ def test_native_boundary_changes_only_allowed_shm_coordination_state(
     )
 
 
+def test_source_identity_keeps_native_sidecars_separate_from_ui_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qplot.datahandling import trusted_live as trusted_live_module
+    from qplot.datahandling.file_identity import DatabaseInstance
+
+    logical_path = os.path.abspath("ui-comparable-sidecars.db")
+    resolved_path = os.path.realpath(logical_path)
+    main_native_identity = ("windows-file-id", 17, 101)
+    wal_native_identity = ("windows-file-id", 17, 102)
+    shm_native_identity = ("windows-file-id", 17, 103)
+    comparable_sidecars = frozenset({(7, 102), (7, 103)})
+
+    monkeypatch.setattr(
+        trusted_live_module,
+        "_capture_database_instance_for_trusted_open",
+        lambda _path: (
+            DatabaseInstance(logical_path, resolved_path, (7, 101)),
+            main_native_identity,
+        ),
+    )
+    monkeypatch.setattr(
+        trusted_live_module,
+        "_database_header_journal_mode",
+        lambda _path: "wal",
+    )
+
+    def native_sidecar_identity(path: Path, _description: str) -> Any:
+        if os.fspath(path).endswith("-wal"):
+            return wal_native_identity
+        if os.fspath(path).endswith("-shm"):
+            return shm_native_identity
+        return None
+
+    monkeypatch.setattr(
+        trusted_live_module,
+        "_optional_file_identity",
+        native_sidecar_identity,
+    )
+    monkeypatch.setattr(
+        trusted_live_module,
+        "database_sidecar_identities",
+        lambda logical, resolved: (
+            comparable_sidecars
+            if (logical, resolved) == (logical_path, resolved_path)
+            else frozenset()
+        ),
+    )
+
+    source, captured_main_native_identity = (
+        trusted_live_module._capture_source_identity(logical_path)
+    )
+
+    assert captured_main_native_identity == main_native_identity
+    assert source.wal_identity == wal_native_identity
+    assert source.shm_identity == shm_native_identity
+    assert source.journal_identity is None
+    assert source.database_instance.identity == (7, 101)
+    assert source.database_instance.sidecar_identities == comparable_sidecars
+
+
 def test_missing_shm_is_created_recovered_and_retained_without_source_writes(
     live_writer: _QcodesWalWriter,
     tmp_path: Path,
