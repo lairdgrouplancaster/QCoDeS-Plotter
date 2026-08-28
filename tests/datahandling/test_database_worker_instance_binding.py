@@ -22,6 +22,7 @@ from qplot.datahandling.file_identity import (
     database_instance,
 )
 from qplot.datahandling.readonly import DatabaseInstanceChangedError
+from qplot.datahandling.trusted_live import TrustedLiveReaderUnavailableError
 from qplot.testdata import RunSpecification, generate_database
 from qplot.windows import _database_actions as database_actions
 
@@ -170,7 +171,28 @@ def _collect_worker(worker):
         batch_ready.connect(lambda *args: batches.append(args))
     worker.signals.finished.connect(lambda *args: finished.append(args))
     worker.run()
+    if isinstance(worker, database_module.DatabaseLoadWorker):
+        worker.cancel()
+        assert worker.trusted_service.wait_closed(5)
     return batches, finished
+
+
+class _UnavailableTrustedRequest:
+    """Force snapshot-only regressions through the documented fallback seam."""
+
+    @staticmethod
+    def wait():
+        raise TrustedLiveReaderUnavailableError("native reader unavailable in test")
+
+    @staticmethod
+    def cancel():
+        return True
+
+
+def _force_snapshot_fallback(worker):
+    worker.trusted_service.submit_bootstrap = (
+        lambda *, deadline=None: _UnavailableTrustedRequest()
+    )
 
 
 def _assert_bound_worker(worker, accepted_instance: DatabaseInstance):
@@ -235,6 +257,44 @@ def test_metadata_workers_retain_the_exact_scheduled_database_instance(tmp_path)
     for worker in workers:
         _assert_bound_worker(worker, accepted_instance)
 
+    workers[0].cancel()
+    assert workers[0].trusted_service.wait_closed(5)
+
+
+def test_metadata_worker_binds_first_sidecars_then_rejects_replacement(tmp_path):
+    database_path = tmp_path / "sidecar-bound.db"
+    database_path.write_bytes(b"SQLite format 3\x00" + b"\x00" * 128)
+    accepted_instance = database_instance(database_path)
+    assert not accepted_instance.sidecar_identities
+    worker = database_module.DatabaseRefreshWorker(
+        3,
+        str(database_path),
+        0,
+        [],
+        expected_database_instance=accepted_instance,
+    )
+
+    wal_path = Path(f"{database_path}-wal")
+    shm_path = Path(f"{database_path}-shm")
+    wal_path.write_bytes(b"accepted WAL")
+    shm_path.write_bytes(b"accepted SHM")
+    first_sidecars = database_instance(database_path).sidecar_identities
+
+    worker._require_current_database_instance()
+
+    assert worker.database_instance.sidecar_identities == first_sidecars
+    assert worker.sidecar_identities == first_sidecars
+
+    parked_wal = tmp_path / "accepted-wal"
+    os.replace(wal_path, parked_wal)
+    wal_path.write_bytes(b"replacement WAL")
+
+    with pytest.raises(
+        DatabaseInstanceChangedError,
+        match="database or one of its SQLite sidecars was replaced",
+    ):
+        worker._require_current_database_instance()
+
 
 def test_database_load_worker_rejects_read_open_aba_without_emitting_b(
     tmp_path,
@@ -270,6 +330,7 @@ def test_database_load_worker_rejects_read_open_aba_without_emitting_b(
         str(database_path),
         expected_database_instance=accepted_instance,
     )
+    _force_snapshot_fallback(worker)
 
     _batches, finished = _collect_worker(worker)
 
@@ -353,6 +414,7 @@ def test_database_load_worker_binds_the_subprocess_access_probe_across_aba(
         str(database_path),
         expected_database_instance=accepted_instance,
     )
+    _force_snapshot_fallback(worker)
 
     _batches, finished = _collect_worker(worker)
 
@@ -704,6 +766,7 @@ def test_database_worker_cancel_interrupts_snapshot_preparation_without_results(
             str(database_path),
             expected_database_instance=accepted_instance,
         )
+        _force_snapshot_fallback(worker)
         monkeypatch.setattr(database_module, "database_access_error", lambda *_a, **_k: None)
     elif worker_kind == "refresh":
         worker = database_module.DatabaseRefreshWorker(
@@ -907,6 +970,8 @@ def test_database_worker_cancel_wins_result_publication_race(
     assert not publisher.is_alive()
     assert publication_errors == []
     assert published == []
+    if worker_kind == "load":
+        assert worker.trusted_service.wait_closed(5)
 
 
 def test_stale_detail_callbacks_cannot_publish_partial_batches():

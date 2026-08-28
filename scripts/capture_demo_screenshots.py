@@ -126,21 +126,18 @@ def save_widget(app, widget, filename):
     return path
 
 
-def dependent_parameter(dataset, dimensions):
-    for param in dataset.get_parameters():
-        if param.depends_on and len(param.depends_on_) == dimensions:
-            return param
-    raise RuntimeError(f"No {dimensions}D dependent parameter in run {dataset.run_id}")
-
-
-def select_dataset(main_window, guid):
-    """Select a run through qPlot's dataset ownership and cleanup path."""
-
+def select_run(app, main_window, guid):
+    """Select a run through Stage 4's DataSet-free detail path."""
     main_window.updateSelected(guid)
-    dataset = main_window.ds
-    if dataset is None or dataset.guid != guid:
+    wait_for(
+        app,
+        lambda: (
+            main_window._selected_run_guid == guid
+            and main_window._database_selected_run_worker is None
+        ),
+    )
+    if main_window._selected_run_guid != guid or main_window.ds is not None:
         raise RuntimeError(f"Could not select run with GUID {guid}")
-    return dataset
 
 
 def install_snapshot_cleanup_audit():
@@ -212,13 +209,12 @@ def capture_screenshots(line_guid, heatmap_guid):
             ),
         )
 
-        heatmap_dataset = select_dataset(main_window, heatmap_guid)
+        select_run(app, main_window, heatmap_guid)
         settle(app)
         main_path = save_widget(app, main_window, "qplot-main-window.png")
 
-        line_dataset = select_dataset(main_window, line_guid)
-        line_param = dependent_parameter(line_dataset, 1)
-        main_window.openPlot(params=[line_param], show=True)
+        select_run(app, main_window, line_guid)
+        main_window.open_selected_measurement("current")
         line_window = main_window.windows[-1]
         line_window.resize(920, 620)
         wait_for(
@@ -228,9 +224,8 @@ def capture_screenshots(line_guid, heatmap_guid):
         )
         line_path = save_widget(app, line_window, "qplot-line-plot.png")
 
-        heatmap_dataset = select_dataset(main_window, heatmap_guid)
-        heatmap_param = dependent_parameter(heatmap_dataset, 2)
-        main_window.openPlot(params=[heatmap_param], show=True)
+        select_run(app, main_window, heatmap_guid)
+        main_window.open_selected_measurement("conductance")
         heatmap_window = main_window.windows[-1]
         heatmap_window.resize(980, 660)
         wait_for(

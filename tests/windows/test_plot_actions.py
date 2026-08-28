@@ -343,7 +343,7 @@ def test_non_single_run_list_selection_cannot_reuse_plot_or_export_target(tmp_pa
         def clear(self):
             pass
 
-    old_isfile = treeWidgets.isfile
+    old_isfile = getattr(treeWidgets, "isfile", None)
     treeWidgets.isfile = lambda _: False
     try:
         first_dataset = Dataset("guid-1", 1)

@@ -9,26 +9,116 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ### Added
 
-- Add a complete, non-default trusted live-reader boundary that uses SQLite's
+- Add a complete trusted live-reader boundary that uses SQLite's
   real WAL index and native locking without copying the selected QCoDeS
   database. Main, WAL, and rollback-journal handles remain physically read-only;
   only SQLite's exact colocated SHM coordination file may be updated. Operations
-  are bounded, cancellable, and identity-bound. The existing snapshot reader
-  remains the application path until later UI integration stages.
+  are bounded, cancellable, and identity-bound. The existing snapshot reader is
+  retained for the narrow Stage 4 fallback and explicitly deferred consumers.
 - Isolate the trusted live reader in a persistent, explicitly spawned helper
   process. Startup and job IPC is bounded and versioned, with conservative
   allocation preflight and exact query-batch result cardinality. Monotonic
   generation-bound cancellation, a closing gate, bounded exit cleanup with a
   daemon fallback, unreaped-process quarantine, and source-bound fresh-process
-  recovery prevent stale or failed work from leaking into a later job. This is
-  non-Qt infrastructure and does not change qPlot's run-table, metadata,
-  preview, thumbnail, plotting, or refresh paths.
+  recovery prevent stale or failed work from leaking into a later job. Stage 4
+  consumes this non-Qt infrastructure without weakening its failure taxonomy.
+- Add a Qt-independent application read broker that owns one persistent trusted
+  helper for an accepted database, serialises bounded fixed-query work, and
+  publishes the basic run list before progressively filling metadata. Selected
+  runs are promoted ahead of visible rows and the remaining table, later commits
+  are detected through the same helper, and cancellation, database switching,
+  and shutdown stay off the GUI thread.
+- Make database loading, run-list refresh, progressive run metadata, and the
+  selected run's plain detail view use trusted live access first. The legacy
+  access probe and snapshot fallback are used only when the native backend is
+  genuinely unavailable or the source or filesystem is explicitly unsupported;
+  trusted-session failures are never converted into fallback or silently
+  replayed.
+- Remove eager QCoDeS DataSet loading from ordinary selection in every access
+  mode. Snapshot-fallback ordinary selection is basic-only and starts no
+  selected-detail worker or additional selected-detail snapshot; rich fallback
+  detail remains deferred. Fallback metadata and retained preview paths can
+  still create private snapshots. DataSets remain exclusive to explicit plot
+  and CSV actions.
+- Defer preview and thumbnail integration deliberately: trusted live loading,
+  selection, scrolling, and metadata completion do not launch automatic
+  snapshot-backed previews. Explicit plot and CSV actions remain action-owned
+  snapshot consumers. The preview/thumbnail scheduler and disk-backed cache
+  remain Stage 5 work.
 - Build the native boundary in explicit C11 mode with MSVC and exercise installed
   reader wheels separately on ARM64 macOS, Intel macOS, Linux, and unprivileged
   Windows CI hosts before cross-platform acceptance.
 
 ### Fixed
 
+- Decode and normalise selected-run snapshots on the broker thread before Qt
+  publication. The published flat view caps UTF-8 input, nesting, container
+  items, nodes, and rendered text; malformed or truncated snapshots show bounded
+  diagnostics without placing raw multi-megabyte JSON in cells or tooltips.
+- Replace dynamic selected/visible run priorities instead of accumulating stale
+  scores, restore omitted rows to stable table order, and linearise trusted
+  request installation with concurrent promotion.
+- Remove the broker callback facility and callback thread, terminally complete
+  active as well as queued requests after fatal loop failure, reap retired
+  services periodically with zero-wait polls, and cap application shutdown with
+  one 15-second monotonic deadline. Before Qt can import or create descendants,
+  a Qt-free launcher contains the complete qPlot tree in a dedicated POSIX
+  session/process group led by its retained unreaped child, or in a retained
+  Windows kill-on-close Job Object assigned atomically at process creation.
+  Signal guards and the bounded startup interval begin before spawn; failures
+  before authenticated `READY`, including a child that never sends `HELLO`,
+  tear down the contained tree. After `READY`, malformed traffic or EOF before
+  `ARM` is observe-only. The launcher commits the first authenticated finite
+  deadline before constructing its acknowledgement, has no `DISARM` transition,
+  and remains armed across Qt event-loop return and quiescent owned-thread-pool
+  destruction. Deadline or non-quiescent shutdown bypasses blocking Qt
+  destruction; diagnostic persistence is independent, while last-resort
+  termination retries whole-tree kill and retained-leader reap without releasing
+  live containment. POSIX launcher signals retain their real signal status, and
+  QCoDeS writers or sentinels started outside qPlot's group or job remain
+  untouched. Public `qplot.run()` now starts a dedicated Python launcher so an
+  acquisition caller and its `waitpid(-1)` threads cannot reap the GUI or be
+  killed by forced qPlot shutdown. A private authenticated, bounded result
+  channel reports only after the GUI tree is gone and remains independent of
+  obtaining the launcher's wait status; forced shutdown returns 70 and POSIX
+  signals return non-destructively as negative signal numbers. Protocol or
+  launcher failure returns 70 without hard-exiting the caller.
+  Caller-side `KeyboardInterrupt`, `SystemExit`, and other control-flow
+  exceptions now commit an authenticated cancellation, wait through repeated
+  interruption until the GUI/helper tree and dedicated launcher are gone, and
+  then re-raise the exact first exception. Cancellation has one dedicated
+  writer with a serialized one-time create/start lifecycle. Its owner, creation
+  attempt, worker assignment, and start attempt remain durable across an
+  interruption immediately after any commit; an uncertain committed start is
+  never retried and resolves through proven worker entry or the unique EOF
+  fallback. The writer persists partial-send progress and resolves to either the
+  complete authenticated record or one committed irreversible write-side EOF.
+  Concurrent cleanup and result-reader requests therefore share the same worker
+  or fallback. The temporary repeated-
+  SIGINT guard captures the caller's original handler once and transactionally
+  verifies installation and restoration even when interruption follows the real
+  `signal.signal` side effect. No later exception may escape during cancellation
+  setup, result/EOF processing, launcher waiting, channel closure, or diagnostic
+  publication. Caller-channel EOF also terminates the contained tree. Pre-`READY`
+  POSIX cleanup no longer signals an
+  unverified PID after a foreign reaper may have collected the launcher.
+  `run(return_objects=True)` remains deliberately in-process and
+  caller-owned, without the launcher's containment or hard-deadline guarantee.
+- Replace 32 GiB filesystem test extensions with logical payload/stat proxies
+  and small physical fixtures, retaining a bounded 64 MiB native no-copy
+  integration case on every platform.
+- Keep Stage 4 expensive metadata from holding a reader transaction across a
+  large result-table or `dbstat` scan. Current QCoDeS result counts use the
+  append-only integer-primary-key watermark; only twice-stable small sources
+  may use bounded aggregate batches, while large/changing sources use planned
+  shapes, fixed ID-window summaries, and explicitly estimated storage.
+- Keep Stage 4 metadata plans intrinsically inside the helper's wire and public
+  result budgets: defer large run descriptions from 1,000-row basic pages,
+  preflight and guard per-run scalars, cap selected layouts and grouped edge
+  summaries, and report oversized omitted fields explicitly. Refresh now
+  samples helper incarnation on both sides of `data_version`, so an idle-helper
+  replacement with the same numeric version still forces schema and watermark
+  reconciliation.
 - Keep every spawned-helper reply path deadline-bounded when a peer sends only
   part of a multiprocessing frame. One persistent receiver per incarnation now
   owns raw reply reads and feeds a one-slot inbox; timed-out startup, job, and

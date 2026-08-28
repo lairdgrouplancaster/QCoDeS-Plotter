@@ -108,6 +108,7 @@ jobs:
           "TMP=$standardTemp" >> $env:GITHUB_ENV
           "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
           "PYTEST_ADDOPTS=--basetemp=$pytestTemp" >> $env:GITHUB_ENV
+          "QPLOT_CI_PHASE_LOG_PATH=$(Join-Path $standardTemp 'wrapper-phase.txt')" >> $env:GITHUB_ENV
 
       - name: Require the pinned APSW platform wheel
         run: >-
@@ -177,6 +178,14 @@ jobs:
           '@
           python -c $guardCode
 
+      - name: Verify unprivileged Windows deadline containment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $python = (Get-Command python).Source
+          & "$env:GITHUB_WORKSPACE\.github\scripts\check-unprivileged-windows-deadline.ps1" `
+            -FilePath $python
+
       - name: Run full test suite
         if: matrix.suite == 'full' && runner.os != 'Windows'
         env:
@@ -201,7 +210,7 @@ jobs:
             "-n", "2", "--dist=loadfile",
             "--timeout=90", "--timeout-method=thread", "--durations=20"
           )
-          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+          & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
             -ArgumentList $arguments
 
@@ -212,14 +221,24 @@ jobs:
         run: >-
           python -m pytest --no-cov --maxfail=1
           --timeout=90 --timeout-method=thread --durations=20
+          tests/datahandling/test_read_sql.py
           tests/datahandling/test_readonly.py
           tests/datahandling/test_trusted_live.py
           tests/datahandling/test_trusted_live_partial_frames.py
           tests/datahandling/test_trusted_live_protocol.py
+          tests/datahandling/test_trusted_live_queries.py
           tests/datahandling/test_trusted_live_result_limits.py
+          tests/datahandling/test_trusted_live_service.py
+          tests/datahandling/test_trusted_live_stage4_integration.py
           tests/datahandling/test_trusted_live_supervisor.py
+          tests/datahandling/test_trusted_live_worker_integration.py
+          tests/datahandling/test_trusted_presentation.py
+          tests/datahandling/test_trusted_snapshot.py
+          tests/widgets/test_run_details.py
+          tests/windows/test_bounded_shutdown.py
           tests/windows/test_heatmap_layer_integration.py
           tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots
+          tests/windows/test_trusted_live_ui.py
 
       - name: Run compatibility test suite as a standard Windows user
         if: matrix.suite == 'compatibility' && runner.os == 'Windows'
@@ -231,18 +250,92 @@ jobs:
           $arguments = @(
             "-m", "pytest", "--no-cov", "--maxfail=1",
             "--timeout=90", "--timeout-method=thread", "--durations=20",
+            "tests/datahandling/test_read_sql.py",
             "tests/datahandling/test_readonly.py",
             "tests/datahandling/test_trusted_live.py",
             "tests/datahandling/test_trusted_live_partial_frames.py",
             "tests/datahandling/test_trusted_live_protocol.py",
+            "tests/datahandling/test_trusted_live_queries.py",
             "tests/datahandling/test_trusted_live_result_limits.py",
+            "tests/datahandling/test_trusted_live_service.py",
+            "tests/datahandling/test_trusted_live_stage4_integration.py",
             "tests/datahandling/test_trusted_live_supervisor.py",
+            "tests/datahandling/test_trusted_live_worker_integration.py",
+            "tests/datahandling/test_trusted_presentation.py",
+            "tests/datahandling/test_trusted_snapshot.py",
+            "tests/widgets/test_run_details.py",
+            "tests/windows/test_bounded_shutdown.py",
             "tests/windows/test_heatmap_layer_integration.py",
-            "tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots"
+            "tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots",
+            "tests/windows/test_trusted_live_ui.py"
           )
-          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+          & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
             -ArgumentList $arguments
+
+      - name: Publish bounded Windows source-test diagnostics
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          function Write-BoundedLogTail {
+            param(
+              [Parameter(Mandatory = $true)]
+              [string] $Path,
+              [int] $MaximumBytes = 32768
+            )
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+              return
+            }
+            Write-Host "===== $([System.IO.Path]::GetFileName($Path)) ====="
+            $stream = $null
+            try {
+              $stream = [System.IO.File]::Open(
+                $Path,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite
+              )
+              $length = [int] [Math]::Min($stream.Length, $MaximumBytes)
+              if ($stream.Length -gt $length) {
+                Write-Host "[truncated to the final $length bytes]"
+              }
+              [void] $stream.Seek(-$length, [System.IO.SeekOrigin]::End)
+              $buffer = [byte[]]::new($length)
+              $totalRead = 0
+              while ($totalRead -lt $length) {
+                $read = $stream.Read(
+                  $buffer,
+                  $totalRead,
+                  $length - $totalRead
+                )
+                if ($read -eq 0) {
+                  break
+                }
+                $totalRead += $read
+              }
+              [Console]::Out.Write(
+                [System.Text.Encoding]::UTF8.GetString(
+                  $buffer,
+                  0,
+                  $totalRead
+                )
+              )
+            } catch {
+              Write-Warning "Could not publish '$Path': $_"
+            } finally {
+              if ($null -ne $stream) {
+                $stream.Dispose()
+              }
+            }
+          }
+          foreach ($name in @(
+            "wrapper-phase.txt",
+            "child-stdout.txt",
+            "child-stderr.txt"
+          )) {
+            $path = Join-Path $env:QPLOT_UNPRIVILEGED_TEMP $name
+            Write-BoundedLogTail -Path $path
+          }
 
   coverage:
     name: Coverage

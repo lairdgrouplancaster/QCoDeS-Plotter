@@ -1444,6 +1444,128 @@ def test_startup_and_normal_close_are_bounded(
     _assert_helper_stopped(supervisor, helper_pid)
 
 
+def test_closed_resource_liveness_retains_receiver_and_endpoint_until_reaped(
+    tmp_path: Path,
+) -> None:
+    class ProbeConnection:
+        def __init__(self, *, closed: bool) -> None:
+            self.closed = closed
+
+        def close(self) -> None:
+            self.closed = True
+
+    class ProbeProcess:
+        pid = 8128
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def join(self, timeout: float) -> None:
+            assert timeout == 0
+
+        def is_alive(self) -> bool:
+            return False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class ProbeReceiver:
+        def __init__(self) -> None:
+            self.alive = True
+
+        def join(self, timeout: float) -> None:
+            assert timeout == 0
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+    supervisor = TrustedLiveReaderSupervisor(tmp_path / "not-opened.db")
+    receiver = ProbeReceiver()
+    process = ProbeProcess()
+    closed_connection = ProbeConnection(closed=True)
+    reply_connection = ProbeConnection(closed=False)
+    helper = supervisor_module._HelperIncarnation(
+        number=1,
+        session=_TEST_PROTOCOL_SESSION,
+        process=process,  # type: ignore[arg-type]
+        command_send=closed_connection,  # type: ignore[arg-type]
+        reply_connection=reply_connection,  # type: ignore[arg-type]
+        control_send=closed_connection,  # type: ignore[arg-type]
+        test_notify_receive=None,
+        reply_inbox=supervisor_module.queue.Queue(),
+        reply_ready=threading.Event(),
+        reply_receiver_stop=threading.Event(),
+        reply_receiver_done=threading.Event(),
+        reply_receiver=receiver,  # type: ignore[arg-type]
+        reply_receiver_started=True,
+    )
+    with supervisor._lock:
+        supervisor._closed = True
+        supervisor._unreaped_helper = helper
+
+    initial = supervisor.resource_liveness()
+    assert initial.helper_pid == 8128
+    assert not initial.process_alive
+    assert initial.receiver_alive
+    assert initial.open_endpoints == 1
+    assert initial.unreaped_incarnation
+    assert initial.resources_owned
+
+    still_pending = supervisor.reap_closed_resources()
+    assert reply_connection.closed
+    assert still_pending.receiver_alive
+    assert still_pending.open_endpoints == 0
+    assert still_pending.unreaped_incarnation
+    assert still_pending.resources_owned
+
+    receiver.alive = False
+    reaped = supervisor.reap_closed_resources()
+    assert process.closed
+    assert not reaped.receiver_alive
+    assert not reaped.unreaped_incarnation
+    assert not reaped.resources_owned
+    assert not supervisor._atexit_registered
+
+
+def test_resource_observation_does_not_wait_for_supervisor_lock(
+    tmp_path: Path,
+) -> None:
+    supervisor = TrustedLiveReaderSupervisor(tmp_path / "not-opened.db")
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+
+    def hold_supervisor_lock() -> None:
+        with supervisor._lock:
+            lock_held.set()
+            release_lock.wait(1.0)
+
+    holder = threading.Thread(target=hold_supervisor_lock)
+    holder.start()
+    assert lock_held.wait(1.0)
+    started = time.monotonic()
+    try:
+        liveness = supervisor.resource_liveness()
+        reaped = supervisor.reap_closed_resources()
+        elapsed = time.monotonic() - started
+    finally:
+        release_lock.set()
+        holder.join(timeout=1.0)
+        supervisor.close()
+
+    assert elapsed < 0.25
+    assert not holder.is_alive()
+    for snapshot in (liveness, reaped):
+        assert snapshot.resources_owned
+        assert snapshot.process_alive
+        assert snapshot.receiver_alive
+        assert snapshot.open_endpoints == 1
+        assert snapshot.active_incarnation
+        assert snapshot.unreaped_incarnation
+        assert snapshot.active_job
+        assert snapshot.closing
+        assert not snapshot.closed
+
+
 def test_spawned_parent_can_return_normally_without_explicit_supervisor_close(
     wal_writer: _ApswWalWriter,
 ) -> None:

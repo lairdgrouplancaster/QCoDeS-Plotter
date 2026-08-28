@@ -133,15 +133,32 @@ def log_exception(context, error=None, logger_name=None):
 
 def log_user_error(title, message, details=None, logger_name=None):
     """
-    Logs a user-visible error dialog.
+    Logs the summary of a user-visible error dialog.
+
+    Dialog details can contain database values, connection strings, or other
+    measurement metadata.  They remain available in the on-screen dialog but
+    are deliberately excluded from the persistent clear-text log.
 
     """
     configure_logging()
     logger = get_logger(logger_name)
     if details:
-        logger.error("%s: %s\nDetails: %s", title, message, details)
+        logger.error("%s: %s\nDetails: omitted from persistent log", title, message)
     else:
         logger.error("%s: %s", title, message)
+
+
+def log_bounded_shutdown(message, diagnostics, logger_name=None):
+    """
+    Persists qPlot's internal bounded-shutdown resource snapshot exactly.
+
+    Unlike user-dialog details, this payload is generated solely from qPlot's
+    process and resource-liveness accounting and is required for post-mortem
+    shutdown diagnosis.
+
+    """
+    configure_logging()
+    get_logger(logger_name).error("%s\n%s", message, diagnostics)
 
 
 def _has_handler_for(logger, target):

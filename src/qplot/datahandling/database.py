@@ -34,9 +34,26 @@ from qplot.datahandling.readSQL import (
     find_new_runs,
     get_run_status,
     get_runs_basic_via_sql,
+    get_snapshot_selected_run_detail,
     iter_run_detail_batches_via_sql,
     iter_run_shape_batches_via_sql,
     iter_run_storage_batches_via_sql,
+)
+from qplot.datahandling.trusted_live import (
+    TrustedLiveReaderUnavailableError,
+    TrustedLiveUnsupportedSourceError,
+)
+from qplot.datahandling.trusted_live_queries import run_records_as_dict
+from qplot.datahandling.trusted_live_service import (
+    SNAPSHOT_FALLBACK_MODE,
+    TRUSTED_LIVE_MODE,
+    TrustedLiveReadService,
+    TrustedReadPriority,
+    TrustedReadRequestCancelledError,
+)
+from qplot.datahandling.trusted_presentation import (
+    bounded_presentation_error,
+    bounded_selected_run_fields,
 )
 from qplot.diagnostics import log_exception
 
@@ -57,6 +74,50 @@ WINDOWS_CLOUD_PLACEHOLDER_ATTRIBUTES = (
     | getattr(stat, "FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS", 0x00400000)
 )
 _DATABASE_ACCESS_ERROR_PREFIX = "QPLOT_DATABASE_ACCESS_ERROR:"
+
+
+def _bounded_run_publication(fields):
+    """Strip raw run payloads before any worker result crosses into Qt."""
+
+    return {
+        name: list(value) if isinstance(value, tuple) else value
+        for name, value in bounded_selected_run_fields(fields or {})
+    }
+
+
+def _bounded_runs_publication(runs):
+    return {
+        run_id: _bounded_run_publication(fields)
+        for run_id, fields in (runs or {}).items()
+    }
+
+
+def _bounded_worker_error(error):
+    """Detach tracebacks/contexts and cap every object queued into Qt."""
+
+    if error is None:
+        return None
+    message = bounded_presentation_error(error)
+    if isinstance(error, DatabaseInstanceChangedError):
+        return DatabaseInstanceChangedError(message)
+    if isinstance(error, UnverifiableDatabaseWalError):
+        return UnverifiableDatabaseWalError(message)
+    return message
+
+
+def trusted_open_failure_allows_snapshot_fallback(error):
+    """Return true only for the two documented initial-open outcomes.
+
+    Several supervisor/process failures intentionally inherit
+    ``TrustedLiveReaderUnavailableError``.  Exact-type checks prevent helper
+    crashes, protocol failures, cancellation, deadlines, and accepted-session
+    failures from being converted into a legacy snapshot replay.
+    """
+
+    return type(error) in {
+        TrustedLiveReaderUnavailableError,
+        TrustedLiveUnsupportedSourceError,
+    }
 
 
 class _DatabaseAccessErrorMessage(str):
@@ -575,6 +636,13 @@ class DatabaseDetailSignals(QtCore.QObject):
     finished = QtCore.pyqtSignal(int, str, object)
 
 
+class DatabaseSelectedRunSignals(QtCore.QObject):
+    """Signals for one generation-bound plain selected-run view."""
+
+    progress = QtCore.pyqtSignal(int, str, str, object)
+    finished = QtCore.pyqtSignal(int, str, str, object, object)
+
+
 class _InterruptibleSqlWorker:
     """Allows the GUI thread to interrupt an active read-only SQLite query."""
 
@@ -632,13 +700,30 @@ class _InterruptibleSqlWorker:
 
     def _require_current_database_instance(self):
         """Reject results if the worker's full logical source was replaced."""
-        current_instance = database_instance(self.database_instance.logical_path)
-        if not database_instances_differ(self.database_instance, current_instance):
+        accepted_instance = self.database_instance
+        current_instance = database_instance(accepted_instance.logical_path)
+        if (
+                not database_instances_differ(accepted_instance, current_instance)
+                and accepted_instance.sidecar_identities.issubset(
+                    current_instance.sidecar_identities
+                )
+                ):
+            # SQLite may create WAL/SHM after the controller first accepts the
+            # main file.  Permit that first directional appearance, but bind it
+            # immediately so a later removal, rotation, or ABA substitution is
+            # rejected by the worker's next pre-read/pre-publication guard.
+            if (
+                    accepted_instance.sidecar_identities
+                    != current_instance.sidecar_identities
+                    ):
+                self.database_instance = current_instance
+                self.sidecar_identities = current_instance.sidecar_identities
             return
 
-        quarantine_wal_for_replaced_database(self.database_instance.logical_path)
+        quarantine_wal_for_replaced_database(accepted_instance.logical_path)
         raise DatabaseInstanceChangedError(
-            "The database was replaced while qPlot was loading background metadata."
+            "The database or one of its SQLite sidecars was replaced while "
+            "qPlot was loading background metadata."
         )
 
 
@@ -653,12 +738,18 @@ class _InterruptibleSqlWorker:
         self._sql_connection_lock = threading.Lock()
         self._publication_lock = threading.RLock()
         self._sql_connection = None
+        self._trusted_request_lock = threading.Lock()
+        self._trusted_request = None
 
 
     def _cancel_read(self):
         """Linearize cancellation against worker result publication."""
         with self._publication_lock:
             self._cancelled.set()
+        with self._trusted_request_lock:
+            trusted_request = self._trusted_request
+        if trusted_request is not None:
+            trusted_request.cancel()
         self._interrupt_sql()
 
 
@@ -679,9 +770,27 @@ class _InterruptibleSqlWorker:
             self._interrupt_sql()
 
 
+    def _set_trusted_request(self, request):
+        with self._trusted_request_lock:
+            self._trusted_request = request
+        if request is not None and self._cancelled.is_set():
+            request.cancel()
+
+
+    def _wait_trusted_request(self, request):
+        self._set_trusted_request(request)
+        try:
+            return request.wait()
+        finally:
+            with self._trusted_request_lock:
+                if self._trusted_request is request:
+                    self._trusted_request = None
+
+
 class DatabaseRefreshSignals(QtCore.QObject):
     """Signals emitted by a coalesced main-window refresh worker."""
 
+    new_runs_ready = QtCore.pyqtSignal(int, str, object)
     finished = QtCore.pyqtSignal(int, str, object, object, object)
 
 
@@ -697,6 +806,8 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             *,
             expected_database_instance=None,
             deadline=None,
+            trusted_service=None,
+            require_publication_ack=False,
             ):
         super().__init__()
         self.signals = DatabaseRefreshSignals()
@@ -710,10 +821,35 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self.watched_runs = list(watched_runs or [])
         self._cancelled = threading.Event()
         self._init_sql_interrupt()
+        self.trusted_service = trusted_service
+        self._require_publication_ack = bool(require_publication_ack)
+        self._new_runs_publication_ack = threading.Event()
+        self._new_runs_publication_lock = threading.Lock()
+        self._new_runs_publication_error: BaseException | None = None
 
 
     def cancel(self):
         self._cancel_read()
+        self._new_runs_publication_ack.set()
+
+
+    def acknowledge_new_runs_published(self):
+        """Release the off-GUI refresh only after its basic page is visible."""
+        with self._new_runs_publication_lock:
+            self._new_runs_publication_error = None
+        self._new_runs_publication_ack.set()
+
+
+    def reject_new_runs_publication(self, error):
+        """Fail closed when a trusted basic page could not reach the GUI."""
+        with self._new_runs_publication_lock:
+            self._new_runs_publication_error = error
+        # The adapter cursor already accepted this bounded page.  Retire the
+        # session instead of letting a later refresh omit rows the GUI failed
+        # to publish.  close_async is deliberately prompt and GUI-safe.
+        if self.trusted_service is not None:
+            self.trusted_service.close_async()
+        self._new_runs_publication_ack.set()
 
 
     def run(self):
@@ -724,6 +860,11 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
                 return
 
             self._require_current_database_instance()
+            if self.trusted_service is not None:
+                new_runs, statuses = self._run_trusted_refresh()
+                self._require_current_database_instance()
+                self._emit_finished({}, statuses, None)
+                return
             new_runs = find_new_runs(
                 self.last_run_id,
                 database_path=self._read_database_path,
@@ -761,6 +902,128 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self._emit_finished(new_runs, statuses, None)
 
 
+    def _run_trusted_refresh(self):
+        header = self._wait_trusted_request(
+            self.trusted_service.submit_refresh(
+                self.last_run_id,
+                deadline=self.deadline,
+            )
+        )
+        new_runs = {}
+        if header.data_version_changed:
+            cursor = header.prior_run_id_watermark
+            while True:
+                if self._cancelled.is_set():
+                    raise InterruptedError("Database refresh cancelled.")
+                page = self._wait_trusted_request(
+                    self.trusted_service.submit_basic_page(
+                        cursor,
+                        header.run_id_watermark,
+                        priority=TrustedReadPriority.REFRESH,
+                        deadline=self.deadline,
+                    )
+                )
+                page_runs = run_records_as_dict(page.runs)
+                new_runs.update(page_runs)
+                if page_runs:
+                    self._emit_new_runs_ready(page_runs)
+                if page.complete:
+                    break
+                cursor = page.next_run_id
+
+        statuses = {}
+        if not header.data_version_changed:
+            return new_runs, statuses
+        for watched in self.watched_runs:
+            if self._cancelled.is_set():
+                raise InterruptedError("Database refresh cancelled.")
+            if (
+                    isinstance(watched, (tuple, list))
+                    and len(watched) in {2, 3}
+                    ):
+                if len(watched) == 2:
+                    run_id, guid = watched
+                    category = "remaining"
+                else:
+                    run_id, guid, category = watched
+            else:
+                continue
+            try:
+                run_id = int(run_id)
+            except (TypeError, ValueError):
+                continue
+            if category == "selected":
+                cheap_priority = TrustedReadPriority.SELECTED_CHEAP
+                expensive_priority = TrustedReadPriority.SELECTED_EXPENSIVE
+            elif category == "visible":
+                cheap_priority = TrustedReadPriority.VISIBLE_CHEAP
+                expensive_priority = TrustedReadPriority.VISIBLE_EXPENSIVE
+            else:
+                cheap_priority = TrustedReadPriority.REMAINING_CHEAP
+                expensive_priority = TrustedReadPriority.REMAINING_EXPENSIVE
+            cheap = self._wait_trusted_request(
+                self.trusted_service.submit_cheap_run(
+                    run_id,
+                    priority=cheap_priority,
+                    deadline=self.deadline,
+                )
+            )
+            expensive = self._wait_trusted_request(
+                self.trusted_service.submit_expensive_run(
+                    run_id,
+                    priority=expensive_priority,
+                    deadline=self.deadline,
+                )
+            )
+            status = cheap.as_dict()
+            status.update(expensive.as_dict())
+            statuses[str(guid)] = status
+        return new_runs, statuses
+
+
+    def _emit_new_runs_ready(self, new_runs):
+        self._require_current_database_instance()
+        new_runs = _bounded_runs_publication(new_runs)
+        if self._require_publication_ack:
+            with self._new_runs_publication_lock:
+                self._new_runs_publication_error = None
+            self._new_runs_publication_ack.clear()
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            self.signals.new_runs_ready.emit(
+                self.generation,
+                self._signal_database_path,
+                new_runs,
+            )
+        if not self._require_publication_ack:
+            return
+
+        acknowledgement_deadline = monotonic() + 10.0
+        if self.deadline is not None:
+            acknowledgement_deadline = min(
+                acknowledgement_deadline,
+                self.deadline,
+            )
+        while not self._new_runs_publication_ack.wait(0.05):
+            if self._cancelled.is_set():
+                raise InterruptedError("Database refresh cancelled.")
+            if monotonic() >= acknowledgement_deadline:
+                raise TimeoutError(
+                    "The GUI did not publish a trusted basic-run page in time."
+                )
+        with self._new_runs_publication_lock:
+            publication_error = self._new_runs_publication_error
+        if publication_error is not None:
+            raise RuntimeError(
+                "The GUI could not publish a trusted basic-run page; the "
+                "accepted service retirement was requested to prevent an "
+                "omitted run."
+            ) from publication_error
+        if self._cancelled.is_set():
+            raise InterruptedError("Database refresh cancelled.")
+
+
     def _emit_finished(self, new_runs, statuses, error):
         if not isinstance(error, DatabaseInstanceChangedError):
             try:
@@ -769,6 +1032,9 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
                 new_runs = {}
                 statuses = {}
                 error = err
+        new_runs = _bounded_runs_publication(new_runs)
+        statuses = _bounded_runs_publication(statuses)
+        error = _bounded_worker_error(error)
         with self._publication_lock:
             if self._cancelled.is_set():
                 return
@@ -807,6 +1073,7 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             *,
             expected_database_instance=None,
             deadline=None,
+            trusted_service=None,
             ):
         super().__init__()
         self.signals = DatabaseLoadSignals()
@@ -819,6 +1086,14 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self.cloud_sync_timeout = cloud_sync_timeout
         self._cancelled = threading.Event()
         self._init_sql_interrupt()
+        self._owns_trusted_service = trusted_service is None
+        self.trusted_service = trusted_service or TrustedLiveReadService(
+            self._read_database_path,
+            expected_database_instance=self.database_instance,
+            session_generation=max(1, int(generation)),
+        )
+        self.access_mode = None
+        self.fallback_reason = None
 
 
     def cancel(self):
@@ -827,6 +1102,8 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
         """
         self._cancel_read()
+        if self._owns_trusted_service:
+            self.trusted_service.close_async()
 
 
     def run(self):
@@ -840,54 +1117,27 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             if self._is_cancelled():
                 return
             self._require_current_database_instance()
-
-            self._emit_status("Checking database access...")
-            access_error = database_access_error(
-                self._read_database_path,
-                **self._read_control_kwargs(),
-                )
-            if self._is_cancelled():
-                return
-
-            if (
-                    access_error
-                    and getattr(access_error, "error_type", None) not in {
-                        DatabaseInstanceChangedError.__name__,
-                        UnverifiableDatabaseWalError.__name__,
-                        }
-                    and database_cloud_storage_label(self._read_database_path)
-                    and os.path.isfile(self._read_database_path)
-                    ):
-                self._prefetch_cloud_file()
+            try:
+                runs = self._load_trusted_runs()
+                self.access_mode = TRUSTED_LIVE_MODE
+            except Exception as trusted_error:
                 if self._is_cancelled():
                     return
-                self._emit_status("Checking database access...")
-                access_error = database_access_error(
-                    self._read_database_path,
-                    **self._read_control_kwargs(),
-                    )
-                if self._is_cancelled():
-                    return
-
-            if access_error:
-                error_type = getattr(access_error, "error_type", None)
-                if error_type == DatabaseInstanceChangedError.__name__:
-                    raise DatabaseInstanceChangedError(access_error)
-                if error_type == UnverifiableDatabaseWalError.__name__:
-                    raise UnverifiableDatabaseWalError(access_error)
-                raise RuntimeError(access_error)
-
-            self._emit_status("Opening database read-only...")
-            self._emit_status("Loading basic run list...")
-            runs = get_runs_basic_via_sql(
-                self._read_database_path,
-                connection_callback=self._set_sql_connection,
-                **self._read_control_kwargs(),
-                ) or {}
+                if (
+                        self.trusted_service.accepted
+                        or not trusted_open_failure_allows_snapshot_fallback(
+                            trusted_error
+                        )
+                        ):
+                    raise
+                self.fallback_reason = type(trusted_error).__name__
+                self._close_trusted_before_fallback()
+                runs = self._load_snapshot_fallback()
+                self.access_mode = SNAPSHOT_FALLBACK_MODE
             if self._is_cancelled():
                 return
             self._require_current_database_instance()
-        except InterruptedError:
+        except (InterruptedError, TrustedReadRequestCancelledError):
             return
         except DatabaseInstanceChangedError as err:
             if self._is_cancelled():
@@ -902,6 +1152,90 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             return
 
         self._emit_finished(runs, None)
+
+
+    def _load_trusted_runs(self):
+        self._emit_status("Opening trusted live database...")
+        header = self._wait_trusted_request(
+            self.trusted_service.submit_bootstrap(deadline=self.deadline)
+        )
+        self._emit_status("Loading basic run list...")
+        runs = {}
+        cursor = 0
+        while True:
+            if self._is_cancelled():
+                raise InterruptedError("Database load cancelled.")
+            page = self._wait_trusted_request(
+                self.trusted_service.submit_basic_page(
+                    cursor,
+                    header.run_id_watermark,
+                    priority=TrustedReadPriority.BOOTSTRAP,
+                    deadline=self.deadline,
+                )
+            )
+            runs.update(run_records_as_dict(page.runs))
+            if page.complete:
+                break
+            if page.next_run_id <= cursor:
+                raise RuntimeError(
+                    "Trusted run-list pagination did not advance its cursor."
+                )
+            cursor = page.next_run_id
+        return runs
+
+
+    def _close_trusted_before_fallback(self):
+        self.trusted_service.close_async()
+        if not self.trusted_service.wait_closed(10):
+            raise TimeoutError(
+                "The unavailable trusted reader did not retire before fallback."
+            )
+        if self.trusted_service.close_error is not None:
+            raise self.trusted_service.close_error
+
+
+    def _load_snapshot_fallback(self):
+        self._emit_status("Checking database access for snapshot fallback...")
+        access_error = database_access_error(
+            self._read_database_path,
+            **self._read_control_kwargs(),
+            )
+        if self._is_cancelled():
+            raise InterruptedError("Database load cancelled.")
+
+        if (
+                access_error
+                and getattr(access_error, "error_type", None) not in {
+                    DatabaseInstanceChangedError.__name__,
+                    UnverifiableDatabaseWalError.__name__,
+                    }
+                and database_cloud_storage_label(self._read_database_path)
+                and os.path.isfile(self._read_database_path)
+                ):
+            self._prefetch_cloud_file()
+            if self._is_cancelled():
+                raise InterruptedError("Database load cancelled.")
+            self._emit_status("Checking database access for snapshot fallback...")
+            access_error = database_access_error(
+                self._read_database_path,
+                **self._read_control_kwargs(),
+                )
+
+        if access_error:
+            error_type = getattr(access_error, "error_type", None)
+            if error_type == DatabaseInstanceChangedError.__name__:
+                raise DatabaseInstanceChangedError(access_error)
+            if error_type == UnverifiableDatabaseWalError.__name__:
+                raise UnverifiableDatabaseWalError(access_error)
+            raise RuntimeError(access_error)
+
+        self._emit_status("Opening snapshot fallback read-only...")
+        self._emit_status("Loading basic run list...")
+        return get_runs_basic_via_sql(
+            self._read_database_path,
+            connection_callback=self._set_sql_connection,
+            **self._read_control_kwargs(),
+            ) or {}
 
 
     def _is_cancelled(self):
@@ -926,6 +1260,11 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             except DatabaseInstanceChangedError as err:
                 runs = {}
                 error = err
+        if error is None:
+            runs = _bounded_runs_publication(runs)
+        else:
+            runs = {}
+        error = _bounded_worker_error(error)
         with self._publication_lock:
             if self._cancelled.is_set():
                 return
@@ -967,6 +1306,10 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
     """
 
+    _trusted_selected_priority = TrustedReadPriority.SELECTED_CHEAP
+    _trusted_visible_priority = TrustedReadPriority.VISIBLE_CHEAP
+    _trusted_remaining_priority = TrustedReadPriority.REMAINING_CHEAP
+
     def __init__(
             self,
             generation,
@@ -975,6 +1318,7 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             *,
             expected_database_instance=None,
             deadline=None,
+            trusted_service=None,
             ):
         super().__init__()
         self.signals = DatabaseDetailSignals()
@@ -992,12 +1336,44 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self._cancelled = threading.Event()
         self._init_sql_interrupt()
         self._priority_lock = threading.Lock()
-        self._priority_epoch = 0
         self._priority_scores = {}
+        self._promoted_run_ids = []
+        self._trusted_active_run_id = None
+        self._accepting_run_ids = True
+        self.trusted_service = trusted_service
 
 
     def cancel(self):
+        with self._priority_lock:
+            self._accepting_run_ids = False
         self._cancel_read()
+
+
+    def add_run_ids(self, run_ids):
+        """Append trusted incremental work without replaying completed runs."""
+        candidates = []
+        for run_id in run_ids or ():
+            try:
+                candidate = int(run_id)
+            except (TypeError, ValueError):
+                continue
+            if candidate > 0:
+                candidates.append(candidate)
+
+        with self._priority_lock:
+            if not self._accepting_run_ids or self._cancelled.is_set():
+                return False
+            known = {
+                int(run_id)
+                for run_id in self.run_ids
+                if str(run_id).lstrip("-").isdigit()
+            }
+            additions = [run_id for run_id in candidates if run_id not in known]
+            for run_id in additions:
+                self._default_run_order[run_id] = len(self.run_ids)
+                self.run_ids.append(run_id)
+                known.add(run_id)
+            return True
 
 
     def prioritize_run_ids(self, run_ids):
@@ -1010,14 +1386,32 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             normalised.append(run_id)
             seen.add(run_id)
 
-        if not normalised:
-            return
-
         with self._priority_lock:
-            self._priority_epoch += 1
-            base_score = -self._priority_epoch * (len(self.run_ids) + 1)
-            for offset, run_id in enumerate(normalised):
-                self._priority_scores[run_id] = base_score + offset
+            # This is a replacement snapshot of the selected/visible rows, not
+            # an accumulating promotion log.  Omitted rows immediately return
+            # to their stable table order, and an empty snapshot clears every
+            # prior viewport/selection promotion.
+            base_score = -len(normalised)
+            self._priority_scores = {
+                run_id: base_score + offset
+                for offset, run_id in enumerate(normalised)
+            }
+            self._promoted_run_ids = normalised
+            active_run_id = self._trusted_active_run_id
+            with self._trusted_request_lock:
+                request = self._trusted_request
+            if active_run_id is not None and request is not None:
+                requested_priority = self._trusted_priority_for_run_locked(
+                    active_run_id,
+                    promoted_order=normalised,
+                )
+                reprioritize = getattr(request, "reprioritize", None)
+                if callable(reprioritize):
+                    reprioritize(requested_priority)
+                elif active_run_id in normalised:
+                    # Compatibility with narrow request doubles that predate
+                    # bidirectional trusted request priorities.
+                    request.promote(requested_priority)
 
 
     def _is_cancelled(self):
@@ -1044,23 +1438,142 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
     def _next_priority_batch(self, done, batch_size):
         with self._priority_lock:
             priority_scores = dict(self._priority_scores)
+            run_ids = tuple(self.run_ids)
+            default_run_order = dict(self._default_run_order)
 
-        candidates = [
-            run_id
-            for run_id in self.run_ids
-            if run_id not in done
-            ]
+        candidates = [run_id for run_id in run_ids if run_id not in done]
         if not candidates:
             return []
 
         def sort_key(run_id):
             return (
                 priority_scores.get(run_id, 0),
-                self._default_run_order.get(run_id, 0),
+                default_run_order.get(run_id, 0),
                 )
 
         candidates.sort(key=sort_key)
         return candidates[:max(1, int(batch_size or 1))]
+
+
+    def _next_trusted_run(self, done):
+        """Choose one run or atomically stop accepting dynamic additions."""
+        with self._priority_lock:
+            candidates = [run_id for run_id in self.run_ids if run_id not in done]
+            if not candidates:
+                self._accepting_run_ids = False
+                return None
+            priority_scores = dict(self._priority_scores)
+            default_run_order = dict(self._default_run_order)
+        candidates.sort(
+            key=lambda run_id: (
+                priority_scores.get(run_id, 0),
+                default_run_order.get(run_id, 0),
+            )
+        )
+        return candidates[0]
+
+
+    def _trusted_priority_for_run(self, run_id, promoted_order=None):
+        with self._priority_lock:
+            return self._trusted_priority_for_run_locked(
+                run_id,
+                promoted_order=promoted_order,
+            )
+
+
+    def _trusted_priority_for_run_locked(self, run_id, promoted_order=None):
+        """Return one trusted priority while ``_priority_lock`` is held."""
+
+        order = list(
+            self._promoted_run_ids
+            if promoted_order is None
+            else promoted_order
+        )
+        if run_id in order:
+            return (
+                self._trusted_selected_priority
+                if order.index(run_id) == 0
+                else self._trusted_visible_priority
+            )
+        return self._trusted_remaining_priority
+
+
+    def _submit_next_trusted_run(self, done, submit):
+        """Choose, submit, and install one request as one priority transition."""
+
+        with self._priority_lock:
+            candidates = [run_id for run_id in self.run_ids if run_id not in done]
+            if not candidates:
+                self._accepting_run_ids = False
+                return None
+            candidates.sort(
+                key=lambda run_id: (
+                    self._priority_scores.get(run_id, 0),
+                    self._default_run_order.get(run_id, 0),
+                )
+            )
+            run_id = candidates[0]
+            priority = self._trusted_priority_for_run_locked(run_id)
+            self._trusted_active_run_id = run_id
+            try:
+                request = submit(run_id, priority)
+            except Exception:
+                self._trusted_active_run_id = None
+                raise
+            # ``prioritize_run_ids`` takes these locks in the same order.  It
+            # therefore observes either no active run or an installed request;
+            # promotion cannot fall into the former submit/install gap.
+            with self._trusted_request_lock:
+                self._trusted_request = request
+            return run_id, request
+
+
+    def _run_trusted_details(self, status_label, submit):
+        with self._priority_lock:
+            total = len(self.run_ids)
+        if total == 0:
+            self._emit_finished(None)
+            return
+        done = set()
+        first_error = None
+        self._emit_status(f"{status_label} 0/{total}")
+        while True:
+            if self._is_cancelled():
+                return
+            submitted = self._submit_next_trusted_run(done, submit)
+            if submitted is None:
+                break
+            run_id, request = submitted
+            try:
+                record = self._wait_trusted_request(request)
+            except Exception as error:
+                if self._is_cancelled():
+                    return
+                service = self.trusted_service
+                if (
+                        service is None
+                        or isinstance(error, DatabaseInstanceChangedError)
+                        or TrustedLiveReadService._terminal_session_error(error)
+                        or bool(getattr(service, "closing", False))
+                        or bool(getattr(service, "closed", False))
+                        ):
+                    raise
+                if first_error is None:
+                    first_error = error
+                done.add(run_id)
+            finally:
+                with self._priority_lock:
+                    if self._trusted_active_run_id == run_id:
+                        self._trusted_active_run_id = None
+            if self._is_cancelled():
+                return
+            if run_id not in done:
+                self._emit_batch_ready({record.run_id: record.as_dict()})
+                done.add(run_id)
+            with self._priority_lock:
+                total = len(self.run_ids)
+            self._emit_status(f"{status_label} {len(done)}/{total}")
+        self._emit_finished(first_error)
 
 
     def _emit_status(self, message):
@@ -1076,6 +1589,7 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
     def _emit_batch_ready(self, details):
         self._require_current_database_instance()
+        details = _bounded_runs_publication(details)
         with self._publication_lock:
             if self._cancelled.is_set():
                 return
@@ -1091,11 +1605,14 @@ class _PrioritizedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
 
 
     def _emit_finished(self, error):
+        with self._priority_lock:
+            self._accepting_run_ids = False
         if not isinstance(error, DatabaseInstanceChangedError):
             try:
                 self._require_current_database_instance()
             except DatabaseInstanceChangedError as err:
                 error = err
+        error = _bounded_worker_error(error)
         with self._publication_lock:
             if self._cancelled.is_set():
                 return
@@ -1130,6 +1647,7 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
             *,
             expected_database_instance=None,
             deadline=None,
+            trusted_service=None,
             ):
         super().__init__(
             generation,
@@ -1137,6 +1655,7 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
             run_ids,
             expected_database_instance=expected_database_instance,
             deadline=deadline,
+            trusted_service=trusted_service,
             )
         self.batch_size = max(1, int(batch_size or 1))
 
@@ -1146,6 +1665,17 @@ class DatabaseDetailWorker(_PrioritizedRunWorker):
         completed = 0
         try:
             if self._is_cancelled():
+                return
+            if self.trusted_service is not None:
+                self._run_trusted_details(
+                    "Loading cheap run metadata...",
+                    lambda run_id, priority:
+                    self.trusted_service.submit_cheap_run(
+                        int(run_id),
+                        priority=priority,
+                        deadline=self.deadline,
+                    ),
+                )
                 return
             if total == 0:
                 self._emit_finished(None)
@@ -1209,6 +1739,10 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
 
     """
 
+    _trusted_selected_priority = TrustedReadPriority.SELECTED_EXPENSIVE
+    _trusted_visible_priority = TrustedReadPriority.VISIBLE_EXPENSIVE
+    _trusted_remaining_priority = TrustedReadPriority.REMAINING_EXPENSIVE
+
     def __init__(
             self,
             generation,
@@ -1218,6 +1752,7 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
             *,
             expected_database_instance=None,
             deadline=None,
+            trusted_service=None,
             ):
         super().__init__(
             generation,
@@ -1225,6 +1760,7 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
             run_ids,
             expected_database_instance=expected_database_instance,
             deadline=deadline,
+            trusted_service=trusted_service,
             )
         self.batch_size = max(1, int(batch_size or 1))
 
@@ -1233,6 +1769,17 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
         total = len(self.run_ids)
         try:
             if self._is_cancelled():
+                return
+            if self.trusted_service is not None:
+                self._run_trusted_details(
+                    "Loading counts, shapes, and sizes...",
+                    lambda run_id, priority:
+                    self.trusted_service.submit_expensive_run(
+                        int(run_id),
+                        priority=priority,
+                        deadline=self.deadline,
+                    ),
+                )
                 return
             if total == 0:
                 self._emit_finished(None)
@@ -1325,6 +1872,147 @@ class DatabaseExpensiveDetailWorker(_PrioritizedRunWorker):
             return
 
         self._emit_finished(None)
+
+
+class DatabaseSelectedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
+    """Load a plain selected-run view off-GUI for either accepted read mode."""
+
+    def __init__(
+            self,
+            generation,
+            database_path,
+            run_id,
+            guid,
+            trusted_service=None,
+            *,
+            run_metadata=None,
+            expected_database_instance=None,
+            deadline=None,
+            ):
+        super().__init__()
+        if trusted_service is not None and not isinstance(
+                trusted_service,
+                TrustedLiveReadService,
+                ):
+            raise TypeError(
+                "trusted_service must be a TrustedLiveReadService or None."
+            )
+        self.signals = DatabaseSelectedRunSignals()
+        self.generation = generation
+        self.run_id = int(run_id)
+        self.guid = str(guid)
+        self.trusted_service = trusted_service
+        self.run_metadata = dict(run_metadata or {})
+        self._init_database_binding(
+            database_path,
+            expected_database_instance,
+            deadline,
+        )
+        self._cancelled = threading.Event()
+        self._init_sql_interrupt()
+
+
+    def cancel(self):
+        self._cancel_read()
+
+
+    def run(self):
+        try:
+            if self._cancelled.is_set():
+                return
+            self._require_current_database_instance()
+            if self.trusted_service is None:
+                detail = self._run_snapshot_detail()
+                self._require_current_database_instance()
+                self._emit_finished(detail, None)
+                return
+            self._wait_trusted_request(
+                self.trusted_service.submit_cheap_run(
+                    self.run_id,
+                    priority=TrustedReadPriority.SELECTED_CHEAP,
+                    deadline=self.deadline,
+                )
+            )
+            initial_detail = self._wait_trusted_request(
+                self.trusted_service.submit_selected_run(
+                    self.run_id,
+                    priority=TrustedReadPriority.SELECTED_CHEAP,
+                    deadline=self.deadline,
+                )
+            )
+            self._emit_progress(initial_detail)
+            if self._cancelled.is_set():
+                return
+            self._wait_trusted_request(
+                self.trusted_service.submit_expensive_run(
+                    self.run_id,
+                    priority=TrustedReadPriority.SELECTED_EXPENSIVE,
+                    deadline=self.deadline,
+                )
+            )
+            detail = self._wait_trusted_request(
+                self.trusted_service.submit_selected_run(
+                    self.run_id,
+                    priority=TrustedReadPriority.SELECTED_EXPENSIVE,
+                    deadline=self.deadline,
+                )
+            )
+            self._require_current_database_instance()
+        except (InterruptedError, TrustedReadRequestCancelledError):
+            return
+        except Exception as error:
+            if self._cancelled.is_set():
+                return
+            log_exception("Selected-run detail worker failed", error, __name__)
+            self._emit_finished(None, error)
+            return
+        self._emit_finished(detail, None)
+
+
+    def _run_snapshot_detail(self):
+        return get_snapshot_selected_run_detail(
+            self._read_database_path,
+            self.run_id,
+            self.guid,
+            self.run_metadata,
+            connection_callback=self._set_sql_connection,
+            **self._read_control_kwargs(),
+        )
+
+
+    def _emit_progress(self, detail):
+        self._require_current_database_instance()
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            self.signals.progress.emit(
+                self.generation,
+                self._signal_database_path,
+                self.guid,
+                detail,
+            )
+
+
+    def _emit_finished(self, detail, error):
+        if not isinstance(error, DatabaseInstanceChangedError):
+            try:
+                self._require_current_database_instance()
+            except DatabaseInstanceChangedError as changed_error:
+                detail = None
+                error = changed_error
+        if error is not None:
+            detail = None
+        error = _bounded_worker_error(error)
+        with self._publication_lock:
+            if self._cancelled.is_set():
+                return
+            self.signals.finished.emit(
+                self.generation,
+                self._signal_database_path,
+                self.guid,
+                detail,
+                error,
+            )
 
 
 def database_info_report(database_path):

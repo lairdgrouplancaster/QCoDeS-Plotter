@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PyQt6 import QtCore, QtGui
@@ -13,8 +14,127 @@ from qplot.windows._widgets.preview import (
 
 
 class RunListTooltipTestCase(unittest.TestCase):
+    def test_controller_data_paths_do_not_open_database(self):
+        database_access = AssertionError("RunList attempted database access")
+        with (
+                patch(
+                    "qcodes.dataset.sqlite.database.get_DB_location",
+                    side_effect=database_access,
+                    ),
+                patch(
+                    "qplot.datahandling.get_runs_via_sql",
+                    side_effect=database_access,
+                    ),
+                patch(
+                    "qplot.datahandling.get_run_status",
+                    side_effect=database_access,
+                    ),
+                ):
+            run_list = treeWidgets.RunList(initalize=True)
+            runs = {
+                1: {
+                    "guid": "controller-guid",
+                    "sweep_parameters": ["x"],
+                    "measure_parameters": ["signal"],
+                    "is_completed": False,
+                    "result_count": 1,
+                    },
+                }
+            self.assertIs(run_list.setRuns(runs), runs)
+
+            updated = run_list.checkWatching({
+                "controller-guid": {
+                    "is_completed": True,
+                    "completed_timestamp": 120.0,
+                    "result_count": 2,
+                    },
+                })
+
+        self.assertEqual(run_list.topLevelItemCount(), 1)
+        self.assertTrue(updated[1]["is_completed"])
+
+    def test_large_basic_run_publication_yields_to_qt_timers(self):
+        run_list = treeWidgets.RunList()
+        ticks = []
+        timer = QtCore.QTimer()
+        timer.setInterval(0)
+        timer.timeout.connect(lambda: ticks.append(True))
+        runs = {
+            run_id: {
+                "guid": f"guid-{run_id}",
+                "sweep_parameters": [],
+                "measure_parameters": [],
+                "is_completed": True,
+            }
+            for run_id in range(1, 602)
+        }
+        try:
+            timer.start()
+            run_list.addRuns(runs)
+            timer.stop()
+
+            self.assertEqual(run_list.topLevelItemCount(), len(runs))
+            self.assertTrue(ticks)
+        finally:
+            timer.stop()
+            run_list.deleteLater()
+            qtw.QApplication.sendPostedEvents(
+                None,
+                QtCore.QEvent.Type.DeferredDelete,
+            )
+            qtw.QApplication.processEvents()
+
+    def test_large_basic_run_publication_rolls_back_an_aborted_page(self):
+        run_list = treeWidgets.RunList()
+        initial_run = {
+            1: {
+                "guid": "guid-1",
+                "sweep_parameters": [],
+                "measure_parameters": [],
+                "is_completed": True,
+            }
+        }
+        page = {
+            run_id: {
+                "guid": f"guid-{run_id}",
+                "sweep_parameters": [],
+                "measure_parameters": [],
+                "is_completed": True,
+            }
+            for run_id in range(2, 303)
+        }
+        continuation_checks = 0
+
+        def continue_loading():
+            nonlocal continuation_checks
+            continuation_checks += 1
+            # The 251st check follows the nested Qt event-loop yield after
+            # the first 250 rows have already been staged.
+            return continuation_checks <= 250
+
+        try:
+            self.assertTrue(run_list.addRuns(initial_run))
+
+            self.assertFalse(
+                run_list.addRuns(page, continue_loading=continue_loading)
+            )
+
+            self.assertEqual(continuation_checks, 251)
+            self.assertEqual(run_list.maxRunId, 1)
+            self.assertEqual(run_list.topLevelItemCount(), 1)
+            self.assertEqual(run_list.topLevelItem(0).guid, "guid-1")
+            self.assertIsNone(run_list._item_for_guid("guid-251"))
+            self.assertEqual(run_list.watching, [])
+        finally:
+            run_list.deleteLater()
+            qtw.QApplication.sendPostedEvents(
+                None,
+                QtCore.QEvent.Type.DeferredDelete,
+            )
+            qtw.QApplication.processEvents()
+
     def test_selection_signals_distinguish_single_and_non_single_rows(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
         try:
             run_list = treeWidgets.RunList()
@@ -86,7 +206,7 @@ class RunListTooltipTestCase(unittest.TestCase):
         self.assertEqual(treeWidgets.format_timestamp(10**30), "unknown")
 
     def test_add_runs_displays_run_with_missing_timestamp(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -367,7 +487,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             )
 
     def test_setpoints_delegate_uses_normal_text_color_for_selection(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -393,7 +513,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_setpoints_delegate_left_aligns_shape_text(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -410,7 +530,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_setpoints_delegate_treats_zero_as_left_count_text(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -461,7 +581,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_setpoints_delegate_uses_widest_shape_text_for_equals_alignment(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -519,7 +639,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_setpoints_delegate_reserves_space_for_one_dimensional_count(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -556,7 +676,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_resize_columns_keeps_narrow_width_inside_viewport(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -586,7 +706,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_resize_columns_uses_roomy_main_window_widths(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -645,7 +765,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             def update(self, key, value):
                 self.values[key] = value
 
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -698,7 +818,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_resize_columns_preserves_manual_width_until_reset(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -725,7 +845,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_columns_do_not_shrink_below_declared_minimums(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -763,7 +883,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             def update(self, key, value):
                 self.values[key] = value
 
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -799,7 +919,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             def update(self, key, value):
                 self.values[key] = value
 
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -860,7 +980,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_all_optional_columns_can_scroll_horizontally(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -904,7 +1024,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_optional_metadata_columns_are_available_without_run_id_alias(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -943,7 +1063,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_guid_index_tracks_added_and_cleared_rows(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1017,7 +1137,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             )
 
     def test_add_runs_only_watches_unfinished_rows(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1216,7 +1336,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_update_runs_merges_background_detail_metadata(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1271,7 +1391,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_update_runs_does_not_replace_exact_size_with_later_estimate(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1311,7 +1431,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_update_runs_replaces_prompt_estimate_with_later_exact_size(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1352,8 +1472,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_check_watching_reports_finished_interrupted_run(self):
-        old_isfile = treeWidgets.isfile
-        old_get_run_status = treeWidgets.get_run_status
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1380,16 +1499,16 @@ class RunListTooltipTestCase(unittest.TestCase):
                 })
             item = run_list.topLevelItem(0)
 
-            treeWidgets.get_run_status = lambda guid: {
-                "completed_timestamp": 120.0,
-                "is_completed": True,
-                "result_count": 800,
-                "read_setpoint_count": 400,
-                "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
-                "database_modified_timestamp": 120.0,
-                }
-
-            updated_runs = run_list.checkWatching()
+            updated_runs = run_list.checkWatching({
+                "interrupted-guid": {
+                    "completed_timestamp": 120.0,
+                    "is_completed": True,
+                    "result_count": 800,
+                    "read_setpoint_count": 400,
+                    "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
+                    "database_modified_timestamp": 120.0,
+                    },
+                })
 
             self.assertEqual(
                 item.text(run_list.cols.index("Status")),
@@ -1410,10 +1529,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                 )
         finally:
             treeWidgets.isfile = old_isfile
-            treeWidgets.get_run_status = old_get_run_status
 
     def test_check_watching_replaces_stale_observed_live_shape(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1483,8 +1601,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_check_watching_updates_finished_failed_run(self):
-        old_isfile = treeWidgets.isfile
-        old_get_run_status = treeWidgets.get_run_status
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1504,15 +1621,15 @@ class RunListTooltipTestCase(unittest.TestCase):
                 })
             item = run_list.topLevelItem(0)
 
-            treeWidgets.get_run_status = lambda guid: {
-                "completed_timestamp": 120.0,
-                "is_completed": True,
-                "result_count": 40,
-                "measurement_exception": "Traceback...\nValueError: bad <value>\n",
-                "database_modified_timestamp": 120.0,
-                }
-
-            updated_runs = run_list.checkWatching()
+            updated_runs = run_list.checkWatching({
+                "failed-guid": {
+                    "completed_timestamp": 120.0,
+                    "is_completed": True,
+                    "result_count": 40,
+                    "measurement_exception": "Traceback...\nValueError: bad <value>\n",
+                    "database_modified_timestamp": 120.0,
+                    },
+                })
 
             status_col = run_list.cols.index("Status")
             self.assertEqual(item.text(status_col), "Failed")
@@ -1530,11 +1647,9 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIn("ValueError: bad &lt;value&gt;", item.toolTip(0))
         finally:
             treeWidgets.isfile = old_isfile
-            treeWidgets.get_run_status = old_get_run_status
 
     def test_check_watching_stops_completed_run_without_completion_timestamp(self):
-        old_isfile = treeWidgets.isfile
-        old_get_run_status = treeWidgets.get_run_status
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1554,14 +1669,14 @@ class RunListTooltipTestCase(unittest.TestCase):
                 })
             item = run_list.topLevelItem(0)
 
-            treeWidgets.get_run_status = lambda guid: {
-                "completed_timestamp": None,
-                "is_completed": True,
-                "result_count": 100,
-                "database_modified_timestamp": 120.0,
-                }
-
-            updated_runs = run_list.checkWatching()
+            updated_runs = run_list.checkWatching({
+                "completed-guid": {
+                    "completed_timestamp": None,
+                    "is_completed": True,
+                    "result_count": 100,
+                    "database_modified_timestamp": 120.0,
+                    },
+                })
 
             self.assertEqual(run_list.watching, [])
             self.assertTrue(updated_runs[1]["is_completed"])
@@ -1577,10 +1692,9 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIn("Completed</td>", item.toolTip(0))
         finally:
             treeWidgets.isfile = old_isfile
-            treeWidgets.get_run_status = old_get_run_status
 
     def test_run_table_measurement_previews_use_preview_metadata(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1680,7 +1794,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_run_table_placeholders_use_subtle_tints_while_generating(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1767,7 +1881,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             cell.deleteLater()
 
     def test_large_run_list_uses_compact_cells_instead_of_widgets_per_run(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         old_limit = treeWidgets.MAX_RUN_PREVIEW_WIDGETS
         treeWidgets.isfile = lambda _: False
         treeWidgets.MAX_RUN_PREVIEW_WIDGETS = 2
@@ -1800,7 +1914,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_setpoint_width_scan_is_cached_until_run_data_changes(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         try:
@@ -1836,7 +1950,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             treeWidgets.isfile = old_isfile
 
     def test_detail_batches_do_not_resort_when_sort_key_is_unchanged(self):
-        old_isfile = treeWidgets.isfile
+        old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
         class RecordingRunList(treeWidgets.RunList):
@@ -1875,76 +1989,3 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertTrue(run_list.isSortingEnabled())
         finally:
             treeWidgets.isfile = old_isfile
-
-    def test_large_selected_run_skips_full_table_setpoint_grouping(self):
-        details = treeWidgets.moreInfo(preview_size=100)
-        sql_calls = []
-        details._setpoint_summaries_from_sql = (
-            lambda *args: sql_calls.append(args) or {"gate": {"steps": 5}}
-            )
-
-        summaries = details._setpoint_summaries(
-            None,
-            ["gate"],
-            run_metadata={
-                "result_table_name": "results",
-                "result_count": (
-                    treeWidgets.MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS + 1
-                    ),
-                "setpoint_shape": [1000],
-                },
-            database_path="large.db",
-            )
-
-        self.assertEqual(sql_calls, [])
-        self.assertEqual(summaries, {"gate": {"steps": 1000}})
-        details.deleteLater()
-
-    def test_unknown_selected_run_size_skips_full_table_setpoint_grouping(self):
-        details = treeWidgets.moreInfo(preview_size=100)
-        sql_calls = []
-        details._setpoint_summaries_from_sql = (
-            lambda *args: sql_calls.append(args) or {"gate": {"steps": 5}}
-            )
-
-        summaries = details._setpoint_summaries(
-            None,
-            ["gate"],
-            run_metadata={
-                "result_table_name": "results",
-                "setpoint_shape": [1000],
-                },
-            database_path="large.db",
-            )
-
-        self.assertEqual(sql_calls, [])
-        self.assertEqual(summaries, {"gate": {"steps": 1000}})
-        details.deleteLater()
-
-    def test_selected_run_setpoint_summary_query_is_cached(self):
-        details = treeWidgets.moreInfo(preview_size=100)
-        sql_calls = []
-        details._setpoint_summaries_from_sql = (
-            lambda *args: sql_calls.append(args) or {"gate": {"steps": 5}}
-            )
-        metadata = {
-            "result_table_name": "results",
-            "result_count": 50,
-            }
-
-        first = details._setpoint_summaries(
-            None,
-            ["gate"],
-            run_metadata=metadata,
-            database_path="small.db",
-            )
-        second = details._setpoint_summaries(
-            None,
-            ["gate"],
-            run_metadata=metadata,
-            database_path="small.db",
-            )
-
-        self.assertEqual(first, second)
-        self.assertEqual(len(sql_calls), 1)
-        details.deleteLater()

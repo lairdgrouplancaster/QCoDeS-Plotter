@@ -33,6 +33,7 @@ from qplot.datahandling.file_identity import (
     canonical_database_path,
     checked_path_bound_file_identity,
     database_instances_differ,
+    database_sidecar_identities,
     logical_database_path,
 )
 
@@ -825,10 +826,14 @@ def _capture_source_identity(
         logical_path=instance.logical_path,
         resolved_path=instance.resolved_path,
         identity=instance.identity,
-        sidecar_identities=frozenset(
-            identity
-            for identity in (wal_identity, shm_identity, journal_identity)
-            if identity is not None
+        # Keep this UI-facing instance comparable with database_instance().
+        # On Windows, the checked native identities above deliberately use
+        # volume/file-index tuples while ordinary UI observations prefer the
+        # non-zero device/inode values exposed by Python.  The native values
+        # remain on TrustedLiveSourceIdentity for the VFS proof below.
+        sidecar_identities=database_sidecar_identities(
+            instance.logical_path,
+            instance.resolved_path,
         ),
     )
 
@@ -1849,7 +1854,16 @@ class TrustedLiveReader:
             cursor = connection.cursor()
             cursor.row_trace = None
             cursor.execute(details.first_query, bindings)
-            if cursor.get_description() != details.description:
+            try:
+                execution_description = cursor.get_description()
+            except apsw.ExecutionCompleteError:
+                # APSW releases the completed statement before exposing its
+                # description when a valid SELECT produces zero rows.  The
+                # exact same statement was prepared, authorised, and bounded
+                # immediately above by query_info(), so its validated
+                # description remains the authoritative zero-row metadata.
+                execution_description = details.description
+            if execution_description != details.description:
                 raise TrustedLiveQueryError(
                     "SQLite result metadata changed between validation and execution."
                 )

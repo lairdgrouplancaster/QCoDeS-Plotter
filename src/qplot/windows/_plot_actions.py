@@ -15,7 +15,10 @@ from qplot.datahandling.file_identity import (
 from qplot.datahandling.readonly import (
     DatabaseInstanceChangedError,
     load_by_guid_read_only,
-    load_by_id_read_only,
+)
+from qplot.datahandling.trusted_live_service import (
+    SNAPSHOT_FALLBACK_MODE,
+    TRUSTED_LIVE_MODE,
 )
 from qplot.diagnostics import log_exception
 
@@ -23,9 +26,9 @@ from ._dataset_handle import (
     DatasetHandle,
     DatasetKey,
     TraceKey,
-    canonical_database_path,
+    bind_dataset_key_to_current_source,
     close_dataset_connection,
-    database_file_identity,
+    dataset_key_matches_current_source,
 )
 from ._export_paths import choose_export_path, write_export_atomically
 from ._plot2d_layers import _heatmap_layer_compatibility
@@ -83,13 +86,101 @@ class PlotActionsMixin:
 
     @staticmethod
     def _dataset_key_is_current(dataset_key):
-        expected_identity = dataset_key.database_identity
-        current_resolved_path = canonical_database_path(dataset_key.database_path)
-        if current_resolved_path != dataset_key.resolved_database_path:
-            return False
-        if expected_identity is None:
-            return not os.path.isfile(dataset_key.database_path)
-        return database_file_identity(dataset_key.database_path) == expected_identity
+        return dataset_key_matches_current_source(
+            dataset_key,
+            allow_new_sidecars=True,
+        )
+
+
+    @staticmethod
+    def _bound_plot_dataset_key_is_current(dataset_key):
+        """Require the exact source identities retained by a plot key."""
+
+        return dataset_key_matches_current_source(dataset_key)
+
+
+    def _request_plot_source_recovery(self, dataset_key):
+        """Retire a plot source without trusting the controller baseline."""
+
+        replacement_handler = getattr(
+            self,
+            "_handle_plot_database_replaced",
+            None,
+        )
+        if callable(replacement_handler):
+            replacement_handler(dataset_key.database_path)
+            return
+
+        reload_replaced = getattr(self, "_reload_replaced_database", None)
+        if callable(reload_replaced):
+            reload_replaced(dataset_key.database_path)
+
+
+    def _ensure_bound_plot_dataset_key_can_be_read(self, dataset_key):
+        """Reject a retained plot key unless every accepted identity matches."""
+
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self,
+                dataset_key.database_path,
+                "using run data",
+                ):
+            raise RuntimeError(
+                "Test-database generation owns this database path until its "
+                "released view has recovered."
+            )
+        if PlotActionsMixin._bound_plot_dataset_key_is_current(dataset_key):
+            return
+
+        PlotActionsMixin._request_plot_source_recovery(self, dataset_key)
+        raise RuntimeError(
+            "The database or its SQLite sidecars were replaced before the "
+            "plot could use its dataset."
+        )
+
+
+    def _rekey_dataset_handle_for_bound_plot(self, prior_key, bound_key):
+        """Replace an equal transient dict key with its exact plot binding."""
+
+        for held_key in list(self.dataset_holder):
+            if held_key != prior_key:
+                continue
+            handle = self.dataset_holder.pop(held_key)
+            held_sidecars = handle.sidecar_identities
+            if (
+                    held_sidecars is not None
+                    and not held_sidecars.issubset(bound_key.sidecar_identities)
+                    ):
+                # This handle came from a different exact sidecar lineage even
+                # though DatasetKey deliberately excludes sidecars from hash
+                # equality.  Do not let it satisfy the promoted plot key.
+                self.dataset_holder[held_key] = handle
+                return False
+            handle.sidecar_identities = bound_key.sidecar_identities
+            self.dataset_holder[bound_key] = handle
+            return True
+        return False
+
+
+    def _bind_plot_dataset_key(self, dataset_key):
+        """Finish first-sidecar binding before retaining a plot source."""
+
+        bound_key = bind_dataset_key_to_current_source(dataset_key)
+        if bound_key is None:
+            PlotActionsMixin._request_plot_source_recovery(self, dataset_key)
+            return None
+        PlotActionsMixin._rekey_dataset_handle_for_bound_plot(
+            self,
+            dataset_key,
+            bound_key,
+        )
+        try:
+            PlotActionsMixin._ensure_bound_plot_dataset_key_can_be_read(
+                self,
+                bound_key,
+            )
+        except RuntimeError:
+            return None
+        return bound_key
 
 
     def _dataset_key_targets_loaded_database(self, dataset_key):
@@ -178,11 +269,18 @@ class PlotActionsMixin:
                     handle.database_identity is not None
                     and handle.database_identity != dataset_key.database_identity
                 )
+                or (
+                    handle.sidecar_identities is not None
+                    and handle.sidecar_identities
+                    != dataset_key.sidecar_identities
+                )
                 ):
             self._discard_dataset_handle(dataset_key, handle)
             return None
         if handle.database_identity is None:
             handle.database_identity = dataset_key.database_identity
+        if handle.sidecar_identities is None:
+            handle.sidecar_identities = dataset_key.sidecar_identities
         return handle
 
     def _dataset_is_held(self, dataset):
@@ -208,6 +306,7 @@ class PlotActionsMixin:
         previous = getattr(self, "ds", None)
         self.ds = dataset
         self._selected_dataset_key = dataset_key
+        self._selected_run_guid = dataset_key.guid
         if previous is not dataset:
             self._close_dataset_if_unowned(
                 previous,
@@ -225,10 +324,38 @@ class PlotActionsMixin:
             )
 
 
+    def _release_trusted_action_dataset(self, dataset):
+        """End an explicit trusted-mode DataSet's GUI-thread ownership.
+
+        Stage 4 permits legacy DataSet materialisation only at an explicit plot
+        or export boundary.  A plot window retains its DataSet through
+        ``dataset_holder``; an unused or failed action must close its unowned
+        handle here so a later ordinary row selection has no SQLite cleanup to
+        perform.
+        """
+        if (
+                dataset is None
+                or getattr(self, "_database_access_mode", None)
+                != TRUSTED_LIVE_MODE
+                ):
+            return False
+        if getattr(self, "ds", None) is dataset:
+            self.ds = None
+            self._selected_dataset_key = None
+        return self._close_dataset_if_unowned(
+            dataset,
+            context="Explicit plot dataset cleanup failed",
+        )
+
+
     def _clear_selected_run_state(self):
         """Clear run actions and UI after a selected dataset cannot be loaded."""
+        cancel_detail = getattr(self, "_cancel_selected_run_detail", None)
+        if callable(cancel_detail):
+            cancel_detail()
         self._release_selected_dataset()
         self.selected_run_id = None
+        self._selected_run_guid = None
 
         run_id_box = getattr(self, "run_idBox", None)
         if run_id_box is not None:
@@ -416,7 +543,21 @@ class PlotActionsMixin:
     def _handle_plot_database_replaced(self, database_path, source_window=None):
         """Reload the current source, or retire a stale plot from another DB."""
 
-        current_path = self.fileTextbox.text()
+        file_textbox = getattr(self, "fileTextbox", None)
+        if file_textbox is None:
+            # Lightweight PlotActionsMixin hosts do not own MainWindow's path
+            # field.  Let their normal instance-change hook perform recovery
+            # instead of entering controller-specific invalidation code.
+            reload_if_changed = getattr(
+                self,
+                "_reload_if_database_instance_changed",
+                None,
+            )
+            if callable(reload_if_changed):
+                return reload_if_changed(database_path)
+            return False
+
+        current_path = file_textbox.text()
         source_key = getattr(source_window, "_dataset_key", None)
         logical_source_path = (
             source_key.database_path
@@ -476,7 +617,7 @@ class PlotActionsMixin:
                 dataset_key = self._current_dataset_key(ds.guid)
 
         assert dataset_key is not None
-        self._ensure_dataset_key_can_be_read(dataset_key)
+        self._ensure_bound_plot_dataset_key_can_be_read(dataset_key)
         shared_handle = self._dataset_handle_for_key(dataset_key)
         loaded_for_construction = shared_handle is None and ds is None
         if shared_handle is not None:
@@ -492,12 +633,14 @@ class PlotActionsMixin:
                 dataset=handle.dataset,
                 users=handle.users,
                 database_identity=handle.database_identity,
+                sidecar_identities=handle.sidecar_identities,
             )
             for held_key, handle in self.dataset_holder.items()
         }
         construction_holder[dataset_key] = DatasetHandle(
             dataset=construction_ds,
             database_identity=dataset_key.database_identity,
+            sidecar_identities=dataset_key.sidecar_identities,
         )
 
         try:
@@ -517,7 +660,16 @@ class PlotActionsMixin:
                     window_type = legacy_window_type
             if window_type not in {"plot1d", "plot2d", "sweeper"}:
                 raise TypeError(f"Unknown window of type: {win.__class__.__name__}")
+            self._ensure_bound_plot_dataset_key_can_be_read(dataset_key)
         except Exception:
+            if "win" in locals():
+                worker = getattr(win, "worker", None)
+                cancel = getattr(worker, "cancel", None)
+                if callable(cancel):
+                    cancel()
+                close = getattr(win, "close", None)
+                if callable(close):
+                    close()
             if loaded_for_construction:
                 try:
                     construction_ds.conn.close()
@@ -631,7 +783,7 @@ class PlotActionsMixin:
     @QtCore.pyqtSlot(str)
     def updateSelected(self, guid):
         """
-        Loads the selected run into memory and updates the details pane.
+        Dispatch ordinary selection to one accepted, DataSet-free reader.
 
         """
         if not PlotActionsMixin._generation_gate_allows_action(
@@ -639,75 +791,39 @@ class PlotActionsMixin:
                 operation="selecting a run",
                 ):
             return
-        self.show_status("Loading selected run...", 0)
-        dataset_key = self._current_dataset_key(guid)
-        try:
-            if self.ds is not None and getattr(self, "_selected_dataset_key", None) == dataset_key:
-                pass
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            update_trusted = getattr(self, "_update_trusted_selected_run", None)
+            if callable(update_trusted):
+                update_trusted(guid)
             else:
-                handle = self._dataset_handle_for_key(dataset_key)
-                if handle is None:
-                    dataset = self._load_dataset(dataset_key)
-                else:
-                    dataset = handle.dataset
-                self._replace_selected_dataset(dataset, dataset_key)
-        except Exception as err:
-            log_exception("Selected run load failed", err, __name__)
-            self._clear_selected_run_state()
-            self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+                self.show_error(
+                    "Trusted Selection Unavailable",
+                    "The accepted trusted live-reader selection path is unavailable.",
+                    "Reload the database to start a new trusted session. qPlot did "
+                    "not fall back to loading a snapshot DataSet.",
+                )
             return
-
-        self.selected_run_id = self.ds.run_id
-        prioritize_details = getattr(self, "_prioritize_database_detail_runs", None)
-        if callable(prioritize_details):
-            prioritize_details([self.selected_run_id])
-        prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
-        if callable(prioritize_previews):
-            prioritize_previews([self.selected_run_id])
-        self.run_idBox.blockSignals(True)
-        self.run_idBox.setText(str(self.ds.run_id))
-        self.run_idBox.blockSignals(False)
-
-        if hasattr(self.ds, "snapshot"):
-            snap = self.ds.snapshot
-        else:
-            snap = None
-
-        run_metadata = self._run_metadata_for_guid(guid)
-        point_count = self._run_point_count(run_metadata)
-
-        paramspec = self.ds.get_parameters()
-        structure = {"Data points": point_count}
-        for param in paramspec:
-            if len(param.depends_on) > 0:
-                structure[param.name] = {
-                    "unit": param.unit,
-                    "label": param.label,
-                    "axes": list(param.depends_on_),
-                }
+        if (
+                getattr(self, "_database_access_mode", None)
+                == SNAPSHOT_FALLBACK_MODE
+                ):
+            update_snapshot = getattr(self, "_update_snapshot_selected_run", None)
+            if callable(update_snapshot):
+                update_snapshot(guid)
             else:
-                structure[param.name] = {
-                    "unit": param.unit,
-                    "label": param.label,
-                }
-        info = {
-            "Data Structure": structure,
-            "MetaData": self.ds.metadata,
-            "Snapshot": snap,
-        }
-        self.infoBox.setInfo(
-            info,
-            self.ds,
-            run_metadata=run_metadata,
-            database_path=self.fileTextbox.text(),
-            )
-        if point_count is None:
-            self.show_status(f"Selected run {self.ds.run_id}.", 5000)
-        else:
-            self.show_status(
-                f"Selected run {self.ds.run_id} with {int(point_count):,} points.",
-                5000,
-            )
+                self.show_error(
+                    "Snapshot Selection Unavailable",
+                    "The accepted snapshot selection path is unavailable.",
+                    "Reload the database to start a new snapshot session. qPlot "
+                    "did not load a QCoDeS DataSet for ordinary selection.",
+                )
+            return
+        self.show_error(
+            "Selection Unavailable",
+            "No accepted database reader is bound to the current selection.",
+            "Reload the database to establish a trusted live or snapshot "
+            "session. qPlot did not load a QCoDeS DataSet.",
+        )
 
 
     def _run_metadata_for_guid(self, guid):
@@ -763,8 +879,15 @@ class PlotActionsMixin:
             self._close_dataset_if_unowned(ds)
             return
 
-        self._replace_selected_dataset(ds, self._current_dataset_key(ds.guid))
-        self.openPlot(params=params)
+        dataset_key = self._accepted_plot_target_key(ds)
+        if dataset_key is None:
+            self._close_dataset_if_unowned(ds)
+            return
+        self._replace_selected_dataset(ds, dataset_key)
+        try:
+            self.openPlot(params=params)
+        finally:
+            self._release_trusted_action_dataset(ds)
 
 
     @QtCore.pyqtSlot()
@@ -778,11 +901,12 @@ class PlotActionsMixin:
                 operation="opening plots",
                 ):
             return
-        if self.ds is None:
+        guid = getattr(self, "_selected_run_guid", None)
+        if self.ds is None and not guid:
             self.show_status("Select a run before plotting all measurements.", 5000)
             return
 
-        self.openPlot()
+        self.openPlot(guid)
 
 
     @QtCore.pyqtSlot()
@@ -818,13 +942,14 @@ class PlotActionsMixin:
                 operation="exporting preview data",
                 ):
             return
-        if self.ds is None:
+        guid = getattr(self, "_selected_run_guid", None)
+        if self.ds is None and not guid:
             self.show_status("Select a run before exporting a preview.", 5000)
             return
 
         dataset_key = getattr(self, "_selected_dataset_key", None)
         if dataset_key is None:
-            dataset_key = self._current_dataset_key(self.ds.guid)
+            dataset_key = self._current_dataset_key(guid or self.ds.guid)
         self._export_preview_csv(dataset_key, parameter_name)
 
 
@@ -857,6 +982,7 @@ class PlotActionsMixin:
             return
 
         dataset = None
+        original_dataset_key = dataset_key
         try:
             # Preview and plot datasets intentionally remain frozen at their
             # original read-only WAL snapshots.  Export needs the newest
@@ -864,8 +990,20 @@ class PlotActionsMixin:
             # bypass DatasetHandle caching.  No action-owned snapshot waits
             # behind the modal save dialog.
             try:
-                dataset = self._load_dataset(dataset_key)
+                dataset_key = self._bind_one_shot_dataset_key(dataset_key)
+                dataset = self._load_run_csv_dataset(dataset_key)
                 param = self._measurement_param_by_name(dataset, parameter_name)
+            except DatabaseInstanceChangedError as err:
+                self._handle_run_csv_source_replaced(
+                    dataset_key or original_dataset_key,
+                )
+                log_exception("Preview CSV run load failed", err, __name__)
+                self.show_error(
+                    "Run Load Failed",
+                    f"Could not load run with GUID {original_dataset_key.guid}.",
+                    str(err),
+                )
+                return
             except Exception as err:
                 log_exception("Preview CSV run load failed", err, __name__)
                 self.show_error(
@@ -887,8 +1025,17 @@ class PlotActionsMixin:
                 # The read-only connection intentionally keeps its original
                 # SQLite snapshot readable if the path is replaced.  Reject
                 # that obsolete frame before it reaches the destination.
-                self._ensure_dataset_key_can_be_read(dataset_key)
+                self._require_run_csv_source_current(dataset_key)
                 self._publish_preview_csv(frame, filename, dataset_key)
+            except DatabaseInstanceChangedError as err:
+                self._handle_run_csv_source_replaced(dataset_key)
+                log_exception("Preview CSV export failed", err, __name__)
+                self.show_error(
+                    "CSV Export Failed",
+                    "Could not export the selected measurement data.",
+                    str(err),
+                )
+                return
             except Exception as err:
                 log_exception("Preview CSV export failed", err, __name__)
                 self.show_error(
@@ -934,11 +1081,13 @@ class PlotActionsMixin:
             return
 
         dataset = None
+        original_dataset_key = dataset_key
         try:
             # The destination is approved before this action-owned view is
             # opened, so a modal save dialog cannot retain an obsolete SQLite
             # snapshot. The read layer also binds acquisition to the database
             # identity captured in ``dataset_key``.
+            dataset_key = self._bind_one_shot_dataset_key(dataset_key)
             dataset = self._load_run_csv_dataset(dataset_key)
             params = self._measurement_params_by_names(dataset, parameter_names)
             frame = self._measurement_dataframe(dataset, params)
@@ -951,7 +1100,9 @@ class PlotActionsMixin:
                 ),
             )
         except DatabaseInstanceChangedError:
-            self._handle_run_csv_source_replaced(dataset_key)
+            self._handle_run_csv_source_replaced(
+                dataset_key or original_dataset_key,
+            )
             return
         except Exception as err:
             log_exception("CSV export failed", err, __name__)
@@ -994,11 +1145,24 @@ class PlotActionsMixin:
         return dataset
 
 
+    def _bind_one_shot_dataset_key(self, dataset_key):
+        """Bind compatible first sidecars before an action-owned read."""
+
+        bound_key = bind_dataset_key_to_current_source(dataset_key)
+        if bound_key is None:
+            raise DatabaseInstanceChangedError(
+                "The database or its SQLite sidecars were replaced before qPlot "
+                "could open the export view."
+            )
+        return bound_key
+
+
     def _require_run_csv_source_current(self, dataset_key):
         """Reject an export when its captured database instance was replaced."""
-        if not self._dataset_key_is_current(dataset_key):
+        if not self._bound_plot_dataset_key_is_current(dataset_key):
             raise DatabaseInstanceChangedError(
-                "The database was replaced while qPlot was exporting run data."
+                "The database or its SQLite sidecars were replaced while "
+                "qPlot was exporting run data."
             )
 
 
@@ -1012,8 +1176,8 @@ class PlotActionsMixin:
         if callable(reload_if_changed):
             reload_if_changed(dataset_key.database_path)
         self.show_status(
-            "CSV export stopped because the database was replaced; reloading "
-            "the source. No CSV was written.",
+            "CSV export stopped because the database was replaced; "
+            "reloading the source. No CSV was written.",
             5000,
         )
 
@@ -1050,7 +1214,9 @@ class PlotActionsMixin:
         write_export_atomically(
             filename,
             lambda temporary: frame.to_csv(temporary, index=False),
-            before_publish=lambda: self._ensure_dataset_key_can_be_read(dataset_key),
+            before_publish=(
+                lambda: self._require_run_csv_source_current(dataset_key)
+            ),
         )
 
 
@@ -1060,7 +1226,8 @@ class PlotActionsMixin:
         Opens plot windows for the selected or requested run.
 
         """
-        target_path = guid.database_path if isinstance(guid, DatasetKey) else None
+        retained_dataset_key = isinstance(guid, DatasetKey)
+        target_path = guid.database_path if retained_dataset_key else None
         if not PlotActionsMixin._generation_gate_allows_action(
                 self,
                 target_path,
@@ -1073,7 +1240,8 @@ class PlotActionsMixin:
         # replacement race) may have deliberately released that old read-only
         # connection before this requested DatasetKey is invalidated.  Presence
         # of a selected dataset is the relevant check here, not its row count.
-        if self.ds is None and not guid:
+        selected_guid = getattr(self, "_selected_run_guid", None)
+        if self.ds is None and not guid and not selected_guid:
             self.show_status("Select a run before opening plots.", 5000)
             return
 
@@ -1083,12 +1251,15 @@ class PlotActionsMixin:
             dataset_key = guid
             guid = dataset_key.guid
         else:
-            target_guid = guid or getattr(self.ds, "guid", "")
+            target_guid = guid or selected_guid or getattr(self.ds, "guid", "")
             dataset_key = self._current_dataset_key(target_guid)
 
         loaded_by_open_plot = False
         try:
-            self._ensure_dataset_key_can_be_read(dataset_key)
+            if retained_dataset_key:
+                self._ensure_bound_plot_dataset_key_can_be_read(dataset_key)
+            else:
+                self._ensure_dataset_key_can_be_read(dataset_key)
             if (
                 self.ds is None
                 or getattr(self, "_selected_dataset_key", None) != dataset_key
@@ -1101,7 +1272,30 @@ class PlotActionsMixin:
                     ds = handle.dataset
             else:
                 ds = self.ds
+
+            prior_key = dataset_key
+            if retained_dataset_key:
+                self._ensure_bound_plot_dataset_key_can_be_read(dataset_key)
+            else:
+                dataset_key = self._bind_plot_dataset_key(dataset_key)
+                if dataset_key is None:
+                    raise RuntimeError(
+                        "The database or its SQLite sidecars changed while "
+                        "the plot dataset was being acquired."
+                    )
+                if (
+                        self.ds is ds
+                        and getattr(self, "_selected_dataset_key", None)
+                        == prior_key
+                        ):
+                    self._selected_dataset_key = dataset_key
+                self._plot_target_dataset_key = dataset_key
         except Exception as err:
+            if loaded_by_open_plot and "ds" in locals():
+                self._close_dataset_if_unowned(
+                    ds,
+                    context="Unused plot dataset cleanup failed",
+                )
             log_exception("Plot run load failed", err, __name__)
             self.show_error("Run Load Failed", "Could not load the selected run.", str(err))
             return
@@ -1217,15 +1411,31 @@ class PlotActionsMixin:
                 ):
             return
         if self.ds is None:
-            self.show_status("Select a run before opening a parameter.", 5000)
-            return
+            dataset = self._dataset_for_plot_target()
+            if dataset is None:
+                return
+            dataset_key = self._accepted_plot_target_key(dataset)
+            if dataset_key is None:
+                self._close_dataset_if_unowned(dataset)
+                return
+            self._replace_selected_dataset(
+                dataset,
+                dataset_key,
+            )
+        action_dataset = self.ds
+        try:
+            params = [
+                param
+                for param in action_dataset.get_parameters()
+                if param.depends_on != ""
+            ]
+            if index >= len(params):
+                self.show_status(f"Run has no parameter {index + 1}.", 5000)
+                return
 
-        params = [param for param in self.ds.get_parameters() if param.depends_on != ""]
-        if index >= len(params):
-            self.show_status(f"Run has no parameter {index + 1}.", 5000)
-            return
-
-        self.openPlot(params=[params[index]])
+            self.openPlot(params=[params[index]])
+        finally:
+            self._release_trusted_action_dataset(action_dataset)
 
 
     @QtCore.pyqtSlot(str)
@@ -1240,15 +1450,32 @@ class PlotActionsMixin:
                 ):
             return
         if self.ds is None:
-            self.show_status("Select a run before opening a preview plot.", 5000)
-            return
-
-        for param in self.ds.get_parameters():
-            if param.name == parameter_name and param.depends_on != "":
-                self.openPlot(params=[param])
+            dataset = self._dataset_for_plot_target()
+            if dataset is None:
                 return
+            dataset_key = self._accepted_plot_target_key(dataset)
+            if dataset_key is None:
+                self._close_dataset_if_unowned(dataset)
+                return
+            self._replace_selected_dataset(
+                dataset,
+                dataset_key,
+            )
+        action_dataset = self.ds
+        try:
+            for param in action_dataset.get_parameters():
+                if param.name == parameter_name and param.depends_on != "":
+                    self.openPlot(params=[param])
+                    return
 
-        self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+            self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+        finally:
+            self._release_trusted_action_dataset(action_dataset)
+
+
+    def open_selected_measurement(self, parameter_name):
+        """Materialise the selected run only after an explicit menu action."""
+        return self.open_preview_plot(str(parameter_name))
 
 
     @QtCore.pyqtSlot(str, str)
@@ -1784,7 +2011,10 @@ class PlotActionsMixin:
                     str(error),
                 )
                 return None
-            dataset_key = selected_key
+            # Parameter enumeration may reuse an explicit-action dataset, but
+            # this new export request is rebound to the currently accepted full
+            # DatabaseInstance after the replacement guard above.
+            dataset_key = self._current_dataset_key(selected_key.guid)
         else:
             metadata = self._run_metadata_for_id(run_id)
             guid = metadata.get("guid")
@@ -1851,7 +2081,7 @@ class PlotActionsMixin:
             self.show_status("Load a database before plotting or exporting.", 5000)
             return None
 
-        if self.selected_run_id is None:
+        if getattr(self, "selected_run_id", None) is None:
             self.show_status("Enter a Run ID before plotting or exporting.", 5000)
             return None
 
@@ -1867,16 +2097,28 @@ class PlotActionsMixin:
             )
             return None
 
-        expected_identity = getattr(self, "_loaded_database_identity", None)
-        load_kwargs = {}
-        if expected_identity is not None:
-            load_kwargs["expected_database_identity"] = expected_identity
-        try:
-            return load_by_id_read_only(
-                self.selected_run_id,
-                self.fileTextbox.text(),
-                **load_kwargs,
+        run_id = self.selected_run_id
+        metadata = self._run_metadata_for_id(run_id)
+        guid = metadata.get("guid")
+        if not guid:
+            self.show_status(
+                f"Run ID {run_id} is not available in the loaded database.",
+                5000,
             )
+            return None
+        dataset_key = self._current_dataset_key(str(guid))
+        self._plot_target_dataset_key = None
+        try:
+            dataset = self._load_dataset(dataset_key)
+            if getattr(dataset, "guid", None) != dataset_key.guid or int(
+                    getattr(dataset, "run_id", -1)
+                    ) != int(run_id):
+                self._close_dataset_if_unowned(dataset)
+                raise RuntimeError(
+                    "The selected GUID did not resolve to the requested run ID."
+                )
+            self._plot_target_dataset_key = dataset_key
+            return dataset
         except DatabaseInstanceChangedError:
             if callable(reload_if_changed):
                 reload_if_changed(self.fileTextbox.text())
@@ -1886,6 +2128,14 @@ class PlotActionsMixin:
             )
             return None
         except Exception as error:
+            if not self._dataset_key_is_current(dataset_key):
+                if callable(reload_if_changed):
+                    reload_if_changed(self.fileTextbox.text())
+                self.show_status(
+                    "Database was replaced; reloading before opening the run.",
+                    5000,
+                )
+                return None
             log_exception("Run ID load failed", error, __name__)
             self.show_error(
                 "Run Load Failed",
@@ -1893,6 +2143,25 @@ class PlotActionsMixin:
                 str(error),
             )
             return None
+
+
+    def _accepted_plot_target_key(self, dataset):
+        """Bind first sidecars and recheck before plot UI publication."""
+
+        dataset_key = getattr(self, "_plot_target_dataset_key", None)
+        if not isinstance(dataset_key, DatasetKey) or dataset_key.guid != str(
+                getattr(dataset, "guid", "")
+                ):
+            dataset_key = self._current_dataset_key(str(dataset.guid))
+        bound_key = PlotActionsMixin._bind_plot_dataset_key(self, dataset_key)
+        if bound_key is not None:
+            self._plot_target_dataset_key = bound_key
+            return bound_key
+        self.show_status(
+            "Database was replaced; reloading before opening the run.",
+            5000,
+        )
+        return None
 
 
     def _measurement_dataframe(self, dataset, params):
@@ -1983,13 +2252,13 @@ class PlotActionsMixin:
         Tracks a dataset used by one or more plot windows.
 
         """
-        self._ensure_dataset_key_can_be_read(dataset_key)
+        self._ensure_bound_plot_dataset_key_can_be_read(dataset_key)
         handle = self._dataset_handle_for_key(dataset_key)
         if handle is None:
             ds = self._load_dataset(dataset_key) if ds is None else ds
             assert ds.guid == dataset_key.guid
 
-            if not self._dataset_key_is_current(dataset_key):
+            if not self._bound_plot_dataset_key_is_current(dataset_key):
                 self._close_dataset_if_unowned(
                     ds,
                     context="Replaced database dataset cleanup failed",
@@ -2000,6 +2269,7 @@ class PlotActionsMixin:
             self.dataset_holder[dataset_key] = DatasetHandle(
                 dataset=ds,
                 database_identity=dataset_key.database_identity,
+                sidecar_identities=dataset_key.sidecar_identities,
             )
         else:
             handle.retain()
@@ -2047,6 +2317,7 @@ class PlotActionsMixin:
                 guid,
                 loaded_instance.identity,
                 loaded_instance.resolved_path,
+                sidecar_identities=loaded_instance.sidecar_identities,
             )
         return DatasetKey(database_path, guid)
 

@@ -1,8 +1,7 @@
+from collections.abc import Mapping
 from datetime import datetime
-from os.path import isfile
 from typing import cast
 
-import numpy as np
 from PyQt6 import (
     QtCore,
     QtGui,
@@ -10,13 +9,20 @@ from PyQt6 import (
 from PyQt6 import (
     QtWidgets as qtw,
 )
-from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.datahandling import (
-    get_run_status,
-    get_runs_via_sql,
+from qplot.datahandling.trusted_live_queries import (
+    TrustedParameterView,
+    TrustedRunRecord,
+    TrustedSelectedRunDetail,
+    TrustedSetpointSummary,
 )
-from qplot.datahandling.readonly import sqlite_read_only_connection
+from qplot.datahandling.trusted_presentation import (
+    TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
+    bounded_presentation_error,
+    bounded_presentation_text,
+    bounded_selected_run_fields,
+    normalize_presentation_tree,
+)
 
 from .._commands import (
     configure_action,
@@ -66,7 +72,7 @@ from .run_list_items import (
 )
 
 MAX_RUN_PREVIEW_WIDGETS = 500
-MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS = 100_000
+RUN_LIST_EVENT_YIELD_ROWS = 250
 RUN_TABLE_COLUMN_WIDTHS_KEY = "GUI.run_table_column_widths"
 RUN_TABLE_VISIBLE_COLUMNS_KEY = "GUI.run_table_visible_columns"
 
@@ -257,11 +263,13 @@ class RunList(qtw.QTreeWidget):
             **kargs,
             ):
         super().__init__(*args, **kargs)
-        if initialize is not None:
-            initalize = initialize
+        # Retained as no-op compatibility flags. Database loading is owned by
+        # the controller and arrives through addRuns/setRuns.
+        _ = initalize, initialize
         
         self.watching: list[SortableTreeWidgetItem] = []
         self.preview_cells: dict[str, RunPreviewCell] = {}
+        self._preview_publication_suspended = False
         self._items_by_guid: dict[str, SortableTreeWidgetItem] = {}
         self._resizing_columns = False
         self._manual_column_widths = False
@@ -312,10 +320,6 @@ class RunList(qtw.QTreeWidget):
             header.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
             header.customContextMenuRequested.connect(self._open_header_menu)
         
-        # Optional IDE convenience; MainWindow loads databases asynchronously.
-        if initalize and isfile(get_DB_location()):
-            self.setRuns()
-            
         # Slot connections
         self.itemSelectionChanged.connect(self.onSelect)
         self.itemDoubleClicked.connect(self._double_clicked)
@@ -336,7 +340,7 @@ class RunList(qtw.QTreeWidget):
         self.addAction(context_action)
         
     
-    def addRuns(self, runs):
+    def addRuns(self, runs, *, continue_loading=None, commit_check=None):
         """
         Adds Row to table.
 
@@ -344,110 +348,204 @@ class RunList(qtw.QTreeWidget):
         ----------
         runs : dict{int: dict}
             Row data to be added.
-            See qplot.datahandling.readDS.get_runs_via_sql() for how runs is
-            produced.
+            Plain run metadata supplied by the controller.
 
         """
         if not runs:
-            return
+            return True
 
-        if (
-                self._preview_widgets_enabled
-                and self.topLevelItemCount() + len(runs) > MAX_RUN_PREVIEW_WIDGETS
-                ):
-            self._disable_measurement_preview_widgets()
+        previous_max_run_id = self.maxRunId
+        added_items: list[SortableTreeWidgetItem] = []
+        guid_history: list[
+            tuple[
+                str,
+                SortableTreeWidgetItem,
+                SortableTreeWidgetItem | None,
+            ]
+        ] = []
+        preview_history: list[
+            tuple[str, RunPreviewCell, RunPreviewCell | None]
+        ] = []
+        committed = False
 
-        self.setSortingEnabled(False) # Prevent constant restort on adding items
+        def roll_back_added_items():
+            for guid, cell, previous_cell in reversed(preview_history):
+                if self.preview_cells.get(guid) is not cell:
+                    continue
+                if previous_cell is None:
+                    self.preview_cells.pop(guid, None)
+                else:
+                    self.preview_cells[guid] = previous_cell
+                cell.deleteLater()
 
-        self.maxRunId = max(self.maxRunId, max(runs, default=0))
-        
-        for run_id, metadata in runs.items():
-            append_to_watching = False
-            measurement_count = measured_parameter_count(metadata)
-            arr = self._run_column_texts(run_id, metadata)
+            for item in reversed(added_items):
+                for watching_index in range(len(self.watching) - 1, -1, -1):
+                    if self.watching[watching_index] is item:
+                        del self.watching[watching_index]
+                item_index = self.indexOfTopLevelItem(item)
+                if item_index >= 0:
+                    self.takeTopLevelItem(item_index)
 
-            if not run_is_complete(metadata):
-                append_to_watching = True
+            for guid, item, previous_item in reversed(guid_history):
+                if self._items_by_guid.get(guid) is not item:
+                    continue
+                if previous_item is None:
+                    self._items_by_guid.pop(guid, None)
+                else:
+                    self._items_by_guid[guid] = previous_item
 
-            # Convert arr to easy to sort QTreeWidgetItem
-            item = SortableTreeWidgetItem(arr)
-            item.set_guid(str(metadata.get("guid") or ""))
-            item.run_metadata = dict(metadata)
-            self._items_by_guid[item.guid] = item
-            for col_name in ("ID", "Setpoints", "Size"):
+            self.maxRunId = previous_max_run_id
+
+        try:
+            if (
+                    self._preview_widgets_enabled
+                    and self.topLevelItemCount() + len(runs)
+                    > MAX_RUN_PREVIEW_WIDGETS
+                    ):
+                self._disable_measurement_preview_widgets()
+
+            # Prevent constant resorting while rows are added.
+            self.setSortingEnabled(False)
+
+            run_count = len(runs)
+            for row_index, (run_id, metadata) in enumerate(runs.items(), start=1):
+                if callable(continue_loading) and not continue_loading():
+                    return False
+                append_to_watching = False
+                measurement_count = measured_parameter_count(metadata)
+                arr = self._run_column_texts(run_id, metadata)
+
+                if not run_is_complete(metadata):
+                    append_to_watching = True
+
+                # Convert arr to easy to sort QTreeWidgetItem
+                item = SortableTreeWidgetItem(arr)
+                item.set_guid(str(metadata.get("guid") or ""))
+                item.run_metadata = dict(metadata)
+                for col_name in ("ID", "Setpoints", "Size"):
+                    item.setTextAlignment(
+                        self.cols.index(col_name),
+                        QtCore.Qt.AlignmentFlag.AlignRight
+                        | QtCore.Qt.AlignmentFlag.AlignVCenter
+                        )
                 item.setTextAlignment(
-                    self.cols.index(col_name),
-                    QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+                    self.cols.index("Status"),
+                    QtCore.Qt.AlignmentFlag.AlignCenter
                     )
-            item.setTextAlignment(
-                self.cols.index("Status"),
-                QtCore.Qt.AlignmentFlag.AlignCenter
-                )
-            item.setTextAlignment(
-                self.cols.index("Duration"),
-                QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
-                )
-            item.setData(
-                self.cols.index("Measurements"),
-                QtCore.Qt.ItemDataRole.UserRole,
-                measurement_count
-                )
-            item.setData(
-                self.cols.index("Measurements"),
-                QtCore.Qt.ItemDataRole.AccessibleTextRole,
-                self._measurement_accessible_text(metadata, measurement_count),
-                )
-            item.setSizeHint(
-                self.cols.index("Measurements"),
-                QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6)
-                )
-            item.setData(
-                self.cols.index("Setpoints"),
-                QtCore.Qt.ItemDataRole.UserRole,
-                metadata.get("setpoint_count")
-                or metadata.get("expected_results")
-                or metadata.get("result_count")
-                )
-            item.setData(
-                self.cols.index("Started"),
-                QtCore.Qt.ItemDataRole.UserRole,
-                metadata.get("run_timestamp")
-                )
-            item.setData(
-                self.cols.index("Completed"),
-                QtCore.Qt.ItemDataRole.UserRole,
-                metadata.get("completed_timestamp")
-                )
-            item.setData(
-                self.cols.index("Status"),
-                QtCore.Qt.ItemDataRole.UserRole,
-                complete_cell_sort_value(metadata)
-                )
-            item.setData(
-                self.cols.index("Duration"),
-                QtCore.Qt.ItemDataRole.UserRole,
-                time_taken_seconds(metadata)
-                )
-            item.setData(
-                self.cols.index("Size"),
-                QtCore.Qt.ItemDataRole.UserRole,
-                metadata.get("storage_bytes")
-                )
-            item.update_tooltip()
-            
-            # Add to top
-            self.addTopLevelItem(item)
-            if self._preview_widgets_enabled:
-                self._set_measurement_preview_cell(item, measurement_count)
-            else:
-                self._set_compact_measurement_cell(item, measurement_count)
-            
-            # If unfinished run
-            if append_to_watching:
-                self.watching.append(item)
-            
-        self._setpoints_delegate.invalidate_width_cache()
-        self.setSortingEnabled(True)
+                item.setTextAlignment(
+                    self.cols.index("Duration"),
+                    QtCore.Qt.AlignmentFlag.AlignRight
+                    | QtCore.Qt.AlignmentFlag.AlignVCenter
+                    )
+                item.setData(
+                    self.cols.index("Measurements"),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    measurement_count
+                    )
+                item.setData(
+                    self.cols.index("Measurements"),
+                    QtCore.Qt.ItemDataRole.AccessibleTextRole,
+                    self._measurement_accessible_text(metadata, measurement_count),
+                    )
+                item.setSizeHint(
+                    self.cols.index("Measurements"),
+                    QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6)
+                    )
+                item.setData(
+                    self.cols.index("Setpoints"),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    metadata.get("setpoint_count")
+                    or metadata.get("expected_results")
+                    or metadata.get("result_count")
+                    )
+                item.setData(
+                    self.cols.index("Started"),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    metadata.get("run_timestamp")
+                    )
+                item.setData(
+                    self.cols.index("Completed"),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    metadata.get("completed_timestamp")
+                    )
+                item.setData(
+                    self.cols.index("Status"),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    complete_cell_sort_value(metadata)
+                    )
+                item.setData(
+                    self.cols.index("Duration"),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    time_taken_seconds(metadata)
+                    )
+                item.setData(
+                    self.cols.index("Size"),
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    metadata.get("storage_bytes")
+                    )
+                item.update_tooltip()
+
+                # Add to top.  Record every mutation before the next operation
+                # so a nested-event abort or widget error can remove the whole
+                # page instead of leaving an unacknowledged prefix visible.
+                self.addTopLevelItem(item)
+                added_items.append(item)
+                previous_item = self._items_by_guid.get(item.guid)
+                guid_history.append((item.guid, item, previous_item))
+                self._items_by_guid[item.guid] = item
+                if self._preview_widgets_enabled:
+                    previous_cell = self.preview_cells.get(item.guid)
+                    try:
+                        self._set_measurement_preview_cell(item, measurement_count)
+                    finally:
+                        current_cell = self.preview_cells.get(item.guid)
+                        if (
+                                current_cell is not None
+                                and current_cell is not previous_cell
+                                ):
+                            preview_history.append(
+                                (item.guid, current_cell, previous_cell)
+                                )
+                else:
+                    self._set_compact_measurement_cell(item, measurement_count)
+
+                # If unfinished run
+                if append_to_watching:
+                    self.watching.append(item)
+
+                if (
+                        row_index < run_count
+                        and row_index % RUN_LIST_EVENT_YIELD_ROWS == 0
+                        ):
+                    # Basic-row construction is deliberately bounded so a large
+                    # trusted page or initial run list cannot monopolise Qt. Detail
+                    # work starts only after addRuns returns (or after the refresh
+                    # worker receives its explicit publication acknowledgement).
+                    QtCore.QCoreApplication.processEvents(
+                        QtCore.QEventLoop.ProcessEventsFlag.AllEvents,
+                        5,
+                    )
+                    if callable(continue_loading) and not continue_loading():
+                        return False
+
+            # Callers that stage database-backed rows may need one last source
+            # identity observation after the nested event yields above.  Keep
+            # it inside this transaction so failure removes the entire page.
+            if callable(commit_check) and not commit_check():
+                return False
+
+            self._setpoints_delegate.invalidate_width_cache()
+            self.setSortingEnabled(True)
+            # maxRunId is the accepted GUI cursor.  Publish it only after every
+            # row in this page and the final view update have succeeded.
+            self.maxRunId = max(previous_max_run_id, max(runs, default=0))
+            committed = True
+            return True
+        finally:
+            if not committed:
+                roll_back_added_items()
+                self._setpoints_delegate.invalidate_width_cache()
+                self.setSortingEnabled(True)
 
 
     def updateRuns(self, runs):
@@ -699,6 +797,8 @@ class RunList(qtw.QTreeWidget):
 
     @QtCore.pyqtSlot(str, object)
     def set_run_previews(self, guid, previews):
+        if self._preview_publication_suspended:
+            return
         cell = self.preview_cells.get(guid)
         if cell is not None:
             cell.show_previews(previews)
@@ -706,9 +806,24 @@ class RunList(qtw.QTreeWidget):
 
     @QtCore.pyqtSlot(str, bool)
     def set_run_preview_generating(self, guid, generating):
+        if self._preview_publication_suspended:
+            return
         cell = self.preview_cells.get(guid)
         if cell is not None:
             cell.set_generating(generating)
+
+
+    def set_preview_publication_suspended(self, suspended):
+        """Gate source-bound preview callbacks during a run-list transaction."""
+        previous = self._preview_publication_suspended
+        self._preview_publication_suspended = bool(suspended)
+        return previous
+
+
+    def show_run_preview_placeholders(self):
+        """Discard rendered run-list previews without changing row metadata."""
+        for cell in tuple(self.preview_cells.values()):
+            cell.show_placeholders(generating=False)
 
 
     @QtCore.pyqtSlot(str, str)
@@ -1151,14 +1266,16 @@ class RunList(qtw.QTreeWidget):
         self._resize_columns()
         
         
-    def setRuns(self):
+    def setRuns(self, runs):
         """
-        Resets table and creates all rows.
+        Reset the table from controller-supplied plain run metadata.
 
         """
         self.clear()
         self.watching = []
-        runs = get_runs_via_sql()
+        self.preview_cells.clear()
+        self._items_by_guid.clear()
+        self.maxRunId = 0
         
         self.addRuns(runs)
         return runs
@@ -1237,20 +1354,16 @@ class RunList(qtw.QTreeWidget):
             return text if text else None
 
 
-    def checkWatching(self, statuses=None):
+    def checkWatching(self, statuses):
         """
-        Check unfinished runs within table and sets finish time if completed.
+        Apply controller-supplied statuses to unfinished runs.
 
         """
+        statuses = statuses or {}
         to_remove = []
         updated_runs = {}
         for run in self.watching:
-
-            status = (
-                get_run_status(run.guid)
-                if statuses is None
-                else statuses.get(run.guid, {})
-                )
+            status = statuses.get(run.guid, {})
             if not status:
                 continue
 
@@ -1408,10 +1521,6 @@ class RunList(qtw.QTreeWidget):
             self.setCurrentItem(item)
             item.setSelected(True)
 
-        if main.ds is None:
-            main.show_status("Select a run before opening the context menu.", 5000)
-            return
-        
         menu = qtw.QMenu(self)
 
         open_all = create_action(
@@ -1423,13 +1532,24 @@ class RunList(qtw.QTreeWidget):
         open_all.triggered.connect(lambda _,: main.open_selected_run_all())
         menu.addAction(open_all)
 
-        params = {param: param.depends_on_ for param in main.ds.get_parameters() if param.depends_on}
+        if main.ds is None:
+            parameter_targets = [
+                (str(name), None)
+                for name in item.run_metadata.get("measure_parameters", ())
+                if name
+            ]
+        else:
+            parameter_targets = [
+                (param.name, param)
+                for param in main.ds.get_parameters()
+                if param.depends_on
+            ]
 
         # Create an action for all dependant parameters in the loaded dataset,
         # linking the coresponding parameter to the openPlot.
-        for itr, param in enumerate(params.keys()):
+        for itr, (parameter_name, param) in enumerate(parameter_targets):
             
-            open_win = QtGui.QAction(f"  - {param.name}", menu)
+            open_win = QtGui.QAction(f"  - {parameter_name}", menu)
             if itr < 9:
                 self._set_action_shortcut(
                     open_win,
@@ -1440,7 +1560,16 @@ class RunList(qtw.QTreeWidget):
             # default. Otherwise, param is set by the last iteration of the for loop.
             # This will be done a few times through the program but this note 
             # may be missing
-            open_win.triggered.connect(lambda _, param=param: main.openPlot(params=[param]))
+            if param is None:
+                open_win.triggered.connect(
+                    lambda _, name=parameter_name:
+                    main.open_selected_measurement(name)
+                )
+            else:
+                open_win.triggered.connect(
+                    lambda _, selected_param=param:
+                    main.openPlot(params=[selected_param])
+                )
             
             menu.addAction(open_win)
 
@@ -1582,7 +1711,6 @@ class moreInfo(qtw.QTabWidget):
     def __init__(self, *args, preview_size=None):
         super().__init__(*args)
         self.setObjectName("runDetailsTabs")
-        self._setpoint_summary_cache = {}
 
         self.overview = CopyableTableWidget()
         self.parameters = CopyableTableWidget()
@@ -1638,15 +1766,160 @@ class moreInfo(qtw.QTabWidget):
         table.horizontalHeader().setStretchLastSection(True)
 
 
-    def setInfo(self, info, dataset=None, run_metadata=None, database_path=None):
+    def setInfo(
+            self,
+            info,
+            dataset=None,
+            run_metadata=None,
+            setpoint_summaries=None,
+            ):
         self.clear()
 
         self._set_overview(info, dataset, run_metadata=run_metadata)
-        self._set_parameters(info, dataset, run_metadata, database_path)
+        self._set_parameters(info, dataset, setpoint_summaries)
         self.preview.set_current_run(dataset)
         self.metadata.setInfo(info.get("MetaData", {}))
         self.snapshot.setInfo(info.get("Snapshot", {}))
         self.raw.setInfo(info)
+
+
+    def set_trusted_run_detail(self, detail: TrustedSelectedRunDetail) -> None:
+        """Render a selected trusted run without dataset or database access."""
+        self._set_plain_run_detail(detail, preview_guid=None)
+
+
+    def set_snapshot_run_detail(self, detail: TrustedSelectedRunDetail) -> None:
+        """Render snapshot detail primitives and preview by plain GUID."""
+        if not isinstance(detail, TrustedSelectedRunDetail):
+            raise TypeError("detail must be a TrustedSelectedRunDetail.")
+        guid = detail.run.as_dict().get("guid")
+        self._set_plain_run_detail(detail, preview_guid=guid)
+
+
+    def _set_plain_run_detail(self, detail, *, preview_guid) -> None:
+        if not isinstance(detail, TrustedSelectedRunDetail):
+            raise TypeError("detail must be a TrustedSelectedRunDetail.")
+
+        self.clear()
+        run_metadata = detail.run.as_dict()
+        run_metadata.setdefault("run_id", detail.run.run_id)
+        snapshot = detail.snapshot
+        presentation = detail.presentation
+        snapshot_parameters = {
+            parameter.name: dict(parameter.fields)
+            for parameter in snapshot.parameters
+            }
+
+        self._set_trusted_overview(run_metadata, detail.parameters)
+        self._set_trusted_parameters(
+            detail.parameters,
+            detail.setpoint_summaries,
+            snapshot_parameters,
+            parameters_truncated=presentation.parameters_truncated,
+            )
+        if preview_guid is None:
+            self.preview.show_trusted_live_placeholder()
+        else:
+            self.preview.set_current_guid(preview_guid)
+        self.metadata.setBoundedView(presentation.metadata)
+        self.snapshot.setBoundedView(snapshot)
+        self.raw.setBoundedView(presentation.raw)
+
+
+    def set_trusted_run_loading(
+            self,
+            run: TrustedRunRecord | Mapping[str, object] | None = None,
+            ) -> None:
+        """Render cached basics and loading placeholders without I/O."""
+        run_metadata = self._trusted_run_metadata(run)
+        self.clear()
+        self._set_trusted_overview(run_metadata)
+        self._set_parameter_message("Loading run details...")
+        self.preview.show_trusted_live_placeholder()
+        self._set_bounded_placeholder_views(
+            run_metadata,
+            "Status",
+            "Loading run details...",
+        )
+
+
+    def set_snapshot_run_loading(
+            self,
+            run: TrustedRunRecord | Mapping[str, object] | None = None,
+            ) -> None:
+        """Render snapshot basics immediately and queue preview by GUID."""
+        run_metadata = self._trusted_run_metadata(run)
+        self.clear()
+        self._set_trusted_overview(run_metadata)
+        self._set_parameter_message("Loading run details...")
+        self.preview.set_current_guid(run_metadata.get("guid"))
+        self._set_bounded_placeholder_views(
+            run_metadata,
+            "Status",
+            "Loading run details...",
+        )
+
+
+    def set_snapshot_run_unavailable(
+            self,
+            run: TrustedRunRecord | Mapping[str, object] | None = None,
+            ) -> None:
+        """Render fallback basics without starting selected-detail I/O.
+
+        Snapshot-fallback previews retain their separately accepted GUID path,
+        but ordinary row selection does not prepare another private database
+        snapshot merely to fill the detail tabs.
+        """
+        run_metadata = self._trusted_run_metadata(run)
+        message = (
+            "Detailed run metadata is deferred in snapshot fallback. "
+            "Use an explicit plot or CSV action to materialise this run."
+        )
+        self.clear()
+        self._set_trusted_overview(run_metadata)
+        self._set_parameter_message("Detailed run metadata unavailable")
+        self.preview.set_current_guid(run_metadata.get("guid"))
+        self._set_bounded_placeholder_views(run_metadata, "Status", message)
+
+
+    def set_trusted_run_error(
+            self,
+            error: BaseException | str,
+            run: TrustedRunRecord | Mapping[str, object] | None = None,
+            ) -> None:
+        """Render a bounded trusted-detail failure while retaining basics."""
+        run_metadata = self._trusted_run_metadata(run)
+        message = bounded_presentation_error(error)
+        self.clear()
+        self._set_trusted_overview(run_metadata)
+        self._set_parameter_message("Run details unavailable")
+        self.preview.show_trusted_live_placeholder()
+        self._set_bounded_placeholder_views(run_metadata, "Error", message)
+
+
+    def set_snapshot_run_error(
+            self,
+            error: BaseException | str,
+            run: TrustedRunRecord | Mapping[str, object] | None = None,
+            ) -> None:
+        """Retain snapshot preview and basics when detail loading fails."""
+        run_metadata = self._trusted_run_metadata(run)
+        message = bounded_presentation_error(error)
+        self.clear()
+        self._set_trusted_overview(run_metadata)
+        self._set_parameter_message("Run details unavailable")
+        self.preview.set_current_guid(run_metadata.get("guid"))
+        self._set_bounded_placeholder_views(run_metadata, "Error", message)
+
+
+    def _set_bounded_placeholder_views(self, run_metadata, field, message):
+        status_view = normalize_presentation_tree({field: message})
+        raw_view = normalize_presentation_tree(
+            {"Run": run_metadata, field: message}
+        )
+        self.metadata.setBoundedView(status_view)
+        self.snapshot.setBoundedView(status_view)
+        self.raw.setBoundedView(raw_view)
 
 
     def update_live_run_details(self, run_metadata):
@@ -1688,16 +1961,12 @@ class moreInfo(qtw.QTabWidget):
 
     def clear(self):
         self.overview.setRowCount(0)
+        self.parameters.clearSpans()
         self.parameters.setRowCount(0)
         self.preview.clear_current_run()
         self.metadata.clear()
         self.snapshot.clear()
         self.raw.clear()
-
-
-    def clear_database_cache(self):
-        """Discard summaries tied to the previously loaded database file."""
-        self._setpoint_summary_cache.clear()
 
 
     def scrollToTop(self):
@@ -1754,34 +2023,30 @@ class moreInfo(qtw.QTabWidget):
                 "Completed",
                 self._run_timestamp(dataset, run_metadata, "completed_timestamp"),
                 ),
-            ("Experiment", self._dataset_attr(dataset, "exp_name")),
-            ("Sample", self._dataset_attr(dataset, "sample_name")),
-            ("Name", self._dataset_attr(dataset, "name")),
-            ("GUID", self._dataset_attr(dataset, "guid")),
+            ("Experiment", self._run_attr(dataset, run_metadata, "exp_name")),
+            ("Sample", self._run_attr(dataset, run_metadata, "sample_name")),
+            ("Name", self._run_attr(dataset, run_metadata, "name")),
+            ("GUID", self._run_attr(dataset, run_metadata, "guid")),
             ]
         rows = [(key, value) for key, value in rows if self._has_value(value)]
 
         self._fill_key_value_table(self.overview, rows)
 
 
-    def _set_parameters(self, info, dataset, run_metadata=None, database_path=None):
+    def _set_parameters(self, info, dataset, setpoint_summaries=None):
         params = list(dataset.get_parameters()) if dataset is not None else []
         snapshot_params = snapshot_parameters(info.get("Snapshot"))
-        all_axes = []
         seen_axes = set()
         for param in params:
             for axis in getattr(param, "depends_on_", ()):
                 if axis in seen_axes:
                     continue
-                all_axes.append(axis)
                 seen_axes.add(axis)
 
-        setpoint_summaries = self._setpoint_summaries(
-            dataset,
-            all_axes,
-            run_metadata=run_metadata,
-            database_path=database_path,
-            )
+        setpoint_summaries = {
+            str(name): dict(summary)
+            for name, summary in (setpoint_summaries or {}).items()
+            }
         setpoint_rows = []
         measured_rows = []
 
@@ -1796,10 +2061,100 @@ class moreInfo(qtw.QTabWidget):
             else:
                 measured_rows.append(values)
 
+        self._fill_parameter_groups(setpoint_rows, measured_rows)
+
+
+    def _set_trusted_overview(self, run_metadata, parameters=()):
+        run_metadata = dict(bounded_selected_run_fields(run_metadata or {}))
+        if parameters and not (
+                run_metadata.get("measure_parameters")
+                or run_metadata.get("sweep_parameters")
+                ):
+            setpoint_names = {
+                name
+                for parameter in parameters
+                for name in parameter.depends_on
+                }
+            run_metadata["measure_parameters"] = [
+                parameter.name
+                for parameter in parameters
+                if parameter.name not in setpoint_names
+                ]
+            run_metadata["sweep_parameters"] = [
+                parameter.name
+                for parameter in parameters
+                if parameter.name in setpoint_names
+                ]
+            run_metadata = dict(bounded_selected_run_fields(run_metadata))
+        info = {
+            "Data Structure": {
+                "Data points": run_metadata.get("result_count"),
+                }
+            }
+        self._set_overview(info, None, run_metadata=run_metadata)
+
+
+    def _set_trusted_parameters(
+            self,
+            parameters: tuple[TrustedParameterView, ...],
+            summaries: tuple[TrustedSetpointSummary, ...],
+            snapshot_params,
+            *,
+            parameters_truncated=False,
+            ) -> None:
+        seen_axes = set()
+        for parameter in parameters:
+            for axis in parameter.depends_on:
+                if axis in seen_axes:
+                    continue
+                seen_axes.add(axis)
+
+        summary_values = {
+            summary.name: {
+                "from": summary.first,
+                "to": summary.last,
+                "steps": summary.steps,
+                }
+            for summary in summaries
+            }
+        setpoint_rows = []
+        measured_rows = []
+        for parameter in parameters:
+            snap = snapshot_params.get(parameter.name, {})
+            is_setpoint = parameter.name in seen_axes and not parameter.depends_on
+            values = self._parameter_row_values(
+                parameter,
+                snap,
+                is_setpoint,
+                summary_values,
+                )
+            if is_setpoint:
+                setpoint_rows.append(values)
+            else:
+                measured_rows.append(values)
+
+        self._fill_parameter_groups(setpoint_rows, measured_rows)
+        if parameters_truncated:
+            row = self.parameters.rowCount()
+            self.parameters.insertRow(row)
+            self.parameters.setSpan(row, 0, 1, self.parameters.columnCount())
+            item = self._table_item(
+                "Additional or oversized parameter details were omitted at "
+                "presentation limits."
+                )
+            font = item.font()
+            font.setItalic(True)
+            item.setFont(font)
+            self.parameters.setItem(row, 0, item)
+            self._resize_table(self.parameters)
+
+
+    def _fill_parameter_groups(self, setpoint_rows, measured_rows):
         groups = [
             ("Set parameters", setpoint_rows),
             ("Measure parameters", measured_rows),
             ]
+        self.parameters.clearSpans()
         self.parameters.setRowCount(sum(1 + len(rows) for _, rows in groups))
 
         row = 0
@@ -1812,6 +2167,30 @@ class moreInfo(qtw.QTabWidget):
                 row += 1
 
         self._resize_table(self.parameters)
+
+
+    def _set_parameter_message(self, message):
+        self.parameters.clearSpans()
+        self.parameters.setRowCount(1)
+        self.parameters.setSpan(0, 0, 1, self.parameters.columnCount())
+        item = self._table_item(message)
+        font = item.font()
+        font.setItalic(True)
+        item.setFont(font)
+        self.parameters.setItem(0, 0, item)
+        self._resize_table(self.parameters)
+
+
+    def _trusted_run_metadata(self, run):
+        if run is None:
+            return {}
+        if isinstance(run, TrustedRunRecord):
+            metadata = dict(run.fields)
+            metadata.setdefault("run_id", run.run_id)
+            return dict(bounded_selected_run_fields(metadata))
+        if isinstance(run, Mapping):
+            return dict(bounded_selected_run_fields(run))
+        raise TypeError("run must be a TrustedRunRecord, mapping, or None.")
 
 
     def _set_parameter_heading_row(self, row, heading):
@@ -1940,174 +2319,6 @@ class moreInfo(qtw.QTabWidget):
         return f"{seconds / points:.3g}"
 
 
-    def _setpoint_summaries(
-            self,
-            dataset,
-            setpoint_names,
-            run_metadata=None,
-            database_path=None,
-            ):
-        run_metadata = run_metadata or {}
-        table_name = (
-            run_metadata.get("result_table_name")
-            or self._dataset_attr(dataset, "table_name")
-            )
-        raw_result_count = run_metadata.get("result_count")
-        try:
-            result_count = (
-                int(raw_result_count)
-                if raw_result_count is not None
-                else None
-                )
-        except (TypeError, ValueError, OverflowError):
-            result_count = None
-
-        cache_key = (
-            database_path,
-            table_name,
-            tuple(setpoint_names),
-            result_count,
-            )
-        cached = self._setpoint_summary_cache.get(cache_key)
-        if cached is not None:
-            summaries = {name: dict(summary) for name, summary in cached.items()}
-        elif (
-                result_count is None
-                or result_count > MAX_SYNCHRONOUS_SETPOINT_SUMMARY_ROWS
-                ):
-            summaries = {}
-        else:
-            summaries = self._setpoint_summaries_from_sql(
-                database_path,
-                table_name,
-                setpoint_names,
-                )
-            if len(self._setpoint_summary_cache) >= 32:
-                self._setpoint_summary_cache.clear()
-            self._setpoint_summary_cache[cache_key] = {
-                name: dict(summary) for name, summary in summaries.items()
-                }
-        self._add_setpoint_shape_steps(summaries, setpoint_names, run_metadata)
-        return summaries
-
-
-    def _setpoint_summaries_from_sql(self, database_path, table_name, setpoint_names):
-        if not database_path or not table_name or not setpoint_names:
-            return {}
-
-        conn = None
-        cursor = None
-        try:
-            conn = sqlite_read_only_connection(database_path, timeout=2)
-            cursor = conn.cursor()
-            columns = self._result_table_columns(cursor, table_name)
-            summaries = {}
-            for name in setpoint_names:
-                if name not in columns:
-                    continue
-                summary = self._setpoint_summary_from_sql(cursor, table_name, name)
-                if summary:
-                    summaries[name] = summary
-            return summaries
-        except Exception:
-            return {}
-        finally:
-            if cursor is not None:
-                cursor.close()
-            if conn is not None:
-                conn.close()
-
-
-    def _result_table_columns(self, cursor, table_name):
-        cursor.execute(f"PRAGMA table_info({_sqlite_identifier(table_name)})")
-        return {row[1] for row in cursor.fetchall()}
-
-
-    def _setpoint_summary_from_sql(self, cursor, table_name, parameter):
-        table = _sqlite_identifier(table_name)
-        column = _sqlite_identifier(parameter)
-        try:
-            cursor.execute(f"""
-              WITH distinct_values(value, first_rowid) AS (
-                  SELECT {column}, MIN(rowid)
-                  FROM {table}
-                  WHERE {column} IS NOT NULL
-                  GROUP BY {column}
-              )
-              SELECT
-                  (
-                      SELECT value
-                      FROM distinct_values
-                      ORDER BY first_rowid ASC
-                      LIMIT 1
-                  ),
-                  (
-                      SELECT value
-                      FROM distinct_values
-                      ORDER BY first_rowid DESC
-                      LIMIT 1
-                  ),
-                  (SELECT COUNT(*) FROM distinct_values)
-            """)
-            first_value, last_value, count = cursor.fetchone()
-            count = int(count or 0)
-            if count <= 0:
-                return {}
-        except Exception:
-            return {}
-
-        if first_value is None or last_value is None:
-            return {}
-
-        return {
-            "from": first_value,
-            "to": last_value,
-            "steps": count,
-            }
-
-
-    def _add_setpoint_shape_steps(self, summaries, setpoint_names, run_metadata):
-        shape = run_metadata.get("setpoint_shape") or run_metadata.get("point_shape")
-        if not shape:
-            return
-
-        for name, steps in zip(setpoint_names, shape, strict=False):
-            if not self._has_value(steps):
-                continue
-            summaries.setdefault(name, {}).setdefault("steps", steps)
-
-
-    def _setpoint_summary(self, values):
-        try:
-            array = np.asarray(values).ravel()
-        except Exception:
-            return {}
-
-        unique_values = []
-        seen = set()
-        for value in array:
-            try:
-                if np.isnan(value):
-                    continue
-            except TypeError:
-                pass
-
-            key = value.item() if hasattr(value, "item") else value
-            if key in seen:
-                continue
-            seen.add(key)
-            unique_values.append(key)
-
-        if not unique_values:
-            return {}
-
-        return {
-            "from": unique_values[0],
-            "to": unique_values[-1],
-            "steps": len(unique_values),
-            }
-
-
     def _fill_key_value_table(self, table, rows):
         table.setRowCount(len(rows))
         for row, (key, value) in enumerate(rows):
@@ -2136,7 +2347,11 @@ class moreInfo(qtw.QTabWidget):
     def _table_item(self, value, max_len=None):
         text = format_value(value, max_len=max_len)
         item = qtw.QTableWidgetItem(text)
-        item.setToolTip(format_value(value))
+        tooltip, _truncated = bounded_presentation_text(
+            format_value(value),
+            limit=TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
+        )
+        item.setToolTip(tooltip)
         return item
 
 
@@ -2145,6 +2360,14 @@ class moreInfo(qtw.QTabWidget):
             return ""
         value = getattr(dataset, name, "")
         return value() if callable(value) else value
+
+
+    def _run_attr(self, dataset, run_metadata, name):
+        if run_metadata is not None:
+            value = run_metadata.get(name)
+            if self._has_value(value):
+                return value
+        return self._dataset_attr(dataset, name)
 
 
     def _run_timestamp(self, dataset, run_metadata, name):
@@ -2226,7 +2449,3 @@ class moreInfo(qtw.QTabWidget):
 
     def _has_value(self, value):
         return value is not None and value != ""
-
-
-def _sqlite_identifier(name):
-    return f'"{str(name).replace(chr(34), chr(34) * 2)}"'

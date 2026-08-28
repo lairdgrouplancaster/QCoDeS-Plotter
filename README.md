@@ -15,20 +15,62 @@ Runtime dependencies are declared in `pyproject.toml` and are installed
 automatically when qPlot is installed.
 
 Development and Git installs of the current beta compile a small native module
-for the non-default trusted live QCoDeS reader, so they also require a C compiler
-suitable for the selected Python. Release wheels include that module for their
-target platform.
+for trusted live QCoDeS access, so they also require a C compiler suitable for
+the selected Python. Release wheels include that module for their target
+platform.
 
 Windows and macOS are the currently supported and GUI-tested desktop
 platforms. A source installation may work on Linux, but Linux is not currently
 part of the GUI test or support matrix.
 
-The standalone trusted reader can inspect committed data still in a live WAL
-without copying or checkpointing it. Its main database, WAL, and rollback
-journal handles remain read-only. SQLite may update only the exact colocated
-`-shm` file as transient WAL coordination state, including its contents and
-metadata. This reader is not yet used by the GUI, preview, plotting, or refresh
-paths; see [Trusted live QCoDeS reader](docs/trusted-live-reader.md).
+For a supported local database, qPlot now attempts trusted live access first.
+One application read broker uses one persistent helper to publish the basic run
+list, detect later commits, fill run metadata progressively, and load the
+selected run's plain detail view without copying the database. Main-database,
+WAL, and rollback-journal handles remain read-only; SQLite may update only the
+exact colocated `-shm` file as transient WAL coordination state.
+
+Normal `qplot`, `python -m qplot`, and `qplot.run()` launches put the complete
+qPlot process tree behind a shutdown boundary before Qt or reader helpers can
+start. The command-line process is the launcher. A public `qplot.run()` call
+first starts a dedicated Python launcher, so the calling process, its threads,
+its QCoDeS writer, and unrelated children stay outside that boundary. POSIX
+uses a dedicated GUI session/process group whose leader is retained until it is
+reaped; Windows assigns the GUI atomically to a retained kill-on-close Job
+Object and keeps the original handles. The API launcher reports only after the
+GUI tree is gone, through a private authenticated channel whose EOF remains
+usable even if a caller thread reaps the launcher first. `qplot.run()` returns
+70 for forced shutdown and represents POSIX signal termination without
+signalling its caller as `-signal_number`. If the caller receives
+`KeyboardInterrupt`, `SystemExit`, or another control-flow exception while
+waiting, it sends an irreversible authenticated cancellation and re-raises the
+original exception only after the launcher has killed and reaped its GUI/helper
+tree and exited. A dedicated cancellation writer retains partial-send progress;
+one serialized lifecycle permits exactly one worker creation and start attempt,
+or one committed write-side-EOF fallback if startup fails. Later interrupts are
+absorbed until authenticated outcome, launcher EOF, and exit/reap observation
+are all complete, so they cannot replace the first exception or release a live
+tree. During that bounded interval qPlot transactionally installs a temporary
+SIGINT absorber and always restores the exact caller handler, including when an
+interrupt lands after either signal-handler side effect. Caller-channel EOF
+triggers the same fail-closed cleanup. A
+confirmed shutdown therefore has
+one immutable absolute deadline even if native Qt teardown blocks. The special
+`qplot.run(return_objects=True)` form instead runs in the caller's process and
+returns caller-owned Qt objects; it intentionally does not acquire the
+launcher's process-tree containment or hard-deadline guarantee.
+
+Snapshot fallback is limited to an unavailable native backend or an explicitly
+unsupported source or filesystem that the legacy access probe can verify
+safely. Ordinary fallback selection is basic-only: it renders cached run-list
+fields and an unavailable detail state without starting a selected-detail
+reader or preparing an additional selected-detail snapshot. That claim applies
+only to row selection: fallback metadata and retained preview paths can still
+create private snapshots. Plot and CSV actions also acquire action-owned
+snapshots. Automatic trusted live
+previews and thumbnails are disabled until the Stage 5 scheduler and disk cache
+are implemented. See
+[Trusted live QCoDeS reader](docs/trusted-live-reader.md).
 
 ## Install
 
@@ -130,9 +172,9 @@ qplot.run()
 2. Drag a QCoDeS `.db` file onto the database path field, or use
    `File -> Load Database...`.
 3. Select a run in the run table.
-4. Plot a measurement by double-clicking its preview, using the run-table
-   context menu, or entering a run ID and measurement number at the top of the
-   window.
+4. Plot a measurement using the run-table context menu, or enter a run ID and
+   measurement number at the top of the window. Snapshot fallback sessions may
+   also offer a preview that can be double-clicked.
 
 Plot windows may appear before their data has finished loading. Check the
 status bar at the bottom of the plot window before assuming a load has failed.

@@ -12,17 +12,26 @@ from qplot.datahandling import readonly as readonly_module
 from qplot.datahandling.file_identity import DatabaseInstance, database_instance
 from qplot.datahandling.readonly import (
     DatabaseInstanceChangedError,
+    replacement_wal_is_quarantined,
     sqlite_read_only_connection,
+)
+from qplot.datahandling.trusted_presentation import (
+    TRUSTED_PRESENTATION_MAX_ERROR_BYTES,
 )
 from qplot.testdata import RunSpecification, generate_database
 from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets.preview import (
     DraggablePreviewImageLabel,
+    PreviewCard,
     PreviewTab,
     generate_run_previews,
 )
 
 _SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE = pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows does not permit replacing an open SQLite WAL/SHM sidecar.",
+)
 
 
 class _RecordingThreadPool:
@@ -113,6 +122,390 @@ def _start_selected_preview(database_source, metadata):
         type("Dataset", (), {"guid": metadata["guid"]})()
     )
     return preview, thread_pool.started[0]
+
+
+def _open_wal_source(database_path: Path):
+    writer = sqlite3.connect(database_path)
+    assert writer.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
+    writer.execute("PRAGMA wal_autocheckpoint = 0")
+    writer.execute("UPDATE runs SET name = name WHERE run_id = 1")
+    writer.commit()
+    assert Path(f"{database_path}-wal").is_file()
+    assert Path(f"{database_path}-shm").is_file()
+    return writer
+
+
+def _replace_sidecar(database_path: Path, suffix: str):
+    sidecar_path = Path(f"{database_path}{suffix}")
+    old_identity = (sidecar_path.stat().st_dev, sidecar_path.stat().st_ino)
+    replacement_path = Path(f"{database_path}{suffix}.replacement")
+    replacement_path.write_bytes(sidecar_path.read_bytes())
+    os.replace(replacement_path, sidecar_path)
+    new_identity = (sidecar_path.stat().st_dev, sidecar_path.stat().st_ino)
+    assert new_identity != old_identity
+
+
+def _assert_replaced_preview_published_nothing(preview, ready):
+    assert ready == []
+    assert preview.cache == {}
+    assert preview.thumbnail_cache == {}
+    assert preview.errors == {}
+    assert preview.thumbnail_errors == {}
+    assert preview.current_guid is None
+    assert preview.database_instance is None
+
+
+def test_preview_binding_promotes_first_sidecar_then_rejects_its_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    logical_path = str(tmp_path / "promoted-sidecar.db")
+    accepted = DatabaseInstance(logical_path, logical_path, (1, 7))
+    first_sidecar = DatabaseInstance(
+        logical_path,
+        logical_path,
+        (1, 7),
+        sidecar_identities=frozenset({(2, 11)}),
+    )
+    replacement = DatabaseInstance(
+        logical_path,
+        logical_path,
+        (1, 7),
+        sidecar_identities=frozenset({(2, 12)}),
+    )
+    observations = iter((first_sidecar, replacement))
+    quarantined = []
+    monkeypatch.setattr(
+        preview_module,
+        "capture_database_instance",
+        lambda _path: next(observations),
+    )
+    monkeypatch.setattr(
+        preview_module,
+        "quarantine_wal_for_replaced_database",
+        quarantined.append,
+    )
+    binding = preview_module._PreviewDatabaseBinding(accepted)
+
+    assert binding.require_current() == first_sidecar
+    with pytest.raises(DatabaseInstanceChangedError):
+        binding.require_current()
+
+    assert binding.database_instance == first_sidecar
+    assert quarantined == [logical_path]
+
+
+@pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
+def test_preview_rejects_sidecar_swap_before_sqlite_open(
+    tmp_path,
+    monkeypatch,
+    sidecar_suffix,
+):
+    database_path = tmp_path / "before-open.db"
+    metadata, _columns, _values = _preview_database(database_path, seed=11)
+    writer = _open_wal_source(database_path)
+    try:
+        preview, worker = _start_selected_preview(database_path, metadata)
+        accepted_instance = worker.database_instance
+        assert accepted_instance.sidecar_identities
+        _replace_sidecar(database_path, sidecar_suffix)
+        replacement_state = _artifact_state(database_path)
+
+        open_calls = []
+
+        def reject_open(*args, **kwargs):
+            open_calls.append((args, kwargs))
+            raise AssertionError("A sidecar-swapped preview opened SQLite")
+
+        monkeypatch.setattr(
+            preview_module,
+            "sqlite_read_only_connection",
+            reject_open,
+        )
+        ready = []
+        replacements = []
+        completions = []
+        preview.previewsReady.connect(lambda *args: ready.append(args))
+        preview.databaseReplaced.connect(replacements.append)
+        worker.signals.finished.connect(lambda *args: completions.append(args))
+
+        worker.run()
+
+        assert open_calls == []
+        assert len(completions) == 1
+        assert completions[0][3] == []
+        assert isinstance(completions[0][4], DatabaseInstanceChangedError)
+        assert replacements == [accepted_instance.logical_path]
+        _assert_replaced_preview_published_nothing(preview, ready)
+        assert replacement_wal_is_quarantined(database_path)
+        assert _artifact_state(database_path) == replacement_state
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
+def test_preview_rejects_sidecar_swap_during_read(
+    tmp_path,
+    monkeypatch,
+    sidecar_suffix,
+):
+    database_path = tmp_path / "during-read.db"
+    metadata, _columns, _values = _preview_database(database_path, seed=12)
+    writer = _open_wal_source(database_path)
+    try:
+        preview, worker = _start_selected_preview(database_path, metadata)
+        accepted_instance = worker.database_instance
+        original_table_columns = preview_module._table_columns
+        replacement_states = []
+
+        def table_columns_then_replace(cursor, table_name):
+            columns = original_table_columns(cursor, table_name)
+            _replace_sidecar(database_path, sidecar_suffix)
+            replacement_states.append(_artifact_state(database_path))
+            return columns
+
+        monkeypatch.setattr(
+            preview_module,
+            "_table_columns",
+            table_columns_then_replace,
+        )
+        ready = []
+        replacements = []
+        completions = []
+        preview.previewsReady.connect(lambda *args: ready.append(args))
+        preview.databaseReplaced.connect(replacements.append)
+        worker.signals.finished.connect(lambda *args: completions.append(args))
+
+        worker.run()
+
+        assert len(replacement_states) == 1
+        assert len(completions) == 1
+        assert completions[0][3] == []
+        assert isinstance(completions[0][4], DatabaseInstanceChangedError)
+        assert replacements == [accepted_instance.logical_path]
+        _assert_replaced_preview_published_nothing(preview, ready)
+        assert replacement_wal_is_quarantined(database_path)
+        assert _artifact_state(database_path) == replacement_states[0]
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
+def test_preview_rejects_sidecar_swap_after_worker_before_ui_publication(
+    tmp_path,
+    sidecar_suffix,
+):
+    database_path = tmp_path / "before-publication.db"
+    metadata, _columns, _values = _preview_database(database_path, seed=13)
+    writer = _open_wal_source(database_path)
+    try:
+        preview, worker = _start_selected_preview(database_path, metadata)
+        generation = preview.generation
+        worker.preview_size = preview.preview_size
+        previews = generate_run_previews(
+            worker.database_instance,
+            metadata,
+            size=worker.preview_size,
+        )
+        assert previews
+        preview._store_cached("older-guid", previews)
+        preview.thumbnail_cache["older-thumbnail"] = previews
+        preview.errors["older-error"] = "stale"
+        preview.thumbnail_errors["older-thumbnail-error"] = "stale"
+        _replace_sidecar(database_path, sidecar_suffix)
+        replacement_state = _artifact_state(database_path)
+        ready = []
+        replacements = []
+        preview.previewsReady.connect(lambda *args: ready.append(args))
+        preview.databaseReplaced.connect(replacements.append)
+
+        preview._worker_finished(
+            generation,
+            metadata["guid"],
+            previews,
+            None,
+            worker,
+        )
+
+        assert replacements == [worker.database_path]
+        _assert_replaced_preview_published_nothing(preview, ready)
+        assert preview.findChildren(DraggablePreviewImageLabel) == []
+        assert replacement_wal_is_quarantined(database_path)
+        assert _artifact_state(database_path) == replacement_state
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
+def test_preview_rechecks_sidecars_after_cache_mutation_before_signal(
+    tmp_path,
+    monkeypatch,
+    sidecar_suffix,
+):
+    database_path = tmp_path / "during-cache-publication.db"
+    metadata, _columns, _values = _preview_database(database_path, seed=14)
+    writer = _open_wal_source(database_path)
+    try:
+        preview, worker = _start_selected_preview(database_path, metadata)
+        generation = preview.generation
+        worker.preview_size = preview.preview_size
+        previews = generate_run_previews(
+            worker.database_instance,
+            metadata,
+            size=worker.preview_size,
+        )
+        assert previews
+        real_store_cached = preview._store_cached
+        replacement_states = []
+
+        def store_then_replace(guid, completed_previews):
+            real_store_cached(guid, completed_previews)
+            _replace_sidecar(database_path, sidecar_suffix)
+            replacement_states.append(_artifact_state(database_path))
+
+        monkeypatch.setattr(preview, "_store_cached", store_then_replace)
+        ready = []
+        replacements = []
+        preview.previewsReady.connect(lambda *args: ready.append(args))
+        preview.databaseReplaced.connect(replacements.append)
+
+        preview._worker_finished(
+            generation,
+            metadata["guid"],
+            previews,
+            None,
+            worker,
+        )
+
+        assert len(replacement_states) == 1
+        assert replacements == [worker.database_path]
+        _assert_replaced_preview_published_nothing(preview, ready)
+        assert preview.findChildren(DraggablePreviewImageLabel) == []
+        assert replacement_wal_is_quarantined(database_path)
+        assert _artifact_state(database_path) == replacement_states[0]
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
+def test_preview_rechecks_sidecars_after_ready_signal_before_selected_render(
+    tmp_path,
+    monkeypatch,
+    sidecar_suffix,
+):
+    database_path = tmp_path / "during-ready-signal.db"
+    metadata, _columns, _values = _preview_database(database_path, seed=15)
+    writer = _open_wal_source(database_path)
+    try:
+        preview, worker = _start_selected_preview(database_path, metadata)
+        generation = preview.generation
+        worker.preview_size = preview.preview_size
+        previews = generate_run_previews(
+            worker.database_instance,
+            metadata,
+            size=worker.preview_size,
+        )
+        assert previews
+        replacement_states = []
+        render_calls = []
+        replacements = []
+
+        def replace_during_ready(_guid, _previews):
+            _replace_sidecar(database_path, sidecar_suffix)
+            replacement_states.append(_artifact_state(database_path))
+
+        preview.previewsReady.connect(replace_during_ready)
+        preview.databaseReplaced.connect(replacements.append)
+        monkeypatch.setattr(
+            preview,
+            "_show_previews",
+            lambda completed_previews: render_calls.append(completed_previews),
+        )
+
+        preview._worker_finished(
+            generation,
+            metadata["guid"],
+            previews,
+            None,
+            worker,
+        )
+
+        assert len(replacement_states) == 1
+        assert replacements == [worker.database_path]
+        assert render_calls == []
+        assert preview.cache == {}
+        assert preview.thumbnail_cache == {}
+        assert preview.current_guid is None
+        assert preview.database_instance is None
+        assert replacement_wal_is_quarantined(database_path)
+        assert _artifact_state(database_path) == replacement_states[0]
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
+def test_preview_rechecks_sidecars_after_selected_render(
+    tmp_path,
+    monkeypatch,
+    sidecar_suffix,
+):
+    database_path = tmp_path / "during-selected-render.db"
+    metadata, _columns, _values = _preview_database(database_path, seed=16)
+    writer = _open_wal_source(database_path)
+    try:
+        preview, worker = _start_selected_preview(database_path, metadata)
+        generation = preview.generation
+        worker.preview_size = preview.preview_size
+        previews = generate_run_previews(
+            worker.database_instance,
+            metadata,
+            size=worker.preview_size,
+        )
+        assert previews
+        real_show_previews = preview._show_previews
+        replacement_states = []
+        replacements = []
+
+        def render_then_replace(completed_previews):
+            real_show_previews(completed_previews)
+            assert any(
+                isinstance(preview.content_layout.itemAt(index).widget(), PreviewCard)
+                for index in range(preview.content_layout.count())
+            )
+            _replace_sidecar(database_path, sidecar_suffix)
+            replacement_states.append(_artifact_state(database_path))
+
+        monkeypatch.setattr(preview, "_show_previews", render_then_replace)
+        preview.databaseReplaced.connect(replacements.append)
+
+        preview._worker_finished(
+            generation,
+            metadata["guid"],
+            previews,
+            None,
+            worker,
+        )
+
+        assert len(replacement_states) == 1
+        assert replacements == [worker.database_path]
+        assert preview.cache == {}
+        assert preview.thumbnail_cache == {}
+        assert preview.current_guid is None
+        assert preview.database_instance is None
+        assert not any(
+            isinstance(preview.content_layout.itemAt(index).widget(), PreviewCard)
+            for index in range(preview.content_layout.count())
+        )
+        assert replacement_wal_is_quarantined(database_path)
+        assert _artifact_state(database_path) == replacement_states[0]
+    finally:
+        writer.close()
 
 
 def test_preview_rejects_replacement_before_sqlite_open_and_preserves_source(
@@ -439,6 +832,102 @@ def test_preview_cancel_wins_final_result_publication_race(tmp_path):
     assert len(published) == 1
     assert published[0][:3] == (worker, 19, "preview-guid")
     assert published[0][3:] == ([], None)
+
+
+def test_preview_worker_detaches_traceback_data_before_qt_publication(
+    tmp_path,
+    monkeypatch,
+):
+    worker = preview_module.PreviewWorker(
+        19,
+        tmp_path / "bounded-error.db",
+        "preview-guid",
+        {},
+        40,
+    )
+    published = []
+
+    class RecordingSignal:
+        @staticmethod
+        def emit(*args):
+            published.append(args)
+
+    class RecordingSignals:
+        finished = RecordingSignal()
+
+    worker.signals = RecordingSignals()
+    raw_secret = "raw-preview-secret-" + "x" * (1024 * 1024)
+
+    def fail_with_retained_local(*_args, **_kwargs):
+        raw_metadata = {"run_description": raw_secret}
+        generated_array = np.full((1024, 1024), 7.0)
+        assert raw_metadata and generated_array.size
+        raise RuntimeError("preview failed")
+
+    monkeypatch.setattr(
+        preview_module,
+        "generate_run_previews",
+        fail_with_retained_local,
+    )
+
+    worker.run()
+
+    assert len(published) == 1
+    error = published[0][-1]
+    assert error == "preview failed"
+    assert isinstance(error, str)
+    assert raw_secret not in repr(published)
+
+
+def test_preview_worker_publishes_fresh_bounded_instance_change_error(
+    tmp_path,
+    monkeypatch,
+):
+    worker = preview_module.PreviewWorker(
+        20,
+        tmp_path / "replaced.db",
+        "preview-guid",
+        {},
+        40,
+    )
+    published = []
+    originals = []
+
+    class RecordingSignal:
+        @staticmethod
+        def emit(*args):
+            published.append(args)
+
+    class RecordingSignals:
+        finished = RecordingSignal()
+
+    worker.signals = RecordingSignals()
+    raw_secret = "raw-instance-secret-" + "x" * (1024 * 1024)
+
+    def fail_with_instance_change(*_args, **_kwargs):
+        retained_metadata = {"run_description": raw_secret}
+        error = DatabaseInstanceChangedError(raw_secret)
+        originals.append(error)
+        assert retained_metadata
+        raise error
+
+    monkeypatch.setattr(
+        preview_module,
+        "generate_run_previews",
+        fail_with_instance_change,
+    )
+
+    worker.run()
+
+    assert len(published) == 1
+    error = published[0][-1]
+    assert isinstance(error, DatabaseInstanceChangedError)
+    assert error is not originals[0]
+    assert error.__traceback__ is None
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    assert len(str(error).encode("utf-8")) <= TRUSTED_PRESENTATION_MAX_ERROR_BYTES
+    assert raw_secret not in repr(published)
 
 
 def test_stale_generation_completion_cannot_publish_preview(tmp_path):

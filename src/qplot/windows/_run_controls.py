@@ -12,6 +12,7 @@ from qplot.datahandling.file_identity import (
     database_instance,
     database_instances_differ,
 )
+from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 
 from ._commands import create_action, plot_measurement_command_spec
 from ._config_persistence import (
@@ -440,6 +441,11 @@ class RunControlsMixin:
         Opens the newest incomplete run already present in the run list.
 
         """
+        # Stage 4 leaves plot-data materialisation on the legacy snapshot path.
+        # A trusted session may enter that path only through an explicit plot or
+        # export action; enabling a persisted preference is not such an action.
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            return None
         generation_gate = getattr(
             self,
             "_database_generation_transaction_blocks_path",
@@ -630,6 +636,14 @@ class RunControlsMixin:
         Updates the run ID target entered into the run text box.
 
         """
+        cancel_selected_detail = getattr(
+            self,
+            "_cancel_selected_run_detail",
+            None,
+        )
+        if callable(cancel_selected_detail):
+            cancel_selected_detail()
+        self._selected_run_guid = None
         self.RunList.blockSignals(True)
         self.RunList.clearSelection()
         self.RunList.blockSignals(False)
@@ -638,6 +652,7 @@ class RunControlsMixin:
             release_selected()
         else:
             self.ds = None
+            self._selected_dataset_key = None
         self.infoBox.clear()
 
         try:

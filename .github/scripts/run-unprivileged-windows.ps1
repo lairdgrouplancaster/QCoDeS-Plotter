@@ -8,11 +8,286 @@ param(
     [AllowEmptyCollection()]
     [string[]] $ArgumentList,
 
-    [string] $WorkingDirectory = $env:GITHUB_WORKSPACE
+    [string] $WorkingDirectory = $env:GITHUB_WORKSPACE,
+
+    [ValidateRange(1, 3600)]
+    [int] $TimeoutSeconds = 420
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+public sealed class QPlotProcessJob : IDisposable
+{
+    private const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    private const int JobObjectExtendedLimitInformationClass = 9;
+    private readonly object sync = new object();
+    private IntPtr handle;
+    private ManualResetEvent deadlineCancelled;
+    private Thread deadlineThread;
+    private bool terminationRequested;
+    private bool timedOut;
+
+    public QPlotProcessJob()
+    {
+        handle = CreateJobObject(IntPtr.Zero, null);
+        if (handle == IntPtr.Zero)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        var information = new JobObjectExtendedLimitInformation();
+        information.BasicLimitInformation.LimitFlags =
+            JobObjectLimitKillOnJobClose;
+        if (!SetInformationJobObject(
+            handle,
+            JobObjectExtendedLimitInformationClass,
+            ref information,
+            (uint)Marshal.SizeOf<JobObjectExtendedLimitInformation>()))
+        {
+            int error = Marshal.GetLastWin32Error();
+            Dispose();
+            throw new Win32Exception(error);
+        }
+    }
+
+    public void Assign(Process process)
+    {
+        if (!AssignProcessToJobObject(handle, process.Handle))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+    }
+
+    public bool TimedOut
+    {
+        get
+        {
+            lock (sync)
+            {
+                return timedOut;
+            }
+        }
+    }
+
+    public void ArmTimeout(int timeoutMilliseconds)
+    {
+        if (timeoutMilliseconds < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
+        }
+        lock (sync)
+        {
+            if (handle == IntPtr.Zero)
+            {
+                throw new ObjectDisposedException(nameof(QPlotProcessJob));
+            }
+            if (deadlineThread != null)
+            {
+                throw new InvalidOperationException("The job deadline is already armed.");
+            }
+            deadlineCancelled = new ManualResetEvent(false);
+            deadlineThread = new Thread(WaitForDeadline);
+            deadlineThread.IsBackground = true;
+            deadlineThread.Name = "qplot-Windows-test-deadline";
+            deadlineThread.Start(timeoutMilliseconds);
+        }
+    }
+
+    private void WaitForDeadline(object state)
+    {
+        int timeoutMilliseconds = (int)state;
+        ManualResetEvent cancelled = deadlineCancelled;
+        if (cancelled.WaitOne(timeoutMilliseconds))
+        {
+            return;
+        }
+        IntPtr activeHandle;
+        lock (sync)
+        {
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+            timedOut = true;
+            if (terminationRequested)
+            {
+                return;
+            }
+            terminationRequested = true;
+            activeHandle = handle;
+        }
+        TerminateJobObject(activeHandle, 1);
+    }
+
+    public void RequestTermination()
+    {
+        IntPtr activeHandle;
+        lock (sync)
+        {
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+            timedOut = true;
+            if (terminationRequested)
+            {
+                return;
+            }
+            terminationRequested = true;
+            activeHandle = handle;
+        }
+        if (!TerminateJobObject(activeHandle, 1))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+    }
+
+    public uint ActiveProcessCount
+    {
+        get
+        {
+            lock (sync)
+            {
+                if (handle == IntPtr.Zero)
+                {
+                    return 0;
+                }
+                var information = new JobObjectBasicAccountingInformation();
+                if (!QueryInformationJobObject(
+                    handle,
+                    1,
+                    ref information,
+                    (uint)Marshal.SizeOf<JobObjectBasicAccountingInformation>(),
+                    IntPtr.Zero))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                return information.ActiveProcesses;
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (sync)
+        {
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+            if (deadlineCancelled != null)
+            {
+                deadlineCancelled.Set();
+            }
+            IntPtr ownedHandle = handle;
+            handle = IntPtr.Zero;
+            if (!CloseHandle(ownedHandle))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+        GC.SuppressFinalize(this);
+    }
+
+    ~QPlotProcessJob()
+    {
+        if (handle != IntPtr.Zero)
+        {
+            CloseHandle(handle);
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectBasicLimitInformation
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectExtendedLimitInformation
+    {
+        public JobObjectBasicLimitInformation BasicLimitInformation;
+        public IoCounters IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectBasicAccountingInformation
+    {
+        public long TotalUserTime;
+        public long TotalKernelTime;
+        public long ThisPeriodTotalUserTime;
+        public long ThisPeriodTotalKernelTime;
+        public uint TotalPageFaultCount;
+        public uint TotalProcesses;
+        public uint ActiveProcesses;
+        public uint TotalTerminatedProcesses;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateJobObject(
+        IntPtr jobAttributes,
+        string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(
+        IntPtr job,
+        int informationClass,
+        ref JobObjectExtendedLimitInformation information,
+        uint informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(
+        IntPtr job,
+        int informationClass,
+        ref JobObjectBasicAccountingInformation information,
+        uint informationLength,
+        IntPtr returnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(
+        IntPtr job,
+        IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateJobObject(
+        IntPtr job,
+        uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+}
+'@
 
 function Assert-PathWithin {
     param(
@@ -78,8 +353,14 @@ $aclIdentity = $null
 $childExitCode = $null
 $primaryError = $null
 $process = $null
+$processStarted = $false
+$processJob = $null
+$processContained = $false
+$stdoutPath = $null
+$stderrPath = $null
 
 try {
+    Write-Host "qPlot Windows wrapper phase: create-account"
     $localUser = New-LocalUser `
         -Name $userName `
         -Password $securePassword `
@@ -135,6 +416,7 @@ try {
             "/Q"
         )
     }
+    Write-Host "qPlot Windows wrapper phase: access-granted"
 
     $homePath = Join-Path $unprivilegedTemp "home"
     $roamingPath = Join-Path $homePath "AppData\Roaming"
@@ -153,13 +435,46 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
 
+    $stdoutPath = Join-Path $unprivilegedTemp "child-stdout.txt"
+    $stderrPath = Join-Path $unprivilegedTemp "child-stderr.txt"
+    [System.IO.File]::WriteAllText(
+        $stdoutPath,
+        "",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllText(
+        $stderrPath,
+        "",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $siteCustomize = @'
+import os
+import sys
+
+if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
+    stdout_path = os.environ["QPLOT_CI_STDOUT_PATH"]
+    stderr_path = os.environ["QPLOT_CI_STDERR_PATH"]
+    stdout_file = open(stdout_path, "a", encoding="utf-8", buffering=1)
+    stderr_file = open(stderr_path, "a", encoding="utf-8", buffering=1)
+    os.dup2(stdout_file.fileno(), 1, inheritable=True)
+    os.dup2(stderr_file.fileno(), 2, inheritable=True)
+    sys.stdout = open(1, "w", encoding="utf-8", buffering=1, closefd=False)
+    sys.stderr = open(2, "w", encoding="utf-8", buffering=1, closefd=False)
+'@
+    $siteCustomizePath = Join-Path $unprivilegedTemp "sitecustomize.py"
+    [System.IO.File]::WriteAllText(
+        $siteCustomizePath,
+        $siteCustomize,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $resolvedExecutable
     $startInfo.WorkingDirectory = $workingPath
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
+    $startInfo.RedirectStandardOutput = $false
+    $startInfo.RedirectStandardError = $false
     $startInfo.UserName = $userName
     $startInfo.Domain = $env:COMPUTERNAME
     $startInfo.Password = $securePassword
@@ -186,51 +501,143 @@ try {
     $startInfo.Environment["PIP_CACHE_DIR"] = Join-Path $unprivilegedTemp "pip-cache"
     $startInfo.Environment["MPLCONFIGDIR"] = Join-Path $unprivilegedTemp "matplotlib"
     $startInfo.Environment["QPLOT_UNPRIVILEGED_TEMP"] = $unprivilegedTemp
+    $startInfo.Environment["QPLOT_CI_STDOUT_PATH"] = $stdoutPath
+    $startInfo.Environment["QPLOT_CI_STDERR_PATH"] = $stderrPath
+    $startInfo.Environment["QPLOT_CI_REDIRECT_ONCE"] = "1"
+    $startInfo.Environment["PYTHONUNBUFFERED"] = "1"
+    $existingPythonPath = $startInfo.Environment["PYTHONPATH"]
+    $startInfo.Environment["PYTHONPATH"] = if ($existingPythonPath) {
+        $unprivilegedTemp + [System.IO.Path]::PathSeparator + $existingPythonPath
+    } else {
+        $unprivilegedTemp
+    }
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $processJob = [QPlotProcessJob]::new()
     if (-not $process.Start()) {
         throw "Windows did not start the unprivileged qPlot CI process."
     }
+    $processStarted = $true
+    $processJob.Assign($process)
+    $processContained = $true
+    $processJob.ArmTimeout($TimeoutSeconds * 1000)
+    Write-Host "qPlot Windows wrapper phase: child-deadline-armed"
 
-    $standardOutput = $process.StandardOutput.ReadToEndAsync()
-    $standardError = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
-    $outputText = $standardOutput.GetAwaiter().GetResult()
-    $errorText = $standardError.GetAwaiter().GetResult()
-    if ($outputText) {
-        [Console]::Out.Write($outputText)
-    }
-    if ($errorText) {
-        [Console]::Error.Write($errorText)
+    # Poll only the direct Python process. sitecustomize redirected fd 1/2 to
+    # regular files, so descendants cannot create an anonymous-pipe EOF wait.
+    $processDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while (-not $process.WaitForExit(250)) {
+        if ([DateTime]::UtcNow -ge $processDeadline) {
+            $processJob.RequestTermination()
+            if (-not $process.WaitForExit(5000)) {
+                $process.Kill()
+            }
+            throw (
+                "The unprivileged qPlot CI process exceeded its " +
+                "$TimeoutSeconds-second direct-process deadline."
+            )
+        }
     }
     $childExitCode = $process.ExitCode
+    Write-Host "qPlot Windows wrapper phase: direct-child-exited"
+    if ($processJob.TimedOut) {
+        throw (
+            "The unprivileged qPlot CI process exceeded its " +
+            "$TimeoutSeconds-second direct-process deadline."
+        )
+    }
+    if ($childExitCode -ne 0) {
+        # pytest-timeout can return while a failed regression's descendant is
+        # still alive. Terminate the contained tree before managed cleanup,
+        # but retain pytest's exact nonzero exit code for the Actions result.
+        $processJob.RequestTermination()
+    } elseif ($processJob.ActiveProcessCount -gt 0) {
+        # Closing a populated job can wait indefinitely in managed cleanup.
+        # Match kill-on-close semantics explicitly, then observe the whole job
+        # rather than only the Python executable initially passed to Process.
+        $processJob.RequestTermination()
+        $jobExitDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        if ($jobExitDeadline -gt $processDeadline) {
+            $jobExitDeadline = $processDeadline
+        }
+        while (
+            $processJob.ActiveProcessCount -gt 0 -and
+            [DateTime]::UtcNow -lt $jobExitDeadline
+        ) {
+            Start-Sleep -Milliseconds 100
+        }
+        if ($processJob.ActiveProcessCount -gt 0) {
+            throw (
+                "The unprivileged qPlot CI process tree did not terminate " +
+                "within its $TimeoutSeconds-second deadline."
+            )
+        }
+    }
 } catch {
     $primaryError = $_
+    Write-Host "qPlot Windows wrapper phase: caught-error"
 } finally {
+    # Closing the job handle kills every remaining descendant and therefore
+    # closes inherited output handles before reader and account cleanup.
+    # A timed-out job has already received TerminateJobObject. Leave its final
+    # handle close to immediate PowerShell process exit rather than re-entering
+    # synchronous kill-on-close processing here.
+    if ($null -ne $processJob -and -not $processJob.TimedOut) {
+        try {
+            $processJob.Dispose()
+        } catch {
+            Write-Warning "Could not close the unprivileged process job: $_"
+        }
+    }
+    if (-not $processContained -and $processStarted -and $null -ne $process) {
+        try {
+            if (-not $process.HasExited) {
+                $process.Kill()
+                [void] $process.WaitForExit(5000)
+            }
+        } catch {
+            Write-Warning "Could not terminate the uncontained child: $_"
+        }
+    }
     if ($userCreated) {
         for ($index = $grantedPaths.Count - 1; $index -ge 0; $index--) {
             try {
-                Invoke-IcaclsChecked -Arguments @(
+                Write-Host (
+                    "qPlot Windows wrapper phase: remove-access " +
+                    $grantedPaths[$index]
+                )
+                $aclRemovalArguments = @(
                     $grantedPaths[$index],
                     "/remove:g",
                     $aclIdentity,
-                    "/T",
-                    "/C",
                     "/Q"
                 )
+                if (-not [string]::Equals(
+                    $grantedPaths[$index],
+                    $unprivilegedTemp,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) {
+                    # The source workspace existed before the grant, so remove
+                    # its explicit per-object ACEs recursively. The standard-
+                    # user temp tree was empty and received access through its
+                    # root's inheritable ACE; traversing the populated pytest
+                    # tree here can defeat the wrapper's process deadline.
+                    $aclRemovalArguments += @("/T", "/C")
+                }
+                Invoke-IcaclsChecked -Arguments $aclRemovalArguments
+                Write-Host "qPlot Windows wrapper phase: access-removed"
             } catch {
                 Write-Warning "Could not remove the qPlot CI ACL: $_"
             }
         }
         try {
+            Write-Host "qPlot Windows wrapper phase: remove-account"
             Remove-LocalUser -Name $userName
+            Write-Host "qPlot Windows wrapper phase: account-removed"
         } catch {
             Write-Warning "Could not remove the disposable qPlot CI account: $_"
         }
-    }
-    if ($null -ne $process) {
-        $process.Dispose()
     }
     if ($null -ne $securePassword) {
         $securePassword.Dispose()

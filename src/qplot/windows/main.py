@@ -1,5 +1,7 @@
 import os
-from time import perf_counter
+import sys
+import threading
+from time import monotonic, perf_counter
 from typing import cast
 
 from PyQt6 import (
@@ -24,12 +26,15 @@ from qplot.datahandling.database import (
     DatabaseRefreshWorker as DatabaseRefreshWorker,
 )
 from qplot.datahandling.database import (
+    DatabaseSelectedRunWorker as DatabaseSelectedRunWorker,
+)
+from qplot.datahandling.database import (
     database_info_report as database_info_report,
 )
 from qplot.datahandling.database import (
     database_path_from_mime_data as database_path_from_mime_data,
 )
-from qplot.diagnostics import log_user_error
+from qplot.diagnostics import get_logger, log_bounded_shutdown, log_user_error
 
 from ._commands import create_action
 from ._config_persistence import (
@@ -57,6 +62,309 @@ from ._window_controls import (
 )
 
 MAIN_WINDOW_READABLE_WIDTH = 780
+_APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = 15.0
+_APPLICATION_SHUTDOWN_DIAGNOSTIC_GRACE_SECONDS = 0.25
+_APPLICATION_FORCED_SHUTDOWN_EXIT_CODE = 70
+_RETIRED_SERVICE_REAPER_INTERVAL_MS = 100
+
+
+def _flush_shutdown_diagnostics():
+    """Flush qPlot's persistent diagnostics and process text streams."""
+
+    for handler in tuple(get_logger().handlers):
+        try:
+            handler.flush()
+            stream = getattr(handler, "stream", None)
+            if stream is not None:
+                os.fsync(stream.fileno())
+        except BaseException:
+            pass
+    for stream in (sys.stderr, sys.stdout):
+        try:
+            stream.flush()
+        except BaseException:
+            pass
+
+
+def _persist_shutdown_diagnostics(*, started_at, total_timeout, diagnostics):
+    """Persist an exact bounded-shutdown snapshot before a hard process exit."""
+
+    elapsed = max(0.0, monotonic() - started_at)
+    if not diagnostics:
+        diagnostics = ("background work remained active without diagnostics",)
+    details = f"elapsed={elapsed:.3f}s\n" + "\n".join(diagnostics)
+    try:
+        log_bounded_shutdown(
+            "Bounded Application Shutdown: "
+            f"the {total_timeout:g}-second monotonic shutdown deadline was "
+            "exhausted; qPlot will terminate at the process boundary if "
+            "Qt-owned work still cannot be destroyed.",
+            details,
+            logger_name=__name__,
+        )
+    finally:
+        _flush_shutdown_diagnostics()
+
+
+class _ProcessShutdownFailSafe:
+    """Pair a direct-parent supervisor with a deadline-only local backstop."""
+
+    def __init__(
+        self,
+        supervisor_client=None,
+        *,
+        startup_diagnostic=None,
+        force_exit=os._exit,
+    ):
+        self._supervisor_client = supervisor_client
+        self._startup_diagnostic = (
+            None if startup_diagnostic is None else str(startup_diagnostic)
+        )
+        self._force_exit = force_exit
+        self._lock = threading.Lock()
+        self._persistence_io_lock = threading.Lock()
+        self._cancelled = threading.Event()
+        self._fallback_diagnostic_started = threading.Event()
+        self._fallback_diagnostic_completed = threading.Event()
+        self._armed = False
+        self._started_at = 0.0
+        self._diagnostic_deadline = 0.0
+        self._hard_deadline = 0.0
+        self._total_timeout = 0.0
+        self._diagnostics: tuple[str, ...] = ()
+        self._supervisor_diagnostics: tuple[str, ...] = ()
+        self._diagnostic_version = 0
+        self._persisted_version = -1
+        self._supervisor_acknowledged = False
+        self._fallback_active = False
+        self._persistence_active = False
+
+    @property
+    def armed(self):
+        with self._lock:
+            return self._armed
+
+    def arm(self, *, started_at, diagnostic_deadline, hard_deadline):
+        """Arm once after shutdown confirmation; later calls never extend it."""
+
+        with self._lock:
+            if self._armed:
+                return None
+            self._armed = True
+            self._started_at = started_at
+            self._diagnostic_deadline = diagnostic_deadline
+            self._hard_deadline = hard_deadline
+            self._total_timeout = max(0.0, hard_deadline - started_at)
+            self._diagnostics = ()
+            self._supervisor_diagnostics = ()
+            self._diagnostic_version = 0
+            self._persisted_version = -1
+            self._supervisor_acknowledged = False
+            self._fallback_active = False
+            self._persistence_active = False
+            self._cancelled.clear()
+            self._fallback_diagnostic_started.clear()
+            self._fallback_diagnostic_completed.clear()
+
+        if self._startup_diagnostic is not None:
+            self._append_supervisor_diagnostic(self._startup_diagnostic)
+        client = self._supervisor_client
+        if client is None:
+            self._activate_fallback()
+            diagnostic = self._startup_diagnostic
+            if diagnostic is None:
+                diagnostic = (
+                    "process shutdown supervisor is unavailable; "
+                    "only the in-process deadline fallback is armed"
+                )
+                self._append_supervisor_diagnostic(diagnostic)
+            return diagnostic
+
+        try:
+            arm_diagnostic = client.arm(hard_deadline)
+        except BaseException as error:
+            arm_diagnostic = (
+                "process shutdown supervisor ARM raised "
+                f"{type(error).__name__}: {error}"
+            )
+        # The direct parent has either installed its immutable deadline or
+        # returned an exact failure by this point.  Install the independent
+        # GUI-local backstop before doing any diagnostic persistence.
+        self._activate_fallback()
+        if arm_diagnostic:
+            exact = str(arm_diagnostic)
+            self._append_supervisor_diagnostic(exact)
+            return exact
+        with self._lock:
+            self._supervisor_acknowledged = True
+        return self._latest_supervisor_diagnostic()
+
+    def update_diagnostics(self, diagnostics):
+        """Publish an in-memory liveness snapshot without doing diagnostic I/O."""
+
+        exact = tuple(str(item) for item in diagnostics)
+        with self._lock:
+            if exact == self._diagnostics:
+                return
+            self._diagnostics = exact
+            self._diagnostic_version += 1
+
+    def persist_now(self):
+        """Persist the newest exact snapshot, once per diagnostic version."""
+
+        with self._persistence_io_lock:
+            with self._lock:
+                if not self._armed:
+                    return
+                version = self._diagnostic_version
+                if version <= self._persisted_version:
+                    return
+                started_at = self._started_at
+                total_timeout = self._total_timeout
+                diagnostics = self._effective_diagnostics_locked()
+            _persist_shutdown_diagnostics(
+                started_at=started_at,
+                total_timeout=total_timeout,
+                diagnostics=diagnostics,
+            )
+            with self._lock:
+                self._persisted_version = max(self._persisted_version, version)
+
+    def persist_async(self):
+        """Persist on a daemon thread so diagnostic I/O cannot delay exit."""
+
+        with self._lock:
+            if not self._armed or self._persistence_active:
+                return
+            self._persistence_active = True
+        try:
+            threading.Thread(
+                target=self._persist_async_worker,
+                name="qplot-shutdown-diagnostic-persistence",
+                daemon=True,
+            ).start()
+        except BaseException as error:
+            with self._lock:
+                self._persistence_active = False
+            self._append_supervisor_diagnostic(
+                "process shutdown diagnostic thread setup raised "
+                f"{type(error).__name__}: {error}"
+            )
+
+    def _persist_async_worker(self):
+        try:
+            while True:
+                self.persist_now()
+                with self._lock:
+                    if (
+                        not self._armed
+                        or self._persisted_version >= self._diagnostic_version
+                    ):
+                        self._persistence_active = False
+                        return
+        finally:
+            with self._lock:
+                self._persistence_active = False
+
+    def disarm(self):
+        """Cancel only the GUI-local fallback after quiescent Qt teardown."""
+
+        # There is deliberately no supervisor DISARM message.  Once ARM was
+        # accepted, the direct parent remains armed until it reaps this process.
+        with self._lock:
+            self._armed = False
+        self._cancelled.set()
+
+    def wait_for_forced_exit(self):
+        """Reach the process boundary before any possibly blocking destructor."""
+
+        with self._lock:
+            hard_deadline = self._hard_deadline
+            armed = self._armed
+        if not armed:
+            return
+        if self._cancelled.wait(max(0.0, hard_deadline - monotonic())):
+            return
+        self._force_exit(_APPLICATION_FORCED_SHUTDOWN_EXIT_CODE)
+
+    def watchdog_operational(self):
+        """Return whether the direct parent acknowledged immutable ARM."""
+
+        with self._lock:
+            return self._armed and self._supervisor_acknowledged
+
+    def _fallback_diagnostic_watchdog(self):
+        self._fallback_diagnostic_started.set()
+        if self._cancelled.wait(max(0.0, self._diagnostic_deadline - monotonic())):
+            return
+        # This watchdog already runs away from the GUI thread.  Persist here
+        # instead of scheduling a second daemon so the hard-deadline watchdog
+        # cannot overtake diagnostic publication merely because that extra
+        # thread has not yet been scheduled.
+        try:
+            self.persist_now()
+        finally:
+            self._fallback_diagnostic_completed.set()
+
+    def _fallback_termination_watchdog(self):
+        # Prefer a completed diagnostic snapshot before termination without
+        # ever allowing slow or blocked diagnostic I/O to extend the immutable
+        # hard deadline. This also prevents the two fallback threads racing at
+        # the deadline after ordinary, fast persistence has already started.
+        self._fallback_diagnostic_completed.wait(
+            max(0.0, self._hard_deadline - monotonic())
+        )
+        if self._cancelled.wait(max(0.0, self._hard_deadline - monotonic())):
+            return
+        self._force_exit(_APPLICATION_FORCED_SHUTDOWN_EXIT_CODE)
+
+    def _activate_fallback(self):
+        with self._lock:
+            if self._fallback_active or not self._armed:
+                return
+            self._fallback_active = True
+        for name, target in (
+            (
+                "qplot-shutdown-diagnostic-fallback",
+                self._fallback_diagnostic_watchdog,
+            ),
+            (
+                "qplot-shutdown-process-fallback",
+                self._fallback_termination_watchdog,
+            ),
+        ):
+            try:
+                threading.Thread(target=target, name=name, daemon=True).start()
+                if target == self._fallback_diagnostic_watchdog:
+                    readiness_deadline = min(
+                        self._diagnostic_deadline,
+                        self._hard_deadline,
+                    )
+                    self._fallback_diagnostic_started.wait(
+                        max(0.0, readiness_deadline - monotonic())
+                    )
+            except BaseException as error:
+                self._append_supervisor_diagnostic(
+                    "process shutdown local fallback setup raised "
+                    f"{type(error).__name__}: {error}"
+                )
+
+    def _append_supervisor_diagnostic(self, diagnostic):
+        exact = str(diagnostic)
+        with self._lock:
+            if exact in self._supervisor_diagnostics:
+                return
+            self._supervisor_diagnostics = (*self._supervisor_diagnostics, exact)
+            self._diagnostic_version += 1
+
+    def _latest_supervisor_diagnostic(self):
+        with self._lock:
+            if not self._supervisor_diagnostics:
+                return None
+            return self._supervisor_diagnostics[-1]
+
+    def _effective_diagnostics_locked(self):
+        return tuple(dict.fromkeys((*self._supervisor_diagnostics, *self._diagnostics)))
 
 
 class DatabasePathLineEdit(qtw.QLineEdit):
@@ -150,6 +458,8 @@ class MainWindow(
         self.databaseExpensiveDetailThreadPool.setMaxThreadCount(1)
         self.databaseRefreshThreadPool = QtCore.QThreadPool(self)
         self.databaseRefreshThreadPool.setMaxThreadCount(1)
+        self.databaseSelectedRunThreadPool = QtCore.QThreadPool(self)
+        self.databaseSelectedRunThreadPool.setMaxThreadCount(1)
         self.testDatabaseGenerationThreadPool = QtCore.QThreadPool(self)
         self.testDatabaseGenerationThreadPool.setMaxThreadCount(1)
         self._database_load_generation = 0
@@ -157,7 +467,7 @@ class MainWindow(
         self._database_load_state = None
         self._database_load_worker = None
         self._loaded_database_identity = None
-        self._loaded_database_instance = None
+        self._loaded_database_instance = None  # type: ignore[assignment]
         self._database_detail_generation = 0
         self._database_detail_active = False
         self._database_detail_worker = None
@@ -172,15 +482,53 @@ class MainWindow(
         self._database_refresh_worker: DatabaseRefreshWorker | None = None
         self._database_refresh_identity = None
         self._database_refresh_instance = None
+        self._database_refresh_staged_new_runs = {}
+        self._database_refresh_publication_active = False
+        self._database_selected_run_generation = 0
+        self._database_selected_run_worker: DatabaseSelectedRunWorker | None = None
+        self._database_selected_run_instance = None
+        self._database_selected_run_mode = None
+        self._restoring_selected_run_publication = False
+        self._selected_run_restore_pending = False
+        self._selected_run_guid = None
+        self._selected_run_detail_cache = {}
+        self._selected_run_partial_detail_keys = set()
+        self._snapshot_setpoint_summary_cache = {}
+        self._trusted_read_service = None
+        self._pending_trusted_read_services = {}
+        self._retired_trusted_read_services = set()
+        self._retired_service_reap_diagnostics: dict[int, str] = {}
+        self._database_access_mode = None
+        self._database_fallback_reason = None
         self._test_database_generation_active = False
         self._test_database_generation_worker: TestDatabaseGenerationWorker | None = None
         self._test_database_replacement_state = None
         self._database_view_released_for_generation = False
         self._shutdown_started = False
         self._shutdown_ready = False
+        self._shutdown_started_at = None
+        self._shutdown_deadline = None
+        self._shutdown_hard_deadline = None
+        self._shutdown_cleanup_escalated = False
+        self._shutdown_escalation_diagnostics: tuple[str, ...] = ()
+        self._shutdown_liveness_diagnostics: tuple[str, ...] = ()
+        self._shutdown_last_diagnostics: tuple[str, ...] = ()
+        self._shutdown_diagnostics: tuple[str, ...] = ()
+        self._shutdown_deadline_exhausted = False
+        # The process entry point installs and owns the fail-safe.  Keeping an
+        # ordinary embedded/test MainWindow inert avoids an unexpected hard
+        # exit in a host process that owns its own Qt lifecycle.
+        self._shutdown_process_fail_safe = None
         self._shutdown_timer = QtCore.QTimer(self)
         self._shutdown_timer.setInterval(25)
         self._shutdown_timer.timeout.connect(self._finish_deferred_shutdown)
+        self._retired_service_reaper_timer = QtCore.QTimer(self)
+        self._retired_service_reaper_timer.setInterval(
+            _RETIRED_SERVICE_REAPER_INTERVAL_MS
+        )
+        self._retired_service_reaper_timer.timeout.connect(
+            self._reap_retired_trusted_read_services
+        )
         self._next_plot_x = 0
         self._next_plot_y = 0
         self.localLastFile = None
@@ -493,6 +841,36 @@ class MainWindow(
                 event.ignore()
                 return
 
+        # One monotonic total bound covers cancellation, cleanup escalation,
+        # diagnostic persistence, and hard process termination.  The final
+        # grace is inside that bound, never appended to it.
+        shutdown_started_at = monotonic()
+        total_timeout = max(0.0, _APPLICATION_SHUTDOWN_TIMEOUT_SECONDS)
+        diagnostic_grace = min(
+            _APPLICATION_SHUTDOWN_DIAGNOSTIC_GRACE_SECONDS,
+            total_timeout * 0.25,
+        )
+        hard_deadline = shutdown_started_at + total_timeout
+        self._shutdown_started_at = shutdown_started_at
+        self._shutdown_deadline = hard_deadline - diagnostic_grace
+        self._shutdown_hard_deadline = hard_deadline
+        self._shutdown_cleanup_escalated = False
+        self._shutdown_escalation_diagnostics = ()
+        self._shutdown_liveness_diagnostics = ()
+        self._shutdown_last_diagnostics = ()
+        self._shutdown_diagnostics = ()
+        self._shutdown_deadline_exhausted = False
+        process_fail_safe = getattr(self, "_shutdown_process_fail_safe", None)
+        if process_fail_safe is not None:
+            launch_diagnostic = process_fail_safe.arm(
+                started_at=shutdown_started_at,
+                diagnostic_deadline=self._shutdown_deadline,
+                hard_deadline=hard_deadline,
+            )
+            if launch_diagnostic:
+                self._shutdown_escalation_diagnostics = (launch_diagnostic,)
+                MainWindow._publish_shutdown_diagnostics(self)
+
         # Mark the refresh lifecycle as shut down before cancelling workers.
         # This also invalidates a QTimer timeout that was already queued.
         self._automatic_refresh_shutdown = True
@@ -520,6 +898,9 @@ class MainWindow(
         refresh_worker = getattr(self, "_database_refresh_worker", None)
         if refresh_worker is not None:
             refresh_worker.cancel()
+        selected_run_worker = getattr(self, "_database_selected_run_worker", None)
+        if selected_run_worker is not None:
+            selected_run_worker.cancel()
         generation_worker = getattr(self, "_test_database_generation_worker", None)
         if generation_worker is not None:
             generation_worker.cancel()
@@ -548,6 +929,14 @@ class MainWindow(
         self._database_refresh_worker = None
         self._database_refresh_identity = None
         self._database_refresh_instance = None
+        self._database_selected_run_generation = (
+            getattr(self, "_database_selected_run_generation", 0) + 1
+            )
+        self._database_selected_run_worker = None
+        self._database_selected_run_instance = None
+        self._database_selected_run_mode = None
+        self._restoring_selected_run_publication = False
+        self._selected_run_restore_pending = False
         self._test_database_generation_active = False
         self._test_database_generation_worker = None
         self._test_database_replacement_state = None
@@ -598,26 +987,273 @@ class MainWindow(
             clear()
 
 
+    def _publish_shutdown_diagnostics(self):
+        """Merge durable escalation errors with the newest liveness scan."""
+
+        diagnostics = tuple(
+            (
+                *getattr(self, "_shutdown_escalation_diagnostics", ()),
+                *getattr(self, "_shutdown_liveness_diagnostics", ()),
+            )
+        )
+        self._shutdown_last_diagnostics = diagnostics
+        process_fail_safe = getattr(self, "_shutdown_process_fail_safe", None)
+        if process_fail_safe is not None:
+            process_fail_safe.update_diagnostics(diagnostics)
+
+
     def _shutdown_background_work_active(self):
         """
         Reports whether a qPlot worker still needs the Qt event loop.
 
         """
+        diagnostics = []
+        active = False
         pool_names = (
             "threadPool",
             "databaseLoadThreadPool",
             "databaseDetailThreadPool",
             "databaseExpensiveDetailThreadPool",
             "databaseRefreshThreadPool",
+            "databaseSelectedRunThreadPool",
             "testDatabaseGenerationThreadPool",
         )
         for pool_name in pool_names:
             pool = getattr(self, pool_name, None)
-            if pool is not None and pool.activeThreadCount() > 0:
-                return True
+            if pool is None:
+                continue
+            try:
+                count = pool.activeThreadCount()
+            except BaseException as error:
+                active = True
+                diagnostics.append(
+                    f"pool {pool_name}: liveness raised "
+                    f"{type(error).__name__}: {error}"
+                )
+                continue
+            if count > 0:
+                active = True
+                diagnostics.append(f"pool {pool_name}: active_threads={count}")
+
+        reap_services = getattr(self, "_reap_retired_trusted_read_services", None)
+        if callable(reap_services):
+            try:
+                reap_services()
+            except BaseException as error:
+                active = True
+                diagnostics.append(
+                    "retired-service reaper raised "
+                    f"{type(error).__name__}: {error}"
+                )
+        diagnostics.extend(
+            getattr(self, "_retired_service_reap_diagnostics", {}).values()
+        )
+        services = set(getattr(self, "_retired_trusted_read_services", ()))
+        active_service = getattr(self, "_trusted_read_service", None)
+        if active_service is not None:
+            services.add(active_service)
+        services.update(
+            getattr(self, "_pending_trusted_read_services", {}).values()
+        )
+        for service in services:
+            service_label = (
+                f"{type(service).__module__}.{type(service).__qualname__}"
+                f"@{id(service):x}"
+            )
+            service_errors = []
+            for error_name in ("fatal_error", "close_error"):
+                try:
+                    service_error = getattr(service, error_name, None)
+                except BaseException as error:
+                    active = True
+                    service_errors.append(
+                        f"{error_name} probe raised {type(error).__name__}: {error}"
+                    )
+                    continue
+                if service_error is not None:
+                    service_errors.append(
+                        f"{error_name}={type(service_error).__name__}: {service_error}"
+                    )
+            try:
+                liveness = service.liveness()
+            except BaseException as error:
+                active = True
+                diagnostics.append(
+                    f"service {service_label}: liveness raised "
+                    f"{type(error).__name__}: {error}"
+                    + ("; " + "; ".join(service_errors) if service_errors else "")
+                )
+                continue
+            field_names = (
+                "dispatcher_alive",
+                "control_alive",
+                "helper_alive",
+                "helper_pid",
+                "receiver_alive",
+                "open_supervisor_endpoints",
+                "unreaped_incarnations",
+                "resource_cleanup_pending",
+                "outstanding_requests",
+                "closing",
+                "closed",
+            )
+            values = {
+                field_name: getattr(liveness, field_name, None)
+                for field_name in field_names
+            }
+            service_active = bool(
+                values["dispatcher_alive"]
+                or values["control_alive"]
+                or values["helper_alive"]
+                or values["receiver_alive"]
+                or values["open_supervisor_endpoints"]
+                or values["unreaped_incarnations"]
+                or values["resource_cleanup_pending"]
+                or values["outstanding_requests"]
+                or not values["closed"]
+            )
+            if service_active:
+                active = True
+                diagnostics.append(
+                    f"service {service_label}: "
+                    + ", ".join(
+                        f"{field_name}={values[field_name]!r}"
+                        for field_name in field_names
+                    )
+                    + ("; " + "; ".join(service_errors) if service_errors else "")
+                )
 
         preview = getattr(getattr(self, "infoBox", None), "preview", None)
-        return bool(getattr(preview, "_workers", {}))
+        preview_workers = getattr(preview, "_workers", {})
+        if preview_workers:
+            active = True
+            diagnostics.append(f"preview_workers={len(preview_workers)}")
+        self._shutdown_liveness_diagnostics = tuple(diagnostics)
+        MainWindow._publish_shutdown_diagnostics(self)
+        return active
+
+
+    def _escalate_shutdown_cleanup(self):
+        """Repeat cancellation and zero-wait cleanup once during shutdown."""
+
+        if getattr(self, "_shutdown_cleanup_escalated", False):
+            return
+        self._shutdown_cleanup_escalated = True
+        escalation_diagnostics = []
+
+        try:
+            MainWindow._cancel_plot_work(self)
+        except BaseException as error:
+            escalation_diagnostics.append(
+                f"plot cancellation raised {type(error).__name__}: {error}"
+            )
+
+        for pool_name in (
+            "threadPool",
+            "databaseLoadThreadPool",
+            "databaseDetailThreadPool",
+            "databaseExpensiveDetailThreadPool",
+            "databaseRefreshThreadPool",
+            "databaseSelectedRunThreadPool",
+            "testDatabaseGenerationThreadPool",
+        ):
+            pool = getattr(self, pool_name, None)
+            clear = getattr(pool, "clear", None)
+            if not callable(clear):
+                continue
+            try:
+                clear()
+            except BaseException as error:
+                escalation_diagnostics.append(
+                    f"pool {pool_name} clear raised {type(error).__name__}: {error}"
+                )
+
+        preview = getattr(getattr(self, "infoBox", None), "preview", None)
+        shutdown = getattr(preview, "shutdown", None)
+        if callable(shutdown):
+            try:
+                shutdown()
+            except BaseException as error:
+                escalation_diagnostics.append(
+                    f"preview shutdown raised {type(error).__name__}: {error}"
+                )
+
+        services = set(getattr(self, "_retired_trusted_read_services", ()))
+        active_service = getattr(self, "_trusted_read_service", None)
+        if active_service is not None:
+            services.add(active_service)
+        services.update(
+            getattr(self, "_pending_trusted_read_services", {}).values()
+        )
+        for service in services:
+            escalate = getattr(service, "escalate_cleanup_async", None)
+            if not callable(escalate):
+                escalate = getattr(service, "close_async", None)
+            if not callable(escalate):
+                continue
+            try:
+                escalate()
+            except BaseException as error:
+                escalation_diagnostics.append(
+                    "service cleanup escalation raised "
+                    f"{type(error).__name__}: {error}"
+                )
+
+        reap_services = getattr(self, "_reap_retired_trusted_read_services", None)
+        if callable(reap_services):
+            try:
+                reap_services()
+            except BaseException as error:
+                escalation_diagnostics.append(
+                    "retired-service escalation reap raised "
+                    f"{type(error).__name__}: {error}"
+                )
+        if escalation_diagnostics:
+            self._shutdown_escalation_diagnostics = tuple(
+                (
+                    *getattr(self, "_shutdown_escalation_diagnostics", ()),
+                    *escalation_diagnostics,
+                )
+            )
+            MainWindow._publish_shutdown_diagnostics(self)
+
+
+    def _complete_deferred_shutdown(self, *, deadline_exhausted=False):
+        """Stop shutdown polling and make the next close event unconditional."""
+
+        shutdown_timer = getattr(self, "_shutdown_timer", None)
+        if shutdown_timer is not None:
+            shutdown_timer.stop()
+        reaper_timer = getattr(self, "_retired_service_reaper_timer", None)
+        if reaper_timer is not None:
+            reaper_timer.stop()
+
+        if deadline_exhausted:
+            diagnostics = tuple(getattr(self, "_shutdown_last_diagnostics", ()))
+            if not diagnostics:
+                diagnostics = ("background work remained active without diagnostics",)
+            self._shutdown_diagnostics = diagnostics
+            process_fail_safe = getattr(self, "_shutdown_process_fail_safe", None)
+            if process_fail_safe is not None:
+                process_fail_safe.update_diagnostics(diagnostics)
+                process_fail_safe.persist_async()
+            else:
+                started_at = getattr(self, "_shutdown_started_at", None)
+                if started_at is None:
+                    started_at = monotonic()
+                _persist_shutdown_diagnostics(
+                    started_at=started_at,
+                    total_timeout=_APPLICATION_SHUTDOWN_TIMEOUT_SECONDS,
+                    diagnostics=diagnostics,
+                )
+        self._shutdown_deadline_exhausted = bool(deadline_exhausted)
+
+        self._shutdown_started = False
+        self._shutdown_ready = True
+        qtw.QApplication.closeAllWindows()
+        application = qtw.QApplication.instance()
+        if application is not None and isinstance(self, qtw.QWidget):
+            application.quit()
 
 
     @QtCore.pyqtSlot()
@@ -628,15 +1264,22 @@ class MainWindow(
         """
         if not getattr(self, "_shutdown_started", False):
             return
-        if MainWindow._shutdown_background_work_active(self):
+        active = MainWindow._shutdown_background_work_active(self)
+        if active and not getattr(self, "_shutdown_cleanup_escalated", False):
+            MainWindow._escalate_shutdown_cleanup(self)
+            active = MainWindow._shutdown_background_work_active(self)
+
+        deadline = getattr(self, "_shutdown_deadline", None)
+        if deadline is None:
+            deadline = monotonic() + _APPLICATION_SHUTDOWN_TIMEOUT_SECONDS
+            self._shutdown_deadline = deadline
+        if active and monotonic() < deadline:
             return
 
-        shutdown_timer = getattr(self, "_shutdown_timer", None)
-        if shutdown_timer is not None:
-            shutdown_timer.stop()
-        self._shutdown_started = False
-        self._shutdown_ready = True
-        qtw.QApplication.closeAllWindows()
+        MainWindow._complete_deferred_shutdown(
+            self,
+            deadline_exhausted=active,
+        )
     
    
     @QtCore.pyqtSlot()

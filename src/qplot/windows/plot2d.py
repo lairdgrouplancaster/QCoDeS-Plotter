@@ -271,14 +271,41 @@ class plot2d(
         full_sql_refresh = bool(
             getattr(plot_worker, "loaded_from_sql_heatmap", False)
             and getattr(plot_worker, "heatmap_axis_ranges", None) is None
-            )
+        )
 
         try:
+            def clear_display():
+                self._invalidate_heatmap_geometry()
+                bar = self.__dict__.get("bar")
+                hide = getattr(bar, "hide", None)
+                if callable(hide):
+                    hide()
+
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
             self._update_large_heatmap_state(plot_worker)
             self.refresh_secondary_heatmaps()
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
             if not self._has_plottable_heatmap_data():
                 self._invalidate_heatmap_geometry()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
                 self._emit_heatmap_trace_updated()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
                 self.show_status(
                     f"Waiting for plottable data for {self.param.name}...",
                     5000,
@@ -287,8 +314,19 @@ class plot2d(
                     "Waiting for plottable data",
                     f"{self.param.name} has no finite heatmap data yet.",
                     kind="empty",
-                    )
-                self._mark_display_synchronized(plot_worker)
+                )
+                display_synchronized = self._mark_display_synchronized(
+                    plot_worker,
+                )
+                if (
+                    getattr(plot_worker, "dataset_completed", None) is True
+                    and not display_synchronized
+                ):
+                    return
+                if getattr(plot_worker, "_qplot_source_rejected", False):
+                    clear_display()
+                    return
+                self._commit_refresh_publication(plot_worker)
                 return
 
             try:
@@ -296,6 +334,11 @@ class plot2d(
             except (TypeError, ValueError) as error:
                 self._invalidate_heatmap_geometry()
                 self._emit_heatmap_trace_updated()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
                 self.show_status(f"Cannot display heatmap: {error}", 10_000)
                 self.show_plot_state(
                     "Invalid heatmap geometry",
@@ -306,6 +349,11 @@ class plot2d(
 
             autoLevels = self.relevel_refresh.isChecked()
             self._render_heatmap()
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
 
             # Produce color bar on first run
             if not hasattr(self, "bar"):
@@ -340,9 +388,32 @@ class plot2d(
                 self._set_colorbar_levels(*self._colorbar_manual_levels)
             
             self._restore_heatmap_interactions()
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
             self._emit_heatmap_trace_updated()
+            if not self._refresh_publication_source_is_current(
+                    plot_worker,
+                    clear_display=clear_display,
+                    ):
+                return
             self._mark_display_synchronized(plot_worker)
+            if getattr(plot_worker, "_qplot_source_rejected", False):
+                clear_display()
+                return
+            self._commit_refresh_publication(plot_worker)
         finally:
+            if isinstance(
+                    getattr(plot_worker, "_qplot_publication_snapshot", None),
+                    dict,
+                    ):
+                if self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    self._commit_refresh_publication(plot_worker)
             # Allow new workers after empty live loads or display errors.
             plot_worker.running = False
             self._ensure_refresh_monitor()
