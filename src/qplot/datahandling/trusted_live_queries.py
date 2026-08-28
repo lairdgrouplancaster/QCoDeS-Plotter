@@ -9,10 +9,12 @@ zero-row ``SELECT`` statements and are quoted before they are used.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import re
+import secrets
 import stat
 from dataclasses import dataclass
 from itertools import islice
@@ -189,6 +191,79 @@ class TrustedRunRecord:
 
     def as_dict(self) -> dict[str, Any]:
         return {name: _thaw_value(value) for name, value in self.fields}
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedSourceRevision:
+    """Opaque, query-layer-owned fingerprint for one run's source data."""
+
+    fingerprint: bytes
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.fingerprint, bytes) or not self.fingerprint:
+            raise ValueError("A source revision must be non-empty bytes.")
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedSourceRevisionNamespace:
+    """Restart-unique service namespace for conservative derived identities.
+
+    Stage 5A deliberately makes this namespace ephemeral.  A trusted-live
+    service creates one namespace for its lifetime and supplies the current
+    helper incarnation separately when deriving a revision.  Persisting this
+    value, or treating revisions as reusable across qPlot sessions, is not
+    supported until a durable QCoDeS-data fingerprint is proven.
+    """
+
+    nonce: bytes
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.nonce, bytes) or not self.nonce:
+            raise ValueError("A source-revision namespace must be non-empty bytes.")
+
+    @classmethod
+    def create(cls) -> TrustedSourceRevisionNamespace:
+        """Create a new unpredictable namespace without filesystem access."""
+
+        return cls(secrets.token_bytes(32))
+
+
+def trusted_source_revision(
+    run: TrustedRunRecord,
+    data_version: int,
+    *,
+    namespace: TrustedSourceRevisionNamespace,
+    helper_incarnation: int,
+) -> TrustedSourceRevision:
+    """Fingerprint bounded run facts in an ephemeral reader incarnation.
+
+    SQLite's connection-local ``data_version`` is useful only within the same
+    helper incarnation.  The service namespace and helper incarnation prevent
+    a repeated value after helper or qPlot restart from aliasing prior work.
+    The exact database-instance namespace is carried separately by the cache
+    key.  This policy intentionally provides no persistent cross-session hit.
+    """
+
+    if type(data_version) is not int or data_version < 0:
+        raise ValueError("data_version must be a non-negative integer.")
+    if not isinstance(namespace, TrustedSourceRevisionNamespace):
+        raise TypeError("namespace must be a TrustedSourceRevisionNamespace.")
+    if type(helper_incarnation) is not int or helper_incarnation < 0:
+        raise ValueError("helper_incarnation must be a non-negative integer.")
+    payload = repr(
+        (
+            "qplot-trusted-source-revision-v2",
+            namespace.nonce,
+            helper_incarnation,
+            data_version,
+            run.run_id,
+            run.fields,
+        )
+    ).encode(
+        "utf-8",
+        errors="surrogatepass",
+    )
+    return TrustedSourceRevision(hashlib.sha256(payload).digest())
 
 
 @dataclass(frozen=True, slots=True)
