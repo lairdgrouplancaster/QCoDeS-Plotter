@@ -14,7 +14,10 @@ param(
     [int] $TimeoutSeconds = 420,
 
     [ValidateRange(1, 600)]
-    [int] $CleanupGraceSeconds = 120
+    [int] $CleanupGraceSeconds = 120,
+
+    [ValidateRange(0, 3600)]
+    [int] $OuterTimeoutSeconds = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -153,7 +156,11 @@ $process.StartInfo = $startInfo
 if (-not $process.Start()) {
     throw "Windows did not start the bounded unprivileged qPlot wrapper."
 }
-$outerLifetimeSeconds = $TimeoutSeconds + $CleanupGraceSeconds
+$outerLifetimeSeconds = if ($OuterTimeoutSeconds -gt 0) {
+    $OuterTimeoutSeconds
+} else {
+    $TimeoutSeconds + $CleanupGraceSeconds
+}
 $outerDeadline = [QPlotOuterDeadline]::new($outerLifetimeSeconds * 1000)
 Write-Host (
     "The bounded unprivileged wrapper started with a " +

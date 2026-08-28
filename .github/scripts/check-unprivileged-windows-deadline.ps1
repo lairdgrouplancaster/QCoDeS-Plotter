@@ -32,8 +32,9 @@ $probeCommand = @"
     -FilePath $fileLiteral ``
     -ArgumentList @('-c', 'import time; time.sleep(30)') ``
     -WorkingDirectory $workingLiteral ``
-    -TimeoutSeconds 2 ``
-    -CleanupGraceSeconds 10
+    -TimeoutSeconds 30 ``
+    -CleanupGraceSeconds 10 ``
+    -OuterTimeoutSeconds 2
 "@
 $encodedCommand = [Convert]::ToBase64String(
     [Text.Encoding]::Unicode.GetBytes($probeCommand)
