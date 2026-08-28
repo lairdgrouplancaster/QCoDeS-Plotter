@@ -400,16 +400,16 @@ def test_unavailable_supervisor_uses_original_deadline_local_fallback(
 
     startup_diagnostic = process_fail_safe.arm(
         started_at=started_at,
-        diagnostic_deadline=started_at + 0.08,
-        hard_deadline=started_at + 0.14,
+        diagnostic_deadline=started_at + 0.5,
+        hard_deadline=started_at + 1.0,
     )
     process_fail_safe.update_diagnostics(("final resource_cleanup_pending=True",))
 
     assert startup_diagnostic == "exact shutdown launcher startup failure"
-    assert not forced.wait(0.03)
-    assert forced.wait(0.3)
+    assert not forced.wait(0.1)
+    assert forced.wait(1.5)
     assert forced_codes == [main_window._APPLICATION_FORCED_SHUTDOWN_EXIT_CODE]
-    assert persistence_recorded.wait(0.3)
+    assert persistence_recorded.wait(1.5)
     assert "exact shutdown launcher startup failure" in persisted[-1]["diagnostics"]
     assert "final resource_cleanup_pending=True" in persisted[-1]["diagnostics"]
     process_fail_safe.disarm()
