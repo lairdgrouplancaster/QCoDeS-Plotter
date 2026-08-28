@@ -1640,6 +1640,7 @@ def test_parameter_view_source_iterators_stop_after_limit_probe(monkeypatch):
             "was stored",
         ),
     ),
+    ids=("empty", "available", "malformed", "oversized"),
 )
 def test_selected_detail_preserves_snapshot_storage_state_through_preflight(
     tmp_path,

@@ -281,7 +281,7 @@ jobs:
             param(
               [Parameter(Mandatory = $true)]
               [string] $Path,
-              [int] $MaximumBytes = 262144
+              [int] $MaximumBytes = 32768
             )
             if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
               return

@@ -110,7 +110,7 @@ function Publish-PersistedLog {
         [System.IO.TextWriter] $Destination
     )
 
-    $maximumBytes = 262144
+    $maximumBytes = 32768
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return
     }
