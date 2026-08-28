@@ -108,6 +108,7 @@ jobs:
           "TMP=$standardTemp" >> $env:GITHUB_ENV
           "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
           "PYTEST_ADDOPTS=--basetemp=$pytestTemp" >> $env:GITHUB_ENV
+          "QPLOT_CI_PHASE_LOG_PATH=$(Join-Path $standardTemp 'wrapper-phase.txt')" >> $env:GITHUB_ENV
 
       - name: Require the pinned APSW platform wheel
         run: >-
@@ -276,16 +277,64 @@ jobs:
         if: failure() && runner.os == 'Windows'
         shell: pwsh
         run: |
-          foreach ($name in @("child-stdout.txt", "child-stderr.txt")) {
-            $path = Join-Path $env:QPLOT_UNPRIVILEGED_TEMP $name
-            if (Test-Path -LiteralPath $path) {
-              Write-Host "===== $name ====="
-              try {
-                [Console]::Out.Write([System.IO.File]::ReadAllText($path))
-              } catch {
-                Write-Warning "Could not publish '$path': $_"
+          function Write-BoundedLogTail {
+            param(
+              [Parameter(Mandatory = $true)]
+              [string] $Path,
+              [int] $MaximumBytes = 262144
+            )
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+              return
+            }
+            Write-Host "===== $([System.IO.Path]::GetFileName($Path)) ====="
+            $stream = $null
+            try {
+              $stream = [System.IO.File]::Open(
+                $Path,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite
+              )
+              $length = [int] [Math]::Min($stream.Length, $MaximumBytes)
+              if ($stream.Length -gt $length) {
+                Write-Host "[truncated to the final $length bytes]"
+              }
+              [void] $stream.Seek(-$length, [System.IO.SeekOrigin]::End)
+              $buffer = [byte[]]::new($length)
+              $totalRead = 0
+              while ($totalRead -lt $length) {
+                $read = $stream.Read(
+                  $buffer,
+                  $totalRead,
+                  $length - $totalRead
+                )
+                if ($read -eq 0) {
+                  break
+                }
+                $totalRead += $read
+              }
+              [Console]::Out.Write(
+                [System.Text.Encoding]::UTF8.GetString(
+                  $buffer,
+                  0,
+                  $totalRead
+                )
+              )
+            } catch {
+              Write-Warning "Could not publish '$Path': $_"
+            } finally {
+              if ($null -ne $stream) {
+                $stream.Dispose()
               }
             }
+          }
+          foreach ($name in @(
+            "wrapper-phase.txt",
+            "child-stdout.txt",
+            "child-stderr.txt"
+          )) {
+            $path = Join-Path $env:QPLOT_UNPRIVILEGED_TEMP $name
+            Write-BoundedLogTail -Path $path
           }
 
   coverage:

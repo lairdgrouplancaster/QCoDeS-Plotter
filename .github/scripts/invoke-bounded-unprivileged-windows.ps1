@@ -110,13 +110,43 @@ function Publish-PersistedLog {
         [System.IO.TextWriter] $Destination
     )
 
-    if (-not (Test-Path -LiteralPath $Path)) {
+    $maximumBytes = 262144
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return
     }
+    $stream = $null
     try {
-        $Destination.Write([System.IO.File]::ReadAllText($Path))
+        $stream = [System.IO.File]::Open(
+            $Path,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::ReadWrite
+        )
+        $length = [int] [Math]::Min($stream.Length, $maximumBytes)
+        if ($stream.Length -gt $length) {
+            $Destination.WriteLine(
+                "[qPlot diagnostics truncated to the final $length bytes]"
+            )
+        }
+        [void] $stream.Seek(-$length, [System.IO.SeekOrigin]::End)
+        $buffer = [byte[]]::new($length)
+        $totalRead = 0
+        while ($totalRead -lt $length) {
+            $read = $stream.Read($buffer, $totalRead, $length - $totalRead)
+            if ($read -eq 0) {
+                break
+            }
+            $totalRead += $read
+        }
+        $Destination.Write(
+            [System.Text.Encoding]::UTF8.GetString($buffer, 0, $totalRead)
+        )
     } catch {
         Write-Warning "Could not publish bounded child diagnostics from '$Path': $_"
+    } finally {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
     }
 }
 
@@ -141,9 +171,13 @@ $phaseLogRoot = if ($env:RUNNER_TEMP) {
 } else {
     [IO.Path]::GetTempPath()
 }
-$phaseLogPath = Join-Path `
-    $phaseLogRoot `
-    "qplot-bounded-wrapper-$([Guid]::NewGuid().ToString('N')).txt"
+$phaseLogPath = if ($env:QPLOT_CI_PHASE_LOG_PATH) {
+    [System.IO.Path]::GetFullPath($env:QPLOT_CI_PHASE_LOG_PATH)
+} else {
+    Join-Path `
+        $phaseLogRoot `
+        "qplot-bounded-wrapper-$([Guid]::NewGuid().ToString('N')).txt"
+}
 $phaseLogLiteral = ConvertTo-SingleQuotedPowerShellLiteral $phaseLogPath
 $argumentLiterals = @(
     $ArgumentList | ForEach-Object {
