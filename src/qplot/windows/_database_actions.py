@@ -79,6 +79,16 @@ def _database_instances_differ(first, second):
     return first is not None and second is not None and first != second
 
 
+def _database_paths_equal(first, second):
+    """Compare database paths using the platform's logical path spelling."""
+    if not first or not second:
+        return False
+    try:
+        return logical_database_path(first) == logical_database_path(second)
+    except (TypeError, ValueError, OSError):
+        return False
+
+
 def _database_observations_differ(first, second):
     """Compare saved observations, retaining compatibility with test harnesses."""
 
@@ -1418,7 +1428,7 @@ class DatabaseActionsMixin:
                 getattr(self, "_database_refresh_publication_active", False)
                 and generation == getattr(self, "_database_refresh_generation", 0)
                 and getattr(self, "_database_refresh_active", False)
-                and database_path == self.fileTextbox.text()
+                and _database_paths_equal(database_path, self.fileTextbox.text())
                 and not getattr(self, "_shutdown_started", False)
                 and not getattr(self, "_shutdown_ready", False)
             )
@@ -1459,7 +1469,7 @@ class DatabaseActionsMixin:
                 raise _DatabaseRefreshPublicationAborted(
                     "The trusted refresh ended before publication."
                 )
-            if database_path != self.fileTextbox.text():
+            if not _database_paths_equal(database_path, self.fileTextbox.text()):
                 raise _DatabaseRefreshPublicationAborted(
                     "The selected database changed before refresh publication."
                 )
@@ -1592,7 +1602,7 @@ class DatabaseActionsMixin:
             return
 
         try:
-            if database_path != self.fileTextbox.text():
+            if not _database_paths_equal(database_path, self.fileTextbox.text()):
                 return
             if isinstance(error, DatabaseInstanceChangedError):
                 DatabaseActionsMixin._cancel_database_refresh(self)
@@ -1657,7 +1667,10 @@ class DatabaseActionsMixin:
             self._database_refresh_staged_new_runs = {}
             pending = bool(getattr(self, "_database_refresh_pending", False))
             self._database_refresh_pending = False
-            if pending and database_path == self.fileTextbox.text():
+            if pending and _database_paths_equal(
+                    database_path,
+                    self.fileTextbox.text(),
+                    ):
                 QtCore.QTimer.singleShot(0, self.refreshMain)
 
 
@@ -3771,7 +3784,7 @@ class DatabaseActionsMixin:
                 abspath,
                 ):
             return
-        if abspath != self.fileTextbox.text():
+        if not _database_paths_equal(abspath, self.fileTextbox.text()):
             return
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
@@ -3811,7 +3824,7 @@ class DatabaseActionsMixin:
                 abspath,
                 ):
             return
-        if abspath != self.fileTextbox.text():
+        if not _database_paths_equal(abspath, self.fileTextbox.text()):
             return
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
@@ -3858,7 +3871,7 @@ class DatabaseActionsMixin:
         self._database_detail_worker = None
         self._database_detail_instance = None
 
-        if abspath != self.fileTextbox.text():
+        if not _database_paths_equal(abspath, self.fileTextbox.text()):
             return
 
         if isinstance(error, DatabaseInstanceChangedError):
@@ -3894,7 +3907,7 @@ class DatabaseActionsMixin:
         self._database_expensive_detail_worker = None
         self._database_expensive_detail_instance = None
 
-        if abspath != self.fileTextbox.text():
+        if not _database_paths_equal(abspath, self.fileTextbox.text()):
             return
 
         if isinstance(error, DatabaseInstanceChangedError):
@@ -3982,7 +3995,10 @@ class DatabaseActionsMixin:
             return None
         if not isinstance(instance, DatabaseInstance):
             return None
-        if self.fileTextbox.text() != instance.logical_path:
+        if not _database_paths_equal(
+                self.fileTextbox.text(),
+                instance.logical_path,
+                ):
             return None
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
@@ -4330,7 +4346,7 @@ class DatabaseActionsMixin:
             return
         if guid != getattr(self, "_selected_run_guid", None):
             return
-        if database_path != self.fileTextbox.text():
+        if not _database_paths_equal(database_path, self.fileTextbox.text()):
             return
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
@@ -4368,7 +4384,7 @@ class DatabaseActionsMixin:
         self._database_selected_run_mode = None
         if guid != getattr(self, "_selected_run_guid", None):
             return
-        if database_path != self.fileTextbox.text():
+        if not _database_paths_equal(database_path, self.fileTextbox.text()):
             return
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,

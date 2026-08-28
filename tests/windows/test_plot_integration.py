@@ -553,6 +553,15 @@ def release_windows_database_locks(window, database_path, *extra_datasets):
     if os.name != "nt":
         return
 
+    database_actions_module.DatabaseActionsMixin._retire_all_trusted_read_services(
+        window
+    )
+    for service in tuple(window._retired_trusted_read_services):
+        assert service.wait_closed(10), "Trusted reader retained Windows file handles"
+    database_actions_module.DatabaseActionsMixin._reap_retired_trusted_read_services(
+        window
+    )
+
     source_path = Path(database_path).resolve()
     datasets = list(extra_datasets)
     selected_key = getattr(window, "_selected_dataset_key", None)
@@ -2356,6 +2365,10 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
         qcodes.config.core.db_location = original_database_path
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows does not permit replacing a database during an open SQLite read.",
+)
 def test_preview_export_rejects_database_replacement_during_fresh_load(
     tmp_path,
     monkeypatch,

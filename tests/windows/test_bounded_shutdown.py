@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -623,6 +624,15 @@ def _probe_value(output: str, prefix: str, key: str) -> str:
     return fields[key]
 
 
+def _shutdown_request_at(output: str) -> float:
+    match = re.search(
+        r"(?m)^SHUTDOWN_REQUEST_AT=([0-9]+(?:\.[0-9]+)?)",
+        output,
+    )
+    assert match is not None, output
+    return float(match.group(1))
+
+
 def test_real_qthreadpool_stall_forces_os_process_exit_after_diagnostics(
     tmp_path: Path,
 ) -> None:
@@ -637,12 +647,7 @@ def test_real_qthreadpool_stall_forces_os_process_exit_after_diagnostics(
         output
     )
     assert launcher_pid > 0
-    request_line = next(
-        line
-        for line in completed.stdout.splitlines()
-        if line.startswith("SHUTDOWN_REQUEST_AT=")
-    )
-    shutdown_elapsed = completed_at - float(request_line.partition("=")[2])
+    shutdown_elapsed = completed_at - _shutdown_request_at(completed.stdout)
     assert 0.25 <= shutdown_elapsed < 1.5
     shutdown_started_at = float(
         _probe_value(completed.stdout, "SHUTDOWN_ARMED", "started")
@@ -703,13 +708,7 @@ def test_real_qthreadpool_completion_disarms_after_graceful_destruction(
     assert completed.stdout.index("EVENT_LOOP_RETURNED") < completed.stdout.index(
         "PROCESS_TEARDOWN_COMPLETED"
     )
-    request_at = float(
-        next(
-            line.partition("=")[2]
-            for line in completed.stdout.splitlines()
-            if line.startswith("SHUTDOWN_REQUEST_AT=")
-        )
-    )
+    request_at = _shutdown_request_at(completed.stdout)
     shutdown_started_at = float(
         _probe_value(completed.stdout, "SHUTDOWN_ARMED", "started")
     )

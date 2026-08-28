@@ -33,6 +33,10 @@ def _replace_sidecars(database_path: Path) -> None:
         os.replace(replacement, Path(f"{database_path}{suffix}"))
 
 
+def _normalized_paths(paths) -> list[str]:
+    return [os.path.normcase(os.path.abspath(os.fspath(path))) for path in paths]
+
+
 class _Signal:
     def __init__(self):
         self.values = []
@@ -99,7 +103,9 @@ def test_retained_plot_rejects_wal_shm_swap_before_automatic_refresh(tmp_path):
 
     assert plot.load_calls == []
     assert plot.monitor.stopped
-    assert plot.database_replaced.values == [(str(database_path),)]
+    assert _normalized_paths(
+        path for (path,) in plot.database_replaced.values
+    ) == _normalized_paths([database_path])
 
 
 def test_sidecar_swap_during_worker_read_is_rejected_before_publication(
@@ -259,7 +265,9 @@ def test_callback_swap_rolls_back_shared_cache_and_axis_state(
     assert plot.axis_data == {"x": [0.0], "y": [1.0]}
     assert plot.axis_param == {"x": "old-x", "y": "old-y"}
     assert plot.display_param == "old-display"
-    assert plot.database_replaced.values == [(str(database_path),)]
+    assert _normalized_paths(
+        path for (path,) in plot.database_replaced.values
+    ) == _normalized_paths([database_path])
 
 
 def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path):
@@ -329,7 +337,9 @@ def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path):
     assert plot.axis_data == {"x": [0.0], "y": [1.0]}
     assert plot.axis_param == {"x": "old-x", "y": "old-y"}
     assert plot.display_param == "old-display"
-    assert plot.database_replaced.values == [(str(database_path),)]
+    assert _normalized_paths(
+        path for (path,) in plot.database_replaced.values
+    ) == _normalized_paths([database_path])
     assert not any("Refresh skipped" in message for message, *_rest in plot.statuses)
     assert worker._qplot_publication_snapshot is None
 
@@ -620,7 +630,9 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path):
     assert plot.axis_data == {"x": [0.0], "y": [1.0]}
     assert plot.axis_param == {"x": "old-x", "y": "old-y"}
     assert plot.trace_updated.values == []
-    assert plot.database_replaced.values == [(str(database_path),)]
+    assert _normalized_paths(
+        path for (path,) in plot.database_replaced.values
+    ) == _normalized_paths([database_path])
 
 
 def test_first_sidecars_are_promoted_into_plot_and_holder_key(tmp_path):
@@ -669,7 +681,7 @@ def test_first_sidecars_are_promoted_into_plot_and_holder_key(tmp_path):
     with pytest.raises(RuntimeError, match="SQLite sidecars"):
         harness._ensure_bound_plot_dataset_key_can_be_read(bound_key)
 
-    assert harness.recoveries == [str(database_path)]
+    assert _normalized_paths(harness.recoveries) == _normalized_paths([database_path])
 
 
 class _CsvHarness(PlotActionsMixin):
@@ -729,7 +741,7 @@ def test_run_csv_binds_first_sidecars_then_rejects_swap_before_open(
 
     assert opened == []
     assert not export_path.exists()
-    assert harness.recoveries == [str(database_path)]
+    assert _normalized_paths(harness.recoveries) == _normalized_paths([database_path])
 
 
 def test_preview_csv_rejects_swap_after_materialisation_before_publish(tmp_path):
@@ -771,5 +783,5 @@ def test_preview_csv_rejects_swap_after_materialisation_before_publish(tmp_path)
     assert len(bound_keys) == 1
     assert bound_keys[0].sidecar_identities
     assert not export_path.exists()
-    assert harness.recoveries == [str(database_path)]
+    assert _normalized_paths(harness.recoveries) == _normalized_paths([database_path])
     assert harness.errors[-1][0] == "CSV Export Failed"

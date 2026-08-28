@@ -28,6 +28,10 @@ from qplot.windows._widgets.preview import (
 )
 
 _SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE = pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows does not permit replacing an open SQLite WAL/SHM sidecar.",
+)
 
 
 class _RecordingThreadPool:
@@ -192,6 +196,7 @@ def test_preview_binding_promotes_first_sidecar_then_rejects_its_replacement(
 
 
 @pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
 def test_preview_rejects_sidecar_swap_before_sqlite_open(
     tmp_path,
     monkeypatch,
@@ -240,6 +245,7 @@ def test_preview_rejects_sidecar_swap_before_sqlite_open(
 
 
 @pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
 def test_preview_rejects_sidecar_swap_during_read(
     tmp_path,
     monkeypatch,
@@ -287,6 +293,7 @@ def test_preview_rejects_sidecar_swap_during_read(
 
 
 @pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
 def test_preview_rejects_sidecar_swap_after_worker_before_ui_publication(
     tmp_path,
     sidecar_suffix,
@@ -333,6 +340,7 @@ def test_preview_rejects_sidecar_swap_after_worker_before_ui_publication(
 
 
 @pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
 def test_preview_rechecks_sidecars_after_cache_mutation_before_signal(
     tmp_path,
     monkeypatch,
@@ -384,6 +392,7 @@ def test_preview_rechecks_sidecars_after_cache_mutation_before_signal(
 
 
 @pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
 def test_preview_rechecks_sidecars_after_ready_signal_before_selected_render(
     tmp_path,
     monkeypatch,
@@ -440,6 +449,7 @@ def test_preview_rechecks_sidecars_after_ready_signal_before_selected_render(
 
 
 @pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+@_WINDOWS_OPEN_SIDECAR_REPLACEMENT_UNAVAILABLE
 def test_preview_rechecks_sidecars_after_selected_render(
     tmp_path,
     monkeypatch,

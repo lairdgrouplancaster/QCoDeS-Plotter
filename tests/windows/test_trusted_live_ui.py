@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from types import SimpleNamespace
@@ -1991,6 +1992,12 @@ def test_trusted_selected_callback_rechecks_after_widget_publication(tmp_path):
     harness._selected_run_guid = "guid-7"
     harness.selected_run_id = 7
     harness._database_selected_run_instance = accepted
+    harness.fileTextbox.value = os.path.join(
+        os.fspath(tmp_path),
+        "equivalent-spelling",
+        os.pardir,
+        database_path.name,
+    )
 
     original_set_detail = harness.infoBox.set_trusted_run_detail
 
@@ -2002,12 +2009,12 @@ def test_trusted_selected_callback_rechecks_after_widget_publication(tmp_path):
 
     harness.database_selected_run_progress(
         harness._database_selected_run_generation,
-        str(database_path),
+        accepted.logical_path,
         "guid-7",
         _selected_detail(),
     )
 
-    assert harness.reloads == [str(database_path)]
+    assert harness.reloads == [accepted.logical_path]
     assert harness.infoBox.visible is None
     assert harness.RunList.updated
     assert harness.RunList.all_run_metadata() == {}
