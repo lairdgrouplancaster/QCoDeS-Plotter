@@ -2465,13 +2465,7 @@ class DatabaseActionsMixin:
                 )
                 if not refreshed and bridge is not None:
                     generation = getattr(self, "_database_load_generation", 0)
-                    QtCore.QTimer.singleShot(
-                        0,
-                        lambda: self._start_trusted_derived_bridge(
-                            generation,
-                            abspath,
-                        ),
-                    )
+                    bridge.queue_database_binding(generation, abspath)
             elif not self.infoBox.preview.has_database(abspath):
                 self.infoBox.preview.set_database_runs(
                     abspath,
@@ -3544,14 +3538,7 @@ class DatabaseActionsMixin:
         )
         if access_mode == TRUSTED_LIVE_MODE:
             if derived_bridge is not None:
-                QtCore.QTimer.singleShot(
-                    0,
-                    lambda: DatabaseActionsMixin._start_trusted_derived_bridge(
-                        self,
-                        generation,
-                        abspath,
-                    ),
-                )
+                derived_bridge.queue_database_binding(generation, abspath)
             else:
                 self._start_database_detail_load(abspath, runs)
         else:
