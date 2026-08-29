@@ -112,9 +112,11 @@ initial-open outcome; ordinary fallback selection is basic-only and starts no
 selected-detail worker or additional selected-detail snapshot. Fallback
 metadata and retained preview paths can still create private snapshots.
 Explicit plot/CSV snapshots remain deferred DataSet consumers. Existing
-fallback previews remain separately permitted, while the trusted Stage 5
-preview/thumbnail scheduler and disk cache are not packaged as implemented
-features.
+fallback previews remain separately permitted. The Stage 5A scheduler and
+Stage 5B coordinator, derived-query, rendering, and cache modules are normal
+installed Python package files and are covered by the same wheel/sdist inventory
+comparison and explicit mypy list. Stage 5B is backend-only: installed Qt code
+still uses the Stage 4 trusted placeholders until Stage 5C.
 
 The CI workflow is configured to build from clean checkouts on Python 3.12. The
 Linux package job builds the sdist and Linux wheel, compares their contents with
@@ -150,6 +152,15 @@ usable. It also permits writer checkpoint progress and audits protected
 artifacts through the application boundary. The source test suite additionally
 proves GUI publication ordering and atomic pending/active database switching.
 This extends rather than replaces the direct supervisor smoke.
+
+The installed-wheel Stage 5B smoke additionally uses the application broker and
+actual coordinator against a writer-held current-schema QCoDeS WAL database. It
+requires self-contained bounded prefix metadata/PNG publication before any
+cheap/expensive detail enrichment and after an append, cache files only under a
+selected application-cache directory disjoint from the database directory,
+writer commit and checkpoint progress between short transactions, protected
+main/WAL/journal artifacts unchanged during reader-only intervals, and no
+coordinator worker or helper left after shutdown.
 
 The installed-wheel checks also invoke the installed shutdown launcher rather
 than substituting a source-tree module. They exercise both the unchanged CLI
@@ -211,7 +222,8 @@ Before creating a tagged release:
 8. Run `python scripts/validate_distribution.py dist`.
 9. Run `python -m twine check dist/*`.
 10. Confirm the validator ran the extracted sdist tests, the installed direct
-    trusted-WAL-helper smoke, and the Stage 4 application-adapter smoke.
+    trusted-WAL-helper smoke, the Stage 4 application-adapter smoke, and the
+    installed Stage 5B live-WAL backend smoke.
 11. Confirm unprivileged Windows, ARM64 macOS, Intel macOS, and Linux wheel jobs
     passed for the exact source.
 12. Run the manual GUI check from `CONTRIBUTING.md`.

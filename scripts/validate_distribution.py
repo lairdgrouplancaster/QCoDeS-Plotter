@@ -346,6 +346,7 @@ from pathlib import Path
 import apsw
 import qplot
 from qplot import _shutdown_supervisor as shutdown_supervisor
+from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
 from qplot.datahandling.trusted_live import (
     TRUSTED_LIVE_MAX_SCALAR_BYTES,
     TrustedLiveCleanupError,
@@ -353,7 +354,10 @@ from qplot.datahandling.trusted_live import (
     TrustedLiveSqlRejectedError,
     TrustedQuery,
 )
-from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+from qplot.datahandling.trusted_live_queries import (
+    TrustedMetadataQueryAdapter,
+    trusted_source_revision,
+)
 from qplot.datahandling.trusted_live_service import (
     TrustedLiveReadService,
     TrustedReadPriority,
@@ -374,6 +378,14 @@ from qplot.datahandling.trusted_snapshot import (
     TrustedSnapshotOmission,
     TrustedSnapshotView,
     normalize_trusted_snapshot,
+)
+from qplot.datahandling.trusted_work_coordinator import (
+    TrustedDerivedRun,
+    TrustedWorkCoordinator,
+)
+from qplot.datahandling.trusted_work_scheduler import (
+    TrustedWorkKind,
+    trusted_derived_cache_root,
 )
 
 
@@ -1953,12 +1965,68 @@ def assert_stage4_run_detail(service, run_id):
     assert summary.steps == 2
 
 
+def exercise_stage5b_backend(service, record, bootstrap, database_directory):
+    publications = []
+    cache = TrustedDerivedDiskCache()
+    assert cache.root == Path(trusted_derived_cache_root())
+    assert cache.root != database_directory
+    assert database_directory not in cache.root.parents
+    revision = trusted_source_revision(
+        record,
+        bootstrap.data_version,
+        namespace=service.source_revision_namespace,
+        helper_incarnation=bootstrap.helper_incarnation,
+    )
+    fields = record.as_dict()
+    coordinator = TrustedWorkCoordinator(
+        service.database_instance,
+        (TrustedDerivedRun(record.run_id, fields["guid"], revision),),
+        service,
+        cache=cache,
+        on_publish=publications.append,
+    )
+    try:
+        assert cache.enabled
+        coordinator.select_run(0)
+        coordinator.set_visible_range(0, 1)
+        coordinator.start()
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            coordinator.poll()
+            snapshot = coordinator.snapshot()
+            if snapshot.pending_count == 0 and not coordinator.active:
+                break
+            time.sleep(0.005)
+        else:
+            raise AssertionError("installed Stage 5B backend did not drain")
+    finally:
+        coordinator.close(timeout=20.0)
+    assert [publication.key.kind for publication in publications] == list(
+        TrustedWorkKind
+    )
+    assert all(
+        publication.result["status"] in {"ok", "unsupported"}
+        for publication in publications
+    )
+    assert all(
+        dict(publication.result["source"])["result_watermark"] == 2
+        for publication in publications
+    )
+    assert tuple(cache.root.glob("*.qdc"))
+    assert not any(
+        thread.name.startswith("qplot-trusted-derived")
+        for thread in threading.enumerate()
+    )
+
+
 def exercise_spawned_supervisor():
     with tempfile.TemporaryDirectory(prefix="qplot-wheel-smoke-") as temporary:
         # macOS may spell the temporary root through the /var -> /private/var
         # system symlink. Exercise the reader with the canonical local path.
-        database_path = Path(temporary).resolve() / "trusted-live.db"
-        switch_database_path = Path(temporary).resolve() / "trusted-live-switch.db"
+        database_directory = Path(temporary).resolve() / "database"
+        database_directory.mkdir()
+        database_path = database_directory / "trusted-live.db"
+        switch_database_path = database_directory / "trusted-live-switch.db"
         writer = subprocess.Popen(
             [
                 sys.executable,
@@ -2065,6 +2133,33 @@ def exercise_spawned_supervisor():
                     assert initial_fields["guid"].endswith("000000000001")
                     assert initial_fields["measure_parameters"] == []
                     assert initial_fields["sweep_parameters"] == []
+                    application_home = Path(temporary) / "application-home"
+                    application_cache = application_home / "cache"
+                    application_home.mkdir()
+                    application_cache.mkdir()
+                    cache_environment = {
+                        "HOME": str(application_home),
+                        "USERPROFILE": str(application_home),
+                        "LOCALAPPDATA": str(application_cache),
+                        "XDG_CACHE_HOME": str(application_cache),
+                    }
+                    prior_cache_environment = {
+                        name: os.environ.get(name) for name in cache_environment
+                    }
+                    os.environ.update(cache_environment)
+                    try:
+                        exercise_stage5b_backend(
+                            service,
+                            initial_page.runs[0],
+                            bootstrap,
+                            database_directory,
+                        )
+                    finally:
+                        for name, prior_value in prior_cache_environment.items():
+                            if prior_value is None:
+                                os.environ.pop(name, None)
+                            else:
+                                os.environ[name] = prior_value
                     cheap = service.submit_cheap_run(1).wait(20.0)
                     assert cheap.run_id == 1
                     cheap_fields = cheap.as_dict()

@@ -221,6 +221,52 @@ selection action, not the whole fallback session: fallback metadata and retained
 preview paths can still create private snapshots. Only explicit plot and CSV
 actions materialise a DataSet.
 
+Stage 5A's `trusted_work_scheduler.py` owns the exact derived priority key
+`(run tier, work kind, stable run index)` without materialising one task per
+run. Stage 5B's `trusted_work_coordinator.py` adds one controlled worker and a
+one-result owner-thread marshalling boundary. It permits only one claim in
+flight, performs cache and rendering work off the owner thread, rejects stale
+exact claim identities before any callback or mutation, supports append-only
+reconciliation and database/format/helper boundaries, and coalesces changes to
+an active run until all work for its captured prefix can publish. One absolute
+deadline covers cache lookup, broker work, rendering, validation, cache write,
+and eviction. Recoverable broker pressure is retried with capped backoff;
+cancelled and stale outcomes are silent. Stage 5C can connect the coordinator
+wakeup to a queued Qt signal without changing scheduler ownership.
+
+`trusted_live_queries.py` and `trusted_live_service.py` expose the corresponding
+fixed derived-source operation through the existing persistent broker and
+helper. One repeatable-read batch captures the run GUID/table identity, current
+schema, indexed `MAX(id)` watermark, guarded run-description facts, and at most
+15 primary-key windows of 256 rows plus the 256-row captured tail. Samples have
+at most 33 columns (the `id` plus 32 source columns), 4,096 retained rows, and
+135,168 cells. Every window uses `id` keysets and the captured prefix; there is
+no OFFSET, complete result-table scan, or large-result COUNT/DISTINCT/GROUP BY
+plan.
+
+`trusted_derived_rendering.py` converts that immutable primitive observation to
+versioned metadata or deterministic PNG bytes without Qt, Matplotlib, QCoDeS
+DataSets, pickle, cursors, or database handles. It caps dependents/images at 8,
+each dimension at 2,048 pixels, decoded image bytes at 16 MiB, encoded image
+bytes at 8 MiB, and the retained payload at 16 MiB. Payload schema, graph,
+text, binary, and image fields are validated before retention. Unsupported,
+empty, malformed, non-finite/extreme numeric, or higher-dimensional sources
+become bounded descriptions.
+
+`trusted_derived_cache.py` stores only canonical, type-tagged keyed entries
+under the absolute platform application-cache root returned by
+`trusted_derived_cache_root()`. SHA-256 filenames and an internal version,
+complete key, length, and payload checksum are verified before decoding. The
+cache uses same-directory exclusive temporary files and atomic replacement;
+faults are misses or uncached results. Defaults cap an entry at 16 MiB, the
+cache at 256 MiB and 2,048 entries. An initial inventory above the 4,096-file
+recovery window is not accepted as healthy: qPlot-owned remnants are purged
+under the job deadline before insertion. Later insertions use an in-memory
+index and heap instead of rescanning. POSIX roots and files are normalised to
+0700 and 0600. A cache root inside, containing, or equal to the selected
+database directory is disabled. Restart-unique service namespaces deliberately
+prevent unproved cross-session hits.
+
 `src/qplot/datahandling/readonly.py` centralises the retained snapshot path.
 Use these helpers for explicitly deferred QCoDeS/dataset consumers and the
 narrow snapshot fallback so qPlot does not initialise, upgrade, or write to a
@@ -465,9 +511,10 @@ Trusted live load, automatic default selection, scrolling, and metadata
 completion do not start snapshot-backed preview or thumbnail workers. Explicit
 plot and CSV actions remain action-owned snapshot consumers addressed by the
 selected GUID and exact `DatabaseInstance`. Snapshot fallback sessions may keep
-their existing preview behavior. Integrating previews and thumbnails with a
-dedicated scheduler and disk-backed derived-data cache is the deliberate Stage
-5 boundary and is not part of Stage 4.
+their existing preview behavior. Stage 5B implements the derived scheduler,
+bounded extraction/rendering, and disk cache as a non-UI backend only. Stage 5C
+must still connect versioned payloads to the run list and preview tab; until
+then the Stage 4 trusted placeholders remain the active UI path.
 
 The WAL-provenance discussion below describes the retained snapshot path used
 by fallback and explicitly deferred consumers, not the trusted reader's native

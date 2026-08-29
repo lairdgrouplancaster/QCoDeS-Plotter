@@ -495,6 +495,42 @@ class TrustedWorkScheduler:
         self._transition(work, TrustedWorkState.RUNNING, TrustedWorkState.PENDING)
         return CompletionDisposition.ACCEPTED
 
+    def is_current_claim(self, work: ScheduledWork) -> bool:
+        """Prove an exact claim token still owns its complete scheduler identity."""
+
+        self._require_owner()
+        return self._running.get(work.claim_id) is work and self._is_current(work)
+
+    def refine_claim_source_revision(
+        self,
+        work: ScheduledWork,
+        source_revision: TrustedSourceRevision,
+    ) -> CompletionDisposition:
+        """Atomically adopt an authoritative revision from one current claim.
+
+        No state is changed until the exact claim token, generation, database,
+        stable run slot/GUID, kind, prior source identity, and render format are
+        all proven current.  The refining claim is retired without publication;
+        its exact-key payload may then be reused by the owner for the replacement
+        claim.
+        """
+
+        self._require_owner()
+        if not isinstance(source_revision, TrustedSourceRevision):
+            raise TypeError("source_revision must be a TrustedSourceRevision.")
+        if not self.is_current_claim(work):
+            return CompletionDisposition.STALE
+        if work.key.source_revision == source_revision:
+            return CompletionDisposition.ACCEPTED
+        self._running.pop(work.claim_id)
+        self._running_slots.remove((work.run_index, work.key.kind))
+        self._revision_overrides[work.run_index] = source_revision
+        self._completed_count -= self._completion_masks[work.run_index].bit_count()
+        self._completion_masks[work.run_index] = 0
+        self._reset_cursors()
+        self._transition(work, TrustedWorkState.RUNNING, TrustedWorkState.CANCELLED)
+        return CompletionDisposition.ACCEPTED
+
     def update_source_revision(
         self,
         run_index: int,

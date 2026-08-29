@@ -36,11 +36,13 @@ from qplot.datahandling.trusted_live import (
 )
 from qplot.datahandling.trusted_live_queries import (
     TrustedBootstrapResult,
+    TrustedDerivedSourceObservation,
     TrustedMetadataQueryAdapter,
     TrustedRefreshResult,
     TrustedRunPage,
     TrustedRunRecord,
     TrustedSelectedRunDetail,
+    TrustedSourceRevisionNamespace,
 )
 from qplot.datahandling.trusted_live_supervisor import (
     TrustedLiveJob,
@@ -67,6 +69,7 @@ class TrustedReadOperation(StrEnum):
     CHEAP_RUN = "cheap-run"
     EXPENSIVE_RUN = "expensive-run"
     SELECTED_RUN = "selected-run"
+    DERIVED_SOURCE = "derived-source"
 
 
 class TrustedReadPriority(IntEnum):
@@ -382,6 +385,7 @@ class TrustedLiveReadService:
         self._closing_supervisor: TrustedLiveReaderSupervisor | None = None
         self._retained_supervisors: list[TrustedLiveReaderSupervisor] = []
         self._adapter: TrustedMetadataQueryAdapter | None = None
+        self._source_revision_namespace = TrustedSourceRevisionNamespace.create()
         self._accepted_database_instance: DatabaseInstance | None = None
 
         self._condition = threading.Condition(threading.RLock())
@@ -427,6 +431,12 @@ class TrustedLiveReadService:
     @property
     def session_generation(self) -> int:
         return self._session_generation
+
+    @property
+    def source_revision_namespace(self) -> TrustedSourceRevisionNamespace:
+        """Restart-unique identity used by all derived observations in this service."""
+
+        return self._source_revision_namespace
 
     @property
     def mode(self) -> str:
@@ -607,6 +617,25 @@ class TrustedLiveReadService:
             TrustedReadRequest[TrustedSelectedRunDetail],
             self._submit(
                 TrustedReadOperation.SELECTED_RUN,
+                (self._validated_run_id(run_id),),
+                priority,
+                deadline,
+            ),
+        )
+
+    def submit_derived_source(
+        self,
+        run_id: int,
+        *,
+        priority: int | TrustedReadPriority = TrustedReadPriority.REMAINING_EXPENSIVE,
+        deadline: float | None = None,
+    ) -> TrustedReadRequest[TrustedDerivedSourceObservation]:
+        """Capture one bounded immutable prefix through the persistent broker."""
+
+        return cast(
+            TrustedReadRequest[TrustedDerivedSourceObservation],
+            self._submit(
+                TrustedReadOperation.DERIVED_SOURCE,
                 (self._validated_run_id(run_id),),
                 priority,
                 deadline,
@@ -1179,6 +1208,12 @@ class TrustedLiveReadService:
             return adapter.expensive_run(run_id)
         if operation.kind is TrustedReadOperation.SELECTED_RUN:
             return adapter.selected_run_detail(run_id)
+        if operation.kind is TrustedReadOperation.DERIVED_SOURCE:
+            return adapter.derived_source_observation(
+                run_id,
+                database_instance=self.database_instance,
+                namespace=self._source_revision_namespace,
+            )
         raise TrustedReadServiceError(
             f"Unsupported trusted broker operation {operation.kind!r}."
         )
