@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from itertools import islice
 from typing import Any, Protocol, TypeAlias, cast
 
+from qplot.datahandling.file_identity import DatabaseInstance
 from qplot.datahandling.readSQL import (
     materialize_run_basic_fields,
     materialize_run_observation,
@@ -75,6 +76,17 @@ _TRUSTED_SINGLE_RUN_MAX_PUBLIC_RAW_BYTES = TRUSTED_LIVE_MAX_SCALAR_BYTES
 _TRUSTED_LAYOUT_TEXT_MAX_BYTES = 512
 _TRUSTED_LAYOUT_MAX_ROWS = 4_096
 _TRUSTED_RESULT_SCHEMA_SQL_MAX_BYTES = 64 * 1024
+TRUSTED_DERIVED_MAX_SOURCE_COLUMNS = 32
+TRUSTED_DERIVED_MAX_DEPENDENTS = 8
+TRUSTED_DERIVED_SAMPLE_WINDOWS = 15
+TRUSTED_DERIVED_ROWS_PER_WINDOW = 256
+TRUSTED_DERIVED_MAX_SAMPLE_ROWS = (
+    TRUSTED_DERIVED_SAMPLE_WINDOWS + 1
+) * TRUSTED_DERIVED_ROWS_PER_WINDOW
+TRUSTED_DERIVED_MAX_SAMPLE_CELLS = TRUSTED_DERIVED_MAX_SAMPLE_ROWS * (
+    TRUSTED_DERIVED_MAX_SOURCE_COLUMNS + 1
+)
+TRUSTED_DERIVED_RUN_TEXT_MAX_BYTES = 256 * 1024
 _QCODES_RESULT_ID_SCHEMA = re.compile(
     r'(?:\(|,)\s*(?:"id"|`id`|\[id\]|id)\s+INTEGER\s+PRIMARY\s+KEY'
     r"(?:\s+AUTOINCREMENT)?\s*(?:,|\))",
@@ -340,6 +352,90 @@ class TrustedSelectedRunDetail:
     setpoint_summaries: tuple[TrustedSetpointSummary, ...]
     presentation: TrustedSelectedRunPresentation
     unavailable_fields: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedDerivedSourceObservation:
+    """One bounded, immutable QCoDeS result-prefix observation.
+
+    ``sample_rows`` always begins with the integer result ``id``.  The schema,
+    run identity, result watermark, and every sampled row are captured by one
+    repeatable-read ``query_batch`` transaction.  No cursor or database object
+    escapes the trusted helper.
+    """
+
+    format_version: int
+    database_instance: DatabaseInstance
+    run_id: int
+    run_guid: str
+    service_namespace: bytes
+    helper_incarnation: int
+    data_version: int
+    result_table_name: str
+    result_columns: tuple[str, ...]
+    result_schema_sha256: bytes
+    result_watermark: int
+    parameters: tuple[TrustedParameterView, ...]
+    dependent_parameters: tuple[str, ...]
+    planned_shape: tuple[int, ...] | None
+    sample_columns: tuple[str, ...]
+    sample_rows: tuple[tuple[PrimitiveScalar, ...], ...]
+    unsupported_reason: str | None = None
+    run_fields: FrozenFields = ()
+    setpoint_summaries: tuple[TrustedSetpointSummary, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.format_version != 1:
+            raise ValueError("Unsupported trusted derived observation version.")
+        if self.database_instance.identity is None:
+            raise ValueError("A derived observation requires an exact database.")
+        if type(self.run_id) is not int or self.run_id <= 0:
+            raise ValueError("A derived observation requires a positive run id.")
+        if not self.run_guid or not self.service_namespace:
+            raise ValueError("A derived observation requires source namespaces.")
+        if self.result_watermark < 0:
+            raise ValueError("A result watermark cannot be negative.")
+        if len(self.sample_columns) > TRUSTED_DERIVED_MAX_SOURCE_COLUMNS + 1:
+            raise ValueError("A derived observation contains too many columns.")
+        if len(self.sample_rows) > TRUSTED_DERIVED_MAX_SAMPLE_ROWS:
+            raise ValueError("A derived observation contains too many rows.")
+        if sum(len(row) for row in self.sample_rows) > TRUSTED_DERIVED_MAX_SAMPLE_CELLS:
+            raise ValueError("A derived observation contains too many cells.")
+
+
+def trusted_derived_source_revision(
+    observation: TrustedDerivedSourceObservation,
+) -> TrustedSourceRevision:
+    """Fingerprint exactly the immutable source prefix carried by an observation."""
+
+    if not isinstance(observation, TrustedDerivedSourceObservation):
+        raise TypeError("observation must be TrustedDerivedSourceObservation.")
+    payload = repr(
+        (
+            "qplot-trusted-derived-source-v1",
+            observation.database_instance.logical_path,
+            observation.database_instance.resolved_path,
+            observation.database_instance.identity,
+            observation.run_id,
+            observation.run_guid,
+            observation.service_namespace,
+            observation.helper_incarnation,
+            observation.data_version,
+            observation.result_table_name,
+            observation.result_columns,
+            observation.result_schema_sha256,
+            observation.result_watermark,
+            observation.parameters,
+            observation.dependent_parameters,
+            observation.planned_shape,
+            observation.sample_columns,
+            observation.sample_rows,
+            observation.setpoint_summaries,
+            observation.unsupported_reason,
+            observation.run_fields,
+        )
+    ).encode("utf-8", errors="surrogatepass")
+    return TrustedSourceRevision(hashlib.sha256(payload).digest())
 
 
 def bounded_parameter_presentation(
@@ -1087,6 +1183,283 @@ class TrustedMetadataQueryAdapter:
             run_id,
             observed,
             self._unavailable_run_fields.get(run_id, ()),
+        )
+
+    def derived_source_observation(
+        self,
+        run_id: int,
+        *,
+        database_instance: DatabaseInstance,
+        namespace: TrustedSourceRevisionNamespace,
+    ) -> TrustedDerivedSourceObservation:
+        """Capture one renderable, bounded result prefix in a short transaction.
+
+        The adapter cache is used only to choose a conservative set of columns
+        and indexed window starts.  The authoritative run identity, schema,
+        watermark, run-description facts, and samples are all re-read in one
+        repeatable-read batch.  Every sampling statement is a primary-key
+        keyset window; database size does not alter its row or cell budget.
+        """
+
+        if not isinstance(database_instance, DatabaseInstance):
+            raise TypeError("database_instance must be a DatabaseInstance.")
+        if database_instance.identity is None:
+            raise ValueError("Derived extraction requires an exact database instance.")
+        if not isinstance(namespace, TrustedSourceRevisionNamespace):
+            raise TypeError("namespace must be TrustedSourceRevisionNamespace.")
+
+        # Stage 5B metadata is a self-contained observation, not a consumer of
+        # a separately scheduled Stage 4 enrichment. Refresh mutable run-table
+        # fields first, then reuse the existing bounded expensive plan for
+        # dimensions, setpoint summaries, count and storage observations.
+        self.cheap_run(run_id)
+        self.expensive_run(run_id)
+        cached = dict(self._require_cached_run(run_id))
+        table_name = self._result_table_name(cached)
+        result_columns = self._ensure_result_columns(table_name)
+        source_columns = tuple(name for name in result_columns if name != "id")
+        retained_columns = source_columns[:TRUSTED_DERIVED_MAX_SOURCE_COLUMNS]
+        table = quote_sqlite_identifier(table_name)
+
+        numeric_expressions = tuple(
+            "CASE WHEN typeof({column}) IN ('integer', 'real') "
+            "THEN {column} ELSE NULL END AS {column}".format(
+                column=quote_sqlite_identifier(name)
+            )
+            for name in retained_columns
+        )
+        selected = ", ".join(('"id"', *numeric_expressions))
+        maximum_expression = f'(SELECT COALESCE(MAX("id"), 0) FROM {table})'
+        sample_queries = [
+            TrustedQuery(
+                f"SELECT {selected} FROM {table} "
+                f'WHERE "id" > MAX(0, (({maximum_expression} * ?) / '
+                f"{TRUSTED_DERIVED_SAMPLE_WINDOWS}) - 1) "
+                f'AND "id" <= {maximum_expression} '
+                f'ORDER BY "id" LIMIT {TRUSTED_DERIVED_ROWS_PER_WINDOW}',
+                (index,),
+            )
+            for index in range(TRUSTED_DERIVED_SAMPLE_WINDOWS)
+        ]
+        # Always retain the newest captured edge, even when the cached count
+        # was stale before this transaction began.
+        sample_queries.append(
+            TrustedQuery(
+                f"SELECT {selected} FROM {table} "
+                f'WHERE "id" <= {maximum_expression} ORDER BY "id" DESC '
+                f"LIMIT {TRUSTED_DERIVED_ROWS_PER_WINDOW}"
+            )
+        )
+
+        incarnation = self._executor.incarnation
+        data_version = self._executor.data_version()
+        identity_sql = (
+            'SELECT "run_id", '
+            f'CASE WHEN octet_length("guid") <= {_TRUSTED_BASIC_TEXT_MAX_BYTES} '
+            'THEN "guid" ELSE NULL END AS "guid", '
+            f'CASE WHEN octet_length("result_table_name") '
+            f'<= {_TRUSTED_BASIC_TEXT_MAX_BYTES} THEN "result_table_name" '
+            'ELSE NULL END AS "result_table_name", '
+            f'CASE WHEN octet_length("parameters") '
+            f'<= {TRUSTED_DERIVED_RUN_TEXT_MAX_BYTES} THEN "parameters" '
+            'ELSE NULL END AS "parameters", '
+            f'CASE WHEN octet_length("run_description") '
+            f'<= {TRUSTED_DERIVED_RUN_TEXT_MAX_BYTES} THEN "run_description" '
+            'ELSE NULL END AS "run_description" '
+            'FROM "runs" WHERE "run_id" = ?'
+        )
+        schema_sql = (
+            "SELECT CASE WHEN octet_length(sql) <= ? THEN sql ELSE NULL END AS sql, "
+            "octet_length(sql) AS sql_bytes FROM sqlite_schema "
+            "WHERE type = 'table' AND name = ?"
+        )
+        results = self._executor.query_batch(
+            (
+                TrustedQuery(identity_sql, (run_id,)),
+                TrustedQuery(f"SELECT * FROM {table} WHERE 0"),
+                TrustedQuery(
+                    schema_sql,
+                    (_TRUSTED_RESULT_SCHEMA_SQL_MAX_BYTES, table_name),
+                ),
+                TrustedQuery(
+                    f'SELECT COALESCE(MAX("id"), 0) AS result_watermark FROM {table}'
+                ),
+                *sample_queries,
+            )
+        )
+        if self._executor.incarnation != incarnation:
+            raise TrustedMetadataQueryError(
+                "The trusted helper incarnation changed during derived extraction."
+            )
+
+        identity = _one_row_mapping(results[0])
+        if identity is None:
+            raise TrustedMetadataQueryError(
+                f"Run {run_id} disappeared during derived extraction."
+            )
+        guid = identity.get("guid")
+        observed_table = identity.get("result_table_name")
+        if not isinstance(guid, str) or not guid:
+            raise TrustedMetadataQueryError("The run GUID is unavailable or oversized.")
+        if observed_table != table_name:
+            raise TrustedMetadataQueryError(
+                "The run result-table identity changed during derived extraction."
+            )
+
+        observed_columns = tuple(results[1].columns)
+        schema_result = results[2]
+        if len(schema_result.rows) != 1 or len(schema_result.rows[0]) != 2:
+            raise TrustedMetadataQueryError("The result-table schema disappeared.")
+        raw_schema, raw_schema_bytes = schema_result.rows[0]
+        if (
+            not isinstance(raw_schema, str)
+            or type(raw_schema_bytes) is not int
+            or raw_schema_bytes < 0
+            or raw_schema_bytes > _TRUSTED_RESULT_SCHEMA_SQL_MAX_BYTES
+            or observed_columns != result_columns
+            or "id" not in observed_columns
+            or _QCODES_RESULT_ID_SCHEMA.search(raw_schema) is None
+        ):
+            raise TrustedUnsupportedQcodesSchemaError(
+                "The result-table schema changed or exceeds derived-work bounds."
+            )
+        watermark = _single_integer(results[3], "derived result watermark")
+
+        rows_by_id: dict[int, tuple[PrimitiveScalar, ...]] = {}
+        expected_columns = ("id", *retained_columns)
+        for result in results[4:]:
+            if tuple(result.columns) != expected_columns:
+                raise TrustedMetadataQueryError(
+                    "A derived sample window returned unexpected columns."
+                )
+            for row in result.rows:
+                if len(row) != len(expected_columns):
+                    raise TrustedMetadataQueryError(
+                        "A derived sample row has an invalid cell count."
+                    )
+                row_id = row[0]
+                if type(row_id) is not int or not 0 < row_id <= watermark:
+                    raise TrustedMetadataQueryError(
+                        "A derived sample escaped its captured result prefix."
+                    )
+                if any(
+                    value is not None
+                    and not isinstance(value, (bool, int, float, str, bytes))
+                    for value in row
+                ):
+                    raise TrustedMetadataQueryError(
+                        "A derived sample contains a non-primitive scalar."
+                    )
+                rows_by_id[row_id] = cast(tuple[PrimitiveScalar, ...], tuple(row))
+        sample_rows = tuple(rows_by_id[key] for key in sorted(rows_by_id))[
+            :TRUSTED_DERIVED_MAX_SAMPLE_ROWS
+        ]
+
+        # Every executor transaction above is a cooperative broker yield
+        # boundary. A higher-priority operation may therefore have published a
+        # newer or more complete adapter entry while this extraction was
+        # sampling. Merge the captured prefix onto that latest entry; never
+        # restore the method-entry snapshot and erase completion/dimension
+        # facts or unavailable-field provenance.
+        latest_metadata = self._require_cached_run(run_id)
+        if (
+            latest_metadata.get("guid") != guid
+            or latest_metadata.get("result_table_name") != table_name
+        ):
+            raise TrustedMetadataQueryError(
+                "The accepted run identity changed during derived extraction."
+            )
+        raw_metadata = {
+            **latest_metadata,
+            "run_id": run_id,
+            "guid": guid,
+            "result_table_name": table_name,
+            "parameters": identity.get("parameters"),
+            "run_description": identity.get("run_description"),
+        }
+        materialized = materialize_run_basic_fields(raw_metadata)
+        # The captured raw description supplies fields that were unavailable
+        # from the bounded adapter cache, but a cooperatively scheduled
+        # operation may already have published newer public facts.  Those
+        # facts (notably observed/planned dimensions and completion) win over
+        # a rematerialization of this extraction's older description.
+        materialized.update(latest_metadata)
+        run_description = _json_object(identity.get("run_description"))
+        measure_parameters = tuple(materialized.get("measure_parameters") or ())
+        sweep_parameters = tuple(materialized.get("sweep_parameters") or ())
+        dependency_sets = self._dependency_sets(
+            run_description,
+            measure_parameters,
+            sweep_parameters,
+            observed_columns,
+        )
+        dependent_parameters = tuple(
+            dependent
+            for _setpoints, dependent in dependency_sets
+            if dependent is not None
+        )[:TRUSTED_DERIVED_MAX_DEPENDENTS]
+        parameter_views, _parameter_truncated = self._parameter_views_bounded(
+            materialized,
+            TrustedQueryResult((), ()),
+        )
+        bounded_parameters, _presentation_truncated = bounded_parameter_presentation(
+            parameter_views
+        )
+        raw_shape = materialized.get("point_shape") or materialized.get(
+            "setpoint_shape"
+        )
+        planned_shape = (
+            tuple(value for value in raw_shape if type(value) is int and value > 0)
+            if isinstance(raw_shape, (list, tuple))
+            else None
+        )
+        unsupported_reason = None
+        if len(source_columns) > TRUSTED_DERIVED_MAX_SOURCE_COLUMNS:
+            unsupported_reason = (
+                "The result has more source columns than the bounded renderer supports."
+            )
+        elif len(sweep_parameters) > 2:
+            unsupported_reason = (
+                "Results with more than two sweep dimensions are unsupported."
+            )
+
+        storage_bytes = self._estimated_result_storage_bytes(
+            watermark,
+            observed_columns,
+            run_description,
+        )
+        observed_run = materialize_run_observation(
+            materialized,
+            result_count=watermark,
+            storage_bytes=storage_bytes,
+            storage_bytes_estimated=True,
+        )
+        for name, value in latest_metadata.items():
+            if name not in {"result_count", "storage_bytes", "storage_bytes_estimated"}:
+                observed_run[name] = value
+        bounded_run = _bounded_public_run_fields(observed_run)
+        self._runs[run_id] = bounded_run
+
+        return TrustedDerivedSourceObservation(
+            format_version=1,
+            database_instance=database_instance,
+            run_id=run_id,
+            run_guid=guid,
+            service_namespace=namespace.nonce,
+            helper_incarnation=incarnation,
+            data_version=data_version,
+            result_table_name=table_name,
+            result_columns=observed_columns,
+            result_schema_sha256=hashlib.sha256(raw_schema.encode("utf-8")).digest(),
+            result_watermark=watermark,
+            parameters=bounded_parameters,
+            dependent_parameters=dependent_parameters,
+            planned_shape=planned_shape,
+            sample_columns=expected_columns,
+            sample_rows=sample_rows,
+            setpoint_summaries=self._setpoint_summaries.get(run_id, ()),
+            unsupported_reason=unsupported_reason,
+            run_fields=_freeze_fields(bounded_run),
         )
 
     def selected_run_detail(self, run_id: int) -> TrustedSelectedRunDetail:

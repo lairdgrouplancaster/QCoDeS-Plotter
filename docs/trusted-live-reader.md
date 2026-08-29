@@ -14,12 +14,14 @@ the broker's one persistent supervisor and helper. The broker serialises finite
 jobs and keeps every blocking wait, cancellation, close, and process join away
 from the GUI thread.
 
-The integration remains deliberately narrower than the complete application.
-Explicit plot and CSV actions still acquire action-owned private snapshots.
-Automatic preview and thumbnail work is disabled for trusted live sessions;
-their broker scheduler and disk-backed cache remain Stage 5 work. A narrowly
-eligible snapshot fallback session may retain the existing snapshot preview
-behavior.
+Stage 5B adds a non-UI derived-work backend around the Stage 5A scheduler. It
+uses the same broker/helper to capture bounded immutable result prefixes,
+produces primitive metadata and deterministic PNG payloads, and performs
+verified disk-cache I/O on its sole worker. Automatic preview and thumbnail
+display is still disabled for trusted live sessions: connecting those payloads
+to Qt is Stage 5C. Explicit plot and CSV actions still acquire action-owned
+private snapshots, and a narrowly eligible snapshot fallback session may retain
+the existing snapshot preview behavior.
 
 ## Source-file boundary
 
@@ -517,14 +519,38 @@ signalling a potentially stale PID.
 caller's process and returns caller-owned Qt objects. It does not acquire this
 launcher containment or process hard-deadline guarantee.
 
-### Stage 5 boundary
+### Stage 5B backend and Stage 5C boundary
 
 Trusted live loading, automatic default selection, scrolling, and metadata
 completion do not launch legacy snapshot-backed preview or thumbnail workers.
-Snapshot fallback sessions may retain their current preview behavior. Stage 4
-does not add preview or thumbnail work categories to the broker and does not
-create a disk-backed derived-data cache. Integrating those paths, scheduling
-their rendering, and adding that cache are the precise Stage 5 work left undone.
+Snapshot fallback sessions retain their current preview behavior. Stage 5B now
+provides the Qt-independent coordinator, persistent-broker extraction operation,
+bounded 1D/2D renderer, and disk-backed cache described below, but MainWindow,
+RunList, and PreviewTab do not instantiate or consume them yet. Their Stage 4
+`set_database_runs("", {})`, `show_run_preview_placeholders()`, and
+`show_trusted_live_placeholder()` paths remain active until Stage 5C.
+
+The derived extraction does not require an expensive-run request first. It
+uses the bounded basic run entry to locate the result table, validates its
+current schema, and captures GUID/table identity, an authoritative indexed
+`MAX(id)` watermark, guarded run-description facts, and 15 keyset windows plus
+the newest 256-row edge in one repeatable-read batch. Sampling retains at most
+4,096 rows, 33 columns, and 135,168 cells, with no OFFSET or full-result
+COUNT/DISTINCT/GROUP BY aggregate. Ordinary appends cannot invalidate the
+captured prefix because all sample ids are at or below that transaction's
+watermark. Repeated active-run invalidations are coalesced, including source
+changes observed during final rendering and terminal failures.
+
+Payloads contain only bounded primitive structures and deterministic PNG bytes.
+One immutable absolute job deadline and cancellation check spans lookup,
+broker acquisition, rasterisation, encoding, payload validation, cache writing,
+and eviction. The qPlot-owned cache uses cryptographic filenames, canonical
+type tags, bounded JSON preflight/materialisation, complete-key verification,
+declared lengths, SHA-256 payload checks, same-directory 0600 temporary files,
+and atomic replacement beneath a 0700 application-cache directory. Read,
+corruption, permission, and capacity failures are misses; unsafe roots at or
+above/below the selected database directory disable disk caching and retain
+memory-only operation.
 
 ## Finite operations and errors
 

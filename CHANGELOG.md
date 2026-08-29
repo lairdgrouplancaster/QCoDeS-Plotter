@@ -40,11 +40,17 @@ installation commands and release validation, see `docs/distribution.md`.
   detail remains deferred. Fallback metadata and retained preview paths can
   still create private snapshots. DataSets remain exclusive to explicit plot
   and CSV actions.
-- Defer preview and thumbnail integration deliberately: trusted live loading,
-  selection, scrolling, and metadata completion do not launch automatic
-  snapshot-backed previews. Explicit plot and CSV actions remain action-owned
-  snapshot consumers. The preview/thumbnail scheduler and disk-backed cache
-  remain Stage 5 work.
+- Add the Stage 5B trusted derived-work backend. A Qt-independent single-claim
+  coordinator executes the Stage 5A selected/visible/remaining schedule,
+  captures immutable result prefixes through the persistent trusted helper,
+  renders bounded deterministic metadata and PNG payloads, and uses a verified,
+  atomic, size-bounded application cache. Active appends are coalesced so a
+  captured prefix can publish before its newer revision is scheduled.
+- Keep Stage 5B disconnected from the Qt presentation layer. Trusted live
+  loading, selection, scrolling, and metadata completion still show the Stage 4
+  preview and thumbnail placeholders; explicit plot and CSV actions remain
+  action-owned snapshot consumers. Stage 5C will decode and route the backend
+  payloads to those widgets.
 - Build the native boundary in explicit C11 mode with MSVC and exercise installed
   reader wheels separately on ARM64 macOS, Intel macOS, Linux, and unprivileged
   Windows CI hosts before cross-platform acceptance.
