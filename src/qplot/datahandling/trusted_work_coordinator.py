@@ -177,6 +177,19 @@ class _RetryWakeupNotifier:
         with self._lock:
             if serial != self._serial or self._timer is None:
                 return
+            assert self._deadline is not None
+            remaining = self._deadline - time.monotonic()
+            if remaining > 0.0:
+                # Some Windows timer implementations can wake slightly before
+                # their requested monotonic deadline.  A one-shot early
+                # notification would be consumed while the coordinator still
+                # refuses to pump, stranding pending retry work.  Retain the
+                # same opaque serial and re-arm for the exact remainder.
+                timer = threading.Timer(remaining, self._fire, args=(serial,))
+                timer.daemon = True
+                self._timer = timer
+                timer.start()
+                return
             self._timer = None
             self._deadline = None
             # Invoke while holding the notifier-only lock so cancel() cannot

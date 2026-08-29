@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtTest, QtWidgets
 from qcodes.dataset import (
     Measurement,
     initialise_or_create_database_at,
@@ -41,7 +41,7 @@ def _process_until(predicate, timeout: float = 30.0) -> None:
         QtWidgets.QApplication.processEvents()
         if predicate():
             return
-        time.sleep(0.005)
+        QtTest.QTest.qWait(5)
     raise AssertionError("Stage 5C real-WAL UI condition was not reached")
 
 
