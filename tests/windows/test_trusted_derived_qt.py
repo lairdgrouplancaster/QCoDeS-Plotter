@@ -370,7 +370,6 @@ class _Window(QtWidgets.QWidget):
         self._shutdown_started = False
         self._shutdown_ready = False
         self.reloads: list[str] = []
-        self.binding_starts: list[tuple[int, str]] = []
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.RunList)
         self.resize(500, 220)
@@ -378,13 +377,6 @@ class _Window(QtWidgets.QWidget):
 
     def _reload_replaced_database(self, path: str) -> None:
         self.reloads.append(path)
-
-    def _start_trusted_derived_bridge(
-        self,
-        generation: int,
-        database_path: str,
-    ) -> None:
-        self.binding_starts.append((generation, database_path))
 
 
 @pytest.fixture(autouse=True)
@@ -518,13 +510,13 @@ def test_fast_baseline_commits_before_bridge_start_and_legacy_enrichment() -> No
     new_service = _LifecycleService(second, accepted=False)
     worker = _FakeLoadWorker(new_service)
     harness = _LifecycleHarness(first, old_service)
+    callbacks = []
 
     class DeferredBridge:
         def __init__(self) -> None:
             self.suspended = 0
             self.cleared = 0
             self.bindings = []
-            self.pending_bindings = []
 
         def suspend_publications(self) -> None:
             self.suspended += 1
@@ -534,9 +526,6 @@ def test_fast_baseline_commits_before_bridge_start_and_legacy_enrichment() -> No
 
         def bind_database(self, instance, runs, service) -> None:
             self.bindings.append((instance, dict(runs), service))
-
-        def queue_database_binding(self, generation, database_path) -> None:
-            self.pending_bindings.append((generation, database_path))
 
     bridge = DeferredBridge()
     harness._trusted_derived_bridge = bridge
@@ -558,6 +547,11 @@ def test_fast_baseline_commits_before_bridge_start_and_legacy_enrichment() -> No
         patch.object(database_actions, "DatabaseLoadWorker", return_value=worker),
         patch.object(database_actions, "set_qcodes_database_location"),
         patch.object(database_actions, "log_event"),
+        patch.object(
+            database_actions.QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda _delay, callback: callbacks.append(callback),
+        ),
     ):
         assert harness.load_file(second.logical_path)
         generation = harness._database_load_generation
@@ -576,29 +570,11 @@ def test_fast_baseline_commits_before_bridge_start_and_legacy_enrichment() -> No
         assert bridge.bindings == []
         assert bridge.cleared == 1
         assert harness.detail_loads == []
-        assert bridge.pending_bindings == [(generation, second.logical_path)]
-        pending_generation, pending_path = bridge.pending_bindings.pop()
-        harness._start_trusted_derived_bridge(pending_generation, pending_path)
+        assert callbacks
+        callbacks[-1]()
 
     assert bridge.bindings == [(second, runs, new_service)]
     assert bridge.suspended == 1
-
-
-def test_database_binding_requests_are_queued_coalesced_and_revocable(
-    bound_bridge,
-) -> None:
-    window, bridge, _coordinator, _runs = bound_bridge
-
-    bridge.queue_database_binding(1, "superseded.db")
-    bridge.queue_database_binding(2, "current.db")
-    assert window.binding_starts == []
-    _process_until(lambda: bool(window.binding_starts))
-    assert window.binding_starts == [(2, "current.db")]
-
-    bridge.queue_database_binding(3, "revoked.db")
-    bridge.suspend_publications()
-    QtWidgets.QApplication.processEvents()
-    assert window.binding_starts == [(2, "current.db")]
 
 
 def test_worker_wakeups_are_coalesced_and_all_ui_mutation_is_on_gui_thread(

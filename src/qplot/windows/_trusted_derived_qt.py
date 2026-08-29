@@ -61,7 +61,6 @@ class TrustedDerivedQtBridge(QtCore.QObject):
     """Own one active coordinator and transactionally publish into MainWindow."""
 
     _queuedWakeup = QtCore.pyqtSignal()
-    _queuedDatabaseBinding = QtCore.pyqtSignal()
 
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
@@ -73,7 +72,6 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._accepting_publications = False
         self._shutting_down = False
         self._binding_serial = 0
-        self._pending_database_binding: tuple[int, str] | None = None
         self._database_instance: DatabaseInstance | None = None
         self._service: TrustedLiveReadService | None = None
         self._coordinator: TrustedWorkCoordinator | None = None
@@ -93,10 +91,6 @@ class TrustedDerivedQtBridge(QtCore.QObject):
 
         self._queuedWakeup.connect(  # type: ignore[call-arg]
             self._poll,
-            QtCore.Qt.ConnectionType.QueuedConnection,
-        )
-        self._queuedDatabaseBinding.connect(  # type: ignore[call-arg]
-            self._apply_queued_database_binding,
             QtCore.Qt.ConnectionType.QueuedConnection,
         )
         self._priority_timer = QtCore.QTimer(self)
@@ -152,34 +146,11 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         """Disarm queued work before a database publication transaction."""
 
         self._require_owner()
-        self._pending_database_binding = None
         self._priority_timer.stop()
         with self._wakeup_lock:
             self._accepting_wakeups = False
         self._accepting_publications = False
         self._binding_serial += 1
-
-    def queue_database_binding(self, generation: int, database_path: str) -> None:
-        """Queue one durable, coalesced post-commit database bind request."""
-
-        self._require_owner()
-        if self._shutting_down:
-            return
-        self._pending_database_binding = (int(generation), str(database_path))
-        self._queuedDatabaseBinding.emit()
-
-    @QtCore.pyqtSlot()
-    def _apply_queued_database_binding(self) -> None:
-        """Apply only the latest binding request after Qt regains control."""
-
-        self._require_owner()
-        pending = self._pending_database_binding
-        self._pending_database_binding = None
-        if pending is None or self._shutting_down:
-            return
-        starter = getattr(self._window, "_start_trusted_derived_bridge", None)
-        if callable(starter):
-            starter(*pending)
 
     def resume_publications(self) -> None:
         """Resume an unchanged committed binding after transaction rollback."""

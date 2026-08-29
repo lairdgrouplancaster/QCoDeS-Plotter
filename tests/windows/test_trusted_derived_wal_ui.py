@@ -17,6 +17,7 @@ from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
 
 from qplot.datahandling import trusted_work_coordinator as coordinator_module
+from qplot.datahandling.file_identity import logical_database_path
 from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
 from qplot.testdata import (
     RunSpecification,
@@ -326,7 +327,8 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
             _process_until(
                 lambda: (
                     bridge._database_instance is not None
-                    and bridge._database_instance.logical_path == str(second_path)
+                    and bridge._database_instance.logical_path
+                    == logical_database_path(second_path)
                 )
             )
             assert first_guid not in bridge._metadata_by_guid
