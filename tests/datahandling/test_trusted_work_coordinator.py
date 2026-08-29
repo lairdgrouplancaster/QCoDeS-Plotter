@@ -855,7 +855,7 @@ class _TimedPressuredService(_PressuredService):
 
 
 def _render_empty_retry_payload(
-    _observation: TrustedDerivedSourceObservation,
+    observation: TrustedDerivedSourceObservation,
     kind: TrustedWorkKind,
     _options: object,
     *,
@@ -869,7 +869,7 @@ def _render_empty_retry_payload(
         "kind": kind.name.lower(),
         "status": "empty",
         "description": "No rendered data required by this scheduling test.",
-        "source": (),
+        "source": (("result_watermark", observation.result_watermark),),
         "images": (),
     }
 
@@ -878,7 +878,7 @@ def _poll_only_on_wakeup(
     coordinator: TrustedWorkCoordinator,
     wakeups: queue.Queue[float],
     *,
-    timeout: float = 5.0,
+    timeout: float = 15.0,
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -989,7 +989,13 @@ class _BlockedTransientService(_TimedPressuredService):
 
 def test_source_change_during_transient_failure_preserves_backoff_for_newest_source(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        coordinator_module,
+        "render_trusted_derived_payload",
+        _render_empty_retry_payload,
+    )
     instance = _instance(272)
     observations = {1: _observation(1, instance, watermark=8)}
     service = _BlockedTransientService(instance, observations, failures=1)

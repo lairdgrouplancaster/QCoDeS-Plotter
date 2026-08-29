@@ -284,8 +284,15 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
 
             coordinator = bridge.coordinator
             assert coordinator is not None
+            _process_until(lambda: not window._database_refresh_active)
+            _process_until(
+                lambda: (
+                    not coordinator.active and coordinator.snapshot().pending_count == 0
+                )
+            )
             generation = coordinator.snapshot().generation
             supervisor = window._trusted_read_service._required_supervisor()
+            _process_until(lambda: not supervisor.resource_liveness().active_job)
             prior_incarnation = supervisor.incarnation
             prior_metadata = bridge._metadata_by_guid[first_guid]
             supervisor.restart()
@@ -294,6 +301,11 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
             assert coordinator.snapshot().generation > generation
             _process_until(
                 lambda: bridge._metadata_by_guid.get(first_guid) is not prior_metadata
+            )
+            _process_until(
+                lambda: (
+                    not coordinator.active and coordinator.snapshot().pending_count == 0
+                )
             )
 
             bridge.source_changed((latest_first_run[5].run_id,))
