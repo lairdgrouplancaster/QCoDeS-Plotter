@@ -711,6 +711,30 @@ def test_same_path_replacement_and_helper_restart_reject_obsolete_results(
     assert window.reloads == [original_path]
 
 
+def test_queued_replacement_reload_is_coalesced_when_another_consumer_wins(
+    bound_bridge,
+    tmp_path,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    current = _publication(
+        bridge,
+        coordinator,
+        "guid-1",
+        TrustedWorkKind.METADATA,
+    )
+    original_path = window._loaded_database_instance.logical_path
+    replacement = tmp_path / "replacement.db"
+    replacement.write_bytes(b"replacement-instance")
+    os.replace(replacement, original_path)
+
+    bridge._publish(current)
+    window._reload_replaced_database(original_path)
+    bridge.clear_database()
+    QtWidgets.QApplication.processEvents()
+
+    assert window.reloads == [original_path]
+
+
 def test_observed_helper_restart_invalidates_old_generation(bound_bridge) -> None:
     window, bridge, coordinator, _runs = bound_bridge
     bridge._publish(

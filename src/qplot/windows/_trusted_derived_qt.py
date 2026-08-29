@@ -420,6 +420,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._parameters_by_guid = {}
         self._summaries_by_guid = {}
         self._last_errors = {}
+        self._replacement_reload_queued = False
         if coordinator is not None:
             coordinator.close_async()
             self._retiring.append(coordinator)
@@ -734,13 +735,31 @@ class TrustedDerivedQtBridge(QtCore.QObject):
     def _queue_replacement_reload(self) -> None:
         if self._replacement_reload_queued or self._database_instance is None:
             return
+        expected_database = self._database_instance
         self._replacement_reload_queued = True
-        path = self._database_instance.logical_path
+        path = expected_database.logical_path
         self.suspend_publications()
         QtCore.QTimer.singleShot(
             0,
-            lambda: self._window._reload_replaced_database(path),
+            lambda: self._run_queued_replacement_reload(path, expected_database),
         )
+
+    def _run_queued_replacement_reload(
+        self,
+        path: str,
+        expected_database: DatabaseInstance,
+    ) -> None:
+        """Reload only while this bridge still owns the replacement claim."""
+
+        self._require_owner()
+        if (
+            not self._replacement_reload_queued
+            or self._shutting_down
+            or self._database_instance is not expected_database
+        ):
+            return
+        self._replacement_reload_queued = False
+        self._window._reload_replaced_database(path)
 
     def _record_error(
         self,
