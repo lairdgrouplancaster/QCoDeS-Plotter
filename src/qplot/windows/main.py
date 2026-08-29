@@ -51,6 +51,7 @@ from ._preferences import (
     create_preferences_action,
 )
 from ._run_controls import RunControlsMixin
+from ._trusted_derived_qt import TrustedDerivedQtBridge
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_QUIT_KEY,
@@ -547,6 +548,7 @@ class MainWindow(
         self.initMenu()
         self.initFile()
         self.initRunDisplay()
+        self._trusted_derived_bridge = TrustedDerivedQtBridge(self)
         self.initShortcuts()
         self.startupDatabaseTimer = QtCore.QTimer(self)
         self.startupDatabaseTimer.setSingleShot(True)
@@ -878,6 +880,9 @@ class MainWindow(
         if callable(stop_refresh_timer):
             stop_refresh_timer()
 
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            derived_bridge.shutdown()
         preview = getattr(getattr(self, "infoBox", None), "preview", None)
         if preview is not None:
             preview.shutdown()
@@ -1128,6 +1133,20 @@ class MainWindow(
         if preview_workers:
             active = True
             diagnostics.append(f"preview_workers={len(preview_workers)}")
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            try:
+                if derived_bridge.background_active():
+                    active = True
+                    diagnostic = derived_bridge.shutdown_diagnostic()
+                    if diagnostic:
+                        diagnostics.append(diagnostic)
+            except BaseException as error:
+                active = True
+                diagnostics.append(
+                    "trusted derived bridge liveness raised "
+                    f"{type(error).__name__}: {error}"
+                )
         self._shutdown_liveness_diagnostics = tuple(diagnostics)
         MainWindow._publish_shutdown_diagnostics(self)
         return active
@@ -1176,6 +1195,16 @@ class MainWindow(
             except BaseException as error:
                 escalation_diagnostics.append(
                     f"preview shutdown raised {type(error).__name__}: {error}"
+                )
+
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            try:
+                derived_bridge.escalate_cleanup()
+            except BaseException as error:
+                escalation_diagnostics.append(
+                    "trusted derived cleanup raised "
+                    f"{type(error).__name__}: {error}"
                 )
 
         services = set(getattr(self, "_retired_trusted_read_services", ()))
@@ -1506,6 +1535,9 @@ class MainWindow(
 
         if size_changed and hasattr(self, "infoBox"):
             self.infoBox.set_preview_size(self.preview_size)
+            derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+            if derived_bridge is not None:
+                derived_bridge.update_preview_size(self.preview_size)
             prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
             if callable(prioritize_previews):
                 prioritize_previews()

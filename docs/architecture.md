@@ -147,8 +147,9 @@ run-detail formatting helpers. Prefer adding display formatting there so it can
 be tested without constructing Qt widgets.
 
 `src/qplot/windows/_widgets/preview.py` creates and renders run preview
-thumbnails. It also handles preview selection, drag payloads, and background
-preview generation.
+thumbnails. It also handles preview selection and drag payloads. Trusted
+sessions receive decoded Stage 5C images from the bridge; retained compatibility
+paths may still use the bounded legacy preview queue.
 
 `src/qplot/windows/_widgets/operations.py` defines the operation panel widgets
 that collect user-selected data operations before refresh processing.
@@ -231,8 +232,28 @@ reconciliation and database/format/helper boundaries, and coalesces changes to
 an active run until all work for its captured prefix can publish. One absolute
 deadline covers cache lookup, broker work, rendering, validation, cache write,
 and eviction. Recoverable broker pressure is retried with capped backoff;
-cancelled and stale outcomes are silent. Stage 5C can connect the coordinator
-wakeup to a queued Qt signal without changing scheduler ownership.
+cancelled and stale outcomes are silent.
+
+Stage 5C's `windows/_trusted_derived_qt.py` is the single Qt ownership
+boundary. `MainWindow` owns one `TrustedDerivedQtBridge`, which in turn owns at
+most one active coordinator. Worker and retry threads can request only one
+coalesced queued wakeup. The bridge drains `coordinator.poll()`, validates the
+exact database instance, service, generation, stable run identity, source
+revision, helper incarnation, and work format, decodes bounded PNG bytes, and
+mutates widgets only on the GUI thread. Selection and the actual sorted or
+filtered viewport feed stable scheduler indices through one coalescing Qt
+timer; neither scrolling nor selection rebuilds the coordinator. A committed
+cheap run-list baseline is installed before coordinator binding, cache access,
+derived extraction, rendering, or image decoding begins.
+
+The bridge does not retain decoded images. `PreviewTab` is the sole retained
+owner of full trusted previews and enforces independent 512-entry and 128 MiB
+limits; its currently displayed pixmap may outlive an evicted cache entry only
+as widget state. Run-list thumbnails are owned only by the fixed set of inline
+preview cells, and databases above the inline-preview threshold skip thumbnail
+decoding in Qt. Selecting an evicted preview uses the scheduler's exact
+database/generation/run/kind replay operation, normally rehydrating from the
+Stage 5B disk cache without repeating metadata or thumbnail work.
 
 `trusted_live_queries.py` and `trusted_live_service.py` expose the corresponding
 fixed derived-source operation through the existing persistent broker and
@@ -508,13 +529,28 @@ caller owns those objects and their cleanup; this mode does not promise the
 launcher's whole-tree containment or process hard deadline.
 
 Trusted live load, automatic default selection, scrolling, and metadata
-completion do not start snapshot-backed preview or thumbnail workers. Explicit
-plot and CSV actions remain action-owned snapshot consumers addressed by the
-selected GUID and exact `DatabaseInstance`. Snapshot fallback sessions may keep
-their existing preview behavior. Stage 5B implements the derived scheduler,
-bounded extraction/rendering, and disk cache as a non-UI backend only. Stage 5C
-must still connect versioned payloads to the run list and preview tab; until
-then the Stage 4 trusted placeholders remain the active UI path.
+completion do not start snapshot-backed detail, preview, or thumbnail workers.
+The Stage 5C bridge makes the Stage 5B coordinator the sole trusted producer of
+derived metadata, run-table thumbnails, and selected-run preview cards. Cache
+hits and freshly rendered payloads use the same transactional publication path;
+unsupported runs receive bounded nonfatal unavailable cards. Explicit plot and
+CSV actions remain action-owned snapshot consumers addressed by the selected
+GUID and exact `DatabaseInstance`, and snapshot fallback sessions may keep
+their existing preview behavior.
+
+Database switching disarms publications before the old coordinator is made
+obsolete, and old queued Qt events are harmless under the bridge's identity and
+generation checks. Appends reconcile stable run slots and source/completion
+changes are coalesced. Preview-size changes invalidate previews only. Helper
+incarnation changes invalidate the complete old generation. Shutdown first
+disarms wakeups and publications, then retires coordinators asynchronously into
+the existing bounded Stage 4 shutdown scan; it adds no watchdog or GUI-thread
+join.
+
+Reselecting the exact active database is an idempotent refresh of that bridge.
+It preserves the coordinator, its two fixed timers, decoded preview cache, and
+trusted widget binding while reconciling any newly appended stable runs. The
+snapshot fallback fast path remains separate and unchanged.
 
 The WAL-provenance discussion below describes the retained snapshot path used
 by fallback and explicitly deferred consumers, not the trusted reader's native

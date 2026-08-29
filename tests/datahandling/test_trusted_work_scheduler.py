@@ -91,6 +91,25 @@ def test_priority_is_selected_then_visible_then_remaining_with_information_order
     ]
 
 
+def test_exact_noncontiguous_viewport_and_range_api_remain_coherent() -> None:
+    scheduler = TrustedWorkScheduler(_instance(), _runs(5))
+    scheduler.set_visible_indices((1, 3))
+
+    assert _order(_drain(scheduler))[:6] == [
+        (1, TrustedWorkKind.METADATA),
+        (3, TrustedWorkKind.METADATA),
+        (1, TrustedWorkKind.THUMBNAIL),
+        (3, TrustedWorkKind.THUMBNAIL),
+        (1, TrustedWorkKind.PREVIEW),
+        (3, TrustedWorkKind.PREVIEW),
+    ]
+
+    scheduler = TrustedWorkScheduler(_instance(), _runs(5))
+    scheduler.set_visible_indices((1, 3))
+    scheduler.set_visible_range(1, 4)
+    assert scheduler.snapshot().visible_indices == (1, 2, 3)
+
+
 def test_selection_and_viewport_changes_reprioritize_without_duplicates() -> None:
     scheduler = TrustedWorkScheduler(_instance(), _runs(6))
     first = scheduler.claim_next()
@@ -624,6 +643,57 @@ def test_reconcile_runs_appends_without_replaying_completed_work() -> None:
         (4, TrustedWorkKind.PREVIEW),
     ]
     assert scheduler.snapshot().completed_count == 15
+
+
+def test_exact_completed_kind_replay_is_coalesced_and_identity_guarded() -> None:
+    instance = _instance()
+    scheduler = TrustedWorkScheduler(instance, _runs(2))
+    assert len(_drain(scheduler)) == 6
+    generation = scheduler.generation
+
+    assert not scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.PREVIEW,
+        database_instance=_instance((7, 12)),
+        generation=generation,
+        run_guid="guid-0",
+    )
+    assert not scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.PREVIEW,
+        database_instance=instance,
+        generation=generation + 1,
+        run_guid="guid-0",
+    )
+    assert not scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.PREVIEW,
+        database_instance=instance,
+        generation=generation,
+        run_guid="guid-replaced",
+    )
+    assert scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.PREVIEW,
+        database_instance=instance,
+        generation=generation,
+        run_guid="guid-0",
+    )
+    assert not scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.PREVIEW,
+        database_instance=instance,
+        generation=generation,
+        run_guid="guid-0",
+    )
+
+    replay = scheduler.claim_next()
+    assert replay is not None
+    assert (replay.run_index, replay.key.kind) == (0, TrustedWorkKind.PREVIEW)
+    assert scheduler.claim_next() is None
+    assert scheduler.complete(replay) is CompletionDisposition.ACCEPTED
+    assert scheduler.snapshot().completed_count == 6
+    assert scheduler.claim_next() is None
 
 
 def test_reconcile_runs_preserves_revision_override() -> None:

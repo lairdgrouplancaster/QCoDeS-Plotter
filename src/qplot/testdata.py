@@ -717,23 +717,54 @@ def enable_generation_provenance_for_writer(connection):
 
     original_commit = connection.commit
     original_rollback = connection.rollback
+    last_synchronized_total_changes = connection.total_changes
+    last_synchronized_schema_version = connection.execute(
+        "PRAGMA schema_version"
+    ).fetchone()[0]
 
     def synchronize_triggers():
         _ensure_generation_provenance_triggers(connection)
         _advance_generation_lineage(connection)
 
     def provenance_commit():
+        nonlocal last_synchronized_schema_version
+        nonlocal last_synchronized_total_changes
         if not connection.in_transaction:
+            return original_commit()
+        schema_version = connection.execute("PRAGMA schema_version").fetchone()[0]
+        if (
+            connection.total_changes == last_synchronized_total_changes
+            and schema_version == last_synchronized_schema_version
+        ):
             return original_commit()
         try:
             synchronize_triggers()
-            return original_commit()
+            result = original_commit()
+            last_synchronized_total_changes = connection.total_changes
+            last_synchronized_schema_version = connection.execute(
+                "PRAGMA schema_version"
+            ).fetchone()[0]
+            return result
         except BaseException:
             try:
                 original_rollback()
             except sqlite3.Error:
                 pass
+            last_synchronized_total_changes = connection.total_changes
+            last_synchronized_schema_version = connection.execute(
+                "PRAGMA schema_version"
+            ).fetchone()[0]
             raise
+
+    def provenance_rollback():
+        nonlocal last_synchronized_schema_version
+        nonlocal last_synchronized_total_changes
+        result = original_rollback()
+        last_synchronized_total_changes = connection.total_changes
+        last_synchronized_schema_version = connection.execute(
+            "PRAGMA schema_version"
+        ).fetchone()[0]
+        return result
 
     # Acquire SQLite's writer lock before inspecting the lineage or WAL.  A
     # second connection must not be able to park uninstrumented frames between
@@ -776,6 +807,10 @@ def enable_generation_provenance_for_writer(connection):
             _remove_legacy_generation_provenance_triggers(connection)
         synchronize_triggers()
         original_commit()
+        last_synchronized_total_changes = connection.total_changes
+        last_synchronized_schema_version = connection.execute(
+            "PRAGMA schema_version"
+        ).fetchone()[0]
     except BaseException:
         try:
             original_rollback()
@@ -784,6 +819,7 @@ def enable_generation_provenance_for_writer(connection):
         raise
 
     connection.commit = provenance_commit
+    connection.rollback = provenance_rollback
     setattr(connection, _PROVENANCE_WRITER_ENABLED_ATTRIBUTE, True)
     return connection
 

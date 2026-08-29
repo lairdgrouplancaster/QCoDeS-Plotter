@@ -2674,11 +2674,24 @@ def test_pending_load_rejects_sidecar_swap_after_staging():
     assert harness._loaded_database_instance == instance_b_staged
 
 
-def test_trusted_same_instance_shortcut_keeps_preview_source_disabled():
+def test_trusted_same_instance_shortcut_preserves_derived_preview_binding():
     instance = _instance("database-a.db", (1, 1))
     service = _FakeService(instance)
     harness = _LifecycleHarness(instance, service)
-    harness.infoBox.preview.set_database_runs("", {})
+    retained_preview_state = ("trusted-derived-owned", {1: {"guid": "guid-a"}})
+    harness.infoBox.preview.database_runs = retained_preview_state
+
+    class ActiveBridge:
+        def __init__(self) -> None:
+            self.coordinator = object()
+            self.refreshes = []
+
+        def refresh_active_database(self, database, runs, active_service) -> bool:
+            self.refreshes.append((database, dict(runs), active_service))
+            return True
+
+    bridge = ActiveBridge()
+    harness._trusted_derived_bridge = bridge
 
     with (
         patch.object(
@@ -2696,7 +2709,8 @@ def test_trusted_same_instance_shortcut_keeps_preview_source_disabled():
         assert harness.load_file(instance.logical_path)
 
     assert harness.databaseLoadThreadPool.started == []
-    assert harness.infoBox.preview.database_runs == ("", {})
+    assert harness.infoBox.preview.database_runs is retained_preview_state
+    assert bridge.refreshes == [(instance, harness.RunList.runs, service)]
     assert service.close_async_calls == 0
 
 

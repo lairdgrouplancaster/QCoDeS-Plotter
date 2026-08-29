@@ -46,11 +46,24 @@ installation commands and release validation, see `docs/distribution.md`.
   renders bounded deterministic metadata and PNG payloads, and uses a verified,
   atomic, size-bounded application cache. Active appends are coalesced so a
   captured prefix can publish before its newer revision is scheduled.
-- Keep Stage 5B disconnected from the Qt presentation layer. Trusted live
-  loading, selection, scrolling, and metadata completion still show the Stage 4
-  preview and thumbnail placeholders; explicit plot and CSV actions remain
-  action-owned snapshot consumers. Stage 5C will decode and route the backend
-  payloads to those widgets.
+- Connect Stage 5B to the trusted Qt presentation path through one owner-thread
+  Stage 5C bridge. The cheap run list remains first, then derived metadata,
+  dimensions, run-table thumbnails, and selected-run previews populate in
+  selected/visible/remaining order. Queued wakeups and viewport changes are
+  coalesced, PNG decoding and widget mutation stay on the GUI thread, and stale
+  database, run, format, helper, and lifecycle generations are discarded.
+- Make the Stage 5B coordinator the sole trusted producer for derived detail,
+  thumbnails, and previews. Legacy snapshot-backed producers remain available
+  only for their documented non-trusted compatibility paths; explicit plot and
+  CSV actions remain separately action-owned. Live appends, completion,
+  preview-size changes, helper restart, switching, and bounded shutdown now
+  propagate through the coordinator without per-run Qt work objects.
+- Keep decoded trusted images bounded independently of database size. The
+  preview tab is the sole retained full-preview cache (512 entries and 128 MiB),
+  run-list thumbnails exist only in enabled inline cells, and selecting an
+  evicted preview replays that exact work kind through the Stage 5B cache.
+  Reselecting the active database refreshes the existing bridge instead of
+  disabling trusted previews or creating another coordinator or timer pair.
 - Build the native boundary in explicit C11 mode with MSVC and exercise installed
   reader wheels separately on ARM64 macOS, Intel macOS, Linux, and unprivileged
   Windows CI hosts before cross-platform acceptance.
