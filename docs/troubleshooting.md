@@ -217,15 +217,17 @@ database folders as always available in Finder. The timeout can be changed with
 
 ## Trusted Run Details Have No Preview Image
 
-This is the deliberate Stage 4 boundary. Loading, automatic default selection,
+This is the deliberate Stage 5C boundary. Loading, automatic default selection,
 scrolling, and progressive metadata do not launch legacy snapshot-backed
 preview or thumbnail workers in a trusted live session. Snapshot fallback
 sessions may retain those previews, but ordinary fallback selection otherwise
 shows cached run-list basics and starts no additional selected-detail snapshot.
 Fallback metadata and retained preview paths can still create private
 snapshots. Use an explicit run-table plot or CSV action when you need the
-underlying dataset; the trusted preview/thumbnail scheduler and disk-backed
-cache remain Stage 5 work.
+underlying dataset. Stage 5B includes a tested non-UI coordinator, bounded
+prefix renderer, and application-cache backend, but it intentionally does not
+route those payloads into MainWindow, RunList, or PreviewTab. That UI connection
+is Stage 5C; the placeholder is not evidence that trusted extraction failed.
 
 ## Plot Windows Look Empty
 

@@ -246,6 +246,42 @@ def _qcodes_wal_writer_process(
                             (next_seq, value, bytes(payload_size)),
                         )
                     control.send(("ok", next_seq))
+                elif command == "commit_many":
+                    count = int(arguments["count"])
+                    if not 1 <= count <= 10_000:
+                        raise ValueError("commit_many count is outside test bounds")
+                    next_seq = writer.execute(
+                        "SELECT coalesce(max(seq), -1) + 1 FROM qplot_trusted_probe"
+                    ).fetchone()[0]
+                    if datasaver is not None:
+                        for offset in range(count):
+                            seq = next_seq + offset
+                            datasaver.add_result(
+                                (setpoint, float(seq)),
+                                (signal, float(seq * 2)),
+                            )
+                        datasaver.flush_data_to_database(block=True)
+                    with atomic(writer):
+                        writer.executemany(
+                            "INSERT INTO qplot_trusted_probe(seq, value) VALUES(?, ?)",
+                            (
+                                (next_seq + offset, f"bulk-{next_seq + offset}")
+                                for offset in range(count)
+                            ),
+                        )
+                    control.send(("ok", next_seq + count - 1))
+                elif command == "complete_run":
+                    if run_context is None:
+                        raise RuntimeError("The QCoDeS run is already complete")
+                    run_context.__exit__(None, None, None)
+                    run_context = None
+                    datasaver = None
+                    setpoint = None
+                    signal = None
+                    _close_qcodes_run_handles(dataset, experiment)
+                    dataset = None
+                    experiment = None
+                    control.send(("ok", True))
                 elif command == "begin_uncommitted":
                     if uncommitted:
                         raise RuntimeError("The writer already has a transaction")
