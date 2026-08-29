@@ -559,6 +559,11 @@ def release_windows_database_locks(window, database_path, *extra_datasets):
     if os.name != "nt":
         return
 
+    derived_bridge = getattr(window, "_trusted_derived_bridge", None)
+    if derived_bridge is not None:
+        derived_bridge.clear_database()
+        wait_for(lambda: not derived_bridge.background_active())
+
     database_actions_module.DatabaseActionsMixin._retire_all_trusted_read_services(
         window
     )
@@ -2121,7 +2126,10 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
             assert len(
                 held_dataset.get_parameter_data("signal")["signal"]["signal"]
             ) == 1
-            assert database_artifact_state(database_path) == source_artifacts
+            assert_database_artifacts_unchanged_except_trusted_shm(
+                database_path,
+                source_artifacts,
+            )
             assert set(source_directory.iterdir()) == source_entries
     finally:
         if window is not None:

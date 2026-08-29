@@ -854,6 +854,26 @@ class _TimedPressuredService(_PressuredService):
         return super().submit_derived_source(run_id, **kwargs)
 
 
+def _render_empty_retry_payload(
+    _observation: TrustedDerivedSourceObservation,
+    kind: TrustedWorkKind,
+    _options: object,
+    *,
+    cancel_check,
+):
+    """Keep retry-notifier tests independent of cold Matplotlib startup."""
+
+    cancel_check()
+    return {
+        "format": "qplot-trusted-derived-payload-v1",
+        "kind": kind.name.lower(),
+        "status": "empty",
+        "description": "No rendered data required by this scheduling test.",
+        "source": (),
+        "images": (),
+    }
+
+
 def _poll_only_on_wakeup(
     coordinator: TrustedWorkCoordinator,
     wakeups: queue.Queue[float],
@@ -873,7 +893,13 @@ def _poll_only_on_wakeup(
 
 def test_transient_retry_schedules_a_new_owner_wakeup_at_backoff_deadline(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        coordinator_module,
+        "render_trusted_derived_payload",
+        _render_empty_retry_payload,
+    )
     instance = _instance(270)
     observations = {1: _observation(1, instance)}
     service = _TimedPressuredService(instance, observations, failures=1)
@@ -903,7 +929,13 @@ def test_transient_retry_schedules_a_new_owner_wakeup_at_backoff_deadline(
 
 def test_repeated_transient_retries_are_event_driven_and_capped_without_errors(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        coordinator_module,
+        "render_trusted_derived_payload",
+        _render_empty_retry_payload,
+    )
     instance = _instance(271)
     observations = {1: _observation(1, instance)}
     service = _TimedPressuredService(instance, observations, failures=4)

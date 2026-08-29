@@ -515,10 +515,14 @@ def test_fast_baseline_commits_before_bridge_start_and_legacy_enrichment() -> No
     class DeferredBridge:
         def __init__(self) -> None:
             self.suspended = 0
+            self.cleared = 0
             self.bindings = []
 
         def suspend_publications(self) -> None:
             self.suspended += 1
+
+        def clear_database(self) -> None:
+            self.cleared += 1
 
         def bind_database(self, instance, runs, service) -> None:
             self.bindings.append((instance, dict(runs), service))
@@ -564,6 +568,7 @@ def test_fast_baseline_commits_before_bridge_start_and_legacy_enrichment() -> No
         assert harness.RunList.all_run_metadata() == runs
         assert harness.fileTextbox.text() == second.logical_path
         assert bridge.bindings == []
+        assert bridge.cleared == 1
         assert harness.detail_loads == []
         assert callbacks
         callbacks[-1]()

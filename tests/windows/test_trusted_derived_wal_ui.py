@@ -101,7 +101,7 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
     second_run = _start_live_run(second_writer, "second_live")
     first_context = first_run[3]
     second_context = second_run[3]
-    latest_first_run = first_run
+    latest_first_run = None
     window = None
     for index in range(1, 25):
         first_run[4].add_result(
@@ -268,6 +268,13 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
             )
             assert (errors, logged_errors) == ([], [])
 
+            _process_until(
+                lambda: (
+                    bridge.coordinator is not None
+                    and not bridge.coordinator.active
+                    and bridge.coordinator.snapshot().pending_count == 0
+                )
+            )
             latest_first_run = _start_live_run(first_writer, "first_new")
             window.refreshMain()
             _process_until(lambda: window.RunList.topLevelItemCount() == 3)
@@ -294,9 +301,14 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
             assert window.load_database_path(str(second_path))
             _process_until(
                 lambda: (
-                    window.fileTextbox.text() == str(second_path)
+                    not window._database_load_active
+                    and window.fileTextbox.text() == str(second_path)
                     and window.RunList.topLevelItemCount() == 2
                 )
+            )
+            assert window._database_access_mode == database_actions.TRUSTED_LIVE_MODE, (
+                window._database_fallback_reason,
+                errors,
             )
             second_guid = str(second_run[5].guid)
             _process_until(
@@ -342,11 +354,12 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
                 timeout=30.0,
             )
             close_main_window(window, timeout_ms=12_000)
-        latest_first_run[4].add_result(
-            (latest_first_run[1], 1.0),
-            (latest_first_run[2], 2.0),
-        )
-        latest_first_run[4].flush_data_to_database(block=True)
+        if latest_first_run is not None:
+            latest_first_run[4].add_result(
+                (latest_first_run[1], 1.0),
+                (latest_first_run[2], 2.0),
+            )
+            latest_first_run[4].flush_data_to_database(block=True)
         assert first_writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (
             0,
             0,
@@ -354,7 +367,7 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
         )
         if first_context is not None:
             first_context.__exit__(None, None, None)
-        if latest_first_run[3] is not first_context:
+        if latest_first_run is not None and latest_first_run[3] is not first_context:
             latest_first_run[3].__exit__(None, None, None)
         if second_context is not None:
             second_context.__exit__(None, None, None)

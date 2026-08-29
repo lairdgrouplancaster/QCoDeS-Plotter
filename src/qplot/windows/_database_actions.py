@@ -3233,6 +3233,18 @@ class DatabaseActionsMixin:
                 # service immediately, before signal restoration or control
                 # synchronisation in the enclosing finally can raise.
                 if old_service is not new_service:
+                    # The old coordinator may still own a bounded read against
+                    # A.  Retire it at the same commit boundary that transfers
+                    # the trusted service, before the queued Stage 5C bind
+                    # creates B's coordinator.  This keeps stale work harmless
+                    # and promptly releases Windows reader locks.
+                    clear_derived = getattr(
+                        derived_bridge,
+                        "clear_database",
+                        None,
+                    )
+                    if callable(clear_derived):
+                        clear_derived()
                     DatabaseActionsMixin._retire_trusted_read_service(
                         self,
                         old_service,
