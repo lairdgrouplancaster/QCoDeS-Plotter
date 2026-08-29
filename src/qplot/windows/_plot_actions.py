@@ -379,6 +379,9 @@ class PlotActionsMixin:
         info_box = getattr(self, "infoBox", None)
         if info_box is not None:
             info_box.clear()
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            derived_bridge.select_run(None)
 
 
     @QtCore.pyqtSlot()

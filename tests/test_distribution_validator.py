@@ -35,6 +35,11 @@ def test_wheel_smoke_uses_current_qcodes_results_and_progressive_details() -> No
     assert "id INTEGER PRIMARY KEY, setpoint REAL, signal REAL" in writer
     assert "(setpoint, signal) VALUES (?, ?)" in writer
 
+    called_names = {
+        node.func.id
+        for node in ast.walk(smoke_module)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
     called_attributes = {
         node.func.attr
         for node in ast.walk(smoke_module)
@@ -43,6 +48,10 @@ def test_wheel_smoke_uses_current_qcodes_results_and_progressive_details() -> No
     assert "submit_expensive_run" in called_attributes
     assert "submit_selected_run" in called_attributes
     assert smoke.count("assert_stage4_run_detail(") == 4
+    assert "exercise_stage5c_qt_bridge" in called_names
+    assert "qplot.windows.main" in smoke
+    assert "cache_miss_state" in smoke
+    assert "window.infoBox.preview._workers" in smoke
     for asserted_field in (
         'expensive_fields["result_count"] == 2',
         'expensive_fields["point_shape"] == [2]',

@@ -243,6 +243,7 @@ class TrustedWorkCoordinator:
         self._retry_notifier = _RetryWakeupNotifier(wakeup)
         self._invalidation_serial = 0
         self._closed = False
+        self._executor_joined = False
         self._configure_cache(database_instance)
 
     @property
@@ -256,6 +257,13 @@ class TrustedWorkCoordinator:
     def active(self) -> bool:
         self._require_owner()
         return self._active is not None
+
+    @property
+    def runs(self) -> tuple[TrustedDerivedRun, ...]:
+        """Return the current stable table, including refined revisions."""
+
+        self._require_owner()
+        return self._runs
 
     def snapshot(self) -> SchedulerSnapshot:
         self._require_owner()
@@ -274,6 +282,11 @@ class TrustedWorkCoordinator:
     def set_visible_range(self, start: int, stop: int) -> None:
         self._require_owner()
         self._scheduler.set_visible_range(start, stop)
+        self._pump()
+
+    def set_visible_indices(self, indices: Sequence[int]) -> None:
+        self._require_owner()
+        self._scheduler.set_visible_indices(indices)
         self._pump()
 
     def reconcile_runs(self, runs: Sequence[TrustedDerivedRun]) -> None:
@@ -303,6 +316,34 @@ class TrustedWorkCoordinator:
         self._scheduler.update_format(kind, work_format)
         self._memory_payload = None
         self._pump()
+
+    def request_completed_work(
+        self,
+        run_index: int,
+        kind: TrustedWorkKind,
+        *,
+        database_instance: DatabaseInstance,
+        generation: int,
+        run_guid: str,
+        prioritize: bool = False,
+    ) -> bool:
+        """Replay one exact completed item, normally from the disk cache."""
+
+        self._require_owner()
+        self._require_open()
+        accepted = self._scheduler.request_completed_work(
+            run_index,
+            kind,
+            database_instance=database_instance,
+            generation=generation,
+            run_guid=run_guid,
+        )
+        if accepted:
+            if prioritize:
+                self._scheduler.select_run(run_index)
+            self._memory_payload = None
+            self._pump()
+        return accepted
 
     def switch_database(
         self,
@@ -394,11 +435,20 @@ class TrustedWorkCoordinator:
         """Cancel work, optionally retire the service, and join the sole worker."""
 
         self._require_owner()
-        if self._closed:
-            return
         if not 0 <= timeout <= 300:
             raise ValueError("timeout must be from zero through 300 seconds.")
-        deadline = time.monotonic() + timeout
+        self.close_async()
+        if not self.wait_closed(timeout):
+            raise TimeoutError(
+                "The trusted derived worker did not stop within its deadline."
+            )
+
+    def close_async(self) -> None:
+        """Promptly cancel scheduling without waiting on the owner/GUI thread."""
+
+        self._require_owner()
+        if self._closed:
+            return
         self._closed = True
         self._retry_notifier.cancel()
         self._scheduler.close()
@@ -407,23 +457,40 @@ class TrustedWorkCoordinator:
         active = self._active
         if active is not None:
             active.work.cancellation.cancel()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        self._reused_observation = None
+        self._memory_payload = None
+
+    def wait_closed(self, timeout: float = 0.0) -> bool:
+        """Wait for the already-cancelled worker under one explicit bound."""
+
+        self._require_owner()
+        if not 0 <= timeout <= 300:
+            raise ValueError("timeout must be from zero through 300 seconds.")
+        self.close_async()
+        deadline = time.monotonic() + timeout
+        active = self._active
+        if active is not None:
             try:
                 active.future.result(timeout=max(0.0, deadline - time.monotonic()))
-            except FutureTimeout as error:
-                self._executor.shutdown(wait=False, cancel_futures=True)
-                raise TimeoutError(
-                    "The trusted derived worker did not stop within its deadline."
-                ) from error
+            except FutureTimeout:
+                return False
             except BaseException:
                 pass
-        self._active = None
-        self._executor.shutdown(wait=False, cancel_futures=True)
+            self._active = None
+        while True:
+            try:
+                self._completions.get_nowait()
+            except queue.Empty:
+                break
         if self._own_service and not self._service.wait_closed(
             max(0.0, deadline - time.monotonic())
         ):
-            raise TimeoutError("The owned trusted-live service did not close.")
-        self._reused_observation = None
-        self._memory_payload = None
+            return False
+        if not self._executor_joined:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+            self._executor_joined = True
+        return True
 
     def _pump(self) -> None:
         if (

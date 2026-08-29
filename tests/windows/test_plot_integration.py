@@ -456,11 +456,12 @@ def select_nondefault_run_and_finish_previews(window):
         0,
     )
     assert len(matches) == 1
+    target_guid = matches[0].guid
     window.RunList.setCurrentItem(matches[0])
     wait_for(
         lambda: (
             window.selected_run_id == target_run_id
-            and window._selected_run_guid == matches[0].guid
+            and window._selected_run_guid == target_guid
             and window.ds is None
             and window._database_selected_run_worker is None
         )
@@ -470,7 +471,12 @@ def select_nondefault_run_and_finish_previews(window):
             not window.infoBox.preview._workers
             and not window.infoBox.preview.queue
             and not window.infoBox.preview.active
-            and window.infoBox.preview.current_guid is None
+            and window.infoBox.preview._trusted_derived_mode
+            and window.infoBox.preview.current_guid == target_guid
+            and (
+                target_guid in window.infoBox.preview.cache
+                or target_guid in window.infoBox.preview.errors
+            )
         )
     )
     return target_run_id
@@ -1285,7 +1291,12 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         assert window.ds is None
         assert window._selected_run_guid == guid
         assert window.infoBox.preview.database_path == ""
-        assert window.infoBox.preview.run_metadata == {}
+        wait_for(
+            lambda: (
+                window.infoBox.preview._trusted_derived_mode
+                and guid in window.infoBox.preview.run_metadata
+            )
+        )
 
         # Trusted selection is DB-free. The explicit plot action materialises
         # a DataSet bound to the accepted database instance.
@@ -1358,6 +1369,17 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
             )
         )
         window.monitor.stop()
+        wait_for(
+            lambda: next(
+                (
+                    run.get("result_count")
+                    for run in window.RunList.all_run_metadata().values()
+                    if run.get("guid") == guid
+                ),
+                None,
+            )
+            == 4
+        )
 
         runs = window.RunList.all_run_metadata()
         replacement_metadata = next(
@@ -1365,7 +1387,8 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         )
         assert replacement_metadata["result_count"] == 4
         assert window.infoBox.preview.database_path == ""
-        assert window.infoBox.preview.run_metadata == {}
+        assert window.infoBox.preview._trusted_derived_mode
+        assert guid in window.infoBox.preview.run_metadata
         assert window.infoBox.preview.cache.get(guid) != stale_preview
         assert "stale" not in window._snapshot_setpoint_summary_cache
         assert old_plot not in window.windows
@@ -1932,6 +1955,17 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             window.load_file = record_load
             window.refreshMain()
             wait_for(lambda: not window._database_refresh_active)
+            wait_for(
+                lambda: next(
+                    (
+                        run.get("result_count")
+                        for run in window.RunList.all_run_metadata().values()
+                        if run.get("guid") == guid
+                    ),
+                    None,
+                )
+                == 4
+            )
             window.monitor.stop()
 
             metadata = window.RunList.all_run_metadata()
@@ -2213,6 +2247,12 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
             held_dataset.conn.cursor()
         assert window.ds is None
         assert window._selected_run_guid == guid
+        wait_for(
+            lambda: any(
+                run_metadata.get("result_count") == 2
+                for run_metadata in window.RunList.all_run_metadata().values()
+            )
+        )
         metadata = next(iter(window.RunList.all_run_metadata().values()))
         assert metadata["result_count"] == 2
         assert database_artifact_state(database_path) == replacement_state
@@ -2355,6 +2395,12 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
         assert held_handle.closed
         assert window.ds is None
         assert window._selected_run_guid == guid
+        wait_for(
+            lambda: any(
+                run_metadata.get("result_count") == 2
+                for run_metadata in window.RunList.all_run_metadata().values()
+            )
+        )
         metadata = next(iter(window.RunList.all_run_metadata().values()))
         assert metadata["result_count"] == 2
         assert database_artifact_state(database_path) == replacement_state
@@ -2672,18 +2718,23 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         assert window.ds is None
         selected_guid = window._selected_run_guid
         assert selected_guid
+        expected_result_count = 5 if outcome == "success" else 2
+        wait_for(
+            lambda: any(
+                run_metadata.get("result_count") == expected_result_count
+                for run_metadata in window.RunList.all_run_metadata().values()
+            )
+        )
         metadata = next(iter(window.RunList.all_run_metadata().values()))
         if outcome == "success":
             assert database_instance(database_path) != original_instance
             assert metadata["result_count"] == 5
             assert replacement_wal_is_quarantined(database_path)
             assert errors == []
-            expected_result_count = 5
         else:
             assert database_instance(database_path) == original_instance
             assert metadata["result_count"] == 2
             assert not replacement_wal_is_quarantined(database_path)
-            expected_result_count = 2
             if outcome == "failure":
                 assert errors == [
                     (
@@ -2790,6 +2841,12 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
         unrelated_instance = database_instance(unrelated_path)
         assert window._loaded_database_instance == unrelated_instance
         assert window.ds is None
+        wait_for(
+            lambda: any(
+                run_metadata.get("result_count") == 3
+                for run_metadata in window.RunList.all_run_metadata().values()
+            )
+        )
         unrelated_metadata = next(
             iter(window.RunList.all_run_metadata().values())
         )
@@ -2900,13 +2957,7 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
                 and not window._database_expensive_detail_active
             )
         )
-        wait_for(
-            lambda: (
-                not window.infoBox.preview._workers
-                and not window.infoBox.preview.queue
-                and not window.infoBox.preview.active
-            )
-        )
+        wait_for(lambda: generation_database_view(window) == original_view)
 
         assert errors == [
             (
@@ -3039,13 +3090,7 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
                 and not window._database_expensive_detail_active
             )
         )
-        wait_for(
-            lambda: (
-                not window.infoBox.preview._workers
-                and not window.infoBox.preview.queue
-                and not window.infoBox.preview.active
-            )
-        )
+        wait_for(lambda: generation_database_view(window) == original_view)
 
         assert errors == [
             (
@@ -3141,6 +3186,12 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         assert old_plot not in window.windows
         assert window.RunList.topLevelItemCount() == 1
         assert window.ds is None
+        wait_for(
+            lambda: any(
+                run_metadata.get("result_count") == 5
+                for run_metadata in window.RunList.all_run_metadata().values()
+            )
+        )
         metadata = next(iter(window.RunList.all_run_metadata().values()))
         assert metadata["result_count"] == 5
         assert window.generateTestDatabaseAction.isEnabled()
@@ -3252,6 +3303,12 @@ def test_loaded_path_test_database_generation_uses_replacement_reload(
         assert old_handle.closed
         assert old_plot not in window.windows
         assert window.ds is None
+        wait_for(
+            lambda: any(
+                run_metadata.get("result_count") == 4
+                for run_metadata in window.RunList.all_run_metadata().values()
+            )
+        )
         metadata = next(iter(window.RunList.all_run_metadata().values()))
         assert metadata["result_count"] == 4
         assert any(
@@ -3456,6 +3513,15 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         plot_dataset_handle = window.dataset_holder[plot_a._dataset_key]
         window.refreshMain()
         wait_for(lambda: not window._database_refresh_active)
+
+        def visible_data_points():
+            return {
+                window.infoBox.overview.item(row, 0).text():
+                window.infoBox.overview.item(row, 1).text()
+                for row in range(window.infoBox.overview.rowCount())
+            }.get("Data points")
+
+        wait_for(lambda: visible_data_points() == "6")
         live_overview = {
             window.infoBox.overview.item(row, 0).text():
             window.infoBox.overview.item(row, 1).text()
@@ -3839,7 +3905,10 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
             np.sort(np.asarray(heatmap.image.image).ravel()),
             [10.0, 11.0, 12.0, 13.0],
             )
-        assert database_artifact_state(database_path) == artifacts_after_writer_completion
+        assert_database_artifacts_unchanged_except_trusted_shm(
+            database_path,
+            artifacts_after_writer_completion,
+        )
 
         wait_for(
             lambda: (
@@ -3851,7 +3920,10 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
         heatmap.refreshWindow()
         assert heatmap.worker is terminal_worker
         assert not heatmap.monitor.isActive()
-        assert database_artifact_state(database_path) == artifacts_after_writer_completion
+        assert_database_artifacts_unchanged_except_trusted_shm(
+            database_path,
+            artifacts_after_writer_completion,
+        )
 
         release_writer_connection.set()
         writer_thread.join(30)
