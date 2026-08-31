@@ -862,16 +862,95 @@ class plot2d(
         self._new_heatmap_downsample_dialog().exec()
 
 
-    def _new_heatmap_downsample_dialog(self) -> qtw.QMessageBox:
-        dialog = qtw.QMessageBox(
-            qtw.QMessageBox.Icon.Warning,
-            "Downsampled Heatmap",
-            self._heatmap_downsample_dialog_text(),
-            qtw.QMessageBox.StandardButton.Ok,
-            self,
+    def _new_heatmap_downsample_dialog(self) -> qtw.QDialog:
+        """Create a titled warning dialog for a downsampled heatmap."""
+        dialog = qtw.QDialog(self)
+        dialog.setWindowTitle("Warning: Heatmap downsampled")
+        dialog.setModal(True)
+
+        layout = qtw.QVBoxLayout(dialog)
+        content = qtw.QHBoxLayout()
+        icon_label = qtw.QLabel(dialog)
+        icon = dialog.style().standardIcon(
+            qtw.QStyle.StandardPixmap.SP_MessageBoxWarning
             )
-        dialog.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        icon_label.setPixmap(icon.pixmap(64, 64))
+        icon_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        content.addWidget(icon_label)
+
+        message_label = qtw.QLabel(self._heatmap_downsample_dialog_message(), dialog)
+        message_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        message_label.setWordWrap(True)
+        message_label.setMinimumWidth(520)
+        content.addWidget(message_label, 1)
+        layout.addLayout(content)
+
+        button_box = qtw.QDialogButtonBox(
+            qtw.QDialogButtonBox.StandardButton.Ok,
+            dialog,
+            )
+        preferences_button = button_box.addButton(
+            "Open Preferences…",
+            qtw.QDialogButtonBox.ButtonRole.ActionRole,
+            )
+        preferences_button.setObjectName("openHeatmapLimitPreferencesButton")
+        preferences_button.clicked.connect(
+            lambda: self._open_heatmap_limit_preferences(dialog)
+            )
+        button_box.accepted.connect(dialog.accept)
+        layout.addWidget(button_box)
         return dialog
+
+
+    def _open_heatmap_limit_preferences(self, dialog: qtw.QDialog) -> None:
+        """Close the alert, then open the preference that controls this limit."""
+        dialog.accept()
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: self.show_preferences_dialog(initial_tab="Runtime"),
+            )
+
+
+    def _heatmap_downsample_dialog_message(self) -> str:
+        """Return the plain-text details shown below the dialog title."""
+        info = self._heatmap_downsample_info or {}
+        lines = ["This heatmap is displayed from downsampled data.", ""]
+
+        if info.get("grid_binned"):
+            source_grid_columns = self._format_heatmap_count(
+                info.get("source_grid_columns")
+                )
+            source_grid_rows = self._format_heatmap_count(
+                info.get("source_grid_rows")
+                )
+            source_grid_cells = self._format_heatmap_count(
+                info.get("source_grid_cell_count")
+                )
+            full_limit = self._format_heatmap_count(
+                info.get("full_resolution_point_limit")
+                )
+            grid_columns = self._format_heatmap_count(info.get("grid_columns"))
+            grid_rows = self._format_heatmap_count(info.get("grid_rows"))
+            grid_cells = self._format_heatmap_count(info.get("grid_cell_count"))
+            lines.extend([
+                f"The source heatmap grid is {source_grid_columns} x "
+                f"{source_grid_rows} = {source_grid_cells} cells.",
+                "The full-resolution heatmap limit is "
+                f"{full_limit} points.",
+                f"The plotted grid is {grid_columns} x {grid_rows} = "
+                f"{grid_cells} cells.",
+                "Values falling into the same plotted grid cell were averaged.",
+                "",
+                ])
+
+        lines.extend([
+            "The full-resolution heatmap limit can be changed using the "
+            "Preferences dialog.",
+            "",
+            "The full-resolution limit controls when qPlot switches to an "
+            "averaged display grid.",
+            ])
+        return "\n".join(lines)
 
 
     def _heatmap_downsample_dialog_text(self) -> str:

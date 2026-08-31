@@ -68,6 +68,8 @@ class loader(QtCore.QRunnable):
                  operations: list | None = None,
                  force_sql_heatmap: bool = False,
                  max_full_heatmap_points: int = MAX_FULL_HEATMAP_POINTS,
+                 max_heatmap_grid_cells: int = MAX_SQL_HEATMAP_GRID_CELLS,
+                 max_heatmap_grid_side: int = MAX_SQL_HEATMAP_GRID_SIDE,
                  heatmap_axis_ranges: dict | None = None,
                  heatmap_full_axis_ranges: dict | None = None,
                  database_identity=None,
@@ -121,6 +123,8 @@ class loader(QtCore.QRunnable):
         self.operations = [] if operations is None else operations
         self.force_sql_heatmap = force_sql_heatmap
         self.max_full_heatmap_points = max(1, int(max_full_heatmap_points))
+        self.max_heatmap_grid_cells = max(1, int(max_heatmap_grid_cells))
+        self.max_heatmap_grid_side = max(1, int(max_heatmap_grid_side))
         self.heatmap_axis_ranges = heatmap_axis_ranges
         self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
         self.database_identity = database_identity
@@ -1162,7 +1166,11 @@ class loader(QtCore.QRunnable):
             "grid_binned": (
                 x_axis.size < source_x_count or y_axis.size < source_y_count
                 ),
-            "grid_cell_limit": MAX_SQL_HEATMAP_GRID_CELLS,
+            "grid_cell_limit": getattr(
+                self,
+                "max_heatmap_grid_cells",
+                MAX_SQL_HEATMAP_GRID_CELLS,
+                ),
             "empty_bins_filled": empty_bins_filled,
             }
         return x_axis, y_axis, data_grid
@@ -1400,9 +1408,19 @@ class loader(QtCore.QRunnable):
 
 
     def _bounded_grid_shape(self, x_count, y_count, max_cells=None):
-        max_cells = int(max_cells or MAX_SQL_HEATMAP_GRID_CELLS)
-        x_bins = max(1, min(int(x_count), MAX_SQL_HEATMAP_GRID_SIDE))
-        y_bins = max(1, min(int(y_count), MAX_SQL_HEATMAP_GRID_SIDE))
+        max_cells = (
+            getattr(self, "max_heatmap_grid_cells", MAX_SQL_HEATMAP_GRID_CELLS)
+            if max_cells is None
+            else int(max_cells)
+            )
+        max_cells = max(1, max_cells)
+        max_side = getattr(
+            self,
+            "max_heatmap_grid_side",
+            MAX_SQL_HEATMAP_GRID_SIDE,
+            )
+        x_bins = max(1, min(int(x_count), max_side))
+        y_bins = max(1, min(int(y_count), max_side))
 
         if x_bins * y_bins <= max_cells:
             return x_bins, y_bins
@@ -1776,7 +1794,11 @@ class loader(QtCore.QRunnable):
 
         max_cells = min(
             self.max_full_heatmap_points,
-            MAX_SQL_HEATMAP_GRID_CELLS,
+            getattr(
+                self,
+                "max_heatmap_grid_cells",
+                MAX_SQL_HEATMAP_GRID_CELLS,
+                ),
             )
         x_axis, y_axis, data_grid = self._heatmap_grid_from_arrays(
             x_data,

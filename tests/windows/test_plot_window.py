@@ -505,6 +505,8 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
                     operations,
                     force_sql_heatmap,
                     max_full_heatmap_points,
+                    max_heatmap_grid_cells,
+                    max_heatmap_grid_side,
                     heatmap_axis_ranges,
                     heatmap_full_axis_ranges,
                     ):
@@ -516,6 +518,8 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
                 self.operations = operations
                 self.force_sql_heatmap = force_sql_heatmap
                 self.max_full_heatmap_points = max_full_heatmap_points
+                self.max_heatmap_grid_cells = max_heatmap_grid_cells
+                self.max_heatmap_grid_side = max_heatmap_grid_side
                 self.heatmap_axis_ranges = heatmap_axis_ranges
                 self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
                 self.emitter = Emitter()

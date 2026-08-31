@@ -56,6 +56,8 @@ PREFERENCE_KEYS = (
     CONFIRM_QUIT_KEY,
     "runtime_settings.max_threads",
     "runtime_settings.max_full_heatmap_points",
+    "runtime_settings.max_heatmap_grid_cells",
+    "runtime_settings.max_heatmap_grid_side",
     "runtime_settings.del_grace_period",
     "runtime_settings.cloud_sync_timeout",
     )
@@ -317,6 +319,48 @@ class PreferencesDialog(qtw.QDialog):
             self.maxFullHeatmapPointsSpin,
             )
 
+        self.maxHeatmapGridCellsSpin = qtw.QSpinBox(tab)
+        self.maxHeatmapGridCellsSpin.setObjectName(
+            "maxHeatmapGridCellsPreferenceSpin"
+            )
+        self.maxHeatmapGridCellsSpin.setAccessibleName(
+            "Maximum heatmap display grid cells"
+            )
+        self.maxHeatmapGridCellsSpin.setRange(1, 2_000_000_000)
+        self.maxHeatmapGridCellsSpin.setSingleStep(10_000)
+        self.maxHeatmapGridCellsSpin.setSuffix(" cells")
+        if hasattr(self.maxHeatmapGridCellsSpin, "setGroupSeparatorShown"):
+            self.maxHeatmapGridCellsSpin.setGroupSeparatorShown(True)
+        self.maxHeatmapGridCellsSpin.setToolTip(
+            "Maximum cells in a downsampled heatmap display grid."
+            )
+        self._add_row(
+            form,
+            "Heatmap display grid &cells:",
+            self.maxHeatmapGridCellsSpin,
+            )
+
+        self.maxHeatmapGridSideSpin = qtw.QSpinBox(tab)
+        self.maxHeatmapGridSideSpin.setObjectName(
+            "maxHeatmapGridSidePreferenceSpin"
+            )
+        self.maxHeatmapGridSideSpin.setAccessibleName(
+            "Maximum heatmap display grid bins per axis"
+            )
+        self.maxHeatmapGridSideSpin.setRange(1, 2_000_000_000)
+        self.maxHeatmapGridSideSpin.setSingleStep(100)
+        self.maxHeatmapGridSideSpin.setSuffix(" bins")
+        if hasattr(self.maxHeatmapGridSideSpin, "setGroupSeparatorShown"):
+            self.maxHeatmapGridSideSpin.setGroupSeparatorShown(True)
+        self.maxHeatmapGridSideSpin.setToolTip(
+            "Maximum bins on either axis of a downsampled heatmap display grid."
+            )
+        self._add_row(
+            form,
+            "Heatmap display grid &side:",
+            self.maxHeatmapGridSideSpin,
+            )
+
         self.delGracePeriodSpin = qtw.QDoubleSpinBox(tab)
         self.delGracePeriodSpin.setObjectName("deleteGracePreferenceSpin")
         self.delGracePeriodSpin.setAccessibleName("Dataset release grace period")
@@ -375,6 +419,8 @@ class PreferencesDialog(qtw.QDialog):
             self.confirmQuitCheck,
             self.maxThreadsSpin,
             self.maxFullHeatmapPointsSpin,
+            self.maxHeatmapGridCellsSpin,
+            self.maxHeatmapGridSideSpin,
             self.delGracePeriodSpin,
             self.cloudSyncTimeoutSpin,
             )
@@ -414,6 +460,12 @@ class PreferencesDialog(qtw.QDialog):
             self.maxFullHeatmapPointsSpin.setValue(
                 int(values["runtime_settings.max_full_heatmap_points"])
                 )
+            self.maxHeatmapGridCellsSpin.setValue(
+                int(values["runtime_settings.max_heatmap_grid_cells"])
+                )
+            self.maxHeatmapGridSideSpin.setValue(
+                int(values["runtime_settings.max_heatmap_grid_side"])
+                )
             self.delGracePeriodSpin.setValue(
                 float(values["runtime_settings.del_grace_period"])
                 )
@@ -450,6 +502,12 @@ class PreferencesDialog(qtw.QDialog):
             "runtime_settings.max_threads": int(self.maxThreadsSpin.value()),
             "runtime_settings.max_full_heatmap_points": int(
                 self.maxFullHeatmapPointsSpin.value()
+                ),
+            "runtime_settings.max_heatmap_grid_cells": int(
+                self.maxHeatmapGridCellsSpin.value()
+                ),
+            "runtime_settings.max_heatmap_grid_side": int(
+                self.maxHeatmapGridSideSpin.value()
                 ),
             "runtime_settings.del_grace_period": self.delGracePeriodSpin.value(),
             "runtime_settings.cloud_sync_timeout": self.cloudSyncTimeoutSpin.value(),

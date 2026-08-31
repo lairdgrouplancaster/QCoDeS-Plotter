@@ -385,6 +385,8 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 60
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 16
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 4
+                worker.max_heatmap_grid_cells = 16
+                worker.max_heatmap_grid_side = 4
 
                 loader._load_large_heatmap_from_sql(worker)
             finally:

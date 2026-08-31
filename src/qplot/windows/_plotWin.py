@@ -1479,7 +1479,7 @@ class plotWidget(
                 )
 
 
-    def show_preferences_dialog(self):
+    def show_preferences_dialog(self, initial_tab: str | None = None):
         """
         Opens the shared preferences dialog from a plot window.
 
@@ -1492,6 +1492,18 @@ class plotWidget(
             self.config = config
 
         dialog = PreferencesDialog(config, self)
+        if initial_tab is not None:
+            tab_widget = dialog.findChild(qtw.QTabWidget)
+            if tab_widget is not None:
+                for index in range(tab_widget.count()):
+                    if tab_widget.tabText(index) == initial_tab:
+                        tab_widget.setCurrentIndex(index)
+                        break
+        if initial_tab == "Runtime":
+            QtCore.QTimer.singleShot(
+                0,
+                dialog.maxFullHeatmapPointsSpin.setFocus,
+                )
         if hasattr(owner, "apply_current_settings"):
             dialog.preferencesApplied.connect(owner.apply_current_settings)
         else:

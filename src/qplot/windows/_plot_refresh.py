@@ -413,6 +413,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
             "max_full_heatmap_points": self.config.get(
                 "runtime_settings.max_full_heatmap_points"
                 ),
+            "max_heatmap_grid_cells": self.config.get(
+                "runtime_settings.max_heatmap_grid_cells"
+                ),
+            "max_heatmap_grid_side": self.config.get(
+                "runtime_settings.max_heatmap_grid_side"
+                ),
             "heatmap_axis_ranges": heatmap_axis_ranges,
             "heatmap_full_axis_ranges": heatmap_full_axis_ranges,
         }

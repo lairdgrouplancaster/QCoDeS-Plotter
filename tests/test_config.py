@@ -1070,6 +1070,25 @@ class TemporaryConfigTestCase(unittest.TestCase):
             3_000_000,
             )
 
+    def test_heatmap_display_grid_limits_are_persistent(self):
+        cfg = config()
+
+        self.assertEqual(cfg.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
+        self.assertEqual(cfg.get("runtime_settings.max_heatmap_grid_side"), 800)
+
+        cfg.update("runtime_settings.max_heatmap_grid_cells", 500_000)
+        cfg.update("runtime_settings.max_heatmap_grid_side", 1_200)
+
+        reloaded = config()
+        self.assertEqual(
+            reloaded.get("runtime_settings.max_heatmap_grid_cells"),
+            500_000,
+            )
+        self.assertEqual(
+            reloaded.get("runtime_settings.max_heatmap_grid_side"),
+            1_200,
+            )
+
     def test_default_refresh_rate_allows_zero_to_disable_auto_refresh(self):
         cfg = config()
 
