@@ -32,12 +32,18 @@ from qplot.datahandling.trusted_presentation import (
     build_selected_run_presentation,
 )
 from qplot.datahandling.trusted_snapshot import (
+    TRUSTED_SNAPSHOT_LOAD_MORE_TEXT,
     TRUSTED_SNAPSHOT_MAX_NODE_VALUE_BYTES,
     TRUSTED_SNAPSHOT_MAX_RENDERED_NODES,
+    TRUSTED_SNAPSHOT_PAGE_MAX_CHILDREN,
     normalize_trusted_snapshot,
 )
 from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets
+from qplot.windows._widgets.details_tables import (
+    SnapshotTreePageRequest,
+    SnapshotTreeValueRequest,
+)
 from qplot.windows._widgets.preview import (
     PREVIEW_BACKGROUND_COLOR,
     PREVIEW_SELECTED_PRIORITY,
@@ -49,6 +55,18 @@ from qplot.windows._widgets.preview import (
     render_heatmap_preview,
     render_sparkline_preview,
 )
+
+
+def _tree_items(tree):
+    pending = [tree.topLevelItem(index) for index in range(tree.topLevelItemCount())]
+    while pending:
+        item = pending.pop(0)
+        yield item
+        pending[0:0] = [item.child(index) for index in range(item.childCount())]
+
+
+def _tree_item(tree, key):
+    return next(item for item in _tree_items(tree) if item.text(0) == key)
 
 
 class RunDetailsTabsTestCase(unittest.TestCase):
@@ -66,10 +84,15 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     ("completed_timestamp", 1_012.0),
                     ("is_completed", True),
                     ("result_count", 6),
+                    ("setpoint_shape", (6,)),
+                    ("setpoint_shape_source", "observed"),
+                    ("setpoint_count", 6),
+                    ("setpoint_count_source", "observed"),
+                    ("read_setpoint_count", 6),
                     ("measure_parameters", ("signal", "standalone")),
                     ("sweep_parameters", ("gate",)),
-                    ),
                 ),
+            ),
             parameters=(
                 TrustedParameterView("gate", "Gate", "V", (), "numeric"),
                 TrustedParameterView(
@@ -78,35 +101,35 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     "A",
                     ("gate",),
                     "numeric",
-                    ),
+                ),
                 TrustedParameterView(
                     "standalone",
                     "Temperature",
                     "K",
                     (),
                     "numeric",
-                    ),
                 ),
+            ),
             metadata=(
                 ("operator", "Ada"),
                 ("tags", ("alpha", "beta")),
-                ),
+            ),
             snapshot=normalize_trusted_snapshot(
-                json.dumps({
-                    "station": {
-                        "parameters": {
-                            "gate": {
-                                "full_name": "gate",
-                                "post_delay": 0.02,
-                                "instrument_name": "dac",
+                json.dumps(
+                    {
+                        "station": {
+                            "parameters": {
+                                "gate": {
+                                    "full_name": "gate",
+                                    "post_delay": 0.02,
+                                    "instrument_name": "dac",
                                 }
                             }
                         }
-                    })
-                ),
-            setpoint_summaries=(
-                TrustedSetpointSummary("gate", -1.0, 1.0, 3),
-                ),
+                    }
+                )
+            ),
+            setpoint_summaries=(TrustedSetpointSummary("gate", -1.0, 1.0, 3),),
             presentation=build_selected_run_presentation(
                 run_fields={
                     "run_id": 7,
@@ -118,6 +141,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     "completed_timestamp": 1_012.0,
                     "is_completed": True,
                     "result_count": 6,
+                    "setpoint_shape": (6,),
+                    "setpoint_shape_source": "observed",
+                    "setpoint_count": 6,
+                    "setpoint_count_source": "observed",
+                    "read_setpoint_count": 6,
                     "measure_parameters": ("signal", "standalone"),
                     "sweep_parameters": ("gate",),
                 },
@@ -137,31 +165,31 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 ),
                 unavailable_fields=(),
             ),
-            )
+        )
 
     def test_trusted_detail_renders_plain_view_without_database_or_dataset_io(self):
         widget = treeWidgets.moreInfo()
         detail = self._trusted_detail()
 
         with (
-                patch.object(
-                    treeWidgets,
-                    "sqlite_read_only_connection",
-                    side_effect=AssertionError("trusted details queried SQLite"),
-                    create=True,
-                    ),
-                patch.object(
-                    widget.preview,
-                    "set_current_run",
-                    side_effect=AssertionError("trusted details loaded a dataset"),
-                    ),
-                ):
+            patch.object(
+                treeWidgets,
+                "sqlite_read_only_connection",
+                side_effect=AssertionError("trusted details queried SQLite"),
+                create=True,
+            ),
+            patch.object(
+                widget.preview,
+                "set_current_run",
+                side_effect=AssertionError("trusted details loaded a dataset"),
+            ),
+        ):
             widget.set_trusted_run_detail(detail)
 
         overview = {
             widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
             for row in range(widget.overview.rowCount())
-            }
+        }
         self.assertEqual(overview["Status"], "Completed")
         self.assertEqual(overview["Data points"], "6")
         self.assertEqual(overview["Measured parameters"], "signal, standalone")
@@ -208,22 +236,22 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             decoder_thread_id, view = executor.submit(
                 decode_off_thread,
                 deep_json,
-                ).result(timeout=2)
+            ).result(timeout=2)
         self.assertNotEqual(decoder_thread_id, gui_thread_id)
         self.assertEqual(view.status, "truncated")
 
         detail = replace(base_detail, snapshot=view)
         with patch.object(
-                json,
-                "loads",
-                side_effect=AssertionError("Qt attempted to decode snapshot JSON"),
-                ):
+            json,
+            "loads",
+            side_effect=AssertionError("Qt attempted to decode snapshot JSON"),
+        ):
             widget.set_trusted_run_detail(detail)
 
         pending = [
             widget.snapshot.topLevelItem(index)
             for index in range(widget.snapshot.topLevelItemCount())
-            ]
+        ]
         rendered = []
         while pending:
             item = pending.pop()
@@ -232,25 +260,231 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
         self.assertLessEqual(len(rendered), TRUSTED_SNAPSHOT_MAX_RENDERED_NODES)
         self.assertTrue(any(item.text(0) == "[truncated]" for item in rendered))
-        self.assertTrue(all(
-            len(item.toolTip(1).encode("utf-8"))
-            <= TRUSTED_SNAPSHOT_MAX_NODE_VALUE_BYTES
-            for item in rendered
-            ))
+        self.assertTrue(
+            all(
+                len(item.toolTip(1).encode("utf-8"))
+                <= TRUSTED_SNAPSHOT_MAX_NODE_VALUE_BYTES
+                for item in rendered
+            )
+        )
 
         malformed = '{"secret":"' + "x" * (2 * 1024 * 1024)
         with ThreadPoolExecutor(max_workers=1) as executor:
             _thread_id, malformed_view = executor.submit(
                 decode_off_thread,
                 malformed,
-                ).result(timeout=5)
-        widget.set_trusted_run_detail(
-            replace(base_detail, snapshot=malformed_view)
-            )
+            ).result(timeout=5)
+        widget.set_trusted_run_detail(replace(base_detail, snapshot=malformed_view))
         diagnostic = widget.snapshot.topLevelItem(0)
         self.assertEqual(diagnostic.text(0), "Snapshot unavailable")
         self.assertNotIn("x" * 100, diagnostic.text(1))
         self.assertNotIn("x" * 100, diagnostic.toolTip(1))
+
+    def test_snapshot_container_expansion_and_load_more_use_exact_bounded_pages(self):
+        widget = treeWidgets.moreInfo()
+        snapshot_json = json.dumps(
+            {
+                "container": {f"field-{index:03d}": index for index in range(140)},
+                "tail": "root field",
+            },
+            separators=(",", ":"),
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            view = executor.submit(
+                normalize_trusted_snapshot,
+                snapshot_json,
+            ).result(timeout=5)
+        source = view.source
+        self.assertIsNotNone(source)
+        detail = replace(self._trusted_detail(), snapshot=view)
+        requests = []
+        widget.snapshotPageRequested.connect(requests.append)
+
+        widget.set_snapshot_run_detail(detail)
+
+        container = _tree_item(widget.snapshot, "container")
+        self.assertEqual(container.childCount(), 0)
+        self.assertEqual(
+            container.childIndicatorPolicy(),
+            qtw.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator,
+        )
+        self.assertTrue(
+            all(value is not source for value in widget.snapshot.__dict__.values())
+        )
+
+        container.setExpanded(True)
+        self.assertEqual(len(requests), 1)
+        first_request = requests[0]
+        self.assertIsInstance(first_request, SnapshotTreePageRequest)
+        self.assertIsNone(first_request.continuation)
+
+        container.setExpanded(False)
+        container.setExpanded(True)
+        self.assertEqual(requests, [first_request])
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            first_page = executor.submit(
+                source.page,
+                first_request.parent_handle,
+                first_request.continuation,
+            ).result(timeout=5)
+        self.assertTrue(widget.accept_snapshot_page(first_page))
+        self.assertFalse(widget.accept_snapshot_page(first_page))
+        self.assertEqual(container.childCount(), 128)
+        load_more = container.child(container.childCount() - 1)
+        self.assertEqual(load_more.text(0), TRUSTED_SNAPSHOT_LOAD_MORE_TEXT)
+
+        widget.snapshot.itemActivated.emit(load_more, 0)
+        widget.snapshot.itemActivated.emit(load_more, 0)
+        self.assertEqual(len(requests), 2)
+        second_request = requests[-1]
+        self.assertEqual(second_request.parent_handle, first_request.parent_handle)
+        self.assertEqual(second_request.continuation, first_page.continuation)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            second_page = executor.submit(
+                source.page,
+                second_request.parent_handle,
+                second_request.continuation,
+            ).result(timeout=5)
+        self.assertTrue(widget.accept_snapshot_page(second_page))
+        self.assertFalse(widget.accept_snapshot_page(second_page))
+        self.assertEqual(container.childCount(), 140)
+        self.assertEqual(container.child(139).text(0), "field-139")
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            replacement_view = executor.submit(
+                normalize_trusted_snapshot,
+                snapshot_json,
+            ).result(timeout=5)
+        widget.set_snapshot_run_detail(replace(detail, snapshot=replacement_view))
+        replacement_container = _tree_item(widget.snapshot, "container")
+        replacement_container.setExpanded(True)
+        replacement_request = requests[-1]
+        self.assertNotEqual(
+            replacement_request.session_token,
+            first_request.session_token,
+        )
+        self.assertFalse(widget.accept_snapshot_page(second_page))
+        self.assertEqual(replacement_container.childCount(), 0)
+        self.assertTrue(widget.reject_snapshot_request(replacement_request))
+        self.assertFalse(widget.reject_snapshot_request(replacement_request))
+
+    def test_snapshot_opens_station_first_page_without_opening_deeper_nodes(self):
+        widget = treeWidgets.moreInfo()
+        snapshot_json = json.dumps(
+            {
+                "station": {
+                    "parameters": {"signal": {"name": "signal"}},
+                    "run_id": 7,
+                },
+                "other": {"remains": "collapsed"},
+            },
+            separators=(",", ":"),
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            view = executor.submit(
+                normalize_trusted_snapshot,
+                snapshot_json,
+            ).result(timeout=5)
+        source = view.source
+        self.assertIsNotNone(source)
+        requests = []
+        widget.snapshotPageRequested.connect(requests.append)
+
+        widget.set_snapshot_run_detail(replace(self._trusted_detail(), snapshot=view))
+
+        station = _tree_item(widget.snapshot, "station")
+        other = _tree_item(widget.snapshot, "other")
+        self.assertTrue(station.isExpanded())
+        self.assertFalse(other.isExpanded())
+        self.assertEqual(station.childCount(), 0)
+        self.assertLessEqual(
+            len(tuple(_tree_items(widget.snapshot))),
+            TRUSTED_SNAPSHOT_PAGE_MAX_CHILDREN,
+        )
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        self.assertIsNone(request.continuation)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            page = executor.submit(
+                source.page,
+                request.parent_handle,
+                request.continuation,
+            ).result(timeout=5)
+        self.assertTrue(widget.accept_snapshot_page(page))
+
+        parameters = _tree_item(widget.snapshot, "parameters")
+        self.assertFalse(parameters.isExpanded())
+        self.assertEqual(parameters.childCount(), 0)
+        self.assertEqual(requests, [request])
+
+    def test_snapshot_scalar_full_value_waits_for_exact_result_and_keeps_metadata(self):
+        widget = treeWidgets.moreInfo()
+        snapshot_value = "snapshot-value-" * 300
+        metadata_value = "metadata-value-" * 300
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            view = executor.submit(
+                normalize_trusted_snapshot,
+                json.dumps(snapshot_value),
+            ).result(timeout=5)
+        source = view.source
+        self.assertIsNotNone(source)
+        self.assertIsNone(view.root_handle)
+        presentation = build_selected_run_presentation(
+            run_fields={"run_id": 7, "guid": "trusted-guid-7"},
+            metadata_fields={"long_metadata": metadata_value},
+            parameters=(),
+            snapshot_summary={"Status": "available"},
+            setpoint_summaries=(),
+            unavailable_fields=(),
+        )
+        base_detail = self._trusted_detail()
+        detail = replace(
+            base_detail,
+            snapshot=view,
+            metadata=presentation.metadata_fields,
+            presentation=presentation,
+        )
+        requests = []
+        widget.snapshotFullValueRequested.connect(requests.append)
+        widget.set_snapshot_run_detail(detail)
+
+        metadata_item = _tree_item(widget.metadata, "long_metadata")
+        widget.metadata.itemActivated.emit(metadata_item, 1)
+        dialog = widget._full_value_dialog
+        self.assertIsNotNone(dialog)
+        self.assertEqual(dialog.text_edit.toPlainText(), metadata_value)
+
+        scalar_item = widget.snapshot.topLevelItem(0)
+        widget.snapshot.itemActivated.emit(scalar_item, 1)
+        widget.snapshot.itemActivated.emit(scalar_item, 1)
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        self.assertIsInstance(request, SnapshotTreeValueRequest)
+        self.assertIsNone(request.parent_handle)
+        self.assertIsNone(request.continuation)
+        self.assertIs(widget._full_value_dialog, dialog)
+        self.assertEqual(dialog.text_edit.toPlainText(), metadata_value)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            result = executor.submit(
+                source.full_value,
+                request.handle,
+            ).result(timeout=5)
+        self.assertTrue(widget.show_snapshot_full_value(request, result))
+        self.assertFalse(widget.show_snapshot_full_value(request, result))
+        self.assertIs(widget._full_value_dialog, dialog)
+        self.assertEqual(dialog.text_edit.toPlainText(), snapshot_value)
+
+        widget.metadata.itemActivated.emit(metadata_item, 1)
+        self.assertEqual(dialog.text_edit.toPlainText(), metadata_value)
+        widget.snapshot.itemActivated.emit(scalar_item, 1)
+        retry = requests[-1]
+        self.assertTrue(widget.reject_snapshot_request(retry))
+        self.assertFalse(widget.reject_snapshot_request(retry))
+        self.assertEqual(dialog.text_edit.toPlainText(), metadata_value)
 
     def test_selected_presentation_bounds_all_qt_cells_before_publication(self):
         widget = treeWidgets.moreInfo()
@@ -348,37 +582,36 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
         for tree in (widget.metadata, widget.raw):
             pending = [
-                tree.topLevelItem(index)
-                for index in range(tree.topLevelItemCount())
+                tree.topLevelItem(index) for index in range(tree.topLevelItemCount())
             ]
             rendered = []
             while pending:
                 item = pending.pop()
                 rendered.append(item)
-                pending.extend(
-                    item.child(index) for index in range(item.childCount())
+                pending.extend(item.child(index) for index in range(item.childCount()))
+            self.assertLessEqual(len(rendered), TRUSTED_PRESENTATION_MAX_RENDERED_NODES)
+            self.assertTrue(any(item.text(0) == "[truncated]" for item in rendered))
+            self.assertTrue(
+                all(
+                    len(item.text(0).encode("utf-8"))
+                    <= TRUSTED_PRESENTATION_MAX_KEY_BYTES
+                    for item in rendered
                 )
-            self.assertLessEqual(
-                len(rendered), TRUSTED_PRESENTATION_MAX_RENDERED_NODES
             )
             self.assertTrue(
-                any(item.text(0) == "[truncated]" for item in rendered)
+                all(
+                    len(item.text(1).encode("utf-8"))
+                    <= TRUSTED_PRESENTATION_MAX_VALUE_BYTES
+                    for item in rendered
+                )
             )
-            self.assertTrue(all(
-                len(item.text(0).encode("utf-8"))
-                <= TRUSTED_PRESENTATION_MAX_KEY_BYTES
-                for item in rendered
-            ))
-            self.assertTrue(all(
-                len(item.text(1).encode("utf-8"))
-                <= TRUSTED_PRESENTATION_MAX_VALUE_BYTES
-                for item in rendered
-            ))
-            self.assertTrue(all(
-                len(item.toolTip(1).encode("utf-8"))
-                <= TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
-                for item in rendered
-            ))
+            self.assertTrue(
+                all(
+                    len(item.toolTip(1).encode("utf-8"))
+                    <= TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
+                    for item in rendered
+                )
+            )
 
         self.assertLessEqual(widget.parameters.rowCount(), 259)
         for row in range(widget.parameters.rowCount()):
@@ -390,24 +623,190 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                         512,
                     )
 
+    def test_shortened_selected_values_open_one_exact_read_only_viewer(self):
+        widget = treeWidgets.moreInfo()
+        base_detail = self._trusted_detail()
+        run_description = '{"interdependencies_":{"payload":"' + "r" * 1_220 + '"}}'
+        measurement_exception = (
+            "Traceback (most recent call last):\r\n"
+            + "x" * 1_200
+            + "\r\nKeyboardInterrupt"
+        )
+        presentation = build_selected_run_presentation(
+            run_fields={
+                "run_id": 7,
+                "guid": "trusted-guid-7",
+                "run_description": run_description,
+            },
+            metadata_fields={
+                "measurement_exception": measurement_exception,
+                "operator": "Ada",
+            },
+            parameters=(),
+            snapshot_summary={"Status": "available"},
+            setpoint_summaries=(),
+            unavailable_fields=(),
+        )
+        detail = replace(
+            base_detail,
+            run=TrustedRunRecord(7, presentation.run_fields),
+            metadata=presentation.metadata_fields,
+            presentation=presentation,
+        )
+
+        clipboard = qtw.QApplication.clipboard()
+        clipboard.setText("clipboard-sentinel")
+        widget.set_snapshot_run_detail(detail)
+
+        description_item = _tree_item(widget.raw, "run_description")
+        exception_item = _tree_item(widget.metadata, "measurement_exception")
+        self.assertIn("[view full]", description_item.text(1))
+        self.assertIn("KeyboardInterrupt", exception_item.text(1))
+
+        widget.raw.itemDoubleClicked.emit(description_item, 1)
+        dialog = widget._full_value_dialog
+        self.assertIsNotNone(dialog)
+        self.assertTrue(dialog.text_edit.isReadOnly())
+        self.assertEqual(dialog.text_edit.toPlainText(), run_description)
+        self.assertEqual(clipboard.text(), "clipboard-sentinel")
+
+        dialog.select_all_button.click()
+        self.assertTrue(dialog.text_edit.textCursor().hasSelection())
+        self.assertEqual(clipboard.text(), "clipboard-sentinel")
+        dialog.copy_button.click()
+        self.assertEqual(clipboard.text(), run_description)
+
+        widget.metadata.itemActivated.emit(exception_item, 1)
+        self.assertIs(widget._full_value_dialog, dialog)
+        self.assertEqual(dialog._exact_text, measurement_exception)
+        self.assertTrue(dialog.text_edit.toPlainText().endswith("KeyboardInterrupt"))
+        clipboard.setText("second-clipboard-sentinel")
+        dialog.copy_button.click()
+        self.assertEqual(clipboard.text(), measurement_exception)
+
+    def test_full_value_ownership_invalidates_and_does_not_accumulate_dialogs(self):
+        widget = treeWidgets.moreInfo()
+        base_detail = self._trusted_detail()
+        full_value = "selected-value-" * 100
+        presentation = build_selected_run_presentation(
+            run_fields={
+                "run_id": 7,
+                "guid": "trusted-guid-7",
+                "run_description": full_value,
+            },
+            metadata_fields={},
+            parameters=(),
+            snapshot_summary={"Status": "available"},
+            setpoint_summaries=(),
+            unavailable_fields=(),
+        )
+        detail = replace(
+            base_detail,
+            run=TrustedRunRecord(7, presentation.run_fields),
+            metadata=(),
+            presentation=presentation,
+        )
+
+        widget.set_snapshot_run_detail(detail)
+        item = _tree_item(widget.raw, "run_description")
+        widget.raw.itemActivated.emit(item, 1)
+        first_dialog = widget._full_value_dialog
+        self.assertEqual(len(widget._trusted_full_values), 1)
+
+        for _index in range(5):
+            widget.set_snapshot_run_detail(detail)
+            self.assertIsNone(widget._full_value_dialog)
+            self.assertEqual(len(widget._trusted_full_values), 1)
+        self.assertFalse(first_dialog.isVisible())
+        qtw.QApplication.sendPostedEvents(
+            None,
+            QtCore.QEvent.Type.DeferredDelete,
+        )
+        self.assertFalse(widget.findChildren(qtw.QDialog))
+
+        item = _tree_item(widget.raw, "run_description")
+        widget.raw.itemActivated.emit(item, 1)
+        self.assertEqual(len(widget.findChildren(qtw.QDialog)), 1)
+        widget.invalidate_trusted_full_values()
+        self.assertFalse(widget._trusted_full_values)
+        self.assertIsNone(widget._full_value_dialog)
+
+    def test_shortened_key_cell_opens_its_exact_backing_text(self):
+        widget = treeWidgets.moreInfo()
+        base_detail = self._trusted_detail()
+        long_key = "custom-metadata-key-" + "k" * 600
+        presentation = build_selected_run_presentation(
+            run_fields={"run_id": 7, "guid": "trusted-guid-7"},
+            metadata_fields={long_key: "ordinary value"},
+            parameters=(),
+            snapshot_summary={"Status": "available"},
+            setpoint_summaries=(),
+            unavailable_fields=(),
+        )
+        detail = replace(
+            base_detail,
+            run=TrustedRunRecord(7, presentation.run_fields),
+            metadata=presentation.metadata_fields,
+            presentation=presentation,
+        )
+
+        widget.set_snapshot_run_detail(detail)
+        item = next(
+            item
+            for item in _tree_items(widget.metadata)
+            if "[view full key]" in item.text(0)
+        )
+        widget.metadata.itemActivated.emit(item, 0)
+
+        dialog = widget._full_value_dialog
+        self.assertIsNotNone(dialog)
+        self.assertEqual(dialog.text_edit.toPlainText(), long_key)
+        self.assertIn("(key)", dialog.path_label.text())
+
+    def test_raw_categories_are_discoverable_and_same_run_expansion_is_preserved(self):
+        widget = treeWidgets.moreInfo()
+        detail = self._trusted_detail()
+
+        widget.set_snapshot_run_detail(detail)
+
+        raw_categories = [
+            widget.raw.topLevelItem(index)
+            for index in range(widget.raw.topLevelItemCount())
+            if widget.raw.topLevelItem(index).childCount()
+        ]
+        self.assertTrue(raw_categories)
+        self.assertTrue(all(item.isExpanded() for item in raw_categories))
+        snapshot_root = widget.snapshot.topLevelItem(0)
+        self.assertEqual(snapshot_root.childCount(), 0)
+        self.assertEqual(
+            snapshot_root.childIndicatorPolicy(),
+            qtw.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator,
+        )
+        self.assertTrue(snapshot_root.isExpanded())
+
+        run_category = _tree_item(widget.raw, "Run")
+        run_category.setExpanded(False)
+        widget.set_snapshot_run_detail(detail)
+        self.assertFalse(_tree_item(widget.raw, "Run").isExpanded())
+
     def test_snapshot_basic_only_state_uses_allowed_guid_preview_api(self):
         widget = treeWidgets.moreInfo()
         detail = self._trusted_detail()
 
         with (
-                patch.object(
-                    widget.preview,
-                    "set_current_run",
-                    side_effect=AssertionError("snapshot detail used a DataSet"),
-                    ),
-                patch.object(widget.preview, "set_current_guid") as set_guid,
-                patch.object(
-                    treeWidgets,
-                    "sqlite_read_only_connection",
-                    side_effect=AssertionError("snapshot basics opened SQLite"),
-                    create=True,
-                ),
-                ):
+            patch.object(
+                widget.preview,
+                "set_current_run",
+                side_effect=AssertionError("snapshot detail used a DataSet"),
+            ),
+            patch.object(widget.preview, "set_current_guid") as set_guid,
+            patch.object(
+                treeWidgets,
+                "sqlite_read_only_connection",
+                side_effect=AssertionError("snapshot basics opened SQLite"),
+                create=True,
+            ),
+        ):
             widget.set_snapshot_run_unavailable(detail.run)
 
         set_guid.assert_called_once_with("trusted-guid-7")
@@ -431,7 +830,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         overview = {
             widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
             for row in range(widget.overview.rowCount())
-            }
+        }
         self.assertEqual(overview["Name"], "trusted run")
         self.assertEqual(overview["GUID"], "trusted-guid-7")
         self.assertEqual(widget.parameters.rowCount(), 1)
@@ -446,7 +845,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             widget.metadata.topLevelItem(0).text(1),
             "bounded detail failure",
-            )
+        )
         self.assertEqual(widget.raw.topLevelItem(1).text(0), "Error")
 
         widget.clear()
@@ -504,15 +903,20 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                         TRUSTED_PRESENTATION_MAX_RENDERED_NODES,
                     )
 
-                self.assertNotIn(marker, "".join(
-                    item.text(0) + item.text(1) + item.toolTip(1)
-                    for item in rendered
-                ))
-                self.assertTrue(all(
-                    len(item.toolTip(1).encode("utf-8"))
-                    <= TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
-                    for item in rendered
-                ))
+                self.assertNotIn(
+                    marker,
+                    "".join(
+                        item.text(0) + item.text(1) + item.toolTip(1)
+                        for item in rendered
+                    ),
+                )
+                self.assertTrue(
+                    all(
+                        len(item.toolTip(1).encode("utf-8"))
+                        <= TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
+                        for item in rendered
+                    )
+                )
                 for row in range(widget.overview.rowCount()):
                     for column in range(widget.overview.columnCount()):
                         item = widget.overview.item(row, column)
@@ -525,42 +929,96 @@ class RunDetailsTabsTestCase(unittest.TestCase):
     def test_overview_status_matches_the_run_table_label(self):
         widget = treeWidgets.moreInfo()
         states = [
-            ("Running (25.0%)", {
-                "is_completed": False,
-                "setpoint_count": 100,
-                "read_setpoint_count": 25,
-                }),
-            ("Running (25.0%)", {
-                "is_completed": 0,
-                "setpoint_count": 100,
-                "read_setpoint_count": 25,
-                }),
-            ("Running (100.0%)", {
-                "is_completed": False,
-                "setpoint_count": 25,
-                "setpoint_count_source": "observed",
-                "read_setpoint_count": 25,
-                }),
+            (
+                "Running (25.0%)",
+                {
+                    "is_completed": False,
+                    "setpoint_count": 100,
+                    "read_setpoint_count": 25,
+                },
+            ),
+            (
+                "Running (25.0%)",
+                {
+                    "is_completed": 0,
+                    "setpoint_count": 100,
+                    "read_setpoint_count": 25,
+                },
+            ),
+            (
+                "Running (100.0%)",
+                {
+                    "is_completed": False,
+                    "setpoint_count": 25,
+                    "setpoint_count_source": "observed",
+                    "read_setpoint_count": 25,
+                },
+            ),
             ("Completed", {"is_completed": True}),
-            ("Interrupted (25.0%)", {
-                "is_completed": True,
-                "measurement_exception": "KeyboardInterrupt",
-                "setpoint_count": 100,
-                "read_setpoint_count": 25,
-                }),
-            ("Failed", {
-                "is_completed": True,
-                "measurement_exception": "ValueError: bad value",
-                }),
-            ]
+            (
+                "Interrupted (25.0%)",
+                {
+                    "is_completed": True,
+                    "measurement_exception": "KeyboardInterrupt",
+                    "setpoint_count": 100,
+                    "read_setpoint_count": 25,
+                },
+            ),
+            (
+                "Failed",
+                {
+                    "is_completed": True,
+                    "measurement_exception": "ValueError: bad value",
+                },
+            ),
+        ]
 
         for expected, metadata in states:
             with self.subTest(expected=expected, metadata=metadata):
                 self.assertEqual(
                     treeWidgets.format_complete_cell(metadata),
                     expected,
-                    )
+                )
                 self.assertEqual(widget._status_text(None, metadata), expected)
+
+    def test_trusted_overview_never_labels_physical_watermark_as_data_points(self):
+        widget = treeWidgets.moreInfo()
+        metadata = {
+            "guid": "two-dependent-guid",
+            "is_completed": False,
+            "result_count": 185_128,
+            "setpoint_shape": [108, 861],
+            "setpoint_shape_source": "planned",
+            "setpoint_count": 92_988,
+            "setpoint_count_source": "planned",
+            "read_setpoint_count": 92_564,
+        }
+
+        widget.set_trusted_derived_metadata(metadata, (), (), {})
+
+        overview = {
+            widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
+            for row in range(widget.overview.rowCount())
+        }
+        self.assertEqual(
+            overview["Data points"],
+            "92,564 / 92,988 = 108 × 861",
+        )
+        self.assertNotIn("185,128", overview["Data points"])
+
+        widget.update_live_run_details(
+            {
+                **metadata,
+                "result_count": 185_976,
+                "read_setpoint_count": 92_988,
+            }
+        )
+        overview = {
+            widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
+            for row in range(widget.overview.rowCount())
+        }
+        self.assertEqual(overview["Data points"], "92,988 = 108 × 861")
+        self.assertNotIn("185,976", overview["Data points"])
 
     def test_axisless_standalone_parameter_is_reported_as_measured(self):
         class Param:
@@ -578,7 +1036,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     Param("x"),
                     Param("signal", ("x",)),
                     Param("standalone"),
-                    ]
+                ]
 
         widget = treeWidgets.moreInfo()
         widget.setInfo(
@@ -587,14 +1045,14 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     "x": {},
                     "signal": {"axes": ["x"]},
                     "standalone": {},
-                    },
                 },
+            },
             Dataset(),
-            )
+        )
         overview = {
             widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
             for row in range(widget.overview.rowCount())
-            }
+        }
 
         self.assertEqual(overview["Measured parameters"], "signal, standalone")
         self.assertEqual(overview["Setpoints"], "x")
@@ -621,7 +1079,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 return [
                     Param("dac_ch1", "Gate ch1", "V"),
                     Param("dmm_v1", "Gate v1", "V", ("dac_ch1",)),
-                    ]
+                ]
 
             def run_timestamp(self):
                 return 1_768_129_603
@@ -639,7 +1097,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     "Data points": 200,
                     "dac_ch1": {"unit": "V", "label": "Gate ch1"},
                     "dmm_v1": {"unit": "V", "label": "Gate v1", "axes": ["dac_ch1"]},
-                    },
+                },
                 "MetaData": {"export_info": "x" * 300},
                 "Snapshot": {
                     "station": {
@@ -649,34 +1107,36 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                                 "value": 25.0,
                                 "instrument_name": "dac",
                                 "vals": "<Numbers -800<=v<=400>",
-                                },
+                            },
                             "v1": {
                                 "full_name": "dmm_v1",
                                 "value": -0.0048,
                                 "instrument_name": "dmm",
                                 "vals": "<Numbers -800<=v<=400>",
-                                },
-                            }
+                            },
                         }
-                    },
+                    }
                 },
-            Dataset()
-            )
+            },
+            Dataset(),
+        )
 
-        self.assertEqual([widget.tabText(i) for i in range(widget.count())],
-                         [
-                             "Overview",
-                             "Sweep parameters",
-                             "Preview",
-                             "Metadata",
-                             "Snapshot",
-                             "Raw key-value",
-                             ])
+        self.assertEqual(
+            [widget.tabText(i) for i in range(widget.count())],
+            [
+                "Overview",
+                "Sweep parameters",
+                "Preview",
+                "Metadata",
+                "Snapshot",
+                "Raw key-value",
+            ],
+        )
         self.assertEqual(
             [
                 widget.overview.item(row, 0).text()
                 for row in range(widget.overview.rowCount())
-                ],
+            ],
             [
                 "Status",
                 "Data points",
@@ -689,15 +1149,15 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 "Sample",
                 "Name",
                 "GUID",
-                ]
-            )
+            ],
+        )
         self.assertEqual(
             [
                 widget.parameters.horizontalHeaderItem(col).text()
                 for col in range(widget.parameters.columnCount())
-                ],
-            ["Name", "Label", "Unit", "From", "To", "Steps", "Delay", "Instrument"]
-            )
+            ],
+            ["Name", "Label", "Unit", "From", "To", "Steps", "Delay", "Instrument"],
+        )
         self.assertEqual(widget.parameters.rowCount(), 4)
         self.assertEqual(widget.parameters.item(0, 0).text(), "Set parameters")
         self.assertTrue(widget.parameters.item(0, 0).font().bold())
@@ -720,30 +1180,29 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertFalse(widget.parameters.item(3, 0).font().bold())
         self.assertFalse(widget.parameters.item(3, 0).font().italic())
         self.assertEqual(
-            widget.overview.item(2, 1).text(),
-            "23.10 s\t(0d 0h 0m 23s; 0.115 s/point)"
-            )
+            widget.overview.item(2, 1).text(), "23.10 s\t(0d 0h 0m 23s; 0.115 s/point)"
+        )
         self.assertLessEqual(len(widget.metadata.topLevelItem(0).text(1)), 180)
         self.assertTrue(widget.metadata.wordWrap())
         self.assertTrue(widget.raw.wordWrap())
-        self.assertEqual(widget.metadata.textElideMode(), QtCore.Qt.TextElideMode.ElideNone)
+        self.assertEqual(
+            widget.metadata.textElideMode(), QtCore.Qt.TextElideMode.ElideNone
+        )
         self.assertEqual(widget.raw.textElideMode(), QtCore.Qt.TextElideMode.ElideNone)
         self.assertEqual(
             widget.metadata.horizontalScrollBarPolicy(),
-            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-            )
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+        )
         self.assertIsInstance(
-            widget.raw.itemDelegateForColumn(1),
-            treeWidgets.WrappedValueDelegate
-            )
+            widget.raw.itemDelegateForColumn(1), treeWidgets.WrappedValueDelegate
+        )
         self.assertEqual(
             widget.metadata.header().sectionResizeMode(1),
-            qtw.QHeaderView.ResizeMode.Stretch
-            )
+            qtw.QHeaderView.ResizeMode.Stretch,
+        )
         self.assertEqual(
-            widget.raw.header().sectionResizeMode(1),
-            qtw.QHeaderView.ResizeMode.Stretch
-            )
+            widget.raw.header().sectionResizeMode(1), qtw.QHeaderView.ResizeMode.Stretch
+        )
         snapshot_station = widget.snapshot.topLevelItem(0)
         self.assertEqual(snapshot_station.text(0), "station")
         self.assertTrue(snapshot_station.isExpanded())
@@ -751,22 +1210,19 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertTrue(snapshot_station.child(0).child(0).isExpanded())
         self.assertEqual(
             widget.parameters.horizontalHeader().sectionResizeMode(7),
-            qtw.QHeaderView.ResizeMode.Stretch
-            )
+            qtw.QHeaderView.ResizeMode.Stretch,
+        )
         widget.parameters.selectRow(3)
         widget.parameters.copySelection()
         self.assertEqual(
-            qtw.QApplication.clipboard().text(),
-            "dmm_v1\tGate v1\tV\t\t\t\t\tdmm"
-            )
+            qtw.QApplication.clipboard().text(), "dmm_v1\tGate v1\tV\t\t\t\t\tdmm"
+        )
         self.assertEqual(
-            widget.parameters.copy_selection_action.shortcuts()[0].toString(),
-            "Ctrl+C"
-            )
+            widget.parameters.copy_selection_action.shortcuts()[0].toString(), "Ctrl+C"
+        )
         self.assertEqual(
-            widget.parameters.copy_cell_action.shortcuts()[0].toString(),
-            "Ctrl+Shift+C"
-            )
+            widget.parameters.copy_cell_action.shortcuts()[0].toString(), "Ctrl+Shift+C"
+        )
         widget.parameters.setCurrentCell(3, 0)
         widget.parameters.copyCell()
         self.assertEqual(qtw.QApplication.clipboard().text(), "dmm_v1")
@@ -780,8 +1236,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         widget.setInfo({"Data Structure": {"Data points": 0}}, Dataset())
         self.assertEqual(
             widget.parameters.horizontalHeader().sectionResizeMode(7),
-            qtw.QHeaderView.ResizeMode.Stretch
-            )
+            qtw.QHeaderView.ResizeMode.Stretch,
+        )
 
     def test_run_details_renders_precomputed_setpoint_summaries_without_db_io(self):
         class Param:
@@ -800,18 +1256,18 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     Param("dac_ch1", "Gate ch1", "V"),
                     Param("dac_ch2", "Gate ch2", "V"),
                     Param("dmm_v1", "Gate v1", "V", ("dac_ch1", "dac_ch2")),
-                    ]
+                ]
 
             def get_parameter_data(self, name):
                 raise AssertionError("Details pane should not load parameter data")
 
         widget = treeWidgets.moreInfo()
         with patch.object(
-                treeWidgets,
-                "sqlite_read_only_connection",
-                side_effect=AssertionError("details widget opened SQLite"),
-                create=True,
-                ):
+            treeWidgets,
+            "sqlite_read_only_connection",
+            side_effect=AssertionError("details widget opened SQLite"),
+            create=True,
+        ):
             widget.setInfo(
                 {
                     "Data Structure": {
@@ -822,8 +1278,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                             "unit": "V",
                             "label": "Gate v1",
                             "axes": ["dac_ch1", "dac_ch2"],
-                            },
                         },
+                    },
                     "Snapshot": {
                         "station": {},
                         "parameters": {
@@ -831,25 +1287,25 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                                 "full_name": "dac_ch1",
                                 "post_delay": 0.02,
                                 "instrument_name": "dac",
-                                },
+                            },
                             "dac_ch2": {
                                 "full_name": "dac_ch2",
                                 "post_delay": 0.03,
                                 "instrument_name": "dac",
-                                },
                             },
                         },
                     },
+                },
                 Dataset(),
                 run_metadata={
                     "result_table_name": "results-1-1",
                     "result_count": 9,
-                    },
+                },
                 setpoint_summaries={
                     "dac_ch1": {"from": -1.0, "to": 1.0, "steps": 3},
                     "dac_ch2": {"from": -2.0, "to": 1.0, "steps": 3},
-                    },
-                )
+                },
+            )
 
         self.assertEqual(widget.parameters.item(1, 0).text(), "dac_ch1")
         self.assertEqual(widget.parameters.item(1, 3).text(), "-1")
@@ -871,12 +1327,12 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         sparkline = render_sparkline_preview(
             np.array([0, 1, 2, 3], dtype=float),
             np.array([1, 4, 2, 3], dtype=float),
-            )
+        )
         heatmap = render_heatmap_preview(
             np.array([0, 1, 0, 1], dtype=float),
             np.array([0, 0, 1, 1], dtype=float),
             np.array([1, 2, 3, 4], dtype=float),
-            )
+        )
 
         self.assertEqual(sparkline.width(), PREVIEW_SIZE)
         self.assertEqual(sparkline.height(), PREVIEW_SIZE)
@@ -888,7 +1344,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             np.array([], dtype=float),
             np.array([], dtype=float),
             size=20,
-            )
+        )
 
         background = QtGui.QColor(sparkline.pixel(0, 0))
         self.assertEqual(background, QtGui.QColor(PREVIEW_BACKGROUND_COLOR))
@@ -900,7 +1356,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             np.array([0, 0, 1, 1], dtype=float),
             np.array([0, 255, 0, 0], dtype=float),
             size=20,
-            )
+        )
 
         high = QtGui.QColor(heatmap.pixel(15, 15))
         above = QtGui.QColor(heatmap.pixel(15, 5))
@@ -919,7 +1375,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             np.array([1, 2], dtype=float),
             size=40,
             grid_shape=(2, 4),
-            )
+        )
 
         measured = QtGui.QColor(heatmap.pixel(15, 30))
         empty_future_column = QtGui.QColor(heatmap.pixel(35, 30))
@@ -939,7 +1395,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 np.array([0, 255, 0, 0], dtype=float),
                 size=20,
                 grid_shape=(1000, 1000),
-                )
+            )
         finally:
             preview_module.MAX_PREVIEW_GRID_CELLS = old_max_cells
 
@@ -947,12 +1403,14 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(heatmap.height(), 20)
 
     def test_heatmap_preview_downsamples_grid_by_averaging(self):
-        grid = np.array([
-            [0.0, 0.0],
-            [100.0, 100.0],
-            [0.0, 0.0],
-            [100.0, 100.0],
-            ])
+        grid = np.array(
+            [
+                [0.0, 0.0],
+                [100.0, 100.0],
+                [0.0, 0.0],
+                [100.0, 100.0],
+            ]
+        )
 
         display_grid = preview_module._prepare_heatmap_display_grid(grid, size=2)
 
@@ -968,11 +1426,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         filled = preview_module._prepare_heatmap_display_grid(
             mostly_complete,
             size=4,
-            )
+        )
         sparse_display = preview_module._prepare_heatmap_display_grid(
             sparse,
             size=4,
-            )
+        )
 
         self.assertTrue(np.isfinite(filled).all())
         self.assertTrue(np.isnan(sparse_display[1:, :]).all())
@@ -983,7 +1441,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             conn = sqlite3.connect(database_path)
             try:
                 cursor = conn.cursor()
-                cursor.execute("CREATE TABLE results (slow_y REAL, fast_x REAL, signal REAL)")
+                cursor.execute(
+                    "CREATE TABLE results (slow_y REAL, fast_x REAL, signal REAL)"
+                )
                 cursor.executemany(
                     "INSERT INTO results VALUES (?, ?, ?)",
                     [
@@ -991,20 +1451,22 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                         (0.0, 1.0, 255.0),
                         (1.0, 0.0, 0.0),
                         (1.0, 1.0, 0.0),
-                        ]
-                    )
+                    ],
+                )
                 conn.commit()
             finally:
                 cursor.close()
                 conn.close()
 
-            previews = generate_run_previews(database_path, {
-                "run_id": 8,
-                "result_table_name": "results",
-                "result_count": 4,
-                "measure_parameters": ["signal"],
-                "sweep_parameters": ["slow_y", "fast_x"],
-                "run_description": """
+            previews = generate_run_previews(
+                database_path,
+                {
+                    "run_id": 8,
+                    "result_table_name": "results",
+                    "result_count": 4,
+                    "measure_parameters": ["signal"],
+                    "sweep_parameters": ["slow_y", "fast_x"],
+                    "run_description": """
                 {
                   "interdependencies_": {
                     "dependencies": {
@@ -1013,7 +1475,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                   }
                 }
                 """,
-                }, size=20)
+                },
+                size=20,
+            )
 
         heatmap = previews[0]["image"]
         high = QtGui.QColor(heatmap.pixel(15, 15))
@@ -1027,27 +1491,31 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             conn = sqlite3.connect(database_path)
             try:
                 cursor = conn.cursor()
-                cursor.execute("CREATE TABLE results (slow_y REAL, fast_x REAL, signal REAL)")
+                cursor.execute(
+                    "CREATE TABLE results (slow_y REAL, fast_x REAL, signal REAL)"
+                )
                 cursor.executemany(
                     "INSERT INTO results VALUES (?, ?, ?)",
                     [
                         (0.0, 0.0, 1.0),
                         (0.0, 1.0, 2.0),
-                        ]
-                    )
+                    ],
+                )
                 conn.commit()
             finally:
                 cursor.close()
                 conn.close()
 
-            previews = generate_run_previews(database_path, {
-                "run_id": 8,
-                "result_table_name": "results",
-                "result_count": 2,
-                "setpoint_shape": [2, 4],
-                "measure_parameters": ["signal"],
-                "sweep_parameters": ["slow_y", "fast_x"],
-                "run_description": """
+            previews = generate_run_previews(
+                database_path,
+                {
+                    "run_id": 8,
+                    "result_table_name": "results",
+                    "result_count": 2,
+                    "setpoint_shape": [2, 4],
+                    "measure_parameters": ["signal"],
+                    "sweep_parameters": ["slow_y", "fast_x"],
+                    "run_description": """
                 {
                   "interdependencies_": {
                     "dependencies": {
@@ -1056,7 +1524,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                   }
                 }
                 """,
-                }, size=40)
+                },
+                size=40,
+            )
 
         heatmap = previews[0]["image"]
         measured = QtGui.QColor(heatmap.pixel(15, 30))
@@ -1070,40 +1540,42 @@ class RunDetailsTabsTestCase(unittest.TestCase):
     def test_preview_tab_arranges_images_horizontally_with_tooltips(self):
         preview = PreviewTab(preview_size=150)
         self.assertLessEqual(preview.minimumHeight(), 50)
-        preview._show_previews([
-            {
-                "parameter": "signal",
-                "title": "signal vs x",
-                "image": render_sparkline_preview(
-                    np.array([0, 1], dtype=float),
-                    np.array([1, 2], dtype=float),
-                    size=150,
+        preview._show_previews(
+            [
+                {
+                    "parameter": "signal",
+                    "title": "signal vs x",
+                    "image": render_sparkline_preview(
+                        np.array([0, 1], dtype=float),
+                        np.array([1, 2], dtype=float),
+                        size=150,
                     ),
                 },
-            {
-                "parameter": "image",
-                "title": "image vs x and y",
-                "image": render_heatmap_preview(
-                    np.array([0, 1, 0, 1], dtype=float),
-                    np.array([0, 0, 1, 1], dtype=float),
-                    np.array([1, 2, 3, 4], dtype=float),
-                    size=150,
+                {
+                    "parameter": "image",
+                    "title": "image vs x and y",
+                    "image": render_heatmap_preview(
+                        np.array([0, 1, 0, 1], dtype=float),
+                        np.array([0, 0, 1, 1], dtype=float),
+                        np.array([1, 2, 3, 4], dtype=float),
+                        size=150,
                     ),
                 },
-            ])
+            ]
+        )
 
         self.assertIsInstance(preview.content_layout, qtw.QHBoxLayout)
         cards = [
             preview.content_layout.itemAt(index).widget()
             for index in range(preview.content_layout.count())
             if preview.content_layout.itemAt(index).widget() is not None
-            ]
+        ]
         self.assertEqual(len(cards), 2)
         for card, title in zip(
-                cards,
-                ["signal vs x", "image vs x and y"],
-                strict=False,
-                ):
+            cards,
+            ["signal vs x", "image vs x and y"],
+            strict=False,
+        ):
             labels = card.findChildren(qtw.QLabel)
             self.assertEqual(len(labels), 1)
             self.assertEqual(labels[0].toolTip(), title)
@@ -1114,18 +1586,20 @@ class RunDetailsTabsTestCase(unittest.TestCase):
     def test_preview_tab_images_carry_drag_metadata_for_current_run(self):
         preview = PreviewTab(preview_size=100)
         preview.current_guid = "run-guid"
-        preview._show_previews([
-            {
-                "parameter": "signal",
-                "axes": ["x"],
-                "title": "signal vs x",
-                "image": render_sparkline_preview(
-                    np.array([0, 1], dtype=float),
-                    np.array([1, 2], dtype=float),
-                    size=100,
+        preview._show_previews(
+            [
+                {
+                    "parameter": "signal",
+                    "axes": ["x"],
+                    "title": "signal vs x",
+                    "image": render_sparkline_preview(
+                        np.array([0, 1], dtype=float),
+                        np.array([1, 2], dtype=float),
+                        size=100,
                     ),
                 },
-            ])
+            ]
+        )
 
         image = preview.findChild(qtw.QLabel, "previewImage")
 
@@ -1145,29 +1619,33 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             "result_table_name": "results",
             "result_count": 1,
             "is_completed": False,
-            }
+        }
         preview.run_metadata = {"run-guid": old_metadata}
         preview.current_guid = "run-guid"
         preview.metadata_signatures = {
             "run-guid": preview._metadata_signature(old_metadata)
-            }
+        }
         preview.cache = {"run-guid": ["stale preview"]}
         preview.errors = {"run-guid": "stale error"}
 
-        preview.add_runs({
-            7: {
-                **old_metadata,
-                "result_count": 100,
-                "is_completed": True,
-                "completed_timestamp": 123.0,
+        preview.add_runs(
+            {
+                7: {
+                    **old_metadata,
+                    "result_count": 100,
+                    "is_completed": True,
+                    "completed_timestamp": 123.0,
                 },
-            })
+            }
+        )
 
         self.assertNotIn("run-guid", preview.cache)
         self.assertNotIn("run-guid", preview.errors)
         self.assertIn("run-guid", preview.queue)
 
-    def test_preview_tab_cancels_and_requeues_active_preview_when_metadata_changes(self):
+    def test_preview_tab_cancels_and_requeues_active_preview_when_metadata_changes(
+        self,
+    ):
         preview = PreviewTab(preview_size=100)
         started_workers = []
 
@@ -1176,30 +1654,35 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 started_workers.append(worker)
 
         preview.thread_pool = ThreadPool()
-        preview.set_database_runs("previews.db", {
-            7: {
-                "guid": "run-guid",
-                "result_table_name": "results",
-                "result_count": 1,
+        preview.set_database_runs(
+            "previews.db",
+            {
+                7: {
+                    "guid": "run-guid",
+                    "result_table_name": "results",
+                    "result_count": 1,
                 },
-            })
+            },
+        )
         preview.set_current_run(type("Dataset", (), {"guid": "run-guid"})())
         old_worker = started_workers[0]
 
-        preview.add_runs({
-            7: {
-                "guid": "run-guid",
-                "result_table_name": "results",
-                "result_count": 2,
+        preview.add_runs(
+            {
+                7: {
+                    "guid": "run-guid",
+                    "result_table_name": "results",
+                    "result_count": 2,
                 },
-            })
+            }
+        )
         preview.prioritize_runs(selected_run_ids=[7])
 
         self.assertTrue(old_worker.is_cancelled())
         self.assertEqual(
             preview.queue["run-guid"],
             preview_module.PREVIEW_SELECTED_THUMBNAIL_PRIORITY,
-            )
+        )
 
         preview._worker_finished(preview.generation, "run-guid", [], None)
 
@@ -1217,25 +1700,27 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             "setpoint_shape": [2, 5],
             "point_shape": [2, 5],
             "storage_bytes": 100,
-            }
+        }
 
         signature = preview._metadata_signature(metadata)
 
         self.assertEqual(
             signature,
             preview._metadata_signature({**metadata, "storage_bytes": 999}),
-            )
+        )
         self.assertNotEqual(
             signature,
             preview._metadata_signature({**metadata, "setpoint_shape": [5, 2]}),
-            )
+        )
         self.assertNotEqual(
             signature,
-            preview._metadata_signature({
-                **metadata,
-                "run_description": '{"shapes": {"signal": [5, 2]}}',
-                }),
-            )
+            preview._metadata_signature(
+                {
+                    **metadata,
+                    "run_description": '{"shapes": {"signal": [5, 2]}}',
+                }
+            ),
+        )
 
     def test_preview_tab_can_update_metadata_without_queueing_preview(self):
         preview = PreviewTab(preview_size=100)
@@ -1247,18 +1732,21 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             "run_id": 7,
             "result_table_name": "results",
             "result_count": 1,
-            }
+        }
         preview.run_metadata = {"run-guid": old_metadata}
         preview.metadata_signatures = {
             "run-guid": preview._metadata_signature(old_metadata)
-            }
+        }
 
-        preview.add_runs({
-            7: {
-                **old_metadata,
-                "result_count": 100,
+        preview.add_runs(
+            {
+                7: {
+                    **old_metadata,
+                    "result_count": 100,
                 },
-            }, queue_previews=False)
+            },
+            queue_previews=False,
+        )
 
         self.assertEqual(preview.queue, {})
         self.assertEqual(preview.run_metadata["run-guid"]["result_count"], 100)
@@ -1269,12 +1757,15 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         generation_changes = []
         preview.previewGenerationChanged.connect(
             lambda *args: generation_changes.append(args)
-            )
+        )
 
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1", "run_timestamp": 100.0},
-            2: {"guid": "guid-2", "run_timestamp": 101.0},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1", "run_timestamp": 100.0},
+                2: {"guid": "guid-2", "run_timestamp": 101.0},
+            },
+        )
 
         self.assertEqual(preview.queue, {})
         self.assertEqual(generation_changes, [])
@@ -1293,7 +1784,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         preview.active = {(preview.generation, "active-guid")}
         preview._workers = {
             (preview.generation, "active-guid"): worker,
-            }
+        }
 
         preview.shutdown()
 
@@ -1328,10 +1819,10 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             raise sqlite3.OperationalError("interrupted")
 
         with patch.object(
-                preview_module,
-                "generate_run_previews",
-                side_effect=interrupt_preview,
-                ):
+            preview_module,
+            "generate_run_previews",
+            side_effect=interrupt_preview,
+        ):
             worker.run()
 
     def test_preview_worker_cancel_interrupts_its_active_sql_connection(self):
@@ -1414,7 +1905,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             env=env,
             text=True,
             timeout=30,
-            )
+        )
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -1425,17 +1916,20 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         started_workers = []
         preview.previewGenerationChanged.connect(
             lambda *args: generation_changes.append(args)
-            )
+        )
 
         class ThreadPool:
             def start(self, worker):
                 started_workers.append(worker)
 
         preview.thread_pool = ThreadPool()
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1", "run_timestamp": 100.0},
-            2: {"guid": "guid-2", "run_timestamp": 101.0},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1", "run_timestamp": 100.0},
+                2: {"guid": "guid-2", "run_timestamp": 101.0},
+            },
+        )
         preview.set_current_run(type("Dataset", (), {"guid": "guid-2"})())
 
         self.assertEqual(generation_changes, [("guid-2", True)])
@@ -1455,22 +1949,27 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 started_workers.append(worker)
 
         preview.thread_pool = ThreadPool()
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1"},
-            2: {"guid": "guid-2"},
-            3: {"guid": "guid-3"},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1"},
+                2: {"guid": "guid-2"},
+                3: {"guid": "guid-3"},
+            },
+        )
 
         preview.prioritize_runs(
             selected_run_ids=[2],
             visible_run_ids=[1, 2, 3],
-            )
+        )
 
         self.assertEqual(
             [worker.guid for worker in started_workers],
             ["guid-2", "guid-1"],
-            )
-        self.assertEqual(preview.queue, {"guid-3": preview_module.PREVIEW_VISIBLE_PRIORITY})
+        )
+        self.assertEqual(
+            preview.queue, {"guid-3": preview_module.PREVIEW_VISIBLE_PRIORITY}
+        )
 
         preview._start_next()
 
@@ -1481,7 +1980,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             [worker.guid for worker in started_workers],
             ["guid-2", "guid-1", "guid-2"],
-            )
+        )
         self.assertEqual(started_workers[-1].preview_size, 100)
 
         preview._worker_finished(preview.generation, "guid-1", [], None)
@@ -1489,7 +1988,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             [worker.guid for worker in started_workers],
             ["guid-2", "guid-1", "guid-2", "guid-3"],
-            )
+        )
 
     def test_visible_thumbnail_and_selected_preview_use_separate_sizes(self):
         preview = PreviewTab(preview_size=200)
@@ -1503,7 +2002,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         preview.set_database_runs("previews.db", {1: {"guid": "guid-1"}})
         preview.prioritize_runs(visible_run_ids=[1])
         thumbnail_worker = started_workers[-1]
-        self.assertEqual(thumbnail_worker.preview_size, preview_module.PREVIEW_THUMBNAIL_SIZE)
+        self.assertEqual(
+            thumbnail_worker.preview_size, preview_module.PREVIEW_THUMBNAIL_SIZE
+        )
 
         preview._worker_finished(preview.generation, "guid-1", [], None)
         self.assertIn("guid-1", preview.thumbnail_cache)
@@ -1521,11 +2022,14 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 started_workers.append(worker)
 
         preview.thread_pool = ThreadPool()
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1"},
-            2: {"guid": "guid-2"},
-            3: {"guid": "guid-3"},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1"},
+                2: {"guid": "guid-2"},
+                3: {"guid": "guid-3"},
+            },
+        )
         preview.set_current_run(type("Dataset", (), {"guid": "guid-2"})())
         old_worker = started_workers.pop()
 
@@ -1533,14 +2037,16 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         preview.prioritize_runs(
             selected_run_ids=[2, 2],
             visible_run_ids=[2, 1, 1, 3],
-            )
+        )
 
         self.assertTrue(old_worker.is_cancelled())
         self.assertEqual(
             [worker.guid for worker in started_workers],
             ["guid-2", "guid-1"],
-            )
-        self.assertEqual(preview.queue, {"guid-3": preview_module.PREVIEW_VISIBLE_PRIORITY})
+        )
+        self.assertEqual(
+            preview.queue, {"guid-3": preview_module.PREVIEW_VISIBLE_PRIORITY}
+        )
 
     def test_same_preview_size_keeps_workers_and_cache(self):
         preview = PreviewTab(preview_size=200)
@@ -1591,22 +2097,25 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 started_workers.append(worker)
 
         preview.thread_pool = ThreadPool()
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1"},
-            2: {"guid": "guid-2"},
-            3: {"guid": "guid-3"},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1"},
+                2: {"guid": "guid-2"},
+                3: {"guid": "guid-3"},
+            },
+        )
         preview.prioritize_runs(visible_run_ids=[1, 2])
 
         self.assertEqual(
             [worker.guid for worker in started_workers],
             ["guid-1", "guid-2"],
-            )
+        )
 
         preview.prioritize_runs(
             selected_run_ids=[3],
             visible_run_ids=[1, 2],
-            )
+        )
 
         cancelled_workers = [
             worker for worker in started_workers if worker.is_cancelled()
@@ -1621,7 +2130,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             started_workers[-1].guid,
             "guid-3",
-            )
+        )
 
     def test_plotted_preview_request_survives_viewport_reprioritisation(self):
         preview = PreviewTab(preview_size=100)
@@ -1632,10 +2141,13 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 started_workers.append(worker)
 
         preview.thread_pool = ThreadPool()
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1"},
-            2: {"guid": "guid-2"},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1"},
+                2: {"guid": "guid-2"},
+            },
+        )
         preview.prioritize_runs(selected_run_ids=[2])
 
         preview.request_guids(["guid-1"])
@@ -1653,7 +2165,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             [worker.guid for worker in started_workers],
             ["guid-2", "guid-1", "guid-2"],
-            )
+        )
 
         preview._worker_finished(preview.generation, "guid-1", [], None)
 
@@ -1670,10 +2182,13 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 started_workers.append(worker)
 
         preview.thread_pool = ThreadPool()
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1"},
-            2: {"guid": "guid-2"},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1"},
+                2: {"guid": "guid-2"},
+            },
+        )
         preview.prioritize_runs(visible_run_ids=[2])
         obsolete_worker = started_workers[0]
 
@@ -1683,11 +2198,13 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             [worker.guid for worker in started_workers],
             ["guid-2", "guid-1"],
-            )
+        )
 
         preview._worker_finished(preview.generation, "guid-2", [], None)
 
-        self.assertEqual([worker.guid for worker in started_workers], ["guid-2", "guid-1"])
+        self.assertEqual(
+            [worker.guid for worker in started_workers], ["guid-2", "guid-1"]
+        )
         self.assertNotIn("guid-2", preview.cache)
         self.assertEqual(ready, [])
 
@@ -1700,21 +2217,24 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 started_workers.append(worker)
 
         preview.thread_pool = ThreadPool()
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1"},
-            2: {"guid": "guid-2"},
-            3: {"guid": "guid-3"},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1"},
+                2: {"guid": "guid-2"},
+                3: {"guid": "guid-3"},
+            },
+        )
         preview.prioritize_runs(
             selected_run_ids=[3],
             visible_run_ids=[2, 3],
-            )
+        )
         old_selected_worker = started_workers[0]
 
         preview.prioritize_runs(
             selected_run_ids=[1],
             visible_run_ids=[2, 3],
-            )
+        )
 
         self.assertTrue(old_selected_worker.is_cancelled())
         self.assertEqual(len(started_workers), 2)
@@ -1724,7 +2244,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             [worker.guid for worker in started_workers],
             ["guid-3", "guid-2", "guid-1"],
-            )
+        )
 
     def test_stale_preview_callback_keeps_current_generation_active(self):
         preview = PreviewTab(preview_size=100)
@@ -1733,7 +2253,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         started_workers = []
         preview.previewGenerationChanged.connect(
             lambda *args: generation_changes.append(args)
-            )
+        )
 
         class ThreadPool:
             def start(self, worker):
@@ -1756,11 +2276,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             preview.active,
             {(current_generation, "shared-guid")},
-            )
+        )
         self.assertEqual(
             generation_changes,
             [("shared-guid", True), ("shared-guid", True)],
-            )
+        )
 
         preview._start_next = lambda: None
         preview._worker_finished(current_generation, "shared-guid", [], None)
@@ -1771,25 +2291,28 @@ class RunDetailsTabsTestCase(unittest.TestCase):
     def test_preview_tab_queues_only_selected_and_visible_runs_by_priority(self):
         preview = PreviewTab(preview_size=100)
         preview._start_next = lambda: None
-        preview.set_database_runs("previews.db", {
-            1: {"guid": "guid-1", "run_timestamp": 100.0},
-            2: {"guid": "guid-2", "run_timestamp": 101.0},
-            3: {"guid": "guid-3", "run_timestamp": 102.0},
-            })
+        preview.set_database_runs(
+            "previews.db",
+            {
+                1: {"guid": "guid-1", "run_timestamp": 100.0},
+                2: {"guid": "guid-2", "run_timestamp": 101.0},
+                3: {"guid": "guid-3", "run_timestamp": 102.0},
+            },
+        )
 
         preview.prioritize_runs(
             selected_run_ids=[2],
             visible_run_ids=[1, 2],
-            )
+        )
 
         self.assertEqual(
             preview.queue["guid-2"],
             preview_module.PREVIEW_SELECTED_THUMBNAIL_PRIORITY,
-            )
+        )
         self.assertEqual(
             preview.queue["guid-1"],
             preview_module.PREVIEW_VISIBLE_PRIORITY,
-            )
+        )
         self.assertNotIn("guid-3", preview.queue)
 
         preview.prioritize_runs(visible_run_ids=[3])
@@ -1799,7 +2322,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             preview.queue["guid-3"],
             preview_module.PREVIEW_VISIBLE_PRIORITY,
-            )
+        )
 
     def test_preview_tab_retries_a_transient_error_when_run_is_reselected(self):
         preview = PreviewTab(preview_size=100)
@@ -1814,7 +2337,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             preview.queue["run-guid"],
             preview_module.PREVIEW_SELECTED_THUMBNAIL_PRIORITY,
-            )
+        )
 
     def test_preview_cache_evicts_least_recently_used_noncurrent_entry(self):
         preview = PreviewTab(preview_size=100)
@@ -1842,15 +2365,15 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             cursor.execute("CREATE TABLE results (x REAL, signal REAL)")
             cursor.executemany(
                 "INSERT INTO results VALUES (?, ?)",
-                [(float(index), float(index * 10)) for index in range(10)]
-                )
+                [(float(index), float(index * 10)) for index in range(10)],
+            )
 
             x, signal = preview_module._select_arrays(
                 cursor,
                 "results",
                 ["x", "signal"],
                 {},
-                )
+            )
 
             self.assertLessEqual(x.size, 3)
             self.assertEqual(x.tolist(), [0.0, 4.0, 8.0])
@@ -1865,22 +2388,22 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                "CREATE TABLE results (x REAL, signal REAL, other REAL)"
-                )
+            cursor.execute("CREATE TABLE results (x REAL, signal REAL, other REAL)")
             values = []
             for index in range(6):
-                values.extend([
-                    (float(index), None, float(index + 100)),
-                    (float(index), float(index * 10), None),
-                    ])
+                values.extend(
+                    [
+                        (float(index), None, float(index + 100)),
+                        (float(index), float(index * 10), None),
+                    ]
+                )
             cursor.executemany("INSERT INTO results VALUES (?, ?, ?)", values)
 
             with patch.object(
-                    preview_module,
-                    "render_sparkline_preview",
-                    side_effect=lambda x, y, size: (x, y),
-                    ):
+                preview_module,
+                "render_sparkline_preview",
+                side_effect=lambda x, y, size: (x, y),
+            ):
                 preview = preview_module._preview_1d(
                     cursor,
                     "results",
@@ -1888,7 +2411,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     "signal",
                     "x",
                     size=100,
-                    )
+                )
 
             x, signal = preview["image"]
             self.assertEqual(x.tolist(), [0.0, 2.0, 4.0])
@@ -1914,8 +2437,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     (1.0, 0.0, 2.0),
                     (0.0, 1.0, 3.0),
                     (1.0, 1.0, 4.0),
-                    ],
-                )
+                ],
+            )
 
             x, y, signal = preview_module._select_arrays(
                 cursor,
@@ -1924,7 +2447,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 {"result_count": 4},
                 max_rows=preview_module._preview_2d_row_limit((2, 2)),
                 sampling="stratified",
-                )
+            )
 
             self.assertEqual(x.size, 4)
             self.assertEqual(y.size, 4)
@@ -1946,31 +2469,31 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 (float(row), float(column), float(column % 2))
                 for row in range(4)
                 for column in range(40)
-                ]
+            ]
             metadata = {
                 "result_count": len(values),
                 "setpoint_shape": [4, 40],
                 "measure_parameters": ["signal"],
                 "sweep_parameters": ["slow_y", "fast_x"],
-                }
+            }
             grids = []
             with patch.object(
-                    preview_module,
-                    "render_heatmap_grid_preview",
-                    side_effect=lambda grid, size: np.array(grid, copy=True),
-                    ):
+                preview_module,
+                "render_heatmap_grid_preview",
+                side_effect=lambda grid, size: np.array(grid, copy=True),
+            ):
                 for table_name, table_values in (
-                        ("forward_results", values),
-                        ("reverse_results", list(reversed(values))),
-                        ):
+                    ("forward_results", values),
+                    ("reverse_results", list(reversed(values))),
+                ):
                     cursor.execute(
                         f"CREATE TABLE {table_name} "
                         "(slow_y REAL, fast_x REAL, signal REAL)"
-                        )
+                    )
                     cursor.executemany(
                         f"INSERT INTO {table_name} VALUES (?, ?, ?)",
                         table_values,
-                        )
+                    )
                     preview = preview_module._preview_2d(
                         cursor,
                         table_name,
@@ -1978,7 +2501,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                         "signal",
                         ["slow_y", "fast_x"],
                         size=4,
-                        )
+                    )
                     grids.append(preview["image"])
         finally:
             conn.close()
@@ -1999,28 +2522,24 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "CREATE TABLE results "
-                "(slow_y REAL, fast_x REAL, signal REAL)"
-                )
-            values = [
-                (0.0, float(column), float(column % 2))
-                for column in range(40)
-                ]
+                "CREATE TABLE results (slow_y REAL, fast_x REAL, signal REAL)"
+            )
+            values = [(0.0, float(column), float(column % 2)) for column in range(40)]
             cursor.executemany(
                 "INSERT INTO results VALUES (?, ?, ?)",
                 values,
-                )
+            )
             metadata = {
                 "result_count": len(values),
                 "setpoint_shape": [4, 40],
                 "measure_parameters": ["signal"],
                 "sweep_parameters": ["slow_y", "fast_x"],
-                }
+            }
             with patch.object(
-                    preview_module,
-                    "render_heatmap_grid_preview",
-                    side_effect=lambda grid, size: np.array(grid, copy=True),
-                    ):
+                preview_module,
+                "render_heatmap_grid_preview",
+                side_effect=lambda grid, size: np.array(grid, copy=True),
+            ):
                 preview = preview_module._preview_2d(
                     cursor,
                     "results",
@@ -2028,7 +2547,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                     "signal",
                     ["slow_y", "fast_x"],
                     size=4,
-                    )
+                )
         finally:
             conn.close()
             preview_module.MAX_PREVIEW_ROWS = old_max_preview_rows
@@ -2051,30 +2570,30 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 (float(row), float(column), float(column % 2))
                 for row in range(4)
                 for column in range(40)
-                ]
+            ]
             metadata = {
                 "result_count": len(values),
                 "measure_parameters": ["signal"],
                 "sweep_parameters": ["slow_y", "fast_x"],
-                }
+            }
             grids = []
             with patch.object(
-                    preview_module,
-                    "render_heatmap_grid_preview",
-                    side_effect=lambda grid, size: np.array(grid, copy=True),
-                    ):
+                preview_module,
+                "render_heatmap_grid_preview",
+                side_effect=lambda grid, size: np.array(grid, copy=True),
+            ):
                 for table_name, table_values in (
-                        ("forward_results", values),
-                        ("reverse_results", list(reversed(values))),
-                        ):
+                    ("forward_results", values),
+                    ("reverse_results", list(reversed(values))),
+                ):
                     cursor.execute(
                         f"CREATE TABLE {table_name} "
                         "(slow_y REAL, fast_x REAL, signal REAL)"
-                        )
+                    )
                     cursor.executemany(
                         f"INSERT INTO {table_name} VALUES (?, ?, ?)",
                         table_values,
-                        )
+                    )
                     preview = preview_module._preview_2d(
                         cursor,
                         table_name,
@@ -2082,7 +2601,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                         "signal",
                         ["slow_y", "fast_x"],
                         size=4,
-                        )
+                    )
                     grids.append(preview["image"])
         finally:
             conn.close()
@@ -2106,39 +2625,39 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 (float(row), float(column), float(column % 2))
                 for row in range(4)
                 for column in range(40)
-                ]
+            ]
             metadata = {
                 "result_count": len(values),
                 "setpoint_shape": [4, 40],
                 "measure_parameters": ["signal"],
                 "sweep_parameters": ["slow_y", "fast_x"],
-                }
+            }
             grids = []
             with (
-                    patch.object(
-                        preview_module,
-                        "_spatial_mean_preview_grid",
-                        side_effect=sqlite3.OperationalError("unsupported"),
-                        ),
-                    patch.object(preview_module, "log_exception") as logged,
-                    patch.object(
-                        preview_module,
-                        "render_heatmap_grid_preview",
-                        side_effect=lambda grid, size: np.array(grid, copy=True),
-                        ),
-                    ):
+                patch.object(
+                    preview_module,
+                    "_spatial_mean_preview_grid",
+                    side_effect=sqlite3.OperationalError("unsupported"),
+                ),
+                patch.object(preview_module, "log_exception") as logged,
+                patch.object(
+                    preview_module,
+                    "render_heatmap_grid_preview",
+                    side_effect=lambda grid, size: np.array(grid, copy=True),
+                ),
+            ):
                 for table_name, table_values in (
-                        ("forward_results", values),
-                        ("reverse_results", list(reversed(values))),
-                        ):
+                    ("forward_results", values),
+                    ("reverse_results", list(reversed(values))),
+                ):
                     cursor.execute(
                         f"CREATE TABLE {table_name} "
                         "(slow_y REAL, fast_x REAL, signal REAL)"
-                        )
+                    )
                     cursor.executemany(
                         f"INSERT INTO {table_name} VALUES (?, ?, ?)",
                         table_values,
-                        )
+                    )
                     preview = preview_module._preview_2d(
                         cursor,
                         table_name,
@@ -2146,7 +2665,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                         "signal",
                         ["slow_y", "fast_x"],
                         size=4,
-                        )
+                    )
                     grids.append(preview["image"])
         finally:
             conn.close()
@@ -2169,7 +2688,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 np.arange(20, dtype=float),
                 size=20,
                 grid_shape=(20, 20),
-                )
+            )
         finally:
             preview_module.PREVIEW_SAMPLES_PER_CELL = old_samples_per_cell
 
@@ -2180,18 +2699,20 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         preview = PreviewTab(preview_size=100)
         requested = []
         preview.plotRequested.connect(requested.append)
-        preview._show_previews([
-            {
-                "parameter": "dmm_v2",
-                "title": "dmm_v2 vs dac_ch1 and dac_ch2",
-                "image": render_heatmap_preview(
-                    np.array([0, 1, 0, 1], dtype=float),
-                    np.array([0, 0, 1, 1], dtype=float),
-                    np.array([1, 2, 3, 4], dtype=float),
-                    size=100,
+        preview._show_previews(
+            [
+                {
+                    "parameter": "dmm_v2",
+                    "title": "dmm_v2 vs dac_ch1 and dac_ch2",
+                    "image": render_heatmap_preview(
+                        np.array([0, 1, 0, 1], dtype=float),
+                        np.array([0, 0, 1, 1], dtype=float),
+                        np.array([1, 2, 3, 4], dtype=float),
+                        size=100,
                     ),
                 },
-            ])
+            ]
+        )
 
         image = preview.findChild(qtw.QLabel, "previewImage")
         event = QtGui.QMouseEvent(
@@ -2200,7 +2721,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             QtCore.Qt.MouseButton.LeftButton,
             QtCore.Qt.MouseButton.LeftButton,
             QtCore.Qt.KeyboardModifier.NoModifier,
-            )
+        )
         qtw.QApplication.sendEvent(image, event)
 
         self.assertEqual(requested, ["dmm_v2"])
@@ -2209,15 +2730,19 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         preview = PreviewTab(preview_size=100)
         requested = []
         preview.plotRequested.connect(requested.append)
-        preview._show_previews([{
-            "parameter": "signal",
-            "title": "signal vs x",
-            "image": render_sparkline_preview(
-                np.array([0, 1], dtype=float),
-                np.array([1, 2], dtype=float),
-                size=100,
-                ),
-            }])
+        preview._show_previews(
+            [
+                {
+                    "parameter": "signal",
+                    "title": "signal vs x",
+                    "image": render_sparkline_preview(
+                        np.array([0, 1], dtype=float),
+                        np.array([1, 2], dtype=float),
+                        size=100,
+                    ),
+                }
+            ]
+        )
 
         image = preview.findChild(qtw.QLabel, "previewImage")
         self.assertEqual(image.focusPolicy(), QtCore.Qt.FocusPolicy.StrongFocus)
@@ -2238,33 +2763,36 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         image = None
 
         def capture_menu(menu, *_args, **_kwargs):
-            captured_action_texts.append([
-                action.text().replace("&", "")
-                for action in menu.actions()
-                ])
+            captured_action_texts.append(
+                [action.text().replace("&", "") for action in menu.actions()]
+            )
 
         try:
             qtw.QMenu.exec = capture_menu
-            preview._show_previews([{
-                "parameter": "signal",
-                "title": "signal vs x",
-                "image": render_sparkline_preview(
-                    np.array([0, 1], dtype=float),
-                    np.array([1, 2], dtype=float),
-                    size=100,
-                    ),
-                }])
+            preview._show_previews(
+                [
+                    {
+                        "parameter": "signal",
+                        "title": "signal vs x",
+                        "image": render_sparkline_preview(
+                            np.array([0, 1], dtype=float),
+                            np.array([1, 2], dtype=float),
+                            size=100,
+                        ),
+                    }
+                ]
+            )
             image = preview.findChild(qtw.QLabel, "previewImage")
 
             QtTest.QTest.keyClick(
                 image,
                 QtCore.Qt.Key.Key_Menu,
-                )
+            )
             QtTest.QTest.keyClick(
                 image,
                 QtCore.Qt.Key.Key_F10,
                 QtCore.Qt.KeyboardModifier.ShiftModifier,
-                )
+            )
         finally:
             if image is not None:
                 # On macOS QtTest leaves the synthetic modifier globally
@@ -2272,10 +2800,13 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 QtTest.QTest.keyRelease(image, QtCore.Qt.Key.Key_Shift)
             qtw.QMenu.exec = old_exec
 
-        self.assertEqual(captured_action_texts, [
-            ["Plot", "Export CSV..."],
-            ["Plot", "Export CSV..."],
-            ])
+        self.assertEqual(
+            captured_action_texts,
+            [
+                ["Plot", "Export CSV..."],
+                ["Plot", "Export CSV..."],
+            ],
+        )
 
     def test_right_clicking_preview_can_request_export(self):
         old_exec = qtw.QMenu.exec
@@ -2289,30 +2820,33 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
         try:
             qtw.QMenu.exec = capture_menu
-            preview._show_previews([
-                {
-                    "parameter": "signal",
-                    "title": "signal vs x",
-                    "image": render_sparkline_preview(
-                        np.array([0, 1], dtype=float),
-                        np.array([1, 2], dtype=float),
-                        size=100,
+            preview._show_previews(
+                [
+                    {
+                        "parameter": "signal",
+                        "title": "signal vs x",
+                        "image": render_sparkline_preview(
+                            np.array([0, 1], dtype=float),
+                            np.array([1, 2], dtype=float),
+                            size=100,
                         ),
                     },
-                ])
+                ]
+            )
 
             image = preview.findChild(qtw.QLabel, "previewImage")
             event = QtGui.QContextMenuEvent(
                 QtGui.QContextMenuEvent.Reason.Mouse,
                 QtCore.QPoint(10, 10),
                 QtCore.QPoint(10, 10),
-                )
+            )
             qtw.QApplication.sendEvent(image, event)
 
             export_action = next(
-                action for action in captured_actions
+                action
+                for action in captured_actions
                 if action.text().replace("&", "") == "Export CSV..."
-                )
+            )
             export_action.trigger()
 
             self.assertEqual(requested, ["signal"])
@@ -2321,27 +2855,29 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
     def test_clicking_preview_marks_it_selected(self):
         preview = PreviewTab(preview_size=80)
-        preview._show_previews([
-            {
-                "parameter": "signal",
-                "title": "signal vs x",
-                "image": render_sparkline_preview(
-                    np.array([0, 1], dtype=float),
-                    np.array([1, 2], dtype=float),
-                    size=80,
+        preview._show_previews(
+            [
+                {
+                    "parameter": "signal",
+                    "title": "signal vs x",
+                    "image": render_sparkline_preview(
+                        np.array([0, 1], dtype=float),
+                        np.array([1, 2], dtype=float),
+                        size=80,
                     ),
                 },
-            {
-                "parameter": "image",
-                "title": "image vs x and y",
-                "image": render_heatmap_preview(
-                    np.array([0, 1, 0, 1], dtype=float),
-                    np.array([0, 0, 1, 1], dtype=float),
-                    np.array([1, 2, 3, 4], dtype=float),
-                    size=80,
+                {
+                    "parameter": "image",
+                    "title": "image vs x and y",
+                    "image": render_heatmap_preview(
+                        np.array([0, 1, 0, 1], dtype=float),
+                        np.array([0, 0, 1, 1], dtype=float),
+                        np.array([1, 2, 3, 4], dtype=float),
+                        size=80,
                     ),
                 },
-            ])
+            ]
+        )
 
         images = preview.findChildren(qtw.QLabel, "previewImage")
         first_press = QtGui.QMouseEvent(
@@ -2350,14 +2886,14 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             QtCore.Qt.MouseButton.LeftButton,
             QtCore.Qt.MouseButton.LeftButton,
             QtCore.Qt.KeyboardModifier.NoModifier,
-            )
+        )
         second_press = QtGui.QMouseEvent(
             QtCore.QEvent.Type.MouseButtonPress,
             QtCore.QPointF(10, 10),
             QtCore.Qt.MouseButton.LeftButton,
             QtCore.Qt.MouseButton.LeftButton,
             QtCore.Qt.KeyboardModifier.NoModifier,
-            )
+        )
 
         qtw.QApplication.sendEvent(images[0], first_press)
         self.assertTrue(images[0].property(PREVIEW_SELECTED_PROPERTY))
@@ -2388,20 +2924,22 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                         (1.0, 0.0, 2.0, 2.0),
                         (0.0, 1.0, 3.0, 3.0),
                         (1.0, 1.0, 4.0, 4.0),
-                        ]
-                    )
+                    ],
+                )
                 conn.commit()
             finally:
                 cursor.close()
                 conn.close()
 
-            previews = generate_run_previews(database_path, {
-                "run_id": 7,
-                "result_table_name": "results",
-                "result_count": 4,
-                "measure_parameters": ["signal_1d", "signal_2d"],
-                "sweep_parameters": ["x", "y"],
-                "run_description": """
+            previews = generate_run_previews(
+                database_path,
+                {
+                    "run_id": 7,
+                    "result_table_name": "results",
+                    "result_count": 4,
+                    "measure_parameters": ["signal_1d", "signal_2d"],
+                    "sweep_parameters": ["x", "y"],
+                    "run_description": """
                 {
                   "interdependencies_": {
                     "dependencies": {
@@ -2411,21 +2949,33 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                   }
                 }
                 """,
-                })
+                },
+            )
 
-        self.assertEqual([preview["title"] for preview in previews], [
-            "signal_1d vs x",
-            "signal_2d vs x and y",
-            ])
-        self.assertEqual([preview["parameter"] for preview in previews], [
-            "signal_1d",
-            "signal_2d",
-            ])
-        self.assertEqual([preview["axes"] for preview in previews], [
-            ["x"],
-            ["x", "y"],
-            ])
-        self.assertTrue(all(preview["image"].width() == PREVIEW_SIZE for preview in previews))
+        self.assertEqual(
+            [preview["title"] for preview in previews],
+            [
+                "signal_1d vs x",
+                "signal_2d vs x and y",
+            ],
+        )
+        self.assertEqual(
+            [preview["parameter"] for preview in previews],
+            [
+                "signal_1d",
+                "signal_2d",
+            ],
+        )
+        self.assertEqual(
+            [preview["axes"] for preview in previews],
+            [
+                ["x"],
+                ["x", "y"],
+            ],
+        )
+        self.assertTrue(
+            all(preview["image"].width() == PREVIEW_SIZE for preview in previews)
+        )
 
     def test_generate_run_previews_rejects_three_dimensional_measurement(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2434,23 +2984,26 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             try:
                 conn.execute(
                     "CREATE TABLE results (x REAL, y REAL, z REAL, signal REAL)"
-                    )
+                )
                 conn.execute("INSERT INTO results VALUES (0, 0, 0, 1)")
                 conn.commit()
             finally:
                 conn.close()
 
-            previews = generate_run_previews(database_path, {
-                "result_table_name": "results",
-                "result_count": 1,
-                "run_description": """
+            previews = generate_run_previews(
+                database_path,
+                {
+                    "result_table_name": "results",
+                    "result_count": 1,
+                    "run_description": """
                 {
                   "interdependencies_": {
                     "dependencies": {"signal": ["x", "y", "z"]}
                   }
                 }
                 """,
-                })
+                },
+            )
 
         self.assertEqual(len(previews), 1)
         self.assertTrue(previews[0]["unsupported"])

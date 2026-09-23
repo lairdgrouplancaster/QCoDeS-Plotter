@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -15,11 +17,26 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from qplot.datahandling.file_identity import DatabaseInstance, database_instance
 from qplot.datahandling.trusted_live_queries import (
+    TrustedParameterView,
+    TrustedRunRecord,
+    TrustedSelectedRunDetail,
+    TrustedSetpointSummary,
     TrustedSourceRevision,
     TrustedSourceRevisionNamespace,
 )
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
-from qplot.datahandling.trusted_work_coordinator import TrustedDerivedRun
+from qplot.datahandling.trusted_presentation import build_selected_run_presentation
+from qplot.datahandling.trusted_snapshot import (
+    TRUSTED_SNAPSHOT_LOAD_MORE_TEXT,
+    normalize_trusted_snapshot,
+)
+from qplot.datahandling.trusted_work_coordinator import (
+    TrustedDerivedRun,
+    TrustedSelectedDetailPublication,
+)
+from qplot.datahandling.trusted_work_coordinator import (
+    TrustedWorkCoordinator as _RealTrustedWorkCoordinator,
+)
 from qplot.datahandling.trusted_work_scheduler import (
     TrustedCacheWorkKey,
     TrustedWorkKind,
@@ -28,7 +45,12 @@ from qplot.datahandling.trusted_work_scheduler import (
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import _trusted_derived_qt as bridge_module
 from qplot.windows._trusted_derived_qt import TrustedDerivedQtBridge
+from qplot.windows._widgets.details_tables import (
+    SnapshotTreePageRequest,
+    SnapshotTreeValueRequest,
+)
 from qplot.windows._widgets.preview import PreviewTab
+from qplot.windows._widgets.treeWidgets import moreInfo
 from tests.windows.test_trusted_live_ui import (
     _FakeLoadWorker,
     _LifecycleHarness,
@@ -55,6 +77,7 @@ class _Service(TrustedLiveReadService):
     def __init__(self, instance: DatabaseInstance, nonce: bytes = b"stage5c") -> None:
         self._instance = instance
         self._namespace = TrustedSourceRevisionNamespace(nonce)
+        self._session_generation = 1
 
     @property
     def database_instance(self) -> DatabaseInstance:
@@ -63,6 +86,247 @@ class _Service(TrustedLiveReadService):
     @property
     def source_revision_namespace(self) -> TrustedSourceRevisionNamespace:
         return self._namespace
+
+
+class _ObjectSignal:
+    def __init__(self) -> None:
+        self._slots = []
+
+    def connect(self, slot) -> None:
+        self._slots.append(slot)
+
+    def emit(self, value) -> None:
+        for slot in tuple(self._slots):
+            slot(value)
+
+
+class _BlockingSnapshotSource:
+    def __init__(self, session_token: str) -> None:
+        self.session_token = session_token
+        self.release = threading.Event()
+        self.started = threading.Event()
+        self.finished = threading.Event()
+        self.calls: list[tuple[str, object, object | None, int]] = []
+
+    def _wait(self, cancel_check) -> None:
+        self.started.set()
+        while not self.release.wait(0.002):
+            cancel_check()
+
+    def page(self, parent, cursor, *, cancel_check):
+        self.calls.append(("page", parent, cursor, threading.get_ident()))
+        try:
+            self._wait(cancel_check)
+        finally:
+            self.finished.set()
+        return SimpleNamespace(
+            parent_handle=parent,
+            request_continuation=cursor,
+            nodes=(),
+            continuation=None,
+            rendered_text_bytes=0,
+        )
+
+    def full_value(self, handle, *, cancel_check):
+        self.calls.append(("value", handle, None, threading.get_ident()))
+        try:
+            self._wait(cancel_check)
+        finally:
+            self.finished.set()
+        return SimpleNamespace(text="complete value", utf8_bytes=14)
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceSnapshotView:
+    nodes: tuple[object, ...]
+    parameters: tuple[object, ...]
+    status: str
+    message: str
+    input_bytes: int
+    session_token: str
+    source: object | None
+
+
+def _with_snapshot_source(
+    detail: TrustedSelectedRunDetail,
+    source: _BlockingSnapshotSource,
+) -> TrustedSelectedRunDetail:
+    snapshot = detail.snapshot
+    return replace(
+        detail,
+        snapshot=_SourceSnapshotView(
+            nodes=tuple(snapshot.nodes),
+            parameters=tuple(snapshot.parameters),
+            status=snapshot.status,
+            message=snapshot.message,
+            input_bytes=snapshot.input_bytes,
+            session_token=source.session_token,
+            source=source,
+        ),
+    )
+
+
+class _SelectedRequest:
+    def __init__(
+        self,
+        detail: TrustedSelectedRunDetail,
+        release: threading.Event | None = None,
+    ) -> None:
+        self.detail = detail
+        self.release = release
+        self.cancelled = False
+
+    @property
+    def done(self) -> bool:
+        return self.cancelled or self.release is None or self.release.is_set()
+
+    def cancel(self) -> bool:
+        self.cancelled = True
+        return True
+
+    def wait(self, _timeout: float | None = None) -> TrustedSelectedRunDetail:
+        if self.cancelled:
+            raise InterruptedError("selected-detail request cancelled")
+        if not self.done:
+            raise TimeoutError("selected-detail request remains blocked")
+        return self.detail
+
+
+class _SelectedService(_Service):
+    def __init__(
+        self,
+        instance: DatabaseInstance,
+        details: dict[int, TrustedSelectedRunDetail],
+        *,
+        releases: dict[int, threading.Event] | None = None,
+    ) -> None:
+        super().__init__(instance, b"selected-detail")
+        self.details = dict(details)
+        self.releases = dict(releases or {})
+        self.selected_submissions: list[tuple[int, dict[str, object]]] = []
+        self.selected_requests: dict[int, list[_SelectedRequest]] = {}
+
+    def submit_selected_run(self, run_id: int, **kwargs) -> _SelectedRequest:
+        self.selected_submissions.append((run_id, dict(kwargs)))
+        request = _SelectedRequest(self.details[run_id], self.releases.get(run_id))
+        self.selected_requests.setdefault(run_id, []).append(request)
+        return request
+
+
+class _DerivedCacheHits:
+    """Return deterministic derived hits without retaining selected detail."""
+
+    def __init__(self, run_ids: dict[str, int]) -> None:
+        self.run_ids = dict(run_ids)
+        self.hits: list[tuple[str, TrustedWorkKind]] = []
+        self.puts = 0
+
+    def configure_for_database(self, _database: DatabaseInstance) -> None:
+        return None
+
+    def get(self, key, *, cancel_check=None):
+        if cancel_check is not None:
+            cancel_check()
+        self.hits.append((key.run_guid, key.kind))
+        run_id = self.run_ids[key.run_guid]
+        payload: dict[str, object] = {
+            "format": "qplot-trusted-derived-payload-v1",
+            "kind": key.kind.name.lower(),
+            "status": "empty",
+            "description": "cached derived result",
+            "source": (
+                ("run_id", run_id),
+                ("run_guid", key.run_guid),
+                ("helper_incarnation", 1),
+            ),
+            "images": (),
+        }
+        if key.kind is TrustedWorkKind.METADATA:
+            payload.update(
+                status="ok",
+                metadata=(
+                    ("run_id", run_id),
+                    ("guid", key.run_guid),
+                    (
+                        "run_fields",
+                        (
+                            ("run_id", run_id),
+                            ("guid", key.run_guid),
+                            ("name", f"cached-{key.run_guid}"),
+                            ("result_count", 3),
+                        ),
+                    ),
+                    (
+                        "parameters",
+                        (
+                            ("x", "X", "V", (), "numeric"),
+                            ("signal", "Signal", "A", ("x",), "numeric"),
+                        ),
+                    ),
+                    ("setpoint_summaries", (("x", 0.0, 1.0, 3),)),
+                ),
+            )
+        return payload
+
+    def put(self, *_args, **_kwargs) -> None:
+        self.puts += 1
+
+
+def _rich_selected_detail(run_id: int, guid: str) -> TrustedSelectedRunDetail:
+    parameters = (
+        TrustedParameterView("x", "Gate", "V", (), "numeric"),
+        TrustedParameterView("signal", "Signal", "A", ("x",), "numeric"),
+    )
+    summaries = (TrustedSetpointSummary("x", 0.0, 1.0, 3),)
+    metadata = (("operator", "Ada"), ("purpose", "selected detail"))
+    snapshot = normalize_trusted_snapshot(
+        '{"station":{"parameters":{"gate":{"value":1.25,"unit":"V"}}}}'
+    )
+    run_fields = {
+        "run_id": run_id,
+        "guid": guid,
+        "name": f"detail-{guid}",
+        "result_count": 3,
+    }
+    presentation = build_selected_run_presentation(
+        run_fields=run_fields,
+        metadata_fields=dict(metadata),
+        parameters=tuple(
+            {
+                "name": parameter.name,
+                "label": parameter.label,
+                "unit": parameter.unit,
+                "depends_on": parameter.depends_on,
+                "type": parameter.paramtype,
+            }
+            for parameter in parameters
+        ),
+        snapshot_summary={
+            "Status": snapshot.status,
+            "Message": snapshot.message,
+            "Input bytes": snapshot.input_bytes,
+            "Rendered nodes": len(snapshot.nodes),
+        },
+        setpoint_summaries=tuple(
+            {
+                "name": summary.name,
+                "from": summary.first,
+                "to": summary.last,
+                "steps": summary.steps,
+            }
+            for summary in summaries
+        ),
+        unavailable_fields=("optional_field",),
+    )
+    return TrustedSelectedRunDetail(
+        run=TrustedRunRecord(run_id, tuple(run_fields.items())),
+        parameters=parameters,
+        metadata=metadata,
+        snapshot=snapshot,
+        setpoint_summaries=summaries,
+        presentation=presentation,
+        unavailable_fields=("optional_field",),
+    )
 
 
 class _FakeCoordinator:
@@ -77,6 +341,7 @@ class _FakeCoordinator:
         formats,
         wakeup,
         on_publish,
+        on_selected_detail,
         on_error,
     ) -> None:
         self.database = database
@@ -85,6 +350,7 @@ class _FakeCoordinator:
         self.formats = dict(formats)
         self.wakeup = wakeup
         self.on_publish = on_publish
+        self.on_selected_detail = on_selected_detail
         self.on_error = on_error
         self.generation = 1
         self.pending: list[WorkPublication] = []
@@ -93,9 +359,35 @@ class _FakeCoordinator:
         self.started = 0
         self.selections: list[int | None] = []
         self.visible_updates: list[tuple[int, ...]] = []
+        self.priority_updates: list[tuple[int | None, tuple[int, ...]]] = []
         self.source_changes: list[int] = []
         self.format_updates: list[tuple[TrustedWorkKind, object]] = []
         self.reconciliations: list[int] = []
+        self.reconciliation_priorities: list[
+            tuple[int | None, tuple[int, ...]] | None
+        ] = []
+        self.append_claim_starts: list[
+            tuple[int, tuple[int | None, tuple[int, ...]]]
+        ] = []
+        self.database_switches: list[
+            tuple[
+                DatabaseInstance,
+                tuple[int | None, tuple[int, ...]] | None,
+                bool,
+            ]
+        ] = []
+        self.database_switch_events: list[
+            tuple[str, tuple[int | None, tuple[int, ...]] | None]
+        ] = []
+        self.database_claim_starts: list[
+            tuple[
+                DatabaseInstance,
+                int,
+                tuple[int | None, tuple[int, ...]],
+            ]
+        ] = []
+        self._applied_priority: tuple[int | None, tuple[int, ...]] = (None, ())
+        self._switched_claim_pending = False
         self.completed: set[tuple[int, TrustedWorkKind]] = set()
         self.replay_requests: list[tuple[int, TrustedWorkKind]] = []
         self.closed = False
@@ -111,14 +403,20 @@ class _FakeCoordinator:
         return False
 
     def snapshot(self):
-        return SimpleNamespace(generation=self.generation, pending_count=0)
+        return SimpleNamespace(
+            generation=self.generation,
+            pending_count=0,
+            selected_index=self._applied_priority[0],
+        )
 
     def start(self) -> None:
         self.started += 1
+        self._start_switched_claim()
 
     def poll(self) -> int:
         self.poll_threads.append(threading.get_ident())
         self.poll_count += 1
+        self._start_switched_claim()
         publications, self.pending = self.pending, []
         for publication in publications:
             index = next(
@@ -136,9 +434,39 @@ class _FakeCoordinator:
     def set_visible_indices(self, indices) -> None:
         self.visible_updates.append(tuple(indices))
 
-    def reconcile_runs(self, runs) -> None:
+    def set_priority(self, selected_index, visible_indices, *, pump=True) -> None:
+        exact_visible = tuple(visible_indices)
+        self._applied_priority = (selected_index, exact_visible)
+        self.priority_updates.append((selected_index, exact_visible))
+        self.selections.append(selected_index)
+        self.visible_updates.append(exact_visible)
+        if pump:
+            self._start_switched_claim()
+
+    def reconcile_runs(self, runs, *, priority=None) -> None:
+        old_count = len(self._runs)
         self._runs = tuple(runs)
         self.reconciliations.append(len(self._runs))
+        exact_priority = None
+        if priority is not None:
+            selected_index, visible_indices = priority
+            exact_priority = (selected_index, tuple(visible_indices))
+            self._applied_priority = exact_priority
+            self.priority_updates.append(exact_priority)
+            self.selections.append(selected_index)
+            self.visible_updates.append(exact_priority[1])
+        self.reconciliation_priorities.append(exact_priority)
+        if len(self._runs) > old_count:
+            selected_index, visible_indices = self._applied_priority
+            claim_index = next(
+                (
+                    index
+                    for index in (selected_index, *visible_indices)
+                    if index is not None and index >= old_count
+                ),
+                old_count,
+            )
+            self.append_claim_starts.append((claim_index, self._applied_priority))
 
     def source_changed(self, index: int) -> None:
         self.source_changes.append(index)
@@ -190,11 +518,50 @@ class _FakeCoordinator:
         self.replay_requests.append((run_index, kind))
         return True
 
-    def switch_database(self, database, runs, service) -> None:
+    def switch_database(
+        self,
+        database,
+        runs,
+        service,
+        *,
+        priority=None,
+        defer_start=False,
+    ) -> None:
         self.database = database
         self._runs = tuple(runs)
         self.service = service
         self.generation += 1
+        exact_priority = None
+        if priority is not None:
+            selected_index, visible_indices = priority
+            exact_priority = (selected_index, tuple(visible_indices))
+            self._applied_priority = exact_priority
+            self.priority_updates.append(exact_priority)
+            self.selections.append(selected_index)
+            self.visible_updates.append(exact_priority[1])
+        self.database_switches.append((database, exact_priority, bool(defer_start)))
+        self.database_switch_events.append(("priority", exact_priority))
+        self._switched_claim_pending = True
+        if not defer_start:
+            self._start_switched_claim()
+
+    def _start_switched_claim(self) -> None:
+        if not self._switched_claim_pending:
+            return
+        selected_index, visible_indices = self._applied_priority
+        claim_index = next(
+            (
+                index
+                for index in (selected_index, *visible_indices)
+                if index is not None
+            ),
+            0,
+        )
+        self.database_claim_starts.append(
+            (self.database, claim_index, self._applied_priority)
+        )
+        self.database_switch_events.append(("claim", self._applied_priority))
+        self._switched_claim_pending = False
 
     def close_async(self) -> None:
         self.closed = True
@@ -339,15 +706,62 @@ class _Preview:
 class _InfoBox:
     def __init__(self) -> None:
         self.preview = _Preview()
+        self.snapshotPageRequested = _ObjectSignal()
+        self.snapshotFullValueRequested = _ObjectSignal()
         self.metadata: list[tuple[dict[str, object], int]] = []
+        self.details: list[tuple[TrustedSelectedRunDetail, int]] = []
+        self.active_detail: TrustedSelectedRunDetail | None = None
         self.errors: list[tuple[str, int]] = []
         self.loading: list[tuple[dict[str, object], int]] = []
+        self.full_value_invalidations = 0
+        self.snapshot_invalidations = 0
+        self.snapshot_pages: list[tuple[object, int]] = []
+        self.snapshot_values: list[tuple[object, object, int]] = []
+        self.snapshot_rejections: list[tuple[object, int]] = []
+        self.accept_snapshot_pages = True
+        self.accept_snapshot_values = True
+
+    def invalidate_trusted_full_values(self) -> None:
+        self.full_value_invalidations += 1
+
+    def invalidate_trusted_snapshot(self) -> None:
+        self.snapshot_invalidations += 1
+
+    def accept_snapshot_page(self, page: object) -> bool:
+        if not self.accept_snapshot_pages:
+            return False
+        self.snapshot_pages.append((page, threading.get_ident()))
+        return True
+
+    def show_snapshot_full_value(self, request: object, result: object) -> bool:
+        if not self.accept_snapshot_values:
+            return False
+        self.snapshot_values.append((request, result, threading.get_ident()))
+        return True
+
+    def reject_snapshot_request(self, request: object) -> None:
+        self.snapshot_rejections.append((request, threading.get_ident()))
 
     def set_trusted_derived_metadata(
         self, run, _parameters, _summaries, _metadata
     ) -> None:
         self.metadata.append((dict(run), threading.get_ident()))
+        # The production method rebuilds every tab.  A later derived metadata
+        # publication must therefore be suppressed or patched narrowly once
+        # richer selected detail has been accepted.
+        self.active_detail = None
         self.preview.set_current_guid(str(run["guid"]))
+
+    def _accept_detail(self, detail: TrustedSelectedRunDetail) -> None:
+        self.details.append((detail, threading.get_ident()))
+        self.active_detail = detail
+        self.preview.set_current_guid(str(detail.run.as_dict()["guid"]))
+
+    def set_trusted_run_detail(self, detail: TrustedSelectedRunDetail) -> None:
+        self._accept_detail(detail)
+
+    def set_snapshot_run_detail(self, detail: TrustedSelectedRunDetail) -> None:
+        self._accept_detail(detail)
 
     def set_trusted_run_error(self, message, _run) -> None:
         self.errors.append((str(message), threading.get_ident()))
@@ -355,6 +769,25 @@ class _InfoBox:
     def set_trusted_run_loading(self, run) -> None:
         self.loading.append((dict(run), threading.get_ident()))
         self.preview.set_current_guid(str(run["guid"]))
+
+
+class _TrackingSnapshotInfoBox(moreInfo):
+    """Production details tabs with observable source-free publications."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.displayed_snapshot_sources: list[object | None] = []
+        self.displayed_snapshot_sessions: list[str] = []
+        self.snapshot_invalidation_count = 0
+
+    def set_snapshot_run_detail(self, detail: TrustedSelectedRunDetail) -> None:
+        self.displayed_snapshot_sources.append(detail.snapshot.source)
+        self.displayed_snapshot_sessions.append(detail.snapshot.session_token)
+        super().set_snapshot_run_detail(detail)
+
+    def invalidate_trusted_snapshot(self) -> None:
+        self.snapshot_invalidation_count += 1
+        super().invalidate_trusted_snapshot()
 
 
 class _Window(QtWidgets.QWidget):
@@ -377,6 +810,21 @@ class _Window(QtWidgets.QWidget):
 
     def _reload_replaced_database(self, path: str) -> None:
         self.reloads.append(path)
+
+
+def _visible_run_guids(run_list: _RunList) -> tuple[str, ...]:
+    viewport = run_list.viewport()
+    first = run_list.itemAt(QtCore.QPoint(1, 1))
+    assert viewport is not None and first is not None
+    visible: list[str] = []
+    item = first
+    while item is not None:
+        rect = run_list.visualItemRect(item)
+        if rect.isValid() and rect.top() > viewport.rect().bottom():
+            break
+        visible.append(str(item.guid))
+        item = run_list.itemBelow(item)
+    return tuple(visible)
 
 
 @pytest.fixture(autouse=True)
@@ -412,7 +860,7 @@ def bound_bridge(tmp_path):
 
 def _publication(
     bridge: TrustedDerivedQtBridge,
-    coordinator: _FakeCoordinator,
+    coordinator: Any,
     guid: str,
     kind: TrustedWorkKind,
     *,
@@ -424,8 +872,13 @@ def _publication(
     index = next(i for i, run in enumerate(coordinator.runs) if run.run_guid == guid)
     run = coordinator.runs[index]
     work_format = bridge._formats[kind]
+    database = (
+        coordinator.database
+        if hasattr(coordinator, "database")
+        else coordinator.snapshot().database_instance
+    )
     key = TrustedCacheWorkKey(
-        coordinator.database,
+        database,
         guid,
         kind,
         run.source_revision,
@@ -467,11 +920,47 @@ def _publication(
             ),
             ("setpoint_summaries", (("x", 0.0, 1.0, 3),)),
         )
+    current_generation = (
+        coordinator.generation
+        if hasattr(coordinator, "generation")
+        else coordinator.snapshot().generation
+    )
     return WorkPublication(
-        coordinator.generation if generation is None else generation,
+        current_generation if generation is None else generation,
         key,
         payload,
         False,
+    )
+
+
+def _selected_detail_publication(
+    bridge: TrustedDerivedQtBridge,
+    coordinator: Any,
+    detail: TrustedSelectedRunDetail,
+    *,
+    helper_incarnation: int = 1,
+    selection_generation: int = 7,
+) -> TrustedSelectedDetailPublication:
+    guid = str(detail.run.as_dict()["guid"])
+    publication = _publication(
+        bridge,
+        coordinator,
+        guid,
+        TrustedWorkKind.METADATA,
+        helper_incarnation=helper_incarnation,
+    )
+    run_index = next(
+        index for index, run in enumerate(coordinator.runs) if run.run_guid == guid
+    )
+    return TrustedSelectedDetailPublication(
+        generation=publication.generation,
+        key=publication.key,
+        run_index=run_index,
+        run_id=detail.run.run_id,
+        run_guid=guid,
+        helper_incarnation=helper_incarnation,
+        selection_generation=selection_generation,
+        detail=detail,
     )
 
 
@@ -501,6 +990,712 @@ def _image_publication(bridge, coordinator, guid, kind):
         payload,
         publication.is_current_selection,
     )
+
+
+def _bind_real_detail_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    *,
+    selected_guid: str,
+    details: dict[int, TrustedSelectedRunDetail],
+    releases: dict[int, threading.Event] | None = None,
+):
+    path = tmp_path / "selected-detail.db"
+    path.write_bytes(b"selected-detail")
+    instance = database_instance(path)
+    runs = {
+        run_id: {
+            "run_id": run_id,
+            "guid": detail.run.as_dict()["guid"],
+            "name": f"run-{run_id}",
+            "result_count": 3,
+        }
+        for run_id, detail in details.items()
+    }
+    service = _SelectedService(instance, details, releases=releases)
+    cache = _DerivedCacheHits(
+        {str(metadata["guid"]): run_id for run_id, metadata in runs.items()}
+    )
+
+    def coordinator_factory(database, derived_runs, active_service, **kwargs):
+        return _RealTrustedWorkCoordinator(
+            database,
+            derived_runs,
+            active_service,
+            cache=cache,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        bridge_module,
+        "TrustedWorkCoordinator",
+        coordinator_factory,
+    )
+    window = _Window(instance, service, runs)
+    window._selected_run_guid = selected_guid
+    bridge = TrustedDerivedQtBridge(window)
+    bridge.bind_database(instance, runs, service)
+    coordinator = bridge.coordinator
+    assert coordinator is not None
+    return window, bridge, coordinator, service, cache
+
+
+def _shutdown_real_bridge(window: _Window, bridge: TrustedDerivedQtBridge) -> None:
+    bridge.shutdown()
+    _process_until(lambda: not bridge.background_active())
+    window.hide()
+    window.deleteLater()
+
+
+def _install_snapshot_session(
+    window: _Window,
+    bridge: TrustedDerivedQtBridge,
+    coordinator: _FakeCoordinator,
+    source: _BlockingSnapshotSource,
+) -> tuple[TrustedSelectedRunDetail, TrustedSelectedDetailPublication]:
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    detail = _with_snapshot_source(_rich_selected_detail(1, "guid-1"), source)
+    publication = _selected_detail_publication(bridge, coordinator, detail)
+    bridge._publish_selected_detail(publication)
+    return detail, publication
+
+
+def _wait_snapshot_worker_without_qt(
+    bridge: TrustedDerivedQtBridge,
+    timeout: float = 2.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with bridge._snapshot_work_lock:
+            if not bridge._snapshot_live_futures:
+                return
+        time.sleep(0.002)
+    raise AssertionError("Snapshot worker did not finish")
+
+
+def test_snapshot_source_is_detached_and_page_and_value_publish_on_owner(
+    bound_bridge,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    owner = threading.get_ident()
+    source = _BlockingSnapshotSource("snapshot-session-1")
+    detail, _publication = _install_snapshot_session(
+        window,
+        bridge,
+        coordinator,
+        source,
+    )
+
+    displayed = window.infoBox.active_detail
+    retained = bridge._selected_detail_publication
+    assert displayed is not None and displayed is not detail
+    assert displayed.snapshot.source is None
+    assert retained is not None and retained.detail.snapshot.source is None
+    assert bridge._snapshot_source is source
+
+    page_request = SnapshotTreePageRequest(
+        source.session_token,
+        "root-container",
+        None,
+    )
+    window.infoBox.snapshotPageRequested.emit(page_request)
+    assert source.started.wait(1.0)
+    assert bridge.background_active()
+    source.release.set()
+    _process_until(lambda: len(window.infoBox.snapshot_pages) == 1)
+
+    page, page_thread = window.infoBox.snapshot_pages[0]
+    assert page.parent_handle == "root-container"
+    assert page_thread == owner
+    assert source.calls[0][3] != owner
+
+    value_request = SnapshotTreeValueRequest(
+        source.session_token,
+        "full-value-handle",
+        "/Snapshot/value (value)",
+        "root-container",
+        None,
+    )
+    window.infoBox.snapshotFullValueRequested.emit(value_request)
+    _process_until(lambda: len(window.infoBox.snapshot_values) == 1)
+    accepted_request, result, value_thread = window.infoBox.snapshot_values[0]
+    assert accepted_request is value_request
+    assert result.text == "complete value"
+    assert value_thread == owner
+    assert not window.infoBox.snapshot_rejections
+
+
+@pytest.mark.parametrize("request_kind", ["page", "value"])
+def test_snapshot_result_queued_past_owner_deadline_is_rejected(
+    bound_bridge,
+    request_kind,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    source = _BlockingSnapshotSource("snapshot-owner-deadline")
+    _install_snapshot_session(window, bridge, coordinator, source)
+    if request_kind == "page":
+        request = SnapshotTreePageRequest(
+            source.session_token,
+            "root-container",
+            None,
+        )
+        window.infoBox.snapshotPageRequested.emit(request)
+    else:
+        request = SnapshotTreeValueRequest(
+            source.session_token,
+            "full-value-handle",
+            "/Snapshot/value (value)",
+            "root-container",
+            None,
+        )
+        window.infoBox.snapshotFullValueRequested.emit(request)
+    assert source.started.wait(1.0)
+    source.release.set()
+    assert source.finished.wait(1.0)
+    _wait_snapshot_worker_without_qt(bridge)
+    with bridge._snapshot_work_lock:
+        work = next(iter(bridge._snapshot_slots.values()))
+
+    with patch.object(bridge_module.time, "monotonic", return_value=work.deadline):
+        bridge._publish_snapshot_results()
+
+    assert not window.infoBox.snapshot_pages
+    assert not window.infoBox.snapshot_values
+    assert [item for item, _thread in window.infoBox.snapshot_rejections] == [request]
+
+
+def test_many_snapshot_sessions_retain_only_current_source_and_replace_tree(
+    tmp_path,
+) -> None:
+    path = tmp_path / "many-snapshot-sessions.db"
+    path.write_bytes(b"many-snapshot-sessions")
+    instance = database_instance(path)
+    service = _Service(instance)
+    runs = {
+        1: {
+            "run_id": 1,
+            "guid": "guid-1",
+            "name": "run-1",
+            "result_count": 150,
+        }
+    }
+    window = _Window(instance, service, runs)
+    info_box = _TrackingSnapshotInfoBox(window)
+    window.infoBox = info_box
+    layout = window.layout()
+    assert layout is not None
+    layout.addWidget(info_box)
+    bridge = TrustedDerivedQtBridge(window)
+    bridge.bind_database(instance, runs, service)
+    coordinator = _FakeCoordinator.created[-1]
+    base_detail = _rich_selected_detail(1, "guid-1")
+    sources = []
+    prior_cancel_events: list[threading.Event] = []
+    session_count = 24
+
+    try:
+        window._selected_run_guid = "guid-1"
+        bridge.select_run("guid-1")
+        for session_index in range(session_count):
+            prefix = f"session_{session_index:02d}_field_"
+            snapshot = normalize_trusted_snapshot(
+                json.dumps(
+                    {
+                        f"{prefix}{field_index:03d}": field_index
+                        for field_index in range(150)
+                    },
+                    separators=(",", ":"),
+                )
+            )
+            assert snapshot.source is not None
+            sources.append(snapshot.source)
+            detail = replace(base_detail, snapshot=snapshot)
+            bridge._publish_selected_detail(
+                _selected_detail_publication(bridge, coordinator, detail)
+            )
+
+            assert bridge._snapshot_source is snapshot.source
+            assert bridge._selected_detail_publication is not None
+            assert bridge._selected_detail_publication.detail.snapshot.source is None
+            assert info_box.displayed_snapshot_sources[-1] is None
+            assert info_box.snapshot.snapshotSessionToken == snapshot.session_token
+            assert all(cancel.is_set() for cancel in prior_cancel_events)
+
+            snapshot_tree = info_box.snapshot
+            assert snapshot_tree.topLevelItemCount() == 128
+            current_keys = tuple(
+                snapshot_tree.topLevelItem(index).text(0)
+                for index in range(snapshot_tree.topLevelItemCount())
+            )
+            assert current_keys[:-1] == tuple(
+                f"{prefix}{field_index:03d}" for field_index in range(127)
+            )
+            assert current_keys[-1] == TRUSTED_SNAPSHOT_LOAD_MORE_TEXT
+            assert all(
+                value is not source
+                for source in sources
+                for value in snapshot_tree.__dict__.values()
+            )
+
+            if session_index + 1 < session_count:
+                current_cancel = bridge._snapshot_session_cancel
+                assert current_cancel is not None and not current_cancel.is_set()
+                prior_cancel_events.append(current_cancel)
+                snapshot_tree.itemActivated.emit(
+                    snapshot_tree.topLevelItem(127),
+                    0,
+                )
+
+        _process_until(lambda: not bridge.background_active(), timeout=5.0)
+        QtWidgets.QApplication.processEvents()
+
+        assert bridge._snapshot_source is sources[-1]
+        assert all(bridge._snapshot_source is not source for source in sources[:-1])
+        assert all(cancel.is_set() for cancel in prior_cancel_events)
+        assert info_box.displayed_snapshot_sources == [None] * session_count
+        assert len(info_box.displayed_snapshot_sessions) == session_count
+        assert info_box.displayed_snapshot_sessions[-1] == sources[-1].session_token
+        assert info_box.snapshot_invalidation_count >= session_count
+        assert info_box.snapshot.topLevelItemCount() == 128
+        assert (
+            info_box.snapshot.topLevelItem(0)
+            .text(0)
+            .startswith(f"session_{session_count - 1:02d}_")
+        )
+        assert info_box.snapshot.topLevelItem(127).text(0) == (
+            TRUSTED_SNAPSHOT_LOAD_MORE_TEXT
+        )
+    finally:
+        bridge.shutdown()
+        _process_until(lambda: not bridge.background_active())
+        window.hide()
+        window.deleteLater()
+
+
+def test_snapshot_diagnostic_without_source_is_still_accepted(bound_bridge) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    detail = replace(
+        _rich_selected_detail(1, "guid-1"),
+        snapshot=normalize_trusted_snapshot(None),
+    )
+    bridge._publish_selected_detail(
+        _selected_detail_publication(bridge, coordinator, detail)
+    )
+
+    assert window.infoBox.active_detail is detail
+    assert detail.snapshot.source is None
+    assert detail.snapshot.session_token == ""
+    assert bridge._snapshot_source is None
+
+
+@pytest.mark.parametrize("request_kind", ["page", "value"])
+def test_snapshot_widget_rejection_releases_exact_request(
+    bound_bridge,
+    request_kind,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    source = _BlockingSnapshotSource("snapshot-widget-rejection")
+    _install_snapshot_session(window, bridge, coordinator, source)
+    request = SnapshotTreeValueRequest(
+        source.session_token,
+        "value-handle",
+        "/Snapshot/value (value)",
+        "root-parent",
+        None,
+    )
+    if request_kind == "page":
+        request = SnapshotTreePageRequest(
+            source.session_token,
+            "root-parent",
+            None,
+        )
+        window.infoBox.accept_snapshot_pages = False
+        window.infoBox.snapshotPageRequested.emit(request)
+    else:
+        window.infoBox.accept_snapshot_values = False
+        window.infoBox.snapshotFullValueRequested.emit(request)
+    assert source.started.wait(1.0)
+    source.release.set()
+    _process_until(lambda: bool(window.infoBox.snapshot_rejections))
+
+    assert [item for item, _thread in window.infoBox.snapshot_rejections] == [request]
+    assert not window.infoBox.snapshot_pages
+    assert not window.infoBox.snapshot_values
+
+
+@pytest.mark.parametrize("request_kind", ["page", "value"])
+@pytest.mark.parametrize(
+    "stale_component",
+    [
+        "database_instance",
+        "binding_serial",
+        "coordinator_generation",
+        "helper_incarnation",
+        "source_revision",
+        "selection_generation",
+        "run_index",
+        "run_id",
+        "run_guid",
+        "service_session_generation",
+        "snapshot_token",
+        "source_identity",
+        "parent_handle",
+        "continuation",
+    ],
+)
+def test_late_snapshot_result_is_rejected_by_every_fence_component(
+    bound_bridge,
+    tmp_path,
+    request_kind,
+    stale_component,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    source = _BlockingSnapshotSource("snapshot-stale-session")
+    _detail, _publication = _install_snapshot_session(
+        window,
+        bridge,
+        coordinator,
+        source,
+    )
+    request = SimpleNamespace(
+        session_token=source.session_token,
+        parent_handle="parent-1",
+        continuation="cursor-1",
+        handle="value-1",
+        path="/Snapshot/value (value)",
+    )
+    if request_kind == "page":
+        window.infoBox.snapshotPageRequested.emit(request)
+    else:
+        window.infoBox.snapshotFullValueRequested.emit(request)
+    assert source.started.wait(1.0)
+    source.release.set()
+    assert source.finished.wait(1.0)
+    _wait_snapshot_worker_without_qt(bridge)
+
+    retained = bridge._selected_detail_publication
+    assert retained is not None
+    if stale_component == "database_instance":
+        other_path = tmp_path / "other-snapshot.db"
+        other_path.write_bytes(b"other snapshot")
+        bridge._database_instance = database_instance(other_path)
+    elif stale_component == "binding_serial":
+        bridge._binding_serial += 1
+    elif stale_component == "coordinator_generation":
+        assert bridge._coordinator_generation is not None
+        bridge._coordinator_generation += 1
+    elif stale_component == "helper_incarnation":
+        bridge._selected_detail_publication = replace(
+            retained,
+            helper_incarnation=retained.helper_incarnation + 1,
+        )
+    elif stale_component == "source_revision":
+        bridge._selected_detail_publication = replace(
+            retained,
+            key=replace(
+                retained.key,
+                source_revision=TrustedSourceRevision(b"stale-source"),
+            ),
+        )
+    elif stale_component == "selection_generation":
+        bridge._selected_detail_publication = replace(
+            retained,
+            selection_generation=retained.selection_generation + 1,
+        )
+    elif stale_component == "run_index":
+        bridge._selected_detail_publication = replace(
+            retained,
+            run_index=retained.run_index + 1,
+        )
+    elif stale_component == "run_id":
+        bridge._selected_detail_publication = replace(
+            retained,
+            run_id=retained.run_id + 1,
+        )
+    elif stale_component == "run_guid":
+        bridge._selected_detail_publication = replace(
+            retained,
+            run_guid="guid-2",
+        )
+    elif stale_component == "service_session_generation":
+        window._trusted_read_service._session_generation += 1
+    elif stale_component == "snapshot_token":
+        bridge._snapshot_session_token = "new-snapshot-token"
+    elif stale_component == "source_identity":
+        bridge._snapshot_source = object()
+    elif stale_component == "parent_handle":
+        request.parent_handle = "parent-2"
+    elif stale_component == "continuation":
+        request.continuation = "cursor-2"
+    else:  # pragma: no cover - parametrization is exhaustive
+        raise AssertionError(stale_component)
+
+    QtWidgets.QApplication.processEvents()
+    assert not window.infoBox.snapshot_pages
+    assert not window.infoBox.snapshot_values
+    assert [item for item, _thread in window.infoBox.snapshot_rejections] == [request]
+
+
+def test_snapshot_executor_has_one_worker_two_slots_and_cancels_with_session(
+    bound_bridge,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    source = _BlockingSnapshotSource("snapshot-bounded-session")
+    _install_snapshot_session(window, bridge, coordinator, source)
+    requests = [
+        SnapshotTreePageRequest(source.session_token, f"parent-{index}", None)
+        for index in range(3)
+    ]
+
+    window.infoBox.snapshotPageRequested.emit(requests[0])
+    assert source.started.wait(1.0)
+    window.infoBox.snapshotPageRequested.emit(requests[1])
+    window.infoBox.snapshotPageRequested.emit(requests[2])
+
+    assert len(source.calls) == 1
+    assert bridge.background_active()
+    assert [item for item, _thread in window.infoBox.snapshot_rejections] == [
+        requests[2]
+    ]
+
+    bridge.source_changed((1,))
+    _process_until(lambda: not bridge.background_active())
+    assert bridge._snapshot_source is None
+    assert not window.infoBox.snapshot_pages
+
+
+def test_replaced_snapshot_session_releases_cancelled_work_source(
+    bound_bridge,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    first = _BlockingSnapshotSource("snapshot-replaced-first")
+    _install_snapshot_session(window, bridge, coordinator, first)
+    request = SnapshotTreePageRequest(
+        first.session_token,
+        "root-container",
+        None,
+    )
+    window.infoBox.snapshotPageRequested.emit(request)
+    assert first.started.wait(1.0)
+    with bridge._snapshot_work_lock:
+        cancelled_work = next(iter(bridge._snapshot_slots.values()))
+    assert cancelled_work.source is first
+
+    second = _BlockingSnapshotSource("snapshot-replaced-second")
+    detail = _with_snapshot_source(_rich_selected_detail(1, "guid-1"), second)
+    bridge._publish_selected_detail(
+        _selected_detail_publication(bridge, coordinator, detail)
+    )
+
+    assert bridge._snapshot_source is second
+    assert cancelled_work.source is None
+    assert first.finished.wait(1.0)
+    _process_until(lambda: not bridge.background_active())
+    assert not window.infoBox.snapshot_pages
+
+
+@pytest.mark.parametrize("request_kind", ["page", "value"])
+def test_shutdown_rejects_late_snapshot_page_or_dialog(
+    bound_bridge,
+    request_kind,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    source = _BlockingSnapshotSource("snapshot-shutdown")
+    _install_snapshot_session(window, bridge, coordinator, source)
+    if request_kind == "page":
+        request = SnapshotTreePageRequest(
+            source.session_token,
+            "root-container",
+            None,
+        )
+        window.infoBox.snapshotPageRequested.emit(request)
+    else:
+        request = SnapshotTreeValueRequest(
+            source.session_token,
+            "full-value-handle",
+            "/Snapshot/value (value)",
+            "root-container",
+            None,
+        )
+        window.infoBox.snapshotFullValueRequested.emit(request)
+    assert source.started.wait(1.0)
+    with bridge._snapshot_work_lock:
+        cancelled_work = next(iter(bridge._snapshot_slots.values()))
+
+    bridge.shutdown()
+
+    assert bridge._snapshot_source is None
+    assert cancelled_work.source is None
+    assert source.finished.wait(1.0)
+    _process_until(lambda: not bridge.background_active())
+    QtWidgets.QApplication.processEvents()
+    assert not window.infoBox.snapshot_pages
+    assert not window.infoBox.snapshot_values
+    assert [item for item, _thread in window.infoBox.snapshot_rejections] == [request]
+
+
+def test_selected_metadata_cache_hit_carries_bounded_detail_without_losing_preview(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    detail = _rich_selected_detail(1, "guid-1")
+    window, bridge, coordinator, service, cache = _bind_real_detail_bridge(
+        monkeypatch,
+        tmp_path,
+        selected_guid="guid-1",
+        details={1: detail},
+    )
+    try:
+        _process_until(lambda: bool(window.RunList.metadata_updates))
+
+        assert ("guid-1", TrustedWorkKind.METADATA) in cache.hits
+        _process_until(lambda: bool(service.selected_submissions))
+        assert [run_id for run_id, _kwargs in service.selected_submissions] == [1]
+        _process_until(lambda: window.infoBox.active_detail is not None)
+        accepted_detail = window.infoBox.active_detail
+        assert accepted_detail is not detail
+        assert accepted_detail.snapshot.source is None
+        assert bridge._snapshot_source is detail.snapshot.source
+
+        raw_keys = {node.key for node in detail.presentation.raw.nodes}
+        assert {
+            "Run",
+            "Metadata",
+            "Snapshot",
+            "Parameters",
+            "Setpoint summaries",
+            "Unavailable fields",
+        } <= raw_keys
+        assert detail.presentation.raw.status == "truncated"
+        assert detail.presentation.metadata.status == "available"
+        assert detail.snapshot.status == "available"
+        assert window.infoBox.preview.current_guid == "guid-1"
+        assert cache.puts == 0
+
+        accepted_count = len(window.infoBox.details)
+        derived_count = len(window.infoBox.metadata)
+        bridge._publish(
+            _publication(
+                bridge,
+                coordinator,
+                "guid-1",
+                TrustedWorkKind.METADATA,
+            )
+        )
+        bridge._publish(
+            _image_publication(
+                bridge,
+                coordinator,
+                "guid-1",
+                TrustedWorkKind.THUMBNAIL,
+            )
+        )
+        bridge._publish(
+            _image_publication(
+                bridge,
+                coordinator,
+                "guid-1",
+                TrustedWorkKind.PREVIEW,
+            )
+        )
+
+        assert window.infoBox.active_detail is accepted_detail
+        assert len(window.infoBox.details) == accepted_count
+        assert len(window.infoBox.metadata) == derived_count
+        assert window.infoBox.preview.current_guid == "guid-1"
+    finally:
+        _shutdown_real_bridge(window, bridge)
+
+
+def test_reselection_rejects_stale_selected_detail_and_preserves_newer_tabs(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    first_release = threading.Event()
+    first = _rich_selected_detail(1, "guid-1")
+    second = _rich_selected_detail(2, "guid-2")
+    window, bridge, coordinator, service, _cache = _bind_real_detail_bridge(
+        monkeypatch,
+        tmp_path,
+        selected_guid="guid-1",
+        details={1: first, 2: second},
+        releases={1: first_release},
+    )
+    try:
+        _process_until(
+            lambda: any(run_id == 1 for run_id, _ in service.selected_submissions)
+        )
+
+        window._selected_run_guid = "guid-2"
+        bridge.select_run("guid-2")
+        bridge._apply_priority()
+        first_release.set()
+        _process_until(
+            lambda: any(run_id == 2 for run_id, _ in service.selected_submissions)
+        )
+        _process_until(
+            lambda: (
+                window.infoBox.active_detail is not None
+                and window.infoBox.active_detail.run.run_id == 2
+            )
+        )
+        accepted_second = window.infoBox.active_detail
+
+        assert all(detail is not first for detail, _thread in window.infoBox.details)
+        assert accepted_second is not second
+        assert accepted_second.snapshot.source is None
+        assert bridge._snapshot_source is second.snapshot.source
+        assert window.infoBox.preview.current_guid == "guid-2"
+
+        bridge._publish(
+            _publication(
+                bridge,
+                coordinator,
+                "guid-1",
+                TrustedWorkKind.METADATA,
+            )
+        )
+        bridge._publish(
+            _publication(
+                bridge,
+                coordinator,
+                "guid-2",
+                TrustedWorkKind.METADATA,
+            )
+        )
+
+        assert window.infoBox.active_detail is accepted_second
+        assert window.infoBox.preview.current_guid == "guid-2"
+    finally:
+        first_release.set()
+        _shutdown_real_bridge(window, bridge)
+
+
+def test_selection_source_helper_database_and_shutdown_boundaries_invalidate_viewer(
+    bound_bridge,
+) -> None:
+    window, bridge, _coordinator, _runs = bound_bridge
+    baseline = window.infoBox.full_value_invalidations
+
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    assert window.infoBox.full_value_invalidations == baseline + 1
+
+    bridge.source_changed((1,))
+    assert window.infoBox.full_value_invalidations == baseline + 2
+
+    bridge.helper_restarted()
+    assert window.infoBox.full_value_invalidations == baseline + 3
+
+    window._selected_run_guid = "guid-2"
+    bridge.select_run("guid-2")
+    assert window.infoBox.full_value_invalidations == baseline + 4
+
+    bridge.clear_database()
+    assert window.infoBox.full_value_invalidations == baseline + 5
 
 
 def test_fast_baseline_commits_before_bridge_start_and_legacy_enrichment() -> None:
@@ -628,6 +1823,10 @@ def test_selection_sort_scroll_and_resize_feed_stable_priority_without_rebuild(
     for index in coordinator.visible_updates[-1]:
         visible_guids.append(coordinator.runs[index].run_guid)
     assert coordinator.selections[-1] == 6
+    assert coordinator.priority_updates[-1] == (
+        6,
+        coordinator.visible_updates[-1],
+    )
     assert visible_guids
     assert visible_guids[0] == window.RunList.topLevelItem(0).guid
     assert bridge.coordinator is original
@@ -641,7 +1840,132 @@ def test_selection_sort_scroll_and_resize_feed_stable_priority_without_rebuild(
     _process_until(lambda: len(coordinator.visible_updates) > prior_updates)
     assert len(coordinator.visible_updates) == prior_updates + 1
     assert coordinator.selections[-1] == 2
+    assert coordinator.priority_updates[-1] == (
+        2,
+        coordinator.visible_updates[-1],
+    )
     assert bridge.coordinator is original
+
+
+def test_idle_append_adopts_current_sorted_view_before_first_new_claim(
+    bound_bridge,
+) -> None:
+    window, bridge, coordinator, runs = bound_bridge
+    _process_until(lambda: not bridge._priority_timer.isActive())
+    assert not coordinator.active
+    assert coordinator.snapshot().pending_count == 0
+
+    window._selected_run_guid = "guid-1"
+    window.RunList.sortItems(1, QtCore.Qt.SortOrder.AscendingOrder)
+    window.RunList.scrollToTop()
+    bridge._apply_priority()
+    old_priority = coordinator.priority_updates[-1]
+
+    extended = dict(runs)
+    extended.update(
+        {
+            run_id: {
+                "run_id": run_id,
+                "guid": f"guid-{run_id}",
+                "name": f"zz-appended-{run_id:03d}",
+            }
+            for run_id in range(13, 33)
+        }
+    )
+    window.RunList.set_runs(extended)
+    window.RunList.sortItems(1, QtCore.Qt.SortOrder.AscendingOrder)
+    selected_item = window.RunList._item_for_guid("guid-32")
+    assert selected_item is not None
+    window._selected_run_guid = "guid-32"
+    window.RunList.setCurrentItem(selected_item)
+    window.RunList.scrollToItem(
+        selected_item,
+        QtWidgets.QAbstractItemView.ScrollHint.PositionAtBottom,
+    )
+    _process_until(lambda: not bridge._priority_timer.isActive())
+
+    visible_guids = _visible_run_guids(window.RunList)
+
+    stable_index = {
+        str(metadata["guid"]): index
+        for index, (_run_id, metadata) in enumerate(sorted(extended.items()))
+    }
+    expected_priority = (
+        stable_index["guid-32"],
+        tuple(stable_index[guid] for guid in visible_guids),
+    )
+    assert expected_priority[0] in expected_priority[1]
+    assert any(index >= len(runs) for index in expected_priority[1])
+    assert expected_priority != old_priority
+    assert coordinator._applied_priority != expected_priority
+
+    bridge.reconcile_runs(extended)
+
+    assert coordinator.reconciliation_priorities == [expected_priority]
+    assert coordinator.append_claim_starts == [
+        (expected_priority[0], expected_priority)
+    ]
+
+
+def test_reused_idle_coordinator_installs_new_database_priority_before_claim(
+    bound_bridge,
+    tmp_path,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    _process_until(lambda: not bridge._priority_timer.isActive())
+    assert not coordinator.active
+    assert coordinator.snapshot().pending_count == 0
+
+    replacement_path = tmp_path / "replacement.db"
+    replacement_path.write_bytes(b"replacement")
+    replacement = database_instance(replacement_path)
+    replacement_service = _Service(replacement, b"replacement")
+    replacement_runs = {
+        run_id: {
+            "run_id": run_id,
+            "guid": f"replacement-guid-{run_id}",
+            "name": f"replacement-{run_id:03d}",
+        }
+        for run_id in range(101, 125)
+    }
+    window.RunList.set_runs(replacement_runs)
+    window.RunList.sortItems(1, QtCore.Qt.SortOrder.AscendingOrder)
+    selected_guid = "replacement-guid-121"
+    selected_item = window.RunList._item_for_guid(selected_guid)
+    assert selected_item is not None
+    window._selected_run_guid = selected_guid
+    window.RunList.setCurrentItem(selected_item)
+    window.RunList.scrollToBottom()
+    _process_until(lambda: not bridge._priority_timer.isActive())
+
+    stable_index = {
+        str(metadata["guid"]): index
+        for index, (_run_id, metadata) in enumerate(sorted(replacement_runs.items()))
+    }
+    expected_priority = (
+        stable_index[selected_guid],
+        tuple(stable_index[guid] for guid in _visible_run_guids(window.RunList)),
+    )
+    assert expected_priority[0] != 0
+    assert expected_priority[0] in expected_priority[1]
+    assert coordinator._applied_priority != expected_priority
+    starts_before = coordinator.started
+
+    window._loaded_database_instance = replacement
+    window._trusted_read_service = replacement_service
+    bridge.bind_database(replacement, replacement_runs, replacement_service)
+
+    assert bridge.coordinator is coordinator
+    assert len(_FakeCoordinator.created) == 1
+    assert coordinator.database_switches == [(replacement, expected_priority, True)]
+    assert coordinator.database_switch_events[:2] == [
+        ("priority", expected_priority),
+        ("claim", expected_priority),
+    ]
+    assert coordinator.database_claim_starts == [
+        (replacement, expected_priority[0], expected_priority)
+    ]
+    assert coordinator.started == starts_before + 1
 
 
 def test_old_database_and_unselected_publications_cannot_replace_selected_tabs(
@@ -808,6 +2132,10 @@ def test_live_facts_reconciliation_and_format_invalidation_are_narrow(
     assert coordinator.reconciliations == [13]
 
     formats_before = dict(bridge._formats)
+    assert dict(formats_before[TrustedWorkKind.THUMBNAIL].options.values) == {
+        "height": 96,
+        "width": 96,
+    }
     bridge.update_preview_size(333)
     assert [kind for kind, _value in coordinator.format_updates] == [
         TrustedWorkKind.PREVIEW
@@ -911,10 +2239,11 @@ def test_large_binding_has_constant_qobject_and_coalesced_event_structure(
     assert len(bridge.findChildren(QtCore.QTimer)) == 2
     assert not bridge.findChildren(QtCore.QThread)
     assert not bridge.findChildren(QtCore.QThreadPool)
+    prior_updates = len(coordinator.priority_updates)
     for _ in range(1_000):
         bridge.request_priority_update()
     QtWidgets.QApplication.processEvents()
-    assert len(coordinator.visible_updates) <= 2
+    assert len(coordinator.priority_updates) <= prior_updates + 1
     print(f"Stage 5C 5000-run bridge binding: {elapsed:.6f}s")
 
     bridge.shutdown()

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
 
 TRUSTED_PRESENTATION_MAX_DEPTH = 16
@@ -25,10 +26,18 @@ TRUSTED_PRESENTATION_MAX_PARAMETER_TEXT_BYTES = 256
 TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES = 32
 TRUSTED_PRESENTATION_MAX_UNAVAILABLE_FIELDS = 256
 TRUSTED_PRESENTATION_MAX_ERROR_BYTES = 1_024
+TRUSTED_PRESENTATION_MAX_FULL_VALUE_TEXT_BYTES = 4 * 1024 * 1024
+TRUSTED_PRESENTATION_MAX_PATH_BYTES = 1_024
 
-_TEXT_RESERVE_BYTES = 512
-_TOOLTIP_RESERVE_BYTES = 512
+_FINAL_ROW_COUNT = 2
+_TEXT_RESERVE_BYTES = _FINAL_ROW_COUNT * (
+    TRUSTED_PRESENTATION_MAX_KEY_BYTES + TRUSTED_PRESENTATION_MAX_VALUE_BYTES
+)
+_TOOLTIP_RESERVE_BYTES = _FINAL_ROW_COUNT * TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
 _TRUNCATION_KEY = "[truncated]"
+_DISPLAY_KEY = "[display]"
+_VIEW_FULL_SUFFIX = " ... [view full]"
+_VIEW_FULL_KEY_SUFFIX = " ... [view full key]"
 _RUN_TRUNCATION_FIELD = (
     "presentation_status",
     "Some run fields were truncated; see Raw tab.",
@@ -81,6 +90,22 @@ class TrustedPresentationNode:
     value: str
     tooltip: str
     parent_index: int | None
+    path: str = ""
+    key_shortened: bool = False
+    value_shortened: bool = False
+    full_key_id: str | None = None
+    full_value_id: str | None = None
+    source_key_bytes: int = 0
+    source_value_bytes: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedPresentationFullValue:
+    """One exact scalar retained once for the current bounded detail."""
+
+    identifier: str
+    text: str = field(repr=False)
+    utf8_bytes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +118,8 @@ class TrustedPresentationView:
     inspected_items: int
     rendered_text_bytes: int
     tooltip_text_bytes: int
+    shortened_key_count: int = 0
+    shortened_value_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +131,10 @@ class TrustedSelectedRunPresentation:
     metadata: TrustedPresentationView
     raw: TrustedPresentationView
     parameters_truncated: bool = False
+    full_values: tuple[TrustedPresentationFullValue, ...] = field(
+        default=(),
+        repr=False,
+    )
 
 
 @dataclass(slots=True)
@@ -112,6 +143,13 @@ class _NodeBuilder:
     value: str
     tooltip: str
     parent_index: int | None
+    path: str = ""
+    key_shortened: bool = False
+    value_shortened: bool = False
+    full_key_id: str | None = None
+    full_value_id: str | None = None
+    source_key_bytes: int = 0
+    source_value_bytes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,26 +159,91 @@ class _Task:
     parent_index: int | None
     depth: int
     root: bool = False
+    path: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _ExitContainer:
+    container_id: int
+
+
+class _FullValueRegistry:
+    """Deduplicate exact selected-detail strings under one aggregate bound."""
+
+    def __init__(self) -> None:
+        self._values_by_identity: dict[int, TrustedPresentationFullValue] = {}
+        self._values: list[TrustedPresentationFullValue] = []
+        self.text_bytes = 0
+
+    def retain(self, text: str) -> TrustedPresentationFullValue | None:
+        retained = self._values_by_identity.get(id(text))
+        if retained is not None and retained.text is text:
+            return retained
+        encoded = text.encode("utf-8", errors="replace")
+        if (
+            len(encoded) > TRUSTED_PRESENTATION_MAX_FULL_VALUE_TEXT_BYTES
+            or self.text_bytes + len(encoded)
+            > TRUSTED_PRESENTATION_MAX_FULL_VALUE_TEXT_BYTES
+        ):
+            return None
+        identifier = f"value:{len(self._values)}"
+        retained = TrustedPresentationFullValue(identifier, text, len(encoded))
+        self._values_by_identity[id(text)] = retained
+        self._values.append(retained)
+        self.text_bytes += len(encoded)
+        return retained
+
+    def checkpoint(self) -> int:
+        return len(self._values)
+
+    def rollback(self, checkpoint: int) -> None:
+        while len(self._values) > checkpoint:
+            retained = self._values.pop()
+            if self._values_by_identity.get(id(retained.text)) is retained:
+                del self._values_by_identity[id(retained.text)]
+            self.text_bytes -= retained.utf8_bytes
+
+    def freeze(self) -> tuple[TrustedPresentationFullValue, ...]:
+        return tuple(self._values)
 
 
 class _PresentationNormalizer:
-    def __init__(self, value: object) -> None:
+    def __init__(
+        self,
+        value: object,
+        *,
+        full_values: _FullValueRegistry | None = None,
+        path_prefix: str = "",
+        initial_reasons: Sequence[str] = (),
+    ) -> None:
         self.value = value
+        self.full_values = full_values
+        self.path_prefix = _bounded_path_prefix(path_prefix)
         self.nodes: list[_NodeBuilder] = []
         self.inspected_items = 0
         self.rendered_text_bytes = 0
         self.tooltip_text_bytes = 0
-        self.reasons: list[str] = []
-        self.seen_containers: set[int] = set()
+        self.reasons: list[str] = list(dict.fromkeys(initial_reasons))
+        self.shortened_key_count = 0
+        self.shortened_value_count = 0
+        self.ancestor_containers: set[int] = set()
         self.halted = False
 
     def normalize(self) -> TrustedPresentationView:
-        tasks = [_Task("Value", self.value, None, 0, True)]
+        tasks: list[_Task | _ExitContainer] = [
+            _Task("Value", self.value, None, 0, True, ())
+        ]
         while tasks and not self.halted:
-            if len(self.nodes) >= TRUSTED_PRESENTATION_MAX_RENDERED_NODES - 1:
+            if (
+                len(self.nodes)
+                >= TRUSTED_PRESENTATION_MAX_RENDERED_NODES - _FINAL_ROW_COUNT
+            ):
                 self._reason("The 512-node rendering limit was reached.")
                 break
             task = tasks.pop()
+            if isinstance(task, _ExitContainer):
+                self.ancestor_containers.discard(task.container_id)
+                continue
             if _is_container(task.value):
                 self._schedule_container(task, tasks)
             else:
@@ -148,13 +251,18 @@ class _PresentationNormalizer:
 
         if tasks:
             self._reason("Additional values were omitted from the bounded view.")
+        if self.shortened_key_count or self.shortened_value_count:
+            self._append_display_summary()
         if self.reasons:
             self._append_marker()
             status: PresentationStatus = "truncated"
             message = " ".join(dict.fromkeys(self.reasons))
         elif self.nodes:
             status = "available"
-            message = "Selected detail normalized within all presentation limits."
+            if self.shortened_key_count or self.shortened_value_count:
+                message = self._display_summary_text()
+            else:
+                message = "Selected detail normalized within all presentation limits."
         else:
             self._add_node("No data", "", "", None)
             status = "empty"
@@ -166,6 +274,13 @@ class _PresentationNormalizer:
                     node.value,
                     node.tooltip,
                     node.parent_index,
+                    node.path,
+                    node.key_shortened,
+                    node.value_shortened,
+                    node.full_key_id,
+                    node.full_value_id,
+                    node.source_key_bytes,
+                    node.source_value_bytes,
                 )
                 for node in self.nodes
             ),
@@ -174,24 +289,38 @@ class _PresentationNormalizer:
             inspected_items=self.inspected_items,
             rendered_text_bytes=self.rendered_text_bytes,
             tooltip_text_bytes=self.tooltip_text_bytes,
+            shortened_key_count=self.shortened_key_count,
+            shortened_value_count=self.shortened_value_count,
         )
 
-    def _schedule_container(self, task: _Task, tasks: list[_Task]) -> None:
+    def _schedule_container(
+        self,
+        task: _Task,
+        tasks: list[_Task | _ExitContainer],
+    ) -> None:
         container_id = id(task.value)
-        if container_id in self.seen_containers:
+        if container_id in self.ancestor_containers:
             self._add_node(
                 task.key,
                 "[cyclic container unavailable]",
                 "[cyclic container unavailable]",
                 task.parent_index,
+                path=task.path,
             )
             self._reason("A cyclic container was omitted.")
             return
-        self.seen_containers.add(container_id)
+        self.ancestor_containers.add(container_id)
+        tasks.append(_ExitContainer(container_id))
 
         parent_index = task.parent_index
         if not task.root:
-            parent_index = self._add_node(task.key, "", "", task.parent_index)
+            parent_index = self._add_node(
+                task.key,
+                "",
+                "",
+                task.parent_index,
+                path=task.path,
+            )
             if parent_index is None:
                 return
         if task.depth >= TRUSTED_PRESENTATION_MAX_DEPTH:
@@ -201,6 +330,7 @@ class _PresentationNormalizer:
                 "Nested values omitted.",
                 "Nested values omitted.",
                 parent_index,
+                path=(*task.path, _TRUNCATION_KEY),
             )
             return
 
@@ -214,6 +344,7 @@ class _PresentationNormalizer:
                     value=value,
                     parent_index=parent_index,
                     depth=task.depth + 1,
+                    path=(*task.path, _path_segment(key)),
                 )
             )
 
@@ -243,7 +374,21 @@ class _PresentationNormalizer:
     def _add_scalar(self, task: _Task) -> None:
         text = _scalar_text(task.value)
         node_key = "Value" if task.root else task.key
-        self._add_node(node_key, text, text, task.parent_index)
+        full_value = task.value if isinstance(task.value, str) else None
+        if isinstance(task.value, bytes) or not (
+            task.value is None or isinstance(task.value, (bool, int, float, str))
+        ):
+            self._reason("A binary or unsupported scalar value was unavailable.")
+        self._add_node(
+            node_key,
+            text,
+            text,
+            task.parent_index,
+            path=task.path or (_path_segment(node_key),),
+            full_value=full_value,
+            head_and_tail=_key_text(node_key).casefold()
+            in {"measurement_exception", "exception", "traceback"},
+        )
 
     def _add_node(
         self,
@@ -251,21 +396,109 @@ class _PresentationNormalizer:
         value: str,
         tooltip: str,
         parent_index: int | None,
+        *,
+        path: tuple[str, ...] = (),
+        full_value: str | None = None,
+        head_and_tail: bool = False,
     ) -> int | None:
-        if len(self.nodes) >= TRUSTED_PRESENTATION_MAX_RENDERED_NODES - 1:
+        if (
+            len(self.nodes)
+            >= TRUSTED_PRESENTATION_MAX_RENDERED_NODES - _FINAL_ROW_COUNT
+        ):
             self._reason("The 512-node rendering limit was reached.")
             self.halted = True
             return None
 
-        key_text, key_truncated = _truncate_utf8(
-            _key_text(key), TRUSTED_PRESENTATION_MAX_KEY_BYTES
+        source_key = _key_text(key)
+        source_value = full_value if full_value is not None else value
+        source_key_bytes = len(source_key.encode("utf-8", errors="replace"))
+        source_value_bytes = len(source_value.encode("utf-8", errors="replace"))
+        backing_checkpoint = (
+            self.full_values.checkpoint() if self.full_values is not None else 0
         )
-        value_text, value_truncated = _truncate_utf8(
-            value, TRUSTED_PRESENTATION_MAX_VALUE_BYTES
+        key_shortened = source_key_bytes > TRUSTED_PRESENTATION_MAX_KEY_BYTES
+        value_shortened = bool(
+            full_value is not None
+            and (
+                source_value != value
+                or len(value.encode("utf-8", errors="replace"))
+                > TRUSTED_PRESENTATION_MAX_VALUE_BYTES
+            )
         )
-        tooltip_text, tooltip_truncated = _truncate_utf8(
-            tooltip, TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
-        )
+        full_key_id = None
+        full_value_id = None
+        if key_shortened:
+            retained_key = self._retain_full_text(source_key)
+            if retained_key is not None:
+                full_key_id = retained_key.identifier
+            else:
+                self._reason(
+                    "A complete scalar key was omitted at the 4194304-byte "
+                    "selected-detail backing limit."
+                )
+        if value_shortened:
+            retained_value = self._retain_full_text(source_value)
+            if retained_value is not None:
+                full_value_id = retained_value.identifier
+            else:
+                self._reason(
+                    "A complete scalar value was omitted at the 4194304-byte "
+                    "selected-detail backing limit."
+                )
+
+        if key_shortened:
+            key_text = _shortened_key_text(
+                source_key,
+                TRUSTED_PRESENTATION_MAX_KEY_BYTES,
+                available=full_key_id is not None,
+            )
+        else:
+            key_text = source_key
+        if value_shortened:
+            value_text = _shortened_value_text(
+                value,
+                TRUSTED_PRESENTATION_MAX_VALUE_BYTES,
+                head_and_tail=head_and_tail,
+                available=full_value_id is not None,
+            )
+        else:
+            value_text, _value_cell_truncated = _truncate_utf8(
+                value, TRUSTED_PRESENTATION_MAX_VALUE_BYTES
+            )
+        if key_shortened or value_shortened:
+            parts = []
+            actions = []
+            if key_shortened:
+                parts.append(f"key: {source_key_bytes} UTF-8 bytes")
+                if full_key_id is not None:
+                    actions.append(
+                        "Activate the marked key cell to view or explicitly copy "
+                        "the complete key."
+                    )
+                else:
+                    actions.append(
+                        "The complete key was not retained at the bounded detail limit."
+                    )
+            if value_shortened:
+                parts.append(f"value: {source_value_bytes} UTF-8 bytes")
+                if full_value_id is not None:
+                    actions.append(
+                        "Activate the marked value cell to view or explicitly copy "
+                        "the complete value."
+                    )
+                else:
+                    actions.append(
+                        "The complete value was not retained at the bounded detail "
+                        "limit."
+                    )
+            tooltip_text, _tooltip_truncated = _truncate_utf8(
+                f"Shortened for display ({'; '.join(parts)}). {' '.join(actions)}",
+                TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
+            )
+        else:
+            tooltip_text, _tooltip_truncated = _truncate_utf8(
+                tooltip, TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
+            )
 
         rendered_remaining = (
             TRUSTED_PRESENTATION_MAX_RENDERED_TEXT_BYTES
@@ -278,40 +511,100 @@ class _PresentationNormalizer:
             - self.tooltip_text_bytes
         )
         key_bytes = len(key_text.encode("utf-8"))
-        if rendered_remaining <= key_bytes or tooltip_remaining <= 0:
+        value_bytes = len(value_text.encode("utf-8"))
+        tooltip_bytes = len(tooltip_text.encode("utf-8"))
+        if (
+            rendered_remaining < key_bytes + value_bytes
+            or tooltip_remaining < tooltip_bytes
+        ):
+            if self.full_values is not None:
+                self.full_values.rollback(backing_checkpoint)
             self._reason("The 65536-byte presentation text limit was reached.")
             self.halted = True
             return None
-        value_text, rendered_total_truncated = _truncate_utf8(
-            value_text, rendered_remaining - key_bytes
-        )
-        tooltip_text, tooltip_total_truncated = _truncate_utf8(
-            tooltip_text, tooltip_remaining
-        )
 
         node_index = len(self.nodes)
         self.nodes.append(
-            _NodeBuilder(key_text, value_text, tooltip_text, parent_index)
+            _NodeBuilder(
+                key_text,
+                value_text,
+                tooltip_text,
+                parent_index,
+                _bounded_path(self.path_prefix, path),
+                key_shortened,
+                value_shortened,
+                full_key_id,
+                full_value_id,
+                source_key_bytes,
+                source_value_bytes,
+            )
         )
-        self.rendered_text_bytes += key_bytes + len(value_text.encode("utf-8"))
-        self.tooltip_text_bytes += len(tooltip_text.encode("utf-8"))
-        if (
-            key_truncated
-            or value_truncated
-            or tooltip_truncated
-            or rendered_total_truncated
-            or tooltip_total_truncated
-        ):
-            self._reason("Keys, values, or tooltips were truncated to display limits.")
+        self.rendered_text_bytes += key_bytes + value_bytes
+        self.tooltip_text_bytes += tooltip_bytes
+        self.shortened_key_count += int(key_shortened)
+        self.shortened_value_count += int(value_shortened)
         return node_index
+
+    def _retain_full_text(self, text: str) -> TrustedPresentationFullValue | None:
+        if self.full_values is None:
+            return None
+        return self.full_values.retain(text)
+
+    def _display_summary_text(self) -> str:
+        parts = []
+        if self.shortened_key_count:
+            noun = "key" if self.shortened_key_count == 1 else "keys"
+            parts.append(f"{self.shortened_key_count} {noun}")
+        if self.shortened_value_count:
+            noun = "value" if self.shortened_value_count == 1 else "values"
+            parts.append(f"{self.shortened_value_count} {noun}")
+        subject = " and ".join(parts)
+        return (
+            f"{subject} shortened for display. Marked rows identify the affected "
+            "text; activate rows labelled 'view full' to view or explicitly copy "
+            "the complete text."
+        )
+
+    def _append_display_summary(self) -> None:
+        if len(self.nodes) >= TRUSTED_PRESENTATION_MAX_RENDERED_NODES:
+            return
+        message, _ = _truncate_utf8(
+            self._display_summary_text(),
+            TRUSTED_PRESENTATION_MAX_VALUE_BYTES,
+        )
+        tooltip, _ = _truncate_utf8(message, _TOOLTIP_RESERVE_BYTES)
+        self.nodes.append(
+            _NodeBuilder(
+                _DISPLAY_KEY,
+                message,
+                tooltip,
+                None,
+                _bounded_path(self.path_prefix, (_DISPLAY_KEY,)),
+            )
+        )
+        self.rendered_text_bytes += len(_DISPLAY_KEY.encode("utf-8")) + len(
+            message.encode("utf-8")
+        )
+        self.tooltip_text_bytes += len(tooltip.encode("utf-8"))
 
     def _append_marker(self) -> None:
         if len(self.nodes) >= TRUSTED_PRESENTATION_MAX_RENDERED_NODES:
             return
         message = " ".join(dict.fromkeys(self.reasons))
-        message, _ = _truncate_utf8(message, _TEXT_RESERVE_BYTES - 32)
+        message, _ = _truncate_utf8(
+            message,
+            TRUSTED_PRESENTATION_MAX_VALUE_BYTES,
+        )
         tooltip, _ = _truncate_utf8(message, _TOOLTIP_RESERVE_BYTES)
-        self.nodes.append(_NodeBuilder(_TRUNCATION_KEY, message, tooltip, None))
+        self.nodes.append(
+            _NodeBuilder(
+                _TRUNCATION_KEY,
+                message,
+                tooltip,
+                None,
+                _bounded_path(self.path_prefix, (_TRUNCATION_KEY,)),
+            )
+        )
         self.rendered_text_bytes += len(_TRUNCATION_KEY.encode("utf-8")) + len(
             message.encode("utf-8")
         )
@@ -346,6 +639,96 @@ def _scalar_text(value: object) -> str:
     if isinstance(value, (bool, int)):
         return str(value)
     return f"[{type(value).__name__} value unavailable]"
+
+
+def _bounded_path_prefix(value: str) -> str:
+    if not value:
+        return ""
+    return _bounded_path("", (_path_segment(value),))
+
+
+def _path_segment(value: object) -> str:
+    text = _key_text(value).replace("~", "~0").replace("/", "~1")
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= TRUSTED_PRESENTATION_MAX_KEY_BYTES:
+        return text
+    digest = hashlib.sha256(encoded).hexdigest()[:16]
+    prefix, _ = _truncate_utf8(
+        text,
+        TRUSTED_PRESENTATION_MAX_KEY_BYTES - len(digest) - 2,
+    )
+    return f"{prefix}~{digest}"
+
+
+def _bounded_path(prefix: str, segments: Sequence[str]) -> str:
+    joined = "/".join((*((prefix.lstrip("/"),) if prefix else ()), *segments))
+    path = f"/{joined}" if joined else "/"
+    encoded = path.encode("utf-8", errors="replace")
+    if len(encoded) <= TRUSTED_PRESENTATION_MAX_PATH_BYTES:
+        return path
+    digest = hashlib.sha256(encoded).hexdigest()
+    retained, _ = _truncate_utf8(
+        path,
+        TRUSTED_PRESENTATION_MAX_PATH_BYTES - len(digest) - 2,
+    )
+    return f"{retained}~{digest}"
+
+
+def _utf8_tail(text: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= limit:
+        return text
+    tail = encoded[-limit:]
+    while tail:
+        try:
+            return tail.decode("utf-8")
+        except UnicodeDecodeError as error:
+            tail = tail[error.end :]
+    return ""
+
+
+def _shortened_value_text(
+    text: str,
+    limit: int,
+    *,
+    head_and_tail: bool,
+    available: bool,
+) -> str:
+    suffix = _VIEW_FULL_SUFFIX if available else " ... [complete value unavailable]"
+    suffix_bytes = len(suffix.encode("utf-8"))
+    if suffix_bytes >= limit:
+        return _truncate_utf8(suffix, limit)[0]
+    body_limit = limit - suffix_bytes
+    if not head_and_tail:
+        prefix, _ = _truncate_utf8(text, body_limit)
+        return f"{prefix}{suffix}"
+
+    separator = " ... "
+    separator_bytes = len(separator.encode("utf-8"))
+    if separator_bytes >= body_limit:
+        prefix, _ = _truncate_utf8(text, body_limit)
+        return f"{prefix}{suffix}"
+    remaining = body_limit - separator_bytes
+    head_limit = max(1, remaining // 3)
+    tail_limit = remaining - head_limit
+    head, _ = _truncate_utf8(text, head_limit)
+    if head.endswith("..."):
+        head = head[:-3]
+    tail = _utf8_tail(text, tail_limit)
+    return f"{head}{separator}{tail}{suffix}"
+
+
+def _shortened_key_text(text: str, limit: int, *, available: bool) -> str:
+    suffix = _VIEW_FULL_KEY_SUFFIX if available else " ... [complete key unavailable]"
+    suffix_bytes = len(suffix.encode("utf-8"))
+    if suffix_bytes >= limit:
+        return _truncate_utf8(suffix, limit)[0]
+    prefix, _ = _truncate_utf8(text, limit - suffix_bytes)
+    if prefix.endswith("..."):
+        prefix = prefix[:-3]
+    return f"{prefix}{suffix}"
 
 
 def _truncate_utf8(text: str, limit: int) -> tuple[str, bool]:
@@ -597,12 +980,50 @@ def build_selected_run_presentation(
             "Additional or oversized parameter details were omitted at "
             "presentation limits."
         )
+    full_values = _FullValueRegistry()
+    metadata = _PresentationNormalizer(
+        metadata_fields,
+        full_values=full_values,
+        path_prefix="Metadata",
+    ).normalize()
+    initial_reasons: list[str] = []
+    presentation_omissions = parameters_truncated or any(
+        name.endswith(".presentation") for name in unavailable_fields
+    )
+    upstream_unavailable = any(
+        not name.endswith(".presentation") for name in unavailable_fields
+    )
+    if presentation_omissions:
+        initial_reasons.append(
+            "One or more selected-run structures were omitted at presentation limits."
+        )
+    if upstream_unavailable:
+        initial_reasons.append(
+            "One or more selected-run fields were unavailable upstream; complete "
+            "source data was omitted."
+        )
+    snapshot_status = snapshot_summary.get("Status")
+    if isinstance(snapshot_status, str) and snapshot_status.casefold() in {
+        "truncated",
+        "malformed",
+        "unavailable",
+    }:
+        initial_reasons.append(
+            "Snapshot source data was truncated, malformed, or unavailable."
+        )
+    raw = _PresentationNormalizer(
+        raw_value,
+        full_values=full_values,
+        path_prefix="Raw",
+        initial_reasons=initial_reasons,
+    ).normalize()
     return TrustedSelectedRunPresentation(
         run_fields=bounded_selected_run_fields(run_fields),
         metadata_fields=bounded_metadata_fields(metadata_fields),
-        metadata=normalize_presentation_tree(metadata_fields),
-        raw=normalize_presentation_tree(raw_value),
+        metadata=metadata,
+        raw=raw,
         parameters_truncated=parameters_truncated,
+        full_values=full_values.freeze(),
     )
 
 
@@ -612,9 +1033,11 @@ __all__ = [
     "TRUSTED_PRESENTATION_MAX_DEPTH",
     "TRUSTED_PRESENTATION_MAX_ERROR_BYTES",
     "TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES",
+    "TRUSTED_PRESENTATION_MAX_FULL_VALUE_TEXT_BYTES",
     "TRUSTED_PRESENTATION_MAX_KEY_BYTES",
     "TRUSTED_PRESENTATION_MAX_METADATA_FIELDS",
     "TRUSTED_PRESENTATION_MAX_PARAMETERS",
+    "TRUSTED_PRESENTATION_MAX_PATH_BYTES",
     "TRUSTED_PRESENTATION_MAX_PARAMETER_TOTAL_TEXT_BYTES",
     "TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES",
     "TRUSTED_PRESENTATION_MAX_PARAMETER_TEXT_BYTES",
@@ -627,6 +1050,7 @@ __all__ = [
     "TRUSTED_PRESENTATION_MAX_UNAVAILABLE_FIELDS",
     "TRUSTED_PRESENTATION_MAX_VALUE_BYTES",
     "TrustedPresentationNode",
+    "TrustedPresentationFullValue",
     "TrustedPresentationView",
     "TrustedSelectedRunPresentation",
     "bounded_metadata_fields",

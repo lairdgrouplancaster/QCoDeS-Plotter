@@ -17,19 +17,19 @@ class RunListTooltipTestCase(unittest.TestCase):
     def test_controller_data_paths_do_not_open_database(self):
         database_access = AssertionError("RunList attempted database access")
         with (
-                patch(
-                    "qcodes.dataset.sqlite.database.get_DB_location",
-                    side_effect=database_access,
-                    ),
-                patch(
-                    "qplot.datahandling.get_runs_via_sql",
-                    side_effect=database_access,
-                    ),
-                patch(
-                    "qplot.datahandling.get_run_status",
-                    side_effect=database_access,
-                    ),
-                ):
+            patch(
+                "qcodes.dataset.sqlite.database.get_DB_location",
+                side_effect=database_access,
+            ),
+            patch(
+                "qplot.datahandling.get_runs_via_sql",
+                side_effect=database_access,
+            ),
+            patch(
+                "qplot.datahandling.get_run_status",
+                side_effect=database_access,
+            ),
+        ):
             run_list = treeWidgets.RunList(initalize=True)
             runs = {
                 1: {
@@ -38,17 +38,19 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "measure_parameters": ["signal"],
                     "is_completed": False,
                     "result_count": 1,
-                    },
-                }
+                },
+            }
             self.assertIs(run_list.setRuns(runs), runs)
 
-            updated = run_list.checkWatching({
-                "controller-guid": {
-                    "is_completed": True,
-                    "completed_timestamp": 120.0,
-                    "result_count": 2,
+            updated = run_list.checkWatching(
+                {
+                    "controller-guid": {
+                        "is_completed": True,
+                        "completed_timestamp": 120.0,
+                        "result_count": 2,
                     },
-                })
+                }
+            )
 
         self.assertEqual(run_list.topLevelItemCount(), 1)
         self.assertTrue(updated[1]["is_completed"])
@@ -115,9 +117,7 @@ class RunListTooltipTestCase(unittest.TestCase):
         try:
             self.assertTrue(run_list.addRuns(initial_run))
 
-            self.assertFalse(
-                run_list.addRuns(page, continue_loading=continue_loading)
-            )
+            self.assertFalse(run_list.addRuns(page, continue_loading=continue_loading))
 
             self.assertEqual(continuation_checks, 251)
             self.assertEqual(run_list.maxRunId, 1)
@@ -139,10 +139,20 @@ class RunListTooltipTestCase(unittest.TestCase):
         try:
             run_list = treeWidgets.RunList()
             run_list.resize(640, 180)
-            run_list.addRuns({
-                1: {"guid": "guid-1", "sweep_parameters": [], "measure_parameters": []},
-                2: {"guid": "guid-2", "sweep_parameters": [], "measure_parameters": []},
-                })
+            run_list.addRuns(
+                {
+                    1: {
+                        "guid": "guid-1",
+                        "sweep_parameters": [],
+                        "measure_parameters": [],
+                    },
+                    2: {
+                        "guid": "guid-2",
+                        "sweep_parameters": [],
+                        "measure_parameters": [],
+                    },
+                }
+            )
             selected = []
             non_single = []
             run_list.selected.connect(selected.append)
@@ -167,14 +177,14 @@ class RunListTooltipTestCase(unittest.TestCase):
                 QtCore.Qt.MouseButton.LeftButton,
                 QtCore.Qt.KeyboardModifier.ControlModifier,
                 second_rect.center(),
-                )
+            )
             self.assertEqual(run_list.selectedItems(), [])
             self.assertEqual(non_single, [True])
 
             # Multiple selected rows also explicitly invalidate a single target.
             run_list.setSelectionMode(
                 qtw.QAbstractItemView.SelectionMode.ExtendedSelection
-                )
+            )
             first.setSelected(True)
             second.setSelected(True)
             self.assertCountEqual(run_list.selectedItems(), [first, second])
@@ -196,7 +206,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 qtw.QApplication.sendPostedEvents(
                     None,
                     QtCore.QEvent.Type.DeferredDelete,
-                    )
+                )
                 qtw.QApplication.processEvents()
             treeWidgets.isfile = old_isfile
 
@@ -211,26 +221,28 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                2: {
-                    "run_timestamp": None,
-                    "completed_timestamp": None,
-                    "is_completed": False,
-                    "guid": "guid-2",
-                    "sweep_parameters": [],
-                    "measure_parameters": [],
-                    "result_count": 0,
+            run_list.addRuns(
+                {
+                    2: {
+                        "run_timestamp": None,
+                        "completed_timestamp": None,
+                        "is_completed": False,
+                        "guid": "guid-2",
+                        "sweep_parameters": [],
+                        "measure_parameters": [],
+                        "result_count": 0,
                     },
-                3: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "guid-3",
-                    "sweep_parameters": [],
-                    "measure_parameters": ["signal"],
-                    "result_count": 1,
+                    3: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "guid-3",
+                        "sweep_parameters": [],
+                        "measure_parameters": ["signal"],
+                        "result_count": 1,
                     },
-                })
+                }
+            )
 
             self.assertEqual(run_list.maxRunId, 3)
             self.assertEqual(run_list.topLevelItemCount(), 2)
@@ -238,27 +250,29 @@ class RunListTooltipTestCase(unittest.TestCase):
                 run_list.topLevelItem(index)
                 for index in range(run_list.topLevelItemCount())
                 if run_list.topLevelItem(index).guid == "guid-2"
-                )
+            )
             self.assertEqual(
                 missing_timestamp_item.text(run_list.cols.index("Started")),
                 "unknown",
-                )
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
     def test_run_tooltip_summarises_parameters(self):
-        tooltip = treeWidgets.run_tooltip_text({
-            "sweep_parameters": ["dac_ch1", "dac_ch2"],
-            "measure_parameters": ["dmm_v1", "dmm_v2"],
-            "run_timestamp": 100.0,
-            "completed_timestamp": None,
-            "is_completed": False,
-            "result_count": 25,
-            "expected_results": 100,
-            "setpoint_count": 100,
-            "setpoint_count_source": "planned",
-            "read_setpoint_count": 25,
-            })
+        tooltip = treeWidgets.run_tooltip_text(
+            {
+                "sweep_parameters": ["dac_ch1", "dac_ch2"],
+                "measure_parameters": ["dmm_v1", "dmm_v2"],
+                "run_timestamp": 100.0,
+                "completed_timestamp": None,
+                "is_completed": False,
+                "result_count": 25,
+                "expected_results": 100,
+                "setpoint_count": 100,
+                "setpoint_count_source": "planned",
+                "read_setpoint_count": 25,
+            }
+        )
 
         self.assertTrue(tooltip.startswith("<table"))
         self.assertEqual(tooltip.count("<tr>"), 3)
@@ -266,57 +280,86 @@ class RunListTooltipTestCase(unittest.TestCase):
         self.assertIn(
             "<td nowrap='nowrap' style='padding:0; white-space:nowrap'>"
             "(dac_ch1,&nbsp;dac_ch2)</td>",
-            tooltip
-            )
+            tooltip,
+        )
         self.assertIn("<td style='padding:0 0.5em 0 0'>Measure</td>", tooltip)
         self.assertIn(
             "<td nowrap='nowrap' style='padding:0; white-space:nowrap'>"
             "(dmm_v1,&nbsp;dmm_v2)</td>",
-            tooltip
-            )
+            tooltip,
+        )
         self.assertIn("Status</td>", tooltip)
         self.assertIn("Running (25.0%)</td>", tooltip)
         self.assertNotIn("Duration", tooltip)
 
     def test_format_point_count_summarises_multidimensional_sweeps(self):
         self.assertEqual(
-            treeWidgets.format_point_count({
-                "point_shape": [10, 100],
-                "expected_results": 1000,
-                }),
-            "1,000 = 10 × 100"
-            )
+            treeWidgets.format_point_count(
+                {
+                    "point_shape": [10, 100],
+                    "expected_results": 1000,
+                }
+            ),
+            "1,000 = 10 × 100",
+        )
 
     def test_format_point_count_suppresses_duplicate_one_dimensional_shape(self):
         self.assertEqual(
-            treeWidgets.format_point_count({
-                "setpoint_shape": [10],
-                "setpoint_count": 10,
-                "point_shape": [10],
-                "expected_results": 10,
-                }),
-            "10"
-            )
+            treeWidgets.format_point_count(
+                {
+                    "setpoint_shape": [10],
+                    "setpoint_count": 10,
+                    "point_shape": [10],
+                    "expected_results": 10,
+                }
+            ),
+            "10",
+        )
 
     def test_format_point_count_keeps_non_duplicate_one_dimensional_shape(self):
         self.assertEqual(
-            treeWidgets.format_point_count({
-                "point_shape": [10],
-                "expected_results": 20,
-                }),
-            "20 = 10"
-            )
+            treeWidgets.format_point_count(
+                {
+                    "point_shape": [10],
+                    "expected_results": 20,
+                }
+            ),
+            "20 = 10",
+        )
 
     def test_format_point_count_uses_setpoint_shape_without_measurement_factor(self):
         self.assertEqual(
-            treeWidgets.format_point_count({
-                "setpoint_shape": [108, 861],
-                "setpoint_count": 92_988,
-                "point_shape": [108, 861, 2],
-                "expected_results": 185_976,
-                }),
-            "92,988 = 108 × 861"
-            )
+            treeWidgets.format_point_count(
+                {
+                    "setpoint_shape": [108, 861],
+                    "setpoint_count": 92_988,
+                    "point_shape": [108, 861, 2],
+                    "expected_results": 185_976,
+                }
+            ),
+            "92,988 = 108 × 861",
+        )
+
+    def test_format_point_count_distinguishes_acquired_from_planned_grid(self):
+        self.assertEqual(
+            treeWidgets.format_point_count(
+                {
+                    "setpoint_shape": [108, 861],
+                    "setpoint_shape_source": "planned",
+                    "setpoint_count": 92_988,
+                    "setpoint_count_source": "planned",
+                    "read_setpoint_count": 92_564,
+                    "result_count": 92_564,
+                }
+            ),
+            "92,564 / 92,988 = 108 × 861",
+        )
+
+    def test_format_point_count_never_falls_back_to_physical_result_watermark(self):
+        self.assertEqual(
+            treeWidgets.format_point_count({"result_count": 185_976}),
+            "unknown",
+        )
 
     def test_running_status_uses_measured_setpoints_not_result_rows(self):
         metadata = {
@@ -327,35 +370,39 @@ class RunListTooltipTestCase(unittest.TestCase):
             "result_count": 1000,
             "read_setpoint_count": 600,
             "is_completed": False,
-            }
+        }
 
         self.assertEqual(treeWidgets.format_point_count(metadata), "1,000 = 10 × 100")
         self.assertEqual(
             treeWidgets.format_complete_cell(metadata),
             "Running (60.0%)",
-            )
+        )
 
     def test_running_status_can_report_all_planned_setpoints_as_measured(self):
         self.assertEqual(
-            treeWidgets.format_complete_cell({
-                "expected_results": 100,
-                "result_count": 100,
-                "setpoint_count": 100,
-                "read_setpoint_count": 100,
-                "is_completed": False,
-                }),
-            "Running (100.0%)"
-            )
+            treeWidgets.format_complete_cell(
+                {
+                    "expected_results": 100,
+                    "result_count": 100,
+                    "setpoint_count": 100,
+                    "read_setpoint_count": 100,
+                    "is_completed": False,
+                }
+            ),
+            "Running (100.0%)",
+        )
 
     def test_running_status_uses_result_progress_while_setpoints_load(self):
         self.assertEqual(
-            treeWidgets.format_complete_cell({
-                "expected_results": 185_976,
-                "result_count": 185_976,
-                "is_completed": False,
-                }),
+            treeWidgets.format_complete_cell(
+                {
+                    "expected_results": 185_976,
+                    "result_count": 185_976,
+                    "is_completed": False,
+                }
+            ),
             "Running (100.0%)",
-            )
+        )
 
     def test_interrupted_completed_run_reports_setpoint_progress(self):
         metadata = {
@@ -366,16 +413,12 @@ class RunListTooltipTestCase(unittest.TestCase):
             "read_setpoint_count": 400,
             "setpoint_count": 1000,
             "expected_results": 2000,
-            }
+        }
 
         self.assertEqual(
-            treeWidgets.format_complete_cell(metadata),
-            "Interrupted (40.0%)"
-            )
-        self.assertEqual(
-            treeWidgets.format_run_status(metadata),
-            "Interrupted (40.0%)"
-            )
+            treeWidgets.format_complete_cell(metadata), "Interrupted (40.0%)"
+        )
+        self.assertEqual(treeWidgets.format_run_status(metadata), "Interrupted (40.0%)")
         self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40.0)
 
     def test_interrupted_run_can_use_observed_setpoint_total(self):
@@ -388,12 +431,12 @@ class RunListTooltipTestCase(unittest.TestCase):
             "setpoint_count_source": "observed",
             "expected_results": 5,
             "expected_results_source": "observed",
-            }
+        }
 
         self.assertEqual(
             treeWidgets.format_run_status(metadata),
             "Interrupted (100.0%)",
-            )
+        )
         self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 100.0)
 
     def test_completed_non_keyboard_measurement_exception_is_failed(self):
@@ -403,7 +446,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             "measurement_exception": "Traceback...\nValueError: bad value\n",
             "result_count": 40,
             "setpoint_count": 100,
-            }
+        }
 
         self.assertEqual(treeWidgets.format_complete_cell(metadata), "Failed")
         self.assertEqual(treeWidgets.format_run_status(metadata), "Failed (40.0%)")
@@ -411,12 +454,14 @@ class RunListTooltipTestCase(unittest.TestCase):
 
     def test_completed_run_without_exception_uses_completed_label(self):
         self.assertEqual(
-            treeWidgets.format_complete_cell({
-                "completed_timestamp": 12_345.6,
-                "is_completed": True,
-                }),
+            treeWidgets.format_complete_cell(
+                {
+                    "completed_timestamp": 12_345.6,
+                    "is_completed": True,
+                }
+            ),
             "Completed",
-            )
+        )
 
     def test_empty_measurement_exceptions_are_not_failures(self):
         for exception in (None, "", " \n\t "):
@@ -425,33 +470,37 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "completed_timestamp": 12_345.6,
                     "is_completed": True,
                     "measurement_exception": exception,
-                    }
+                }
                 self.assertFalse(treeWidgets.run_failed(metadata))
                 self.assertEqual(
                     treeWidgets.format_complete_cell(metadata),
                     "Completed",
-                    )
+                )
 
     def test_exception_state_takes_precedence_over_completed_state(self):
         base_metadata = {
             "completed_timestamp": 12_345.6,
             "is_completed": True,
-            }
+        }
 
         self.assertEqual(
-            treeWidgets.format_complete_cell({
-                **base_metadata,
-                "measurement_exception": "KeyboardInterrupt",
-                }),
+            treeWidgets.format_complete_cell(
+                {
+                    **base_metadata,
+                    "measurement_exception": "KeyboardInterrupt",
+                }
+            ),
             "Interrupted (unknown)",
-            )
+        )
         self.assertEqual(
-            treeWidgets.format_complete_cell({
-                **base_metadata,
-                "measurement_exception": "ValueError: bad value",
-                }),
+            treeWidgets.format_complete_cell(
+                {
+                    **base_metadata,
+                    "measurement_exception": "ValueError: bad value",
+                }
+            ),
             "Failed",
-            )
+        )
 
     def test_failed_run_tooltip_has_escaped_concise_exception(self):
         metadata = {
@@ -461,10 +510,10 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "Traceback (most recent call last):\n"
                 "  internal implementation detail\n"
                 "ValueError: x < 2 & y > 1\n"
-                ),
+            ),
             "result_count": 40,
             "setpoint_count": 100,
-            }
+        }
 
         tooltip = treeWidgets.run_tooltip_text(metadata)
         self.assertIn("Failed (40.0%)", tooltip)
@@ -478,13 +527,15 @@ class RunListTooltipTestCase(unittest.TestCase):
 
     def test_duration_uses_commas(self):
         self.assertEqual(
-            treeWidgets.format_time_taken_seconds({
-                "run_timestamp": 100.0,
-                "completed_timestamp": 12_345.6,
-                "is_completed": True,
-                }),
-            "12,245.6 s"
-            )
+            treeWidgets.format_time_taken_seconds(
+                {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": 12_345.6,
+                    "is_completed": True,
+                }
+            ),
+            "12,245.6 s",
+        )
 
     def test_setpoints_delegate_uses_normal_text_color_for_selection(self):
         old_isfile = getattr(treeWidgets, "isfile", None)
@@ -492,23 +543,25 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            delegate = run_list.itemDelegateForColumn(
-                run_list.cols.index("Setpoints")
-                )
+            delegate = run_list.itemDelegateForColumn(run_list.cols.index("Setpoints"))
             option = qtw.QStyleOptionViewItem()
             option.widget = run_list
-            option.state = qtw.QStyle.StateFlag.State_Selected | qtw.QStyle.StateFlag.State_Enabled
+            option.state = (
+                qtw.QStyle.StateFlag.State_Selected | qtw.QStyle.StateFlag.State_Enabled
+            )
 
             self.assertEqual(
                 delegate._text_color(option),
-                option.palette.color(QtGui.QPalette.ColorRole.Text)
-                )
+                option.palette.color(QtGui.QPalette.ColorRole.Text),
+            )
 
-            option.state |= qtw.QStyle.StateFlag.State_Active | qtw.QStyle.StateFlag.State_HasFocus
+            option.state |= (
+                qtw.QStyle.StateFlag.State_Active | qtw.QStyle.StateFlag.State_HasFocus
+            )
             self.assertEqual(
                 delegate._text_color(option),
-                option.palette.color(QtGui.QPalette.ColorRole.Text)
-                )
+                option.palette.color(QtGui.QPalette.ColorRole.Text),
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -518,14 +571,15 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            delegate = run_list.itemDelegateForColumn(
-                run_list.cols.index("Setpoints")
-                )
+            delegate = run_list.itemDelegateForColumn(run_list.cols.index("Setpoints"))
 
             self.assertEqual(
                 int(delegate.right_text_alignment),
-                (QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter).value
-                )
+                (
+                    QtCore.Qt.AlignmentFlag.AlignLeft
+                    | QtCore.Qt.AlignmentFlag.AlignVCenter
+                ).value,
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -535,35 +589,35 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "sweep-guid",
-                    "sweep_parameters": ["x", "y"],
-                    "measure_parameters": ["signal"],
-                    "setpoint_count": 100,
-                    "setpoint_shape": [10, 10],
-                    "result_count": 100,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "sweep-guid",
+                        "sweep_parameters": ["x", "y"],
+                        "measure_parameters": ["signal"],
+                        "setpoint_count": 100,
+                        "setpoint_shape": [10, 10],
+                        "result_count": 100,
                     },
-                2: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "empty-guid",
-                    "sweep_parameters": [],
-                    "measure_parameters": ["signal"],
-                    "result_count": 0,
+                    2: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "empty-guid",
+                        "sweep_parameters": [],
+                        "measure_parameters": ["signal"],
+                        "result_count": 0,
                     },
-                })
-            delegate = run_list.itemDelegateForColumn(
-                run_list.cols.index("Setpoints")
-                )
+                }
+            )
+            delegate = run_list.itemDelegateForColumn(run_list.cols.index("Setpoints"))
             items = {
                 run_list.topLevelItem(row).guid: run_list.topLevelItem(row)
                 for row in range(run_list.topLevelItemCount())
-                }
+            }
             zero_item = items["empty-guid"]
             setpoints_col = run_list.cols.index("Setpoints")
             metrics = QtGui.QFontMetrics(run_list.font())
@@ -574,9 +628,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                 delegate._max_right_width(
                     run_list.indexFromItem(zero_item, setpoints_col),
                     metrics,
-                    ),
-                0
-                )
+                ),
+                0,
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -586,44 +640,44 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "small-guid",
-                    "sweep_parameters": ["x", "y"],
-                    "measure_parameters": ["signal"],
-                    "setpoint_count": 100,
-                    "setpoint_shape": [10, 10],
-                    "result_count": 100,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "small-guid",
+                        "sweep_parameters": ["x", "y"],
+                        "measure_parameters": ["signal"],
+                        "setpoint_count": 100,
+                        "setpoint_shape": [10, 10],
+                        "result_count": 100,
                     },
-                2: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "medium-guid",
-                    "sweep_parameters": ["x", "y"],
-                    "measure_parameters": ["signal"],
-                    "setpoint_count": 10_000,
-                    "setpoint_shape": [100, 100],
-                    "result_count": 10_000,
+                    2: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "medium-guid",
+                        "sweep_parameters": ["x", "y"],
+                        "measure_parameters": ["signal"],
+                        "setpoint_count": 10_000,
+                        "setpoint_shape": [100, 100],
+                        "result_count": 10_000,
                     },
-                3: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "large-guid",
-                    "sweep_parameters": ["x", "y"],
-                    "measure_parameters": ["signal"],
-                    "setpoint_count": 1_000_000,
-                    "setpoint_shape": [1000, 1000],
-                    "result_count": 1_000_000,
+                    3: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "large-guid",
+                        "sweep_parameters": ["x", "y"],
+                        "measure_parameters": ["signal"],
+                        "setpoint_count": 1_000_000,
+                        "setpoint_shape": [1000, 1000],
+                        "result_count": 1_000_000,
                     },
-                })
-            delegate = run_list.itemDelegateForColumn(
-                run_list.cols.index("Setpoints")
-                )
+                }
+            )
+            delegate = run_list.itemDelegateForColumn(run_list.cols.index("Setpoints"))
             item = run_list.topLevelItem(0)
             setpoints_col = run_list.cols.index("Setpoints")
             metrics = QtGui.QFontMetrics(run_list.font())
@@ -632,9 +686,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                 delegate._max_right_width(
                     run_list.indexFromItem(item, setpoints_col),
                     metrics,
-                    ),
-                metrics.horizontalAdvance("1,000 × 1,000")
-                )
+                ),
+                metrics.horizontalAdvance("1,000 × 1,000"),
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -644,22 +698,22 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "trace-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
-                    "setpoint_count": 1000,
-                    "setpoint_shape": [1000],
-                    "result_count": 1000,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "trace-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
+                        "setpoint_count": 1000,
+                        "setpoint_shape": [1000],
+                        "result_count": 1000,
                     },
-                })
-            delegate = run_list.itemDelegateForColumn(
-                run_list.cols.index("Setpoints")
-                )
+                }
+            )
+            delegate = run_list.itemDelegateForColumn(run_list.cols.index("Setpoints"))
             item = run_list.topLevelItem(0)
             setpoints_col = run_list.cols.index("Setpoints")
             metrics = QtGui.QFontMetrics(run_list.font())
@@ -669,9 +723,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                 delegate._max_right_width(
                     run_list.indexFromItem(item, setpoints_col),
                     metrics,
-                    ),
-                metrics.horizontalAdvance("1,000")
-                )
+                ),
+                metrics.horizontalAdvance("1,000"),
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -690,17 +744,17 @@ class RunListTooltipTestCase(unittest.TestCase):
                 name: run_list.columnWidth(col)
                 for col, name in enumerate(run_list.cols)
                 if not run_list.isColumnHidden(col)
-                }
+            }
 
             self.assertLessEqual(sum(widths.values()), run_list.viewport().width())
             self.assertGreaterEqual(
                 widths["Started"],
                 treeWidgets.RunList.readable_column_widths["Started"],
-                )
+            )
             self.assertGreaterEqual(
                 widths["Measurements"],
                 treeWidgets.RunList.readable_column_widths["Measurements"],
-                )
+            )
             run_list.hide()
         finally:
             treeWidgets.isfile = old_isfile
@@ -718,7 +772,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 name: width
                 for name, width in run_list._preferred_column_widths().items()
                 if name in run_list.visible_columns()
-                }
+            }
             frame_width = run_list.width() - run_list.viewport().width()
             run_list.resize(sum(preferred_widths.values()) + frame_width, 300)
             qtw.QApplication.processEvents()
@@ -728,7 +782,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 name: run_list.columnWidth(col)
                 for col, name in enumerate(run_list.cols)
                 if not run_list.isColumnHidden(col)
-                }
+            }
 
             for name, width in treeWidgets.RunList.column_widths.items():
                 if name in widths:
@@ -744,7 +798,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                     self.assertGreaterEqual(
                         widths[name],
                         metrics.horizontalAdvance(value) + 12,
-                        )
+                    )
             run_list.hide()
         finally:
             treeWidgets.isfile = old_isfile
@@ -756,8 +810,8 @@ class RunListTooltipTestCase(unittest.TestCase):
                     treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: [],
                     treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY: list(
                         treeWidgets.RunList.default_visible_column_ids
-                        ),
-                    }
+                    ),
+                }
 
             def get(self, key):
                 return self.values[key]
@@ -773,20 +827,17 @@ class RunListTooltipTestCase(unittest.TestCase):
             first = treeWidgets.RunList(config=cfg)
             saved_widths = [48, 112, 205, 154, 146, 104, 68]
             for name, width in zip(
-                    first.default_visible_columns,
-                    saved_widths,
-                    strict=True,
-                    ):
+                first.default_visible_columns,
+                saved_widths,
+                strict=True,
+            ):
                 first.setColumnWidth(first.cols.index(name), width)
             first._persist_column_widths()
 
             self.assertEqual(
                 cfg.values[treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY],
-                [
-                    first._column_width_cache[name]
-                    for name in first.cols
-                    ],
-                )
+                [first._column_width_cache[name] for name in first.cols],
+            )
 
             restored = treeWidgets.RunList(config=cfg)
             self.assertTrue(restored._manual_column_widths)
@@ -794,12 +845,12 @@ class RunListTooltipTestCase(unittest.TestCase):
                 [
                     restored.columnWidth(restored.cols.index(name))
                     for name in restored.default_visible_columns
-                    ],
+                ],
                 saved_widths,
-                )
+            )
             self.assertTrue(
                 all(width >= 32 for width in restored._column_width_cache.values())
-                )
+            )
 
             self.assertTrue(restored.reset_column_widths())
             self.assertEqual(cfg.values[treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY], [])
@@ -811,9 +862,9 @@ class RunListTooltipTestCase(unittest.TestCase):
                 [
                     defaults.columnWidth(defaults.cols.index(name))
                     for name in defaults.default_visible_columns
-                    ],
+                ],
                 saved_widths,
-                )
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -855,13 +906,13 @@ class RunListTooltipTestCase(unittest.TestCase):
                 run_list.readable_column_widths,
                 available_width=100,
                 order=run_list.compact_growth_order,
-                )
+            )
 
             self.assertEqual(widths, run_list.minimum_column_widths)
             self.assertEqual(
                 run_list.horizontalScrollBarPolicy(),
                 QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
-                )
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -874,8 +925,8 @@ class RunListTooltipTestCase(unittest.TestCase):
                     treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: saved_widths,
                     treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY: list(
                         treeWidgets.RunList.default_visible_column_ids
-                        ),
-                    }
+                    ),
+                }
 
             def get(self, key):
                 return self.values[key]
@@ -890,16 +941,15 @@ class RunListTooltipTestCase(unittest.TestCase):
             run_list = treeWidgets.RunList(config=MemoryConfig())
 
             self.assertEqual(
-                {
-                    name: run_list._column_width_cache[name]
-                    for name in run_list.cols
-                    },
-                dict(zip(
-                    run_list.cols,
-                    saved_widths,
-                    strict=True,
-                    )),
-                )
+                {name: run_list._column_width_cache[name] for name in run_list.cols},
+                dict(
+                    zip(
+                        run_list.cols,
+                        saved_widths,
+                        strict=True,
+                    )
+                ),
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -910,8 +960,8 @@ class RunListTooltipTestCase(unittest.TestCase):
                     treeWidgets.RUN_TABLE_COLUMN_WIDTHS_KEY: [],
                     treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY: list(
                         treeWidgets.RunList.default_visible_column_ids
-                        ),
-                    }
+                    ),
+                }
 
             def get(self, key):
                 return self.values[key]
@@ -940,8 +990,8 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "Started",
                     "Status",
                     "Duration",
-                    ],
-                )
+                ],
+            )
 
             menu = restored._build_header_menu()
             columns_menu = menu.actions()[0].menu()
@@ -949,7 +999,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 action.property("runTableColumnId"): action
                 for action in columns_menu.actions()
                 if action.property("runTableColumnId") is not None
-                }
+            }
             self.assertEqual(set(actions_by_id), set(restored.column_ids))
             self.assertTrue(actions_by_id["experiment"].isChecked())
             self.assertFalse(actions_by_id["size"].isChecked())
@@ -965,17 +1015,17 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertNotIn(
                 "sample",
                 cfg.values[treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY],
-                )
+            )
 
             self.assertTrue(restored.reset_column_visibility())
             self.assertEqual(
                 restored.visible_column_ids(),
                 list(restored.default_visible_column_ids),
-                )
+            )
             self.assertEqual(
                 cfg.values[treeWidgets.RUN_TABLE_VISIBLE_COLUMNS_KEY],
                 list(restored.default_visible_column_ids),
-                )
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -997,7 +1047,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 run_list.columnWidth(column)
                 for column in range(run_list.columnCount())
                 if not run_list.isColumnHidden(column)
-                )
+            )
             self.assertGreater(visible_width, run_list.viewport().width())
             self.assertGreater(run_list.horizontalScrollBar().maximum(), 0)
 
@@ -1013,12 +1063,12 @@ class RunListTooltipTestCase(unittest.TestCase):
                 action
                 for action in columns_menu.actions()
                 if action.text() == "Restore defaults"
-                )
+            )
             restore_action.trigger()
             self.assertEqual(
                 run_list.visible_columns(),
                 list(run_list.default_visible_columns),
-                )
+            )
             run_list.hide()
         finally:
             treeWidgets.isfile = old_isfile
@@ -1051,14 +1101,14 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "Started",
                     "Completed",
                     "GUID",
-                    ],
-                )
+                ],
+            )
             menu = run_list._build_header_menu()
             columns_menu = menu.actions()[0].menu()
             self.assertNotIn(
                 "Run ID",
                 [action.text() for action in columns_menu.actions()],
-                )
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -1068,17 +1118,19 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "indexed-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
-                    "result_count": 1,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "indexed-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
+                        "result_count": 1,
                     },
-                })
+                }
+            )
             item = run_list.topLevelItem(0)
 
             self.assertIs(run_list._item_for_guid("indexed-guid"), item)
@@ -1092,49 +1144,57 @@ class RunListTooltipTestCase(unittest.TestCase):
 
     def test_unknown_completion_duration_uses_database_modified_time(self):
         self.assertEqual(
-            treeWidgets.format_complete_cell({
-                "run_timestamp": 100.0,
-                "completed_timestamp": None,
-                "is_completed": None,
-                "result_count": 185_976,
-                "expected_results": None,
-                }),
-            "unknown"
-            )
+            treeWidgets.format_complete_cell(
+                {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": None,
+                    "result_count": 185_976,
+                    "expected_results": None,
+                }
+            ),
+            "unknown",
+        )
         self.assertEqual(
-            treeWidgets.format_time_taken_seconds({
-                "run_timestamp": 100.0,
-                "completed_timestamp": None,
-                "is_completed": None,
-                "result_count": 185_976,
-                "expected_results": None,
-                "database_modified_timestamp": 12_345.6,
-                }),
-            "12,245.6 s"
-            )
+            treeWidgets.format_time_taken_seconds(
+                {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": None,
+                    "result_count": 185_976,
+                    "expected_results": None,
+                    "database_modified_timestamp": 12_345.6,
+                }
+            ),
+            "12,245.6 s",
+        )
 
     def test_incomplete_duration_uses_database_modified_time(self):
         self.assertEqual(
-            treeWidgets.format_complete_cell({
-                "run_timestamp": 100.0,
-                "completed_timestamp": None,
-                "is_completed": False,
-                "result_count": 25,
-                "expected_results": 100,
-                }),
-            "Running (25.0%)"
-            )
+            treeWidgets.format_complete_cell(
+                {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "result_count": 25,
+                    "expected_results": 100,
+                }
+            ),
+            "Running (25.0%)",
+        )
         self.assertEqual(
-            treeWidgets.format_time_taken_seconds({
-                "run_timestamp": 100.0,
-                "completed_timestamp": None,
-                "is_completed": False,
-                "result_count": 25,
-                "expected_results": 100,
-                "database_modified_timestamp": 12_345.6,
-                }),
-            "12,245.6 s"
-            )
+            treeWidgets.format_time_taken_seconds(
+                {
+                    "run_timestamp": 100.0,
+                    "completed_timestamp": None,
+                    "is_completed": False,
+                    "result_count": 25,
+                    "expected_results": 100,
+                    "database_modified_timestamp": 12_345.6,
+                }
+            ),
+            "12,245.6 s",
+        )
 
     def test_add_runs_only_watches_unfinished_rows(self):
         old_isfile = getattr(treeWidgets, "isfile", None)
@@ -1142,46 +1202,51 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": None,
-                    "is_completed": False,
-                    "exp_name": "exp",
-                    "sample_name": "sample",
-                    "name": "unfinished",
-                    "result_table_name": "results_1",
-                    "guid": "unfinished-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["y"],
-                    "result_count": 1,
-                "expected_results": 10,
-                "point_shape": [10],
-                "setpoint_count": 10,
-                "setpoint_count_source": "planned",
-                "read_setpoint_count": 1,
-                "storage_bytes": 102_400,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": None,
+                        "is_completed": False,
+                        "exp_name": "exp",
+                        "sample_name": "sample",
+                        "name": "unfinished",
+                        "result_table_name": "results_1",
+                        "guid": "unfinished-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["y"],
+                        "result_count": 1,
+                        "expected_results": 10,
+                        "point_shape": [10],
+                        "setpoint_count": 10,
+                        "setpoint_count_source": "planned",
+                        "read_setpoint_count": 1,
+                        "storage_bytes": 102_400,
                     },
-                2: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "exp_name": "exp",
-                    "sample_name": "sample",
-                    "name": "finished",
-                    "result_table_name": "results_2",
-                    "guid": "finished-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["z", "w"],
-                    "result_count": 10,
-                    "expected_results": 1000,
-                    "point_shape": [10, 100],
-                    "storage_bytes": 1536,
+                    2: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "exp_name": "exp",
+                        "sample_name": "sample",
+                        "name": "finished",
+                        "result_table_name": "results_2",
+                        "guid": "finished-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["z", "w"],
+                        "result_count": 10,
+                        "expected_results": 1000,
+                        "point_shape": [10, 100],
+                        "storage_bytes": 1536,
                     },
-                })
+                }
+            )
 
             self.assertEqual(
-                [run_list.headerItem().text(col) for col in range(run_list.columnCount())],
+                [
+                    run_list.headerItem().text(col)
+                    for col in range(run_list.columnCount())
+                ],
                 [
                     "ID",
                     "Experiment",
@@ -1195,32 +1260,41 @@ class RunListTooltipTestCase(unittest.TestCase):
                     "Duration",
                     "Size",
                     "GUID",
-                    ],
-                )
+                ],
+            )
             self.assertEqual(
                 run_list.visible_columns(),
-                ["ID", "Measurements", "Setpoints", "Started", "Status", "Duration", "Size"],
-                )
+                [
+                    "ID",
+                    "Measurements",
+                    "Setpoints",
+                    "Started",
+                    "Status",
+                    "Duration",
+                    "Size",
+                ],
+            )
             self.assertIsInstance(
                 run_list.itemDelegateForColumn(run_list.cols.index("Setpoints")),
-                treeWidgets.EqualsAlignedDelegate
-                )
+                treeWidgets.EqualsAlignedDelegate,
+            )
             self.assertFalse(run_list.rootIsDecorated())
             self.assertEqual(run_list.indentation(), 0)
             self.assertEqual(
                 run_list.horizontalScrollBarPolicy(),
-                QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
-                )
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+            )
             self.assertTrue(
                 all(
-                    run_list.header().sectionResizeMode(col) == qtw.QHeaderView.ResizeMode.Interactive
+                    run_list.header().sectionResizeMode(col)
+                    == qtw.QHeaderView.ResizeMode.Interactive
                     for col in range(run_list.columnCount())
-                    )
                 )
+            )
             items = {
                 run_list.topLevelItem(row).guid: run_list.topLevelItem(row)
                 for row in range(run_list.topLevelItemCount())
-                }
+            }
             column = run_list.cols.index
             measurements_col = column("Measurements")
             setpoints_col = column("Setpoints")
@@ -1228,100 +1302,126 @@ class RunListTooltipTestCase(unittest.TestCase):
             duration_col = column("Duration")
             size_col = column("Size")
 
-            self.assertEqual([item.guid for item in run_list.watching], ["unfinished-guid"])
+            self.assertEqual(
+                [item.guid for item in run_list.watching], ["unfinished-guid"]
+            )
             self.assertEqual(items["unfinished-guid"].text(measurements_col), "")
             self.assertEqual(
                 items["unfinished-guid"].data(
                     measurements_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    ),
+                ),
                 1,
-                )
+            )
             self.assertEqual(
                 items["unfinished-guid"].data(
                     measurements_col,
                     QtCore.Qt.ItemDataRole.AccessibleTextRole,
-                    ),
+                ),
                 "1 measurement: y",
-                )
+            )
             self.assertIsInstance(
                 run_list.itemWidget(items["unfinished-guid"], measurements_col),
-                treeWidgets.RunPreviewCell
-                )
+                treeWidgets.RunPreviewCell,
+            )
             self.assertEqual(
                 run_list.itemWidget(
                     items["unfinished-guid"],
                     measurements_col,
-                    ).accessibleName(),
+                ).accessibleName(),
                 "1 measurement: y",
-                )
+            )
             self.assertEqual(
                 len(
                     run_list.itemWidget(
                         items["unfinished-guid"], measurements_col
-                        ).findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
-                    ),
-                1
-                )
+                    ).findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+                ),
+                1,
+            )
             self.assertEqual(items["unfinished-guid"].text(setpoints_col), "10")
-            self.assertEqual(items["unfinished-guid"].text(status_col), "Running (10.0%)")
-            self.assertRegex(items["unfinished-guid"].text(duration_col), r"^[\d,]+\.\d s$")
+            self.assertEqual(
+                items["unfinished-guid"].text(status_col), "Running (10.0%)"
+            )
+            self.assertRegex(
+                items["unfinished-guid"].text(duration_col), r"^[\d,]+\.\d s$"
+            )
             self.assertEqual(items["unfinished-guid"].text(size_col), "100 KB")
             self.assertEqual(items["unfinished-guid"].text(column("Experiment")), "exp")
             self.assertEqual(items["unfinished-guid"].text(column("Sample")), "sample")
-            self.assertEqual(items["unfinished-guid"].text(column("Name")), "unfinished")
-            self.assertEqual(items["unfinished-guid"].text(column("Completed")), "Ongoing")
-            self.assertEqual(items["unfinished-guid"].text(column("GUID")), "unfinished-guid")
+            self.assertEqual(
+                items["unfinished-guid"].text(column("Name")), "unfinished"
+            )
+            self.assertEqual(
+                items["unfinished-guid"].text(column("Completed")), "Ongoing"
+            )
+            self.assertEqual(
+                items["unfinished-guid"].text(column("GUID")), "unfinished-guid"
+            )
             self.assertEqual(items["finished-guid"].text(measurements_col), "")
             self.assertEqual(
                 items["finished-guid"].data(
                     measurements_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    ),
+                ),
                 2,
-                )
+            )
             self.assertEqual(
                 items["finished-guid"].data(
                     measurements_col,
                     QtCore.Qt.ItemDataRole.AccessibleTextRole,
-                    ),
+                ),
                 "2 measurements: z, w",
-                )
+            )
             self.assertEqual(
                 len(
                     run_list.itemWidget(
                         items["finished-guid"], measurements_col
-                        ).findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
-                    ),
-                2
-                )
-            self.assertEqual(items["finished-guid"].text(setpoints_col), "1,000 = 10 × 100")
+                    ).findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+                ),
+                2,
+            )
+            self.assertEqual(
+                items["finished-guid"].text(setpoints_col), "1,000 = 10 × 100"
+            )
             self.assertEqual(items["finished-guid"].text(status_col), "Completed")
             self.assertEqual(items["finished-guid"].text(duration_col), "10.0 s")
             self.assertEqual(
                 items["finished-guid"].text(column("Completed")),
                 treeWidgets.format_timestamp(110.0),
-                )
+            )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(column("ID"))),
-                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
-                )
+                (
+                    QtCore.Qt.AlignmentFlag.AlignRight
+                    | QtCore.Qt.AlignmentFlag.AlignVCenter
+                ).value,
+            )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(setpoints_col)),
-                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
-                )
+                (
+                    QtCore.Qt.AlignmentFlag.AlignRight
+                    | QtCore.Qt.AlignmentFlag.AlignVCenter
+                ).value,
+            )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(status_col)),
-                QtCore.Qt.AlignmentFlag.AlignCenter.value
-                )
+                QtCore.Qt.AlignmentFlag.AlignCenter.value,
+            )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(duration_col)),
-                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
-                )
+                (
+                    QtCore.Qt.AlignmentFlag.AlignRight
+                    | QtCore.Qt.AlignmentFlag.AlignVCenter
+                ).value,
+            )
             self.assertEqual(
                 int(items["finished-guid"].textAlignment(size_col)),
-                (QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter).value
-                )
+                (
+                    QtCore.Qt.AlignmentFlag.AlignRight
+                    | QtCore.Qt.AlignmentFlag.AlignVCenter
+                ).value,
+            )
             self.assertIn("Measure</td>", items["unfinished-guid"].toolTip(0))
             self.assertIn("(y)</td>", items["unfinished-guid"].toolTip(0))
             self.assertIn("Status</td>", items["finished-guid"].toolTip(0))
@@ -1329,9 +1429,12 @@ class RunListTooltipTestCase(unittest.TestCase):
 
             run_list.sortItems(measurements_col, QtCore.Qt.SortOrder.DescendingOrder)
             self.assertEqual(
-                [run_list.topLevelItem(row).guid for row in range(run_list.topLevelItemCount())],
-                ["finished-guid", "unfinished-guid"]
-                )
+                [
+                    run_list.topLevelItem(row).guid
+                    for row in range(run_list.topLevelItemCount())
+                ],
+                ["finished-guid", "unfinished-guid"],
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -1341,32 +1444,36 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": None,
-                    "is_completed": False,
-                    "guid": "run-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": None,
+                        "is_completed": False,
+                        "guid": "run-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
                     },
-                })
+                }
+            )
 
             item = run_list.topLevelItem(0)
-            updated = run_list.updateRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "run-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
-                    "result_count": 10,
-                    "setpoint_count": 10,
-                    "setpoint_shape": [10],
-                    "storage_bytes": 2048,
+            updated = run_list.updateRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "run-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
+                        "result_count": 10,
+                        "setpoint_count": 10,
+                        "setpoint_shape": [10],
+                        "storage_bytes": 2048,
                     },
-                })
+                }
+            )
 
             self.assertEqual(run_list.topLevelItemCount(), 1)
             self.assertIs(run_list.topLevelItem(0), item)
@@ -1378,14 +1485,14 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(
                 item.text(run_list.cols.index("Completed")),
                 treeWidgets.format_timestamp(110.0),
-                )
+            )
             self.assertEqual(
                 item.data(
                     run_list.cols.index("Completed"),
                     QtCore.Qt.ItemDataRole.UserRole,
-                    ),
+                ),
                 110.0,
-                )
+            )
             self.assertEqual(run_list.watching, [])
         finally:
             treeWidgets.isfile = old_isfile
@@ -1396,32 +1503,38 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "run-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "run-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
                     },
-                })
+                }
+            )
 
-            run_list.updateRuns({
-                1: {
-                    "guid": "run-guid",
-                    "storage_bytes": 4096,
-                    "storage_bytes_estimated": False,
+            run_list.updateRuns(
+                {
+                    1: {
+                        "guid": "run-guid",
+                        "storage_bytes": 4096,
+                        "storage_bytes_estimated": False,
                     },
-                })
-            updated = run_list.updateRuns({
-                1: {
-                    "guid": "run-guid",
-                    "result_count": 10,
-                    "storage_bytes": 1024,
-                    "storage_bytes_estimated": True,
+                }
+            )
+            updated = run_list.updateRuns(
+                {
+                    1: {
+                        "guid": "run-guid",
+                        "result_count": 10,
+                        "storage_bytes": 1024,
+                        "storage_bytes_estimated": True,
                     },
-                })
+                }
+            )
 
             item = run_list.topLevelItem(0)
             self.assertEqual(updated[1]["storage_bytes"], 4096)
@@ -1436,31 +1549,37 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "run-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "run-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
                     },
-                })
+                }
+            )
 
-            estimated = run_list.updateRuns({
-                1: {
-                    "guid": "run-guid",
-                    "storage_bytes": 1024,
-                    "storage_bytes_estimated": True,
+            estimated = run_list.updateRuns(
+                {
+                    1: {
+                        "guid": "run-guid",
+                        "storage_bytes": 1024,
+                        "storage_bytes_estimated": True,
                     },
-                })
-            exact = run_list.updateRuns({
-                1: {
-                    "guid": "run-guid",
-                    "storage_bytes": 4096,
-                    "storage_bytes_estimated": False,
+                }
+            )
+            exact = run_list.updateRuns(
+                {
+                    1: {
+                        "guid": "run-guid",
+                        "storage_bytes": 4096,
+                        "storage_bytes_estimated": False,
                     },
-                })
+                }
+            )
 
             item = run_list.topLevelItem(0)
             self.assertEqual(estimated[1]["storage_bytes"], 1024)
@@ -1477,56 +1596,61 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": None,
-                    "is_completed": False,
-                    "exp_name": "exp",
-                    "sample_name": "sample",
-                    "name": "interrupted",
-                    "result_table_name": "results_1",
-                    "guid": "interrupted-guid",
-                    "sweep_parameters": ["x", "y"],
-                    "measure_parameters": ["signal", "other"],
-                    "result_count": 100,
-                    "read_setpoint_count": 100,
-                    "setpoint_count": 1000,
-                    "expected_results": 2000,
-                    "point_shape": [10, 100],
-                    "setpoint_shape": [10, 100],
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": None,
+                        "is_completed": False,
+                        "exp_name": "exp",
+                        "sample_name": "sample",
+                        "name": "interrupted",
+                        "result_table_name": "results_1",
+                        "guid": "interrupted-guid",
+                        "sweep_parameters": ["x", "y"],
+                        "measure_parameters": ["signal", "other"],
+                        "result_count": 100,
+                        "read_setpoint_count": 100,
+                        "setpoint_count": 1000,
+                        "expected_results": 2000,
+                        "point_shape": [10, 100],
+                        "setpoint_shape": [10, 100],
                     }
-                })
+                }
+            )
             item = run_list.topLevelItem(0)
 
-            updated_runs = run_list.checkWatching({
-                "interrupted-guid": {
-                    "completed_timestamp": 120.0,
-                    "is_completed": True,
-                    "result_count": 800,
-                    "read_setpoint_count": 400,
-                    "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
-                    "database_modified_timestamp": 120.0,
+            updated_runs = run_list.checkWatching(
+                {
+                    "interrupted-guid": {
+                        "completed_timestamp": 120.0,
+                        "is_completed": True,
+                        "result_count": 800,
+                        "read_setpoint_count": 400,
+                        "measurement_exception": "Traceback...\nKeyboardInterrupt\n",
+                        "database_modified_timestamp": 120.0,
                     },
-                })
+                }
+            )
 
             self.assertEqual(
-                item.text(run_list.cols.index("Status")),
-                "Interrupted (40.0%)"
-                )
+                item.text(run_list.cols.index("Status")), "Interrupted (40.0%)"
+            )
             self.assertEqual(
-                item.data(run_list.cols.index("Status"), QtCore.Qt.ItemDataRole.UserRole),
-                40.0
-                )
+                item.data(
+                    run_list.cols.index("Status"), QtCore.Qt.ItemDataRole.UserRole
+                ),
+                40.0,
+            )
             self.assertEqual(run_list.watching, [])
             self.assertEqual(
                 updated_runs[1]["measurement_exception"],
-                "Traceback...\nKeyboardInterrupt\n"
-                )
+                "Traceback...\nKeyboardInterrupt\n",
+            )
             self.assertEqual(
                 item.text(run_list.cols.index("Completed")),
                 treeWidgets.format_timestamp(120.0),
-                )
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -1536,62 +1660,68 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": None,
-                    "is_completed": False,
-                    "guid": "growing-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
-                    "result_count": 1,
-                    "point_shape": [1],
-                    "setpoint_shape": [1],
-                    "setpoint_shape_source": "observed",
-                    "setpoint_count": 1,
-                    "setpoint_count_source": "observed",
-                    "expected_results": 1,
-                    "expected_results_source": "observed",
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": None,
+                        "is_completed": False,
+                        "guid": "growing-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
+                        "result_count": 1,
+                        "point_shape": [1],
+                        "setpoint_shape": [1],
+                        "setpoint_shape_source": "observed",
+                        "setpoint_count": 1,
+                        "setpoint_count_source": "observed",
+                        "expected_results": 1,
+                        "expected_results_source": "observed",
                     },
-                })
+                }
+            )
             item = run_list.topLevelItem(0)
 
-            run_list.checkWatching({
-                "growing-guid": {
-                    "is_completed": False,
-                    "result_count": 5,
-                    "read_setpoint_count": 5,
-                    "point_shape": [5],
-                    "setpoint_shape": [5],
-                    "setpoint_shape_source": "observed",
-                    "setpoint_count": 5,
-                    "setpoint_count_source": "observed",
-                    "expected_results": None,
-                    "expected_results_source": None,
+            run_list.checkWatching(
+                {
+                    "growing-guid": {
+                        "is_completed": False,
+                        "result_count": 5,
+                        "read_setpoint_count": 5,
+                        "point_shape": [5],
+                        "setpoint_shape": [5],
+                        "setpoint_shape_source": "observed",
+                        "setpoint_count": 5,
+                        "setpoint_count_source": "observed",
+                        "expected_results": None,
+                        "expected_results_source": None,
                     },
-                })
+                }
+            )
 
             self.assertEqual(item.text(run_list.cols.index("Setpoints")), "5")
             self.assertEqual(
                 item.text(run_list.cols.index("Status")),
                 "Running (100.0%)",
-                )
+            )
             self.assertIsNone(item.run_metadata["expected_results"])
 
-            run_list.checkWatching({
-                "growing-guid": {
-                    "completed_timestamp": 120.0,
-                    "is_completed": True,
-                    "result_count": 5,
-                    "point_shape": [5],
-                    "setpoint_shape": [5],
-                    "setpoint_shape_source": "observed",
-                    "setpoint_count": 5,
-                    "setpoint_count_source": "observed",
-                    "expected_results": 5,
-                    "expected_results_source": "observed",
+            run_list.checkWatching(
+                {
+                    "growing-guid": {
+                        "completed_timestamp": 120.0,
+                        "is_completed": True,
+                        "result_count": 5,
+                        "point_shape": [5],
+                        "setpoint_shape": [5],
+                        "setpoint_shape_source": "observed",
+                        "setpoint_count": 5,
+                        "setpoint_count_source": "observed",
+                        "expected_results": 5,
+                        "expected_results_source": "observed",
                     },
-                })
+                }
+            )
 
             self.assertEqual(item.text(run_list.cols.index("Setpoints")), "5")
             self.assertEqual(item.text(run_list.cols.index("Status")), "Completed")
@@ -1606,42 +1736,46 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": None,
-                    "is_completed": False,
-                    "guid": "failed-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
-                    "result_count": 10,
-                    "setpoint_count": 100,
-                    "expected_results": 100,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": None,
+                        "is_completed": False,
+                        "guid": "failed-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
+                        "result_count": 10,
+                        "setpoint_count": 100,
+                        "expected_results": 100,
                     }
-                })
+                }
+            )
             item = run_list.topLevelItem(0)
 
-            updated_runs = run_list.checkWatching({
-                "failed-guid": {
-                    "completed_timestamp": 120.0,
-                    "is_completed": True,
-                    "result_count": 40,
-                    "measurement_exception": "Traceback...\nValueError: bad <value>\n",
-                    "database_modified_timestamp": 120.0,
+            updated_runs = run_list.checkWatching(
+                {
+                    "failed-guid": {
+                        "completed_timestamp": 120.0,
+                        "is_completed": True,
+                        "result_count": 40,
+                        "measurement_exception": "Traceback...\nValueError: bad <value>\n",
+                        "database_modified_timestamp": 120.0,
                     },
-                })
+                }
+            )
 
             status_col = run_list.cols.index("Status")
             self.assertEqual(item.text(status_col), "Failed")
             self.assertEqual(
                 item.data(status_col, QtCore.Qt.ItemDataRole.UserRole),
                 40.0,
-                )
+            )
             self.assertEqual(run_list.watching, [])
             self.assertEqual(
                 updated_runs[1]["measurement_exception"],
                 "Traceback...\nValueError: bad <value>\n",
-                )
+            )
             self.assertIn("Status</td>", item.toolTip(0))
             self.assertIn("Failed (40.0%)", item.toolTip(0))
             self.assertIn("ValueError: bad &lt;value&gt;", item.toolTip(0))
@@ -1654,29 +1788,33 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": None,
-                    "is_completed": False,
-                    "guid": "completed-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
-                    "result_count": 10,
-                    "setpoint_count": 100,
-                    "expected_results": 100,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": None,
+                        "is_completed": False,
+                        "guid": "completed-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
+                        "result_count": 10,
+                        "setpoint_count": 100,
+                        "expected_results": 100,
                     }
-                })
+                }
+            )
             item = run_list.topLevelItem(0)
 
-            updated_runs = run_list.checkWatching({
-                "completed-guid": {
-                    "completed_timestamp": None,
-                    "is_completed": True,
-                    "result_count": 100,
-                    "database_modified_timestamp": 120.0,
+            updated_runs = run_list.checkWatching(
+                {
+                    "completed-guid": {
+                        "completed_timestamp": None,
+                        "is_completed": True,
+                        "result_count": 100,
+                        "database_modified_timestamp": 120.0,
                     },
-                })
+                }
+            )
 
             self.assertEqual(run_list.watching, [])
             self.assertTrue(updated_runs[1]["is_completed"])
@@ -1684,11 +1822,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(
                 item.text(run_list.cols.index("Status")),
                 "Completed",
-                )
+            )
             self.assertEqual(
                 item.text(run_list.cols.index("Duration")),
                 "unknown",
-                )
+            )
             self.assertIn("Completed</td>", item.toolTip(0))
         finally:
             treeWidgets.isfile = old_isfile
@@ -1702,45 +1840,53 @@ class RunListTooltipTestCase(unittest.TestCase):
             requested = []
             run_list.previewPlotRequested.connect(
                 lambda guid, parameter: requested.append((guid, parameter))
-                )
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "result_table_name": "results_1",
-                    "guid": "run-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal", "other"],
-                    "result_count": 2,
-                    "expected_results": 2,
-                    "storage_bytes": 2048,
+            )
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "result_table_name": "results_1",
+                        "guid": "run-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal", "other"],
+                        "result_count": 2,
+                        "expected_results": 2,
+                        "storage_bytes": 2048,
                     },
-                })
+                }
+            )
 
             item = run_list.topLevelItem(0)
             cell = run_list.itemWidget(
                 item,
                 run_list.cols.index("Measurements"),
-                )
+            )
             self.assertEqual(
-                len(cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")),
-                2
-                )
+                len(cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")), 2
+            )
 
-            run_list.set_run_previews("run-guid", [{
-                "parameter": "signal",
-                "axes": ["x"],
-                "title": "signal vs x",
-                "image": render_sparkline_preview(
-                    np.array([0, 1], dtype=float),
-                    np.array([1, 2], dtype=float),
-                    size=40,
-                    ),
-                }])
+            run_list.set_run_previews(
+                "run-guid",
+                [
+                    {
+                        "parameter": "signal",
+                        "axes": ["x"],
+                        "title": "signal vs x",
+                        "image": render_sparkline_preview(
+                            np.array([0, 1], dtype=float),
+                            np.array([1, 2], dtype=float),
+                            size=40,
+                        ),
+                    }
+                ],
+            )
 
             images = cell.findChildren(qtw.QLabel, "measurementPreviewImage")
-            placeholders = cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+            placeholders = cell.findChildren(
+                qtw.QLabel, "measurementPreviewPlaceholder"
+            )
             self.assertEqual(len(images), 1)
             self.assertEqual(len(placeholders), 1)
             self.assertIsInstance(images[0], DraggablePreviewImageLabel)
@@ -1757,7 +1903,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 QtCore.Qt.MouseButton.LeftButton,
                 QtCore.Qt.MouseButton.LeftButton,
                 QtCore.Qt.KeyboardModifier.NoModifier,
-                )
+            )
             qtw.QApplication.sendEvent(images[0], event)
 
             self.assertEqual(requested, [("run-guid", "signal")])
@@ -1766,29 +1912,34 @@ class RunListTooltipTestCase(unittest.TestCase):
             export_requested = []
             run_list.previewExportRequested.connect(
                 lambda guid, parameter: export_requested.append((guid, parameter))
-                )
+            )
             images[0].exportRequested.emit("signal")
 
             self.assertEqual(export_requested, [("run-guid", "signal")])
             self.assertIs(run_list.currentItem(), item)
 
-            run_list.set_run_previews("run-guid", [{
-                "parameter": "signal",
-                "axes": ["x", "y", "z"],
-                "dimension_count": 3,
-                "title": "signal has 3 independent axes",
-                "unsupported": True,
-                }])
+            run_list.set_run_previews(
+                "run-guid",
+                [
+                    {
+                        "parameter": "signal",
+                        "axes": ["x", "y", "z"],
+                        "dimension_count": 3,
+                        "title": "signal has 3 independent axes",
+                        "unsupported": True,
+                    }
+                ],
+            )
             unsupported = cell.findChildren(
                 qtw.QLabel,
                 "measurementPreviewUnsupported",
-                )
+            )
             self.assertEqual(len(unsupported), 1)
             self.assertEqual(unsupported[0].text(), "3D")
             self.assertEqual(
                 unsupported[0].accessibleName(),
                 "3D measurement unsupported",
-                )
+            )
             self.assertIn("3 independent axes", unsupported[0].toolTip())
         finally:
             treeWidgets.isfile = old_isfile
@@ -1799,29 +1950,33 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "result_table_name": "results_1",
-                    "guid": "run-guid",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["a", "b", "c"],
-                    "result_count": 2,
-                    "expected_results": 2,
-                    "storage_bytes": 2048,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "result_table_name": "results_1",
+                        "guid": "run-guid",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["a", "b", "c"],
+                        "result_count": 2,
+                        "expected_results": 2,
+                        "storage_bytes": 2048,
                     },
-                })
+                }
+            )
 
             item = run_list.topLevelItem(0)
             cell = run_list.itemWidget(
                 item,
                 run_list.cols.index("Measurements"),
-                )
+            )
 
             run_list.set_run_preview_generating("run-guid", True)
-            placeholders = cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+            placeholders = cell.findChildren(
+                qtw.QLabel, "measurementPreviewPlaceholder"
+            )
             styles = [placeholder.styleSheet() for placeholder in placeholders]
 
             self.assertEqual(len(placeholders), 3)
@@ -1833,9 +1988,11 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertTrue(
                 all(
                     placeholder.styleSheet() == ""
-                    for placeholder in cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder")
+                    for placeholder in cell.findChildren(
+                        qtw.QLabel, "measurementPreviewPlaceholder"
                     )
                 )
+            )
         finally:
             treeWidgets.isfile = old_isfile
 
@@ -1845,17 +2002,21 @@ class RunListTooltipTestCase(unittest.TestCase):
             np.array([0, 1], dtype=float),
             np.array([1, 2], dtype=float),
             size=40,
-            )
+        )
         new_image = render_sparkline_preview(
             np.array([0, 1], dtype=float),
             np.array([2, 1], dtype=float),
             size=40,
-            )
+        )
         try:
-            cell.show_previews([{
-                "parameter": "signal",
-                "image": old_image,
-                }])
+            cell.show_previews(
+                [
+                    {
+                        "parameter": "signal",
+                        "image": old_image,
+                    }
+                ]
+            )
             old_label = cell.findChild(qtw.QLabel, "measurementPreviewImage")
             old_cache_key = old_label.pixmap().cacheKey()
 
@@ -1864,16 +2025,20 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertIs(
                 cell.findChild(qtw.QLabel, "measurementPreviewImage"),
                 old_label,
-                )
+            )
             self.assertEqual(
                 cell.findChildren(qtw.QLabel, "measurementPreviewPlaceholder"),
                 [],
-                )
+            )
 
-            cell.show_previews([{
-                "parameter": "signal",
-                "image": new_image,
-                }])
+            cell.show_previews(
+                [
+                    {
+                        "parameter": "signal",
+                        "image": new_image,
+                    }
+                ]
+            )
             new_label = cell.findChild(qtw.QLabel, "measurementPreviewImage")
             self.assertIsNot(new_label, old_label)
             self.assertNotEqual(new_label.pixmap().cacheKey(), old_cache_key)
@@ -1888,18 +2053,20 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                run_id: {
-                    "run_timestamp": 100.0 + run_id,
-                    "completed_timestamp": 110.0 + run_id,
-                    "is_completed": True,
-                    "guid": f"guid-{run_id}",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
-                    "result_count": 10,
+            run_list.addRuns(
+                {
+                    run_id: {
+                        "run_timestamp": 100.0 + run_id,
+                        "completed_timestamp": 110.0 + run_id,
+                        "is_completed": True,
+                        "guid": f"guid-{run_id}",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
+                        "result_count": 10,
                     }
-                for run_id in range(1, 4)
-                })
+                    for run_id in range(1, 4)
+                }
+            )
 
             self.assertFalse(run_list._preview_widgets_enabled)
             self.assertEqual(run_list.preview_cells, {})
@@ -1919,19 +2086,21 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = treeWidgets.RunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": 110.0,
-                    "is_completed": True,
-                    "guid": "guid-1",
-                    "sweep_parameters": ["x", "y"],
-                    "measure_parameters": ["signal"],
-                    "setpoint_count": 100,
-                    "setpoint_shape": [10, 10],
-                    "result_count": 100,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": 110.0,
+                        "is_completed": True,
+                        "guid": "guid-1",
+                        "sweep_parameters": ["x", "y"],
+                        "measure_parameters": ["signal"],
+                        "setpoint_count": 100,
+                        "setpoint_shape": [10, 10],
+                        "result_count": 100,
                     },
-                })
+                }
+            )
             item = run_list.topLevelItem(0)
             column = run_list.cols.index("Setpoints")
             index = run_list.indexFromItem(item, column)
@@ -1964,26 +2133,30 @@ class RunListTooltipTestCase(unittest.TestCase):
 
         try:
             run_list = RecordingRunList()
-            run_list.addRuns({
-                1: {
-                    "run_timestamp": 100.0,
-                    "completed_timestamp": None,
-                    "is_completed": False,
-                    "guid": "guid-1",
-                    "sweep_parameters": ["x"],
-                    "measure_parameters": ["signal"],
-                    "result_count": 1,
+            run_list.addRuns(
+                {
+                    1: {
+                        "run_timestamp": 100.0,
+                        "completed_timestamp": None,
+                        "is_completed": False,
+                        "guid": "guid-1",
+                        "sweep_parameters": ["x"],
+                        "measure_parameters": ["signal"],
+                        "result_count": 1,
                     },
-                })
+                }
+            )
             run_list.sortItems(0, QtCore.Qt.SortOrder.DescendingOrder)
             run_list.sorting_changes.clear()
 
-            run_list.updateRuns({
-                1: {
-                    "guid": "guid-1",
-                    "result_count": 2,
+            run_list.updateRuns(
+                {
+                    1: {
+                        "guid": "guid-1",
+                        "result_count": 2,
                     },
-                })
+                }
+            )
 
             self.assertEqual(run_list.sorting_changes, [])
             self.assertTrue(run_list.isSortingEnabled())

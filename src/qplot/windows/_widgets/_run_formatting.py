@@ -18,7 +18,7 @@ def run_tooltip_text(metadata):
             "<td style='padding:0 0.5em 0 0'>Exception</td>"
             f"<td style='padding:0'>{summary}</td>"
             "</tr>"
-            )
+        )
 
     return (
         "<table style='margin:0; border-spacing:0; border-collapse:collapse'>"
@@ -36,7 +36,7 @@ def run_tooltip_text(metadata):
         "</tr>"
         f"{exception_row}"
         "</table>"
-        )
+    )
 
 
 def run_tooltip_plain_text(metadata):
@@ -46,7 +46,7 @@ def run_tooltip_plain_text(metadata):
         f"{'Sweep':<7}({sweep})",
         f"Measure ({measure})",
         f"Status  {format_run_status(metadata)}",
-        ]
+    ]
     if run_failed(metadata):
         lines.append(f"Exception {measurement_exception_summary(metadata)}")
 
@@ -80,7 +80,7 @@ def run_failed(metadata):
         exception is not None
         and str(exception).strip()
         and not run_was_interrupted(metadata)
-        )
+    )
 
 
 def measurement_exception_summary(metadata, maximum_length=200):
@@ -88,9 +88,9 @@ def measurement_exception_summary(metadata, maximum_length=200):
     summary = next(
         (line.strip() for line in reversed(exception.splitlines()) if line.strip()),
         "",
-        )
+    )
     if len(summary) > maximum_length:
-        return f"{summary[:maximum_length - 1]}…"
+        return f"{summary[: maximum_length - 1]}…"
     return summary
 
 
@@ -112,10 +112,7 @@ def format_run_state(metadata):
         return "Failed"
     if run_is_complete(metadata):
         return "Completed"
-    if (
-            metadata.get("is_completed") is not None
-            and not bool(metadata["is_completed"])
-            ):
+    if metadata.get("is_completed") is not None and not bool(metadata["is_completed"]):
         return _format_state_with_setpoint_progress("Running", metadata)
     return "unknown"
 
@@ -156,7 +153,7 @@ def setpoint_progress_percent_value(metadata):
         metadata.get("read_setpoint_count"),
         metadata.get("setpoint_count"),
         maximum=100,
-        )
+    )
     if percent is not None:
         return percent
 
@@ -168,7 +165,7 @@ def setpoint_progress_percent_value(metadata):
         metadata.get("result_count"),
         metadata.get("expected_results"),
         maximum=100,
-        )
+    )
 
 
 def format_setpoint_progress_percent(metadata):
@@ -182,10 +179,7 @@ def interrupted_progress_percent_value(metadata):
     expected = None
     if metadata.get("setpoint_count_source") != "observed":
         expected = metadata.get("setpoint_count")
-    if (
-            not expected
-            and metadata.get("expected_results_source") != "observed"
-            ):
+    if not expected and metadata.get("expected_results_source") != "observed":
         expected = metadata.get("expected_results")
     count = metadata.get("read_setpoint_count")
     if count is None:
@@ -314,6 +308,7 @@ def format_storage_size(bytes_value):
 
 def format_point_count(metadata):
     expected = metadata.get("setpoint_count", metadata.get("expected_results"))
+    acquired = metadata.get("read_setpoint_count")
     shape = metadata.get("setpoint_shape") or metadata.get("point_shape")
     if shape:
         try:
@@ -327,6 +322,16 @@ def format_point_count(metadata):
         if duplicate_count is not None:
             return duplicate_count
 
+        if (
+            acquired is not None
+            and expected
+            and metadata.get("setpoint_shape_source") == "planned"
+            and acquired != expected
+        ):
+            try:
+                return f"{int(acquired):,} / {int(expected):,} = {shape_parts}"
+            except (TypeError, ValueError):
+                pass
         if expected:
             return f"{int(expected):,} = {shape_parts}"
         if shape_parts:
@@ -335,14 +340,23 @@ def format_point_count(metadata):
     if expected:
         return f"{int(expected):,}"
 
-    count = metadata.get("result_count")
-    if count is not None:
-        try:
-            return f"{int(count):,}"
-        except (TypeError, ValueError):
-            pass
+    # With no physical result rows, logical multiplicity is immaterial: the
+    # acquired logical count is exactly zero.  Positive MAX(id) values remain
+    # internal until a structural layout proves their logical interpretation.
+    if type(metadata.get("result_count")) is int and metadata["result_count"] == 0:
+        return "0"
 
     return "unknown"
+
+
+def point_count_sort_value(metadata):
+    for name in ("setpoint_count", "expected_results"):
+        value = metadata.get(name)
+        if type(value) is int and value >= 0:
+            return value
+    if type(metadata.get("result_count")) is int and metadata["result_count"] == 0:
+        return 0
+    return None
 
 
 def one_dimensional_duplicate_point_count(metadata, shape_values=None):

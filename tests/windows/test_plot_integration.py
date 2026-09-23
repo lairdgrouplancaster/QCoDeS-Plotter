@@ -59,7 +59,9 @@ from tests._window_lifecycle import close_main_window
 def configure_temp_qplot(monkeypatch, tmp_path):
     qplot_home = tmp_path / ".qplot"
     monkeypatch.setattr(config, "default_path", str(qplot_home))
-    monkeypatch.setattr(config, "default_file", str(qplot_home / config.config_file_name))
+    monkeypatch.setattr(
+        config, "default_file", str(qplot_home / config.config_file_name)
+    )
 
 
 def wait_for(predicate, timeout=12):
@@ -176,9 +178,7 @@ def export_real_plot_csv(monkeypatch, plot_window, target):
         "question",
         lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
     )
-    return plot_window._export_pyqtgraph_exporter(
-        CSVExporter(plot_window.plot)
-    )
+    return plot_window._export_pyqtgraph_exporter(CSVExporter(plot_window.plot))
 
 
 def csv_rows(csv_path):
@@ -306,7 +306,9 @@ def dependent_parameter(dataset, dimensions):
     for param in dataset.get_parameters():
         if param.depends_on and len(param.depends_on_) == dimensions:
             return param
-    raise AssertionError(f"No {dimensions}D dependent parameter in run {dataset.run_id}")
+    raise AssertionError(
+        f"No {dimensions}D dependent parameter in run {dataset.run_id}"
+    )
 
 
 def database_artifact_state(database_path):
@@ -323,7 +325,7 @@ def database_artifact_state(database_path):
             stat.st_size,
             stat.st_mtime_ns,
             hashlib.sha256(path.read_bytes()).hexdigest(),
-            )
+        )
     return state
 
 
@@ -421,8 +423,7 @@ def generation_database_view(window):
     return {
         "run_list": run_list_contents(window.RunList),
         "watching_guids": tuple(
-            getattr(item, "guid", None)
-            for item in window.RunList.watching
+            getattr(item, "guid", None) for item in window.RunList.watching
         ),
         "selected_run_id": window.selected_run_id,
         "selected_guid": getattr(window, "_selected_run_guid", None),
@@ -435,8 +436,7 @@ def generation_database_view(window):
         "preview_cached_guids": tuple(sorted(preview.cache)),
         "generation_action_enabled": window.generateTestDatabaseAction.isEnabled(),
         "database_controls_enabled": tuple(
-            getattr(window, name).isEnabled()
-            for name in control_names
+            getattr(window, name).isEnabled() for name in control_names
         ),
         "monitor_active": window.monitor.isActive(),
         "monitor_interval": window.monitor.interval(),
@@ -576,19 +576,16 @@ def release_windows_database_locks(window, database_path, *extra_datasets):
     source_path = Path(database_path).resolve()
     datasets = list(extra_datasets)
     selected_key = getattr(window, "_selected_dataset_key", None)
-    if (
-            selected_key is not None
-            and (
-                Path(selected_key.database_path).resolve() == source_path
-                or Path(selected_key.resolved_database_path) == source_path
-            )
-            ):
+    if selected_key is not None and (
+        Path(selected_key.database_path).resolve() == source_path
+        or Path(selected_key.resolved_database_path) == source_path
+    ):
         datasets.append(getattr(window, "ds", None))
     for dataset_key, handle in getattr(window, "dataset_holder", {}).items():
         if (
-                Path(dataset_key.database_path).resolve() == source_path
-                or Path(dataset_key.resolved_database_path) == source_path
-                ):
+            Path(dataset_key.database_path).resolve() == source_path
+            or Path(dataset_key.resolved_database_path) == source_path
+        ):
             datasets.append(handle.dataset)
 
     closed_connections = set()
@@ -760,12 +757,14 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
         assert len(line_rows) == line_window.axis_data["x"].size + 1
         assert len(line_rows[0]) >= 2
         assert len(line_rows[0]) % 2 == 0
-        expected_line = np.column_stack((
-            line_window.axis_data["x"],
-            line_window.axis_data["y"],
-        ))
+        expected_line = np.column_stack(
+            (
+                line_window.axis_data["x"],
+                line_window.axis_data["y"],
+            )
+        )
         populated_pairs = [
-            np.asarray([row[index:index + 2] for row in line_rows[1:]], dtype=float)
+            np.asarray([row[index : index + 2] for row in line_rows[1:]], dtype=float)
             for index in range(0, len(line_rows[0]), 2)
             if all(row[index] and row[index + 1] for row in line_rows[1:])
         ]
@@ -839,11 +838,13 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
             nonuniform_window.display_param.name,
         ]
         exported = np.asarray(nonuniform_rows[1:], dtype=float)
-        expected_nonuniform = np.asarray([
-            (x_value, y_value, nonuniform_window.dataGrid[y_index, x_index])
-            for y_index, y_value in enumerate(nonuniform_window.axis_data["y"])
-            for x_index, x_value in enumerate(nonuniform_window.axis_data["x"])
-        ])
+        expected_nonuniform = np.asarray(
+            [
+                (x_value, y_value, nonuniform_window.dataGrid[y_index, x_index])
+                for y_index, y_value in enumerate(nonuniform_window.axis_data["y"])
+                for x_index, x_value in enumerate(nonuniform_window.axis_data["x"])
+            ]
+        )
         np.testing.assert_allclose(exported, expected_nonuniform, equal_nan=True)
 
         gate_column = header.index("offset_gate")
@@ -1003,11 +1004,13 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
         assert export_real_plot_csv(monkeypatch, heatmap_window, target)
         rows = np.asarray(csv_rows(target)[1:], dtype=float)
         assert rows.shape == (current_grid.size, 3)
-        expected = np.asarray([
-            (x_value, y_value, current_grid[y_index, x_index])
-            for y_index, y_value in enumerate(current_y)
-            for x_index, x_value in enumerate(current_x)
-        ])
+        expected = np.asarray(
+            [
+                (x_value, y_value, current_grid[y_index, x_index])
+                for y_index, y_value in enumerate(current_y)
+                for x_index, x_value in enumerate(current_x)
+            ]
+        )
         np.testing.assert_allclose(rows, expected, equal_nan=True)
     finally:
         close_main_window(window)
@@ -1107,9 +1110,7 @@ def test_main_window_close_releases_private_wal_snapshot_before_qt_cleanup(
         wait_for(lambda: not getattr(plot.worker, "running", False))
         dataset = window.dataset_holder[plot._dataset_key].dataset
         connection = dataset.conn
-        snapshot_path = Path(
-            connection.execute("PRAGMA database_list").fetchone()[2]
-        )
+        snapshot_path = Path(connection.execute("PRAGMA database_list").fetchone()[2])
         snapshot_directory = snapshot_path.parent
         assert snapshot_directory.name.startswith("qplot-readonly-")
         assert snapshot_directory.is_dir()
@@ -1149,8 +1150,8 @@ def test_main_window_close_completes_promptly_while_snapshot_copy_is_cancelled(
         expected_database_instance=accepted_instance,
     )
 
-    worker.trusted_service.submit_bootstrap = (
-        lambda *, deadline=None: _UnavailableTrustedRequest()
+    worker.trusted_service.submit_bootstrap = lambda *, deadline=None: (
+        _UnavailableTrustedRequest()
     )
     snapshot_directories = []
     real_temporary_directory = readonly_module.tempfile.TemporaryDirectory
@@ -1171,7 +1172,9 @@ def test_main_window_close_completes_promptly_while_snapshot_copy_is_cancelled(
         "_clone_file_if_supported",
         lambda *_args: False,
     )
-    monkeypatch.setattr(database_module, "database_access_error", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        database_module, "database_access_error", lambda *_a, **_k: None
+    )
     real_copy = readonly_module._copy_file_cooperatively
     copy_checkpoint = threading.Event()
 
@@ -1375,15 +1378,17 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         )
         window.monitor.stop()
         wait_for(
-            lambda: next(
-                (
-                    run.get("result_count")
-                    for run in window.RunList.all_run_metadata().values()
-                    if run.get("guid") == guid
-                ),
-                None,
+            lambda: (
+                next(
+                    (
+                        run.get("result_count")
+                        for run in window.RunList.all_run_metadata().values()
+                        if run.get("guid") == guid
+                    ),
+                    None,
+                )
+                == 4
             )
-            == 4
         )
 
         runs = window.RunList.all_run_metadata()
@@ -1547,10 +1552,13 @@ def test_symlinked_database_replacement_retires_the_accepted_instance(
         qtw.QApplication.processEvents()
         assert len(replacement_loads) == 1
         assert replacement_loads[0][1] == {"force": True, "replacement": True}
-        assert symlink_source_artifact_state(
-            view_path,
-            *artifact_targets,
-        ) == replacement_artifacts
+        assert (
+            symlink_source_artifact_state(
+                view_path,
+                *artifact_targets,
+            )
+            == replacement_artifacts
+        )
     finally:
         window.load_file = original_load_file
         close_main_window(window)
@@ -1658,10 +1666,7 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
         assert metadata["result_count"] == 4
         assert old_plot not in window.windows
         assert old_handle.closed
-        assert (
-            window._database_access_mode
-            == database_module.SNAPSHOT_FALLBACK_MODE
-        )
+        assert window._database_access_mode == database_module.SNAPSHOT_FALLBACK_MODE
         assert window.ds is None
         replacement_guid = metadata["guid"]
         assert window._selected_run_guid == replacement_guid
@@ -1879,12 +1884,15 @@ def test_replaced_background_plot_does_not_switch_current_database(
         assert window._loaded_database_identity == database_file_identity(database_b)
         assert window.ds is None
         assert window._selected_run_guid == guid_b
-        assert symlink_source_artifact_state(
-            source_view,
-            database_a,
-            replacement_a,
-            database_b,
-        ) == replacement_artifacts
+        assert (
+            symlink_source_artifact_state(
+                source_view,
+                database_a,
+                replacement_a,
+                database_b,
+            )
+            == replacement_artifacts
+        )
     finally:
         close_main_window(window)
         qcodes.config.core.db_location = original_database_path
@@ -1953,6 +1961,7 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             assert database_file_identity(database_path) == loaded_identity
 
             replacement_loads = []
+
             def record_load(*args, **kwargs):
                 replacement_loads.append((args, kwargs))
                 return original_load_file(*args, **kwargs)
@@ -1961,22 +1970,22 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             window.refreshMain()
             wait_for(lambda: not window._database_refresh_active)
             wait_for(
-                lambda: next(
-                    (
-                        run.get("result_count")
-                        for run in window.RunList.all_run_metadata().values()
-                        if run.get("guid") == guid
-                    ),
-                    None,
+                lambda: (
+                    next(
+                        (
+                            run.get("result_count")
+                            for run in window.RunList.all_run_metadata().values()
+                            if run.get("guid") == guid
+                        ),
+                        None,
+                    )
+                    == 4
                 )
-                == 4
             )
             window.monitor.stop()
 
             metadata = window.RunList.all_run_metadata()
-            run_metadata = next(
-                run for run in metadata.values() if run["guid"] == guid
-            )
+            run_metadata = next(run for run in metadata.values() if run["guid"] == guid)
             assert run_metadata["result_count"] == 4
             assert window._loaded_database_identity == loaded_identity
             assert window._current_dataset_key(guid) == dataset_key
@@ -2054,9 +2063,9 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
             dataset_key = plot._dataset_key
             held_handle = window.dataset_holder[dataset_key]
             held_dataset = held_handle.dataset
-            assert len(
-                held_dataset.get_parameter_data("signal")["signal"]["signal"]
-            ) == 1
+            assert (
+                len(held_dataset.get_parameter_data("signal")["signal"]["signal"]) == 1
+            )
 
             datasaver.add_result((gate, 2.0), (signal, 12.0))
             datasaver.flush_data_to_database(block=True)
@@ -2123,9 +2132,9 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
             assert window.ds is None
             assert window.dataset_holder[dataset_key] is held_handle
             assert not held_handle.closed
-            assert len(
-                held_dataset.get_parameter_data("signal")["signal"]["signal"]
-            ) == 1
+            assert (
+                len(held_dataset.get_parameter_data("signal")["signal"]["signal"]) == 1
+            )
             assert_database_artifacts_unchanged_except_trusted_shm(
                 database_path,
                 source_artifacts,
@@ -2154,8 +2163,8 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
     replacement_path = replacement_directory / "dialog-race.db"
     export_path = export_directory / "obsolete.csv"
     _run_id, guid, _table_name = build_line_database(database_path, 1)
-    _replacement_run_id, replacement_guid, _replacement_table = (
-        build_line_database(replacement_path, 2, guid=guid)
+    _replacement_run_id, replacement_guid, _replacement_table = build_line_database(
+        replacement_path, 2, guid=guid
     )
     assert replacement_guid == guid
     window = main_window.MainWindow()
@@ -2289,8 +2298,8 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
     original_export = b"existing,content\nkeep,this\n"
     export_path.write_bytes(original_export)
     _run_id, guid, _table_name = build_line_database(database_path, 1)
-    _replacement_run_id, replacement_guid, _replacement_table = (
-        build_line_database(replacement_path, 2, guid=guid)
+    _replacement_run_id, replacement_guid, _replacement_table = build_line_database(
+        replacement_path, 2, guid=guid
     )
     assert replacement_guid == guid
     window = main_window.MainWindow()
@@ -2547,9 +2556,7 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
         # the plot-owned snapshot from the original database instance.
         assert window.dataset_holder[dataset_key] is held_handle
         assert not held_handle.closed
-        assert len(
-            held_dataset.get_parameter_data("signal")["signal"]["signal"]
-        ) == 1
+        assert len(held_dataset.get_parameter_data("signal")["signal"]["signal"]) == 1
         assert database_artifact_state(database_path) == replacement_state
         assert set(source_directory.iterdir()) == replacement_entries
     finally:
@@ -2598,10 +2605,8 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         window.config.config["user_preference"]["confirm_close"] = False
         window.config.config["user_preference"]["confirm_close_all"] = False
         window.close_database(status=False)
-        window.show_error = (
-            lambda title, message, details=None: errors.append(
-                (title, message, details)
-            )
+        window.show_error = lambda title, message, details=None: errors.append(
+            (title, message, details)
         )
         assert window.load_file(str(database_path))
         wait_for(
@@ -2833,9 +2838,7 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
         assert window._test_database_replacement_state.outcome == "replacement"
         assert window._database_view_released_for_generation
         assert window._database_generation_transaction_blocks_path(owned_path)
-        assert not window._database_generation_transaction_blocks_path(
-            unrelated_path
-        )
+        assert not window._database_generation_transaction_blocks_path(unrelated_path)
 
         release_load_pool.set()
         wait_for(
@@ -2855,9 +2858,7 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
                 for run_metadata in window.RunList.all_run_metadata().values()
             )
         )
-        unrelated_metadata = next(
-            iter(window.RunList.all_run_metadata().values())
-        )
+        unrelated_metadata = next(iter(window.RunList.all_run_metadata().values()))
         assert unrelated_metadata["result_count"] == 3
         assert not window._database_generation_transaction_blocks_path(owned_path)
         assert not window._database_generation_transaction_blocks_path(unrelated_path)
@@ -2873,7 +2874,9 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
         wait_for(lambda: not getattr(unrelated_plot.worker, "running", False))
         unrelated_handle = window.dataset_holder[unrelated_plot._dataset_key]
         assert unrelated_handle.dataset.number_of_results == 3
-        assert unrelated_plot._dataset_key.database_identity == unrelated_instance.identity
+        assert (
+            unrelated_plot._dataset_key.database_identity == unrelated_instance.identity
+        )
 
         qtw.QApplication.processEvents()
         assert window.fileTextbox.text() == str(unrelated_path)
@@ -2912,10 +2915,8 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
         window.config.config["user_preference"]["confirm_close"] = False
         window.config.config["user_preference"]["confirm_close_all"] = False
         window.close_database(status=False)
-        window.show_error = (
-            lambda title, message, details=None: errors.append(
-                (title, message, details)
-            )
+        window.show_error = lambda title, message, details=None: errors.append(
+            (title, message, details)
         )
         assert window.load_file(str(database_path))
         wait_for(
@@ -3041,10 +3042,8 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
         window.config.config["user_preference"]["confirm_close"] = False
         window.config.config["user_preference"]["confirm_close_all"] = False
         window.close_database(status=False)
-        window.show_error = (
-            lambda title, message, details=None: errors.append(
-                (title, message, details)
-            )
+        window.show_error = lambda title, message, details=None: errors.append(
+            (title, message, details)
         )
         assert window.load_file(str(database_path))
         wait_for(
@@ -3058,10 +3057,7 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
         expected_monitor_interval = 2400
         selected_run_id = select_nondefault_run_and_finish_previews(window)
         assert window.ds is None
-        assert (
-            window.RunList.all_run_metadata()[selected_run_id]["name"]
-            == "NEW_WAL"
-        )
+        assert window.RunList.all_run_metadata()[selected_run_id]["name"] == "NEW_WAL"
         assert window.monitor.isActive()
         assert window.monitor.interval() == expected_monitor_interval
         assert not replacement_wal_is_quarantined(database_path)
@@ -3148,10 +3144,8 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         window.config.config["user_preference"]["confirm_close"] = False
         window.config.config["user_preference"]["confirm_close_all"] = False
         window.close_database(status=False)
-        window.show_error = (
-            lambda title, message, details=None: errors.append(
-                (title, message, details)
-            )
+        window.show_error = lambda title, message, details=None: errors.append(
+            (title, message, details)
         )
         assert window.load_file(str(database_path))
         wait_for(
@@ -3364,7 +3358,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
                 "threaded_live_run",
                 sample_name="completion_race",
                 conn=writer_connection,
-                )
+            )
             gate = ManualParameter("gate")
             signal_a = ManualParameter("signal_a")
             signal_b = ManualParameter("signal_b")
@@ -3378,7 +3372,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
                     (gate, 0.0),
                     (signal_a, 10.0),
                     (signal_b, 20.0),
-                    )
+                )
                 datasaver.flush_data_to_database(block=True)
                 writer_state["run_id"] = writer_dataset.run_id
                 initial_row_written.set()
@@ -3388,12 +3382,12 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
                     (gate, 1.0),
                     (signal_a, 11.0),
                     (signal_b, 21.0),
-                    )
+                )
                 datasaver.add_result(
                     (gate, 2.0),
                     (signal_a, 12.0),
                     (signal_b, 22.0),
-                    )
+                )
             writer_completed.set()
             if not release_writer_connection.wait(30):
                 raise TimeoutError("Test did not release the writer connection")
@@ -3442,10 +3436,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
             )
         )
         viewer_dataset = window.dataset_holder[plot_a._dataset_key].dataset
-        assert (
-            plot_a._dataset_key.database_identity
-            == window._loaded_database_identity
-        )
+        assert plot_a._dataset_key.database_identity == window._loaded_database_identity
         assert viewer_dataset.run_id == writer_state["run_id"]
         assert viewer_dataset.running
         # QCoDeS stores one result-table row per dependent parameter tree.
@@ -3455,7 +3446,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
             candidate.name: candidate
             for candidate in viewer_dataset.get_parameters()
             if candidate.depends_on
-            }
+        }
         for plot in (plot_a, hidden_plot_b):
             plot.spinBox.setValue(60.0)
             plot.monitor.stop()
@@ -3465,8 +3456,8 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
                 cache_parameter_data(
                     viewer_dataset.cache,
                     parameter_name,
-                    )[parameter_name]
-                )
+                )[parameter_name]
+            )
 
         def line_values(plot):
             return np.asarray(plot.line.getData()[1])
@@ -3481,7 +3472,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
             hidden_plot_b._dataset_key,
             "signal_b",
             param=hidden_plot_b.param,
-            )
+        )
         merged_b = plot_a.lines[hidden_plot_b._trace_key]
         assert hidden_plot_b._closed
         assert hidden_plot_b not in window.windows
@@ -3524,19 +3515,24 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
 
         def visible_data_points():
             return {
-                window.infoBox.overview.item(row, 0).text():
-                window.infoBox.overview.item(row, 1).text()
+                window.infoBox.overview.item(
+                    row, 0
+                ).text(): window.infoBox.overview.item(row, 1).text()
                 for row in range(window.infoBox.overview.rowCount())
             }.get("Data points")
 
-        wait_for(lambda: visible_data_points() == "6")
+        # QCoDeS stores one physical row per dependent tree here: six physical
+        # rows are three logical setpoints and must never be labelled as six
+        # Data points in the selected Overview.
+        wait_for(lambda: visible_data_points() == "3")
         live_overview = {
-            window.infoBox.overview.item(row, 0).text():
-            window.infoBox.overview.item(row, 1).text()
+            window.infoBox.overview.item(row, 0).text(): window.infoBox.overview.item(
+                row, 1
+            ).text()
             for row in range(window.infoBox.overview.rowCount())
-            }
+        }
         assert live_overview["Status"] == "Completed"
-        assert live_overview["Data points"] == "6"
+        assert live_overview["Data points"] == "3"
         assert live_overview["Completed"]
         assert viewer_dataset.running
         assert viewer_dataset.number_of_results == 2
@@ -3555,10 +3551,8 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         def record_and_fail_first_b_load(*args, **kwargs):
             nonlocal failed_b_load
             parameter_name = (
-                kwargs["meas_parameter"]
-                if "meas_parameter" in kwargs
-                else args[3]
-                )
+                kwargs["meas_parameter"] if "meas_parameter" in kwargs else args[3]
+            )
             final_loads.append(parameter_name)
             if parameter_name == "signal_b" and not failed_b_load:
                 failed_b_load = True
@@ -3569,7 +3563,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
             worker_module,
             "load_param_data_from_db",
             record_and_fail_first_b_load,
-            )
+        )
         import qcodes.dataset.data_set as qcodes_data_set
 
         def reject_qcodes_completion_write(*_args, **_kwargs):
@@ -3579,7 +3573,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
             qcodes_data_set,
             "mark_run_complete",
             reject_qcodes_completion_write,
-            )
+        )
 
         plot_a.refreshWindow()
         wait_for(
@@ -3695,7 +3689,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         np.testing.assert_array_equal(
             np.asarray(merged_b.getData()[1]),
             [20.0],
-            )
+        )
         assert final_loads == ["signal_a", "signal_b", "signal_b"]
         assert not plot_b._refresh_monitor_required()
 
@@ -3711,11 +3705,11 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         np.testing.assert_array_equal(
             line_values(hidden_plot_b),
             [20.0, 21.0, 22.0],
-            )
+        )
         np.testing.assert_array_equal(
             np.asarray(merged_b.getData()[1]),
             [20.0, 21.0, 22.0],
-            )
+        )
         assert final_loads == ["signal_a", "signal_b", "signal_b"]
         assert not hidden_plot_b._refresh_monitor_required()
 
@@ -3775,7 +3769,7 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
                 "threaded_live_heatmap",
                 sample_name="direct_sql_completion",
                 conn=writer_connection,
-                )
+            )
             x_param = ManualParameter("x_param")
             y_param = ManualParameter("y_param")
             signal = ManualParameter("heat_signal")
@@ -3789,22 +3783,22 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
                     (x_param, 0.0),
                     (y_param, 0.0),
                     (signal, 10.0),
-                    )
+                )
                 datasaver.flush_data_to_database(block=True)
                 writer_state["run_id"] = writer_dataset.run_id
                 initial_row_written.set()
                 if not finish_writer.wait(30):
                     raise TimeoutError("Test did not release the heatmap writer")
                 for x_value, y_value, signal_value in (
-                        (1.0, 0.0, 11.0),
-                        (0.0, 1.0, 12.0),
-                        (1.0, 1.0, 13.0),
-                        ):
+                    (1.0, 0.0, 11.0),
+                    (0.0, 1.0, 12.0),
+                    (1.0, 1.0, 13.0),
+                ):
                     datasaver.add_result(
                         (x_param, x_value),
                         (y_param, y_value),
                         (signal, signal_value),
-                        )
+                    )
             writer_completed.set()
             if not release_writer_connection.wait(30):
                 raise TimeoutError("Test did not release the heatmap connection")
@@ -3847,8 +3841,7 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
         wait_for(lambda: not getattr(heatmap.worker, "running", False))
         viewer_dataset = window.dataset_holder[heatmap._dataset_key].dataset
         assert (
-            heatmap._dataset_key.database_identity
-            == window._loaded_database_identity
+            heatmap._dataset_key.database_identity == window._loaded_database_identity
         )
         assert viewer_dataset.run_id == writer_state["run_id"]
         assert viewer_dataset.running
@@ -3860,9 +3853,12 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
 
         assert not heatmap.worker.loaded_from_sql_heatmap
         assert np.isfinite(np.asarray(heatmap.dataGrid)).sum() == 1
-        assert np.asarray(
-            cache_parameter_data(viewer_dataset.cache, "heat_signal")["heat_signal"]
-            ).size == 1
+        assert (
+            np.asarray(
+                cache_parameter_data(viewer_dataset.cache, "heat_signal")["heat_signal"]
+            ).size
+            == 1
+        )
 
         finish_writer.set()
         assert writer_completed.wait(30)
@@ -3882,7 +3878,7 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
             qcodes_data_set,
             "mark_run_complete",
             reject_qcodes_completion_write,
-            )
+        )
 
         heatmap.refreshWindow()
         wait_for(
@@ -3901,18 +3897,21 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
         assert not cache_parameter_is_synchronized(
             viewer_dataset.cache,
             "heat_signal",
-            )
-        assert np.asarray(
-            cache_parameter_data(viewer_dataset.cache, "heat_signal")["heat_signal"]
-            ).size == 1
+        )
+        assert (
+            np.asarray(
+                cache_parameter_data(viewer_dataset.cache, "heat_signal")["heat_signal"]
+            ).size
+            == 1
+        )
         np.testing.assert_array_equal(
             np.sort(np.asarray(heatmap.dataGrid)[np.isfinite(heatmap.dataGrid)]),
             [10.0, 11.0, 12.0, 13.0],
-            )
+        )
         np.testing.assert_array_equal(
             np.sort(np.asarray(heatmap.image.image).ravel()),
             [10.0, 11.0, 12.0, 13.0],
-            )
+        )
         assert_database_artifacts_unchanged_except_trusted_shm(
             database_path,
             artifacts_after_writer_completion,
@@ -3923,7 +3922,7 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
                 not heatmap._heatmap_view_reload_timer.isActive()
                 and not getattr(heatmap.worker, "running", False)
             ),
-            )
+        )
         terminal_worker = heatmap.worker
         heatmap.refreshWindow()
         assert heatmap.worker is terminal_worker

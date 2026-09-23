@@ -15,8 +15,7 @@ import math
 import os
 import re
 import secrets
-import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import islice
 from typing import Any, Protocol, TypeAlias, cast
 
@@ -44,6 +43,7 @@ from qplot.datahandling.trusted_presentation import (
     build_selected_run_presentation,
 )
 from qplot.datahandling.trusted_snapshot import (
+    TRUSTED_SNAPSHOT_MAX_INPUT_BYTES,
     TrustedSnapshotOmission,
     TrustedSnapshotView,
     normalize_trusted_snapshot,
@@ -52,14 +52,6 @@ from qplot.datahandling.trusted_snapshot import (
 TRUSTED_RUN_PAGE_SIZE = 1_000
 TRUSTED_RUN_PAGE_SIZE_MAX = TRUSTED_RUN_PAGE_SIZE
 
-# Whole-table aggregates are useful for recovering shapes and exact distinct
-# setpoint counts from small legacy-style acquisitions.  They are deliberately
-# disabled once either bound is exceeded: a row limit alone is not sufficient
-# when a result row may contain a large array/blob, and a file-size limit alone
-# is not sufficient for a very high row count.  Large tables use only the
-# integer-primary-key fast path and fixed-size edge windows below.
-_TRUSTED_AGGREGATE_MAX_ROWS = 100_000
-_TRUSTED_AGGREGATE_MAX_SOURCE_BYTES = 8 * 1024 * 1024
 _TRUSTED_AGGREGATE_BATCH_SIZE = 4
 _TRUSTED_SETPOINT_EDGE_PAGE_ROWS = 4_096
 _TRUSTED_SETPOINT_EDGE_MAX_PAGES = 32
@@ -72,10 +64,24 @@ _TRUSTED_SINGLE_RUN_PREFLIGHT_BATCH_SIZE = 4
 _TRUSTED_SINGLE_RUN_GROUP_MAX_COLUMNS = 32
 _TRUSTED_SINGLE_RUN_GROUP_MAX_RAW_BYTES = TRUSTED_LIVE_MAX_SCALAR_BYTES
 _TRUSTED_SINGLE_RUN_GROUP_MAX_SHARED_VALUE_BYTES = 128 * 1024
-_TRUSTED_SINGLE_RUN_MAX_PUBLIC_RAW_BYTES = TRUSTED_LIVE_MAX_SCALAR_BYTES
+_TRUSTED_SINGLE_RUN_MAX_NON_SNAPSHOT_RAW_BYTES = TRUSTED_LIVE_MAX_SCALAR_BYTES
+_TRUSTED_SINGLE_RUN_MAX_SNAPSHOT_RAW_BYTES = min(
+    TRUSTED_SNAPSHOT_MAX_INPUT_BYTES,
+    TRUSTED_LIVE_MAX_SCALAR_BYTES,
+)
 _TRUSTED_LAYOUT_TEXT_MAX_BYTES = 512
 _TRUSTED_LAYOUT_MAX_ROWS = 4_096
 _TRUSTED_RESULT_SCHEMA_SQL_MAX_BYTES = 64 * 1024
+_TRUSTED_REGULAR_LAYOUT_PREFIX_ROWS = 64
+_TRUSTED_REGULAR_LAYOUT_MAX_SEARCH_PROBES = 63
+_TRUSTED_REGULAR_LAYOUT_ANCHOR_ROWS = 16
+_TRUSTED_REGULAR_LAYOUT_MAX_DEPENDENTS = 8
+_TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS = 4_096
+_TRUSTED_VECTOR_FINGERPRINT_BITS = 256
+_TRUSTED_VECTOR_FINGERPRINT_MASK = (1 << _TRUSTED_VECTOR_FINGERPRINT_BITS) - 1
+_TRUSTED_VECTOR_FINGERPRINT_BASE = (
+    0x1000000000000000000013B  # odd, so powers are invertible modulo 2**256
+)
 TRUSTED_DERIVED_MAX_SOURCE_COLUMNS = 32
 TRUSTED_DERIVED_MAX_DEPENDENTS = 8
 TRUSTED_DERIVED_SAMPLE_WINDOWS = 15
@@ -83,6 +89,7 @@ TRUSTED_DERIVED_ROWS_PER_WINDOW = 256
 TRUSTED_DERIVED_MAX_SAMPLE_ROWS = (
     TRUSTED_DERIVED_SAMPLE_WINDOWS + 1
 ) * TRUSTED_DERIVED_ROWS_PER_WINDOW
+TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS = TRUSTED_DERIVED_MAX_SAMPLE_ROWS - 1
 TRUSTED_DERIVED_MAX_SAMPLE_CELLS = TRUSTED_DERIVED_MAX_SAMPLE_ROWS * (
     TRUSTED_DERIVED_MAX_SOURCE_COLUMNS + 1
 )
@@ -327,6 +334,155 @@ class TrustedSetpointSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class Trusted2DDependentRowPattern:
+    """Proven physical result-row progression for one 2D dependent."""
+
+    dependent: str
+    first_row_id: int
+    fast_id_stride: int
+    slow_id_stride: int
+
+    def __post_init__(self) -> None:
+        if not self.dependent:
+            raise ValueError("A 2D row pattern requires a dependent name.")
+        if type(self.first_row_id) is not int or self.first_row_id <= 0:
+            raise ValueError("A 2D row pattern requires a positive first row id.")
+        if (
+            type(self.fast_id_stride) is not int
+            or self.fast_id_stride <= 0
+            or type(self.slow_id_stride) is not int
+            or self.slow_id_stride <= 0
+        ):
+            raise ValueError("A 2D row pattern requires positive row-id strides.")
+
+
+@dataclass(frozen=True, slots=True)
+class Trusted2DLayoutProof:
+    """Run-local proof shared by metadata and bounded derived extraction."""
+
+    dependencies: tuple[str, str]
+    shape: tuple[int, int]
+    fast_axis_index: int
+    dependent_rows: tuple[Trusted2DDependentRowPattern, ...]
+    source: str
+
+    def __post_init__(self) -> None:
+        if (
+            len(self.dependencies) != 2
+            or len(set(self.dependencies)) != 2
+            or any(not name for name in self.dependencies)
+        ):
+            raise ValueError("A 2D layout proof requires two dependency names.")
+        if (
+            len(self.shape) != 2
+            or any(type(count) is not int or count <= 0 for count in self.shape)
+            or math.prod(self.shape) > (1 << 63) - 1
+        ):
+            raise ValueError("A 2D layout proof requires a bounded positive shape.")
+        if type(self.fast_axis_index) is not int or self.fast_axis_index not in (0, 1):
+            raise ValueError("A 2D layout proof requires one fast dependency axis.")
+        if (
+            not self.dependent_rows
+            or len(self.dependent_rows) > TRUSTED_DERIVED_MAX_DEPENDENTS
+        ):
+            raise ValueError("A 2D layout proof has an invalid dependent collection.")
+        names = tuple(pattern.dependent for pattern in self.dependent_rows)
+        if len(set(names)) != len(names):
+            raise ValueError("A 2D layout proof repeats a dependent name.")
+        if self.source not in {"planned", "observed"}:
+            raise ValueError("A 2D layout proof has an invalid source.")
+        slow_count = self.shape[1 - self.fast_axis_index]
+        fast_count = self.shape[self.fast_axis_index]
+        for pattern in self.dependent_rows:
+            if (
+                fast_count > 1
+                and pattern.slow_id_stride <= (fast_count - 1) * pattern.fast_id_stride
+            ):
+                raise ValueError("A 2D row pattern overlaps adjacent slow rows.")
+            last_row_id = (
+                pattern.first_row_id
+                + (slow_count - 1) * pattern.slow_id_stride
+                + (fast_count - 1) * pattern.fast_id_stride
+            )
+            if last_row_id > (1 << 63) - 1:
+                raise ValueError("A 2D row pattern exceeds SQLite integer ids.")
+
+
+@dataclass(frozen=True, slots=True)
+class Trusted2DGridLayout:
+    """Validated sampled layout for one dependent image.
+
+    Shape follows declared QCoDeS dependency order.  ``fast_axis_index`` records
+    which dependency actually changes within a physical acquisition row; it is
+    row-decoding metadata only.  Rendering retains the established convention
+    that declared dependency 0 is vertical and dependency 1 is horizontal.
+    Independent physical strides ensure sparse, interleaved, and
+    dependent-blocked rows never inherit another dependent's samples.
+    """
+
+    dependent: str
+    dependencies: tuple[str, str]
+    shape: tuple[int, int]
+    fast_axis_index: int
+    first_row_id: int
+    fast_id_stride: int
+    slow_id_stride: int
+    sample_slow_indexes: tuple[int, ...]
+    sample_fast_indexes: tuple[int, ...]
+    slow_reversed: bool
+    fast_reversed: bool
+    serpentine: bool
+    complete: bool
+    source: str
+
+    def __post_init__(self) -> None:
+        proof = Trusted2DLayoutProof(
+            self.dependencies,
+            self.shape,
+            self.fast_axis_index,
+            (
+                Trusted2DDependentRowPattern(
+                    self.dependent,
+                    self.first_row_id,
+                    self.fast_id_stride,
+                    self.slow_id_stride,
+                ),
+            ),
+            self.source,
+        )
+        del proof
+        slow_count = self.shape[1 - self.fast_axis_index]
+        fast_count = self.shape[self.fast_axis_index]
+        if (
+            not self.sample_slow_indexes
+            or not self.sample_fast_indexes
+            or tuple(sorted(set(self.sample_slow_indexes))) != self.sample_slow_indexes
+            or tuple(sorted(set(self.sample_fast_indexes))) != self.sample_fast_indexes
+            or any(
+                type(index) is not int
+                for index in (*self.sample_slow_indexes, *self.sample_fast_indexes)
+            )
+            or len(self.sample_slow_indexes) * len(self.sample_fast_indexes)
+            > TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS
+            or self.sample_slow_indexes[0] < 0
+            or self.sample_slow_indexes[-1] >= slow_count
+            or self.sample_fast_indexes[0] < 0
+            or self.sample_fast_indexes[-1] >= fast_count
+        ):
+            raise ValueError("A 2D sampled layout has invalid grid indexes.")
+        if any(
+            type(value) is not bool
+            for value in (
+                self.slow_reversed,
+                self.fast_reversed,
+                self.serpentine,
+                self.complete,
+            )
+        ):
+            raise ValueError("A 2D sampled layout has invalid flags.")
+
+
+@dataclass(frozen=True, slots=True)
 class _SingleRunColumnPreflight:
     name: str
     value_type: str
@@ -337,8 +493,92 @@ class _SingleRunColumnPreflight:
 class _SingleRunValues:
     fields: dict[str, Any]
     unavailable_fields: tuple[str, ...]
-    accepted_raw_bytes: int
+    accepted_non_snapshot_raw_bytes: int
     snapshot_omission: TrustedSnapshotOmission | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RegularLayoutRow:
+    """One bounded numeric row retained only while proving a sweep layout."""
+
+    row_id: int
+    axes: tuple[int | float, ...]
+    present: tuple[bool, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RegularSetpointObservation:
+    dependencies: tuple[str, ...]
+    result_watermark: int
+    count: int
+    shape: tuple[int, ...]
+    proof_2d: Trusted2DLayoutProof | None = None
+    storage_kind: str = "dense"
+    patterns: tuple[_RegularDependentPattern, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _RegularDependentPattern:
+    dependent: str | None
+    present_index: int
+    first_row_id: int
+    fast_id_stride: int
+    slow_id_stride: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ProgressivePhysicalPattern:
+    first_row_id: int
+    fast_id_stride: int
+    slow_id_stride: int
+    owner_indexes: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ProgressiveAxisState:
+    """Constant-size verifier for one physical dependency grid."""
+
+    next_slow_index: int = 0
+    next_fast_index: int = 0
+    current_slow_value: int | float | None = None
+    previous_slow_value: int | float | None = None
+    slow_direction: int = 0
+    previous_fast_value: int | float | None = None
+    current_fast_direction: int = 0
+    current_forward: int = 0
+    current_reverse: int = 0
+    current_power: int = 1
+    reference_forward: int | None = None
+    reference_reverse: int | None = None
+    reference_fast_direction: int = 0
+    reference_checkpoints: tuple[tuple[int, int, int, int], ...] = ()
+    row_major_possible: bool = True
+    serpentine_possible: bool = True
+    completed_rows: int = 0
+    viable: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _ProgressiveRegularLayout:
+    """Constant-memory full-prefix proof for one regular-layout candidate."""
+
+    dependencies: tuple[str, ...]
+    dependents: tuple[str, ...]
+    result_watermark: int
+    proof_source: str
+    observation: _RegularSetpointObservation
+    physical_patterns: tuple[_ProgressivePhysicalPattern, ...]
+    axis_states: tuple[_ProgressiveAxisState, ...]
+    after_row_id: int = 0
+    viable: bool = True
+    pending_logical_index: int | None = None
+    pending_axes: tuple[int | float, ...] | None = None
+    pending_pattern_indexes: tuple[int, ...] = ()
+    cross_slow_index: int | None = None
+    cross_reference_slow: int | float | None = None
+    cross_reference_forward: int | None = None
+    cross_reference_reverse: int | None = None
+    cross_next_pattern: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,6 +623,9 @@ class TrustedDerivedSourceObservation:
     unsupported_reason: str | None = None
     run_fields: FrozenFields = ()
     setpoint_summaries: tuple[TrustedSetpointSummary, ...] = ()
+    validated_2d_layouts: tuple[Trusted2DGridLayout, ...] = ()
+    progressive_layout_pending: bool = False
+    progressive_layout_cursor: int = 0
 
     def __post_init__(self) -> None:
         if self.format_version != 1:
@@ -395,12 +638,512 @@ class TrustedDerivedSourceObservation:
             raise ValueError("A derived observation requires source namespaces.")
         if self.result_watermark < 0:
             raise ValueError("A result watermark cannot be negative.")
+        if type(self.progressive_layout_pending) is not bool:
+            raise ValueError("A progressive-layout pending flag must be boolean.")
+        if (
+            type(self.progressive_layout_cursor) is not int
+            or self.progressive_layout_cursor < 0
+            or (self.progressive_layout_pending and self.progressive_layout_cursor <= 0)
+            or (
+                not self.progressive_layout_pending
+                and self.progressive_layout_cursor != 0
+            )
+        ):
+            raise ValueError("A derived observation has an invalid progress cursor.")
         if len(self.sample_columns) > TRUSTED_DERIVED_MAX_SOURCE_COLUMNS + 1:
             raise ValueError("A derived observation contains too many columns.")
         if len(self.sample_rows) > TRUSTED_DERIVED_MAX_SAMPLE_ROWS:
             raise ValueError("A derived observation contains too many rows.")
         if sum(len(row) for row in self.sample_rows) > TRUSTED_DERIVED_MAX_SAMPLE_CELLS:
             raise ValueError("A derived observation contains too many cells.")
+        if (
+            not isinstance(self.validated_2d_layouts, tuple)
+            or len(self.validated_2d_layouts) > TRUSTED_DERIVED_MAX_DEPENDENTS
+            or any(
+                not isinstance(layout, Trusted2DGridLayout)
+                for layout in self.validated_2d_layouts
+            )
+            or len({layout.dependent for layout in self.validated_2d_layouts})
+            != len(self.validated_2d_layouts)
+        ):
+            raise ValueError("A derived observation has invalid 2D layouts.")
+
+
+def _balanced_grid_sample_shape(
+    slow_count: int,
+    fast_count: int,
+    maximum: int,
+) -> tuple[int, int]:
+    """Choose similarly downsampled axis counts within one exact row budget."""
+
+    if (
+        type(slow_count) is not int
+        or type(fast_count) is not int
+        or slow_count <= 0
+        or fast_count <= 0
+        or type(maximum) is not int
+        or maximum <= 0
+    ):
+        raise ValueError("Grid sample dimensions and budget must be positive integers.")
+    if slow_count * fast_count <= maximum:
+        return slow_count, fast_count
+
+    # A non-singleton axis must contribute both endpoints.  When an entire
+    # small axis fits below the square-root budget, preserve it before using
+    # the remaining rows proportionally along the large axis.  This retains
+    # every slow step in very wide scientific sweeps without changing the
+    # balanced allocation used for ordinary aspect ratios.
+    # Four slow-axis samples (when available) are the smallest mirror-symmetric
+    # set that contains both acquisition parities.  That lets a bounded sample
+    # distinguish row-major from serpentine storage even for an extremely wide
+    # grid whose proportional allocation would otherwise choose only its two
+    # same-parity endpoints.
+    sampled_slow = min(slow_count, 4)
+    sampled_fast = min(fast_count, 2)
+    if sampled_slow * sampled_fast > maximum:
+        # Preserve the helper's small-budget behaviour for defensive callers.
+        # Production per-pattern budgets are always large enough for the
+        # parity-capable minimum; a smaller caller will simply fail orientation
+        # validation if its two endpoints have the same parity.
+        sampled_slow = min(slow_count, 2)
+    complete_axis_limit = math.isqrt(maximum)
+    if slow_count <= fast_count and slow_count <= complete_axis_limit:
+        sampled_slow = slow_count
+    elif fast_count < slow_count and fast_count <= complete_axis_limit:
+        sampled_fast = fast_count
+    if sampled_slow * sampled_fast > maximum:
+        raise ValueError("The grid sample budget cannot cover both axis extents.")
+    while True:
+        can_add_slow = (
+            sampled_slow < slow_count and (sampled_slow + 1) * sampled_fast <= maximum
+        )
+        can_add_fast = (
+            sampled_fast < fast_count and sampled_slow * (sampled_fast + 1) <= maximum
+        )
+        if not can_add_slow and not can_add_fast:
+            break
+        if can_add_slow and (
+            not can_add_fast or sampled_slow * fast_count <= sampled_fast * slow_count
+        ):
+            sampled_slow += 1
+        else:
+            sampled_fast += 1
+    return sampled_slow, sampled_fast
+
+
+def _symmetric_grid_indexes(length: int, count: int) -> tuple[int, ...]:
+    if not 1 <= count <= length:
+        raise ValueError("A sampled axis count must fit its source axis.")
+    if count == length:
+        return tuple(range(length))
+    if count == 1:
+        return (0,)
+
+    # An even-length integer axis has no self-mirroring centre cell, so an odd
+    # number of samples cannot be exactly mirror-symmetric.  Use one fewer
+    # sample in that case; ``count`` is an upper bound and both endpoints remain
+    # represented.
+    sample_count = count - 1 if length % 2 == 0 and count % 2 else count
+    indexes = [0] * sample_count
+    pair_count = sample_count // 2
+    denominator = sample_count - 1
+    for index in range(pair_count):
+        lower = (index * (length - 1)) // denominator
+        indexes[index] = lower
+        indexes[sample_count - 1 - index] = length - 1 - lower
+    if sample_count % 2:
+        indexes[pair_count] = (length - 1) // 2
+    result = tuple(indexes)
+    if length > 3 and len(result) >= 4 and 1 not in result:
+        # Adjacent rows expose acquisition direction and serpentine parity
+        # early.  Replace the second sample and its mirror together: changing
+        # only one side would make bin-rank reversal mix different scientific
+        # coordinates on alternating rows.
+        result = (result[0], 1, *result[2:-2], length - 2, result[-1])
+    if tuple(sorted(set(result))) != result or result != tuple(
+        length - 1 - value for value in reversed(result)
+    ):
+        raise RuntimeError("A representative axis sample lost mirror symmetry.")
+    return result
+
+
+def _strict_numeric_direction(left: int | float, right: int | float) -> int:
+    if right > left:
+        return 1
+    if right < left:
+        return -1
+    return 0
+
+
+def _numeric_fingerprint_token(value: int | float) -> int:
+    """Return a stable numeric token that treats equal ints/floats equally."""
+
+    if type(value) is int:
+        numerator, denominator = value, 1
+    else:
+        numerator, denominator = float(value).as_integer_ratio()
+    encoded = f"{numerator}/{denominator}".encode("ascii")
+    return int.from_bytes(hashlib.sha256(encoded).digest(), "big")
+
+
+def _append_vector_fingerprint(
+    forward: int,
+    reverse: int,
+    power: int,
+    value: int | float,
+) -> tuple[int, int, int]:
+    token = _numeric_fingerprint_token(value)
+    forward = (
+        forward * _TRUSTED_VECTOR_FINGERPRINT_BASE + token
+    ) & _TRUSTED_VECTOR_FINGERPRINT_MASK
+    reverse = (reverse + token * power) & _TRUSTED_VECTOR_FINGERPRINT_MASK
+    power = (
+        power * _TRUSTED_VECTOR_FINGERPRINT_BASE
+    ) & _TRUSTED_VECTOR_FINGERPRINT_MASK
+    return forward, reverse, power
+
+
+def _progressive_fast_row_matches(
+    expected_count: int,
+    expected_start: int | float | None,
+    expected_end: int | float | None,
+    observed_count: int,
+    observed_start: int | float | None,
+    observed_end: int | float | None,
+) -> bool:
+    return expected_count == observed_count and (
+        (expected_start, expected_end) == (observed_start, observed_end)
+        or (expected_start, expected_end) == (observed_end, observed_start)
+    )
+
+
+def _representative_grid_sample(
+    slow_count: int,
+    fast_count: int,
+    *,
+    maximum_rows: int = TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS,
+    first_row_id: int = 1,
+    fast_id_stride: int = 1,
+    slow_id_stride: int | None = None,
+) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+    """Return bounded physical PK probes spread across a complete 2D grid."""
+
+    sampled_slow_count, sampled_fast_count = _balanced_grid_sample_shape(
+        slow_count,
+        fast_count,
+        maximum_rows,
+    )
+    slow_indexes = _symmetric_grid_indexes(slow_count, sampled_slow_count)
+    fast_indexes = _symmetric_grid_indexes(fast_count, sampled_fast_count)
+    if slow_id_stride is None:
+        slow_id_stride = fast_count * fast_id_stride
+    ids = tuple(
+        first_row_id + slow_index * slow_id_stride + fast_index * fast_id_stride
+        for slow_index in slow_indexes
+        for fast_index in fast_indexes
+    )
+    if (
+        type(first_row_id) is not int
+        or first_row_id <= 0
+        or type(fast_id_stride) is not int
+        or fast_id_stride <= 0
+        or type(slow_id_stride) is not int
+        or slow_id_stride <= 0
+        or len(ids) > maximum_rows
+        or ids[-1] > (1 << 63) - 1
+    ):
+        raise ValueError("A representative grid sample exceeds bounded row ids.")
+    return ids, slow_indexes, fast_indexes
+
+
+@dataclass(frozen=True, slots=True)
+class _Trusted2DSamplePlan:
+    proof: Trusted2DLayoutProof
+    pattern: Trusted2DDependentRowPattern
+    row_ids: tuple[int, ...]
+    slow_indexes: tuple[int, ...]
+    fast_indexes: tuple[int, ...]
+
+
+def _trusted_2d_sample_plans(
+    proof: Trusted2DLayoutProof,
+) -> tuple[_Trusted2DSamplePlan, ...]:
+    physical_patterns = {
+        (
+            pattern.first_row_id,
+            pattern.fast_id_stride,
+            pattern.slow_id_stride,
+        )
+        for pattern in proof.dependent_rows
+    }
+    per_pattern_budget = max(
+        1,
+        TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS // len(physical_patterns),
+    )
+    slow_count = proof.shape[1 - proof.fast_axis_index]
+    fast_count = proof.shape[proof.fast_axis_index]
+    samples: dict[
+        tuple[int, int, int],
+        tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]],
+    ] = {}
+    plans: list[_Trusted2DSamplePlan] = []
+    for pattern in proof.dependent_rows:
+        physical_pattern = (
+            pattern.first_row_id,
+            pattern.fast_id_stride,
+            pattern.slow_id_stride,
+        )
+        sample = samples.get(physical_pattern)
+        if sample is None:
+            sample = _representative_grid_sample(
+                slow_count,
+                fast_count,
+                maximum_rows=per_pattern_budget,
+                first_row_id=pattern.first_row_id,
+                fast_id_stride=pattern.fast_id_stride,
+                slow_id_stride=pattern.slow_id_stride,
+            )
+            samples[physical_pattern] = sample
+        plans.append(_Trusted2DSamplePlan(proof, pattern, *sample))
+    return tuple(plans)
+
+
+def _pattern_grid_index(
+    pattern: Trusted2DDependentRowPattern,
+    row_id: int,
+    *,
+    slow_count: int,
+    fast_count: int,
+) -> tuple[int, int] | None:
+    relative = row_id - pattern.first_row_id
+    if relative < 0:
+        return None
+    slow_index, remainder = divmod(relative, pattern.slow_id_stride)
+    if remainder % pattern.fast_id_stride:
+        return None
+    fast_index = remainder // pattern.fast_id_stride
+    if slow_index >= slow_count or fast_index >= fast_count:
+        return None
+    return slow_index, fast_index
+
+
+def _strict_axis_reversed(values: list[tuple[int, float]]) -> bool | None:
+    ordered = sorted(values)
+    if len(ordered) < 2:
+        return False
+    deltas = tuple(
+        later[1] - earlier[1]
+        for earlier, later in zip(ordered, ordered[1:], strict=False)
+    )
+    if all(delta > 0.0 and math.isfinite(delta) for delta in deltas):
+        return False
+    if all(delta < 0.0 and math.isfinite(delta) for delta in deltas):
+        return True
+    return None
+
+
+def _sampled_fast_values_match(
+    reference: dict[int, float],
+    current: dict[int, float],
+    fast_count: int,
+    *,
+    reversed_axis: bool,
+) -> bool:
+    for fast_index, fast_value in current.items():
+        reference_index = fast_count - 1 - fast_index if reversed_axis else fast_index
+        reference_value = reference.get(reference_index)
+        if reference_value is None or not math.isclose(
+            fast_value,
+            reference_value,
+            rel_tol=1e-12,
+            abs_tol=0.0,
+        ):
+            return False
+    return True
+
+
+def _validated_sampled_grid_layout(
+    plan: _Trusted2DSamplePlan,
+    *,
+    sample_columns: tuple[str, ...],
+    sample_rows: tuple[tuple[PrimitiveScalar, ...], ...],
+    result_watermark: int,
+    completed: bool,
+) -> Trusted2DGridLayout | None:
+    proof = plan.proof
+    pattern = plan.pattern
+    fast_axis = proof.dependencies[proof.fast_axis_index]
+    slow_axis = proof.dependencies[1 - proof.fast_axis_index]
+    indexes = {name: index for index, name in enumerate(sample_columns)}
+    if any(name not in indexes for name in (slow_axis, fast_axis, pattern.dependent)):
+        return None
+    slow_count = proof.shape[1 - proof.fast_axis_index]
+    fast_count = proof.shape[proof.fast_axis_index]
+    returned = {row[0]: row for row in sample_rows if row and type(row[0]) is int}
+    expected = {row_id for row_id in plan.row_ids if row_id <= result_watermark}
+    if not expected.issubset(returned):
+        return None
+
+    grouped: dict[int, list[tuple[int, float, float]]] = {}
+    for row_id, row in returned.items():
+        grid_index = _pattern_grid_index(
+            pattern,
+            row_id,
+            slow_count=slow_count,
+            fast_count=fast_count,
+        )
+        if grid_index is None:
+            continue
+        if len(row) != len(sample_columns):
+            return None
+        slow_value = row[indexes[slow_axis]]
+        fast_value = row[indexes[fast_axis]]
+        if (
+            isinstance(slow_value, bool)
+            or not isinstance(slow_value, (int, float))
+            or isinstance(fast_value, bool)
+            or not isinstance(fast_value, (int, float))
+        ):
+            return None
+        finite_slow = float(slow_value)
+        finite_fast = float(fast_value)
+        if not math.isfinite(finite_slow) or not math.isfinite(finite_fast):
+            return None
+        slow_index, fast_index = grid_index
+        grouped.setdefault(slow_index, []).append(
+            (fast_index, finite_slow, finite_fast)
+        )
+    if not grouped:
+        return None
+
+    slow_values: list[tuple[int, float]] = []
+    fast_directions: list[tuple[int, bool]] = []
+    reference_fast_values: dict[int, float] | None = None
+    for slow_index, values in sorted(grouped.items()):
+        reference_slow = values[0][1]
+        if any(
+            not math.isclose(value[1], reference_slow, rel_tol=1e-12, abs_tol=0.0)
+            for value in values[1:]
+        ):
+            return None
+        slow_values.append((slow_index, reference_slow))
+        ordered_fast = tuple(
+            sorted((fast_index, fast_value) for fast_index, _slow, fast_value in values)
+        )
+        direction = _strict_axis_reversed(list(ordered_fast))
+        if direction is None:
+            return None
+        # One value cannot prove which end of a non-singleton fast axis it
+        # represents.  In a live serpentine sweep, accepting a newly started
+        # row here would place its first point on the wrong horizontal edge.
+        if fast_count > 1 and len(values) < 2:
+            return None
+        row_fast_values = dict(ordered_fast)
+        if reference_fast_values is None:
+            reference_fast_values = row_fast_values
+        else:
+            if completed and row_fast_values.keys() != reference_fast_values.keys():
+                return None
+
+            # A rectangular row has one canonical fast-coordinate vector.
+            # Serpentine acquisition may store that vector in reverse, but a
+            # slow-dependent shift or warp is not a Cartesian heatmap and must
+            # remain an honest placeholder.
+            if not (
+                _sampled_fast_values_match(
+                    reference_fast_values,
+                    row_fast_values,
+                    fast_count,
+                    reversed_axis=False,
+                )
+                or _sampled_fast_values_match(
+                    reference_fast_values,
+                    row_fast_values,
+                    fast_count,
+                    reversed_axis=True,
+                )
+            ):
+                return None
+        if fast_count > 1:
+            fast_directions.append((slow_index, direction))
+
+    # Likewise, one represented row cannot prove whether a non-singleton slow
+    # axis ascends or descends.  Keep an honest placeholder until the captured
+    # prefix contains direction evidence for both scientific axes.
+    if slow_count > 1 and len(slow_values) < 2:
+        return None
+    slow_reversed = _strict_axis_reversed(slow_values)
+    if slow_reversed is None:
+        return None
+    if (
+        slow_count > 1
+        and fast_count > 1
+        and {slow_index % 2 for slow_index, _reversed_axis in fast_directions} != {0, 1}
+    ):
+        # Equal directions on two even (or two odd) sampled rows cannot
+        # distinguish row-major acquisition from serpentine acquisition.  Both
+        # parities are required before publishing orientation for future rows.
+        return None
+    fast_reversed = fast_directions[0][1] if fast_directions else False
+    serpentine = False
+    if len(fast_directions) >= 2:
+        row_major = all(
+            reversed_axis == fast_reversed
+            for _slow_index, reversed_axis in fast_directions
+        )
+        serpentine = all(
+            reversed_axis == (fast_reversed ^ bool(slow_index % 2))
+            for slow_index, reversed_axis in fast_directions
+        )
+        if not row_major and not serpentine:
+            return None
+        if row_major:
+            serpentine = False
+        elif fast_directions[0][0] % 2:
+            fast_reversed = not fast_reversed
+
+    last_row_id = (
+        pattern.first_row_id
+        + (slow_count - 1) * pattern.slow_id_stride
+        + (fast_count - 1) * pattern.fast_id_stride
+    )
+    if completed and last_row_id > result_watermark:
+        return None
+    return Trusted2DGridLayout(
+        dependent=pattern.dependent,
+        dependencies=proof.dependencies,
+        shape=proof.shape,
+        fast_axis_index=proof.fast_axis_index,
+        first_row_id=pattern.first_row_id,
+        fast_id_stride=pattern.fast_id_stride,
+        slow_id_stride=pattern.slow_id_stride,
+        sample_slow_indexes=plan.slow_indexes,
+        sample_fast_indexes=plan.fast_indexes,
+        slow_reversed=slow_reversed,
+        fast_reversed=fast_reversed,
+        serpentine=serpentine,
+        complete=bool(completed and last_row_id <= result_watermark),
+        source=proof.source,
+    )
+
+
+def _planned_dense_2d_layout_proof(
+    metadata: dict[str, Any],
+    dependency_sets: tuple[tuple[tuple[str, ...], str | None], ...],
+) -> Trusted2DLayoutProof | None:
+    """Fail closed when only a declared shape, not a row-layout proof, exists.
+
+    QCoDeS shape metadata follows declared dependency order.  It does not say
+    which dependency changes on consecutive physical result rows, nor whether
+    multiple dependents use shared, interleaved, or blocked rows.  In
+    particular, assuming dependency 1 is fast would transpose an ordinary
+    fast-first acquisition.  Completed runs obtain a proof from the bounded
+    run-local structural probes; incomplete runs retain an honest placeholder
+    until equivalent evidence exists.
+    """
+
+    del metadata, dependency_sets
+    return None
 
 
 def trusted_derived_source_revision(
@@ -431,6 +1174,9 @@ def trusted_derived_source_revision(
             observation.sample_columns,
             observation.sample_rows,
             observation.setpoint_summaries,
+            observation.validated_2d_layouts,
+            observation.progressive_layout_pending,
+            observation.progressive_layout_cursor,
             observation.unsupported_reason,
             observation.run_fields,
         )
@@ -737,6 +1483,14 @@ class TrustedMetadataQueryAdapter:
         self._unavailable_run_fields: dict[int, tuple[str, ...]] = {}
         self._setpoint_summaries: dict[int, tuple[TrustedSetpointSummary, ...]] = {}
         self._setpoint_summaries_truncated: dict[int, bool] = {}
+        self._setpoint_summary_watermarks: dict[int, int] = {}
+        self._validated_grid_layouts: dict[int, Trusted2DLayoutProof] = {}
+        self._regular_setpoint_observations: dict[
+            int,
+            _RegularSetpointObservation,
+        ] = {}
+        self._regular_layout_progress: dict[int, _ProgressiveRegularLayout] = {}
+        self._verified_regular_layouts: dict[int, _ProgressiveRegularLayout] = {}
         self._last_run_id = 0
         self._data_version: int | None = None
         self._data_version_incarnation: int | None = None
@@ -770,6 +1524,11 @@ class TrustedMetadataQueryAdapter:
         self._result_columns.clear()
         self._setpoint_summaries.clear()
         self._setpoint_summaries_truncated.clear()
+        self._setpoint_summary_watermarks.clear()
+        self._validated_grid_layouts.clear()
+        self._regular_setpoint_observations.clear()
+        self._regular_layout_progress.clear()
+        self._verified_regular_layouts.clear()
         self._last_run_id = 0
         self._pending_watermark = watermark
         self._data_version = baseline
@@ -923,6 +1682,11 @@ class TrustedMetadataQueryAdapter:
             # tied to its former result table.
             self._setpoint_summaries.pop(record.run_id, None)
             self._setpoint_summaries_truncated.pop(record.run_id, None)
+            self._setpoint_summary_watermarks.pop(record.run_id, None)
+            self._validated_grid_layouts.pop(record.run_id, None)
+            self._regular_setpoint_observations.pop(record.run_id, None)
+            self._regular_layout_progress.pop(record.run_id, None)
+            self._verified_regular_layouts.pop(record.run_id, None)
             self._unavailable_run_fields.pop(record.run_id, None)
             return record
 
@@ -1018,10 +1782,10 @@ class TrustedMetadataQueryAdapter:
         Current QCoDeS result tables are append-only and use ``id INTEGER
         PRIMARY KEY``.  Capturing ``MAX(id)`` therefore gives both the accepted
         result count and an immutable prefix watermark through which later
-        metadata transactions can read consistently.  Optional whole-prefix
-        aggregates are used only for conservatively small sources.  Large
-        sources retain planned shapes, use fixed-size ID windows for small
-        first/last summaries, and receive an explicitly estimated storage size.
+        metadata transactions can read consistently.  Completed regular sweeps
+        are inferred with fixed-size primary-key projections and logarithmic
+        direct-ID probes.  Setpoint summaries use fixed-size ID windows, and
+        storage size remains explicitly estimated.
         """
 
         metadata = dict(self._require_cached_run(run_id))
@@ -1060,72 +1824,120 @@ class TrustedMetadataQueryAdapter:
         )
 
         result_watermark = self._result_id_watermark(table_name)
-        aggregate_prefix = self._bounded_aggregate_prefix(result_watermark)
-        queries: list[TrustedQuery] = []
-        observation_keys: list[tuple[tuple[str, ...], str | None]] = []
-        if aggregate_prefix and self._needs_observed_setpoints(metadata):
-            for setpoints, dependent in dependency_sets:
-                queries.append(
-                    self._setpoint_observation_query(
-                        table_name,
-                        setpoints,
-                        dependent,
-                        result_watermark,
-                    )
+        regular_observation = self._regular_setpoint_observations.get(run_id)
+        expected_dependencies = (
+            dependency_sets[0][0]
+            if dependency_sets
+            and len({dependencies for dependencies, _dependent in dependency_sets}) == 1
+            else ()
+        )
+        expected_dependents = tuple(
+            dict.fromkeys(
+                dependent
+                for _dependencies, dependent in dependency_sets
+                if dependent is not None
+            )
+        )
+        if (
+            regular_observation is None
+            or regular_observation.result_watermark != result_watermark
+            or regular_observation.dependencies != expected_dependencies
+        ):
+            regular_observation = None
+            self._regular_setpoint_observations.pop(run_id, None)
+            self._validated_grid_layouts.pop(run_id, None)
+            shape_source = (
+                "planned"
+                if metadata.get("setpoint_shape_source") == "planned"
+                else "observed"
+            )
+            progress = self._regular_layout_progress.get(run_id)
+            if progress is not None and (
+                progress.dependencies != expected_dependencies
+                or progress.dependents != expected_dependents
+            ):
+                self._regular_layout_progress.pop(run_id, None)
+                progress = None
+            candidate = None
+            if progress is None or progress.result_watermark != result_watermark:
+                candidate = self._infer_regular_setpoint_observation(
+                    table_name,
+                    dependency_sets,
+                    result_watermark,
+                    proof_source=shape_source,
                 )
-                observation_keys.append((setpoints, dependent))
+                raw_planned_shape = metadata.get("setpoint_shape")
+                planned_shape = (
+                    tuple(raw_planned_shape)
+                    if metadata.get("setpoint_shape_source") == "planned"
+                    and isinstance(raw_planned_shape, (list, tuple))
+                    and all(
+                        type(value) is int and value > 0 for value in raw_planned_shape
+                    )
+                    else None
+                )
+                planned_candidate = self._planned_regular_setpoint_candidate(
+                    table_name,
+                    dependency_sets,
+                    result_watermark,
+                    planned_shape,
+                )
+                if planned_candidate is not None and (
+                    candidate is None
+                    or planned_candidate.count < math.prod(planned_candidate.shape)
+                    or candidate.shape != planned_candidate.shape
+                ):
+                    candidate = planned_candidate
+            regular_observation = self._advance_progressive_regular_layout(
+                run_id,
+                table_name,
+                expected_dependencies,
+                expected_dependents,
+                result_watermark,
+                proof_source=shape_source,
+                candidate=candidate,
+            )
+            if regular_observation is not None:
+                self._regular_setpoint_observations[run_id] = regular_observation
+
+        observations: list[tuple[tuple[str, ...], int, tuple[int, ...] | None]] = []
+        raw_public_shape = metadata.get("setpoint_shape")
+        public_shape = (
+            tuple(
+                value for value in raw_public_shape if type(value) is int and value > 0
+            )
+            if isinstance(raw_public_shape, (list, tuple))
+            else None
+        )
+        if regular_observation is not None:
+            if regular_observation.proof_2d is not None and (
+                public_shape is None or public_shape == regular_observation.shape
+            ):
+                self._validated_grid_layouts[run_id] = regular_observation.proof_2d
+            observations.append(
+                (
+                    regular_observation.dependencies,
+                    regular_observation.count,
+                    regular_observation.shape,
+                )
+            )
 
         summary_names = tuple(
             name for name in sweep_parameters if name in result_columns
         )[:_TRUSTED_SETPOINT_SUMMARY_MAX_PARAMETERS]
-        if aggregate_prefix:
-            for name in summary_names:
-                queries.append(
-                    self._setpoint_summary_query(
-                        table_name,
-                        name,
-                        result_watermark,
+        planned_steps = self._planned_setpoint_steps(metadata, summary_names)
+        if regular_observation is not None:
+            planned_steps.update(
+                dict(
+                    zip(
+                        regular_observation.dependencies,
+                        regular_observation.shape,
+                        strict=True,
                     )
                 )
-
-        results = self._bounded_query_batches(tuple(queries))
-        result_index = 0
-        observations: list[tuple[tuple[str, ...], int, tuple[int, ...] | None]] = []
-        for setpoints, _dependent in observation_keys:
-            observation = results[result_index]
-            result_index += 1
-            if len(observation.rows) != 1:
-                continue
-            values = observation.rows[0]
-            if len(values) != 1 + len(setpoints):
-                continue
-            count = _positive_int(values[0])
-            axis_counts = tuple(
-                count_value
-                for value in values[1:]
-                if (count_value := _positive_int(value)) is not None
             )
-            shape = (
-                axis_counts
-                if count is not None
-                and len(axis_counts) == len(setpoints)
-                and math.prod(axis_counts) == count
-                else None
-            )
-            if count is not None:
-                observations.append((setpoints, count, shape))
-
-        summaries: list[TrustedSetpointSummary] = []
-        if aggregate_prefix:
-            for name in summary_names:
-                summary_result = results[result_index]
-                result_index += 1
-                summary = self._materialize_summary(name, summary_result)
-                if summary is not None:
-                    summaries.append(summary)
-        else:
-            planned_steps = self._planned_setpoint_steps(metadata, summary_names)
-            summaries.extend(
+        if self._setpoint_summary_watermarks.get(run_id) != result_watermark:
+            summaries = list(
                 self._bounded_setpoint_summaries(
                     table_name,
                     summary_names,
@@ -1133,11 +1945,12 @@ class TrustedMetadataQueryAdapter:
                     planned_steps,
                 )
             )
-        public_summaries, summaries_truncated = bounded_setpoint_presentation(
-            tuple(summaries)
-        )
-        self._setpoint_summaries[run_id] = public_summaries
-        self._setpoint_summaries_truncated[run_id] = summaries_truncated
+            public_summaries, summaries_truncated = bounded_setpoint_presentation(
+                tuple(summaries)
+            )
+            self._setpoint_summaries[run_id] = public_summaries
+            self._setpoint_summaries_truncated[run_id] = summaries_truncated
+            self._setpoint_summary_watermarks[run_id] = result_watermark
 
         # Cooperative broker scheduling may execute a higher-priority cheap or
         # selected operation on this same adapter between any two supervisor
@@ -1146,6 +1959,16 @@ class TrustedMetadataQueryAdapter:
         # entry snapshot would otherwise regress fresher run-table fields when
         # the outer operation resumes.
         latest_metadata = self._require_cached_run(run_id)
+        retained_observed_fields = (
+            {
+                name: latest_metadata[name]
+                for name in (*_OBSERVED_SHAPE_FIELDS, "read_setpoint_count")
+                if name in latest_metadata
+            }
+            if regular_observation is None
+            and latest_metadata.get("setpoint_shape_source") == "observed"
+            else {}
+        )
         read_setpoint_count = max((count for _, count, _ in observations), default=None)
         setpoint_shape: tuple[int, ...] | None = None
         setpoint_count: int | None = None
@@ -1178,6 +2001,12 @@ class TrustedMetadataQueryAdapter:
             storage_bytes=storage_bytes,
             storage_bytes_estimated=True,
         )
+        observed.update(retained_observed_fields)
+        # Keep the trusted expensive/derived field contract stable when a
+        # partial run has no structurally proven logical count.  ``None`` is
+        # the honest bounded result; absence would make identical observations
+        # depend on whether an older enrichment happened to populate the key.
+        observed.setdefault("read_setpoint_count", None)
         self._runs[run_id] = _bounded_public_run_fields(observed)
         return _bounded_run_record(
             run_id,
@@ -1220,6 +2049,32 @@ class TrustedMetadataQueryAdapter:
         source_columns = tuple(name for name in result_columns if name != "id")
         retained_columns = source_columns[:TRUSTED_DERIVED_MAX_SOURCE_COLUMNS]
         table = quote_sqlite_identifier(table_name)
+        cached_run_description = _json_object(cached.get("run_description"))
+        cached_measure_parameters = tuple(cached.get("measure_parameters") or ())
+        cached_sweep_parameters = tuple(cached.get("sweep_parameters") or ())
+        cached_dependency_sets = self._dependency_sets(
+            cached_run_description,
+            cached_measure_parameters,
+            cached_sweep_parameters,
+            result_columns,
+        )
+        cached_proof = getattr(self, "_validated_grid_layouts", {}).get(run_id)
+        layout_proof = (
+            cached_proof
+            if isinstance(cached_proof, Trusted2DLayoutProof)
+            else _planned_dense_2d_layout_proof(cached, cached_dependency_sets)
+        )
+        if layout_proof is not None and any(
+            name not in retained_columns
+            for name in (
+                *layout_proof.dependencies,
+                *(pattern.dependent for pattern in layout_proof.dependent_rows),
+            )
+        ):
+            layout_proof = None
+        grid_sample_plans = (
+            _trusted_2d_sample_plans(layout_proof) if layout_proof is not None else ()
+        )
 
         numeric_expressions = tuple(
             "CASE WHEN typeof({column}) IN ('integer', 'real') "
@@ -1230,26 +2085,46 @@ class TrustedMetadataQueryAdapter:
         )
         selected = ", ".join(('"id"', *numeric_expressions))
         maximum_expression = f'(SELECT COALESCE(MAX("id"), 0) FROM {table})'
-        sample_queries = [
-            TrustedQuery(
-                f"SELECT {selected} FROM {table} "
-                f'WHERE "id" > MAX(0, (({maximum_expression} * ?) / '
-                f"{TRUSTED_DERIVED_SAMPLE_WINDOWS}) - 1) "
-                f'AND "id" <= {maximum_expression} '
-                f'ORDER BY "id" LIMIT {TRUSTED_DERIVED_ROWS_PER_WINDOW}',
-                (index,),
+        if grid_sample_plans:
+            sampled_grid_ids = tuple(
+                sorted(
+                    {row_id for plan in grid_sample_plans for row_id in plan.row_ids}
+                )
             )
-            for index in range(TRUSTED_DERIVED_SAMPLE_WINDOWS)
-        ]
-        # Always retain the newest captured edge, even when the cached count
-        # was stale before this transaction began.
-        sample_queries.append(
-            TrustedQuery(
-                f"SELECT {selected} FROM {table} "
-                f'WHERE "id" <= {maximum_expression} ORDER BY "id" DESC '
-                f"LIMIT {TRUSTED_DERIVED_ROWS_PER_WINDOW}"
+            if len(sampled_grid_ids) > TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS:
+                raise TrustedMetadataQueryError(
+                    "A derived grid sample exceeds its row budget."
+                )
+            placeholders = ", ".join("?" for _ in sampled_grid_ids)
+            sample_queries = [
+                TrustedQuery(
+                    f"SELECT {selected} FROM {table} "
+                    f'WHERE "id" IN ({placeholders}) ORDER BY "id" '
+                    f"LIMIT {TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS}",
+                    sampled_grid_ids,
+                )
+            ]
+        else:
+            sample_queries = [
+                TrustedQuery(
+                    f"SELECT {selected} FROM {table} "
+                    f'WHERE "id" > MAX(0, (({maximum_expression} * ?) / '
+                    f"{TRUSTED_DERIVED_SAMPLE_WINDOWS}) - 1) "
+                    f'AND "id" <= {maximum_expression} '
+                    f'ORDER BY "id" LIMIT {TRUSTED_DERIVED_ROWS_PER_WINDOW}',
+                    (index,),
+                )
+                for index in range(TRUSTED_DERIVED_SAMPLE_WINDOWS)
+            ]
+            # Preserve the established 1D newest-edge sample even when the
+            # cached count was stale before this transaction began.
+            sample_queries.append(
+                TrustedQuery(
+                    f"SELECT {selected} FROM {table} "
+                    f'WHERE "id" <= {maximum_expression} ORDER BY "id" DESC '
+                    f"LIMIT {TRUSTED_DERIVED_ROWS_PER_WINDOW}"
+                )
             )
-        )
 
         incarnation = self._executor.incarnation
         data_version = self._executor.data_version()
@@ -1405,8 +2280,11 @@ class TrustedMetadataQueryAdapter:
         bounded_parameters, _presentation_truncated = bounded_parameter_presentation(
             parameter_views
         )
-        raw_shape = materialized.get("point_shape") or materialized.get(
-            "setpoint_shape"
+        # Setpoint shape is the scientific grid.  ``point_shape`` may append a
+        # measured-parameter row factor (for example 251 x 16 x 2) and must
+        # never be mistaken for a third sweep dependency.
+        raw_shape = materialized.get("setpoint_shape") or materialized.get(
+            "point_shape"
         )
         planned_shape = (
             tuple(value for value in raw_shape if type(value) is int and value > 0)
@@ -1440,6 +2318,57 @@ class TrustedMetadataQueryAdapter:
         bounded_run = _bounded_public_run_fields(observed_run)
         self._runs[run_id] = bounded_run
 
+        validated_layouts: tuple[Trusted2DGridLayout, ...] = ()
+        if layout_proof is not None and grid_sample_plans:
+            authoritative_dependencies = {
+                (setpoints, dependent)
+                for setpoints, dependent in dependency_sets
+                if dependent is not None
+            }
+            proof_shape = tuple(layout_proof.shape)
+            public_shape = materialized.get("setpoint_shape")
+            completed = bool(materialized.get("is_completed"))
+            slow_count = proof_shape[1 - layout_proof.fast_axis_index]
+            fast_count = proof_shape[layout_proof.fast_axis_index]
+            last_pattern_ids = tuple(
+                pattern.first_row_id
+                + (slow_count - 1) * pattern.slow_id_stride
+                + (fast_count - 1) * pattern.fast_id_stride
+                for pattern in layout_proof.dependent_rows
+            )
+            proof_matches = (
+                isinstance(public_shape, (list, tuple))
+                and tuple(public_shape) == proof_shape
+                and materialized.get("setpoint_shape_source") == layout_proof.source
+                and all(
+                    (layout_proof.dependencies, pattern.dependent)
+                    in authoritative_dependencies
+                    for pattern in layout_proof.dependent_rows
+                )
+                and watermark <= max(last_pattern_ids)
+                and (not completed or watermark == max(last_pattern_ids))
+            )
+            if proof_matches:
+                layouts = tuple(
+                    layout
+                    for plan in grid_sample_plans
+                    if (
+                        layout := _validated_sampled_grid_layout(
+                            plan,
+                            sample_columns=expected_columns,
+                            sample_rows=sample_rows,
+                            result_watermark=watermark,
+                            completed=completed,
+                        )
+                    )
+                    is not None
+                )
+                if len(layouts) == len(grid_sample_plans):
+                    validated_layouts = layouts
+
+        progress = self._regular_layout_progress.get(run_id)
+        progressive_layout_cursor = progress.after_row_id if progress is not None else 0
+
         return TrustedDerivedSourceObservation(
             format_version=1,
             database_instance=database_instance,
@@ -1460,6 +2389,9 @@ class TrustedMetadataQueryAdapter:
             setpoint_summaries=self._setpoint_summaries.get(run_id, ()),
             unsupported_reason=unsupported_reason,
             run_fields=_freeze_fields(bounded_run),
+            validated_2d_layouts=validated_layouts,
+            progressive_layout_pending=progress is not None,
+            progressive_layout_cursor=progressive_layout_cursor,
         )
 
     def selected_run_detail(self, run_id: int) -> TrustedSelectedRunDetail:
@@ -1485,7 +2417,8 @@ class TrustedMetadataQueryAdapter:
             layout_watermark,
             max_raw_bytes=max(
                 0,
-                _TRUSTED_SINGLE_RUN_MAX_PUBLIC_RAW_BYTES - loaded.accepted_raw_bytes,
+                _TRUSTED_SINGLE_RUN_MAX_NON_SNAPSHOT_RAW_BYTES
+                - loaded.accepted_non_snapshot_raw_bytes,
             ),
         )
         full = dict(loaded.fields)
@@ -1562,10 +2495,14 @@ class TrustedMetadataQueryAdapter:
                 for parameter in parameters
             ),
             snapshot_summary={
-                "Status": snapshot.status,
+                "Status": (
+                    "available — loaded on demand"
+                    if snapshot.status == "available"
+                    else snapshot.status
+                ),
                 "Message": snapshot.message,
                 "Input bytes": snapshot.input_bytes,
-                "Rendered nodes": len(snapshot.nodes),
+                "Initial page nodes": len(snapshot.nodes),
             },
             setpoint_summaries=tuple(
                 {
@@ -1802,8 +2739,10 @@ class TrustedMetadataQueryAdapter:
         crossing the supervisor's scalar, row, Python-object, or wire limits.
         Groups contain at most 4 MiB of observed raw payload and 32 columns;
         values above 128 KiB receive a one-column statement so Stage 3's
-        width-derived per-value limit is also satisfied. Even worst-case JSON
-        escaping therefore remains below the 32 MiB wire envelope.
+        width-derived per-value limit is also satisfied. The selected Snapshot
+        has its own at-most-4-MiB source budget instead of consuming the bounded
+        aggregate for non-Snapshot detail fields. Even worst-case JSON escaping
+        therefore remains below the 32 MiB wire envelope for every query.
         """
 
         if not columns:
@@ -1852,7 +2791,7 @@ class TrustedMetadataQueryAdapter:
         unavailable: list[str] = []
         group: list[_SingleRunColumnPreflight] = []
         group_bytes = 0
-        accepted_raw_bytes = 0
+        accepted_non_snapshot_raw_bytes = 0
         snapshot_omission: TrustedSnapshotOmission | None = None
 
         def flush_group() -> bool:
@@ -1894,20 +2833,22 @@ class TrustedMetadataQueryAdapter:
             if item.value_bytes is None:
                 values[item.name] = None
                 continue
-            if (
-                item.value_bytes > TRUSTED_LIVE_MAX_SCALAR_BYTES
-                or item.value_bytes
-                > _TRUSTED_SINGLE_RUN_MAX_PUBLIC_RAW_BYTES - accepted_raw_bytes
+            is_snapshot = item.name == "snapshot"
+            if item.value_bytes > (
+                _TRUSTED_SINGLE_RUN_MAX_SNAPSHOT_RAW_BYTES
+                if is_snapshot
+                else TRUSTED_LIVE_MAX_SCALAR_BYTES
+            ) or (
+                not is_snapshot
+                and item.value_bytes
+                > _TRUSTED_SINGLE_RUN_MAX_NON_SNAPSHOT_RAW_BYTES
+                - accepted_non_snapshot_raw_bytes
             ):
                 values[item.name] = None
                 unavailable.append(item.name)
-                if item.name == "snapshot":
+                if is_snapshot:
                     snapshot_omission = TrustedSnapshotOmission(
-                        (
-                            "payload_limit"
-                            if item.value_bytes > TRUSTED_LIVE_MAX_SCALAR_BYTES
-                            else "detail_budget"
-                        ),
+                        "payload_limit",
                         item.value_bytes,
                     )
                 continue
@@ -1916,7 +2857,8 @@ class TrustedMetadataQueryAdapter:
                     return None
                 group.append(item)
                 group_bytes = item.value_bytes
-                accepted_raw_bytes += item.value_bytes
+                if not is_snapshot:
+                    accepted_non_snapshot_raw_bytes += item.value_bytes
                 if not flush_group():
                     return None
                 continue
@@ -1929,13 +2871,14 @@ class TrustedMetadataQueryAdapter:
                     return None
             group.append(item)
             group_bytes += item.value_bytes
-            accepted_raw_bytes += item.value_bytes
+            if not is_snapshot:
+                accepted_non_snapshot_raw_bytes += item.value_bytes
         if not flush_group():
             return None
         return _SingleRunValues(
             values,
             tuple(dict.fromkeys(unavailable)),
-            accepted_raw_bytes,
+            accepted_non_snapshot_raw_bytes,
             snapshot_omission,
         )
 
@@ -2064,48 +3007,10 @@ class TrustedMetadataQueryAdapter:
         return _single_integer(result, "result-count watermark")
 
     def _bounded_aggregate_prefix(self, result_watermark: int) -> bool:
-        """Whether whole-prefix aggregates have a conservative physical bound."""
+        """Compatibility hook: Stage 5 never runs whole-prefix aggregates."""
 
-        if result_watermark > _TRUSTED_AGGREGATE_MAX_ROWS:
-            return False
-        observations: list[tuple[tuple[str, int, int, int, int, int] | None, ...]] = []
-        for _ in range(2):
-            artifacts: list[tuple[str, int, int, int, int, int] | None] = []
-            total_size = 0
-            for suffix in ("", "-wal", "-journal"):
-                path = f"{self._database_path}{suffix}"
-                try:
-                    status = os.stat(path, follow_symlinks=False)
-                except FileNotFoundError:
-                    if not suffix:
-                        return False
-                    artifacts.append(None)
-                    continue
-                except OSError:
-                    return False
-                if not stat.S_ISREG(status.st_mode) or status.st_size < 0:
-                    return False
-                artifacts.append(
-                    (
-                        path,
-                        int(status.st_dev),
-                        int(status.st_ino),
-                        status.st_size,
-                        status.st_mtime_ns,
-                        status.st_ctime_ns,
-                    )
-                )
-                total_size += status.st_size
-                if total_size > _TRUSTED_AGGREGATE_MAX_SOURCE_BYTES:
-                    return False
-            observations.append(tuple(artifacts))
-
-        # A single main-then-WAL observation can undercount during a checkpoint
-        # (small main observed before the transfer, truncated WAL afterwards).
-        # Require two identical identity/size observations. A changing writer
-        # simply takes the fixed-window large-source path; no sleep, hash, open,
-        # or retry is performed here.
-        return observations[0] == observations[1]
+        del result_watermark
+        return False
 
     @staticmethod
     def _needs_observed_setpoints(metadata: dict[str, Any]) -> bool:
@@ -2166,60 +3071,1741 @@ class TrustedMetadataQueryAdapter:
             planned.append((sweep_parameters, None))
         return tuple(planned)
 
-    @staticmethod
-    def _setpoint_conditions(
-        setpoints: tuple[str, ...],
-        dependent: str | None,
-    ) -> str:
-        names = (*setpoints, *((dependent,) if dependent is not None else ()))
-        return " AND ".join(
-            f"{quote_sqlite_identifier(name)} IS NOT NULL" for name in names
-        )
-
-    def _setpoint_observation_query(
+    def _infer_regular_setpoint_observation(
         self,
         table_name: str,
-        setpoints: tuple[str, ...],
-        dependent: str | None,
-        through_result_id: int,
-    ) -> TrustedQuery:
-        table = quote_sqlite_identifier(table_name)
-        columns = ", ".join(quote_sqlite_identifier(name) for name in setpoints)
-        conditions = self._setpoint_conditions(setpoints, dependent)
-        bounded_conditions = f'"id" <= ? AND {conditions}'
-        distinct_counts = ", ".join(
-            f"COUNT(DISTINCT {quote_sqlite_identifier(name)}) AS "
-            f"{quote_sqlite_identifier(f'axis_{index}')}"
-            for index, name in enumerate(setpoints)
+        dependency_sets: tuple[tuple[tuple[str, ...], str | None], ...],
+        result_watermark: int,
+        *,
+        proof_source: str,
+    ) -> _RegularSetpointObservation | None:
+        """Prove one current-QCoDeS 1D/2D rectangular result layout.
+
+        The common prefix classifies dense, per-point interleaved, or
+        dependent-blocked storage.  Exponential and binary primary-key probes
+        then find an arbitrarily large inner-axis period without scanning the
+        intervening rows.  A fixed set of domain-wide probes rejects ordering,
+        dependency-presence, or accepted-watermark inconsistencies before an
+        exact shape is published.
+        """
+
+        if result_watermark <= 0 or not dependency_sets:
+            return None
+        dependency_names = {names for names, _dependent in dependency_sets}
+        if len(dependency_names) != 1:
+            return None
+        dependencies = next(iter(dependency_names))
+        if len(dependencies) not in (1, 2):
+            return None
+        raw_dependents = tuple(
+            dependent for _names, dependent in dependency_sets if dependent is not None
         )
-        return TrustedQuery(
-            "SELECT "
-            f"(SELECT COUNT(*) FROM (SELECT DISTINCT {columns} FROM {table} "
-            f"WHERE {bounded_conditions})) AS tuple_count, {distinct_counts} "
-            f"FROM {table} WHERE {bounded_conditions}",
-            (through_result_id, through_result_id),
+        dependents = tuple(dict.fromkeys(raw_dependents))
+        if (
+            len(dependents) != len(raw_dependents)
+            or len(dependents) > _TRUSTED_REGULAR_LAYOUT_MAX_DEPENDENTS
+            or (
+                not dependents
+                and any(dependent is not None for _n, dependent in dependency_sets)
+            )
+        ):
+            return None
+
+        prefix_through = min(
+            result_watermark,
+            _TRUSTED_REGULAR_LAYOUT_PREFIX_ROWS,
+        )
+        prefix = self._regular_layout_range(
+            table_name,
+            dependencies,
+            dependents,
+            0,
+            prefix_through,
+        )
+        if prefix is None or tuple(row.row_id for row in prefix) != tuple(
+            range(1, prefix_through + 1)
+        ):
+            return None
+        classified = self._regular_storage_kind(prefix, dependents)
+        if classified is None:
+            return None
+        storage_kind, phase_order = classified
+        if storage_kind == "blocked":
+            inferred = self._infer_blocked_regular_layout(
+                table_name,
+                dependencies,
+                dependents,
+                prefix,
+                result_watermark,
+            )
+        else:
+            inferred = self._infer_strided_regular_layout(
+                table_name,
+                dependencies,
+                dependents,
+                prefix,
+                result_watermark,
+                storage_kind=storage_kind,
+                phase_order=phase_order,
+            )
+        if inferred is None:
+            return None
+        shape, fast_axis_index, patterns = inferred
+        if not self._validate_regular_layout(
+            table_name,
+            dependencies,
+            dependents,
+            result_watermark,
+            shape,
+            fast_axis_index,
+            patterns,
+            storage_kind=storage_kind,
+        ):
+            return None
+
+        proof = None
+        if len(dependencies) == 2 and dependents and fast_axis_index is not None:
+            proof = Trusted2DLayoutProof(
+                dependencies=cast(tuple[str, str], dependencies),
+                shape=cast(tuple[int, int], shape),
+                fast_axis_index=fast_axis_index,
+                dependent_rows=tuple(
+                    Trusted2DDependentRowPattern(
+                        pattern.dependent,
+                        pattern.first_row_id,
+                        pattern.fast_id_stride,
+                        pattern.slow_id_stride,
+                    )
+                    for pattern in patterns
+                    if pattern.dependent is not None
+                ),
+                source=proof_source,
+            )
+        return _RegularSetpointObservation(
+            dependencies,
+            result_watermark,
+            math.prod(shape),
+            shape,
+            proof,
+            storage_kind,
+            patterns,
+        )
+
+    def _planned_regular_setpoint_candidate(
+        self,
+        table_name: str,
+        dependency_sets: tuple[tuple[tuple[str, ...], str | None], ...],
+        result_watermark: int,
+        planned_shape: tuple[int, ...] | None,
+    ) -> _RegularSetpointObservation | None:
+        """Build a structurally bounded candidate for a live planned extent."""
+
+        if (
+            result_watermark <= 0
+            or planned_shape is None
+            or len(planned_shape) not in (1, 2)
+            or any(type(value) is not int or value <= 0 for value in planned_shape)
+            or not dependency_sets
+        ):
+            return None
+        dependency_names = {names for names, _dependent in dependency_sets}
+        if len(dependency_names) != 1:
+            return None
+        dependencies = next(iter(dependency_names))
+        if len(dependencies) != len(planned_shape):
+            return None
+        raw_dependents = tuple(
+            dependent for _names, dependent in dependency_sets if dependent is not None
+        )
+        dependents = tuple(dict.fromkeys(raw_dependents))
+        if (
+            len(dependents) != len(raw_dependents)
+            or len(dependents) > _TRUSTED_REGULAR_LAYOUT_MAX_DEPENDENTS
+        ):
+            return None
+        prefix_through = min(result_watermark, _TRUSTED_REGULAR_LAYOUT_PREFIX_ROWS)
+        prefix = self._regular_layout_range(
+            table_name,
+            dependencies,
+            dependents,
+            0,
+            prefix_through,
+        )
+        if prefix is None or tuple(row.row_id for row in prefix) != tuple(
+            range(1, prefix_through + 1)
+        ):
+            return None
+        classified = self._regular_storage_kind(prefix, dependents)
+        if classified is None:
+            return None
+        storage_kind, phase_order = classified
+        if storage_kind not in {"dense", "interleaved"}:
+            # A dependent-blocked live prefix needs its first complete physical
+            # slow row before phase starts and row strides can be proven.  The
+            # ordinary bounded candidate path handles completed rectangles.
+            return None
+        multiplicity = len(dependents) if storage_kind == "interleaved" else 1
+        if result_watermark % multiplicity:
+            return None
+        logical_count = result_watermark // multiplicity
+        if not 0 < logical_count <= math.prod(planned_shape):
+            return None
+
+        if len(planned_shape) == 1:
+            fast_axis_index = None
+            fast_count = planned_shape[0]
+        else:
+            primary_first_id = 1
+            if storage_kind == "interleaved":
+                primary_first_id = phase_order.index(0) + 1
+            first = self._regular_layout_direct(
+                table_name,
+                dependencies,
+                dependents,
+                (primary_first_id, primary_first_id + multiplicity),
+                result_watermark,
+            )
+            if first is None or len(first) != 2:
+                return None
+            changed = self._changed_axis_indexes(first[0].axes, first[1].axes)
+            if len(changed) != 1:
+                return None
+            fast_axis_index = changed[0]
+            fast_count = planned_shape[fast_axis_index]
+
+        if storage_kind == "interleaved":
+            first_ids = {
+                dependent_index: phase + 1
+                for phase, dependent_index in enumerate(phase_order)
+            }
+            patterns = tuple(
+                _RegularDependentPattern(
+                    dependent,
+                    dependent_index,
+                    first_ids[dependent_index],
+                    multiplicity,
+                    fast_count * multiplicity,
+                )
+                for dependent_index, dependent in enumerate(dependents)
+            )
+        else:
+            patterns = tuple(
+                _RegularDependentPattern(
+                    dependent if dependents else None,
+                    dependent_index if dependents else 0,
+                    1,
+                    1,
+                    fast_count,
+                )
+                for dependent_index, dependent in enumerate(dependents or ("",))
+            )
+
+        proof = None
+        if len(planned_shape) == 2 and dependents and fast_axis_index is not None:
+            proof = Trusted2DLayoutProof(
+                dependencies=cast(tuple[str, str], dependencies),
+                shape=cast(tuple[int, int], planned_shape),
+                fast_axis_index=fast_axis_index,
+                dependent_rows=tuple(
+                    Trusted2DDependentRowPattern(
+                        pattern.dependent,
+                        pattern.first_row_id,
+                        pattern.fast_id_stride,
+                        pattern.slow_id_stride,
+                    )
+                    for pattern in patterns
+                    if pattern.dependent is not None
+                ),
+                source="planned",
+            )
+        return _RegularSetpointObservation(
+            dependencies,
+            result_watermark,
+            logical_count,
+            planned_shape,
+            proof,
+            storage_kind,
+            patterns,
+        )
+
+    @classmethod
+    def _progressive_candidate_from_page(
+        cls,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        result_watermark: int,
+        page: tuple[_RegularLayoutRow, ...],
+        *,
+        proof_source: str,
+    ) -> _RegularSetpointObservation | None:
+        """Derive a candidate from the first full-prefix page, never a proof."""
+
+        prefix = page[:_TRUSTED_REGULAR_LAYOUT_PREFIX_ROWS]
+        classified = cls._regular_storage_kind(prefix, dependents)
+        if classified is None:
+            return None
+        storage_kind, phase_order = classified
+        if storage_kind not in {"dense", "interleaved"}:
+            return None
+        multiplicity = len(dependents) if storage_kind == "interleaved" else 1
+        if result_watermark % multiplicity:
+            return None
+        logical_count = result_watermark // multiplicity
+        if logical_count <= 0:
+            return None
+
+        if storage_kind == "dense":
+            logical_axes = tuple(row.axes for row in page)
+        else:
+            complete_groups = len(page) // multiplicity
+            axes: list[tuple[int | float, ...]] = []
+            for group_index in range(complete_groups):
+                group = page[
+                    group_index * multiplicity : (group_index + 1) * multiplicity
+                ]
+                if any(row.axes != group[0].axes for row in group):
+                    return None
+                for phase, row in enumerate(group):
+                    present_count = sum(row.present)
+                    if present_count not in (0, 1):
+                        return None
+                    if present_count == 1 and not row.present[phase_order[phase]]:
+                        return None
+                axes.append(group[0].axes)
+            logical_axes = tuple(axes)
+        if not logical_axes:
+            return None
+
+        if len(dependencies) == 1:
+            shape: tuple[int, ...] = (logical_count,)
+            fast_axis_index = None
+            fast_count = logical_count
+        else:
+            if len(logical_axes) < 2:
+                return None
+            changed = cls._changed_axis_indexes(logical_axes[0], logical_axes[1])
+            if len(changed) != 1:
+                return None
+            fast_axis_index = changed[0]
+            slow_axis_index = 1 - fast_axis_index
+            fast_count = next(
+                (
+                    index
+                    for index, axes in enumerate(logical_axes[1:], start=1)
+                    if axes[slow_axis_index] != logical_axes[0][slow_axis_index]
+                ),
+                0,
+            )
+            if fast_count == 0:
+                if len(logical_axes) < logical_count:
+                    return None
+                fast_count = logical_count
+            if logical_count % fast_count:
+                return None
+            shape_values = [0, 0]
+            shape_values[fast_axis_index] = fast_count
+            shape_values[slow_axis_index] = logical_count // fast_count
+            shape = tuple(shape_values)
+
+        if storage_kind == "interleaved":
+            first_ids = {
+                dependent_index: phase + 1
+                for phase, dependent_index in enumerate(phase_order)
+            }
+            patterns = tuple(
+                _RegularDependentPattern(
+                    dependent,
+                    dependent_index,
+                    first_ids[dependent_index],
+                    multiplicity,
+                    fast_count * multiplicity,
+                )
+                for dependent_index, dependent in enumerate(dependents)
+            )
+        else:
+            patterns = tuple(
+                _RegularDependentPattern(
+                    dependent if dependents else None,
+                    dependent_index if dependents else 0,
+                    1,
+                    1,
+                    fast_count,
+                )
+                for dependent_index, dependent in enumerate(dependents or ("",))
+            )
+        proof = None
+        if len(shape) == 2 and dependents and fast_axis_index is not None:
+            proof = Trusted2DLayoutProof(
+                cast(tuple[str, str], dependencies),
+                cast(tuple[int, int], shape),
+                fast_axis_index,
+                tuple(
+                    Trusted2DDependentRowPattern(
+                        pattern.dependent,
+                        pattern.first_row_id,
+                        pattern.fast_id_stride,
+                        pattern.slow_id_stride,
+                    )
+                    for pattern in patterns
+                    if pattern.dependent is not None
+                ),
+                proof_source,
+            )
+        return _RegularSetpointObservation(
+            dependencies,
+            result_watermark,
+            logical_count,
+            shape,
+            proof,
+            storage_kind,
+            patterns,
+        )
+
+    def _advance_progressive_regular_layout(
+        self,
+        run_id: int,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        result_watermark: int,
+        *,
+        proof_source: str,
+        candidate: _RegularSetpointObservation | None = None,
+    ) -> _RegularSetpointObservation | None:
+        """Verify exactly one bounded full-prefix keyset page per invocation."""
+
+        if result_watermark <= 0 or len(dependencies) not in (1, 2):
+            self._regular_layout_progress.pop(run_id, None)
+            self._verified_regular_layouts.pop(run_id, None)
+            return None
+        state = self._regular_layout_progress.get(run_id)
+        page: tuple[_RegularLayoutRow, ...] | None = None
+        if (
+            state is not None
+            and state.result_watermark != result_watermark
+            and candidate is not None
+        ):
+            state = self._resume_progressive_regular_layout(state, candidate)
+            if state is None:
+                self._regular_layout_progress.pop(run_id, None)
+        if state is None:
+            verified = self._verified_regular_layouts.get(run_id)
+            if verified is not None and candidate is not None:
+                state = self._resume_progressive_regular_layout(verified, candidate)
+            if state is None:
+                self._verified_regular_layouts.pop(run_id, None)
+                if candidate is None:
+                    page = self._progressive_regular_layout_page(
+                        table_name,
+                        dependencies,
+                        dependents,
+                        0,
+                        result_watermark,
+                    )
+                    if not page or tuple(row.row_id for row in page) != tuple(
+                        range(1, len(page) + 1)
+                    ):
+                        return None
+                    candidate = self._progressive_candidate_from_page(
+                        dependencies,
+                        dependents,
+                        result_watermark,
+                        page,
+                        proof_source=proof_source,
+                    )
+                if candidate is None:
+                    return None
+                state = self._new_progressive_regular_layout(candidate)
+        if (
+            state.dependencies != dependencies
+            or state.dependents != dependents
+            or state.result_watermark != result_watermark
+        ):
+            self._regular_layout_progress.pop(run_id, None)
+            return None
+        if page is None:
+            page = self._progressive_regular_layout_page(
+                table_name,
+                dependencies,
+                dependents,
+                state.after_row_id,
+                result_watermark,
+            )
+        if not page or tuple(row.row_id for row in page) != tuple(
+            range(state.after_row_id + 1, state.after_row_id + len(page) + 1)
+        ):
+            self._regular_layout_progress.pop(run_id, None)
+            return None
+        state = self._consume_progressive_regular_page(state, page)
+        if not state.viable:
+            self._regular_layout_progress.pop(run_id, None)
+            self._verified_regular_layouts.pop(run_id, None)
+            return None
+        if state.after_row_id < result_watermark:
+            self._regular_layout_progress[run_id] = state
+            return None
+
+        self._regular_layout_progress.pop(run_id, None)
+        observation = self._finish_progressive_regular_layout(state)
+        if observation is None:
+            self._verified_regular_layouts.pop(run_id, None)
+            return None
+        self._verified_regular_layouts[run_id] = state
+        return observation
+
+    @staticmethod
+    def _progressive_fast_axis_index(
+        observation: _RegularSetpointObservation,
+    ) -> int:
+        if len(observation.shape) == 1:
+            return 0
+        if observation.proof_2d is None:
+            raise ValueError("A two-dimensional candidate requires a physical proof.")
+        return observation.proof_2d.fast_axis_index
+
+    @classmethod
+    def _progressive_fast_count(
+        cls,
+        observation: _RegularSetpointObservation,
+    ) -> int:
+        return observation.shape[cls._progressive_fast_axis_index(observation)]
+
+    @staticmethod
+    def _progressive_physical_patterns(
+        observation: _RegularSetpointObservation,
+    ) -> tuple[_ProgressivePhysicalPattern, ...]:
+        grouped: dict[tuple[int, int, int], list[int]] = {}
+        for pattern in observation.patterns:
+            grouped.setdefault(
+                (
+                    pattern.first_row_id,
+                    pattern.fast_id_stride,
+                    pattern.slow_id_stride,
+                ),
+                [],
+            ).append(pattern.present_index)
+        return tuple(
+            _ProgressivePhysicalPattern(*signature, tuple(sorted(owners)))
+            for signature, owners in sorted(grouped.items())
+        )
+
+    @classmethod
+    def _new_progressive_regular_layout(
+        cls,
+        observation: _RegularSetpointObservation,
+    ) -> _ProgressiveRegularLayout:
+        physical_patterns = cls._progressive_physical_patterns(observation)
+        if not physical_patterns:
+            raise ValueError("A progressive candidate requires physical patterns.")
+        dependents = tuple(
+            pattern.dependent
+            for pattern in observation.patterns
+            if pattern.dependent is not None
+        )
+        return _ProgressiveRegularLayout(
+            observation.dependencies,
+            dependents,
+            observation.result_watermark,
+            observation.proof_2d.source if observation.proof_2d else "observed",
+            observation,
+            physical_patterns,
+            tuple(_ProgressiveAxisState() for _pattern in physical_patterns),
+        )
+
+    @classmethod
+    def _progressive_candidates_compatible(
+        cls,
+        previous: _RegularSetpointObservation,
+        current: _RegularSetpointObservation,
+    ) -> bool:
+        previous_fast_axis = cls._progressive_fast_axis_index(previous)
+        current_fast_axis = cls._progressive_fast_axis_index(current)
+        return (
+            previous.dependencies == current.dependencies
+            and previous.storage_kind == current.storage_kind
+            and previous_fast_axis == current_fast_axis
+            and previous.shape[previous_fast_axis] == current.shape[current_fast_axis]
+            and cls._progressive_physical_patterns(previous)
+            == cls._progressive_physical_patterns(current)
+            and previous.count <= current.count
+            and previous.result_watermark < current.result_watermark
+        )
+
+    @classmethod
+    def _resume_progressive_regular_layout(
+        cls,
+        previous: _ProgressiveRegularLayout,
+        candidate: _RegularSetpointObservation,
+    ) -> _ProgressiveRegularLayout | None:
+        if not cls._progressive_candidates_compatible(
+            previous.observation,
+            candidate,
+        ):
+            return None
+        fast_count = cls._progressive_fast_count(candidate)
+        previous_remainder = previous.observation.count % fast_count
+        current_remainder = candidate.count % fast_count
+        if previous_remainder and current_remainder not in {
+            previous_remainder,
+            0,
+        }:
+            # The reference row did not retain a checkpoint for an arbitrary
+            # newly extended partial length.  Keep the older accepted prefix
+            # rather than rescan it or make a guessed partial claim.
+            return None
+        return replace(
+            previous,
+            result_watermark=candidate.result_watermark,
+            proof_source=(
+                candidate.proof_2d.source
+                if candidate.proof_2d is not None
+                else previous.proof_source
+            ),
+            observation=candidate,
+            viable=True,
+        )
+
+    def _progressive_regular_layout_page(
+        self,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        after_row_id: int,
+        result_watermark: int,
+    ) -> tuple[_RegularLayoutRow, ...] | None:
+        table = quote_sqlite_identifier(table_name)
+        result = self._executor.query(
+            f"SELECT {self._regular_probe_projection(dependencies, dependents)} "
+            f'FROM {table} WHERE "id" > ? AND "id" <= ? '
+            f'ORDER BY "id" LIMIT ?',
+            (
+                after_row_id,
+                result_watermark,
+                _TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS,
+            ),
+        )
+        return self._materialize_regular_layout_rows(
+            result,
+            len(dependencies),
+            max(1, len(dependents)),
+        )
+
+    @classmethod
+    def _progressive_pattern_grid_index(
+        cls,
+        observation: _RegularSetpointObservation,
+        pattern: _ProgressivePhysicalPattern,
+        row_id: int,
+    ) -> tuple[int, int] | None:
+        fast_axis_index = cls._progressive_fast_axis_index(observation)
+        fast_count = observation.shape[fast_axis_index]
+        slow_count = (
+            1 if len(observation.shape) == 1 else observation.shape[1 - fast_axis_index]
+        )
+        delta = row_id - pattern.first_row_id
+        if delta < 0:
+            return None
+        slow_index, within_slow = divmod(delta, pattern.slow_id_stride)
+        if within_slow % pattern.fast_id_stride:
+            return None
+        fast_index = within_slow // pattern.fast_id_stride
+        if slow_index >= slow_count or fast_index >= fast_count:
+            return None
+        return slow_index, fast_index
+
+    @classmethod
+    def _consume_progressive_regular_page(
+        cls,
+        state: _ProgressiveRegularLayout,
+        page: tuple[_RegularLayoutRow, ...],
+    ) -> _ProgressiveRegularLayout:
+        axis_states = list(state.axis_states)
+        current = state
+        fast_axis_index = cls._progressive_fast_axis_index(state.observation)
+        slow_axis_index = 0 if len(state.dependencies) == 1 else 1 - fast_axis_index
+        for row in page:
+            matches = tuple(
+                (pattern_index, grid_index)
+                for pattern_index, pattern in enumerate(state.physical_patterns)
+                if (
+                    grid_index := cls._progressive_pattern_grid_index(
+                        state.observation,
+                        pattern,
+                        row.row_id,
+                    )
+                )
+                is not None
+            )
+            if len(matches) != 1:
+                return replace(current, after_row_id=row.row_id, viable=False)
+            pattern_index, (slow_index, fast_index) = matches[0]
+            pattern = state.physical_patterns[pattern_index]
+            present_count = sum(row.present)
+            if state.observation.storage_kind != "dense" and not (
+                present_count == 0
+                or (
+                    present_count == 1
+                    and any(row.present[index] for index in pattern.owner_indexes)
+                )
+            ):
+                return replace(current, after_row_id=row.row_id, viable=False)
+
+            if state.observation.storage_kind == "interleaved":
+                logical_index = (
+                    slow_index * cls._progressive_fast_count(state.observation)
+                    + fast_index
+                )
+                if current.pending_logical_index is None:
+                    if pattern_index != 0:
+                        return replace(current, after_row_id=row.row_id, viable=False)
+                    current = replace(
+                        current,
+                        pending_logical_index=logical_index,
+                        pending_axes=row.axes,
+                        pending_pattern_indexes=(pattern_index,),
+                    )
+                else:
+                    expected_pattern = len(current.pending_pattern_indexes)
+                    if (
+                        logical_index != current.pending_logical_index
+                        or row.axes != current.pending_axes
+                        or pattern_index != expected_pattern
+                    ):
+                        return replace(current, after_row_id=row.row_id, viable=False)
+                    pending = (*current.pending_pattern_indexes, pattern_index)
+                    current = replace(current, pending_pattern_indexes=pending)
+                if len(current.pending_pattern_indexes) == len(state.physical_patterns):
+                    current = replace(
+                        current,
+                        pending_logical_index=None,
+                        pending_axes=None,
+                        pending_pattern_indexes=(),
+                    )
+
+            updated_axis, event = cls._consume_progressive_axis_value(
+                axis_states[pattern_index],
+                slow_index=slow_index,
+                fast_index=fast_index,
+                slow_value=(
+                    0 if len(state.dependencies) == 1 else row.axes[slow_axis_index]
+                ),
+                fast_value=row.axes[fast_axis_index],
+                fast_count=cls._progressive_fast_count(state.observation),
+                checkpoint_count=(
+                    state.observation.count
+                    % cls._progressive_fast_count(state.observation)
+                ),
+            )
+            axis_states[pattern_index] = updated_axis
+            if not updated_axis.viable:
+                return replace(current, after_row_id=row.row_id, viable=False)
+            if event is not None:
+                current = cls._consume_progressive_cross_event(
+                    current,
+                    pattern_index,
+                    event,
+                )
+                if not current.viable:
+                    return replace(current, after_row_id=row.row_id)
+        return replace(
+            current,
+            after_row_id=page[-1].row_id,
+            axis_states=tuple(axis_states),
         )
 
     @staticmethod
-    def _setpoint_summary_query(
-        table_name: str,
-        parameter: str,
-        through_result_id: int,
-    ) -> TrustedQuery:
-        table = quote_sqlite_identifier(table_name)
-        column = quote_sqlite_identifier(parameter)
-        return TrustedQuery(
-            "WITH distinct_values(value, first_rowid) AS ("
-            f"SELECT {column}, MIN(rowid) FROM {table} "
-            f'WHERE "id" <= ? AND {column} IS NOT NULL '
-            f"AND octet_length({column}) <= {_TRUSTED_SETPOINT_VALUE_MAX_BYTES} "
-            f"GROUP BY {column}) "
-            "SELECT "
-            "(SELECT value FROM distinct_values ORDER BY first_rowid ASC LIMIT 1), "
-            "(SELECT value FROM distinct_values ORDER BY first_rowid DESC LIMIT 1), "
-            "(SELECT COUNT(*) FROM distinct_values)",
-            (through_result_id,),
+    def _consume_progressive_axis_value(
+        state: _ProgressiveAxisState,
+        *,
+        slow_index: int,
+        fast_index: int,
+        slow_value: int | float,
+        fast_value: int | float,
+        fast_count: int,
+        checkpoint_count: int,
+    ) -> tuple[
+        _ProgressiveAxisState,
+        tuple[int, int | float, int, int] | None,
+    ]:
+        if (
+            not state.viable
+            or slow_index != state.next_slow_index
+            or fast_index != state.next_fast_index
+        ):
+            return replace(state, viable=False), None
+        if fast_index == 0:
+            if state.current_slow_value is not None:
+                return replace(state, viable=False), None
+            slow_direction = state.slow_direction
+            if state.previous_slow_value is not None:
+                direction = _strict_numeric_direction(
+                    state.previous_slow_value,
+                    slow_value,
+                )
+                if direction == 0 or (slow_direction and direction != slow_direction):
+                    return replace(state, viable=False), None
+                slow_direction = direction
+            state = replace(
+                state,
+                current_slow_value=slow_value,
+                slow_direction=slow_direction,
+            )
+        elif slow_value != state.current_slow_value:
+            return replace(state, viable=False), None
+
+        fast_direction = state.current_fast_direction
+        if state.previous_fast_value is not None:
+            direction = _strict_numeric_direction(state.previous_fast_value, fast_value)
+            if direction == 0 or (fast_direction and direction != fast_direction):
+                return replace(state, viable=False), None
+            fast_direction = direction
+        forward, reverse, power = _append_vector_fingerprint(
+            state.current_forward,
+            state.current_reverse,
+            state.current_power,
+            fast_value,
         )
+        count = fast_index + 1
+        checkpoints = state.reference_checkpoints
+        wanted = {
+            value
+            for value in (checkpoint_count, fast_count - checkpoint_count)
+            if 0 < value < fast_count
+        }
+        if (
+            state.reference_forward is None
+            and count in wanted
+            and all(item[0] != count for item in checkpoints)
+        ):
+            checkpoints = (*checkpoints, (count, forward, reverse, power))
+        updated = replace(
+            state,
+            next_fast_index=count,
+            previous_fast_value=fast_value,
+            current_fast_direction=fast_direction,
+            current_forward=forward,
+            current_reverse=reverse,
+            current_power=power,
+            reference_checkpoints=checkpoints,
+        )
+        if count < fast_count:
+            return updated, None
+
+        reference_forward = updated.reference_forward
+        reference_reverse = updated.reference_reverse
+        reference_direction = updated.reference_fast_direction
+        row_major_possible = updated.row_major_possible
+        serpentine_possible = updated.serpentine_possible
+        if fast_count > 1 and fast_direction == 0:
+            return replace(updated, viable=False), None
+        if reference_forward is None:
+            reference_forward = forward
+            reference_reverse = reverse
+            reference_direction = fast_direction
+        else:
+            same = forward == reference_forward and reverse == reference_reverse
+            reversed_row = forward == reference_reverse and reverse == reference_forward
+            if same and reversed_row and fast_count > 1:
+                same = fast_direction == reference_direction
+                reversed_row = fast_direction == -reference_direction
+            if not same and not reversed_row:
+                return replace(updated, viable=False), None
+            row_major_possible = row_major_possible and same
+            serpentine_possible = serpentine_possible and (
+                same if slow_index % 2 == 0 else reversed_row
+            )
+            if not row_major_possible and not serpentine_possible:
+                return replace(updated, viable=False), None
+        assert updated.current_slow_value is not None
+        event = (
+            slow_index,
+            updated.current_slow_value,
+            forward,
+            reverse,
+        )
+        return (
+            replace(
+                updated,
+                next_slow_index=slow_index + 1,
+                next_fast_index=0,
+                previous_slow_value=updated.current_slow_value,
+                current_slow_value=None,
+                previous_fast_value=None,
+                current_fast_direction=0,
+                current_forward=0,
+                current_reverse=0,
+                current_power=1,
+                reference_forward=reference_forward,
+                reference_reverse=reference_reverse,
+                reference_fast_direction=reference_direction,
+                row_major_possible=row_major_possible,
+                serpentine_possible=serpentine_possible,
+                completed_rows=updated.completed_rows + 1,
+            ),
+            event,
+        )
+
+    @staticmethod
+    def _consume_progressive_cross_event(
+        state: _ProgressiveRegularLayout,
+        pattern_index: int,
+        event: tuple[int, int | float, int, int],
+    ) -> _ProgressiveRegularLayout:
+        slow_index, slow_value, forward, reverse = event
+        if pattern_index != state.cross_next_pattern:
+            return replace(state, viable=False)
+        if pattern_index == 0:
+            state = replace(
+                state,
+                cross_slow_index=slow_index,
+                cross_reference_slow=slow_value,
+                cross_reference_forward=forward,
+                cross_reference_reverse=reverse,
+                cross_next_pattern=1,
+            )
+        elif (
+            slow_index != state.cross_slow_index
+            or slow_value != state.cross_reference_slow
+            or not (
+                (
+                    forward == state.cross_reference_forward
+                    and reverse == state.cross_reference_reverse
+                )
+                or (
+                    forward == state.cross_reference_reverse
+                    and reverse == state.cross_reference_forward
+                )
+            )
+        ):
+            return replace(state, viable=False)
+        else:
+            state = replace(state, cross_next_pattern=pattern_index + 1)
+        if state.cross_next_pattern == len(state.physical_patterns):
+            return replace(
+                state,
+                cross_slow_index=None,
+                cross_reference_slow=None,
+                cross_reference_forward=None,
+                cross_reference_reverse=None,
+                cross_next_pattern=0,
+            )
+        return state
+
+    @staticmethod
+    def _progressive_partial_axis_matches(
+        state: _ProgressiveAxisState,
+        fast_count: int,
+        partial_count: int,
+    ) -> bool:
+        if (
+            partial_count <= 0
+            or state.reference_forward is None
+            or state.reference_reverse is None
+            or state.next_fast_index != partial_count
+        ):
+            return False
+        checkpoints = {item[0]: item for item in state.reference_checkpoints}
+        prefix = checkpoints.get(partial_count)
+        before_suffix = checkpoints.get(fast_count - partial_count)
+        if prefix is None or before_suffix is None:
+            return False
+        _count, prefix_forward, _prefix_reverse, _prefix_power = prefix
+        _count, _before_forward, before_reverse, before_power = before_suffix
+        inverse_power = pow(
+            before_power,
+            -1,
+            1 << _TRUSTED_VECTOR_FINGERPRINT_BITS,
+        )
+        reversed_suffix = (
+            (state.reference_reverse - before_reverse) * inverse_power
+        ) & _TRUSTED_VECTOR_FINGERPRINT_MASK
+        return state.current_forward in {prefix_forward, reversed_suffix}
+
+    @classmethod
+    def _finish_progressive_regular_layout(
+        cls,
+        state: _ProgressiveRegularLayout,
+    ) -> _RegularSetpointObservation | None:
+        observation = state.observation
+        fast_count = cls._progressive_fast_count(observation)
+        full_rows, partial_count = divmod(observation.count, fast_count)
+        if (
+            not state.viable
+            or state.after_row_id != observation.result_watermark
+            or state.pending_logical_index is not None
+            or state.cross_next_pattern != 0
+            or any(axis.completed_rows != full_rows for axis in state.axis_states)
+        ):
+            return None
+        if partial_count:
+            if observation.proof_2d is None or observation.proof_2d.source != "planned":
+                return None
+            if not all(
+                cls._progressive_partial_axis_matches(
+                    axis,
+                    fast_count,
+                    partial_count,
+                )
+                for axis in state.axis_states
+            ):
+                return None
+            slow_values = {axis.current_slow_value for axis in state.axis_states}
+            forward_values = {axis.current_forward for axis in state.axis_states}
+            if len(slow_values) != 1 or len(forward_values) != 1:
+                return None
+        elif any(
+            axis.next_fast_index != 0
+            or axis.next_slow_index != full_rows
+            or axis.current_slow_value is not None
+            for axis in state.axis_states
+        ):
+            return None
+        if (
+            observation.proof_2d is not None
+            and observation.proof_2d.source == "observed"
+            and observation.count != math.prod(observation.shape)
+        ):
+            return None
+        return observation
+
+    @staticmethod
+    def _regular_probe_projection(
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+    ) -> str:
+        axes = tuple(
+            "CASE WHEN typeof({column}) IN ('integer', 'real') "
+            "THEN {column} ELSE NULL END AS {alias}".format(
+                column=quote_sqlite_identifier(name),
+                alias=quote_sqlite_identifier(f"qplot_axis_{index}"),
+            )
+            for index, name in enumerate(dependencies)
+        )
+        if dependents:
+            present = tuple(
+                "CASE WHEN {column} IS NOT NULL THEN 1 ELSE 0 END AS {alias}".format(
+                    column=quote_sqlite_identifier(name),
+                    alias=quote_sqlite_identifier(f"qplot_present_{index}"),
+                )
+                for index, name in enumerate(dependents)
+            )
+        else:
+            conditions = " AND ".join(
+                f"{quote_sqlite_identifier(name)} IS NOT NULL" for name in dependencies
+            )
+            present = (
+                f'CASE WHEN {conditions} THEN 1 ELSE 0 END AS "qplot_present_0"',
+            )
+        return ", ".join(('"id"', *axes, *present))
+
+    def _regular_layout_range(
+        self,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        lower_id: int,
+        upper_id: int,
+    ) -> tuple[_RegularLayoutRow, ...] | None:
+        if not 0 <= lower_id < upper_id:
+            return None
+        limit = min(
+            _TRUSTED_REGULAR_LAYOUT_PREFIX_ROWS,
+            upper_id - lower_id,
+        )
+        table = quote_sqlite_identifier(table_name)
+        result = self._executor.query(
+            f"SELECT {self._regular_probe_projection(dependencies, dependents)} "
+            f'FROM {table} WHERE "id" > ? AND "id" <= ? '
+            f'ORDER BY "id" LIMIT ?',
+            (lower_id, upper_id, limit),
+        )
+        return self._materialize_regular_layout_rows(
+            result,
+            len(dependencies),
+            max(1, len(dependents)),
+        )
+
+    def _regular_layout_direct(
+        self,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        row_ids: tuple[int, ...],
+        result_watermark: int,
+    ) -> tuple[_RegularLayoutRow, ...] | None:
+        expected_ids = tuple(
+            sorted(
+                {
+                    row_id
+                    for row_id in row_ids
+                    if type(row_id) is int and 0 < row_id <= result_watermark
+                }
+            )
+        )
+        if not expected_ids or len(expected_ids) > 1_024:
+            return None
+        placeholders = ", ".join("?" for _row_id in expected_ids)
+        table = quote_sqlite_identifier(table_name)
+        result = self._executor.query(
+            f"SELECT {self._regular_probe_projection(dependencies, dependents)} "
+            f'FROM {table} WHERE "id" IN ({placeholders}) '
+            f'AND "id" <= ? ORDER BY "id"',
+            (*expected_ids, result_watermark),
+        )
+        rows = self._materialize_regular_layout_rows(
+            result,
+            len(dependencies),
+            max(1, len(dependents)),
+        )
+        if rows is None or tuple(row.row_id for row in rows) != expected_ids:
+            return None
+        return rows
+
+    @staticmethod
+    def _materialize_regular_layout_rows(
+        result: TrustedQueryResult,
+        axis_count: int,
+        present_count: int,
+    ) -> tuple[_RegularLayoutRow, ...] | None:
+        expected_columns = (
+            "id",
+            *(f"qplot_axis_{index}" for index in range(axis_count)),
+            *(f"qplot_present_{index}" for index in range(present_count)),
+        )
+        if tuple(result.columns) != expected_columns:
+            return None
+        output: list[_RegularLayoutRow] = []
+        previous_id = 0
+        for raw_row in result.rows:
+            if len(raw_row) != len(expected_columns):
+                return None
+            row_id = raw_row[0]
+            raw_axes = raw_row[1 : 1 + axis_count]
+            raw_present = raw_row[1 + axis_count :]
+            if type(row_id) is not int or row_id <= previous_id:
+                return None
+            axes: list[int | float] = []
+            for value in raw_axes:
+                if type(value) not in (int, float) or not math.isfinite(float(value)):
+                    return None
+                axes.append(cast(int | float, value))
+            if any(
+                type(value) is not int or value not in (0, 1) for value in raw_present
+            ):
+                return None
+            output.append(
+                _RegularLayoutRow(
+                    row_id,
+                    tuple(axes),
+                    tuple(bool(value) for value in raw_present),
+                )
+            )
+            previous_id = row_id
+        return tuple(output)
+
+    @staticmethod
+    def _regular_storage_kind(
+        prefix: tuple[_RegularLayoutRow, ...],
+        dependents: tuple[str, ...],
+    ) -> tuple[str, tuple[int, ...]] | None:
+        dependent_count = max(1, len(dependents))
+        all_present = (True,) * dependent_count
+        if len(dependents) == 1:
+            # A single registered dependent owns every physical QCoDeS row.
+            # Its value may legitimately be SQL NULL at a measured grid cell;
+            # the numeric dependency columns, not z-value presence, prove the
+            # row's coordinate.  Multiple dependents need additional shared-row
+            # evidence below because NULL markers can also encode sparse storage.
+            return "dense", (0,)
+        if not dependents:
+            return (
+                ("dense", (0,))
+                if all(row.present == all_present for row in prefix)
+                else None
+            )
+        # One row containing multiple registered outputs proves that those
+        # outputs share a physical coordinate row.  Other outputs may be SQL
+        # NULL at genuinely unmeasured cells; dependency coordinates, row ids,
+        # and sweep ordering remain the structural evidence.  If every row has
+        # at most one output, storage is still ambiguous and must pass the
+        # conservative interleaved/blocked classification below.
+        if any(sum(row.present) > 1 for row in prefix):
+            return "dense", tuple(range(dependent_count))
+
+        # Interleaved QCoDeS rows repeat one fixed dependent phase order at each
+        # coordinate.  A phase's z value may be NULL, so learn its owner from
+        # another complete prefix group while requiring every observed owner to
+        # agree and the final phase mapping to be a full permutation.
+        phase_owners: list[int | None] = [None] * dependent_count
+        complete_groups = len(prefix) // dependent_count
+        interleaved_possible = complete_groups > 0
+        for group_index in range(complete_groups):
+            start = group_index * dependent_count
+            group = prefix[start : start + dependent_count]
+            if any(row.axes != group[0].axes for row in group):
+                interleaved_possible = False
+                break
+            for phase, row in enumerate(group):
+                present_count = sum(row.present)
+                if present_count == 0:
+                    continue
+                if present_count != 1:
+                    interleaved_possible = False
+                    break
+                owner = row.present.index(True)
+                known_owner = phase_owners[phase]
+                if known_owner is None:
+                    phase_owners[phase] = owner
+                elif known_owner != owner:
+                    interleaved_possible = False
+                    break
+            if not interleaved_possible:
+                break
+        if interleaved_possible and None not in phase_owners:
+            phase_order = tuple(cast(int, owner) for owner in phase_owners)
+            if set(phase_order) == set(range(dependent_count)):
+                return "interleaved", phase_order
+
+        first_present = prefix[0].present
+        if sum(first_present) != 1:
+            return None
+        if len(prefix) == 1 or (
+            prefix[1].present == first_present and prefix[1].axes != prefix[0].axes
+        ):
+            return "blocked", (first_present.index(True),)
+        return None
+
+    def _infer_strided_regular_layout(
+        self,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        prefix: tuple[_RegularLayoutRow, ...],
+        result_watermark: int,
+        *,
+        storage_kind: str,
+        phase_order: tuple[int, ...],
+    ) -> (
+        tuple[
+            tuple[int, ...],
+            int | None,
+            tuple[_RegularDependentPattern, ...],
+        ]
+        | None
+    ):
+        dependent_count = max(1, len(dependents))
+        multiplicity = dependent_count if storage_kind == "interleaved" else 1
+        if result_watermark % multiplicity:
+            return None
+        logical_count = result_watermark // multiplicity
+        if logical_count <= 0:
+            return None
+        if storage_kind == "interleaved":
+            first_ids = {
+                dependent_index: phase + 1
+                for phase, dependent_index in enumerate(phase_order)
+            }
+            patterns = tuple(
+                _RegularDependentPattern(
+                    dependent,
+                    dependent_index,
+                    first_ids[dependent_index],
+                    multiplicity,
+                    logical_count * multiplicity,
+                )
+                for dependent_index, dependent in enumerate(dependents)
+            )
+        else:
+            patterns = tuple(
+                _RegularDependentPattern(
+                    dependent if dependents else None,
+                    dependent_index if dependents else 0,
+                    1,
+                    1,
+                    logical_count,
+                )
+                for dependent_index, dependent in enumerate(dependents or ("",))
+            )
+        primary = patterns[0]
+        first_row = prefix[primary.first_row_id - 1]
+        if len(dependencies) == 1:
+            if logical_count > 1:
+                second_id = primary.first_row_id + primary.fast_id_stride
+                rows = self._regular_layout_direct(
+                    table_name,
+                    dependencies,
+                    dependents,
+                    (second_id,),
+                    result_watermark,
+                )
+                if rows is None or rows[0].axes == first_row.axes:
+                    return None
+            patterns = tuple(
+                _RegularDependentPattern(
+                    pattern.dependent,
+                    pattern.present_index,
+                    pattern.first_row_id,
+                    pattern.fast_id_stride,
+                    logical_count * pattern.fast_id_stride,
+                )
+                for pattern in patterns
+            )
+            return (logical_count,), None, patterns
+
+        if logical_count == 1:
+            fast_axis_index = 1
+            inner_count = 1
+        else:
+            second_id = primary.first_row_id + primary.fast_id_stride
+            second = self._regular_layout_direct(
+                table_name,
+                dependencies,
+                dependents,
+                (second_id,),
+                result_watermark,
+            )
+            if second is None:
+                return None
+            changed = self._changed_axis_indexes(first_row.axes, second[0].axes)
+            if len(changed) != 1:
+                return None
+            fast_axis_index = changed[0]
+            outer_axis_index = 1 - fast_axis_index
+            observed_inner_count = self._first_outer_axis_transition(
+                table_name,
+                dependencies,
+                dependents,
+                primary,
+                logical_count,
+                outer_axis_index,
+                first_row.axes[outer_axis_index],
+                result_watermark,
+                storage_kind=storage_kind,
+            )
+            if observed_inner_count is None:
+                return None
+            inner_count = observed_inner_count
+        if logical_count % inner_count:
+            return None
+        slow_count = logical_count // inner_count
+        shape_values = [0, 0]
+        shape_values[fast_axis_index] = inner_count
+        shape_values[1 - fast_axis_index] = slow_count
+        patterns = tuple(
+            _RegularDependentPattern(
+                pattern.dependent,
+                pattern.present_index,
+                pattern.first_row_id,
+                pattern.fast_id_stride,
+                inner_count * pattern.fast_id_stride,
+            )
+            for pattern in patterns
+        )
+        return cast(tuple[int, int], tuple(shape_values)), fast_axis_index, patterns
+
+    def _infer_blocked_regular_layout(
+        self,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        prefix: tuple[_RegularLayoutRow, ...],
+        result_watermark: int,
+    ) -> (
+        tuple[
+            tuple[int, ...],
+            int | None,
+            tuple[_RegularDependentPattern, ...],
+        ]
+        | None
+    ):
+        if len(dependents) < 2:
+            return None
+        initial_present = prefix[0].present
+        boundary = self._first_block_boundary(
+            table_name,
+            dependencies,
+            dependents,
+            initial_present,
+            result_watermark,
+        )
+        if boundary is None:
+            return None
+        inner_count = boundary - 1
+        dependent_count = len(dependents)
+        slow_id_stride = dependent_count * inner_count
+        if inner_count <= 0 or result_watermark % slow_id_stride:
+            return None
+        slow_count = result_watermark // slow_id_stride
+        block_ids = tuple(
+            row_id
+            for block_index in range(dependent_count)
+            for row_id in (
+                block_index * inner_count + 1,
+                (block_index + 1) * inner_count,
+            )
+        )
+        block_rows = self._regular_layout_direct(
+            table_name,
+            dependencies,
+            dependents,
+            block_ids,
+            result_watermark,
+        )
+        if block_rows is None:
+            return None
+        by_id = {row.row_id: row for row in block_rows}
+        block_order: list[int] = []
+        for block_index in range(dependent_count):
+            start = by_id[block_index * inner_count + 1]
+            end = by_id[(block_index + 1) * inner_count]
+            if (
+                sum(start.present) != 1
+                or start.present != end.present
+                or start.axes != prefix[0].axes
+                or (inner_count > 1 and end.axes == start.axes)
+            ):
+                return None
+            block_order.append(start.present.index(True))
+        if set(block_order) != set(range(dependent_count)):
+            return None
+        patterns = tuple(
+            _RegularDependentPattern(
+                dependents[dependent_index],
+                dependent_index,
+                block_order.index(dependent_index) * inner_count + 1,
+                1,
+                slow_id_stride,
+            )
+            for dependent_index in range(dependent_count)
+        )
+        logical_count = inner_count * slow_count
+        if len(dependencies) == 1:
+            if slow_count != 1:
+                return None
+            return (logical_count,), None, patterns
+
+        if inner_count > 1:
+            second = self._regular_layout_direct(
+                table_name,
+                dependencies,
+                dependents,
+                (2,),
+                result_watermark,
+            )
+            if second is None:
+                return None
+            changed = self._changed_axis_indexes(prefix[0].axes, second[0].axes)
+            if len(changed) != 1:
+                return None
+            fast_axis_index = changed[0]
+        elif slow_count > 1:
+            next_slow = self._regular_layout_direct(
+                table_name,
+                dependencies,
+                dependents,
+                (slow_id_stride + 1,),
+                result_watermark,
+            )
+            if next_slow is None:
+                return None
+            changed = self._changed_axis_indexes(prefix[0].axes, next_slow[0].axes)
+            if len(changed) != 1:
+                return None
+            fast_axis_index = 1 - changed[0]
+        else:
+            fast_axis_index = 1
+        if slow_count > 1:
+            next_slow = self._regular_layout_direct(
+                table_name,
+                dependencies,
+                dependents,
+                (slow_id_stride + 1,),
+                result_watermark,
+            )
+            if next_slow is None:
+                return None
+            changed = self._changed_axis_indexes(prefix[0].axes, next_slow[0].axes)
+            if changed != (1 - fast_axis_index,):
+                return None
+        shape_values = [0, 0]
+        shape_values[fast_axis_index] = inner_count
+        shape_values[1 - fast_axis_index] = slow_count
+        return cast(tuple[int, int], tuple(shape_values)), fast_axis_index, patterns
+
+    def _first_block_boundary(
+        self,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        initial_present: tuple[bool, ...],
+        result_watermark: int,
+    ) -> int | None:
+        candidates = self._exponential_probe_values(result_watermark, minimum=2)
+        rows = self._regular_layout_direct(
+            table_name,
+            dependencies,
+            dependents,
+            candidates,
+            result_watermark,
+        )
+        if rows is None:
+            return None
+        lower = 1
+        upper = None
+        for row in rows:
+            if row.present == initial_present:
+                lower = row.row_id
+            else:
+                upper = row.row_id
+                break
+        if upper is None:
+            return None
+        for _probe in range(_TRUSTED_REGULAR_LAYOUT_MAX_SEARCH_PROBES):
+            if upper - lower <= 1:
+                return upper
+            middle = lower + ((upper - lower) // 2)
+            middle_rows = self._regular_layout_direct(
+                table_name,
+                dependencies,
+                dependents,
+                (middle,),
+                result_watermark,
+            )
+            if middle_rows is None:
+                return None
+            if middle_rows[0].present == initial_present:
+                lower = middle
+            else:
+                upper = middle
+        return None
+
+    def _first_outer_axis_transition(
+        self,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        pattern: _RegularDependentPattern,
+        logical_count: int,
+        outer_axis_index: int,
+        initial_outer_value: int | float,
+        result_watermark: int,
+        *,
+        storage_kind: str,
+    ) -> int | None:
+        maximum_index = logical_count - 1
+        indexes = self._exponential_probe_values(maximum_index, minimum=1)
+        row_ids = tuple(
+            pattern.first_row_id + index * pattern.fast_id_stride for index in indexes
+        )
+        rows = self._regular_layout_direct(
+            table_name,
+            dependencies,
+            dependents,
+            row_ids,
+            result_watermark,
+        )
+        if rows is None:
+            return None
+        by_id = {row.row_id: row for row in rows}
+        lower = 0
+        upper = None
+        for index, row_id in zip(indexes, row_ids, strict=True):
+            row = by_id[row_id]
+            if not self._regular_row_matches_pattern(
+                row, pattern, storage_kind, len(dependents)
+            ):
+                return None
+            if row.axes[outer_axis_index] == initial_outer_value:
+                lower = index
+            else:
+                upper = index
+                break
+        if upper is None:
+            return logical_count
+        for _probe in range(_TRUSTED_REGULAR_LAYOUT_MAX_SEARCH_PROBES):
+            if upper - lower <= 1:
+                return upper
+            middle = lower + ((upper - lower) // 2)
+            row_id = pattern.first_row_id + middle * pattern.fast_id_stride
+            middle_rows = self._regular_layout_direct(
+                table_name,
+                dependencies,
+                dependents,
+                (row_id,),
+                result_watermark,
+            )
+            if middle_rows is None or not self._regular_row_matches_pattern(
+                middle_rows[0], pattern, storage_kind, len(dependents)
+            ):
+                return None
+            if middle_rows[0].axes[outer_axis_index] == initial_outer_value:
+                lower = middle
+            else:
+                upper = middle
+        return None
+
+    @staticmethod
+    def _exponential_probe_values(maximum: int, *, minimum: int) -> tuple[int, ...]:
+        if maximum < minimum:
+            return ()
+        values: list[int] = []
+        value = 1
+        while value < minimum:
+            value *= 2
+        while (
+            value <= maximum and len(values) < _TRUSTED_REGULAR_LAYOUT_MAX_SEARCH_PROBES
+        ):
+            values.append(value)
+            value *= 2
+        if not values or values[-1] != maximum:
+            values.append(maximum)
+        return tuple(dict.fromkeys(values))
+
+    @staticmethod
+    def _changed_axis_indexes(
+        first: tuple[int | float, ...],
+        second: tuple[int | float, ...],
+    ) -> tuple[int, ...]:
+        return tuple(
+            index
+            for index, (left, right) in enumerate(zip(first, second, strict=True))
+            if left != right
+        )
+
+    @staticmethod
+    def _regular_row_matches_pattern(
+        row: _RegularLayoutRow,
+        pattern: _RegularDependentPattern,
+        storage_kind: str,
+        dependent_count: int,
+    ) -> bool:
+        if dependent_count == 0:
+            return row.present == (True,)
+        if dependent_count == 1:
+            return len(row.present) == 1
+        if storage_kind == "dense":
+            # Dense/shared ownership was established by the bounded prefix.
+            # Missing measured values do not remove the physical grid row.
+            return len(row.present) == dependent_count
+        # The proven physical phase/stride owns this sparse row even when its
+        # one measured value is NULL.  A value belonging to another dependent,
+        # or multiple present dependents, still contradicts the row pattern.
+        present_count = sum(row.present)
+        return present_count == 0 or (
+            present_count == 1 and row.present[pattern.present_index]
+        )
+
+    def _validate_regular_layout(
+        self,
+        table_name: str,
+        dependencies: tuple[str, ...],
+        dependents: tuple[str, ...],
+        result_watermark: int,
+        shape: tuple[int, ...],
+        fast_axis_index: int | None,
+        patterns: tuple[_RegularDependentPattern, ...],
+        *,
+        storage_kind: str,
+    ) -> bool:
+        if math.prod(shape) <= 0 or not patterns:
+            return False
+        slow_indexes: tuple[int, ...]
+        if len(shape) == 1:
+            slow_indexes = (0,)
+            fast_indexes = _symmetric_grid_indexes(
+                shape[0],
+                min(shape[0], _TRUSTED_REGULAR_LAYOUT_ANCHOR_ROWS),
+            )
+            fast_count = shape[0]
+        else:
+            assert fast_axis_index is not None
+            slow_count = shape[1 - fast_axis_index]
+            fast_count = shape[fast_axis_index]
+            slow_indexes = _symmetric_grid_indexes(
+                slow_count,
+                min(slow_count, _TRUSTED_REGULAR_LAYOUT_ANCHOR_ROWS),
+            )
+            fast_indexes = tuple(sorted({0, fast_count // 2, fast_count - 1}))
+        requests = tuple(
+            (
+                pattern,
+                slow_index,
+                fast_index,
+                pattern.first_row_id
+                + slow_index * pattern.slow_id_stride
+                + fast_index * pattern.fast_id_stride,
+            )
+            for pattern in patterns
+            for slow_index in slow_indexes
+            for fast_index in fast_indexes
+        )
+        rows = self._regular_layout_direct(
+            table_name,
+            dependencies,
+            dependents,
+            tuple(request[3] for request in requests),
+            result_watermark,
+        )
+        if rows is None:
+            return False
+        by_id = {row.row_id: row for row in rows}
+        coordinates: dict[tuple[int, int], tuple[int | float, ...]] = {}
+        for pattern, slow_index, fast_index, row_id in requests:
+            row = by_id[row_id]
+            if not self._regular_row_matches_pattern(
+                row,
+                pattern,
+                storage_kind,
+                len(dependents),
+            ):
+                return False
+            grid_index = (slow_index, fast_index)
+            known = coordinates.setdefault(grid_index, row.axes)
+            if known != row.axes:
+                return False
+        maximum_id = max(
+            pattern.first_row_id
+            + (slow_indexes[-1] if len(shape) == 2 else 0) * pattern.slow_id_stride
+            + (fast_count - 1) * pattern.fast_id_stride
+            for pattern in patterns
+        )
+        full_maximum_id = max(
+            pattern.first_row_id
+            + ((shape[1 - cast(int, fast_axis_index)] - 1) if len(shape) == 2 else 0)
+            * pattern.slow_id_stride
+            + (fast_count - 1) * pattern.fast_id_stride
+            for pattern in patterns
+        )
+        if maximum_id > result_watermark or full_maximum_id != result_watermark:
+            return False
+        if len(shape) == 1:
+            values = [coordinates[(0, index)][0] for index in fast_indexes]
+            return len(set(values)) == len(values)
+
+        assert fast_axis_index is not None
+        slow_axis_index = 1 - fast_axis_index
+        slow_values: list[int | float] = []
+        baseline_fast: tuple[int | float, ...] | None = None
+        for slow_index in slow_indexes:
+            row_coordinates = tuple(
+                coordinates[(slow_index, fast_index)] for fast_index in fast_indexes
+            )
+            row_slow_values = tuple(
+                coordinate[slow_axis_index] for coordinate in row_coordinates
+            )
+            if len(set(row_slow_values)) != 1:
+                return False
+            slow_values.append(row_slow_values[0])
+            row_fast = tuple(
+                coordinate[fast_axis_index] for coordinate in row_coordinates
+            )
+            if len(set(row_fast)) != len(row_fast):
+                return False
+            if baseline_fast is None:
+                baseline_fast = row_fast
+            elif row_fast not in (baseline_fast, tuple(reversed(baseline_fast))):
+                return False
+        return len(set(slow_values)) == len(slow_values)
 
     def _bounded_setpoint_summaries(
         self,

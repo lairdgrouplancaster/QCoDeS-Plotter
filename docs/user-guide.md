@@ -23,30 +23,79 @@ For a supported same-host local database, qPlot first opens the trusted live
 reader. One application broker keeps one persistent helper for the exact
 accepted database instance. It publishes the basic run list before querying any
 result table, checks the same helper for later commits, and fills cheap and
-expensive metadata progressively in the background. The selected run is loaded
-first, then visible rows in viewport order, then the remaining table. If the
-window is left undisturbed, every safely bounded run field completes. Large
-descriptions and parameter metadata are deferred from the first run-list page;
-an individual field that exceeds the fixed detail budget is left unavailable
-rather than causing the trusted read to fail and retry.
+expensive metadata progressively in the background. Derived work uses the base
+priority `(run tier, work kind, stable index)`: the selected run gets metadata
+(including ephemeral detail), thumbnail, then preview; visible rows get all
+metadata, then all thumbnails, then all previews; remaining rows follow the same
+three lanes. Selecting or scrolling promotes the affected pending work without
+duplicating it. If the window is left undisturbed, every safely bounded run field
+completes. Large descriptions and parameter metadata are deferred from the
+first run-list page; an individual field that exceeds the fixed detail budget
+is left unavailable rather than causing the trusted read to fail and retry.
 
 Selecting a run performs no synchronous database or snapshot read. In a
 trusted session, qPlot shows cached basic values and loading placeholders
-immediately, then applies a plain detail view only if the database instance,
-selection generation, and GUID are still current. Reselecting an unchanged run
-can use that exact-instance cache, and trusted sessions obtain missing detail
-through their broker. Snapshot-fallback
-sessions stop at cached run-list basics and an unavailable detail state: row
-selection starts no selected-detail reader, prepares no additional
-selected-detail snapshot, and creates no QCoDeS `DataSet`. This applies only to
-ordinary selection: fallback metadata and retained preview paths can still
-create private snapshots. Rich fallback details remain deferred until a later
-stage; explicit plot and CSV actions still materialise their action-owned
-snapshots.
-For a very large or actively changing result source, qPlot prefers its planned
-shape and labels storage as estimated. An observed shape or distinct step count
-that would require a whole-table scan can remain unknown; this keeps each live
-reader transaction short enough for the acquisition's checkpoints to progress.
+immediately, then fills the selected Raw key-value, Metadata, and Snapshot tabs
+from one bounded ephemeral trusted detail read. The result is applied only while
+the exact database, helper, source, selection generation, run ID, and GUID still
+match; changing selection cancels it or makes it harmlessly stale. It is not a
+QCoDeS `DataSet`, a private snapshot, or a retained derived-cache item.
+Long scalar keys and values remain compact in the tree and are marked locally.
+A `[display]` row counts these present-but-shortened cells; it is not a data-loss
+warning. Double-click a marked cell, press Enter on its row, or use **View
+Complete Value...** to open the current run's bounded read-only value viewer.
+The viewer has Select All and an explicit Copy button and does not touch the
+clipboard merely by opening. Traceback summaries retain both their beginning
+and final exception line. A global `[truncated]` row is reserved for actual
+source or structural omissions in Metadata and Raw. Raw categories open one
+level by default.
+
+Snapshot browsing is independently lazy. `available — loaded on demand` means
+the complete stored snapshot was validated and remains accessible through
+bounded pages. The top-level QCoDeS `station` container opens automatically and
+fetches only its first bounded page; deeper
+containers remain lazy. Expand one to fetch its children, and activate `Load
+more…` to reveal each later page without omissions or duplicates. No page
+creates more than 128 children or 32 KiB of displayed text. A shortened
+Snapshot scalar shows a preview and a local **View Full** action for its exact
+contents. `Load more…` is pagination, not a truncation warning; Snapshot
+`malformed`, `truncated`, or `unavailable` is reserved for an actual source,
+validation, or consistency failure.
+
+Snapshot-fallback sessions stop at cached run-list basics and an unavailable
+detail state: row selection starts no selected-detail reader, prepares no
+additional selected-detail snapshot, and creates no QCoDeS `DataSet`. A trusted
+detail error likewise does not trigger an automatic fallback copy. This applies
+only to ordinary selection: fallback metadata and retained preview paths can
+still create private snapshots. Explicit plot and CSV actions still materialise
+their action-owned snapshots.
+
+The indexed result `id` watermark counts physical QCoDeS rows, which can exceed
+scientific points when dependents are interleaved or stored in blocks. A valid
+run-description shape can supply a planned `setpoint_count`, but it remains a
+provisional expected extent; an unfinished run may have acquired fewer logical
+points. qPlot shows acquired `read_setpoint_count`, and labels `setpoint_count`
+as observed, only after it has structurally verified the layout. An observed
+exact shape appears only after the captured rectangular prefix is verified.
+Irregular or inconclusive acquired shape/count values remain unknown rather
+than being guessed, and storage stays labelled as estimated.
+
+Large regular prefixes are verified through resumable 4,096-row metadata-only
+pages. Only one page runs per UI owner turn, and priority is re-evaluated at
+every boundary. Progressive metadata is a dependency only for its own run.
+Strictly higher-tier work and ready selected images always win; within the same
+tier, ordinary work receives at most three claims (one sibling
+metadata/thumbnail/preview sequence) before one paced continuation page is aged
+in. Pages rotate between eligible runs, and selecting a new run pre-empts at the
+next boundary. When no selected image is ready, qPlot admits remaining-run
+metadata within eight foreground claims.
+One 10 ms coalesced continuation wakeup avoids zero-delay polling while the
+schedule still fully drains. Inconclusive pages do not render, publish, or write
+a cache entry. Once conclusive, the normal metadata, thumbnail, and preview
+results are each produced only once, not once per page. Verification keeps
+constant-size state and can resume from the accepted physical cursor when newly
+appended rows retain a compatible layout. Incompatible or insufficient evidence
+remains unknown rather than being guessed.
 
 Trusted live access uses SQLite's real colocated WAL index, so committed rows
 that exist only in an active WAL are visible without copying or checkpointing
@@ -93,9 +142,10 @@ private files are removed when their owning connection closes.
 Automatic default selection, scrolling, and metadata completion do not launch
 legacy preview or thumbnail snapshot workers during a trusted live session.
 Snapshot fallback sessions may retain their current preview behavior. The
-trusted preview/thumbnail scheduler and disk-backed cache are deliberately
-deferred to Stage 5. Explicit plot and CSV actions remain available through
-their action-owned snapshots and the selected GUID and exact database instance.
+trusted Stage 5C scheduler instead produces bounded derived thumbnails and
+previews through the persistent helper and version-3 derived cache. Explicit
+plot and CSV actions remain available through their action-owned snapshots and
+the selected GUID and exact database instance.
 
 Generated test databases carry provenance for snapshot consumers that ordinary
 SQLite files lack: a unique generation token and a bounded chain of random,
@@ -223,11 +273,17 @@ The run table gives a compact view of each run, including measurements,
 setpoints, start time, completion state, duration, and estimated size. The
 details pane fills the selected run's overview, parameters, bounded setpoint
 summary, snapshot fields, and raw metadata progressively. During a trusted live
-session its preview area remains deferred rather than starting an automatic
-snapshot worker. In snapshot fallback, ordinary selection shows cached run-list
-basics rather than starting an additional selected-detail snapshot. Fallback
-metadata and the separately retained legacy-preview path can still create
-private snapshots.
+session its preview area receives the bounded derived preview after that
+selected run's metadata and thumbnail complete; it does not start an automatic
+snapshot worker. The
+renderer covers both complete 2D extents with representative samples, keeps
+missing or not-yet-measured cells neutral, restores reversed/serpentine axes,
+uses dependency 0 vertically and dependency 1 horizontally, and gives
+thumbnails and previews the same scientific mapping. Dependents render
+independently, and a finite singleton 1D point remains visible. In snapshot
+fallback, ordinary selection shows cached run-list basics rather than starting
+an additional selected-detail snapshot. Fallback metadata and the separately
+retained legacy-preview path can still create private snapshots.
 
 Right-click the run-table header and open **Columns** to show or hide any
 column, including Experiment, Sample, Name, Completed, and GUID. Column choices

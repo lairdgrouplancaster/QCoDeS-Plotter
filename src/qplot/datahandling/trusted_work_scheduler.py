@@ -238,6 +238,9 @@ PublicationCallback: TypeAlias = Callable[[WorkPublication], None]
 
 _WORK_KINDS = tuple(TrustedWorkKind)
 _RUN_TIERS = tuple(TrustedRunTier)
+_WORK_COMPLETION_MASK = sum(1 << int(kind) for kind in _WORK_KINDS)
+_PROGRESSIVE_METADATA_PARKED_BIT = 1 << len(_WORK_KINDS)
+_METADATA_CONCLUSIVE_BIT = 1 << (len(_WORK_KINDS) + 1)
 _DEFAULT_FORMATS = MappingProxyType(
     {
         TrustedWorkKind.METADATA: WorkFormat("metadata-v1"),
@@ -336,6 +339,10 @@ class TrustedWorkScheduler:
         self._visible_indices: tuple[int, ...] = ()
         self._visible_index_set: frozenset[int] = frozenset()
         self._completion_masks = bytearray(len(runs))
+        # Spare bits in the existing one-byte-per-run completion table encode
+        # the progressive dependency and conclusive-metadata state.  This
+        # avoids an unbounded Python set alongside the structurally bounded
+        # scheduler arrays.
         self._revision_overrides: dict[int, TrustedSourceRevision] = {}
         self._completed_count = 0
         self._running: dict[int, ScheduledWork] = {}
@@ -427,16 +434,150 @@ class TrustedWorkScheduler:
         self._visible_stop = exact[-1] + 1 if exact else 0
         self._reset_cursors()
 
-    def claim_next(self) -> ScheduledWork | None:
-        """Claim the deterministic next item, with at most one in flight."""
+    def set_priority(
+        self,
+        selected_index: int | None,
+        visible_indices: Sequence[int],
+    ) -> None:
+        """Atomically adopt selection and the exact visible stable indices."""
 
         self._require_owner()
         self._require_active()
+        if selected_index is not None:
+            self._validate_run_index(selected_index)
+        if not isinstance(visible_indices, Sequence):
+            raise TypeError("visible indices must be a stable Sequence.")
+        exact = tuple(visible_indices)
+        if any(type(index) is not int for index in exact):
+            raise TypeError("visible indices must contain integers.")
+        if any(not 0 <= index < len(self._runs) for index in exact):
+            raise ValueError("A visible index is outside the run table.")
+        if len(exact) != len(set(exact)):
+            raise ValueError("visible indices must be unique.")
+        exact = tuple(sorted(exact))
+        if selected_index == self._selected_index and exact == self._visible_indices:
+            return
+        self._selected_index = selected_index
+        self._visible_indices = exact
+        self._visible_index_set = frozenset(exact)
+        self._visible_start = exact[0] if exact else 0
+        self._visible_stop = exact[-1] + 1 if exact else 0
+        self._reset_cursors()
+
+    def claim_next(
+        self,
+        *,
+        age_remaining_metadata: bool = False,
+    ) -> ScheduledWork | None:
+        """Claim the deterministic next item, with at most one in flight.
+
+        ``age_remaining_metadata`` admits one stable remaining-tier metadata
+        quantum ahead of the base order.  The coordinator uses this bounded
+        exception only after its tested foreground-claim limit; normal callers
+        always receive the exact tier-first priority order.
+        """
+
+        self._require_owner()
+        self._require_active()
+        if type(age_remaining_metadata) is not bool:
+            raise TypeError("age_remaining_metadata must be a boolean.")
         if self._running:
             return None
-        candidate = self._next_candidate(advance=True)
+        candidate = None
+        if age_remaining_metadata:
+            run_index = self._lane_candidate(
+                TrustedRunTier.REMAINING,
+                TrustedWorkKind.METADATA,
+                advance=True,
+            )
+            if run_index is not None:
+                candidate = (
+                    TrustedRunTier.REMAINING,
+                    TrustedWorkKind.METADATA,
+                    run_index,
+                )
+        if candidate is None:
+            candidate = self._next_candidate(advance=True)
         if candidate is None:
             return None
+        return self._claim_candidate(candidate)
+
+    def claim_pending(
+        self,
+        run_index: int,
+        kind: TrustedWorkKind,
+    ) -> ScheduledWork | None:
+        """Claim one exact pending slot after an owner-side priority decision."""
+
+        self._require_owner()
+        self._require_active()
+        self._validate_run_index(run_index)
+        if not isinstance(kind, TrustedWorkKind):
+            raise TypeError("kind must be a TrustedWorkKind.")
+        if self._running or (run_index, kind) in self._running_slots:
+            return None
+        if self._completion_masks[run_index] & self._kind_bit(kind):
+            return None
+        return self._claim_candidate((self._tier_for_index(run_index), kind, run_index))
+
+    def next_pending_priority(
+        self,
+        *,
+        admissible: Callable[[int, TrustedWorkKind], bool] | None = None,
+    ) -> PriorityKey | None:
+        """Peek the first pending base-order slot accepted by ``admissible``.
+
+        This owner-side view lets the coordinator bypass an independently
+        retry-delayed slot without moving a lane cursor past it.  Once that
+        slot's deadline arrives it therefore resumes at its original stable
+        priority rather than being stranded behind later work.
+        """
+
+        self._require_owner()
+        self._require_active()
+        if admissible is not None and not callable(admissible):
+            raise TypeError("admissible must be callable.")
+        candidate = self._next_candidate(
+            advance=False,
+            admissible=admissible,
+        )
+        if candidate is None:
+            return None
+        tier, kind, run_index = candidate
+        return int(tier), int(kind), run_index
+
+    def next_pending_remaining_metadata_index(
+        self,
+        *,
+        exclude_index: int | None = None,
+        admissible: Callable[[int], bool] | None = None,
+    ) -> int | None:
+        """Peek the stable ordinary background-metadata lane without claiming."""
+
+        self._require_owner()
+        self._require_active()
+        if exclude_index is not None:
+            self._validate_run_index(exclude_index)
+        cursor = self._lane_cursors[
+            (TrustedRunTier.REMAINING, TrustedWorkKind.METADATA)
+        ]
+        bit = self._kind_bit(TrustedWorkKind.METADATA)
+        for run_index in range(cursor, len(self._runs)):
+            if (
+                run_index == exclude_index
+                or (admissible is not None and not admissible(run_index))
+                or self._tier_for_index(run_index) is not TrustedRunTier.REMAINING
+                or self._completion_masks[run_index] & bit
+                or (run_index, TrustedWorkKind.METADATA) in self._running_slots
+            ):
+                continue
+            return run_index
+        return None
+
+    def _claim_candidate(
+        self,
+        candidate: tuple[TrustedRunTier, TrustedWorkKind, int],
+    ) -> ScheduledWork:
         tier, kind, run_index = candidate
         source = self._runs[run_index]
         source_revision = self._revision_overrides.get(
@@ -487,6 +628,8 @@ class TrustedWorkScheduler:
         if not self._completion_masks[work.run_index] & bit:
             self._completion_masks[work.run_index] |= bit
             self._completed_count += 1
+        if work.key.kind is TrustedWorkKind.METADATA:
+            self._completion_masks[work.run_index] |= _METADATA_CONCLUSIVE_BIT
         self._transition(work, TrustedWorkState.RUNNING, TrustedWorkState.COMPLETED)
         if not self._is_current(work):
             return CompletionDisposition.STALE
@@ -561,11 +704,74 @@ class TrustedWorkScheduler:
             return CompletionDisposition.ACCEPTED
         self._running.pop(work.claim_id)
         self._running_slots.remove((work.run_index, work.key.kind))
+        self._completion_masks[work.run_index] &= ~(
+            _PROGRESSIVE_METADATA_PARKED_BIT | _METADATA_CONCLUSIVE_BIT
+        )
         self._revision_overrides[work.run_index] = source_revision
-        self._completed_count -= self._completion_masks[work.run_index].bit_count()
+        self._completed_count -= (
+            self._completion_masks[work.run_index] & _WORK_COMPLETION_MASK
+        ).bit_count()
         self._completion_masks[work.run_index] = 0
         self._reset_cursors()
         self._transition(work, TrustedWorkState.RUNNING, TrustedWorkState.CANCELLED)
+        return CompletionDisposition.ACCEPTED
+
+    def park_progressive_metadata(
+        self,
+        work: ScheduledWork,
+        source_revision: TrustedSourceRevision,
+    ) -> CompletionDisposition:
+        """Retire an inconclusive metadata page without publishing any output.
+
+        All three output kinds are marked complete temporarily so ordinary
+        thumbnail and preview lanes cannot amplify a metadata-only progressive
+        inspection.  The owner later clears only the metadata bit with
+        :meth:`request_completed_work`; a conclusive replacement claim refines
+        the source revision normally and makes all real outputs pending again.
+        """
+
+        self._require_owner()
+        if not isinstance(source_revision, TrustedSourceRevision):
+            raise TypeError("source_revision must be a TrustedSourceRevision.")
+        if work.key.kind is not TrustedWorkKind.METADATA:
+            raise ValueError("Only metadata work can be parked progressively.")
+        if not self.is_current_claim(work):
+            return CompletionDisposition.STALE
+
+        self._running.pop(work.claim_id)
+        self._running_slots.remove((work.run_index, work.key.kind))
+        self._revision_overrides[work.run_index] = source_revision
+        prior_mask = self._completion_masks[work.run_index]
+        self._completed_count -= (prior_mask & _WORK_COMPLETION_MASK).bit_count()
+        parked_mask = _WORK_COMPLETION_MASK | _PROGRESSIVE_METADATA_PARKED_BIT
+        self._completion_masks[work.run_index] = parked_mask
+        self._completed_count += len(_WORK_KINDS)
+        self._reset_cursors()
+        self._transition(work, TrustedWorkState.RUNNING, TrustedWorkState.COMPLETED)
+        return CompletionDisposition.ACCEPTED
+
+    def unpark_progressive_metadata(
+        self,
+        work: ScheduledWork,
+    ) -> CompletionDisposition:
+        """Release only this run's image dependency after conclusive metadata."""
+
+        self._require_owner()
+        if work.key.kind is not TrustedWorkKind.METADATA:
+            raise ValueError("Only metadata work can finish a progressive proof.")
+        if not self.is_current_claim(work):
+            return CompletionDisposition.STALE
+        if not (
+            self._completion_masks[work.run_index] & _PROGRESSIVE_METADATA_PARKED_BIT
+        ):
+            return CompletionDisposition.ACCEPTED
+        self._completion_masks[work.run_index] &= ~_PROGRESSIVE_METADATA_PARKED_BIT
+        for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW):
+            bit = self._kind_bit(kind)
+            if self._completion_masks[work.run_index] & bit:
+                self._completion_masks[work.run_index] &= ~bit
+                self._completed_count -= 1
+        self._reset_cursors()
         return CompletionDisposition.ACCEPTED
 
     def update_source_revision(
@@ -590,7 +796,9 @@ class TrustedWorkScheduler:
             work for work in self._running.values() if work.run_index == run_index
         )
         self._revision_overrides[run_index] = source_revision
-        self._completed_count -= self._completion_masks[run_index].bit_count()
+        self._completed_count -= (
+            self._completion_masks[run_index] & _WORK_COMPLETION_MASK
+        ).bit_count()
         self._completion_masks[run_index] = 0
         transitions = self._remove_claims(affected)
         self._reset_cursors()
@@ -613,6 +821,11 @@ class TrustedWorkScheduler:
         self._formats[kind] = work_format
         bit = self._kind_bit(kind)
         for index, mask in enumerate(self._completion_masks):
+            if (
+                mask & _PROGRESSIVE_METADATA_PARKED_BIT
+                and kind is not TrustedWorkKind.METADATA
+            ):
+                continue
             if mask & bit:
                 self._completion_masks[index] &= ~bit
                 self._completed_count -= 1
@@ -656,6 +869,10 @@ class TrustedWorkScheduler:
             or not 0 <= run_index < len(self._runs)
             or self._runs[run_index].run_guid != run_guid
             or (run_index, kind) in self._running_slots
+            or (
+                self._completion_masks[run_index] & _PROGRESSIVE_METADATA_PARKED_BIT
+                and kind is not TrustedWorkKind.METADATA
+            )
         ):
             return False
         bit = self._kind_bit(kind)
@@ -762,6 +979,22 @@ class TrustedWorkScheduler:
             return TrustedWorkState.COMPLETED
         return TrustedWorkState.PENDING
 
+    def metadata_is_conclusive(self, run_index: int) -> bool:
+        """Return whether this run's current source has unblocked image work."""
+
+        self._require_owner()
+        self._validate_run_index(run_index)
+        return bool(self._completion_masks[run_index] & _METADATA_CONCLUSIVE_BIT)
+
+    def metadata_is_progressively_parked(self, run_index: int) -> bool:
+        """Return whether images remain hidden behind progressive metadata."""
+
+        self._require_owner()
+        self._validate_run_index(run_index)
+        return bool(
+            self._completion_masks[run_index] & _PROGRESSIVE_METADATA_PARKED_BIT
+        )
+
     def snapshot(self) -> SchedulerSnapshot:
         self._require_owner()
         next_candidate = None
@@ -789,10 +1022,16 @@ class TrustedWorkScheduler:
         self,
         *,
         advance: bool,
+        admissible: Callable[[int, TrustedWorkKind], bool] | None = None,
     ) -> tuple[TrustedRunTier, TrustedWorkKind, int] | None:
         for tier in _RUN_TIERS:
             for kind in _WORK_KINDS:
-                run_index = self._lane_candidate(tier, kind, advance=advance)
+                run_index = self._lane_candidate(
+                    tier,
+                    kind,
+                    advance=advance,
+                    admissible=admissible,
+                )
                 if run_index is not None:
                     return tier, kind, run_index
         return None
@@ -803,6 +1042,7 @@ class TrustedWorkScheduler:
         kind: TrustedWorkKind,
         *,
         advance: bool,
+        admissible: Callable[[int, TrustedWorkKind], bool] | None = None,
     ) -> int | None:
         cursor = self._lane_cursors[(tier, kind)]
         if tier is TrustedRunTier.SELECTED:
@@ -821,6 +1061,8 @@ class TrustedWorkScheduler:
         bit = self._kind_bit(kind)
         for index in candidates:
             if self._tier_for_index(index) is not tier:
+                continue
+            if admissible is not None and not admissible(index, kind):
                 continue
             if self._completion_masks[index] & bit:
                 continue

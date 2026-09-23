@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from qplot.datahandling.file_identity import DatabaseInstance
 from qplot.datahandling.trusted_live import TrustedQuery, TrustedQueryResult
 from qplot.datahandling.trusted_live_queries import (
     TRUSTED_DERIVED_MAX_SAMPLE_ROWS,
+    Trusted2DGridLayout,
     TrustedMetadataQueryAdapter,
     TrustedSourceRevisionNamespace,
     trusted_derived_source_revision,
@@ -187,6 +191,121 @@ def test_revision_separates_database_prefix_and_helper_incarnation(
     )
 
     assert trusted_derived_source_revision(changed) != first
+
+
+def test_progressive_cursor_is_validated_and_part_of_source_revision(
+    tmp_path: Path,
+) -> None:
+    executor = _Executor()
+    adapter = _DerivedAdapter(executor, tmp_path / "progress.db")
+    adapter._runs[1] = {  # type: ignore[attr-defined]
+        "guid": "guid-1",
+        "result_table_name": "results",
+        "result_count": 1,
+    }
+    adapter._result_columns["results"] = (  # type: ignore[attr-defined]
+        "id",
+        "x",
+        "signal",
+    )
+    observation = adapter.derived_source_observation(
+        1,
+        database_instance=DatabaseInstance(
+            "/data/progress.db",
+            "/data/progress.db",
+            (1, 3),
+        ),
+        namespace=TrustedSourceRevisionNamespace(b"progress"),
+    )
+
+    first = replace(
+        observation,
+        progressive_layout_pending=True,
+        progressive_layout_cursor=4_096,
+    )
+    second = replace(first, progressive_layout_cursor=8_192)
+
+    assert trusted_derived_source_revision(first) != trusted_derived_source_revision(
+        second
+    )
+    with pytest.raises(ValueError, match="progress cursor"):
+        replace(observation, progressive_layout_cursor=1)
+    with pytest.raises(ValueError, match="progress cursor"):
+        replace(observation, progressive_layout_pending=True)
+
+
+def test_live_interleaved_layout_growth_changes_render_source_revision(
+    tmp_path: Path,
+) -> None:
+    executor = _Executor()
+    adapter = _DerivedAdapter(executor, tmp_path / "interleaved.db")
+    adapter._runs[1] = {  # type: ignore[attr-defined]
+        "guid": "guid-1",
+        "result_table_name": "results",
+        "result_count": 1,
+    }
+    adapter._result_columns["results"] = (  # type: ignore[attr-defined]
+        "id",
+        "x",
+        "signal",
+    )
+    observation = adapter.derived_source_observation(
+        1,
+        database_instance=DatabaseInstance(
+            "/data/interleaved.db",
+            "/data/interleaved.db",
+            (1, 4),
+        ),
+        namespace=TrustedSourceRevisionNamespace(b"interleaved"),
+    )
+
+    def layouts(slow_count: int) -> tuple[Trusted2DGridLayout, ...]:
+        return tuple(
+            Trusted2DGridLayout(
+                dependent=dependent,
+                dependencies=("slow", "fast"),
+                shape=(slow_count, 861),
+                fast_axis_index=1,
+                first_row_id=phase,
+                fast_id_stride=2,
+                slow_id_stride=1_722,
+                sample_slow_indexes=(0, 1, slow_count - 2, slow_count - 1),
+                sample_fast_indexes=(0, 1, 859, 860),
+                slow_reversed=False,
+                fast_reversed=False,
+                serpentine=False,
+                complete=False,
+                source="observed",
+            )
+            for dependent, phase in (("signal", 1), ("signal_2", 2))
+        )
+
+    initial = replace(
+        observation,
+        result_columns=("id", "slow", "fast", "signal", "signal_2"),
+        result_watermark=107 * 861 * 2,
+        dependent_parameters=("signal", "signal_2"),
+        planned_shape=(107, 861),
+        sample_columns=("id", "slow", "fast", "signal", "signal_2"),
+        sample_rows=(),
+        validated_2d_layouts=layouts(107),
+    )
+    appended = replace(
+        initial,
+        result_watermark=108 * 861 * 2,
+        planned_shape=(108, 861),
+        validated_2d_layouts=layouts(108),
+    )
+
+    assert len(initial.validated_2d_layouts) == 2
+    assert all(not layout.complete for layout in initial.validated_2d_layouts)
+    assert {layout.dependent for layout in appended.validated_2d_layouts} == {
+        "signal",
+        "signal_2",
+    }
+    assert trusted_derived_source_revision(initial) != trusted_derived_source_revision(
+        appended
+    )
 
 
 def test_sampling_windows_do_not_depend_on_cached_expensive_result_count(
