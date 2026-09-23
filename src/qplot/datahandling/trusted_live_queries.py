@@ -111,6 +111,9 @@ _BASIC_RUN_COLUMNS = (
     "result_table_name",
 )
 _DEFERRED_BASIC_RUN_COLUMNS = ("parameters", "run_description")
+# Small descriptions can supply placeholder labels in the initial bounded page.
+# Larger descriptions remain deferred; no result-table sampling is needed here.
+_TRUSTED_PLACEHOLDER_DESCRIPTION_MAX_BYTES = 2048
 _OPTIONAL_BASIC_RUN_COLUMNS = ("measurement_exception",)
 _OBSERVED_SHAPE_FIELDS = (
     "point_shape",
@@ -1701,6 +1704,9 @@ class TrustedMetadataQueryAdapter:
         for name in authoritative_fields:
             if name != "run_id" and name in fresh:
                 merged[name] = fresh[name]
+        if fresh.get("preview_dimensions"):
+            for name in ("preview_dimensions", "measure_parameters", "sweep_parameters"):
+                merged[name] = fresh[name]
         merged = _materialize_refreshed_basic_fields(merged, cached)
         unavailable_fields = tuple(
             dict.fromkeys(
@@ -2705,6 +2711,12 @@ class TrustedMetadataQueryAdapter:
                 )
             run_expressions.append(f"{source} AS {quoted}")
         run_select = ", ".join(run_expressions)
+        if "run_description" in run_columns:
+            run_select += (
+                ', CASE WHEN octet_length(runs."run_description") <= '
+                f'{_TRUSTED_PLACEHOLDER_DESCRIPTION_MAX_BYTES} '
+                'THEN runs."run_description" ELSE NULL END AS "run_description"'
+            )
         experiment_expressions = []
         for source_name, alias in (
             ("name", "exp_name"),
@@ -2906,6 +2918,25 @@ class TrustedMetadataQueryAdapter:
             prior = raw_run_id
             values["database_modified_timestamp"] = modified
             materialized = materialize_run_basic_fields(values)
+            description = _json_object(values.get("run_description"))
+            interdependencies = description.get("interdependencies_", {})
+            dependencies = (
+                interdependencies.get("dependencies", {})
+                if isinstance(interdependencies, dict) else {}
+            )
+            dimensions = {
+                name: len(axes)
+                for name, axes in dependencies.items()
+                if name in materialized.get("measure_parameters", ())
+                and isinstance(axes, list) and axes
+                and all(isinstance(axis, str) for axis in axes)
+            } if isinstance(dependencies, dict) else {}
+            materialized["preview_dimensions"] = [
+                dimensions.get(name)
+                for name in materialized.get("measure_parameters", ())
+            ]
+            # Retain only compact derived labels, not per-run source documents.
+            materialized.pop("run_description", None)
             records.append(TrustedRunRecord(raw_run_id, _freeze_fields(materialized)))
         return records
 

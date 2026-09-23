@@ -65,6 +65,7 @@ _SELECTED_RUN_FIELDS = (
     "expected_results",
     "expected_results_source",
     "measure_parameters",
+    "preview_dimensions",
     "measurement_exception",
     "parameters_truncated",
     "point_shape",

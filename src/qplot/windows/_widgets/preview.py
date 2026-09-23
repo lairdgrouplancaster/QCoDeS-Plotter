@@ -1114,6 +1114,19 @@ class PreviewTab(qtw.QWidget):
 
     def _show_message(self, message, tooltip=None):
         self._clear_layout()
+        if message in ("Generating preview...", "Retrying preview..."):
+            metadata = self.run_metadata.get(self.current_guid, {})
+            for dimension in preview_placeholder_dimensions(metadata) or [None]:
+                placeholder = qtw.QLabel(f"{dimension}D" if dimension else "")
+                placeholder.setObjectName("previewPlaceholder")
+                placeholder.setFixedSize(self.preview_size, self.preview_size)
+                placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                placeholder.setFrameShape(qtw.QFrame.Shape.Box)
+                placeholder.setToolTip(message)
+                placeholder.setAccessibleName(
+                    f"{dimension}D preview pending" if dimension else "Preview pending"
+                )
+                self.content_layout.addWidget(placeholder)
         label = qtw.QLabel(message)
         label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         label.setMinimumHeight(120)
@@ -2710,6 +2723,33 @@ def _rows_to_float_arrays(rows, column_count):
                 values.append(np.nan)
         columns.append(np.asarray(values, dtype=float))
     return columns
+
+
+def preview_placeholder_dimensions(metadata):
+    """Use known per-measurement dependencies, never guess from global axes."""
+    dimensions = metadata.get("preview_dimensions")
+    if isinstance(dimensions, (list, tuple)):
+        return [value if type(value) is int and value > 0 else None for value in dimensions]
+    if dimensions is None:
+        dimensions = {}
+        raw_description = metadata.get("run_description")
+        description = (
+            raw_description if isinstance(raw_description, dict)
+            else _json_dict(raw_description)
+        )
+        interdependencies = description.get("interdependencies_", {})
+        dependencies = (
+            interdependencies.get("dependencies", {})
+            if isinstance(interdependencies, dict) else {}
+        )
+        if not dependencies:
+            dependencies = _legacy_dependencies(description)
+        if isinstance(dependencies, dict):
+            dimensions = {
+                name: len(axes) for name, axes in dependencies.items()
+                if isinstance(axes, (list, tuple))
+            }
+    return [dimensions.get(name) for name in metadata.get("measure_parameters") or []]
 
 
 def _dependencies_from_metadata(metadata):

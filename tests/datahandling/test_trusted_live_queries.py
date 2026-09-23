@@ -493,6 +493,9 @@ class _FakeExecutor:
                     projected.append("experiment one")
                 elif alias == "sample_name":
                     projected.append("sample one")
+                elif alias == "run_description":
+                    value = run[alias]
+                    projected.append(value if len(value.encode("utf-8")) <= 2048 else None)
                 else:
                     projected.append(run[alias])
             rows.append(tuple(projected))
@@ -859,10 +862,27 @@ def test_basic_run_list_is_paged_without_accessing_any_result_table(tmp_path):
         for query in executor.queries
         for run in executor.runs.values()
     )
-    assert records[0].as_dict()["measure_parameters"] == []
-    assert records[0].as_dict()["sweep_parameters"] == []
-    assert all("run_description" not in query.sql for query in page_queries)
+    assert records[0].as_dict()["measure_parameters"] == ["signal"]
+    assert records[0].as_dict()["sweep_parameters"] == ["x", "y"]
+    assert records[0].as_dict()["preview_dimensions"] == [2]
+    assert "run_description" not in records[0].as_dict()
+    assert all('octet_length(runs."run_description") <= 2048' in query.sql for query in page_queries)
     assert all('runs."parameters"' not in query.sql for query in page_queries)
+
+
+def test_placeholder_description_is_optional_bounded_and_not_retained(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1, 2, 3))
+    executor.runs[1]["run_description"] = "x" * 2049
+    executor.runs[2]["run_description"] = "{malformed"
+    executor.runs[3]["run_description"] = json.dumps({
+        "interdependencies_": {"dependencies": {"signal": ["x"]}}
+    })
+    header = adapter.bootstrap()
+    records = _load_basic_pages(adapter, 0, header.run_id_watermark)
+    assert not records[0].as_dict()["preview_dimensions"]
+    assert not records[1].as_dict()["preview_dimensions"]
+    assert records[2].as_dict()["preview_dimensions"] == [1]
+    assert all("run_description" not in record.as_dict() for record in records)
 
 
 def test_refresh_reconciles_same_version_when_data_version_respawns_helper(tmp_path):

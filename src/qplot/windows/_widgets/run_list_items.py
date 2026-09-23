@@ -2,7 +2,9 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._run_formatting import one_dimensional_duplicate_point_count, run_tooltip_text
-from .preview import DraggablePreviewImageLabel, unsupported_preview_label
+from .preview import (
+    DraggablePreviewImageLabel, preview_placeholder_dimensions, unsupported_preview_label,
+)
 
 MEASUREMENT_PREVIEW_SIZE = 22
 MEASUREMENT_PREVIEW_SPACING = 3
@@ -35,6 +37,7 @@ class RunPreviewCell(qtw.QWidget):
         self.icon_size = int(icon_size)
         self._generating = False
         self._has_rendered_previews = False
+        self._placeholder_dimensions = []
 
         self.content_layout = qtw.QHBoxLayout()
         self.content_layout.setContentsMargins(2, 0, 2, 0)
@@ -104,7 +107,7 @@ class RunPreviewCell(qtw.QWidget):
             self.content_layout.addWidget(label)
             preview_count += 1
 
-        for index in range(max(0, self.placeholder_count - preview_count)):
+        for index in range(preview_count, self.placeholder_count):
             self.content_layout.addWidget(self._placeholder_label(index))
         self.content_layout.addStretch()
         self._has_rendered_previews = preview_count > 0
@@ -127,8 +130,23 @@ class RunPreviewCell(qtw.QWidget):
             label.setToolTip("")
 
 
+    def update_placeholder_metadata(self, metadata):
+        dimensions = preview_placeholder_dimensions(metadata)
+        if dimensions != self._placeholder_dimensions:
+            self._placeholder_dimensions = dimensions
+            if not self._has_rendered_previews:
+                self.show_placeholders()
+
+
     def _placeholder_label(self, index=0, generating=False):
         label = qtw.QLabel()
+        dimensions = self._placeholder_dimensions
+        dimension = dimensions[index] if index < len(dimensions) else None
+        label.setText(f"{dimension}D" if dimension else "")
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        font = label.font()
+        font.setPointSize(8)
+        label.setFont(font)
         label.setObjectName("measurementPreviewPlaceholder")
         label.setFixedSize(self.icon_size, self.icon_size)
         label.setFrameShape(qtw.QFrame.Shape.Box)

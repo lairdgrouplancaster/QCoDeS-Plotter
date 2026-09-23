@@ -895,11 +895,19 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         current_run = dict(getattr(item, "run_metadata", {}) or {})
         run_fields = self._preserve_newer_live_facts(current_run, run_fields)
         parameters = self._parameter_views(metadata.get("parameters"))
+        dimensions = {
+            parameter.name: len(parameter.depends_on)
+            for parameter in parameters if parameter.depends_on
+        }
+        run_fields["preview_dimensions"] = [
+            dimensions.get(name) for name in run_fields.get("measure_parameters", ())
+        ]
         summaries = self._setpoint_summaries(metadata.get("setpoint_summaries"))
         self._metadata_by_guid[guid] = dict(metadata)
         self._parameters_by_guid[guid] = parameters
         self._summaries_by_guid[guid] = summaries
         self._window.RunList.updateRuns({run_id: run_fields})
+        self._window.infoBox.preview.add_trusted_derived_runs({run_id: run_fields})
         if guid != getattr(self._window, "_selected_run_guid", None):
             return
         retained = self._selected_detail_publication

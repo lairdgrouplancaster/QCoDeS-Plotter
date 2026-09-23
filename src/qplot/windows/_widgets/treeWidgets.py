@@ -627,6 +627,8 @@ class RunList(qtw.QTreeWidget):
             self._set_measurement_preview_cell(item, measurement_count)
         elif not self._preview_widgets_enabled:
             self._set_compact_measurement_cell(item, measurement_count)
+        elif cell is not None:
+            cell.update_placeholder_metadata(metadata)
 
         setpoints_col = self.cols.index("Setpoints")
         item.setText(setpoints_col, format_point_count(metadata))
@@ -736,6 +738,7 @@ class RunList(qtw.QTreeWidget):
     def _set_measurement_preview_cell(self, item, measurement_count):
         column = self.cols.index("Measurements")
         cell = RunPreviewCell(item.guid, measurement_count, self)
+        cell.update_placeholder_metadata(item.run_metadata)
         cell.plotRequested.connect(self._preview_plot_requested)
         cell.exportRequested.connect(self._preview_export_requested)
         accessible_text = self._measurement_accessible_text(
