@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
+from collections import deque
 from pathlib import Path
 from unittest.mock import patch
 
@@ -276,7 +278,31 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
                     and bridge.coordinator.snapshot().pending_count == 0
                 )
             )
-            latest_first_run = _start_live_run(first_writer, "first_new")
+            writer_trace = deque(maxlen=12)
+            first_writer.set_trace_callback(writer_trace.append)
+            try:
+                latest_first_run = _start_live_run(first_writer, "first_new")
+            except Exception as error:
+                causes = []
+                cause = error
+                while cause is not None:
+                    causes.append((
+                        type(cause).__name__,
+                        str(cause),
+                        getattr(cause, "sqlite_errorname", None),
+                        getattr(cause, "sqlite_errorcode", None),
+                    ))
+                    cause = cause.__cause__
+                raise AssertionError({
+                    "sqlite_version": sqlite3.sqlite_version,
+                    "causes": causes,
+                    "writer_trace": list(writer_trace),
+                    "journal_mode": first_writer.execute("PRAGMA journal_mode").fetchone(),
+                    "reader_liveness": window._trusted_read_service._required_supervisor().resource_liveness(),
+                    "refresh_active": window._database_refresh_active,
+                }) from error
+            finally:
+                first_writer.set_trace_callback(None)
             window.refreshMain()
             _process_until(lambda: window.RunList.topLevelItemCount() == 3)
             assert (errors, logged_errors) == ([], [])

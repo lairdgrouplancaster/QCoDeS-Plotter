@@ -4415,11 +4415,15 @@ def test_public_run_returns_70_on_authenticated_malformed_result(
     malformed_launcher_source = textwrap.dedent(
         """
         import os
+        import socket
         from qplot import _shutdown_supervisor as supervisor
 
         bootstrap = supervisor._api_launcher_bootstrap_from_environment()
         channel = supervisor._connect_public_api_result_channel(bootstrap)
         channel.sendall(b"!" * supervisor._API_RESULT_HEADER.size)
+        # Match production publication: commit the queued header and FIN before
+        # ExitProcess can reset Winsock and discard the malformed test frame.
+        channel.shutdown(socket.SHUT_WR)
         os._exit(24)
         """
     )
