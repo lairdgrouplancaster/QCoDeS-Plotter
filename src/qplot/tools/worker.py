@@ -361,8 +361,13 @@ class loader(QtCore.QRunnable):
                 self._check_cancelled()
                 depvarData = data[self.param.name]
 
+                # A QCoDeS array record adds a storage dimension, not an
+                # independent setpoint. Select the plot by declared axes.
+                if len(self.param.depends_on_) == 1:
+                    axis_data, axis_param = self.for_1d(data, ~np.isnan(depvarData))
+
                 # for shaped 2d plots
-                if len(depvarData.shape) == 2:
+                elif len(depvarData.shape) == 2:
                     (
                         axis_data,
                         axis_param,
@@ -376,26 +381,16 @@ class loader(QtCore.QRunnable):
                     #Remove nan values
                     valid_rows = ~np.isnan(depvarData)
 
-                    # for 1d plots
-                    if len(self.param.depends_on_) == 1:
-                        (
-                            axis_data,
-                            axis_param
-                        ) = self.for_1d(
-                            data,
-                            valid_rows
-                            )
-                    # for >2d plots/unshaped 2d
-                    else:
-                        (
-                            axis_data,
-                            axis_param,
-                            dataGrid
-                        ) = self.for_unshaped_2d(
-                            data,
-                            valid_rows,
-                            depvarData
-                            )
+                    # for unshaped 2d plots
+                    (
+                        axis_data,
+                        axis_param,
+                        dataGrid
+                    ) = self.for_unshaped_2d(
+                        data,
+                        valid_rows,
+                        depvarData
+                        )
 
                 # Allow main to fetch data
                 self.axis_data = axis_data
@@ -1472,18 +1467,29 @@ class loader(QtCore.QRunnable):
         self._check_cancelled()
         axis_data = {}
         axis_param = {}
-        dict_labels = list(data.keys())
-        
-        x_name =  self.axes_dict["x"]
-        axis_data["x"] = data[x_name][valid_rows]
+        x_name = self.axes_dict["x"]
+        y_name = (
+            self.param.name
+            if x_name != self.param.name
+            else self.param.depends_on_[0]
+        )
+        # Flatten both arrays with the same mask in QCoDeS record order.
+        # Sorting or uniquing either axis would break sample alignment.
+        x_values = np.asarray(data[x_name])
+        y_values = np.asarray(data[y_name])
+        if x_values.shape != y_values.shape:
+            raise ValueError("1D setpoint and measurement shapes do not match")
+        valid_rows = (
+            np.asarray(valid_rows)
+            & ~np.isnan(x_values)
+            & ~np.isnan(y_values)
+        )
+        axis_data["x"] = x_values[valid_rows].reshape(-1)
         self._check_cancelled()
         axis_param["x"] = self.param_dict[x_name]
-        
-        # get other value
-        index = 1 if dict_labels[0] == x_name else 0
-        axis_data["y"] = data[dict_labels[index]][valid_rows]
+        axis_data["y"] = y_values[valid_rows].reshape(-1)
         self._check_cancelled()
-        axis_param["y"] = self.param_dict[dict_labels[index]]
+        axis_param["y"] = self.param_dict[y_name]
         
         return axis_data, axis_param
         
