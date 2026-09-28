@@ -512,15 +512,22 @@ class loader(QtCore.QRunnable):
         if setpoint_count is None:
             return False
 
+        return self._requires_bounded_heatmap(setpoint_count)
+
+
+    def _requires_bounded_heatmap(self, point_count):
+        """Reject full-resolution operations before allocating a large grid."""
+
+        self._check_cancelled()
         limit = max(1, int(getattr(
             self,
             "max_full_heatmap_points",
             MAX_FULL_HEATMAP_POINTS,
             )))
-        requires_bounded_load = setpoint_count > limit
+        requires_bounded_load = point_count > limit
         if requires_bounded_load and getattr(self, "operations", None):
             raise OperationExecutionError(
-                f"This heatmap has approximately {setpoint_count:,} points, "
+                f"This heatmap requires {point_count:,} full-resolution points, "
                 f"which exceeds the full-resolution operation limit of {limit:,}. "
                 "Disable operations or increase max_full_heatmap_points."
                 )
@@ -1017,10 +1024,16 @@ class loader(QtCore.QRunnable):
             y_data,
             z_data,
             *,
-            max_cells=MAX_SQL_HEATMAP_GRID_CELLS,
+            max_cells=None,
             ):
         self._check_cancelled()
-        max_cells = max(1, int(max_cells))
+        display_limit = max(1, int(getattr(
+            self, "max_heatmap_grid_cells", MAX_SQL_HEATMAP_GRID_CELLS,
+            )))
+        max_cells = (
+            display_limit if max_cells is None
+            else max(1, min(int(max_cells), display_limit))
+            )
         if z_data.size == 0:
             self._heatmap_grid_info = {
                 "unique_x_count": 0,
@@ -1067,7 +1080,9 @@ class loader(QtCore.QRunnable):
 
         if (
                 not getattr(self, "sampled_heatmap_source", False)
-                and exact_cells <= max_cells
+                and self._bounded_grid_shape(
+                    unique_x.size, unique_y.size, max_cells=max_cells,
+                    ) == (unique_x.size, unique_y.size)
                 ):
             x_axis, y_axis, data_grid = self._unique_heatmap_grid(
                 x_data,
@@ -1386,7 +1401,7 @@ class loader(QtCore.QRunnable):
 
 
     def _grid_axis_bounds(self, axis):
-        ranges = self.heatmap_axis_ranges or {}
+        ranges = getattr(self, "heatmap_axis_ranges", None) or {}
         axis_range = ranges.get(axis)
         if axis_range is None:
             return None
@@ -1531,6 +1546,9 @@ class loader(QtCore.QRunnable):
         if (
                 not shaped_axes_are_rectilinear
                 or axis_dimension["x"] == axis_dimension["y"]
+                or self._requires_bounded_heatmap(
+                    int(axis_data["x"].size) * int(axis_data["y"].size)
+                    )
                 ):
             valid_rows = np.isfinite(depvarData)
             for axis in ("x", "y"):
@@ -1654,11 +1672,48 @@ class loader(QtCore.QRunnable):
             # Update data
             axis_data[axis] = data[name][valid_rows]
             axis_param[axis] = param
-            
+
+        x_data, y_data, z_data = self._arrays_from_values(
+            axis_data["x"], axis_data["y"], depvarData[valid_rows],
+            )
+        # Source rows and planned shapes do not bound a pivot: even a short
+        # diagonal scan creates unique-X * unique-Y cells. Count only paired,
+        # valid samples, including when a shaped scan falls back to this path.
+        x_count = int(np.unique(x_data).size)
+        self._check_cancelled()
+        y_count = int(np.unique(y_data).size)
+        self._check_cancelled()
+        if self._requires_bounded_heatmap(x_count * y_count):
+            self.heatmap_source_grid_shape = (y_count, x_count)
+            self.heatmap_source_axis_ranges = {
+                "x": (float(np.min(x_data)), float(np.max(x_data))),
+                "y": (float(np.min(y_data)), float(np.max(y_data))),
+                }
+            self.sampled_heatmap_source = False
+            self.aggregated_heatmap_source = False
+            x_axis, y_axis, data_grid = self._heatmap_grid_from_arrays(
+                x_data, y_data, z_data,
+                max_cells=getattr(
+                    self, "max_full_heatmap_points", MAX_FULL_HEATMAP_POINTS,
+                    ),
+                )
+            self.loaded_point_count = int(z_data.size)
+            self._heatmap_aggregated_source_rows = int(z_data.size)
+            self._heatmap_source_info = {
+                "row_count": int(z_data.size),
+                "estimated_range_rows": int(z_data.size),
+                "sampled": False,
+                "aggregated": True,
+                "strategy": "spatial mean",
+                "axis_ranges": None,
+                }
+            self.heatmap_downsample_info = self._heatmap_downsample_info()
+            return {"x": x_axis, "y": y_axis}, axis_param, data_grid
+
         dataGrid = data2matrix(
-                axis_data["y"], 
-                axis_data["x"], 
-                depvarData[valid_rows]
+                y_data,
+                x_data,
+                z_data,
             )
         self._check_cancelled()
         
