@@ -28,6 +28,8 @@ class _Config:
             "user_preference.confirm_close": True,
             "runtime_settings.max_threads": 2,
             "runtime_settings.max_full_heatmap_points": 1000,
+            "runtime_settings.max_heatmap_grid_cells": 250000,
+            "runtime_settings.max_heatmap_grid_side": 800,
             "runtime_settings.del_grace_period": 1.0,
             "runtime_settings.cloud_sync_timeout": 1.0,
         }

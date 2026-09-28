@@ -164,6 +164,97 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(persisted["user_preference"]["axis_major_tick_count"], 3)
         self.assertNotIn("axis_tick_density", persisted["user_preference"])
 
+    def test_existing_config_is_migrated_with_heatmap_grid_limits(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["user_preference"].update({
+            "theme": "dark",
+            "default_refresh_rate": 4.0,
+            })
+        stored_config["file"]["default_load_path"] = "/custom/qcodes/path"
+        del stored_config["runtime_settings"]["max_heatmap_grid_cells"]
+        del stored_config["runtime_settings"]["max_heatmap_grid_side"]
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+
+        migrated = config()
+
+        self.assertEqual(migrated.get("user_preference.theme"), "dark")
+        self.assertEqual(migrated.get("user_preference.default_refresh_rate"), 4.0)
+        self.assertEqual(migrated.get("file.default_load_path"), "/custom/qcodes/path")
+        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
+        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 800)
+        self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+
+        persisted = json.loads(Path(config.default_file).read_text(encoding="utf-8"))
+        self.assertEqual(persisted["file"]["default_load_path"], "/custom/qcodes/path")
+        self.assertEqual(
+            persisted["runtime_settings"]["max_heatmap_grid_cells"],
+            250_000,
+            )
+        self.assertEqual(
+            persisted["runtime_settings"]["max_heatmap_grid_side"],
+            800,
+            )
+
+    def test_heatmap_grid_migration_preserves_existing_values(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["runtime_settings"].update({
+            "max_heatmap_grid_cells": 1234,
+            "max_heatmap_grid_side": 56,
+            })
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+
+        migrated = config()
+
+        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 1234)
+        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 56)
+        self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+
+    def test_heatmap_grid_migration_save_failure_keeps_valid_config_in_memory(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        del stored_config["runtime_settings"]["max_heatmap_grid_cells"]
+        del stored_config["runtime_settings"]["max_heatmap_grid_side"]
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+        original_contents = Path(config.default_file).read_text(encoding="utf-8")
+
+        with (
+            patch.object(
+                config,
+                "save_config",
+                side_effect=PermissionError("simulated migration failure"),
+                ) as save_config,
+            patch("qplot.configuration.config.log_exception") as logged,
+            ):
+            migrated = config()
+
+            self.assertEqual(migrated.get("user_preference.theme"), "light")
+            self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
+            self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 800)
+            self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+            self.assertIsNotNone(migrated.startup_warning)
+            self.assertEqual(save_config.call_count, 1)
+            logged.assert_called_once_with(
+                f"Could not persist migrated configuration at {config.default_file}",
+                ANY,
+                "qplot.configuration.config",
+                )
+
+        self.assertEqual(
+            Path(config.default_file).read_text(encoding="utf-8"),
+            original_contents,
+            )
+
     def test_migration_save_failure_keeps_valid_config_in_memory(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)

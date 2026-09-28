@@ -407,20 +407,28 @@ class config:
         """Apply non-destructive migrations for newly introduced settings."""
 
         preferences = candidate.get("user_preference")
-        if not isinstance(preferences, dict):
-            return False
-
-        preference_schema = self.schema["properties"]["user_preference"]["properties"]
         migrated = False
-        # ``axis_tick_density`` was superseded by an explicit target because
-        # PyQtGraph clamps density values and cannot produce sparse axes.
-        if preferences.pop("axis_tick_density", None) is not None:
-            migrated = True
 
-        for key in ("colorbar_width", "axis_tick_width", "axis_major_tick_count"):
-            if key not in preferences:
-                preferences[key] = deepcopy(preference_schema[key]["default"])
+        if isinstance(preferences, dict):
+            preference_schema = self.schema["properties"]["user_preference"]["properties"]
+            # ``axis_tick_density`` was superseded by an explicit target because
+            # PyQtGraph clamps density values and cannot produce sparse axes.
+            if preferences.pop("axis_tick_density", None) is not None:
                 migrated = True
+
+            for key in ("colorbar_width", "axis_tick_width", "axis_major_tick_count"):
+                if key not in preferences:
+                    preferences[key] = deepcopy(preference_schema[key]["default"])
+                    migrated = True
+
+        runtime_settings = candidate.get("runtime_settings")
+        if isinstance(runtime_settings, dict):
+            runtime_schema = self.schema["properties"]["runtime_settings"]["properties"]
+            for key in ("max_heatmap_grid_cells", "max_heatmap_grid_side"):
+                if key not in runtime_settings:
+                    runtime_settings[key] = deepcopy(runtime_schema[key]["default"])
+                    migrated = True
+
         return migrated
 
 
