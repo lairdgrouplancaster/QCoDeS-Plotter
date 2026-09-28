@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+from qcodes import Station
+from qcodes.parameters import ManualParameter
+from qcodes.utils.json_utils import NumpyJSONEncoder
+
 from qplot.datahandling.trusted_snapshot import (
     TRUSTED_SNAPSHOT_MAX_DEPTH,
     TRUSTED_SNAPSHOT_MAX_INPUT_BYTES,
@@ -9,6 +16,14 @@ from qplot.datahandling.trusted_snapshot import (
     TRUSTED_SNAPSHOT_MAX_RENDERED_TEXT_BYTES,
     normalize_trusted_snapshot,
 )
+
+
+def _qcodes_snapshot(value: float) -> str:
+    station = Station(
+        ManualParameter("sensor", initial_value=value),
+        ManualParameter("reference", initial_value=2.5),
+    )
+    return json.dumps({"station": station.snapshot(update=False)}, cls=NumpyJSONEncoder)
 
 
 def _rendered_bytes(view) -> int:
@@ -145,4 +160,81 @@ def test_parameter_aliases_are_extracted_into_bounded_plain_fields() -> None:
     assert parameters["gate"]["value"] == 2.5
     assert parameters["dac_gate"]["label"] == "Gate"
     assert parameters["dac_gate"]["post_delay"] == 0.1
+    _assert_bounded(view)
+
+
+@pytest.mark.parametrize(
+    ("value", "token"),
+    [(float("nan"), "NaN"), (float("inf"), "Infinity"), (float("-inf"), "-Infinity")],
+)
+def test_qcodes_nonfinite_station_parameter_keeps_snapshot_and_other_parameters(
+    value: float, token: str
+) -> None:
+    snapshot_json = _qcodes_snapshot(value)
+    assert f'"value": {token}' in snapshot_json
+
+    view = normalize_trusted_snapshot(snapshot_json)
+    parameters = {parameter.name: dict(parameter.fields) for parameter in view.parameters}
+
+    assert view.status == "available"
+    assert parameters["sensor"]["value"] == token
+    assert parameters["sensor"]["raw_value"] == token
+    assert parameters["reference"]["value"] == 2.5
+    assert ("value", token) in [(node.key, node.value) for node in view.nodes]
+    assert ("value", "2.5") in [(node.key, node.value) for node in view.nodes]
+    _assert_bounded(view)
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_tokens_work_in_nested_arrays_and_objects(token: str) -> None:
+    view = normalize_trusted_snapshot(
+        '{"station":{"metadata":{"samples":[' + token + ',{"again":' + token + '}]},'
+        '"parameters":{"reference":{"value":1.25}}}}'
+    )
+
+    assert view.status == "available"
+    assert sum(node.value == token for node in view.nodes) == 2
+    assert dict(view.parameters[0].fields)["value"] == 1.25
+    _assert_bounded(view)
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("suffix", ["x", "0", ".1", "_", "e2"])
+def test_nonfinite_tokens_require_a_value_boundary(token: str, suffix: str) -> None:
+    view = normalize_trusted_snapshot(
+        '{"station":{"parameters":{"sensor":{"value":'
+        + token + suffix + '},"reference":{"value":2.5}}}}'
+    )
+
+    assert view.status == "malformed"
+    assert view.parameters == ()
+    _assert_bounded(view)
+
+
+def test_finite_qcodes_station_parameter_remains_numeric() -> None:
+    view = normalize_trusted_snapshot(_qcodes_snapshot(-3.25))
+
+    assert view.status == "available"
+    assert dict(view.parameters[0].fields)["value"] == -3.25
+    assert ("value", "-3.25") in [(node.key, node.value) for node in view.nodes]
+    _assert_bounded(view)
+
+
+def test_nonfinite_values_do_not_bypass_snapshot_budgets() -> None:
+    token = "Infinity"
+    cases = (
+        ('{"nested":' * (TRUSTED_SNAPSHOT_MAX_DEPTH + 1) + token
+         + "}" * (TRUSTED_SNAPSHOT_MAX_DEPTH + 1), "nesting"),
+        ("[" + (token + ",") * TRUSTED_SNAPSHOT_MAX_RENDERED_NODES
+         + token + "]", "rendering"),
+    )
+    for snapshot_json, reason in cases:
+        view = normalize_trusted_snapshot(snapshot_json)
+        assert view.status == "truncated"
+        assert reason in view.message
+        _assert_bounded(view)
+
+    oversized = '["' + "x" * TRUSTED_SNAPSHOT_MAX_INPUT_BYTES + '",' + token + "]"
+    view = normalize_trusted_snapshot(oversized)
+    assert view.status == "unavailable"
     _assert_bounded(view)

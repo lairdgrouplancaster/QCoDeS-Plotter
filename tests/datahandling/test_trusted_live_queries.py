@@ -12,6 +12,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from qcodes import Station
+from qcodes.parameters import ManualParameter
+from qcodes.utils.json_utils import NumpyJSONEncoder
 
 from qplot.datahandling import trusted_live_queries as trusted_queries_module
 from qplot.datahandling.trusted_live import (
@@ -1626,6 +1629,37 @@ def test_parameter_view_source_iterators_stop_after_limit_probe(monkeypatch):
     assert parameters.yielded == TRUSTED_PRESENTATION_MAX_PARAMETERS + 1
     assert dependencies.yielded == (TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES + 1)
     assert len(views[0].depends_on) == (TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES)
+
+
+@pytest.mark.parametrize(
+    ("value", "token"),
+    [(float("nan"), "NaN"), (float("inf"), "Infinity"), (float("-inf"), "-Infinity")],
+)
+def test_selected_detail_keeps_qcodes_nonfinite_snapshot_parameters(
+    tmp_path, value: float, token: str
+) -> None:
+    station = Station(
+        ManualParameter("sensor", initial_value=value),
+        ManualParameter("reference", initial_value=2.5),
+    )
+    snapshot_json = json.dumps(
+        {"station": station.snapshot(update=False)}, cls=NumpyJSONEncoder
+    )
+    adapter, executor = _adapter(tmp_path, (1,))
+    executor.runs[1]["snapshot"] = snapshot_json
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    detail = adapter.selected_run_detail(1)
+    parameters = {
+        parameter.name: dict(parameter.fields)
+        for parameter in detail.snapshot.parameters
+    }
+
+    assert detail.snapshot.status == "available"
+    assert parameters["sensor"]["value"] == token
+    assert parameters["reference"]["value"] == 2.5
+    assert "snapshot" not in detail.unavailable_fields
 
 
 @pytest.mark.parametrize(

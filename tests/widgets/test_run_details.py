@@ -252,6 +252,25 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertNotIn("x" * 100, diagnostic.text(1))
         self.assertNotIn("x" * 100, diagnostic.toolTip(1))
 
+    def test_nonfinite_snapshot_values_render_in_both_detail_modes(self):
+        for token in ("NaN", "Infinity", "-Infinity"):
+            snapshot = normalize_trusted_snapshot(
+                '{"station":{"parameters":{"gate":{"value":'
+                + token + ',"label":"Gate"},"other":{"value":2.5}}}}'
+            )
+            detail = replace(
+                self._trusted_detail(), snapshot=snapshot, setpoint_summaries=()
+            )
+            for method_name in ("set_trusted_run_detail", "set_snapshot_run_detail"):
+                with self.subTest(token=token, method=method_name):
+                    widget = treeWidgets.moreInfo()
+                    getattr(widget, method_name)(detail)
+                    self.assertEqual(widget.parameters.item(1, 3).text(), token)
+                    self.assertEqual(widget.parameters.item(1, 4).text(), token)
+                    gate = widget.snapshot.topLevelItem(0).child(0).child(0)
+                    self.assertEqual(gate.child(0).text(1), token)
+                    self.assertEqual(gate.child(0).toolTip(1), token)
+
     def test_selected_presentation_bounds_all_qt_cells_before_publication(self):
         widget = treeWidgets.moreInfo()
         base_detail = self._trusted_detail()

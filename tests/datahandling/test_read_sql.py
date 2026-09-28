@@ -5,6 +5,10 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from qcodes import Station
+from qcodes.parameters import ManualParameter
+from qcodes.utils.json_utils import NumpyJSONEncoder
+
 from qplot.datahandling import readSQL
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES,
@@ -325,6 +329,56 @@ class RunSizeTestCase(unittest.TestCase):
                             detail.snapshot.input_bytes,
                             len(stored_snapshot.encode("utf-8")),
                         )
+
+    def test_snapshot_detail_keeps_qcodes_nonfinite_parameters(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = os.path.join(temp_dir, "nonfinite.db")
+            conn = sqlite3.connect(database_path)
+            try:
+                conn.execute(
+                    "CREATE TABLE runs (run_id INTEGER PRIMARY KEY, guid TEXT, snapshot TEXT)"
+                )
+                conn.execute(
+                    "CREATE TABLE layouts (layout_id INTEGER PRIMARY KEY, "
+                    "run_id INTEGER, parameter TEXT, label TEXT, unit TEXT, "
+                    "inferred_from TEXT)"
+                )
+                for run_id, value in enumerate(
+                    (float("nan"), float("inf"), float("-inf")), start=1
+                ):
+                    station = Station(
+                        ManualParameter("sensor", initial_value=value),
+                        ManualParameter("reference", initial_value=2.5),
+                    )
+                    snapshot_json = json.dumps(
+                        {"station": station.snapshot(update=False)},
+                        cls=NumpyJSONEncoder,
+                    )
+                    conn.execute(
+                        "INSERT INTO runs VALUES (?, ?, ?)",
+                        (run_id, f"guid-{run_id}", snapshot_json),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            for run_id, token in enumerate(("NaN", "Infinity", "-Infinity"), start=1):
+                with self.subTest(token=token):
+                    with patch.object(
+                        readSQL,
+                        "qcodes_read_only_connection",
+                        side_effect=self._read_only_sqlite_connection,
+                    ):
+                        detail = readSQL.get_snapshot_selected_run_detail(
+                            database_path, run_id, f"guid-{run_id}"
+                        )
+                    parameters = {
+                        parameter.name: dict(parameter.fields)
+                        for parameter in detail.snapshot.parameters
+                    }
+                    self.assertEqual(detail.snapshot.status, "available")
+                    self.assertEqual(parameters["sensor"]["value"], token)
+                    self.assertEqual(parameters["reference"]["value"], 2.5)
 
     def test_snapshot_selected_detail_discards_large_dynamic_and_raw_values(self):
         huge_label = "fallback-private-label-" * 30_000

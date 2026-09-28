@@ -299,6 +299,15 @@ class _BoundedSnapshotDecoder:
         for literal, literal_value, display in literals:
             if self.source.startswith(literal, position):
                 return literal_value, display, position + len(literal)
+        # QCoDeS uses NumpyJSONEncoder, whose JSON output may contain these
+        # non-standard numeric tokens.  Keep their spelling as text so the
+        # bounded view can cross the strict finite-only live IPC boundary.
+        for literal in ("NaN", "Infinity", "-Infinity"):
+            if self.source.startswith(literal, position):
+                end = position + len(literal)
+                if end == len(self.source) or self.source[end] in " \t\r\n,]}":
+                    return literal, literal, end
+                raise _SnapshotSyntaxError(end, "The JSON value is invalid.")
         match = _NUMBER.match(self.source, position)
         if match is None:
             raise _SnapshotSyntaxError(position, "The JSON value is invalid.")
