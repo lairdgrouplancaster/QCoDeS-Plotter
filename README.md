@@ -76,7 +76,7 @@ are implemented. See
 
 Install qPlot inside a Python 3.11 or newer virtual environment:
 The commands below install the latest full release, `1.5.0`. The current beta
-is `1.6.0-b1`; it is documented below but is not used for the default install.
+is `1.6.0b1`; it is documented below but is not used for the default install.
 
 ### Prelude
 #### Windows
@@ -112,7 +112,7 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 
 To test the latest beta, execute:
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.6.0-b1
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.6.0b1
 ```
 
 ### Troubleshooting

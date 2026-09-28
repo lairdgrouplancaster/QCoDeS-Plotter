@@ -871,7 +871,9 @@ class plot2d(
         layout = qtw.QVBoxLayout(dialog)
         content = qtw.QHBoxLayout()
         icon_label = qtw.QLabel(dialog)
-        icon = dialog.style().standardIcon(
+        style = dialog.style()
+        assert style is not None
+        icon = style.standardIcon(
             qtw.QStyle.StandardPixmap.SP_MessageBoxWarning
             )
         icon_label.setPixmap(icon.pixmap(64, 64))
@@ -889,9 +891,9 @@ class plot2d(
             qtw.QDialogButtonBox.StandardButton.Ok,
             dialog,
             )
-        preferences_button = button_box.addButton(
-            "Open Preferences…",
-            qtw.QDialogButtonBox.ButtonRole.ActionRole,
+        preferences_button = qtw.QPushButton("Open Preferences…", dialog)
+        button_box.addButton(
+            preferences_button, qtw.QDialogButtonBox.ButtonRole.ActionRole
             )
         preferences_button.setObjectName("openHeatmapLimitPreferencesButton")
         preferences_button.clicked.connect(

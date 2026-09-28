@@ -7,6 +7,8 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.6.0b1 - 2026-09-28
+
 ### Added
 
 - Add a complete trusted live-reader boundary that uses SQLite's
@@ -54,6 +56,22 @@ installation commands and release validation, see `docs/distribution.md`.
 - Build the native boundary in explicit C11 mode with MSVC and exercise installed
   reader wheels separately on ARM64 macOS, Intel macOS, Linux, and unprivileged
   Windows CI hosts before cross-platform acceptance.
+- Add configurable heatmap display grid limits to keep large Cartesian grids
+  within a bounded allocation budget.
+- Print the visible plot area through the system print dialog, including
+  page-formatted PDFs when it exposes a concrete PDF destination. PDF file
+  output is staged and atomically published; Save Plot as PDF remains the
+  plot-sized output path.
+- Make every run-table column optional and persistent from the header menu,
+  including Experiment, Sample, Name, Completed, and GUID, with horizontal
+  scrolling for wider layouts.
+
+### Changed
+
+- Replace legacy settings upgrades with one strict configuration format for
+  the new major version. Older or incomplete settings files are backed up and
+  reset to current defaults, and the recent-database list is now the single
+  source for restoring the last opened database.
 
 ### Fixed
 
@@ -144,28 +162,12 @@ installation commands and release validation, see `docs/distribution.md`.
 - Reject exponent-overflow and other untagged non-finite JSON numbers at the
   generic IPC boundary, with regressions for duplicate keys and aggregate
   collection limits while preserving tagged SQLite-real round trips.
-
-## 1.6.0-b1 - 2026-08-18
-
-### Added
-
-- Print the visible plot area through the system print dialog, including
-  page-formatted PDFs when it exposes a concrete PDF destination. PDF file
-  output is staged and atomically published; Save Plot as PDF remains the
-  plot-sized output path.
-- Make every run-table column optional and persistent from the header menu,
-  including Experiment, Sample, Name, Completed, and GUID, with horizontal
-  scrolling for wider layouts.
-
-### Changed
-
-- Replace legacy settings upgrades with one strict configuration format for
-  the new major version. Older or incomplete settings files are backed up and
-  reset to current defaults, and the recent-database list is now the single
-  source for restoring the last opened database.
-
-### Fixed
-
+- Preserve matching setpoint and value arrays when plotting one-dimensional
+  QCoDeS array measurements.
+- Export standalone QCoDeS measurements to CSV without requiring dependent
+  parameters, and retain correct ownership of action snapshots.
+- Handle non-finite values in QCoDeS snapshots without losing selected-run
+  details.
 - Bind generated-database WAL provenance to the exact checkpointed branch with
   a bounded parent-linked nonce chain. Provenance-aware QCoDeS writers cover
   later result tables, background writes, repeated checkpoints, and fresh qPlot
