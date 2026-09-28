@@ -1174,27 +1174,25 @@ def _sidecar_swap_fixture(tmp_path, name: str):
     return database_path, wal_path, replacement_wal, database_instance(database_path)
 
 
-def _selected_detail() -> TrustedSelectedRunDetail:
+def _selected_detail(*, run_id=7, count=12, completed=None) -> TrustedSelectedRunDetail:
+    fields = {
+        "guid": f"guid-{run_id}",
+        "name": "trusted run",
+        "result_count": count,
+    }
+    if completed is not None:
+        fields["is_completed"] = completed
     return TrustedSelectedRunDetail(
         run=TrustedRunRecord(
-            7,
-            (
-                ("guid", "guid-7"),
-                ("name", "trusted run"),
-                ("result_count", 12),
-            ),
+            run_id,
+            tuple(fields.items()),
         ),
         parameters=(),
         metadata=(),
         snapshot=normalize_trusted_snapshot(None),
         setpoint_summaries=(),
         presentation=build_selected_run_presentation(
-            run_fields={
-                "run_id": 7,
-                "guid": "guid-7",
-                "name": "trusted run",
-                "result_count": 12,
-            },
+            run_fields={"run_id": run_id, **fields},
             metadata_fields={},
             parameters=(),
             snapshot_summary={"Status": "empty"},
@@ -1202,6 +1200,164 @@ def _selected_detail() -> TrustedSelectedRunDetail:
             unavailable_fields=(),
         ),
     )
+
+
+@pytest.fixture
+def live_detail_refresh(monkeypatch):
+    class Harness(_SelectionHarness):
+        updateSelected = plot_actions.PlotActionsMixin.updateSelected
+
+        def _sync_empty_state(self):
+            pass
+
+    instance = _instance("detail-refresh.db", (1, 7))
+    harness = Harness(instance, _FakeService(instance))
+    harness.RunList = treeWidgets.RunList()
+    harness.RunList.addRuns({
+        run_id: {
+            **_selected_detail(run_id=run_id, completed=False).run.as_dict(),
+            "sweep_parameters": [],
+            "measure_parameters": ["signal"],
+        }
+        for run_id in (7, 8)
+    })
+    monkeypatch.setattr(database_actions, "database_instance", lambda path: instance)
+    monkeypatch.setattr(
+        database_actions, "DatabaseSelectedRunWorker",
+        lambda *args, **kwargs: _FakeSelectedWorker(args, kwargs),
+    )
+    yield harness, instance
+    harness._cancel_selected_run_detail()
+    harness.RunList.deleteLater()
+    qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    qtw.QApplication.processEvents()
+
+
+def _finish_selected_detail(harness, instance, detail, *, partial=False):
+    args = (
+        harness._database_selected_run_generation,
+        instance.logical_path,
+        detail.run.as_dict()["guid"],
+        detail,
+    )
+    if partial:
+        harness.database_selected_run_progress(*args)
+    else:
+        harness.database_selected_run_finished(*args, None)
+
+
+@pytest.mark.parametrize("selection", ["guid-8", None])
+@pytest.mark.parametrize("partial", [False, True])
+def test_refresh_invalidates_unselected_live_details(live_detail_refresh, selection, partial):
+    harness, instance = live_detail_refresh
+    # Retain B's cache as well as A's, to check refresh is selective.
+    harness.updateSelected("guid-8")
+    detail_b = _selected_detail(run_id=8, completed=False)
+    _finish_selected_detail(harness, instance, detail_b, partial=partial)
+    harness.updateSelected("guid-7")
+    _finish_selected_detail(
+        harness, instance, _selected_detail(completed=False), partial=partial,
+    )
+    if selection is None:
+        harness._cancel_selected_run_detail()
+        harness._selected_run_guid = None
+        harness.selected_run_id = None
+        harness.infoBox.clear()
+    else:
+        harness.updateSelected(selection)
+    key_a = database_actions._selected_run_detail_cache_key(instance, 7, "guid-7")
+    key_b = database_actions._selected_run_detail_cache_key(instance, 8, "guid-8")
+    # An orphan partial key from an earlier sidecar baseline must also go.
+    orphan_key = (*key_a[:3], frozenset({("old-sidecar", (1, 2))}), *key_a[4:])
+    harness._selected_run_partial_detail_keys.add(orphan_key)
+    worker = harness._database_selected_run_worker
+    started = len(harness.databaseDetailThreadPool.started)
+
+    harness._apply_database_refresh_result({}, {
+        "guid-7": {"result_count": 30, "is_completed": True},
+    })
+
+    assert harness._selected_run_detail_cache == {key_b: detail_b}
+    assert harness._selected_run_partial_detail_keys == ({key_b} if partial else set())
+    assert harness._database_selected_run_worker is worker
+    assert len(harness.databaseDetailThreadPool.started) == started
+    if worker is not None:
+        assert not worker.cancelled
+    harness.infoBox.events.clear()
+    harness.updateSelected("guid-7")
+    assert len(harness.databaseDetailThreadPool.started) == started + 1
+    assert [event[0] for event in harness.infoBox.events] == ["loading"]
+    assert harness.infoBox.visible[1]["result_count"] == 30
+    assert harness.infoBox.visible[1]["is_completed"] is True
+    assert harness._run_metadata_for_guid("guid-7")["result_count"] == 30
+    fresh = _selected_detail(count=30, completed=True)
+    _finish_selected_detail(harness, instance, fresh)
+    assert harness.infoBox.visible == ("detail", fresh)
+
+
+@pytest.mark.parametrize("count,completed", [(12, True), (30, False), (None, True)])
+@pytest.mark.parametrize("partial", [False, True])
+def test_selection_rejects_stale_cached_live_detail_before_display(
+        live_detail_refresh, count, completed, partial):
+    harness, instance = live_detail_refresh
+    harness.RunList.updateRuns({
+        7: {"guid": "guid-7", "result_count": 30, "is_completed": True},
+    })
+    key = database_actions._selected_run_detail_cache_key(instance, 7, "guid-7")
+    harness._selected_run_detail_cache[key] = _selected_detail(count=count, completed=completed)
+    harness._selected_run_partial_detail_keys = {key} if partial else set()
+
+    harness.updateSelected("guid-7")
+
+    assert [event[0] for event in harness.infoBox.events] == ["loading"]
+    assert harness.infoBox.visible[1]["result_count"] == 30
+    assert harness.infoBox.visible[1]["is_completed"] is True
+    assert harness._selected_run_detail_cache == {}
+    assert harness._selected_run_partial_detail_keys == set()
+    assert len(harness.databaseDetailThreadPool.started) == 1
+
+
+@pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("current_generation", [False, True])
+@pytest.mark.parametrize("count,completed", [(12, True), (30, False)])
+def test_delayed_live_detail_cannot_revert_refreshed_metadata(
+        live_detail_refresh, partial, current_generation, count, completed):
+    harness, instance = live_detail_refresh
+    harness.updateSelected("guid-7")
+    old_generation = harness._database_selected_run_generation
+    old_worker = harness._database_selected_run_worker
+    harness._apply_database_refresh_result({}, {
+        "guid-7": {"result_count": 30, "is_completed": True},
+    })
+    assert old_worker.cancelled
+    assert harness._database_selected_run_generation > old_generation
+    new_worker = harness._database_selected_run_worker
+    harness.infoBox.events.clear()
+    metadata = harness._run_metadata_for_guid("guid-7")
+    generation = (
+        harness._database_selected_run_generation if current_generation else old_generation
+    )
+    args = (
+        generation, instance.logical_path, "guid-7",
+        _selected_detail(count=count, completed=completed),
+    )
+    if partial:
+        harness.database_selected_run_progress(*args)
+    else:
+        harness.database_selected_run_finished(*args, None)
+
+    assert harness._run_metadata_for_guid("guid-7") == metadata
+    assert harness.infoBox.events == []
+    assert harness.infoBox.visible[0] == "loading"
+    assert harness.infoBox.visible[1]["result_count"] == 30
+    assert harness.infoBox.visible[1]["is_completed"] is True
+    assert harness._selected_run_detail_cache == {}
+    assert getattr(harness, "_selected_run_partial_detail_keys", set()) == set()
+    if not current_generation:
+        assert harness._database_selected_run_worker is new_worker
+        fresh = _selected_detail(count=30, completed=True)
+        _finish_selected_detail(harness, instance, fresh)
+        assert harness.infoBox.visible == ("detail", fresh)
 
 
 def test_trusted_selection_publishes_loading_then_plain_detail_without_db_io():

@@ -136,6 +136,20 @@ def _selected_run_detail_cache_key(instance, run_id, guid):
     )
 
 
+def _selected_run_detail_is_stale(detail, metadata):
+    """Keep accepted live progress from regressing to an older observation."""
+    observed = detail.run.as_dict()
+    accepted_count = metadata.get("result_count")
+    observed_count = observed.get("result_count")
+    return (
+        accepted_count is not None
+        and (observed_count is None or observed_count < accepted_count)
+    ) or (
+        bool(metadata.get("is_completed"))
+        and not bool(observed.get("is_completed"))
+    )
+
+
 def _database_publication_is_guarded(database_path):
     """Fail closed if publication is in flight or its guard cannot be inspected."""
     try:
@@ -3931,6 +3945,23 @@ class DatabaseActionsMixin:
 
 
     def _refresh_selected_run_details(self, runs, *, live_only=False):
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            if not live_only:
+                return
+            # Refresh affects cached runs even when another run (or no run)
+            # is selected. Include partial keys without a remaining cache entry.
+            refreshed_guids = {
+                str(metadata["guid"])
+                for metadata in runs.values()
+                if metadata.get("guid")
+            }
+            cache = getattr(self, "_selected_run_detail_cache", {})
+            partial_keys = getattr(self, "_selected_run_partial_detail_keys", set())
+            for key in set(cache) | partial_keys:
+                if key and key[-1] in refreshed_guids:
+                    cache.pop(key, None)
+                    partial_keys.discard(key)
+
         guid = getattr(self, "_selected_run_guid", None)
         selected_key = getattr(self, "_selected_dataset_key", None)
         if not guid:
@@ -3943,18 +3974,6 @@ class DatabaseActionsMixin:
         for metadata in runs.values():
             if metadata.get("guid") == guid:
                 if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
-                    if not live_only:
-                        return
-                    cache = getattr(self, "_selected_run_detail_cache", {})
-                    partial_keys = getattr(
-                        self,
-                        "_selected_run_partial_detail_keys",
-                        set(),
-                    )
-                    for key in tuple(cache):
-                        if key and key[-1] == guid:
-                            cache.pop(key, None)
-                            partial_keys.discard(key)
                     self.updateSelected(guid)
                 elif live_only:
                     update_live = getattr(
@@ -4052,7 +4071,8 @@ class DatabaseActionsMixin:
                 if access_mode == SNAPSHOT_FALLBACK_MODE:
                     setter_name = "set_snapshot_run_unavailable"
                     setter_value = metadata
-                elif detail is not None:
+                elif detail is not None and not _selected_run_detail_is_stale(
+                        detail, metadata):
                     setter_name = "set_trusted_run_detail"
                     setter_value = detail
                 else:
@@ -4281,7 +4301,13 @@ class DatabaseActionsMixin:
             return True
 
         cache_key = _selected_run_detail_cache_key(instance, run_id, guid)
-        cached = getattr(self, "_selected_run_detail_cache", {}).get(cache_key)
+        cache = getattr(self, "_selected_run_detail_cache", {})
+        cached = cache.get(cache_key)
+        if cached is not None and _selected_run_detail_is_stale(
+                cached, self._run_metadata_for_guid(guid)):
+            cache.pop(cache_key, None)
+            getattr(self, "_selected_run_partial_detail_keys", set()).discard(cache_key)
+            cached = None
         if cached is not None:
             if not DatabaseActionsMixin._publish_trusted_selected_run_detail(
                     self,
@@ -4538,6 +4564,11 @@ class DatabaseActionsMixin:
             )
             cache.pop(stale_key, None)
             partial_keys.discard(stale_key)
+
+        if _selected_run_detail_is_stale(detail, self._run_metadata_for_guid(guid)):
+            # Reject before either widget sees the old counts/completion state.
+            # Refresh also cancels/restarts the selected worker via its generation.
+            return False
 
         self.RunList.updateRuns({detail.run.run_id: detail_metadata})
         guarded_instance = (
