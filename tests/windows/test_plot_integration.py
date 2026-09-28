@@ -390,7 +390,7 @@ def dependent_parameter(dataset, dimensions):
     raise AssertionError(f"No {dimensions}D dependent parameter in run {dataset.run_id}")
 
 
-def database_artifact_state(database_path):
+def database_artifact_state(database_path, *, hash_shm=True):
     """Record content and metadata for the database and SQLite sidecars."""
 
     state = {}
@@ -403,9 +403,20 @@ def database_artifact_state(database_path):
         state[suffix] = (
             stat.st_size,
             stat.st_mtime_ns,
-            hashlib.sha256(path.read_bytes()).hexdigest(),
+            hashlib.sha256(path.read_bytes()).hexdigest()
+            if suffix != "-shm" or hash_shm else None,
             )
     return state
+
+
+def trusted_database_artifact_state(database_path):
+    """Hash protected files without reading SQLite's live SHM lock bytes.
+
+    Windows enforces the SHM byte-range locks against ordinary file reads.
+    Trusted viewing permits SHM content changes; only its presence is checked.
+    Snapshot-only tests keep their strict SHM hashes via database_artifact_state.
+    """
+    return database_artifact_state(database_path, hash_shm=False)
 
 
 def database_artifact_bytes_and_mtimes(database_path):
@@ -425,7 +436,7 @@ def assert_database_artifacts_unchanged_except_trusted_shm(
     database_path,
     expected,
     *,
-    state_reader=database_artifact_state,
+    state_reader=trusted_database_artifact_state,
 ):
     """Keep every source artifact exact except SQLite's permitted WAL SHM."""
 
@@ -3593,7 +3604,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         # fresh read-only snapshots to discover the committed final rows.
         assert viewer_dataset.number_of_results == 2
 
-        writer_complete_artifacts = database_artifact_state(database_path)
+        writer_complete_artifacts = trusted_database_artifact_state(database_path)
         assert set(writer_complete_artifacts) == {"", "-wal", "-shm", "-journal"}
         assert writer_complete_artifacts[""] is not None
         assert writer_complete_artifacts["-wal"] is not None

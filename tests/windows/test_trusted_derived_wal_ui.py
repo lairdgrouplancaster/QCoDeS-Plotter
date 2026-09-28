@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import sqlite3
 import time
-from collections import deque
 from pathlib import Path
 from unittest.mock import patch
 
@@ -82,7 +80,17 @@ def _start_live_run(writer, name: str):
     measurement.register_parameter(setpoint)
     measurement.register_parameter(signal, setpoints=(setpoint,))
     context = measurement.run(write_in_background=False)
-    datasaver = context.__enter__()
+    try:
+        datasaver = context.__enter__()
+    except RuntimeError as error:
+        cause = error
+        while cause.__cause__ is not None:
+            cause = cause.__cause__
+        error.add_note(
+            f"Run creation SQLite result: {getattr(cause, 'sqlite_errorname', None)} "
+            f"({getattr(cause, 'sqlite_errorcode', None)})"
+        )
+        raise
     datasaver.add_result((setpoint, 0.0), (signal, 0.0))
     datasaver.flush_data_to_database(block=True)
     return experiment, setpoint, signal, context, datasaver, datasaver.dataset
@@ -271,38 +279,22 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
             )
             assert (errors, logged_errors) == ([], [])
 
+            # Completing derived work does not finish the independent refresh
+            # broker. Drain both before this fixture's schema-changing phase;
+            # live appends and checkpoint progress are exercised separately.
+            service = window._trusted_read_service
+            supervisor = service._required_supervisor()
             _process_until(
                 lambda: (
                     bridge.coordinator is not None
                     and not bridge.coordinator.active
                     and bridge.coordinator.snapshot().pending_count == 0
+                    and not window._database_refresh_active
+                    and service.liveness().outstanding_requests == 0
+                    and not supervisor.resource_liveness().active_job
                 )
             )
-            writer_trace = deque(maxlen=12)
-            first_writer.set_trace_callback(writer_trace.append)
-            try:
-                latest_first_run = _start_live_run(first_writer, "first_new")
-            except Exception as error:
-                causes = []
-                cause = error
-                while cause is not None:
-                    causes.append((
-                        type(cause).__name__,
-                        str(cause),
-                        getattr(cause, "sqlite_errorname", None),
-                        getattr(cause, "sqlite_errorcode", None),
-                    ))
-                    cause = cause.__cause__
-                raise AssertionError({
-                    "sqlite_version": sqlite3.sqlite_version,
-                    "causes": causes,
-                    "writer_trace": list(writer_trace),
-                    "journal_mode": first_writer.execute("PRAGMA journal_mode").fetchone(),
-                    "reader_liveness": window._trusted_read_service._required_supervisor().resource_liveness(),
-                    "refresh_active": window._database_refresh_active,
-                }) from error
-            finally:
-                first_writer.set_trace_callback(None)
+            latest_first_run = _start_live_run(first_writer, "first_new")
             window.refreshMain()
             _process_until(lambda: window.RunList.topLevelItemCount() == 3)
             assert (errors, logged_errors) == ([], [])
