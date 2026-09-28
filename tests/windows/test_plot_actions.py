@@ -335,7 +335,7 @@ def test_non_single_run_list_selection_cannot_reuse_plot_or_export_target(tmp_pa
                 type(
                     "Parameter",
                     (),
-                    {"name": "signal", "depends_on": "x"},
+                    {"name": "signal", "depends_on": "x", "depends_on_": ("x",)},
                 )()
             ]
 

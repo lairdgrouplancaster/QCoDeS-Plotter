@@ -1,9 +1,12 @@
 """Database-instance races in normal run CSV export."""
 
+import csv
 import os
+import sqlite3
 from collections import Counter
 from pathlib import Path
 
+import pytest
 from qcodes.dataset import (
     Measurement,
     initialise_or_create_database_at,
@@ -16,7 +19,9 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
     logical_database_path,
 )
+from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 from qplot.windows import _plot_actions as plot_actions_module
+from qplot.windows._dataset_handle import close_dataset_connection
 from qplot.windows._export_paths import prepare_export_destination
 from qplot.windows._plot_actions import PlotActionsMixin
 
@@ -125,6 +130,128 @@ def _create_run(database_path: Path, row_count: int):
     # Windows, preventing the replacement race this test is meant to model.
     experiment.conn.close()
     return run_id, guid
+
+
+def _create_measurement_run(database_path, kind):
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment(
+        f"csv_measurements_{database_path.stem}", sample_name="sample"
+    )
+    x = ManualParameter("x")
+    signal = ManualParameter("signal")
+    temperature = ManualParameter("temperature")
+    measurement = Measurement(exp=experiment, name="csv_measurements")
+    if kind == "mixed":
+        measurement.register_parameter(temperature)
+    if kind in ("mixed", "dependent"):
+        measurement.register_parameter(x)
+        measurement.register_parameter(signal, setpoints=(x,))
+    if kind == "standalone":
+        measurement.register_parameter(temperature)
+    with measurement.run(write_in_background=False) as datasaver:
+        if kind in ("mixed", "dependent"):
+            for index in range(3):
+                datasaver.add_result((x, index), (signal, 10 + index))
+        if kind in ("mixed", "standalone"):
+            for value in (20, 21):
+                datasaver.add_result((temperature, value))
+        dataset = datasaver.dataset
+        run_id, guid = dataset.run_id, dataset.guid
+    dataset.conn.close()
+    experiment.conn.close()
+    return run_id, guid
+
+
+@pytest.mark.parametrize(
+    "kind,selection",
+    (
+        ("mixed", "*"), ("mixed", "1"), ("mixed", "2"),
+        ("standalone", "*"), ("standalone", "1"),
+        ("dependent", "*"), ("dependent", "1"),
+    ),
+)
+@pytest.mark.parametrize("loaded", (False, True))
+def test_run_csv_exports_real_measurements_consistently(
+        tmp_path, kind, selection, loaded
+        ):
+    names = {
+        "mixed": ["signal", "temperature"],
+        "standalone": ["temperature"],
+        "dependent": ["signal"],
+    }[kind]
+    database_path = tmp_path / f"{kind}.db"
+    run_id, guid = _create_measurement_run(database_path, kind)
+    destination = tmp_path / "export.csv"
+    harness = _RunCsvHarness(database_path, destination, run_id, guid)
+    harness.RunList._runs[run_id]["measure_parameters"] = names
+    harness.measurementBox.value = selection
+    selected = None
+    try:
+        if loaded:
+            selected = harness._load_run_csv_dataset(
+                harness._current_dataset_key(guid)
+            )
+            harness.ds = selected
+            harness._selected_dataset_key = harness._current_dataset_key(guid)
+
+        request = harness._run_csv_export_request()
+        expected_names = names if selection == "*" else [names[int(selection) - 1]]
+        assert request[1] == tuple(expected_names)
+        harness.exportRunCsv()
+        assert harness.errors == []
+        with destination.open(newline="", encoding="utf-8") as csv_file:
+            rows = list(csv.reader(csv_file))
+
+        if expected_names == ["signal"]:
+            assert rows == [
+                ["signal", "x"], ["10.0", "0.0"],
+                ["11.0", "1.0"], ["12.0", "2.0"],
+            ]
+        elif expected_names == ["temperature"]:
+            assert rows == [["temperature"], ["20.0"], ["21.0"]]
+        else:
+            assert rows == [
+                ["signal.signal", "signal.x", "temperature.temperature"],
+                ["10.0", "0.0", "20.0"],
+                ["11.0", "1.0", "21.0"],
+                ["12.0", "2.0", ""],
+            ]
+    finally:
+        if selected is not None:
+            close_dataset_connection(selected)
+
+
+def test_trusted_csv_export_recovers_standalone_before_metadata_finishes(
+        tmp_path
+        ):
+    database_path = tmp_path / "progressive.db"
+    run_id, guid = _create_measurement_run(database_path, "mixed")
+    destination = tmp_path / "progressive.csv"
+    harness = _RunCsvHarness(database_path, destination, run_id, guid)
+    harness._database_access_mode = TRUSTED_LIVE_MODE
+    harness.RunList._runs[run_id]["measure_parameters"] = ["signal"]
+
+    def choose_after_preflight(_default_name):
+        assert len(harness.loaded_datasets) == 1
+        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+            harness.loaded_datasets[0].conn.cursor()
+        return str(destination)
+
+    harness.destination_callback = choose_after_preflight
+    harness.exportRunCsv()
+
+    assert harness.errors == []
+    with destination.open(newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.reader(csv_file))
+    assert rows == [
+        ["signal.signal", "signal.x", "temperature.temperature"],
+        ["10.0", "0.0", "20.0"],
+        ["11.0", "1.0", "21.0"],
+        ["12.0", "2.0", ""],
+    ]
+    assert len(harness.loaded_datasets) == 2
+    with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+        harness.loaded_datasets[1].conn.cursor()
 
 
 def _artifact_state(database_path: Path):
