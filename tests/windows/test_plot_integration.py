@@ -229,9 +229,14 @@ def test_mixed_run_csv_is_identical_before_and_after_opening_plot(
         )
         window.monitor.stop()
         assert window.selected_run_id == run_id
-        assert window.RunList.all_run_metadata()[run_id]["measure_parameters"] == [
+        wait_for(
+            lambda: bool(
+                window.RunList.all_run_metadata()[run_id]["measure_parameters"]
+            )
+        )
+        assert tuple(window.RunList.all_run_metadata()[run_id]["measure_parameters"]) == (
             "signal", "temperature"
-        ]
+        )
 
         destinations = iter((tmp_path / "before.csv", tmp_path / "after.csv"))
         monkeypatch.setattr(
