@@ -804,6 +804,22 @@ class RunList(qtw.QTreeWidget):
             cell.show_previews(previews)
 
 
+    def accepts_run_preview(self, guid):
+        """Return whether one inline cell can own a decoded thumbnail now."""
+
+        return (
+            not self._preview_publication_suspended
+            and str(guid or "") in self.preview_cells
+        )
+
+
+    def run_preview_is_ready(self, guid):
+        """Expose bounded inline-cell readiness for acceptance diagnostics."""
+
+        cell = self.preview_cells.get(str(guid or ""))
+        return bool(cell is not None and cell._has_rendered_previews)
+
+
     @QtCore.pyqtSlot(str, bool)
     def set_run_preview_generating(self, guid, generating):
         if self._preview_publication_suspended:
@@ -1786,6 +1802,44 @@ class moreInfo(qtw.QTabWidget):
     def set_trusted_run_detail(self, detail: TrustedSelectedRunDetail) -> None:
         """Render a selected trusted run without dataset or database access."""
         self._set_plain_run_detail(detail, preview_guid=None)
+
+
+    def set_trusted_derived_metadata(
+            self,
+            run_metadata,
+            parameters,
+            setpoint_summaries,
+            metadata,
+            ) -> None:
+        """Render one Stage 5B metadata publication without database access."""
+
+        run_metadata = self._trusted_run_metadata(run_metadata)
+        guid = run_metadata.get("guid")
+        self.clear()
+        self._set_trusted_overview(run_metadata, parameters)
+        self._set_trusted_parameters(
+            tuple(parameters or ()),
+            tuple(setpoint_summaries or ()),
+            {},
+        )
+        self.preview.set_current_guid(guid)
+        self.metadata.setBoundedView(normalize_presentation_tree(metadata or {}))
+        unavailable = normalize_presentation_tree(
+            {
+                "Status": (
+                    "Snapshot detail is not part of bounded background derived work."
+                )
+            }
+        )
+        self.snapshot.setBoundedView(unavailable)
+        self.raw.setBoundedView(
+            normalize_presentation_tree(
+                {
+                    "Run": run_metadata,
+                    "Derived metadata": metadata or {},
+                }
+            )
+        )
 
 
     def set_snapshot_run_detail(self, detail: TrustedSelectedRunDetail) -> None:

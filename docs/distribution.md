@@ -115,8 +115,12 @@ Explicit plot/CSV snapshots remain deferred DataSet consumers. Existing
 fallback previews remain separately permitted. The Stage 5A scheduler and
 Stage 5B coordinator, derived-query, rendering, and cache modules are normal
 installed Python package files and are covered by the same wheel/sdist inventory
-comparison and explicit mypy list. Stage 5B is backend-only: installed Qt code
-still uses the Stage 4 trusted placeholders until Stage 5C.
+comparison and explicit mypy list. The packaged Stage 5C
+`TrustedDerivedQtBridge` connects that backend to installed Qt code. Trusted sessions
+use that one owner-thread bridge and one bounded coordinator for progressive
+metadata, thumbnails, and previews; the competing legacy producers remain
+disabled. The bridge module and Stage 5C source regressions participate in the
+same exact wheel/sdist inventory and configured mypy checks.
 
 The CI workflow is configured to build from clean checkouts on Python 3.12. The
 Linux package job builds the sdist and Linux wheel, compares their contents with
@@ -161,6 +165,22 @@ selected application-cache directory disjoint from the database directory,
 writer commit and checkpoint progress between short transactions, protected
 main/WAL/journal artifacts unchanged during reader-only intervals, and no
 coordinator worker or helper left after shutdown.
+
+The installed-wheel Stage 5C smoke drives the packaged Qt bridge offscreen. It
+checks cheap-baseline-first binding, queued GUI-owner polling, equivalent cache
+hit/miss publication without duplicate cache writes, suppression of the legacy
+detail and preview workers, preview decoding and size invalidation, and bounded
+bridge/coordinator shutdown. It also reselects the active binding and verifies
+that the same coordinator, two timers, and cached preview remain operational.
+Source-tree acceptance additionally proves bounded decoded-preview ownership,
+byte-based eviction, absence of hidden thumbnails for large lists, exact
+preview-only cache replay, selected/visible/remaining progression, and stale
+database/helper-generation rejection. A real writer-held QCoDeS WAL database
+exercises append, completion, new-run reconciliation, helper restart, active
+database switching and reselection, later writer commits, PASSIVE/TRUNCATE
+checkpoints, cache separation, and protected-artifact audits. Hosted Linux,
+ARM64 macOS, Intel macOS, and unprivileged Windows checks remain required for
+the exact final revision.
 
 The installed-wheel checks also invoke the installed shutdown launcher rather
 than substituting a source-tree module. They exercise both the unchanged CLI
@@ -223,7 +243,7 @@ Before creating a tagged release:
 9. Run `python -m twine check dist/*`.
 10. Confirm the validator ran the extracted sdist tests, the installed direct
     trusted-WAL-helper smoke, the Stage 4 application-adapter smoke, and the
-    installed Stage 5B live-WAL backend smoke.
+    installed Stage 5B live-WAL backend and Stage 5C Qt-bridge smokes.
 11. Confirm unprivileged Windows, ARM64 macOS, Intel macOS, and Linux wheel jobs
     passed for the exact source.
 12. Run the manual GUI check from `CONTRIBUTING.md`.

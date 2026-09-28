@@ -215,19 +215,35 @@ signed in, and allowed to download the file. You can also mark important
 database folders as always available in Finder. The timeout can be changed with
 `qplot-cfg -set_value runtime_settings.cloud_sync_timeout 180`.
 
-## Trusted Run Details Have No Preview Image
+## Trusted Run Details or Previews Stay on Loading
 
-This is the deliberate Stage 5C boundary. Loading, automatic default selection,
-scrolling, and progressive metadata do not launch legacy snapshot-backed
-preview or thumbnail workers in a trusted live session. Snapshot fallback
-sessions may retain those previews, but ordinary fallback selection otherwise
-shows cached run-list basics and starts no additional selected-detail snapshot.
-Fallback metadata and retained preview paths can still create private
-snapshots. Use an explicit run-table plot or CSV action when you need the
-underlying dataset. Stage 5B includes a tested non-UI coordinator, bounded
-prefix renderer, and application-cache backend, but it intentionally does not
-route those payloads into MainWindow, RunList, or PreviewTab. That UI connection
-is Stage 5C; the placeholder is not evidence that trusted extraction failed.
+Trusted metadata, dimensions, thumbnails, and selected-run previews populate
+progressively after the cheap run list appears. Work is prioritised for the
+selected row, then rows visible in the actual table viewport, then the rest of
+the database. Large databases can therefore retain loading placeholders for
+off-screen runs while foreground work is already usable; if left idle, all
+eligible runs are eventually populated. Scrolling to or selecting a run
+promotes its pending work without starting a second worker.
+
+Decoded full previews use a bounded in-memory cache. Revisiting an evicted run
+may briefly show loading while qPlot requests only that preview again, normally
+from the derived disk cache; it does not repeat metadata or thumbnail work.
+Run-list thumbnails are not decoded for databases above the inline-preview
+threshold. Reselecting the already active database preserves the trusted
+preview binding and existing cached previews.
+
+Unsupported, malformed, empty, or individually failing runs show a bounded
+unavailable state and do not stop other runs. Check `~/.qplot/qplot.log` if a
+supported run remains unavailable. Cache permission or corruption problems are
+treated as misses and rendering continues without disk caching. The derived
+cache lives in qPlot's application-cache directory and must never be moved into
+or above the database directory.
+
+Trusted live sessions do not use the legacy snapshot-backed detail, thumbnail,
+or preview workers. Explicit plot and CSV actions still open their own deferred
+action-owned dataset, and snapshot fallback retains its documented narrower
+behavior. If the accepted database or helper incarnation changes, obsolete
+derived results are discarded and current work is regenerated.
 
 ## Plot Windows Look Empty
 

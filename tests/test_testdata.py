@@ -19,7 +19,7 @@ from qcodes.dataset import (
     load_or_create_experiment,
 )
 from qcodes.dataset.measurements import DataSaver
-from qcodes.dataset.sqlite.connection import AtomicConnection
+from qcodes.dataset.sqlite.connection import AtomicConnection, atomic
 from qcodes.parameters import ManualParameter
 
 from qplot import testdata as testdata_module
@@ -1777,6 +1777,22 @@ def test_enabled_writer_proves_future_qcodes_result_after_checkpoint_and_restart
                 signal.name,
             ) == [10.0, 20.0]
             assert complete_artifact_state(database_path) == source_before
+    finally:
+        writer.close()
+
+
+def test_enabled_writer_keeps_qcodes_atomic_reads_read_only(tmp_path):
+    database_path = tmp_path / "atomic-read.db"
+    testdata_module.generate_database([small_specification()], database_path)
+    writer = testdata_module._connect_writable_exact_path(database_path)
+    try:
+        testdata_module.enable_generation_provenance_for_writer(writer)
+        lineage_before = testdata_module._generation_lineage_state(writer)
+
+        with atomic(writer):
+            assert writer.execute("SELECT COUNT(*) FROM runs").fetchone() == (1,)
+
+        assert testdata_module._generation_lineage_state(writer) == lineage_before
     finally:
         writer.close()
 

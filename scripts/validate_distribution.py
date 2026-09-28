@@ -2019,6 +2019,155 @@ def exercise_stage5b_backend(service, record, bootstrap, database_directory):
     )
 
 
+def exercise_stage5c_qt_bridge(service, record):
+    from PyQt6 import QtCore, QtWidgets
+    from qplot.datahandling import trusted_work_coordinator as coordinator_module
+    from qplot.windows.main import MainWindow
+
+    cache_root = Path(trusted_derived_cache_root())
+    for artifact in cache_root.glob("*.qdc"):
+        artifact.unlink()
+
+    cache_gets = []
+    cache_puts = []
+    cache_type = coordinator_module.TrustedDerivedDiskCache
+
+    class RecordingCache(cache_type):
+        def get(self, *args, **kwargs):
+            result = super().get(*args, **kwargs)
+            cache_gets.append(result is not None)
+            return result
+
+        def put(self, *args, **kwargs):
+            result = super().put(*args, **kwargs)
+            cache_puts.append(result)
+            return result
+
+    coordinator_module.TrustedDerivedDiskCache = RecordingCache
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        application = QtWidgets.QApplication(["qplot-stage5c-wheel-smoke"])
+    window = MainWindow()
+    window.startupDatabaseTimer.stop()
+    window.monitor.stop()
+    window.config.config["user_preference"]["confirm_close"] = False
+    window.config.config["user_preference"]["confirm_close_all"] = False
+    window.resize(800, 500)
+    window.show()
+    fields = record.as_dict()
+    guid = str(fields["guid"])
+    runs = {record.run_id: fields}
+    bridge = window._trusted_derived_bridge
+
+    def process_until(predicate, timeout=20.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            application.processEvents()
+            if predicate():
+                return
+            time.sleep(0.005)
+        raise AssertionError("installed Stage 5C Qt bridge did not settle")
+
+    def bind_and_wait():
+        window.RunList.setRuns(runs)
+        window._loaded_database_instance = service.database_instance
+        window._trusted_read_service = service
+        window._selected_run_guid = guid
+        window.selected_run_id = record.run_id
+        bridge.bind_database(service.database_instance, runs, service)
+        bridge.select_run(guid)
+        process_until(
+            lambda: (
+                guid in bridge._metadata_by_guid
+                and window.RunList.run_preview_is_ready(guid)
+                and guid in window.infoBox.preview.cache
+                and bridge.coordinator is not None
+                and not bridge.coordinator.active
+                and bridge.coordinator.snapshot().pending_count == 0
+            )
+        )
+
+    def image_signature(previews):
+        signature = []
+        for preview in previews:
+            image = preview.get("image")
+            signature.append(
+                (
+                    preview.get("parameter"),
+                    preview.get("title"),
+                    bool(preview.get("unsupported")),
+                    image.width() if image is not None else None,
+                    image.height() if image is not None else None,
+                )
+            )
+        return tuple(signature)
+
+    def ui_snapshot():
+        metadata = dict(bridge._metadata_by_guid[guid])
+        run_fields = dict(metadata["run_fields"])
+        return (
+            run_fields["result_count"],
+            tuple(parameter.name for parameter in bridge._parameters_by_guid[guid]),
+            window.RunList.run_preview_is_ready(guid),
+            image_signature(window.infoBox.preview.cache[guid]),
+        )
+
+    try:
+        bind_and_wait()
+        cache_miss_state = ui_snapshot()
+        first_put_count = len(cache_puts)
+        assert first_put_count >= 3
+        assert not window.infoBox.preview._workers
+        assert window._database_detail_worker is None
+        assert window._database_expensive_detail_worker is None
+        assert window._database_selected_run_worker is None
+
+        coordinator_before_reselection = bridge.coordinator
+        timers_before_reselection = tuple(bridge.findChildren(QtCore.QTimer))
+        cached_preview_before_reselection = window.infoBox.preview.cache[guid]
+        assert bridge.refresh_active_database(
+            service.database_instance,
+            runs,
+            service,
+        )
+        assert bridge.coordinator is coordinator_before_reselection
+        assert tuple(bridge.findChildren(QtCore.QTimer)) == timers_before_reselection
+        assert len(timers_before_reselection) == 2
+        assert window.infoBox.preview.cache[guid] is cached_preview_before_reselection
+        assert window.infoBox.preview._trusted_derived_mode
+
+        bridge.clear_database()
+        process_until(lambda: not bridge.background_active())
+        second_get_start = len(cache_gets)
+        bind_and_wait()
+        assert ui_snapshot() == cache_miss_state
+        assert any(cache_gets[second_get_start:])
+        assert len(cache_puts) == first_put_count
+
+        prior_preview = window.infoBox.preview.cache[guid]
+        bridge.update_preview_size(window.preview_size + 13)
+        process_until(
+            lambda: window.infoBox.preview.cache.get(guid) is not prior_preview
+        )
+        assert window.RunList.run_preview_is_ready(guid)
+    finally:
+        bridge.clear_database()
+        process_until(lambda: not bridge.background_active())
+        window._trusted_read_service = None
+        window._loaded_database_instance = None
+        window.infoBox.preview.shutdown()
+        window.hide()
+        window.deleteLater()
+        application.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        application.processEvents()
+        coordinator_module.TrustedDerivedDiskCache = cache_type
+
+    assert not any(
+        thread.name.startswith("qplot-trusted-derived")
+        for thread in threading.enumerate()
+    )
+
+
 def exercise_spawned_supervisor():
     with tempfile.TemporaryDirectory(prefix="qplot-wheel-smoke-") as temporary:
         # macOS may spell the temporary root through the /var -> /private/var
@@ -2153,6 +2302,10 @@ def exercise_spawned_supervisor():
                             initial_page.runs[0],
                             bootstrap,
                             database_directory,
+                        )
+                        exercise_stage5c_qt_bridge(
+                            service,
+                            initial_page.runs[0],
                         )
                     finally:
                         for name, prior_value in prior_cache_environment.items():

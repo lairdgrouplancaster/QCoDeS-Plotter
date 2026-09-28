@@ -120,10 +120,26 @@ class PreviewTab(qtw.QWidget):
     previewGenerationChanged = QtCore.pyqtSignal(str, bool)
     databaseReplaced = QtCore.pyqtSignal(str)
 
-    def __init__(self, *args, preview_size=PREVIEW_SIZE):
+    def __init__(
+            self,
+            *args,
+            preview_size=PREVIEW_SIZE,
+            cache_max_entries=None,
+            cache_max_bytes=None,
+            ):
         super().__init__(*args)
 
         self.preview_size = int(preview_size or PREVIEW_SIZE)
+        self._cache_max_entries = (
+            None if cache_max_entries is None else int(cache_max_entries)
+        )
+        self._cache_max_bytes = (
+            None if cache_max_bytes is None else int(cache_max_bytes)
+        )
+        if self._cache_max_entries is not None and self._cache_max_entries < 1:
+            raise ValueError("cache_max_entries must be positive")
+        if self._cache_max_bytes is not None and self._cache_max_bytes < 1:
+            raise ValueError("cache_max_bytes must be positive")
         self._update_minimum_height()
         self.database_path = ""
         self.database_instance: DatabaseInstance | None = None
@@ -145,6 +161,7 @@ class PreviewTab(qtw.QWidget):
         self._start_scheduled = False
         self._shutting_down = False
         self._preview_active = True
+        self._trusted_derived_mode = False
 
         # A widget-owned QThreadPool waits for its runnables in the QObject
         # destructor.  If a Python QRunnable needs the GIL while SIP is
@@ -216,6 +233,13 @@ class PreviewTab(qtw.QWidget):
 
         self.preview_size = preview_size
         self._update_minimum_height()
+        if self._trusted_derived_mode:
+            self.cache = OrderedDict()
+            self.cache_bytes = 0
+            self.errors = {}
+            if self.current_guid:
+                self._show_message("Generating preview...")
+            return
         self._cancel_workers()
         self.generation += 1
         self.cache = OrderedDict()
@@ -244,6 +268,7 @@ class PreviewTab(qtw.QWidget):
     def set_database_runs(self, database_path, runs):
         self._cancel_workers()
         self.generation += 1
+        self._trusted_derived_mode = False
         self.database_instance = _preview_database_instance(database_path)
         self._database_binding = (
             _PreviewDatabaseBinding(self.database_instance)
@@ -274,7 +299,111 @@ class PreviewTab(qtw.QWidget):
         self._show_message("Select a run")
 
 
+    def set_trusted_derived_runs(self, runs):
+        """Bind plain run identities without enabling the legacy producer."""
+
+        self._cancel_workers()
+        self.generation += 1
+        self._trusted_derived_mode = True
+        self.database_instance = None
+        self._database_binding = None
+        self.database_path = ""
+        self.current_guid = None
+        self.run_metadata = self._normalise_runs(runs)
+        self.cache = OrderedDict()
+        self.thumbnail_cache = OrderedDict()
+        self.cache_bytes = 0
+        self.errors = {}
+        self.thumbnail_errors = {}
+        self.queue = {}
+        self._explicit_guids = set()
+        self.active = set()
+        self._active_priorities = {}
+        self._workers = {}
+        self.metadata_signatures = {}
+        self._start_scheduled = False
+        self._show_message("Select a run")
+
+
+    def add_trusted_derived_runs(self, runs):
+        """Append bridge-owned run metadata without scheduling legacy work."""
+
+        if not self._trusted_derived_mode:
+            return
+        self.run_metadata.update(self._normalise_runs(runs))
+
+
+    def refresh_trusted_derived_runs(self, runs):
+        """Refresh an unchanged trusted binding without discarding its LRU."""
+
+        if not self._trusted_derived_mode:
+            self.set_trusted_derived_runs(runs)
+            return
+        normalised = self._normalise_runs(runs)
+        valid_guids = set(normalised)
+        for guid in tuple(self.cache):
+            if guid not in valid_guids:
+                self._drop_cached(guid)
+        self.errors = {
+            guid: error
+            for guid, error in self.errors.items()
+            if guid in valid_guids
+        }
+        self.run_metadata = normalised
+        if self.current_guid not in valid_guids:
+            self.clear_current_run()
+
+
+    def trusted_preview_needs_replay(self, guid):
+        """Return whether a selected trusted preview was evicted or never seen."""
+
+        exact_guid = str(guid or "")
+        return bool(
+            self._trusted_derived_mode
+            and exact_guid in self.run_metadata
+            and exact_guid not in self.cache
+            and exact_guid not in self.errors
+        )
+
+
+    def discard_trusted_previews(self):
+        """Release decoded previews after a trusted render-format change."""
+
+        if not self._trusted_derived_mode:
+            return
+        self.cache = OrderedDict()
+        self.cache_bytes = 0
+        self.errors = {}
+        if self.current_guid:
+            self._show_message("Generating preview...")
+
+
+    def publish_trusted_previews(self, guid, previews, *, error=None):
+        """Accept GUI-thread decoded Stage 5B images through one UI path."""
+
+        if not self._trusted_derived_mode or self._shutting_down:
+            return
+        guid = str(guid or "")
+        if not guid or guid not in self.run_metadata:
+            return
+        if error:
+            self.errors[guid] = str(error)
+            self._drop_cached(guid)
+        else:
+            self.errors.pop(guid, None)
+            self._store_cached(guid, list(previews or []))
+        if guid != self.current_guid:
+            return
+        if error:
+            self._show_message("Preview unavailable", str(error))
+        else:
+            self._show_previews(previews)
+
+
     def add_runs(self, runs, queue_previews=True):
+        if self._trusted_derived_mode:
+            self.add_trusted_derived_runs(runs)
+            return
         if not self.database_path:
             return
 
@@ -315,6 +444,16 @@ class PreviewTab(qtw.QWidget):
 
         guid = str(guid)
         self.current_guid = guid
+        if self._trusted_derived_mode:
+            if guid not in self.run_metadata:
+                self._show_message("No preview available")
+            elif guid in self.cache:
+                self._show_previews(self._cached_previews(guid))
+            elif guid in self.errors:
+                self._show_message("Preview unavailable", self.errors[guid])
+            else:
+                self._show_message("Generating preview...")
+            return
         if not self.database_path or guid not in self.run_metadata:
             self._show_message("No preview available")
             return
@@ -354,7 +493,11 @@ class PreviewTab(qtw.QWidget):
 
 
     def show_trusted_live_placeholder(self):
-        """Show the Stage 4 placeholder without scheduling preview work."""
+        """Retain the trusted selection while its bridge result is pending."""
+
+        if self._trusted_derived_mode and self.current_guid:
+            self._show_message("Generating preview...")
+            return
         self.current_guid = None
         self._show_message("Preview deferred for trusted live access until Stage 5")
 
@@ -686,14 +829,26 @@ class PreviewTab(qtw.QWidget):
         self._drop_cached(guid)
         self.cache[guid] = previews
         self.cache_bytes += self._preview_bytes(previews)
+        max_entries = (
+            PREVIEW_CACHE_MAX_ENTRIES
+            if self._cache_max_entries is None
+            else self._cache_max_entries
+        )
+        max_bytes = (
+            PREVIEW_CACHE_MAX_BYTES
+            if self._cache_max_bytes is None
+            else self._cache_max_bytes
+        )
         while (
-                len(self.cache) > PREVIEW_CACHE_MAX_ENTRIES
-                or self.cache_bytes > PREVIEW_CACHE_MAX_BYTES
+                len(self.cache) > max_entries
+                or self.cache_bytes > max_bytes
                 ):
             evict_guid = next(
                 (cached_guid for cached_guid in self.cache if cached_guid != self.current_guid),
                 None,
                 )
+            if evict_guid is None:
+                evict_guid = next(iter(self.cache), None)
             if evict_guid is None:
                 break
             self._drop_cached(evict_guid)

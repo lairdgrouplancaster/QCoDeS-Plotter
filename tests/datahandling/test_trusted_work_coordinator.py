@@ -221,6 +221,102 @@ def test_real_coordinator_preserves_exact_priority_and_eventual_drain(
     ]
 
 
+def test_completed_preview_replay_hits_cache_without_repeating_other_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = _instance()
+    observations = {1: _observation(1, instance)}
+    service = _Service(instance, observations)
+    publications = []
+    rendered = []
+    real_render = coordinator_module.render_trusted_derived_payload
+
+    def record_render(*args: Any, **kwargs: Any):
+        rendered.append(args[1])
+        return real_render(*args, **kwargs)
+
+    monkeypatch.setattr(
+        coordinator_module,
+        "render_trusted_derived_payload",
+        record_render,
+    )
+    coordinator = TrustedWorkCoordinator(
+        instance,
+        _runs(observations),
+        service,
+        cache=TrustedDerivedDiskCache(tmp_path / "cache"),
+        on_publish=publications.append,
+    )
+    coordinator.select_run(0)
+    coordinator.start()
+    _drain(coordinator)
+    initial_submissions = len(service.submissions)
+    initial_kinds = [publication.key.kind for publication in publications]
+    initial_rendered = list(rendered)
+    generation = coordinator.snapshot().generation
+
+    assert coordinator.request_completed_work(
+        0,
+        TrustedWorkKind.PREVIEW,
+        database_instance=instance,
+        generation=generation,
+        run_guid="guid-1",
+    )
+    assert not coordinator.request_completed_work(
+        0,
+        TrustedWorkKind.PREVIEW,
+        database_instance=instance,
+        generation=generation,
+        run_guid="guid-1",
+    )
+    _drain(coordinator)
+
+    assert initial_kinds == list(TrustedWorkKind)
+    assert [publication.key.kind for publication in publications[3:]] == [
+        TrustedWorkKind.PREVIEW
+    ]
+    assert rendered == initial_rendered
+    assert len(service.submissions) == initial_submissions
+    coordinator.close()
+
+
+def test_append_reconciliation_adopts_refined_existing_revision(tmp_path: Path) -> None:
+    instance = _instance()
+    observations = {index: _observation(index, instance) for index in (1, 2)}
+    publications = []
+    coordinator = TrustedWorkCoordinator(
+        instance,
+        _provisional_runs({1: observations[1]}),
+        _Service(instance, observations),
+        cache=TrustedDerivedDiskCache(tmp_path / "disabled", enabled=False),
+        on_publish=publications.append,
+    )
+    coordinator.start()
+    _drain(coordinator)
+    refined = coordinator.runs
+    assert refined[0].source_revision == trusted_derived_source_revision(
+        observations[1]
+    )
+
+    coordinator.reconcile_runs(
+        (
+            *refined,
+            TrustedDerivedRun(
+                2,
+                observations[2].run_guid,
+                TrustedSourceRevision(b"new-provisional"),
+            ),
+        )
+    )
+    _drain(coordinator)
+    coordinator.close()
+
+    assert {
+        item.key.kind for item in publications if item.key.run_guid == "guid-2"
+    } == set(TrustedWorkKind)
+
+
 def test_completion_and_publication_are_marshaled_to_owner_thread(
     tmp_path: Path,
 ) -> None:
@@ -758,11 +854,31 @@ class _TimedPressuredService(_PressuredService):
         return super().submit_derived_source(run_id, **kwargs)
 
 
+def _render_empty_retry_payload(
+    observation: TrustedDerivedSourceObservation,
+    kind: TrustedWorkKind,
+    _options: object,
+    *,
+    cancel_check,
+):
+    """Keep retry-notifier tests independent of cold Matplotlib startup."""
+
+    cancel_check()
+    return {
+        "format": "qplot-trusted-derived-payload-v1",
+        "kind": kind.name.lower(),
+        "status": "empty",
+        "description": "No rendered data required by this scheduling test.",
+        "source": (("result_watermark", observation.result_watermark),),
+        "images": (),
+    }
+
+
 def _poll_only_on_wakeup(
     coordinator: TrustedWorkCoordinator,
     wakeups: queue.Queue[float],
     *,
-    timeout: float = 5.0,
+    timeout: float = 15.0,
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -775,9 +891,53 @@ def _poll_only_on_wakeup(
     raise AssertionError("The event-driven coordinator did not drain")
 
 
+def test_retry_notifier_rearms_an_early_platform_timer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [10.0]
+    timers = []
+    wakeups = []
+
+    class EarlyTimer:
+        def __init__(self, interval, callback, args=()) -> None:
+            self.interval = interval
+            self.callback = callback
+            self.args = args
+            self.daemon = False
+            self.cancelled = False
+            timers.append(self)
+
+        def start(self) -> None:
+            return None
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(coordinator_module.threading, "Timer", EarlyTimer)
+    notifier = coordinator_module._RetryWakeupNotifier(lambda: wakeups.append(now[0]))
+    notifier.schedule(10.025)
+
+    assert timers[-1].interval == pytest.approx(0.025)
+    now[0] = 10.02
+    timers[-1].callback(*timers[-1].args)
+    assert wakeups == []
+    assert timers[-1].interval == pytest.approx(0.005)
+
+    now[0] = 10.025
+    timers[-1].callback(*timers[-1].args)
+    assert wakeups == [10.025]
+
+
 def test_transient_retry_schedules_a_new_owner_wakeup_at_backoff_deadline(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        coordinator_module,
+        "render_trusted_derived_payload",
+        _render_empty_retry_payload,
+    )
     instance = _instance(270)
     observations = {1: _observation(1, instance)}
     service = _TimedPressuredService(instance, observations, failures=1)
@@ -807,7 +967,13 @@ def test_transient_retry_schedules_a_new_owner_wakeup_at_backoff_deadline(
 
 def test_repeated_transient_retries_are_event_driven_and_capped_without_errors(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        coordinator_module,
+        "render_trusted_derived_payload",
+        _render_empty_retry_payload,
+    )
     instance = _instance(271)
     observations = {1: _observation(1, instance)}
     service = _TimedPressuredService(instance, observations, failures=4)
@@ -861,7 +1027,13 @@ class _BlockedTransientService(_TimedPressuredService):
 
 def test_source_change_during_transient_failure_preserves_backoff_for_newest_source(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        coordinator_module,
+        "render_trusted_derived_payload",
+        _render_empty_retry_payload,
+    )
     instance = _instance(272)
     observations = {1: _observation(1, instance, watermark=8)}
     service = _BlockedTransientService(instance, observations, failures=1)

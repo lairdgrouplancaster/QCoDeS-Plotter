@@ -226,6 +226,7 @@ class SchedulerSnapshot:
     run_count: int
     selected_index: int | None
     visible_range: tuple[int, int]
+    visible_indices: tuple[int, ...]
     pending_count: int
     running: tuple[ScheduledWork, ...]
     completed_count: int
@@ -332,6 +333,8 @@ class TrustedWorkScheduler:
         self._selected_index: int | None = None
         self._visible_start = 0
         self._visible_stop = 0
+        self._visible_indices: tuple[int, ...] = ()
+        self._visible_index_set: frozenset[int] = frozenset()
         self._completion_masks = bytearray(len(runs))
         self._revision_overrides: dict[int, TrustedSourceRevision] = {}
         self._completed_count = 0
@@ -385,10 +388,44 @@ class TrustedWorkScheduler:
             or stop > len(self._runs)
         ):
             raise ValueError("The visible range must be within the run table.")
-        if (start, stop) != (self._visible_start, self._visible_stop):
+        exact = tuple(range(start, stop))
+        if (start, stop) != (
+            self._visible_start,
+            self._visible_stop,
+        ) or exact != self._visible_indices:
             self._visible_start = start
             self._visible_stop = stop
+            self._visible_indices = exact
+            self._visible_index_set = frozenset(self._visible_indices)
             self._reset_cursors()
+
+    def set_visible_indices(self, indices: Sequence[int]) -> None:
+        """Set the exact stable run slots currently intersecting the viewport.
+
+        Qt sorting and filtering can make visible rows non-contiguous in the
+        scheduler's stable run order.  The original range API remains for
+        simple consumers; Stage 5C uses this exact bounded set.
+        """
+
+        self._require_owner()
+        self._require_active()
+        if not isinstance(indices, Sequence):
+            raise TypeError("visible indices must be a stable Sequence.")
+        exact = tuple(indices)
+        if any(type(index) is not int for index in exact):
+            raise TypeError("visible indices must contain integers.")
+        if any(not 0 <= index < len(self._runs) for index in exact):
+            raise ValueError("A visible index is outside the run table.")
+        if len(exact) != len(set(exact)):
+            raise ValueError("visible indices must be unique.")
+        exact = tuple(sorted(exact))
+        if exact == self._visible_indices:
+            return
+        self._visible_indices = exact
+        self._visible_index_set = frozenset(exact)
+        self._visible_start = exact[0] if exact else 0
+        self._visible_stop = exact[-1] + 1 if exact else 0
+        self._reset_cursors()
 
     def claim_next(self) -> ScheduledWork | None:
         """Claim the deterministic next item, with at most one in flight."""
@@ -583,6 +620,52 @@ class TrustedWorkScheduler:
         self._reset_cursors()
         self._emit_transitions(transitions)
 
+    def request_completed_work(
+        self,
+        run_index: int,
+        kind: TrustedWorkKind,
+        *,
+        database_instance: DatabaseInstance,
+        generation: int,
+        run_guid: str,
+    ) -> bool:
+        """Return one exact completed item to pending for bounded replay.
+
+        This is intentionally narrower than source or format invalidation: it
+        retains the exact cache identity and resets only one completion bit.
+        Stale GUI requests are harmless because the complete database,
+        generation, stable run slot/GUID, and work-kind identity must still
+        match. Repeated requests coalesce while that item is pending/running.
+        """
+
+        self._require_owner()
+        self._require_active()
+        if not isinstance(kind, TrustedWorkKind):
+            raise TypeError("kind must be a TrustedWorkKind.")
+        if type(run_index) is not int:
+            raise TypeError("run_index must be an integer.")
+        if not isinstance(database_instance, DatabaseInstance):
+            raise TypeError("database_instance must be a DatabaseInstance.")
+        if type(generation) is not int:
+            raise TypeError("generation must be an integer.")
+        if not isinstance(run_guid, str) or not run_guid:
+            raise ValueError("run_guid must be a non-empty string.")
+        if (
+            database_instance != self._database_instance
+            or generation != self._generation
+            or not 0 <= run_index < len(self._runs)
+            or self._runs[run_index].run_guid != run_guid
+            or (run_index, kind) in self._running_slots
+        ):
+            return False
+        bit = self._kind_bit(kind)
+        if not self._completion_masks[run_index] & bit:
+            return False
+        self._completion_masks[run_index] &= ~bit
+        self._completed_count -= 1
+        self._reset_cursors()
+        return True
+
     def reconcile_runs(self, runs: Sequence[TrustedRunWorkSource]) -> None:
         """Adopt an append-only same-database run table without replaying work.
 
@@ -597,14 +680,40 @@ class TrustedWorkScheduler:
         old_count = len(self._runs)
         if len(run_table) < old_count:
             raise ValueError("Same-instance run reconciliation may not remove runs.")
-        if run_table[:old_count] != self._runs:
+        effective_prefix = tuple(
+            TrustedRunWorkSource(
+                run.run_guid,
+                self._revision_overrides.get(index, run.source_revision),
+            )
+            for index, run in enumerate(self._runs)
+        )
+        prefix_is_stable = all(
+            incoming.run_guid == original.run_guid
+            and incoming.source_revision
+            in {original.source_revision, effective.source_revision}
+            for incoming, original, effective in zip(
+                run_table[:old_count],
+                self._runs,
+                effective_prefix,
+                strict=True,
+            )
+        )
+        if not prefix_is_stable:
             raise ValueError(
                 "Existing runs must remain an exact stable prefix; use "
                 "update_source_revision for source changes."
             )
         if len(run_table) == old_count:
             return
-        self._runs = run_table
+        # Fold refined revisions into the stable prefix.  Callers may present
+        # either their original baseline or the coordinator's already-refined
+        # view, but an append must never regress effective source identity.
+        self._runs = (*effective_prefix, *run_table[old_count:])
+        self._revision_overrides = {
+            index: revision
+            for index, revision in self._revision_overrides.items()
+            if index >= old_count
+        }
         self._completion_masks.extend(b"\0" * (len(run_table) - old_count))
         self._reset_cursors()
 
@@ -626,6 +735,8 @@ class TrustedWorkScheduler:
         self._selected_index = None
         self._visible_start = 0
         self._visible_stop = 0
+        self._visible_indices = ()
+        self._visible_index_set = frozenset()
         self._completion_masks = bytearray(len(runs))
         self._revision_overrides = {}
         self._completed_count = 0
@@ -667,6 +778,7 @@ class TrustedWorkScheduler:
             run_count=len(self._runs),
             selected_index=self._selected_index,
             visible_range=(self._visible_start, self._visible_stop),
+            visible_indices=self._visible_indices,
             pending_count=total - self._completed_count - len(self._running),
             running=tuple(self._running.values()),
             completed_count=self._completed_count,
@@ -700,7 +812,9 @@ class TrustedWorkScheduler:
                 else (self._selected_index,)
             )
         elif tier is TrustedRunTier.VISIBLE:
-            candidates = range(max(cursor, self._visible_start), self._visible_stop)
+            candidates = tuple(
+                index for index in self._visible_indices if index >= cursor
+            )
         else:
             candidates = range(cursor, len(self._runs))
 
@@ -722,7 +836,7 @@ class TrustedWorkScheduler:
     def _tier_for_index(self, run_index: int) -> TrustedRunTier:
         if run_index == self._selected_index:
             return TrustedRunTier.SELECTED
-        if self._visible_start <= run_index < self._visible_stop:
+        if run_index in self._visible_index_set:
             return TrustedRunTier.VISIBLE
         return TrustedRunTier.REMAINING
 

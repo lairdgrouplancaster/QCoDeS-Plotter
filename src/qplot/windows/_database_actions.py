@@ -1113,6 +1113,9 @@ class DatabaseActionsMixin:
         worker = getattr(self, "_database_load_worker", None)
         if worker is not None:
             worker.cancel()
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            derived_bridge.clear_database()
         cancel_detail_load = getattr(self, "_cancel_database_detail_load", None)
         if callable(cancel_detail_load):
             cancel_detail_load()
@@ -1377,6 +1380,9 @@ class DatabaseActionsMixin:
             return
         if trusted_service is not None:
             refresh_kwargs["trusted_service"] = trusted_service
+            refresh_kwargs["derived_coordinator_owned"] = bool(
+                getattr(self, "_trusted_derived_bridge", None)
+            )
         worker = DatabaseRefreshWorker(
             generation,
             database_path,
@@ -1644,7 +1650,12 @@ class DatabaseActionsMixin:
                 current_instance,
             )
             if error is not None:
-                log_exception("Main-window refresh failed", error, __name__)
+                logged_error = (
+                    error
+                    if isinstance(error, BaseException)
+                    else RuntimeError(str(error))
+                )
+                log_exception("Main-window refresh failed", logged_error, __name__)
                 if isinstance(error, UnverifiableDatabaseWalError):
                     self.show_error(
                         "Unverifiable Database WAL",
@@ -1712,7 +1723,11 @@ class DatabaseActionsMixin:
                 remaining_statuses[run_id] = metadata
             updated_runs.update(update_runs(remaining_statuses))
         if updated_runs:
-            if getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE:
+            if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+                bridge = getattr(self, "_trusted_derived_bridge", None)
+                if bridge is not None:
+                    bridge.source_changed(tuple(updated_runs))
+            else:
                 self.infoBox.preview.add_runs(updated_runs)
                 prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
                 if callable(prioritize_previews):
@@ -1811,13 +1826,14 @@ class DatabaseActionsMixin:
             if callable(prioritize_previews):
                 prioritize_previews()
         if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
-            queue_details = getattr(
-                self,
-                "_queue_incremental_trusted_detail_runs",
-                None,
-            )
-            if callable(queue_details):
-                queue_details(tuple(additions))
+            bridge = getattr(self, "_trusted_derived_bridge", None)
+            if bridge is not None:
+                bridge.reconcile_runs(self.RunList.all_run_metadata())
+            else:
+                DatabaseActionsMixin._queue_incremental_trusted_detail_runs(
+                    self,
+                    tuple(additions),
+                )
         else:
             restart_details = getattr(
                 self,
@@ -1839,7 +1855,12 @@ class DatabaseActionsMixin:
 
 
     def _queue_incremental_trusted_detail_runs(self, run_ids):
-        """Extend active drains, starting only a category that already ended."""
+        """Compatibility hook routing trusted additions only to Stage 5C."""
+
+        bridge = getattr(self, "_trusted_derived_bridge", None)
+        if bridge is not None:
+            bridge.reconcile_runs(self.RunList.all_run_metadata())
+            return
         normalised = []
         for run_id in run_ids or ():
             try:
@@ -1865,15 +1886,13 @@ class DatabaseActionsMixin:
             "expected_database_instance": detail_instance,
             "trusted_service": trusted_service,
         }
-
         cheap_worker = getattr(self, "_database_detail_worker", None)
         add_cheap = getattr(cheap_worker, "add_run_ids", None)
-        cheap_accepted = bool(
-            getattr(self, "_database_detail_active", False)
-            and callable(add_cheap)
-            and add_cheap(normalised)
-        )
-        if not cheap_accepted:
+        if not (
+                getattr(self, "_database_detail_active", False)
+                and callable(add_cheap)
+                and add_cheap(normalised)
+                ):
             DatabaseActionsMixin._start_database_cheap_detail_worker(
                 self,
                 database_path,
@@ -1881,19 +1900,13 @@ class DatabaseActionsMixin:
                 detail_instance,
                 worker_kwargs,
             )
-
-        expensive_worker = getattr(
-            self,
-            "_database_expensive_detail_worker",
-            None,
-        )
+        expensive_worker = getattr(self, "_database_expensive_detail_worker", None)
         add_expensive = getattr(expensive_worker, "add_run_ids", None)
-        expensive_accepted = bool(
-            getattr(self, "_database_expensive_detail_active", False)
-            and callable(add_expensive)
-            and add_expensive(normalised)
-        )
-        if not expensive_accepted:
+        if not (
+                getattr(self, "_database_expensive_detail_active", False)
+                and callable(add_expensive)
+                and add_expensive(normalised)
+                ):
             DatabaseActionsMixin._start_database_expensive_detail_worker(
                 self,
                 database_path,
@@ -2449,7 +2462,30 @@ class DatabaseActionsMixin:
                 )
                 ):
             if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
-                self.infoBox.preview.set_database_runs("", {})
+                service = DatabaseActionsMixin._active_trusted_service_for_instance(
+                    self,
+                    current_instance,
+                )
+                bridge = getattr(self, "_trusted_derived_bridge", None)
+                refresh = getattr(bridge, "refresh_active_database", None)
+                refreshed = bool(
+                    service is not None
+                    and callable(refresh)
+                    and refresh(
+                        getattr(self, "_loaded_database_instance", current_instance),
+                        self.RunList.all_run_metadata(),
+                        service,
+                    )
+                )
+                if not refreshed and bridge is not None:
+                    generation = getattr(self, "_database_load_generation", 0)
+                    QtCore.QTimer.singleShot(
+                        0,
+                        lambda: self._start_trusted_derived_bridge(
+                            generation,
+                            abspath,
+                        ),
+                    )
             elif not self.infoBox.preview.has_database(abspath):
                 self.infoBox.preview.set_database_runs(
                     abspath,
@@ -2612,6 +2648,9 @@ class DatabaseActionsMixin:
     def _release_database_runtime_state(self, abspath):
         """Release database consumers without asserting that publication won."""
         old_instance = getattr(self, "_loaded_database_instance", None)
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            derived_bridge.clear_database()
         stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
         if callable(stop_refresh_timer):
             stop_refresh_timer()
@@ -3080,6 +3119,9 @@ class DatabaseActionsMixin:
         # rollback below explicitly restarts A's progressive work.
         self._cancel_database_detail_load()
         DatabaseActionsMixin._cancel_selected_run_detail(self)
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            derived_bridge.suspend_publications()
 
         # Keep every owned pending session reachable by close_database()/quit
         # while addRuns deliberately pumps Qt events.  Snapshot fallback has
@@ -3205,6 +3247,18 @@ class DatabaseActionsMixin:
                 # service immediately, before signal restoration or control
                 # synchronisation in the enclosing finally can raise.
                 if old_service is not new_service:
+                    # The old coordinator may still own a bounded read against
+                    # A.  Retire it at the same commit boundary that transfers
+                    # the trusted service, before the queued Stage 5C bind
+                    # creates B's coordinator.  This keeps stale work harmless
+                    # and promptly releases Windows reader locks.
+                    clear_derived = getattr(
+                        derived_bridge,
+                        "clear_database",
+                        None,
+                    )
+                    if callable(clear_derived):
+                        clear_derived()
                     DatabaseActionsMixin._retire_trusted_read_service(
                         self,
                         old_service,
@@ -3355,6 +3409,8 @@ class DatabaseActionsMixin:
             return
 
         if publication_restored:
+            if derived_bridge is not None:
+                derived_bridge.resume_publications()
             rollback_path = publication_snapshot["database_path"]
             rollback_runs = publication_snapshot["runs"]
             if rollback_path:
@@ -3500,7 +3556,63 @@ class DatabaseActionsMixin:
             elapsed,
             logger_name=__name__,
         )
-        self._start_database_detail_load(abspath, runs)
+        if access_mode == TRUSTED_LIVE_MODE:
+            if derived_bridge is not None:
+                QtCore.QTimer.singleShot(
+                    0,
+                    lambda: DatabaseActionsMixin._start_trusted_derived_bridge(
+                        self,
+                        generation,
+                        abspath,
+                    ),
+                )
+            else:
+                self._start_database_detail_load(abspath, runs)
+        else:
+            if derived_bridge is not None:
+                derived_bridge.clear_database()
+            self._start_database_detail_load(abspath, runs)
+
+
+    def _start_trusted_derived_bridge(self, generation, database_path):
+        """Start Stage 5C only after the cheap run-list commit returned to Qt."""
+
+        if generation != getattr(self, "_database_load_generation", 0):
+            return
+        if getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE:
+            return
+        if not _database_paths_equal(database_path, self.fileTextbox.text()):
+            return
+        if (
+                getattr(self, "_shutdown_started", False)
+                or getattr(self, "_shutdown_ready", False)
+                ):
+            return
+        instance = getattr(self, "_loaded_database_instance", None)
+        service = DatabaseActionsMixin._active_trusted_service_for_instance(
+            self,
+            instance,
+        )
+        bridge = getattr(self, "_trusted_derived_bridge", None)
+        if (
+                not isinstance(instance, DatabaseInstance)
+                or service is None
+                or bridge is None
+                ):
+            return
+        current = database_instance(database_path)
+        if _database_instances_or_sidecars_differ(instance, current):
+            self._reload_replaced_database(database_path)
+            return
+        DatabaseActionsMixin._advance_loaded_database_sidecar_baseline(
+            self,
+            current,
+        )
+        bridge.bind_database(
+            getattr(self, "_loaded_database_instance", current),
+            self.RunList.all_run_metadata(),
+            service,
+        )
 
 
     def _restore_test_database_replacement_selection(self, state):
@@ -3569,6 +3681,13 @@ class DatabaseActionsMixin:
                 abspath,
                 ):
             return
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            bridge = getattr(self, "_trusted_derived_bridge", None)
+            if bridge is not None:
+                if bridge.coordinator is not None:
+                    bridge.reconcile_runs(self.RunList.all_run_metadata())
+                    bridge.request_priority_update()
+                return
         run_ids = self._database_detail_run_order(runs)
         if not run_ids:
             return
@@ -3626,7 +3745,10 @@ class DatabaseActionsMixin:
             ):
         if (
                 getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE
-                and worker_kwargs.get("trusted_service") is None
+                and (
+                    getattr(self, "_trusted_derived_bridge", None) is not None
+                    or worker_kwargs.get("trusted_service") is None
+                )
                 ):
             return
         prior_worker = getattr(self, "_database_detail_worker", None)
@@ -3669,7 +3791,10 @@ class DatabaseActionsMixin:
             ):
         if (
                 getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE
-                and worker_kwargs.get("trusted_service") is None
+                and (
+                    getattr(self, "_trusted_derived_bridge", None) is not None
+                    or worker_kwargs.get("trusted_service") is None
+                )
                 ):
             return
         prior_worker = getattr(self, "_database_expensive_detail_worker", None)
@@ -3717,6 +3842,11 @@ class DatabaseActionsMixin:
 
 
     def _prioritize_database_detail_runs(self, run_ids=None):
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            bridge = getattr(self, "_trusted_derived_bridge", None)
+            if bridge is not None:
+                bridge.request_priority_update()
+                return
         if not (
                 getattr(self, "_database_detail_active", False)
                 or getattr(self, "_database_expensive_detail_active", False)
@@ -4249,10 +4379,6 @@ class DatabaseActionsMixin:
 
         DatabaseActionsMixin._cancel_selected_run_detail(self)
         generation = self._database_selected_run_generation
-        service = DatabaseActionsMixin._active_trusted_service_for_instance(
-            self,
-            instance,
-        )
         metadata = dict(getattr(item, "run_metadata", {}) or {})
         metadata.setdefault("run_id", run_id)
         metadata.setdefault("guid", str(guid))
@@ -4271,12 +4397,12 @@ class DatabaseActionsMixin:
         finally:
             self.run_idBox.blockSignals(blocked)
 
-        prioritize_details = getattr(self, "_prioritize_database_detail_runs", None)
-        if callable(prioritize_details):
-            prioritize_details([run_id])
         set_loading = getattr(self.infoBox, "set_trusted_run_loading", None)
         if callable(set_loading):
             set_loading(metadata)
+        bridge = getattr(self, "_trusted_derived_bridge", None)
+        if bridge is None:
+            self._prioritize_database_detail_runs([run_id])
 
         if isinstance(instance, DatabaseInstance):
             instance = DatabaseActionsMixin._selected_run_publication_instance(
@@ -4290,6 +4416,10 @@ class DatabaseActionsMixin:
                 DatabaseActionsMixin._restore_current_selected_run_view(self)
                 return True
 
+        service = DatabaseActionsMixin._active_trusted_service_for_instance(
+            self,
+            instance,
+        )
         if not isinstance(instance, DatabaseInstance) or service is None:
             set_error = getattr(self.infoBox, "set_trusted_run_error", None)
             if callable(set_error):
@@ -4299,7 +4429,13 @@ class DatabaseActionsMixin:
                     metadata,
                 )
             return True
+        if bridge is not None:
+            bridge.select_run(str(guid))
+            return True
 
+        # Non-MainWindow compatibility harnesses retain the Stage 4 path.
+        # Every production MainWindow owns the Stage 5C bridge, so this branch
+        # cannot compete with coordinator-owned trusted work in the app.
         cache_key = _selected_run_detail_cache_key(instance, run_id, guid)
         cache = getattr(self, "_selected_run_detail_cache", {})
         cached = cache.get(cache_key)

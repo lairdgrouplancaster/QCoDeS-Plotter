@@ -654,6 +654,9 @@ class RunControlsMixin:
             self.ds = None
             self._selected_dataset_key = None
         self.infoBox.clear()
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            derived_bridge.request_priority_update()
 
         try:
             self.selected_run_id = int(text)
@@ -693,6 +696,9 @@ class RunControlsMixin:
         prioritize_details = getattr(self, "_prioritize_database_detail_runs", None)
         if callable(prioritize_details):
             prioritize_details()
+        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+        if derived_bridge is not None:
+            derived_bridge.request_priority_update()
         self._prioritize_preview_runs()
 
 
@@ -703,6 +709,11 @@ class RunControlsMixin:
             None,
         )
         if callable(generation_gate) and generation_gate():
+            return
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            derived_bridge = getattr(self, "_trusted_derived_bridge", None)
+            if derived_bridge is not None:
+                derived_bridge.request_priority_update()
             return
         preview = getattr(getattr(self, "infoBox", None), "preview", None)
         prioritize = getattr(preview, "prioritize_runs", None)

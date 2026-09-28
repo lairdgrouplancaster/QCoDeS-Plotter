@@ -808,6 +808,7 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             deadline=None,
             trusted_service=None,
             require_publication_ack=False,
+            derived_coordinator_owned=False,
             ):
         super().__init__()
         self.signals = DatabaseRefreshSignals()
@@ -823,6 +824,7 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self._init_sql_interrupt()
         self.trusted_service = trusted_service
         self._require_publication_ack = bool(require_publication_ack)
+        self._derived_coordinator_owned = bool(derived_coordinator_owned)
         self._new_runs_publication_ack = threading.Event()
         self._new_runs_publication_lock = threading.Lock()
         self._new_runs_publication_error: BaseException | None = None
@@ -954,13 +956,10 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
                 continue
             if category == "selected":
                 cheap_priority = TrustedReadPriority.SELECTED_CHEAP
-                expensive_priority = TrustedReadPriority.SELECTED_EXPENSIVE
             elif category == "visible":
                 cheap_priority = TrustedReadPriority.VISIBLE_CHEAP
-                expensive_priority = TrustedReadPriority.VISIBLE_EXPENSIVE
             else:
                 cheap_priority = TrustedReadPriority.REMAINING_CHEAP
-                expensive_priority = TrustedReadPriority.REMAINING_EXPENSIVE
             cheap = self._wait_trusted_request(
                 self.trusted_service.submit_cheap_run(
                     run_id,
@@ -968,15 +967,22 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
                     deadline=self.deadline,
                 )
             )
-            expensive = self._wait_trusted_request(
-                self.trusted_service.submit_expensive_run(
-                    run_id,
-                    priority=expensive_priority,
-                    deadline=self.deadline,
-                )
-            )
             status = cheap.as_dict()
-            status.update(expensive.as_dict())
+            if not self._derived_coordinator_owned:
+                if category == "selected":
+                    expensive_priority = TrustedReadPriority.SELECTED_EXPENSIVE
+                elif category == "visible":
+                    expensive_priority = TrustedReadPriority.VISIBLE_EXPENSIVE
+                else:
+                    expensive_priority = TrustedReadPriority.REMAINING_EXPENSIVE
+                expensive = self._wait_trusted_request(
+                    self.trusted_service.submit_expensive_run(
+                        run_id,
+                        priority=expensive_priority,
+                        deadline=self.deadline,
+                    )
+                )
+                status.update(expensive.as_dict())
             statuses[str(guid)] = status
         return new_runs, statuses
 

@@ -17,11 +17,12 @@ from the GUI thread.
 Stage 5B adds a non-UI derived-work backend around the Stage 5A scheduler. It
 uses the same broker/helper to capture bounded immutable result prefixes,
 produces primitive metadata and deterministic PNG payloads, and performs
-verified disk-cache I/O on its sole worker. Automatic preview and thumbnail
-display is still disabled for trusted live sessions: connecting those payloads
-to Qt is Stage 5C. Explicit plot and CSV actions still acquire action-owned
-private snapshots, and a narrowly eligible snapshot fallback session may retain
-the existing snapshot preview behavior.
+verified disk-cache I/O on its sole worker. Stage 5C connects those payloads to
+Qt through one GUI-owned bridge, progressively displaying derived metadata,
+thumbnails, and previews without reviving the legacy competing producers.
+Explicit plot and CSV actions still acquire action-owned private snapshots, and
+a narrowly eligible snapshot fallback session may retain the existing snapshot
+preview behavior.
 
 ## Source-file boundary
 
@@ -519,16 +520,34 @@ signalling a potentially stale PID.
 caller's process and returns caller-owned Qt objects. It does not acquire this
 launcher containment or process hard-deadline guarantee.
 
-### Stage 5B backend and Stage 5C boundary
+### Stage 5C Qt derived-work bridge
 
 Trusted live loading, automatic default selection, scrolling, and metadata
-completion do not launch legacy snapshot-backed preview or thumbnail workers.
-Snapshot fallback sessions retain their current preview behavior. Stage 5B now
-provides the Qt-independent coordinator, persistent-broker extraction operation,
-bounded 1D/2D renderer, and disk-backed cache described below, but MainWindow,
-RunList, and PreviewTab do not instantiate or consume them yet. Their Stage 4
-`set_database_runs("", {})`, `show_run_preview_placeholders()`, and
-`show_trusted_live_placeholder()` paths remain active until Stage 5C.
+completion do not launch legacy snapshot-backed detail, preview, or thumbnail
+workers. Snapshot fallback sessions retain their separately permitted behavior.
+For a trusted session, `TrustedDerivedQtBridge` owns one Stage 5B coordinator
+and is the sole producer of derived run metadata, dimensions, run-table
+thumbnails, and selected-run preview cards. The cheap run list is committed
+first; the event loop then starts progressive selected, visible, and remaining
+work, with metadata, thumbnail, and preview order inside each tier.
+
+Coordinator and retry threads only request one coalesced queued Qt wakeup. The
+bridge alone polls on the GUI thread, decodes PNG payloads into Qt images, and
+updates `MainWindow`, `RunList`, and `PreviewTab`. It derives visible stable run
+slots from the actual viewport after scrolling, sorting, filtering, resizing,
+and model changes. Publications are accepted only while the exact database,
+service, generation, GUID/run identity, source revision, helper incarnation,
+and renderer/options format remain current. A no-longer-selected result may be
+retained for later selection but cannot replace the selected detail or preview.
+
+Decoded image ownership is intentionally outside the bridge. `PreviewTab` owns
+the only retained full-preview cache and applies independent 512-entry and
+128 MiB limits. Inline run-list cells own the thumbnails they display; when
+inline previews are disabled above 500 runs, Qt skips thumbnail decoding even
+though Stage 5B extraction and disk-cache population may continue. Selecting an
+evicted preview clears only that run's completed preview bit through an exact
+database/generation/GUID-aware scheduler operation, so metadata and thumbnail
+completion remain intact and the coordinator can replay the PNG from disk.
 
 The derived extraction does not require an expensive-run request first. It
 uses the bounded basic run entry to locate the result table, validates its
@@ -551,6 +570,20 @@ and atomic replacement beneath a 0700 application-cache directory. Read,
 corruption, permission, and capacity failures are misses; unsafe roots at or
 above/below the selected database directory disable disk caching and retain
 memory-only operation.
+
+Live appends and incomplete-to-complete changes are coalesced behind the active
+captured prefix, then regenerated without starving selected or visible work.
+Changing preview size invalidates only preview work. Database switching and
+same-path replacement disarm or reject obsolete publications, while a helper
+incarnation boundary invalidates the previous coordinator generation. Close
+disarms wakeups and publications first and retires the coordinator through the
+existing bounded application shutdown lifecycle, leaving no extra Qt watchdog,
+per-run task, timer, or worker architecture.
+
+Selecting the exact active database path again refreshes this binding in place.
+The bridge retains its coordinator, exactly two fixed timers, selected/viewport
+priority, and bounded preview cache, while later publications remain eligible.
+It does not start a helper, coordinator, timer pair, or legacy worker.
 
 ## Finite operations and errors
 
