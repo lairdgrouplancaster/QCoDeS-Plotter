@@ -64,6 +64,22 @@ def _combo_index_for_data(combo, value):
     return -1
 
 
+def _exportable_measurement_params(dataset):
+    """Return dependent values, then standalone values, in run order."""
+    parameters = dataset.get_parameters()
+    setpoint_names = {
+        name
+        for param in parameters
+        for name in param.depends_on_
+    }
+    dependent = [param for param in parameters if param.depends_on_]
+    standalone = [
+        param for param in parameters
+        if not param.depends_on_ and param.name not in setpoint_names
+    ]
+    return dependent + standalone
+
+
 class PlotActionsMixin:
     """
     Plot launching, preview plotting, CSV export, and plot dataset tracking.
@@ -2000,8 +2016,7 @@ class PlotActionsMixin:
             try:
                 parameter_names = tuple(
                     param.name
-                    for param in selected_dataset.get_parameters()
-                    if param.depends_on != ""
+                    for param in _exportable_measurement_params(selected_dataset)
                 )
             except Exception as error:
                 log_exception("Run parameter enumeration failed", error, __name__)
@@ -2054,13 +2069,15 @@ class PlotActionsMixin:
 
     def _measurement_params_by_names(self, dataset, parameter_names):
         """Resolve captured measurement names against a freshly loaded run."""
-        parameters = {param.name: param for param in dataset.get_parameters()}
+        parameters = {
+            param.name: param for param in _exportable_measurement_params(dataset)
+        }
         resolved = []
         for name in parameter_names:
             param = parameters.get(name)
-            if param is None or param.depends_on == "":
+            if param is None:
                 raise ValueError(
-                    f"Measurement parameter {name!r} is not present in the "
+                    f"Measurement parameter {name!r} is not exportable in the "
                     "freshly loaded run."
                 )
             resolved.append(param)

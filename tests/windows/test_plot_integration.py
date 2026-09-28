@@ -186,6 +186,82 @@ def csv_rows(csv_path):
         return list(csv.reader(csv_file))
 
 
+def test_mixed_run_csv_is_identical_before_and_after_opening_plot(
+        tmp_path, monkeypatch
+        ):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    original_database_path = qcodes.config.core.db_location
+    database_path = tmp_path / "mixed-export.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("mixed_export", sample_name="sample")
+    x = ManualParameter("x")
+    signal = ManualParameter("signal")
+    temperature = ManualParameter("temperature")
+    measurement = Measurement(exp=experiment, name="mixed_export")
+    measurement.register_parameter(temperature)
+    measurement.register_parameter(x)
+    measurement.register_parameter(signal, setpoints=(x,))
+    with measurement.run(write_in_background=False) as datasaver:
+        for index in range(3):
+            datasaver.add_result((x, index), (signal, index + 10))
+        for value in (20, 21):
+            datasaver.add_result((temperature, value))
+        dataset = datasaver.dataset
+        run_id, guid = dataset.run_id, dataset.guid
+    dataset.conn.close()
+    experiment.conn.close()
+
+    window = None
+    try:
+        window = main_window.MainWindow()
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(
+            lambda: (
+                not window._database_load_active
+                and not window._database_detail_active
+                and not window._database_expensive_detail_active
+            )
+        )
+        window.monitor.stop()
+        assert window.selected_run_id == run_id
+        assert window.RunList.all_run_metadata()[run_id]["measure_parameters"] == [
+            "signal", "temperature"
+        ]
+
+        destinations = iter((tmp_path / "before.csv", tmp_path / "after.csv"))
+        monkeypatch.setattr(
+            qtw.QFileDialog, "getSaveFileName",
+            lambda *_args, **_kwargs: (str(next(destinations)), "CSV files (*.csv)"),
+        )
+        window.measurementBox.setText("*")
+        window.exportRunCsv()
+
+        window.openPlot(guid=guid, show=False)
+        plot = window.windows[-1]
+        wait_for(lambda: not getattr(plot.worker, "running", False))
+        held_dataset = window.dataset_holder[plot._dataset_key].dataset
+        window._replace_selected_dataset(held_dataset, plot._dataset_key)
+        window.exportRunCsv()
+
+        expected = [
+            ["signal.signal", "signal.x", "temperature.temperature"],
+            ["10.0", "0.0", "20.0"],
+            ["11.0", "1.0", "21.0"],
+            ["12.0", "2.0", ""],
+        ]
+        assert csv_rows(tmp_path / "before.csv") == expected
+        assert csv_rows(tmp_path / "after.csv") == expected
+    finally:
+        if window is not None:
+            close_main_window(window)
+        qcodes.config.core.db_location = original_database_path
+
+
 def build_line_database(db_path, point_count, *, guid=None, journal_mode=None):
     selected_journal_mode = "DELETE" if journal_mode is None else journal_mode
     initialise_or_create_database_at(
