@@ -583,6 +583,10 @@ class loader(QtCore.QRunnable):
 
 
     def _load_large_heatmap_from_sql(self):
+        # SQLite aggregates treat QCoDeS complex BLOBs as numbers, so reject
+        # them before the bounded SQL path can compute a misleading grid.
+        if getattr(self.param, "type", None) == "complex":
+            self._reject_complex_heatmap()
         conn = sqlite_read_only_connection(
             cache_database_path(self.cache),
             **self._read_only_open_kwargs(),
@@ -1004,8 +1008,18 @@ class loader(QtCore.QRunnable):
         return self._arrays_from_values(x_values, y_values, z_values)
 
 
+    def _reject_complex_heatmap(self):
+        raise ValueError(
+            f"Complex-valued heatmaps are not supported for parameter "
+            f"'{self.param.name}'."
+        )
+
+
     def _arrays_from_values(self, x_values, y_values, z_values):
         self._check_cancelled()
+        z_values = np.asarray(z_values)
+        if np.iscomplexobj(z_values):
+            self._reject_complex_heatmap()
         x_data = np.asarray(x_values, dtype=float)
         self._check_cancelled()
         y_data = np.asarray(y_values, dtype=float)
@@ -1516,6 +1530,9 @@ class loader(QtCore.QRunnable):
         axis_dimension = {}
         valid = {}
         shaped_axes_are_rectilinear = True
+        depvarData = np.asarray(depvarData)
+        if np.iscomplexobj(depvarData):
+            self._reject_complex_heatmap()
         depvarData = np.asarray(depvarData, dtype=float)
         self._check_cancelled()
         
