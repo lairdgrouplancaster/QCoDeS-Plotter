@@ -1,8 +1,61 @@
+from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.database import _bounded_run_publication
-from qplot.windows._widgets.preview import PreviewTab, preview_placeholder_dimensions
+from qplot.windows._widgets.preview import (
+    PreviewImageLabel,
+    PreviewTab,
+    preview_placeholder_dimensions,
+)
 from qplot.windows._widgets.run_list_items import RunPreviewCell
+
+
+def test_placeholder_selection_and_actions_work_before_thumbnail_arrives():
+    cell = RunPreviewCell("guid", 2)
+    cell.update_placeholder_metadata({
+        "measure_parameters": ["a", "b"], "preview_dimensions": [2, 2],
+    })
+    cell.show()
+    plots = []
+    exports = []
+    cell.plotRequested.connect(lambda *args: plots.append(args))
+    cell.exportRequested.connect(lambda *args: exports.append(args))
+    try:
+        labels = cell.findChildren(PreviewImageLabel)
+        QtTest.QTest.mouseClick(labels[0], QtCore.Qt.MouseButton.LeftButton)
+        assert [label._selected for label in labels] == [True, False]
+        QtTest.QTest.mouseClick(labels[1], QtCore.Qt.MouseButton.LeftButton)
+        assert [label._selected for label in labels] == [False, True]
+        QtTest.QTest.mouseDClick(labels[1], QtCore.Qt.MouseButton.LeftButton)
+        QtTest.QTest.keyClick(labels[1], QtCore.Qt.Key.Key_Return)
+        labels[1].exportRequested.emit(labels[1].parameter)
+        assert plots == [("guid", "b"), ("guid", "b")]
+        assert exports == [("guid", "b")]
+
+        cell.set_generating(True)
+        assert [label._selected for label in cell.findChildren(PreviewImageLabel)] == [False, True]
+        image = QtGui.QImage(22, 22, QtGui.QImage.Format.Format_RGB32)
+        image.fill(QtCore.Qt.GlobalColor.white)
+        cell.show_previews([
+            {"parameter": parameter, "axes": ["x", "y"], "image": image}
+            for parameter in ("a", "b")
+        ])
+        assert [label._selected for label in cell.findChildren(PreviewImageLabel)] == [False, True]
+    finally:
+        cell.close()
+        cell.deleteLater()
+
+
+def test_placeholder_parameter_updates_even_when_dimensions_are_unchanged():
+    cell = RunPreviewCell("guid", 1)
+    try:
+        for parameter in ("a", "b"):
+            cell.update_placeholder_metadata({"measure_parameters": [parameter]})
+            label = cell.findChildren(PreviewImageLabel)[0]
+            assert label.parameter == parameter
+            assert parameter in label.accessibleName()
+    finally:
+        cell.deleteLater()
 
 
 def test_initial_dimensions_survive_bounded_worker_publication():

@@ -4,6 +4,7 @@ from PyQt6 import QtWidgets as qtw
 from ._run_formatting import one_dimensional_duplicate_point_count, run_tooltip_text
 from .preview import (
     DraggablePreviewImageLabel,
+    PreviewImageLabel,
     preview_placeholder_dimensions,
     unsupported_preview_label,
 )
@@ -40,6 +41,7 @@ class RunPreviewCell(qtw.QWidget):
         self._generating = False
         self._has_rendered_previews = False
         self._placeholder_dimensions = []
+        self._placeholder_parameters = []
 
         self.content_layout = qtw.QHBoxLayout()
         self.content_layout.setContentsMargins(2, 0, 2, 0)
@@ -54,7 +56,7 @@ class RunPreviewCell(qtw.QWidget):
 
 
     def show_placeholders(self, count=None, generating=None):
-        self._clear_layout()
+        selected_parameter = self._clear_layout()
         self._has_rendered_previews = False
         if generating is not None:
             self._generating = bool(generating)
@@ -64,11 +66,12 @@ class RunPreviewCell(qtw.QWidget):
                 self._placeholder_label(index, generating=self._generating)
                 )
         self.content_layout.addStretch()
+        self._restore_selection(selected_parameter)
 
 
     def show_previews(self, previews):
         self._generating = False
-        self._clear_layout()
+        selected_parameter = self._clear_layout()
 
         preview_count = 0
         for preview in previews or []:
@@ -113,6 +116,7 @@ class RunPreviewCell(qtw.QWidget):
             self.content_layout.addWidget(self._placeholder_label(index))
         self.content_layout.addStretch()
         self._has_rendered_previews = preview_count > 0
+        self._restore_selection(selected_parameter)
 
 
     def set_generating(self, generating):
@@ -134,14 +138,21 @@ class RunPreviewCell(qtw.QWidget):
 
     def update_placeholder_metadata(self, metadata):
         dimensions = preview_placeholder_dimensions(metadata)
-        if dimensions != self._placeholder_dimensions:
+        parameters = list(metadata.get("measure_parameters") or [])
+        if (dimensions != self._placeholder_dimensions
+                or parameters != self._placeholder_parameters):
             self._placeholder_dimensions = dimensions
+            self._placeholder_parameters = parameters
             if not self._has_rendered_previews:
                 self.show_placeholders()
 
 
     def _placeholder_label(self, index=0, generating=False):
-        label = qtw.QLabel()
+        parameters = self._placeholder_parameters
+        parameter = parameters[index] if index < len(parameters) else ""
+        label = PreviewImageLabel(parameter)
+        label.plotRequested.connect(self._emit_plot_requested)
+        label.exportRequested.connect(self._emit_export_requested)
         dimensions = self._placeholder_dimensions
         dimension = dimensions[index] if index < len(dimensions) else None
         label.setText(f"{dimension}D" if dimension else "")
@@ -184,6 +195,11 @@ class RunPreviewCell(qtw.QWidget):
 
 
     def _clear_layout(self):
+        selected_parameter = next(
+            (label.parameter for label in self.findChildren(PreviewImageLabel)
+             if label._selected),
+            None,
+            )
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             if item is None:
@@ -192,6 +208,15 @@ class RunPreviewCell(qtw.QWidget):
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
+        return selected_parameter
+
+
+    def _restore_selection(self, parameter):
+        if parameter:
+            for label in self.findChildren(PreviewImageLabel):
+                if label.parameter == parameter:
+                    label.set_selected(True)
+                    break
 
 
 class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
