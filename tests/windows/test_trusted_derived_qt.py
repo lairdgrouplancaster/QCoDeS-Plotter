@@ -1433,7 +1433,9 @@ def test_late_snapshot_result_is_rejected_by_every_fence_component(
     else:  # pragma: no cover - parametrization is exhaustive
         raise AssertionError(stale_component)
 
-    QtWidgets.QApplication.processEvents()
+    # The worker drops its live-future marker before emitting the queued Qt
+    # signal. One processEvents call may precede that emission entirely.
+    _process_until(lambda: bool(window.infoBox.snapshot_rejections))
     assert not window.infoBox.snapshot_pages
     assert not window.infoBox.snapshot_values
     assert [item for item, _thread in window.infoBox.snapshot_rejections] == [request]
@@ -1672,6 +1674,76 @@ def test_reselection_rejects_stale_selected_detail_and_preserves_newer_tabs(
     finally:
         first_release.set()
         _shutdown_real_bridge(window, bridge)
+
+
+def test_metadata_revision_change_invalidates_viewer_until_current_detail_arrives(
+    bound_bridge,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    info_box = _TrackingSnapshotInfoBox(window)
+    window.infoBox = info_box
+    window.layout().addWidget(info_box)
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+
+    def selected_detail(text):
+        detail = _rich_selected_detail(1, "guid-1")
+        return replace(
+            detail,
+            presentation=build_selected_run_presentation(
+                run_fields=detail.run.as_dict(),
+                metadata_fields={"operator": text},
+                parameters=(),
+                setpoint_summaries=(),
+                snapshot_summary={},
+                unavailable_fields=(),
+            ),
+        )
+
+    def open_operator_value(text):
+        value = next(
+            value for value in info_box._trusted_full_values.values()
+            if value.text == text
+        )
+        info_box._show_trusted_full_value(value.identifier, "/Metadata/operator")
+        dialog = info_box._full_value_dialog
+        assert dialog is not None
+        assert dialog._exact_text == text
+        return dialog
+
+    old_text = "old operator " * 200
+    bridge._publish_selected_detail(
+        _selected_detail_publication(bridge, coordinator, selected_detail(old_text))
+    )
+    dialog = open_operator_value(old_text)
+    retained = bridge._selected_detail_publication
+    metadata = _publication(bridge, coordinator, "guid-1", TrustedWorkKind.METADATA)
+
+    # Same-revision background metadata must leave an open exact viewer alone.
+    bridge._publish(metadata)
+    assert bridge._selected_detail_publication is retained
+    assert info_box._full_value_dialog is dialog
+    assert dialog._exact_text == old_text
+
+    revision = TrustedSourceRevision(b"refined-metadata-revision")
+    coordinator._runs = tuple(
+        replace(run, source_revision=revision) if run.run_guid == "guid-1" else run
+        for run in coordinator.runs
+    )
+    bridge._publish(replace(metadata, key=replace(metadata.key, source_revision=revision)))
+    assert bridge._selected_detail_publication is None
+    assert bridge._snapshot_source is None
+    assert info_box._full_value_dialog is None
+    assert not info_box._trusted_full_values
+    assert dialog._exact_text is None
+
+    # A new accepted detail restores current values, never the retired backing.
+    new_text = "new operator " * 200
+    bridge._publish_selected_detail(
+        _selected_detail_publication(bridge, coordinator, selected_detail(new_text))
+    )
+    assert open_operator_value(new_text) is not dialog
+    assert all(value.text != old_text for value in info_box._trusted_full_values.values())
 
 
 def test_selection_source_helper_database_and_shutdown_boundaries_invalidate_viewer(

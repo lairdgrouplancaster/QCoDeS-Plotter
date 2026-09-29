@@ -293,6 +293,20 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
 
     def assert_selected_value_presentation():
         bridge = window._trusted_derived_bridge
+        # A progressive detail can precede terminal metadata, which may refine
+        # the source revision and correctly invalidate its exact-value viewer.
+        # Exercise dialog reuse only after that revision and its detail settle.
+        _process_until(
+            lambda: (
+                bridge.coordinator is not None
+                and not bridge.coordinator.active
+                and bridge.coordinator.snapshot().pending_count == 0
+                and not window._database_refresh_active
+                and not bridge.background_active()
+                and bridge._selected_detail_publication is not None
+                and bridge._detail_display_guid == str(first_run[5].guid)
+            )
+        )
         publication = bridge._selected_detail_publication
         assert publication is not None
         assert publication.run_guid == str(first_run[5].guid)

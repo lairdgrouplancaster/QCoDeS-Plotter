@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -105,6 +106,9 @@ def artifact_bytes_and_mtimes(database_path):
 
 
 def complete_artifact_state(database_path):
+    # Reading may update atime (including this audit's own read_bytes call).
+    # Preserve content, identity, permissions and modification/change checks;
+    # access time is not evidence of a database write.
     artifacts = {}
     for suffix in ("", *testdata_module._SQLITE_SIDECAR_SUFFIXES):
         artifact_path = Path(f"{database_path}{suffix}")
@@ -119,12 +123,49 @@ def complete_artifact_state(database_path):
             status.st_ino,
             status.st_mode,
             status.st_size,
-            status.st_atime_ns,
             status.st_mtime_ns,
             status.st_ctime_ns,
             contents,
         )
     return artifacts
+
+
+@pytest.mark.parametrize(
+    "changed_field",
+    [
+        "st_atime_ns", "st_dev", "st_ino", "st_mode", "st_size",
+        "st_mtime_ns", "st_ctime_ns", "contents",
+    ],
+)
+def test_complete_artifact_state_ignores_only_access_time(
+    tmp_path, monkeypatch, changed_field,
+):
+    database_path = tmp_path / "audit-fixture.db"
+    database_path.write_bytes(b"synthetic audit fixture")
+    before = complete_artifact_state(database_path)
+    original_stat = Path.stat
+    original_status = database_path.stat()
+
+    def altered_stat(path, *args, **kwargs):
+        if path != database_path:
+            return original_stat(path, *args, **kwargs)
+        fields = {
+            field: getattr(original_status, field)
+            for field in (
+                "st_dev", "st_ino", "st_mode", "st_size",
+                "st_atime_ns", "st_mtime_ns", "st_ctime_ns",
+            )
+        }
+        if changed_field != "contents":
+            fields[changed_field] += 1
+        return SimpleNamespace(**fields)
+
+    if changed_field == "contents":
+        database_path.write_bytes(b"changed audit contents")
+    monkeypatch.setattr(Path, "stat", altered_stat)
+    assert (complete_artifact_state(database_path) == before) is (
+        changed_field == "st_atime_ns"
+    )
 
 
 def immutable_run_name(database_path):

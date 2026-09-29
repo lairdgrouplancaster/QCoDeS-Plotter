@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import ast
+import json
+import sys
+from types import SimpleNamespace
+from unittest.mock import Mock, call
+
+import pytest
 
 from scripts.validate_distribution import (
     ENTRYPOINT_DELEGATION_SITECUSTOMIZE,
@@ -53,6 +59,9 @@ def test_wheel_smoke_uses_current_qcodes_results_and_progressive_details() -> No
     assert "cache_miss_state" in smoke
     assert "window.infoBox.preview._workers" in smoke
     for asserted_field in (
+        'initial_fields["measure_parameters"] == ["signal"]',
+        'initial_fields["sweep_parameters"] == ["setpoint"]',
+        'initial_fields["preview_dimensions"] == [1]',
         'expensive_fields["result_count"] == 2',
         'expensive_fields["point_shape"] == [2]',
         'expensive_fields["setpoint_shape_source"] == "planned"',
@@ -283,6 +292,68 @@ def test_wheel_smoke_exercises_installed_exact_process_supervision() -> None:
     assert immediate_helper_assertion in smoke
     assert cleanup_helper_wait in smoke
     assert smoke.index(immediate_helper_assertion) < smoke.index(cleanup_helper_wait)
+
+
+@pytest.mark.parametrize(
+    "incomplete_record,incomplete_pid",
+    [
+        (FileNotFoundError(), "33"),
+        ("", "33"),
+        ('{"gui_pid":', "33"),
+        ("{}", "33"),
+        ('{"gui_pid":11,"helper_pid":22}', ""),
+        ('{"gui_pid":11,"helper_pid":22}', FileNotFoundError()),
+    ],
+)
+@pytest.mark.parametrize("outcome", ["ready", "timeout", "caller_exit"])
+def test_installed_caller_eof_waits_for_complete_readiness(
+    incomplete_record, incomplete_pid, outcome,
+):
+    smoke = ast.parse(wheel_smoke_code())
+    function = next(
+        node for node in smoke.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "exercise_installed_public_api_caller_eof"
+    )
+    caller = Mock()
+    caller.poll.return_value = None
+    caller.communicate.return_value = ("child output", "child error")
+    caller.kill.side_effect = lambda: setattr(caller.poll, "return_value", -1)
+    record_path = Mock()
+    record_path.read_text.side_effect = [
+        incomplete_record, '{"gui_pid":11,"helper_pid":22}',
+    ]
+    launcher_path = Mock()
+    launcher_path.read_text.side_effect = [incomplete_pid, "33"]
+    clock = Mock()
+    clock.monotonic.side_effect = [0.0, 11.0 if outcome == "timeout" else 0.0]
+    wait_for_exit = Mock()
+    namespace = {
+        "sys": sys,
+        "subprocess": SimpleNamespace(Popen=Mock(return_value=caller), DEVNULL=-3, PIPE=-1),
+        "time": clock,
+        "json": json,
+        "VANISHING_API_CALLER_CODE": "unused mock child",
+        "wait_for_process_exit": wait_for_exit,
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "<smoke-test>", "exec"), namespace)
+    exercise = namespace[function.name]
+    if outcome == "caller_exit":
+        caller.poll.return_value = 1
+        with pytest.raises(AssertionError, match="exited before readiness"):
+            exercise("child.py", record_path, "test.db", launcher_path)
+        caller.kill.assert_not_called()
+        wait_for_exit.assert_not_called()
+    elif outcome == "timeout":
+        with pytest.raises(TimeoutError, match="did not become ready"):
+            exercise("child.py", record_path, "test.db", launcher_path)
+        caller.kill.assert_called_once()
+        wait_for_exit.assert_not_called()
+    else:
+        exercise("child.py", record_path, "test.db", launcher_path)
+        caller.kill.assert_called_once()
+        clock.sleep.assert_called_once_with(0.01)
+        assert wait_for_exit.call_args_list == [call(33), call(11), call(22)]
 
 
 def test_actual_installed_entrypoint_hook_captures_launcher_delegation() -> None:

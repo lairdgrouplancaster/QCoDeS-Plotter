@@ -1489,7 +1489,21 @@ def exercise_installed_public_api_caller_eof(
     )
     try:
         deadline = time.monotonic() + 10.0
-        while not record_path.exists() or not launcher_record_path.exists():
+        while True:
+            # Creating a readiness file does not publish its contents atomically.
+            # Wait for both complete records before killing the public caller.
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                launcher_pid = int(launcher_record_path.read_text(encoding="utf-8"))
+                if not isinstance(record, dict) or not all(
+                    type(record.get(name)) is int and record[name] > 0
+                    for name in ("gui_pid", "helper_pid")
+                ) or launcher_pid <= 0:
+                    raise ValueError("incomplete installed caller readiness")
+            except (FileNotFoundError, ValueError):
+                pass
+            else:
+                break
             if caller.poll() is not None:
                 stdout, stderr = caller.communicate()
                 raise AssertionError(
@@ -1499,8 +1513,6 @@ def exercise_installed_public_api_caller_eof(
             if time.monotonic() >= deadline:
                 raise TimeoutError("installed caller-EOF tree did not become ready")
             time.sleep(0.01)
-        record = json.loads(record_path.read_text(encoding="utf-8"))
-        launcher_pid = int(launcher_record_path.read_text(encoding="utf-8"))
         caller.kill()
         caller.wait(timeout=5.0)
         wait_for_process_exit(launcher_pid)
@@ -3155,8 +3167,9 @@ def exercise_spawned_supervisor():
                     assert tuple(record.run_id for record in initial_page.runs) == (1,)
                     initial_fields = initial_page.runs[0].as_dict()
                     assert initial_fields["guid"].endswith("000000000001")
-                    assert initial_fields["measure_parameters"] == []
-                    assert initial_fields["sweep_parameters"] == []
+                    assert initial_fields["measure_parameters"] == ["signal"]
+                    assert initial_fields["sweep_parameters"] == ["setpoint"]
+                    assert initial_fields["preview_dimensions"] == [1]
                     application_home = Path(temporary) / "application-home"
                     application_cache = application_home / "cache"
                     application_home.mkdir()

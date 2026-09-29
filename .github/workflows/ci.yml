@@ -492,6 +492,16 @@ jobs:
             -FilePath $python `
             -ArgumentList $arguments
 
+      - name: Upload Windows wheel failure diagnostics
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qplot-wheel-windows-diagnostics
+          if-no-files-found: ignore
+          path: |
+            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stdout.txt
+            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stderr.txt
+
       - name: Check wheel metadata
         run: python -m twine check dist/*
 
