@@ -577,6 +577,10 @@ if os.environ.pop("QPLOT_CI_REDIRECT_ONCE", None) == "1":
 } catch {
     $primaryError = $_
     Write-Host "qPlot Windows wrapper phase: caught-error"
+    # A terminating Write-Error after cleanup can escape the caller's *>
+    # redirection. Persist the cause now so timeouts never look like a silent
+    # pytest failure, even if later cleanup also fails or stalls.
+    Write-Host ("qPlot Windows wrapper error: " + $primaryError.Exception.Message)
 } finally {
     # Closing the job handle kills every remaining descendant and therefore
     # closes inherited output handles before reader and account cleanup.
