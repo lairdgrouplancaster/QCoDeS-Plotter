@@ -2,9 +2,13 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
 from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
+from qplot.configuration.themes.blank import blank
+from qplot.configuration.themes.dark import dark
+from qplot.configuration.themes.light import light
 from qplot.datahandling.file_identity import database_instance
 from qplot.windows._database_actions import DatabaseActionsMixin
 from qplot.windows._preferences import PreferencesDialog
@@ -101,6 +105,72 @@ class _RefreshHarness(qtw.QMainWindow):
 
     def _auto_plot_changed(self, _checked):
         pass
+
+
+@pytest.mark.parametrize("theme", [light, dark, blank], ids=["light", "dark", "blank"])
+@pytest.mark.parametrize("style_name", qtw.QStyleFactory.keys())
+def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name):
+    window = _RefreshHarness()
+    window.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen)
+    window.setStyleSheet(theme.main)
+    style = qtw.QStyleFactory.create(style_name)
+    style.setParent(window)
+    spin = window.spinBox
+    spin.setStyle(style)
+    container = qtw.QWidget(window)
+    layout = qtw.QHBoxLayout(container)
+    layout.addWidget(spin)
+    window.setCentralWidget(container)
+    try:
+        window.show()
+        assert spin.maximum() == 10_000.0
+        for interval in (0.0, 10.0, 10_000.0):
+            spin.setValue(interval)
+            qtw.QApplication.processEvents()
+            option = qtw.QStyleOptionSpinBox()
+            spin.initStyleOption(option)
+            editor = spin.lineEdit()
+            edit_rect = editor.geometry()
+            for control in (
+                qtw.QStyle.SubControl.SC_SpinBoxUp,
+                qtw.QStyle.SubControl.SC_SpinBoxDown,
+            ):
+                button_rect = spin.style().subControlRect(
+                    qtw.QStyle.ComplexControl.CC_SpinBox, option, control, spin
+                )
+                assert not edit_rect.intersects(button_rect), (
+                    style_name, interval, edit_rect, button_rect
+                )
+            assert editor.width() >= editor.fontMetrics().horizontalAdvance(spin.text())
+
+        frame = qtw.QStyleOptionFrame()
+        editor.initStyleOption(frame)
+        contents = editor.style().subElementRect(
+            qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
+        )
+        text_width = editor.fontMetrics().horizontalAdvance(spin.text())
+        assert text_width + 4 <= contents.width() <= text_width + 8
+        spin.setValue(10_001.0)
+        assert spin.value() == 10_000.0
+
+        # The layout fix must keep the native step buttons usable.
+        spin.setValue(10.0)
+        for control, expected in (
+            (qtw.QStyle.SubControl.SC_SpinBoxUp, 10.1),
+            (qtw.QStyle.SubControl.SC_SpinBoxDown, 10.0),
+        ):
+            spin.initStyleOption(option)
+            button_rect = spin.style().subControlRect(
+                qtw.QStyle.ComplexControl.CC_SpinBox, option, control, spin
+            )
+            QtTest.QTest.mouseClick(
+                spin, QtCore.Qt.MouseButton.LeftButton, pos=button_rect.center()
+            )
+            assert spin.value() == pytest.approx(expected)
+    finally:
+        window.monitor.stop()
+        window.close()
+        window.deleteLater()
 
 
 class RefreshTimerLifecycleTestCase(unittest.TestCase):

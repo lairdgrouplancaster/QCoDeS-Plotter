@@ -222,6 +222,11 @@ _STYLESHEET_TEMPLATE = Template(
         background-color: $field_alt_bg;
         color: $muted_text;
     }
+    QDoubleSpinBox#refreshIntervalSpin {
+        /* Windows 11 places both native step buttons side by side. Its
+           stylesheet edit-field geometry otherwise overlaps the up button. */
+        padding-right: 32px;
+    }
     QComboBox:editable {
         background-color: $field_bg;
         color: $text;

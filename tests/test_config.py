@@ -51,6 +51,13 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(config().get("user_preference.theme"), "dark")
         self.assertIs(config().theme, dark)
 
+    def test_refresh_interval_accepts_maximum_and_rejects_larger_values(self):
+        cfg = config()
+        cfg.update("user_preference.default_refresh_rate", 10_000.0)
+        with self.assertRaises(ValidationError):
+            cfg.update("user_preference.default_refresh_rate", 10_000.1)
+        self.assertEqual(config().get("user_preference.default_refresh_rate"), 10_000.0)
+
     def test_run_table_column_widths_write_and_reload(self):
         cfg = config()
         widths = [44, 120, 112, 96, 170, 150, 142, 142, 140, 96, 62, 286]

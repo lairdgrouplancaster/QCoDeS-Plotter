@@ -706,7 +706,7 @@ class plotWidget(
             self.toolbarRef.hide()
         
         self.spinBox = qtw.QDoubleSpinBox()
-        self.spinBox.setRange(0.0, 86_400.0)
+        self.spinBox.setRange(0.0, 10_000.0)
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
 

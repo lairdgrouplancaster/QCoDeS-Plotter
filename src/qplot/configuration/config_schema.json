@@ -232,7 +232,7 @@
                 "default_refresh_rate": {
                     "type": "number",
                     "minimum": 0,
-                    "maximum": 86400,
+                    "maximum": 10000,
                     "default": 1
                 }
             },

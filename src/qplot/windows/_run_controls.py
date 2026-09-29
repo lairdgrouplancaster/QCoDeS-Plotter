@@ -29,6 +29,42 @@ from ._widgets._run_formatting import run_is_complete
 AUTO_PLOT_KEY = "user_preference.auto_plot"
 
 
+class _RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
+    """Fit the longest interval without the native spin box's surplus width."""
+
+    def sizeHint(self):
+        size = super().sizeHint()
+        option = qtw.QStyleOptionSpinBox()
+        self.initStyleOption(option)
+        option.rect = QtCore.QRect(QtCore.QPoint(), size)
+        edit_rect = self.style().subControlRect(
+            qtw.QStyle.ComplexControl.CC_SpinBox,
+            option, qtw.QStyle.SubControl.SC_SpinBoxEditField, self,
+        )
+        editor = self.lineEdit()
+        frame = qtw.QStyleOptionFrame()
+        editor.initStyleOption(frame)
+        frame.rect = QtCore.QRect(QtCore.QPoint(), edit_rect.size())
+        contents = editor.style().subElementRect(
+            qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
+        )
+        text_width = max(
+            editor.fontMetrics().horizontalAdvance(
+                self.prefix() + self.textFromValue(value) + self.suffix()
+            )
+            for value in (self.minimum(), self.maximum())
+        )
+        margins = editor.textMargins()
+        size.setWidth(
+            size.width() - contents.width() + text_width
+            + margins.left() + margins.right() + 4
+        )
+        return size
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+
 def _run_timestamp_sort_key(metadata):
     try:
         return float(metadata.get("run_timestamp") or 0)
@@ -52,12 +88,15 @@ class RunControlsMixin:
         Refresh checks for any new runs added to the dataset.
 
         """
-        self.spinBox = qtw.QDoubleSpinBox()
-        self.spinBox.setRange(0.0, 86_400.0)
+        self.spinBox = _RefreshIntervalSpinBox()
+        self.spinBox.setObjectName("refreshIntervalSpin")
+        self.spinBox.setRange(0.0, 10_000.0)
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
         self.spinBox.setSuffix(" s")
-        self.spinBox.setFixedWidth(84)
+        self.spinBox.setSizePolicy(
+            qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed
+        )
         self.spinBox.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.spinBox.setToolTip("Refresh interval in seconds")
         self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
