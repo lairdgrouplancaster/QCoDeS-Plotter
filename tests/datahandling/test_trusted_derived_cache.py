@@ -14,6 +14,7 @@ import pytest
 import qplot.datahandling.trusted_derived_cache as cache_module
 from qplot.datahandling.file_identity import DatabaseInstance
 from qplot.datahandling.trusted_derived_cache import (
+    TRUSTED_DERIVED_CACHE_FORMAT_VERSION,
     TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS,
     TRUSTED_DERIVED_CACHE_MAX_TEXT_BYTES,
     TrustedDerivedDiskCache,
@@ -33,6 +34,10 @@ from qplot.datahandling.trusted_work_scheduler import (
 )
 
 _DEFAULT_OPTIONS = RenderingOptions()
+
+
+def test_scientifically_corrected_renderer_uses_cache_format_after_v2() -> None:
+    assert TRUSTED_DERIVED_CACHE_FORMAT_VERSION > 2
 
 
 def _key(
@@ -319,9 +324,9 @@ def test_corrupt_truncated_and_incompatible_entries_are_misses(
         path.write_bytes(data[:-1] + bytes((data[-1] ^ 1,)))
     else:
         changed = bytearray(data)
-        marker = b'"format_version":1'
+        marker = f'"format_version":{TRUSTED_DERIVED_CACHE_FORMAT_VERSION}'.encode()
         offset = changed.index(marker) + len(marker) - 1
-        changed[offset] = ord("2")
+        changed[offset] = ord(str((TRUSTED_DERIVED_CACHE_FORMAT_VERSION + 1) % 10))
         path.write_bytes(changed)
 
     assert cache.get(key) is None

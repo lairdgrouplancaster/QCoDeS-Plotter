@@ -57,6 +57,8 @@ def test_wheel_smoke_uses_current_qcodes_results_and_progressive_details() -> No
         'expensive_fields["point_shape"] == [2]',
         'expensive_fields["setpoint_shape_source"] == "planned"',
         'expensive_fields["storage_bytes_estimated"] is True',
+        "selected.snapshot.source.page(station.container_handle, None)",
+        '(("run_id", str(run_id), None),)',
         "summary.first == 0.0",
         "summary.last == 1.0",
         "summary.steps == 2",
@@ -90,14 +92,104 @@ def test_wheel_smoke_exercises_latest_bounded_detail_contract() -> None:
     ):
         assert installed_module in smoke
     for expected_contract in (
-        'presentation.metadata.status == "truncated"',
-        'presentation.raw.status == "truncated"',
+        'scalar_presentation.metadata.status == "available"',
+        'scalar_presentation.raw.status == "available"',
+        "scalar_presentation.metadata.shortened_value_count == 1",
+        "scalar_presentation.raw.shortened_value_count == 2",
+        'node.key == "[display]"',
+        "description_node.source_value_bytes == 1_258",
+        "measurement_exception_node.source_value_bytes == 1_255",
+        '"KeyboardInterrupt" in measurement_exception_node.value',
+        "full_values[description_node.full_value_id].text == run_description",
+        'structural_presentation.metadata.status == "truncated"',
+        'structural_presentation.raw.status == "truncated"',
+        'node.key == "[truncated]"',
         'no_snapshot.status == "empty"',
         'omitted_snapshot.status == "unavailable"',
         '"No snapshot was stored" not in omitted_snapshot.message',
         "isinstance(selected.presentation, TrustedSelectedRunPresentation)",
     ):
         assert expected_contract in smoke
+
+
+def test_wheel_smoke_exercises_mixed_size_live_wal_priority() -> None:
+    smoke = wheel_smoke_code()
+    compile(smoke, "<qplot-wheel-smoke>", "exec")
+    smoke_module = ast.parse(smoke)
+    function_name = "exercise_stage5c_mixed_size_wal_priority"
+    function = next(
+        (
+            node
+            for node in smoke_module.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function_name
+        ),
+        None,
+    )
+    assert function is not None, (
+        "the installed-wheel smoke must define a real public-QCoDeS mixed-size "
+        "Stage 5C WAL acceptance"
+    )
+    called_names = {
+        node.func.id
+        for node in ast.walk(smoke_module)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert function_name in called_names
+    function_source = ast.get_source_segment(smoke, function)
+    assert function_source is not None
+    for required_contract in (
+        "Measurement",
+        "ManualParameter",
+        ".set_shapes(",
+        ".add_result(",
+        ".flush_data_to_database(",
+        "RunList.run_preview_is_ready",
+        "infoBox.preview.cache",
+        "_metadata_by_guid",
+        "_detail_display_guid",
+        "measurement_exception",
+        "run_description",
+        "stage5c_operator",
+        "FULL_VALUE_PATH_ROLE",
+        "FULL_VALUE_ID_ROLE",
+        "itemActivated.emit",
+        "itemDoubleClicked.emit",
+        "_full_value_dialog",
+        "prior_dialog._exact_text is None",
+        "not prior_dialog.isVisible()",
+        "toPlainText()",
+        "parameters_truncated",
+        "selected_snapshot_parameters",
+        "station=selected_station",
+        '138 * 1024 <= len(stored_snapshot.encode("utf-8")) <= 150 * 1024',
+        "stored_snapshot.count",
+        "> 1_024",
+        'snapshot_view.status == "available"',
+        '"loaded on demand" in snapshot_view.message',
+        "snapshot_view.source is None",
+        "len(initial_items) <= 128",
+        "station_item.isExpanded()",
+        '"/Snapshot/station/parameters"',
+        '"Load more…"',
+        "snapshot_tree.itemActivated.emit",
+        '"/Snapshot/station/parameters/lazy_final_parameter/name"',
+        'final_name.text(1) == "lazy_final_parameter"',
+        "next_writer_index = remaining_count",
+        "continuation_pages += 1",
+        'remaining_run["datasaver"].add_result',
+        'remaining_run["datasaver"].flush_data_to_database',
+        "reader_baseline = protected_artifact_state",
+        'checkpoint_until_idle("PASSIVE")',
+        'checkpoint_until_idle("TRUNCATE")',
+        "protected_artifact_state",
+        "assert_source_policy",
+        "live_helper_is_observable",
+        "live_liveness.helper_pid is not None",
+        "helper_alive",
+        "background_active",
+    ):
+        assert required_contract in function_source
 
 
 def test_wheel_smoke_exercises_installed_exact_process_supervision() -> None:

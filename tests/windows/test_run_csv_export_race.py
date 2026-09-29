@@ -2,6 +2,7 @@
 
 import csv
 import os
+import sqlite3
 from collections import Counter
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
     logical_database_path,
 )
+from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows._dataset_handle import close_dataset_connection
 from qplot.windows._export_paths import prepare_export_destination
@@ -217,6 +219,39 @@ def test_run_csv_exports_real_measurements_consistently(
     finally:
         if selected is not None:
             close_dataset_connection(selected)
+
+
+def test_trusted_csv_export_recovers_standalone_before_metadata_finishes(
+        tmp_path
+        ):
+    database_path = tmp_path / "progressive.db"
+    run_id, guid = _create_measurement_run(database_path, "mixed")
+    destination = tmp_path / "progressive.csv"
+    harness = _RunCsvHarness(database_path, destination, run_id, guid)
+    harness._database_access_mode = TRUSTED_LIVE_MODE
+    harness.RunList._runs[run_id]["measure_parameters"] = ["signal"]
+
+    def choose_after_preflight(_default_name):
+        assert len(harness.loaded_datasets) == 1
+        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+            harness.loaded_datasets[0].conn.cursor()
+        return str(destination)
+
+    harness.destination_callback = choose_after_preflight
+    harness.exportRunCsv()
+
+    assert harness.errors == []
+    with destination.open(newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.reader(csv_file))
+    assert rows == [
+        ["signal.signal", "signal.x", "temperature.temperature"],
+        ["10.0", "0.0", "20.0"],
+        ["11.0", "1.0", "21.0"],
+        ["12.0", "2.0", ""],
+    ]
+    assert len(harness.loaded_datasets) == 2
+    with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+        harness.loaded_datasets[1].conn.cursor()
 
 
 def _artifact_state(database_path: Path):

@@ -3,6 +3,7 @@
 *.db-wal
 *.pyc
 *.so
+*.pyd
 .recovery/
 .DS_Store
 .venv/

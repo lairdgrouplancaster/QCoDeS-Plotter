@@ -97,12 +97,12 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
                     "signal": {
                         "x": [[0.0, 1.0], [0.0, 1.0]],
                         "signal": [[10.0, 11.0], [12.0, 13.0]],
-                        },
+                    },
                     "current": {
                         "gate": [0.0, 1.0, 2.0, 3.0],
                         "current": [20.0, 21.0, 22.0, 23.0],
-                        },
-                    }
+                    },
+                }
 
             def get_parameter_data(self, name):
                 return {name: self.data[name]}
@@ -111,16 +111,18 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
             object(),
             Dataset(),
             [Param("signal"), Param("current")],
-            )
+        )
 
         self.assertEqual(
             list(frame.columns),
             ["signal.x", "signal.signal", "current.gate", "current.current"],
-            )
+        )
         self.assertEqual(frame["signal.signal"].tolist(), [10.0, 11.0, 12.0, 13.0])
         self.assertEqual(frame["current.current"].tolist(), [20.0, 21.0, 22.0, 23.0])
 
-    def test_default_export_filename_uses_database_folder_and_safe_measurement_name(self):
+    def test_default_export_filename_uses_database_folder_and_safe_measurement_name(
+        self,
+    ):
         class Field:
             def text(self):
                 return str(Path("C:/data/source.db"))
@@ -426,9 +428,7 @@ class DatasetHandleTestCase(unittest.TestCase):
 
             self.assertTrue(captured.sidecar_identities)
             self.assertEqual(explicitly_empty.sidecar_identities, frozenset())
-            self.assertTrue(
-                PlotActionsMixin._dataset_key_is_current(explicitly_empty)
-            )
+            self.assertTrue(PlotActionsMixin._dataset_key_is_current(explicitly_empty))
 
     def test_dataset_key_rejects_accepted_sidecar_removal_or_replacement(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -830,7 +830,7 @@ class DatasetHandleTestCase(unittest.TestCase):
         harness._replace_selected_dataset(
             new_dataset,
             DatasetKey("database.db", "new-guid"),
-            )
+        )
 
         self.assertTrue(old_dataset.conn.closed)
         self.assertFalse(new_dataset.conn.closed)
@@ -1071,7 +1071,7 @@ class OpenPlotDatasetOwnershipTestCase(unittest.TestCase):
         harness = self.Harness(dataset)
         harness.open_win = lambda *args, **kwargs: self.fail(
             "Unsupported parameter must not create a plot window"
-            )
+        )
 
         harness.openPlot(harness._current_dataset_key(dataset.guid), show=False)
 
@@ -1146,7 +1146,9 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
                 self.threadPool = object()
                 self.dataset_holder = {}
                 self.windows = []
-                self.fileTextbox = DatabaseAwareDatasetCacheTestCase.Field("database.db")
+                self.fileTextbox = DatabaseAwareDatasetCacheTestCase.Field(
+                    "database.db"
+                )
                 self.admin_calls = 0
 
             def post_admin(self):
@@ -1325,14 +1327,14 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
 
         class plot1d:
             def __init__(
-                    self,
-                    dataset_key,
-                    param,
-                    _config,
-                    _thread_pool,
-                    dataset_holder,
-                    **_kwargs,
-                    ):
+                self,
+                dataset_key,
+                param,
+                _config,
+                _thread_pool,
+                dataset_holder,
+                **_kwargs,
+            ):
                 self._dataset_key = dataset_key
                 self.param = param
                 self.dataset = dataset_holder[dataset_key].dataset
@@ -1360,9 +1362,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         harness.ds = None
         harness._selected_dataset_key = None
         harness._load_dataset = lambda key: (
-            dataset_a
-            if key == key_a
-            else self.fail(f"unexpected dataset load: {key}")
+            dataset_a if key == key_a else self.fail(f"unexpected dataset load: {key}")
         )
         harness.post_admin = lambda: None
         harness.show_status = lambda *_args: None
@@ -1436,7 +1436,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         target.axis_dropdown = {
             "x": Combo("gate"),
             "y": Combo("line_signal"),
-            }
+        }
 
         heatmap_param = self.Param()
         heatmap_param.name = "heatmap_signal"
@@ -1448,7 +1448,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
                     dataset_key,
                     heatmap_param.name,
                     sweep_id=sweep_id,
-                    )
+                )
                 self.param = heatmap_param
                 self.label = f"ID:1 heatmap_signal [cut {sweep_id + 1}]"
                 self.axis_options = {"x": target_param.depends_on}
@@ -1459,7 +1459,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         target.lines = {
             target.label: target.line,
             first_cut._trace_key: first_line,
-            }
+        }
         candidates = []
         target.update_line_picker = lambda wins: candidates.extend(wins)
 
@@ -1475,8 +1475,8 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
         harness = type("Harness", (PlotActionsMixin,), {})()
         harness.config = self.Config()
         harness.status_messages = []
-        harness.show_status = lambda message, timeout=5000: harness.status_messages.append(
-            (message, timeout)
+        harness.show_status = lambda message, timeout=5000: (
+            harness.status_messages.append((message, timeout))
         )
         key_a = DatasetKey("database-a.db", "shared-guid")
         key_b = DatasetKey("database-b.db", "shared-guid")
@@ -1529,7 +1529,9 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
                 self.dataset_holder = {}
                 self.threadPool = object()
                 self.windows = []
-                self.fileTextbox = DatabaseAwareDatasetCacheTestCase.Field("database.db")
+                self.fileTextbox = DatabaseAwareDatasetCacheTestCase.Field(
+                    "database.db"
+                )
 
         constructor_connections = []
 
@@ -1716,22 +1718,23 @@ class OptionsMenuTestCase(unittest.TestCase):
             menus = {
                 action.text().replace("&", ""): action.menu()
                 for action in window.menuBar().actions()
-                }
+            }
             option_texts = [
                 action.text().replace("&", "")
                 for action in menus["Options"].actions()
                 if not action.isSeparator()
-                ]
+            ]
             preferences_action = next(
-                action for action in menus["Options"].actions()
+                action
+                for action in menus["Options"].actions()
                 if action.text().replace("&", "") == "Preferences..."
-                )
+            )
 
             self.assertIn("Preferences...", option_texts)
             self.assertEqual(
                 preferences_action.menuRole(),
                 QtGui.QAction.MenuRole.PreferencesRole,
-                )
+            )
             self.assertIn("Reset All Settings...", option_texts)
             self.assertNotIn("Open Location", option_texts)
             self.assertNotIn("Theme", option_texts)
@@ -1749,17 +1752,17 @@ class OptionsMenuTestCase(unittest.TestCase):
             menus = {
                 action.text().replace("&", ""): action.menu()
                 for action in window.menuBar().actions()
-                }
+            }
             file_menu = menus["File"]
             test_data_menu = next(
                 action.menu()
                 for action in file_menu.actions()
                 if action.text().replace("&", "") == "Generate Test Data"
-                )
+            )
             actions = {
                 action.objectName(): action.text().replace("&", "")
                 for action in test_data_menu.actions()
-                }
+            }
 
             self.assertEqual(
                 actions,
@@ -1768,7 +1771,7 @@ class OptionsMenuTestCase(unittest.TestCase):
                     "exportTestDatabaseCsvCollectionAction": "Export CSV Collection...",
                     "generateTestDatabaseAction": "Generate Database from CSV...",
                 },
-                )
+            )
         finally:
             window.deleteLater()
 
@@ -1890,6 +1893,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
+
             def fake_confirmation(window, title, message, config_key, *args):
                 confirmation_keys.append(config_key)
                 return qtw.QMessageBox.StandardButton.No
@@ -1902,7 +1906,9 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         self.assertEqual(closed, [])
         self.assertEqual(confirmation_keys, [CONFIRM_CLOSE_ALL_KEY])
-        self.assertEqual(harness.status_messages[-1][0], "Close all plot windows cancelled.")
+        self.assertEqual(
+            harness.status_messages[-1][0], "Close all plot windows cancelled."
+        )
 
     def test_close_all_without_warning_closes_each_window(self):
         closed = []
@@ -1994,7 +2000,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 "Close All Plot Windows",
                 "Close 2 plot windows?",
                 CONFIRM_CLOSE_ALL_KEY,
-                )
+            )
         finally:
             qtw.QMessageBox.exec = old_exec
             window.deleteLater()
@@ -2025,7 +2031,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 "Confirm Exit",
                 "Are you sure you want to exit?",
                 CONFIRM_QUIT_KEY,
-                )
+            )
         finally:
             qtw.QMessageBox.exec = old_exec
             window.deleteLater()
@@ -2111,6 +2117,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         try:
             main_window.ask_confirmation_with_dont_ask_again = fake_confirmation
+
             def close_all_windows():
                 shutdown_order.append(("windows",))
                 closed_all_windows.append(True)
@@ -2130,7 +2137,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertEqual(
             confirmations,
             [("Confirm Exit", "Are you sure you want to exit?", CONFIRM_QUIT_KEY)],
-            )
+        )
         self.assertEqual(updates, [(CONFIRM_QUIT_KEY, False)])
         self.assertTrue(harness.startupDatabaseTimer.stopped)
         self.assertTrue(worker.cancelled)
@@ -2179,8 +2186,8 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 raise AssertionError("Database should stay open after cancelling")
 
         try:
-            main_window.ask_confirmation_with_dont_ask_again = (
-                lambda *args, **kwargs: qtw.QMessageBox.StandardButton.No
+            main_window.ask_confirmation_with_dont_ask_again = lambda *args, **kwargs: (
+                qtw.QMessageBox.StandardButton.No
             )
             event = Event()
             Harness().closeEvent(event)
@@ -2341,7 +2348,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 "windows": [type("Window", (), {"worker": active_worker})()],
                 "threadPool": Pool(),
             },
-            )()
+        )()
 
         main_window.MainWindow._cancel_plot_work(harness)
 
@@ -2360,9 +2367,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.stopped = True
 
         class Harness:
-            _finish_deferred_shutdown = (
-                main_window.MainWindow._finish_deferred_shutdown
-            )
+            _finish_deferred_shutdown = main_window.MainWindow._finish_deferred_shutdown
 
             def __init__(self):
                 self._shutdown_started = True
@@ -2393,7 +2398,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             values = {
                 "user_preference.confirm_close_all": True,
                 "user_preference.confirm_close": False,
-                }
+            }
 
             def get(self, key):
                 return self.values[key]
@@ -2408,28 +2413,28 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         try:
             add_confirmation_options(window, menu)
-            actions = [
-                action for action in menu.actions()
-                if not action.isSeparator()
-                ]
+            actions = [action for action in menu.actions() if not action.isSeparator()]
 
             self.assertEqual(
                 [action.text() for action in actions],
                 [
                     "Confirm Before Closing All Plot Windows",
                     "Confirm Before Quit",
-                    ]
-                )
+                ],
+            )
             self.assertTrue(actions[0].isChecked())
             self.assertFalse(actions[1].isChecked())
 
             actions[0].setChecked(False)
             actions[1].setChecked(True)
 
-            self.assertEqual(updates, [
-                ("user_preference.confirm_close_all", False),
-                ("user_preference.confirm_close", True),
-                ])
+            self.assertEqual(
+                updates,
+                [
+                    ("user_preference.confirm_close_all", False),
+                    ("user_preference.confirm_close", True),
+                ],
+            )
         finally:
             window.deleteLater()
 
@@ -2479,7 +2484,9 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.No
+            qtw.QMessageBox.question = lambda *args, **kwargs: (
+                qtw.QMessageBox.StandardButton.No
+            )
             harness = Harness()
             harness.restore_default_settings()
         finally:
@@ -2522,6 +2529,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
+
             def answer_yes(*args, **kwargs):
                 questions.append((args, kwargs))
                 return qtw.QMessageBox.StandardButton.Yes
@@ -2539,7 +2547,6 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertEqual(harness.status_messages[-1][0], "Settings reset to defaults.")
         self.assertIn("close the current database", questions[0][0][2])
         self.assertIn("all plot windows", questions[0][0][2])
-
 
     def test_close_database_clears_loaded_database_state(self):
         class Field:
@@ -2653,7 +2660,6 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertTrue(harness.emptyStateFrame.visible)
 
 
-
 class DatabaseAccessProbeTestCase(unittest.TestCase):
     def test_database_access_error_returns_none_for_readable_database(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2673,7 +2679,7 @@ class DatabaseAccessProbeTestCase(unittest.TestCase):
             raise database_module.subprocess.TimeoutExpired(
                 cmd=args[0],
                 timeout=kwargs["timeout"],
-                )
+            )
 
         database_module.subprocess.run = run
         try:
@@ -2686,11 +2692,13 @@ class DatabaseAccessProbeTestCase(unittest.TestCase):
 
     def test_structured_access_error_parser_skips_invalid_later_markers(self):
         prefix = database_module._DATABASE_ACCESS_ERROR_PREFIX
-        output = "\n".join((
-            prefix + '{"type":"ExpectedError","message":"useful details"}',
-            prefix + "null",
-            prefix + "{malformed",
-        ))
+        output = "\n".join(
+            (
+                prefix + '{"type":"ExpectedError","message":"useful details"}',
+                prefix + "null",
+                prefix + "{malformed",
+            )
+        )
 
         error = database_module._database_access_error_message(output)
 
@@ -2820,7 +2828,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             return (
                 self.database_runs is not None
                 and self.database_runs[0] == database_path
-                )
+            )
 
     class InfoBox:
         def __init__(self):
@@ -2872,49 +2880,45 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         database_load_status = main_window.MainWindow.database_load_status
         _cancel_database_detail_load = (
             main_window.MainWindow._cancel_database_detail_load
-            )
+        )
         _hide_database_load_panel = main_window.MainWindow._hide_database_load_panel
-        _prepare_database_load_ui = (
-            main_window.MainWindow._prepare_database_load_ui
-            )
+        _prepare_database_load_ui = main_window.MainWindow._prepare_database_load_ui
         _prepare_replaced_database_reload = (
             main_window.MainWindow._prepare_replaced_database_reload
-            )
+        )
         _prepare_test_database_replacement = (
             main_window.MainWindow._prepare_test_database_replacement
-            )
+        )
         _release_database_runtime_state = (
             main_window.MainWindow._release_database_runtime_state
-            )
+        )
         _set_database_load_controls_enabled = (
             main_window.MainWindow._set_database_load_controls_enabled
-            )
+        )
         _show_database_load_panel = main_window.MainWindow._show_database_load_panel
         _sync_empty_state = main_window.MainWindow._sync_empty_state
         _sync_no_database_empty_state = (
             main_window.MainWindow._sync_no_database_empty_state
-            )
-        _sync_loaded_empty_state = (
-            main_window.MainWindow._sync_loaded_empty_state
-            )
+        )
+        _sync_loaded_empty_state = main_window.MainWindow._sync_loaded_empty_state
         _set_empty_state_button_visible = (
             main_window.MainWindow._set_empty_state_button_visible
-            )
+        )
         _loaded_empty_database_detail = (
             main_window.MainWindow._loaded_empty_database_detail
-            )
+        )
         _current_refresh_interval = main_window.MainWindow._current_refresh_interval
         _loaded_empty_database_status = (
             main_window.MainWindow._loaded_empty_database_status
-            )
+        )
         _empty_database_refresh_status = (
             main_window.MainWindow._empty_database_refresh_status
-            )
+        )
         _main_refresh_interval = main_window.MainWindow._main_refresh_interval
         _apply_refresh_interval = main_window.MainWindow._apply_refresh_interval
         _database_detail_priority_run_ids = (
             main_window.MainWindow._database_detail_priority_run_ids
-            )
+        )
 
         def __init__(self):
             super().__init__()
@@ -2996,7 +3000,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             "detail_active": harness._database_detail_active,
             "expensive_detail_worker": harness._database_expensive_detail_worker,
             "expensive_detail_active": harness._database_expensive_detail_active,
-            }
+        }
 
     def _active_database_harness(self):
         old_runs = {5: {"guid": "guid-5", "run_timestamp": 123.0}}
@@ -3052,10 +3056,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
 
             with patch.object(
-                    database_actions,
-                    "database_instance",
-                    return_value=unavailable,
-                    ):
+                database_actions,
+                "database_instance",
+                return_value=unavailable,
+            ):
                 self.assertFalse(harness.load_file(str(database_path)))
 
             self.assertEqual(harness.databaseLoadThreadPool.started, [])
@@ -3064,7 +3068,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 "Database Identity Unavailable",
             )
 
-    def test_symlink_replacement_during_load_retries_without_committing_stale_runs(self):
+    def test_symlink_replacement_during_load_retries_without_committing_stale_runs(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             target_a = root / "target-a.db"
@@ -3086,10 +3092,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             os.replace(next_link, view_path)
 
             with patch.object(
-                    database_actions.QtCore.QTimer,
-                    "singleShot",
-                    side_effect=lambda _delay, callback: callback(),
-                    ):
+                database_actions.QtCore.QTimer,
+                "singleShot",
+                side_effect=lambda _delay, callback: callback(),
+            ):
                 harness.database_load_finished(
                     generation,
                     str(view_path),
@@ -3136,9 +3142,11 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             set_qcodes_database_location(database_path)
             try:
                 harness = self.Harness()
-                harness.config = self.Config({
-                    "file.recent_file_paths": [database_path],
-                    })
+                harness.config = self.Config(
+                    {
+                        "file.recent_file_paths": [database_path],
+                    }
+                )
 
                 self.assertTrue(harness.load_startup_database())
 
@@ -3175,14 +3183,14 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 harness = self.Harness()
                 harness.config = self.Config(
                     {"file.recent_file_paths": [str(missing_database)]}
-                    )
+                )
 
                 self.assertTrue(harness.load_startup_database())
 
                 self.assertEqual(
                     harness._database_load_state["abspath"],
                     str(qcodes_database),
-                    )
+                )
             finally:
                 set_qcodes_database_location(active_database)
 
@@ -3200,14 +3208,14 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 harness.startup_database_path = str(startup_database)
                 harness.config = self.Config(
                     {"file.recent_file_paths": [str(recent_database)]}
-                    )
+                )
 
                 self.assertTrue(harness.load_startup_database())
 
                 self.assertEqual(
                     harness._database_load_state["abspath"],
                     str(startup_database),
-                    )
+                )
             finally:
                 set_qcodes_database_location(active_database)
 
@@ -3262,9 +3270,11 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             set_qcodes_database_location(database_path)
             try:
                 harness = self.Harness()
-                harness.config = self.Config({
-                    "file.recent_file_paths": [database_path],
-                    })
+                harness.config = self.Config(
+                    {
+                        "file.recent_file_paths": [database_path],
+                    }
+                )
 
                 self.assertTrue(harness.load_startup_database())
                 generation = harness._database_load_generation
@@ -3273,14 +3283,14 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                     database_path,
                     runs,
                     None,
-                    )
+                )
 
                 self.assertEqual(harness.fileTextbox.text(), database_path)
                 self.assertEqual(harness.RunList.runs, runs)
                 self.assertEqual(
                     harness.infoBox.preview.database_runs,
                     (database_path, runs),
-                    )
+                )
                 self.assertEqual(harness.detail_loads, [(database_path, runs)])
                 self.assertEqual(harness.monitor.started, [1500])
             finally:
@@ -3302,8 +3312,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 self.assertEqual(
                     harness.databaseLoadThreadPool.started,
                     started_workers,
-                    )
-                self.assertIn("Database is already loaded", harness.status_messages[-1][0])
+                )
+                self.assertIn(
+                    "Database is already loaded", harness.status_messages[-1][0]
+                )
             finally:
                 set_qcodes_database_location(active_database)
 
@@ -3446,7 +3458,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.assertEqual(
                 harness.status_messages[-1],
                 ("Wait for the current database load to finish.", 5000),
-                )
+            )
             self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
         finally:
             set_qcodes_database_location(active_database)
@@ -3465,7 +3477,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 "database-b.db",
                 new_runs,
                 None,
-                )
+            )
 
             self.assertEqual(get_DB_location(), "database-b.db")
             self.assertEqual(harness.fileTextbox.text(), "database-b.db")
@@ -3473,7 +3485,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.assertEqual(
                 harness.infoBox.preview.database_runs,
                 ("database-b.db", new_runs),
-                )
+            )
             self.assertEqual(harness.database_at_default_selection, "database-b.db")
             self.assertFalse(harness.RunList.signals_blocked)
             self.assertFalse(harness.run_idBox.signals_blocked)
@@ -3512,7 +3524,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 "database-b.db",
                 {},
                 RuntimeError("broken database"),
-                )
+            )
 
             expected_view = dict(previous_view)
             expected_view["monitor_stopped"] = True
@@ -3538,7 +3550,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 "database-b.db",
                 stale_runs,
                 None,
-                )
+            )
 
             self.assertEqual(self._database_view(harness), previous_view)
             self.assertEqual(get_DB_location(), "database-a.db")
@@ -3555,11 +3567,13 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         self.assertTrue(harness.databaseLoadFrame.visible)
         self.assertEqual(harness.databaseLoadLabel.text, "Waiting for OneDrive sync...")
-        self.assertEqual(harness.databaseLoadLabel.tooltip, "Waiting for OneDrive sync...")
+        self.assertEqual(
+            harness.databaseLoadLabel.tooltip, "Waiting for OneDrive sync..."
+        )
         self.assertEqual(
             harness.status_messages,
             [("Waiting for OneDrive sync...", 0)],
-            )
+        )
 
     def test_database_detail_batch_updates_rows_and_previews(self):
         class RunList:
@@ -3582,10 +3596,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 self.preview = Preview()
 
         class Harness:
-            database_detail_batch_ready = main_window.MainWindow.database_detail_batch_ready
+            database_detail_batch_ready = (
+                main_window.MainWindow.database_detail_batch_ready
+            )
             _apply_database_detail_batch = (
                 main_window.MainWindow._apply_database_detail_batch
-                )
+            )
 
             def __init__(self):
                 self._database_detail_generation = 4
@@ -3617,7 +3633,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 return runs
 
         class Harness:
-            database_detail_batch_ready = main_window.MainWindow.database_detail_batch_ready
+            database_detail_batch_ready = (
+                main_window.MainWindow.database_detail_batch_ready
+            )
 
             def __init__(self):
                 self._database_detail_generation = 4
@@ -3634,10 +3652,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         runs = {1: {"guid": "guid-1", "result_count": 10}}
 
         with patch.object(
-                database_actions,
-                "_database_file_identity",
-                return_value=(1, 2),
-                ):
+            database_actions,
+            "_database_file_identity",
+            return_value=(1, 2),
+        ):
             harness.database_detail_batch_ready(4, "loaded.db", runs)
 
         self.assertEqual(harness.reloads, ["loaded.db"])
@@ -3653,7 +3671,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 return runs
 
         class Harness:
-            database_detail_batch_ready = main_window.MainWindow.database_detail_batch_ready
+            database_detail_batch_ready = (
+                main_window.MainWindow.database_detail_batch_ready
+            )
 
             def __init__(self, view_path):
                 self._database_detail_generation = 4
@@ -3711,7 +3731,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         harness._database_load_worker = worker
         harness._database_load_state = {
             "abspath": "pending.db",
-            }
+        }
 
         harness.cancel_database_load()
 
@@ -3725,7 +3745,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         self.assertEqual(
             harness.infoBox.preview.database_runs,
             ("old.db", previous_runs),
-            )
+        )
         self.assertEqual(harness.RunList.watching, ["old"])
         self.assertEqual(harness.RunList.maxRunId, 9)
         self.assertEqual(harness.monitor.started, [])
@@ -3734,7 +3754,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         self.assertTrue(harness.loadDatabaseButton.enabled)
         self.assertTrue(harness.refreshDatabaseButton.enabled)
         self.assertFalse(harness.emptyStateFrame.visible)
-        self.assertEqual(harness.status_messages[-1], ("Database load cancelled.", 3000))
+        self.assertEqual(
+            harness.status_messages[-1], ("Database load cancelled.", 3000)
+        )
 
     def test_empty_state_is_visible_only_without_database_runs_or_loading(self):
         harness = self.Harness()
@@ -3778,7 +3800,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         self.assertEqual(
             harness._empty_database_refresh_status(),
             "No measurements found yet.",
-            )
+        )
 
 
 class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
@@ -3807,10 +3829,10 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
             main_window.MainWindow._apply_database_refresh_result
-            )
+        )
         _empty_database_refresh_status = (
             main_window.MainWindow._empty_database_refresh_status
-            )
+        )
         _main_refresh_interval = main_window.MainWindow._main_refresh_interval
         _current_refresh_interval = main_window.MainWindow._current_refresh_interval
 
@@ -3820,7 +3842,9 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             self.spinBox = DatabaseLoadUiTestCase.SpinBox(1.5)
             self.status_messages = []
             self.sync_count = 0
-            self.databaseRefreshThreadPool = RefreshMainEmptyDatabaseTestCase.ThreadPool()
+            self.databaseRefreshThreadPool = (
+                RefreshMainEmptyDatabaseTestCase.ThreadPool()
+            )
 
         def _sync_empty_state(self):
             self.sync_count += 1
@@ -3840,7 +3864,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             {},
             {},
             None,
-            )
+        )
 
         self.assertTrue(harness.RunList.checked_watching)
         self.assertEqual(harness.sync_count, 1)
@@ -3850,7 +3874,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
                 ("Checking for new runs...", 0),
                 ("No measurements found yet; still waiting for new runs.", 3000),
             ],
-            )
+        )
 
     def test_repeated_refresh_requests_are_coalesced_while_worker_is_active(self):
         harness = self.Harness()
@@ -3864,7 +3888,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
         self.assertEqual(
             harness.status_messages[-1],
             ("Database refresh queued.", 3000),
-            )
+        )
 
     def test_refresh_request_during_error_dialog_is_coalesced(self):
         harness = self.Harness()
@@ -3875,16 +3899,16 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
 
         harness.show_error = show_error
         with patch(
-                "qplot.windows._database_actions.QtCore.QTimer.singleShot",
-                side_effect=lambda _delay, callback: callback(),
-                ):
+            "qplot.windows._database_actions.QtCore.QTimer.singleShot",
+            side_effect=lambda _delay, callback: callback(),
+        ):
             harness.database_refresh_finished(
                 harness._database_refresh_generation,
                 "empty.db",
                 {},
                 {},
                 RuntimeError("database temporarily unavailable"),
-                )
+            )
 
         self.assertEqual(len(harness.databaseRefreshThreadPool.workers), 2)
         self.assertTrue(harness._database_refresh_active)
@@ -3912,16 +3936,16 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             os.replace(replacement_path, database_path)
 
             with patch.object(
-                    database_actions.QtCore.QTimer,
-                    "singleShot",
-                    ) as single_shot:
+                database_actions.QtCore.QTimer,
+                "singleShot",
+            ) as single_shot:
                 harness.database_refresh_finished(
                     harness._database_refresh_generation,
                     str(database_path),
                     {1: {"guid": "stale-guid"}},
                     {},
                     None,
-                    )
+                )
 
             self.assertEqual(reloads, [str(database_path)])
             self.assertTrue(worker._cancelled.is_set())
@@ -3961,10 +3985,10 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
             main_window.MainWindow._apply_database_refresh_result
-            )
+        )
         _refresh_selected_run_details = (
             main_window.MainWindow._refresh_selected_run_details
-            )
+        )
 
         def __init__(self, updated_runs):
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
@@ -3972,7 +3996,9 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
             self.infoBox = RefreshMainPreviewUpdateTestCase.InfoBox()
             self.status_messages = []
             self.sync_count = 0
-            self.databaseRefreshThreadPool = RefreshMainEmptyDatabaseTestCase.ThreadPool()
+            self.databaseRefreshThreadPool = (
+                RefreshMainEmptyDatabaseTestCase.ThreadPool()
+            )
 
         def _sync_empty_state(self):
             self.sync_count += 1
@@ -3989,8 +4015,8 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
                 "guid": "guid-4",
                 "result_count": 1000,
                 "is_completed": True,
-                },
-            }
+            },
+        }
         harness = self.Harness(updated_runs)
         harness.refreshMain()
         harness.database_refresh_finished(
@@ -3999,13 +4025,13 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
             {},
             {"guid-4": updated_runs[4]},
             None,
-            )
+        )
 
         self.assertEqual(harness.infoBox.preview.added_runs, [updated_runs])
         self.assertEqual(
             harness.status_messages[-1],
             ("No new runs found.", 3000),
-            )
+        )
 
 
 class RefreshMainLiveDetailsTestCase(unittest.TestCase):
@@ -4068,10 +4094,10 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
             main_window.MainWindow._apply_database_refresh_result
-            )
+        )
         _refresh_selected_run_details = (
             main_window.MainWindow._refresh_selected_run_details
-            )
+        )
 
         def __init__(self):
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
@@ -4092,19 +4118,19 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
                 "completed_timestamp": None,
                 "measure_parameters": ["signal"],
                 "sweep_parameters": [],
-                }
+            }
             self.infoBox.details.setInfo(
                 {
                     "Data Structure": {
                         "Data points": 1,
                         "signal": {"label": "Signal", "unit": "V"},
-                        },
+                    },
                     "MetaData": self.ds.metadata,
                     "Snapshot": self.ds.snapshot,
                 },
                 self.ds,
                 run_metadata=initial_metadata,
-                )
+            )
 
         def _sync_empty_state(self):
             self.sync_count += 1
@@ -4118,12 +4144,13 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
         @staticmethod
         def overview_values(details):
             return {
-                details.overview.item(row, 0).text():
-                details.overview.item(row, 1).text()
+                details.overview.item(row, 0).text(): details.overview.item(
+                    row, 1
+                ).text()
                 for row in range(details.overview.rowCount())
-                }
+            }
 
-    def test_running_count_and_completion_patch_only_live_overview_fields(self):
+    def test_physical_count_does_not_replace_proven_live_overview_points(self):
         harness = self.Harness()
         details = harness.infoBox.details
         details.setCurrentIndex(details.indexOf(details.metadata))
@@ -4139,13 +4166,13 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
             "result_count": 2,
             "run_timestamp": 100.0,
             "completed_timestamp": None,
-            }
+        }
         harness.RunList.updated_runs = {7: running_metadata}
         harness._apply_database_refresh_result({}, {"selected-guid": running_metadata})
 
         running_overview = harness.overview_values(details)
         self.assertEqual(running_overview["Status"], "Running (unknown)")
-        self.assertEqual(running_overview["Data points"], "2")
+        self.assertEqual(running_overview["Data points"], "1")
         self.assertEqual(harness.ds.number_of_results, 1)
         self.assertTrue(harness.ds.running)
 
@@ -4155,18 +4182,20 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
             "result_count": 3,
             "run_timestamp": 100.0,
             "completed_timestamp": 130.0,
-            }
+        }
         harness.RunList.updated_runs = {7: completed_metadata}
-        harness._apply_database_refresh_result({}, {"selected-guid": completed_metadata})
+        harness._apply_database_refresh_result(
+            {}, {"selected-guid": completed_metadata}
+        )
 
         completed_overview = harness.overview_values(details)
         self.assertEqual(completed_overview["Status"], "Completed")
-        self.assertEqual(completed_overview["Data points"], "3")
+        self.assertEqual(completed_overview["Data points"], "1")
         self.assertTrue(completed_overview["Duration"].startswith("30.00 s"))
         self.assertEqual(
             completed_overview["Completed"],
             details._run_timestamp(None, completed_metadata, "completed_timestamp"),
-            )
+        )
         self.assertTrue(harness.ds.running)
         self.assertFalse(harness.ds.completed)
         self.assertEqual(harness.ds.number_of_results, 1)
@@ -4176,10 +4205,12 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
         self.assertIs(details.parameters.item(1, 0), static_parameter_item)
         self.assertIs(details.metadata.topLevelItem(0), static_metadata_item)
         self.assertIs(details.raw.topLevelItem(0), static_raw_item)
-        self.assertFalse(any(
-            message.startswith("Selected run")
-            for message, _timeout in harness.status_messages
-            ))
+        self.assertFalse(
+            any(
+                message.startswith("Selected run")
+                for message, _timeout in harness.status_messages
+            )
+        )
 
     def test_unrelated_disappeared_and_unselected_runs_do_not_change_details(self):
         harness = self.Harness()
@@ -4191,7 +4222,7 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
             "result_count": 99,
             "run_timestamp": 100.0,
             "completed_timestamp": 200.0,
-            }
+        }
         harness.RunList.updated_runs = {8: unrelated}
         harness._apply_database_refresh_result({}, {"other-guid": unrelated})
         self.assertEqual(harness.overview_values(harness.infoBox.details), before)
@@ -4203,13 +4234,15 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
 
         harness._selected_dataset_key = None
         harness.ds = None
-        harness.RunList.updated_runs = {7: {
-            "guid": "selected-guid",
-            "is_completed": True,
-            "result_count": 3,
-            "run_timestamp": 100.0,
-            "completed_timestamp": 130.0,
-            }}
+        harness.RunList.updated_runs = {
+            7: {
+                "guid": "selected-guid",
+                "is_completed": True,
+                "result_count": 3,
+                "run_timestamp": 100.0,
+                "completed_timestamp": 130.0,
+            }
+        }
         harness._apply_database_refresh_result({}, {})
         self.assertEqual(harness.overview_values(harness.infoBox.details), before)
 
@@ -4222,7 +4255,7 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
             "result_count": 100,
             "run_timestamp": 1.0,
             "completed_timestamp": 2.0,
-            }
+        }
         harness.fileTextbox.setText("replacement.db")
 
         harness.database_refresh_finished(
@@ -4231,7 +4264,7 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
             {},
             {"selected-guid": stale},
             None,
-            )
+        )
 
         self.assertEqual(harness.overview_values(harness.infoBox.details), before)
         self.assertEqual(harness.infoBox.live_updates, [])
@@ -4278,7 +4311,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
             main_window.MainWindow._apply_database_refresh_result
-            )
+        )
 
         def __init__(self, auto_plot_checked):
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
@@ -4286,11 +4319,13 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             self.infoBox = RefreshMainAutoPlotTestCase.InfoBox()
             self.autoPlotBox = RefreshMainAutoPlotTestCase.AutoPlotBox(
                 auto_plot_checked
-                )
+            )
             self.status_messages = []
             self.plotted_guids = []
             self.sync_count = 0
-            self.databaseRefreshThreadPool = RefreshMainEmptyDatabaseTestCase.ThreadPool()
+            self.databaseRefreshThreadPool = (
+                RefreshMainEmptyDatabaseTestCase.ThreadPool()
+            )
             self._database_access_mode = database_actions.SNAPSHOT_FALLBACK_MODE
 
         def _sync_empty_state(self):
@@ -4310,7 +4345,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             11: {"guid": "guid-11", "run_timestamp": None},
             12: {"guid": "guid-12", "run_timestamp": 12.5},
             13: {"guid": "guid-13", "run_timestamp": 12.5},
-            }
+        }
         harness = self.Harness(auto_plot_checked=True)
         harness.refreshMain()
         worker = harness.databaseRefreshThreadPool.workers[0]
@@ -4321,7 +4356,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             new_runs,
             {},
             None,
-            )
+        )
         self.assertTrue(harness.RunList.checked_watching)
         self.assertEqual(harness.RunList.maxRunId, 13)
         expected_runs = new_runs
@@ -4331,19 +4366,19 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         self.assertEqual(
             harness.plotted_guids,
             ["guid-11", "guid-12", "guid-13"],
-            )
+        )
         self.assertEqual(
             harness.status_messages,
             [
                 ("Checking for new runs...", 0),
                 ("Found 3 new runs.", 5000),
-                ],
-            )
+            ],
+        )
 
     def test_refresh_does_not_auto_plot_new_runs_when_disabled(self):
         new_runs = {
             11: {"guid": "guid-11", "run_timestamp": 11.0},
-            }
+        }
         harness = self.Harness(auto_plot_checked=False)
         harness.refreshMain()
         harness.database_refresh_finished(
@@ -4352,18 +4387,18 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             new_runs,
             {},
             None,
-            )
+        )
 
         self.assertEqual(harness.plotted_guids, [])
         self.assertEqual(
             harness.status_messages[-1],
             ("Found 1 new run.", 5000),
-            )
+        )
 
     def test_trusted_refresh_never_auto_materializes_plot_dataset(self):
         new_runs = {
             11: {"guid": "guid-11", "run_timestamp": 11.0},
-            }
+        }
         harness = self.Harness(auto_plot_checked=True)
         harness._database_access_mode = database_actions.TRUSTED_LIVE_MODE
         harness._apply_database_refresh_result(new_runs, {})
@@ -4395,7 +4430,7 @@ class AutoPlotToggleTestCase(unittest.TestCase):
         _auto_plot_changed = main_window.MainWindow._auto_plot_changed
         _auto_plot_current_running_run = (
             main_window.MainWindow._auto_plot_current_running_run
-            )
+        )
 
         def __init__(self, metadata, auto_plot=False, access_mode=None):
             self.config = AutoPlotToggleTestCase.Config(auto_plot)
@@ -4407,23 +4442,25 @@ class AutoPlotToggleTestCase(unittest.TestCase):
             self.plotted_guids.append(guid)
 
     def test_enabling_auto_plot_opens_newest_incomplete_run(self):
-        harness = self.Harness({
-            1: {
-                "guid": "older-running",
-                "run_timestamp": 10.0,
-                "is_completed": False,
+        harness = self.Harness(
+            {
+                1: {
+                    "guid": "older-running",
+                    "run_timestamp": 10.0,
+                    "is_completed": False,
                 },
-            2: {
-                "guid": "complete",
-                "run_timestamp": 12.0,
-                "is_completed": True,
+                2: {
+                    "guid": "complete",
+                    "run_timestamp": 12.0,
+                    "is_completed": True,
                 },
-            3: {
-                "guid": "newer-running",
-                "run_timestamp": 15.0,
-                "is_completed": False,
+                3: {
+                    "guid": "newer-running",
+                    "run_timestamp": 15.0,
+                    "is_completed": False,
                 },
-            })
+            }
+        )
 
         harness._auto_plot_changed(True)
 
@@ -4437,10 +4474,10 @@ class AutoPlotToggleTestCase(unittest.TestCase):
                     "guid": "running",
                     "run_timestamp": 10.0,
                     "is_completed": False,
-                    },
                 },
+            },
             auto_plot=True,
-            )
+        )
 
         harness._auto_plot_changed(False)
 
@@ -4454,10 +4491,10 @@ class AutoPlotToggleTestCase(unittest.TestCase):
                     "guid": "running",
                     "run_timestamp": 10.0,
                     "is_completed": False,
-                    },
                 },
+            },
             access_mode=database_actions.TRUSTED_LIVE_MODE,
-            )
+        )
 
         harness._auto_plot_changed(True)
 
@@ -4466,72 +4503,80 @@ class AutoPlotToggleTestCase(unittest.TestCase):
 
 
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
-    @patch.object(database_module, "database_cloud_storage_label", return_value="OneDrive")
+    @patch.object(
+        database_module, "database_cloud_storage_label", return_value="OneDrive"
+    )
     @patch.object(database_module.os, "stat")
     def test_local_windows_cloud_file_is_not_treated_as_placeholder(
-            self,
-            stat_file,
-            _cloud_label,
-            ):
+        self,
+        stat_file,
+        _cloud_label,
+    ):
         stat_file.return_value = type(
             "FileInfo",
             (),
             {"st_size": 4096, "st_file_attributes": 0x20},
-            )()
+        )()
 
         self.assertFalse(
             database_module.database_is_likely_cloud_placeholder("OneDrive/local.db")
-            )
+        )
 
-    @patch.object(database_module, "database_cloud_storage_label", return_value="OneDrive")
+    @patch.object(
+        database_module, "database_cloud_storage_label", return_value="OneDrive"
+    )
     @patch.object(database_module.os, "stat")
     def test_offline_windows_cloud_file_is_treated_as_placeholder(
-            self,
-            stat_file,
-            _cloud_label,
-            ):
+        self,
+        stat_file,
+        _cloud_label,
+    ):
         stat_file.return_value = type(
             "FileInfo",
             (),
             {
                 "st_size": 4096,
                 "st_file_attributes": database_module.WINDOWS_CLOUD_PLACEHOLDER_ATTRIBUTES,
-                },
-            )()
+            },
+        )()
 
         self.assertTrue(
             database_module.database_is_likely_cloud_placeholder("OneDrive/offline.db")
-            )
+        )
 
-    @patch.object(database_module, "database_cloud_storage_label", return_value="OneDrive")
+    @patch.object(
+        database_module, "database_cloud_storage_label", return_value="OneDrive"
+    )
     @patch.object(database_module.os, "stat")
     def test_cloud_file_without_allocation_metadata_is_not_assumed_placeholder(
-            self,
-            stat_file,
-            _cloud_label,
-            ):
+        self,
+        stat_file,
+        _cloud_label,
+    ):
         stat_file.return_value = type("FileInfo", (), {"st_size": 4096})()
 
         self.assertFalse(
             database_module.database_is_likely_cloud_placeholder("OneDrive/unknown.db")
-            )
+        )
 
-    @patch.object(database_module, "database_cloud_storage_label", return_value="OneDrive")
+    @patch.object(
+        database_module, "database_cloud_storage_label", return_value="OneDrive"
+    )
     @patch.object(database_module.os, "stat")
     def test_sparse_cloud_file_uses_posix_allocation_metadata(
-            self,
-            stat_file,
-            _cloud_label,
-            ):
+        self,
+        stat_file,
+        _cloud_label,
+    ):
         stat_file.return_value = type(
             "FileInfo",
             (),
             {"st_size": 4096, "st_blocks": 0},
-            )()
+        )()
 
         self.assertTrue(
             database_module.database_is_likely_cloud_placeholder("OneDrive/sparse.db")
-            )
+        )
 
     def test_prefetch_subprocess_retries_transient_timeout_errors(self):
         class Handle:
@@ -4558,20 +4603,20 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
             database_path = str(Path(temp_dir) / "placeholder.db")
             Path(database_path).write_bytes(b"database")
             with (
-                    patch(
-                        "builtins.open",
-                        side_effect=[
-                            TimeoutError(errno.ETIMEDOUT, "Operation timed out"),
-                            handle,
-                            ],
-                        ) as open_file,
-                    patch(
-                        "builtins.print",
-                        side_effect=lambda value, **_kwargs: output.append(value),
-                        ),
-                    patch("time.sleep"),
-                    patch.object(sys, "argv", ["prefetch", database_path]),
-                    ):
+                patch(
+                    "builtins.open",
+                    side_effect=[
+                        TimeoutError(errno.ETIMEDOUT, "Operation timed out"),
+                        handle,
+                    ],
+                ) as open_file,
+                patch(
+                    "builtins.print",
+                    side_effect=lambda value, **_kwargs: output.append(value),
+                ),
+                patch("time.sleep"),
+                patch.object(sys, "argv", ["prefetch", database_path]),
+            ):
                 exec(database_module._database_prefetch_script(), {})
 
         self.assertEqual(open_file.call_count, 2)
@@ -4591,7 +4636,7 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
                     status_callback=statuses.append,
                     chunk_size=4,
                     status_interval=0,
-                    )
+                )
             finally:
                 database_module.database_cloud_storage_label = old_label
 
@@ -4611,7 +4656,7 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
                     database_path,
                     timeout=5,
                     status_callback=statuses.append,
-                    )
+                )
             finally:
                 database_module.database_cloud_storage_label = old_label
 
@@ -4651,7 +4696,7 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
                     "OneDrive/test.db",
                     timeout=0.01,
                     status_callback=lambda _message: None,
-                    )
+                )
         finally:
             database_module.subprocess.Popen = old_popen
 
@@ -4691,7 +4736,7 @@ class CloudDatabasePrefetchTestCase(unittest.TestCase):
                     "OneDrive/test.db",
                     timeout=5,
                     cancelled_callback=lambda: True,
-                    )
+                )
         finally:
             database_module.subprocess.Popen = old_popen
 
@@ -4712,7 +4757,7 @@ class DatabaseRefreshWorkerTestCase(unittest.TestCase):
             "example.db",
             10,
             ["guid-1", "guid-2"],
-            )
+        )
         worker.signals.finished.connect(lambda *args: results.append(args))
 
         with (
@@ -4720,9 +4765,9 @@ class DatabaseRefreshWorkerTestCase(unittest.TestCase):
                 database_module,
                 "find_new_runs",
                 return_value={11: {"guid": "guid-11"}},
-                ) as find_runs,
+            ) as find_runs,
             patch.object(database_module, "get_run_status", side_effect=get_status),
-            ):
+        ):
             worker.run()
 
         find_runs.assert_called_once_with(
@@ -4730,31 +4775,45 @@ class DatabaseRefreshWorkerTestCase(unittest.TestCase):
             database_path="example.db",
             cancelled_callback=ANY,
             connection_callback=ANY,
-            )
-        self.assertEqual(seen_status_calls, [
-            ("guid-1", {
-                "database_path": "example.db",
-                "include_storage_bytes": False,
-                "cancelled_callback": ANY,
-                "connection_callback": ANY,
-                }),
-            ("guid-2", {
-                "database_path": "example.db",
-                "include_storage_bytes": False,
-                "cancelled_callback": ANY,
-                "connection_callback": ANY,
-                }),
-            ])
-        self.assertEqual(results, [(
-            4,
-            "example.db",
-            {11: {"guid": "guid-11"}},
-            {
-                "guid-1": {"is_completed": True, "result_count": 12},
-                "guid-2": {"is_completed": True, "result_count": 12},
-                },
-            None,
-            )])
+        )
+        self.assertEqual(
+            seen_status_calls,
+            [
+                (
+                    "guid-1",
+                    {
+                        "database_path": "example.db",
+                        "include_storage_bytes": False,
+                        "cancelled_callback": ANY,
+                        "connection_callback": ANY,
+                    },
+                ),
+                (
+                    "guid-2",
+                    {
+                        "database_path": "example.db",
+                        "include_storage_bytes": False,
+                        "cancelled_callback": ANY,
+                        "connection_callback": ANY,
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(
+            results,
+            [
+                (
+                    4,
+                    "example.db",
+                    {11: {"guid": "guid-11"}},
+                    {
+                        "guid-1": {"is_completed": True, "result_count": 12},
+                        "guid-2": {"is_completed": True, "result_count": 12},
+                    },
+                    None,
+                )
+            ],
+        )
 
 
 class DatabaseLoadWorkerTestCase(unittest.TestCase):
@@ -4784,10 +4843,10 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             return None
 
         def get_runs(
-                database_path,
-                cancelled_callback=None,
-                connection_callback=None,
-                ):
+            database_path,
+            cancelled_callback=None,
+            connection_callback=None,
+        ):
             self.assertTrue(callable(cancelled_callback))
             self.assertTrue(callable(connection_callback))
             calls.append(("basic_runs", database_path))
@@ -4807,25 +4866,32 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             database_module.database_access_error = old_access_error
             database_module.get_runs_basic_via_sql = old_get_runs
 
-        self.assertEqual(calls, [
-            ("access", "example.db"),
-            ("basic_runs", "example.db"),
-            ])
-        self.assertEqual(statuses, [
-            (7, "Opening trusted live database..."),
-            (7, "Checking database access for snapshot fallback..."),
-            (7, "Opening snapshot fallback read-only..."),
-            (7, "Loading basic run list..."),
-            ])
-        self.assertEqual(finished, [
-            (7, "example.db", {1: {"guid": "guid-1", "run_timestamp": 123.0}}, None)
-            ])
+        self.assertEqual(
+            calls,
+            [
+                ("access", "example.db"),
+                ("basic_runs", "example.db"),
+            ],
+        )
+        self.assertEqual(
+            statuses,
+            [
+                (7, "Opening trusted live database..."),
+                (7, "Checking database access for snapshot fallback..."),
+                (7, "Opening snapshot fallback read-only..."),
+                (7, "Loading basic run list..."),
+            ],
+        )
+        self.assertEqual(
+            finished,
+            [(7, "example.db", {1: {"guid": "guid-1", "run_timestamp": 123.0}}, None)],
+        )
 
     def test_database_load_worker_reports_access_error(self):
         old_access_error = database_module.database_access_error
 
-        database_module.database_access_error = (
-            lambda _path, **_kwargs: "locked database"
+        database_module.database_access_error = lambda _path, **_kwargs: (
+            "locked database"
         )
         try:
             worker = main_window.DatabaseLoadWorker(3, "locked.db")
@@ -4846,9 +4912,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             "unverifiable WAL with owner-checkpoint guidance",
             UnverifiableDatabaseWalError.__name__,
         )
-        database_module.database_access_error = (
-            lambda _path, **_kwargs: access_error
-        )
+        database_module.database_access_error = lambda _path, **_kwargs: access_error
         try:
             worker = main_window.DatabaseLoadWorker(3, "unverifiable.db")
             finished = []
@@ -4963,7 +5027,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker = main_window.DatabaseLoadWorker(12, "stale.db")
             worker.signals.finished.connect(
                 lambda *args: harness.database_load_finished(*args)
-                )
+            )
 
             worker.run()
 
@@ -4991,7 +5055,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             worker = main_window.DatabaseLoadWorker(14, "committed.db")
             worker.signals.finished.connect(
                 lambda *args: harness.database_load_finished(*args)
-                )
+            )
 
             worker.run()
 
@@ -5008,11 +5072,11 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         old_access_error = database_module.database_access_error
         calls = []
 
-        database_module.database_is_likely_cloud_placeholder = lambda _path: calls.append(
-            "placeholder"
-            )
-        database_module.database_access_error = (
-            lambda _path, **_kwargs: calls.append("access")
+        database_module.database_is_likely_cloud_placeholder = lambda _path: (
+            calls.append("placeholder")
+        )
+        database_module.database_access_error = lambda _path, **_kwargs: calls.append(
+            "access"
         )
         try:
             worker = main_window.DatabaseLoadWorker(4, "example.db")
@@ -5035,18 +5099,18 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         calls = []
 
         def prefetch(
-                database_path,
-                timeout=None,
-                status_callback=None,
-                cancelled_callback=None,
-                ):
+            database_path,
+            timeout=None,
+            status_callback=None,
+            cancelled_callback=None,
+        ):
             calls.append(("prefetch", database_path, timeout))
             raise InterruptedError("Database load cancelled.")
 
         database_module.database_is_likely_cloud_placeholder = lambda _path: True
         database_module.prefetch_database_file_with_timeout = prefetch
-        database_module.database_access_error = (
-            lambda _path, **_kwargs: calls.append("access")
+        database_module.database_access_error = lambda _path, **_kwargs: calls.append(
+            "access"
         )
         try:
             worker = main_window.DatabaseLoadWorker(5, "cloud.db", 8)
@@ -5069,7 +5133,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             def emit(self, *args):
                 raise RuntimeError(
                     "wrapped C/C++ object of type DatabaseLoadSignals has been deleted"
-                    )
+                )
 
         class DeletedSignals:
             status = DeletedSignal()
@@ -5098,11 +5162,11 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             return next(access_results)
 
         def prefetch(
-                database_path,
-                timeout=None,
-                status_callback=None,
-                cancelled_callback=None,
-                ):
+            database_path,
+            timeout=None,
+            status_callback=None,
+            cancelled_callback=None,
+        ):
             calls.append(("prefetch", database_path, timeout))
             self.assertIsNotNone(cancelled_callback)
             status_callback("Waiting for OneDrive sync... 100% available")
@@ -5135,11 +5199,14 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             database_module.prefetch_database_file_with_timeout = old_prefetch
             database_module.get_runs_basic_via_sql = old_get_runs
 
-        self.assertEqual(calls, [
-            ("access", expected_path),
-            ("prefetch", expected_path, 12),
-            ("access", expected_path),
-            ])
+        self.assertEqual(
+            calls,
+            [
+                ("access", expected_path),
+                ("prefetch", expected_path, 12),
+                ("access", expected_path),
+            ],
+        )
         self.assertIn((9, "Waiting for OneDrive sync... 100% available"), statuses)
         self.assertEqual(finished, [(9, expected_path, {}, None)])
 
@@ -5148,27 +5215,29 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         calls = []
 
         def iter_details(
-                database_path,
-                run_ids,
-                batch_size=1,
-                infer_missing_shapes=True,
-                include_storage_bytes=True,
-                include_storage_estimate=False,
-                include_read_setpoint_count=True,
-                cancelled_callback=None,
-                connection_callback=None,
-                ):
+            database_path,
+            run_ids,
+            batch_size=1,
+            infer_missing_shapes=True,
+            include_storage_bytes=True,
+            include_storage_estimate=False,
+            include_read_setpoint_count=True,
+            cancelled_callback=None,
+            connection_callback=None,
+        ):
             self.assertTrue(callable(cancelled_callback))
             self.assertTrue(callable(connection_callback))
-            calls.append((
-                database_path,
-                run_ids,
-                batch_size,
-                infer_missing_shapes,
-                include_storage_bytes,
-                include_storage_estimate,
-                include_read_setpoint_count,
-                ))
+            calls.append(
+                (
+                    database_path,
+                    run_ids,
+                    batch_size,
+                    infer_missing_shapes,
+                    include_storage_bytes,
+                    include_storage_estimate,
+                    include_read_setpoint_count,
+                )
+            )
             for run_id in run_ids:
                 if run_id == 2:
                     yield {
@@ -5177,8 +5246,8 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                             "result_count": 20,
                             "storage_bytes": 1000,
                             "storage_bytes_estimated": True,
-                            }
                         }
+                    }
                 elif run_id == 1:
                     yield {1: {"guid": "guid-1", "result_count": 10}}
 
@@ -5189,7 +5258,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 "details.db",
                 [2, 1],
                 batch_size=1,
-                )
+            )
             statuses = []
             batches = []
             finished = []
@@ -5202,62 +5271,81 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         finally:
             database_module.iter_run_detail_batches_via_sql = old_iter_details
 
-        self.assertEqual(calls, [
-            ("details.db", [1], 1, False, False, True, True),
-            ("details.db", [2], 1, False, False, True, True),
-            ])
-        self.assertEqual(batches, [
-            (11, "details.db", {1: {"guid": "guid-1", "result_count": 10}}),
-            (11, "details.db", {
-                2: {
-                    "guid": "guid-2",
-                    "result_count": 20,
-                    "storage_bytes": 1000,
-                    "storage_bytes_estimated": True,
+        self.assertEqual(
+            calls,
+            [
+                ("details.db", [1], 1, False, False, True, True),
+                ("details.db", [2], 1, False, False, True, True),
+            ],
+        )
+        self.assertEqual(
+            batches,
+            [
+                (11, "details.db", {1: {"guid": "guid-1", "result_count": 10}}),
+                (
+                    11,
+                    "details.db",
+                    {
+                        2: {
+                            "guid": "guid-2",
+                            "result_count": 20,
+                            "storage_bytes": 1000,
+                            "storage_bytes_estimated": True,
+                        },
                     },
-                }),
-            ])
-        self.assertEqual(statuses, [
-            (11, "Loading run details... 0/2"),
-            (11, "Loading run details... 1/2"),
-            (11, "Loading run details... 2/2"),
-            ])
+                ),
+            ],
+        )
+        self.assertEqual(
+            statuses,
+            [
+                (11, "Loading run details... 0/2"),
+                (11, "Loading run details... 1/2"),
+                (11, "Loading run details... 2/2"),
+            ],
+        )
         self.assertEqual(finished, [(11, "details.db", None)])
 
-    def test_database_expensive_detail_worker_prioritizes_shape_and_storage_batches(self):
+    def test_database_expensive_detail_worker_prioritizes_shape_and_storage_batches(
+        self,
+    ):
         old_iter_shapes = database_module.iter_run_shape_batches_via_sql
         old_iter_storage = database_module.iter_run_storage_batches_via_sql
         calls = []
 
         def iter_shapes(
-                database_path,
-                run_ids,
-                batch_size=1,
-                cancelled_callback=None,
-                connection_callback=None,
-                ):
+            database_path,
+            run_ids,
+            batch_size=1,
+            cancelled_callback=None,
+            connection_callback=None,
+        ):
             self.assertTrue(callable(cancelled_callback))
             self.assertTrue(callable(connection_callback))
             calls.append(("shapes", database_path, run_ids, batch_size))
             if 1 in run_ids:
-                yield {1: {"guid": "guid-1", "setpoint_shape": [10], "setpoint_count": 10}}
+                yield {
+                    1: {"guid": "guid-1", "setpoint_shape": [10], "setpoint_count": 10}
+                }
 
         def iter_storage(
-                database_path,
-                run_ids,
-                batch_size=25,
-                cancelled_callback=None,
-                connection_callback=None,
-                ):
+            database_path,
+            run_ids,
+            batch_size=25,
+            cancelled_callback=None,
+            connection_callback=None,
+        ):
             self.assertTrue(callable(cancelled_callback))
             self.assertTrue(callable(connection_callback))
             calls.append(("storage", database_path, run_ids, batch_size))
             if 1 in run_ids:
-                yield {1: {
-                    "guid": "guid-1",
-                    "storage_bytes": 2000,
-                    "storage_bytes_estimated": False,
-                    }}
+                yield {
+                    1: {
+                        "guid": "guid-1",
+                        "storage_bytes": 2000,
+                        "storage_bytes_estimated": False,
+                    }
+                }
 
         database_module.iter_run_shape_batches_via_sql = iter_shapes
         database_module.iter_run_storage_batches_via_sql = iter_storage
@@ -5267,7 +5355,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
                 "details.db",
                 [2, 1],
                 batch_size=2,
-                )
+            )
             statuses = []
             batches = []
             finished = []
@@ -5281,26 +5369,49 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             database_module.iter_run_shape_batches_via_sql = old_iter_shapes
             database_module.iter_run_storage_batches_via_sql = old_iter_storage
 
-        self.assertEqual(calls, [
-            ("shapes", "details.db", [1, 2], 2),
-            ("storage", "details.db", [1, 2], 25),
-            ])
-        self.assertEqual(batches, [
-            (12, "details.db", {1: {"guid": "guid-1", "setpoint_shape": [10], "setpoint_count": 10}}),
-            (12, "details.db", {
-                1: {
-                    "guid": "guid-1",
-                    "storage_bytes": 2000,
-                    "storage_bytes_estimated": False,
+        self.assertEqual(
+            calls,
+            [
+                ("shapes", "details.db", [1, 2], 2),
+                ("storage", "details.db", [1, 2], 25),
+            ],
+        )
+        self.assertEqual(
+            batches,
+            [
+                (
+                    12,
+                    "details.db",
+                    {
+                        1: {
+                            "guid": "guid-1",
+                            "setpoint_shape": [10],
+                            "setpoint_count": 10,
+                        }
                     },
-                }),
-            ])
-        self.assertEqual(statuses, [
-            (12, "Loading setpoint shapes... 0/2"),
-            (12, "Loading setpoint shapes... 2/2"),
-            (12, "Loading exact run sizes... 0/2"),
-            (12, "Loading exact run sizes... 2/2"),
-            ])
+                ),
+                (
+                    12,
+                    "details.db",
+                    {
+                        1: {
+                            "guid": "guid-1",
+                            "storage_bytes": 2000,
+                            "storage_bytes_estimated": False,
+                        },
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(
+            statuses,
+            [
+                (12, "Loading setpoint shapes... 0/2"),
+                (12, "Loading setpoint shapes... 2/2"),
+                (12, "Loading exact run sizes... 0/2"),
+                (12, "Loading exact run sizes... 2/2"),
+            ],
+        )
         self.assertEqual(finished, [(12, "details.db", None)])
 
 
@@ -5330,7 +5441,7 @@ class DatabaseDropTestCase(unittest.TestCase):
             try:
                 conn.execute(
                     "CREATE TABLE experiments (exp_id INTEGER PRIMARY KEY, name TEXT, sample_name TEXT)"
-                    )
+                )
                 conn.execute("""
                   CREATE TABLE runs (
                       run_id INTEGER PRIMARY KEY,
@@ -5343,14 +5454,14 @@ class DatabaseDropTestCase(unittest.TestCase):
                 """)
                 conn.execute(
                     "INSERT INTO experiments (exp_id, name, sample_name) VALUES (1, 'exp', 'sample')"
-                    )
+                )
                 conn.execute(
                     """
                     INSERT INTO runs
                     (run_id, name, run_timestamp, completed_timestamp, is_completed, guid)
                     VALUES (3, 'measurement', 1768129603, 1768129626, 1, 'guid-3')
                     """
-                    )
+                )
                 conn.commit()
             finally:
                 conn.close()
@@ -5372,10 +5483,12 @@ class DatabaseDropTestCase(unittest.TestCase):
         self.assertNotIn("SQLite version:", report)
 
     def test_database_info_dialog_displays_copyable_table(self):
-        dialog = database_actions.DatabaseInfoDialog([
-            ("Database", "demo.db"),
-            ("Path", "C:/data/demo.db"),
-            ])
+        dialog = database_actions.DatabaseInfoDialog(
+            [
+                ("Database", "demo.db"),
+                ("Path", "C:/data/demo.db"),
+            ]
+        )
 
         try:
             table = dialog.table
@@ -5386,22 +5499,27 @@ class DatabaseDropTestCase(unittest.TestCase):
             self.assertEqual(
                 [table.horizontalHeaderItem(col).text() for col in range(2)],
                 ["Field", "Value"],
-                )
-            self.assertEqual(table.selectionBehavior(), qtw.QAbstractItemView.SelectionBehavior.SelectRows)
+            )
+            self.assertEqual(
+                table.selectionBehavior(),
+                qtw.QAbstractItemView.SelectionBehavior.SelectRows,
+            )
             self.assertEqual(table.item(0, 0).text(), "Database")
             self.assertEqual(table.item(0, 1).text(), "demo.db")
 
             table.selectRow(1)
             table.copySelection()
 
-            self.assertEqual(qtw.QApplication.clipboard().text(), "Path\tC:/data/demo.db")
+            self.assertEqual(
+                qtw.QApplication.clipboard().text(), "Path\tC:/data/demo.db"
+            )
 
             dialog.copyAll()
 
             self.assertEqual(
                 qtw.QApplication.clipboard().text(),
                 "Database\tdemo.db\nPath\tC:/data/demo.db",
-                )
+            )
         finally:
             dialog.deleteLater()
 
@@ -5411,9 +5529,8 @@ class DatabaseDropTestCase(unittest.TestCase):
             mime_data.setUrls([QtCore.QUrl.fromLocalFile(database.name)])
 
             self.assertEqual(
-                main_window.database_path_from_mime_data(mime_data),
-                database.name
-                )
+                main_window.database_path_from_mime_data(mime_data), database.name
+            )
 
     def test_database_path_from_mime_data_rejects_ambiguous_or_non_db_drops(self):
         with (
@@ -5424,10 +5541,12 @@ class DatabaseDropTestCase(unittest.TestCase):
             text_drop.setUrls([QtCore.QUrl.fromLocalFile(text_file.name)])
 
             multiple_drop = QtCore.QMimeData()
-            multiple_drop.setUrls([
-                QtCore.QUrl.fromLocalFile(database.name),
-                QtCore.QUrl.fromLocalFile(text_file.name),
-                ])
+            multiple_drop.setUrls(
+                [
+                    QtCore.QUrl.fromLocalFile(database.name),
+                    QtCore.QUrl.fromLocalFile(text_file.name),
+                ]
+            )
 
             self.assertIsNone(main_window.database_path_from_mime_data(text_drop))
             self.assertIsNone(main_window.database_path_from_mime_data(multiple_drop))

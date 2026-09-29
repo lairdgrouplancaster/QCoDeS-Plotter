@@ -3933,7 +3933,7 @@ def test_legacy_preview_callback_cannot_land_on_staged_trusted_rows(
 @pytest.mark.parametrize(
     ("access_mode", "expected_close_calls"),
     (
-        (database_actions.TRUSTED_LIVE_MODE, [1, 1]),
+        (database_actions.TRUSTED_LIVE_MODE, [1, 1, 1]),
         (database_actions.SNAPSHOT_FALLBACK_MODE, [1, 1]),
     ),
 )
@@ -3959,6 +3959,15 @@ def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
         load_calls.append((args, kwargs))
         return dataset
 
+    def choose_after_preflight(_default_name):
+        # Trusted export enumerates progressive metadata in its own short-lived
+        # dataset. Both that view and the plot action must close before a modal
+        # destination dialog; the export data view is opened afterwards.
+        assert [dataset.conn.close_calls for dataset in datasets] == (
+            expected_close_calls[:-1]
+        )
+        return harness.export_filename
+
     def publish_without_disk_write(
         filename,
         _writer,
@@ -3980,6 +3989,11 @@ def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
             "write_export_atomically",
             side_effect=publish_without_disk_write,
         ),
+        patch.object(
+            harness,
+            "_choose_csv_export_filename",
+            side_effect=choose_after_preflight,
+        ),
     ):
         harness.openPlot(guid, show=False)
         harness.exportRunCsv()
@@ -3994,11 +4008,7 @@ def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
             (guid, instance.logical_path),
             {"expected_database_identity": instance.identity},
         ),
-        (
-            (guid, instance.logical_path),
-            {"expected_database_identity": instance.identity},
-        ),
-    ]
+    ] * len(expected_close_calls)
     assert published == [harness.export_filename]
     assert [dataset.conn.close_calls for dataset in datasets] == expected_close_calls
     assert harness.ds is None
