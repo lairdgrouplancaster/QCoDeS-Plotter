@@ -13,6 +13,8 @@ from qcodes.dataset import (
 
 import qplot.tools.worker as worker_module
 from qplot.datahandling.readonly import load_by_id_read_only
+from qplot.tools.operation_registry import OperationCall
+from qplot.tools.plot_tools import differentiate, fill_heatmap
 from qplot.tools.worker import loader
 
 
@@ -72,6 +74,59 @@ def run_worker(worker):
     worker.run()
     assert errors == []
     assert finished == [True]
+
+
+def paired_shaped_unshaped_results(
+    tmp_path, slow_order, fast_order, signal_value, operation,
+):
+    """Run equivalent current-QCoDeS scalar scans with and without shape."""
+
+    path = tmp_path / "operated_coordinate_order.db"
+    initialise_or_create_database_at(str(path), journal_mode="DELETE")
+    experiment = load_or_create_experiment(
+        "operated_coordinate_order", sample_name="test",
+    )
+    run_ids = []
+    for shaped in (False, True):
+        measurement = Measurement(
+            exp=experiment,
+            name="shaped_scan" if shaped else "unshaped_scan",
+        )
+        measurement.register_custom_parameter("slow")
+        measurement.register_custom_parameter("fast")
+        measurement.register_custom_parameter(
+            "signal", setpoints=("slow", "fast"),
+        )
+        if shaped:
+            measurement.set_shapes({"signal": (len(slow_order), len(fast_order))})
+        with measurement.run() as datasaver:
+            for slow in slow_order:
+                for fast in fast_order:
+                    datasaver.add_result(
+                        ("slow", slow),
+                        ("fast", fast),
+                        ("signal", float(signal_value(slow, fast))),
+                    )
+            run_ids.append(datasaver.dataset.run_id)
+
+    before = hashlib.sha256(path.read_bytes()).digest()
+    results = []
+    for run_id in run_ids:
+        dataset = load_by_id_read_only(run_id, str(path))
+        try:
+            worker = make_worker(dataset, operations=[operation])
+            run_worker(worker)
+            results.append((
+                {axis: values.copy() for axis, values in worker.axis_data.items()},
+                worker.dataGrid.copy(),
+            ))
+        finally:
+            dataset.conn.close()
+
+    assert hashlib.sha256(path.read_bytes()).digest() == before
+    assert not path.with_name(path.name + "-journal").exists()
+    assert not path.with_name(path.name + "-wal").exists()
+    return results
 
 
 @pytest.mark.parametrize("arrays", [False, True], ids=["scalar", "array"])
@@ -353,3 +408,87 @@ def test_real_qcodes_shaped_and_unshaped_coordinate_order_equivalent(
     assert hashlib.sha256(path.read_bytes()).digest() == before
     assert not path.with_name(path.name + "-journal").exists()
     assert not path.with_name(path.name + "-wal").exists()
+
+
+@pytest.mark.parametrize(
+    ("slow_order", "fast_order"),
+    [
+        ([0, 1], [0, 2, 1]),
+        ([1, 0], [2, 1, 0]),
+    ],
+    ids=["unordered-fast", "descending-both"],
+)
+def test_real_qcodes_shaped_and_unshaped_derivatives_use_coordinate_order(
+    tmp_path, slow_order, fast_order,
+):
+    operation = OperationCall(
+        "dz/dx",
+        lambda data, cancelled_callback=None: differentiate(
+            "x", data, cancelled_callback=cancelled_callback,
+        ),
+        derivative_axis="x",
+        cooperative=True,
+    )
+
+    results = paired_shaped_unshaped_results(
+        tmp_path,
+        slow_order,
+        fast_order,
+        lambda slow, fast: fast ** 2 + 10 * slow,
+        operation,
+    )
+
+    for axes, grid in results:
+        np.testing.assert_array_equal(axes["x"], [0, 1, 2])
+        np.testing.assert_array_equal(axes["y"], [0, 1])
+        np.testing.assert_allclose(grid, [[1, 2, 3], [1, 2, 3]])
+    np.testing.assert_array_equal(results[0][1], results[1][1])
+
+
+@pytest.mark.parametrize(
+    ("which", "slow_order", "fast_order", "signal_value", "expected"),
+    [
+        (
+            "right",
+            [1, 0],
+            [2, 1, 0],
+            lambda slow, fast: (
+                np.nan if slow == 0 and fast == 1 else 10 * slow + fast + 1
+            ),
+            [[1, 1, 3], [11, 12, 13]],
+        ),
+        (
+            "below",
+            [2, 1, 0],
+            [1, 0],
+            lambda slow, fast: (
+                np.nan if slow == 1 and fast == 0 else 100 * fast + slow + 1
+            ),
+            [[1, 101], [1, 102], [3, 103]],
+        ),
+    ],
+    ids=["fill-right-descending-x", "fill-below-descending-y"],
+)
+def test_real_qcodes_shaped_and_unshaped_directional_fill_uses_coordinate_order(
+    tmp_path, which, slow_order, fast_order, signal_value, expected,
+):
+    operation = OperationCall(
+        f"Fill {which.title()}",
+        lambda data, cancelled_callback=None: fill_heatmap(
+            which,
+            data,
+            max_depth=1,
+            cancelled_callback=cancelled_callback,
+        ),
+        cooperative=True,
+    )
+
+    results = paired_shaped_unshaped_results(
+        tmp_path, slow_order, fast_order, signal_value, operation,
+    )
+
+    for axes, grid in results:
+        np.testing.assert_array_equal(axes["x"], sorted(fast_order))
+        np.testing.assert_array_equal(axes["y"], sorted(slow_order))
+        np.testing.assert_array_equal(grid, expected)
+    np.testing.assert_array_equal(results[0][1], results[1][1])

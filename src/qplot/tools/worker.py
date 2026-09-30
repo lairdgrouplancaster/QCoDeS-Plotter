@@ -475,6 +475,11 @@ class loader(QtCore.QRunnable):
             self._check_cancelled()
             # Operations are an ordered, atomic pipeline. Large heatmaps are
             # reduced for display only after this pipeline has completed.
+            # Normalize heatmap geometry first so coordinate-dependent
+            # operations see spatial order rather than acquisition order.
+            if self.operations:
+                self._canonicalize_heatmap()
+                self._check_cancelled()
             results = self.do_operations()
             if results is not None:
                 (
@@ -488,6 +493,8 @@ class loader(QtCore.QRunnable):
             self._check_cancelled()
             self._aggregate_operated_heatmap_if_needed()
             self._check_cancelled()
+            # Operations may return replacement coordinates or grids, so keep
+            # the final geometry validation and normalization as well.
             self._canonicalize_heatmap()
             self._check_cancelled()
         except PlotWorkCancelled:
