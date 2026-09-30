@@ -19,12 +19,6 @@ from typing import Any
 
 import apsw
 import pytest
-from qcodes.dataset import (
-    Measurement,
-    initialise_or_create_database_at,
-    load_or_create_experiment,
-)
-from qcodes.parameters import ManualParameter
 
 from qplot.datahandling import _trusted_live_protocol as protocol_module
 from qplot.datahandling import trusted_live_supervisor as supervisor_module
@@ -294,6 +288,15 @@ def _qcodes_wal_writer_process(database_path: str, control: Connection) -> None:
     run_context: Any = None
     dataset: Any = None
     try:
+        # APSW-only writer processes also import this module when spawned.
+        # Load QCoDeS only for the writer that actually uses its public APIs.
+        from qcodes.dataset import (
+            Measurement,
+            initialise_or_create_database_at,
+            load_or_create_experiment,
+        )
+        from qcodes.parameters import ManualParameter
+
         initialise_or_create_database_at(database_path, journal_mode="WAL")
         experiment = load_or_create_experiment(
             "supervisor_live_experiment",
