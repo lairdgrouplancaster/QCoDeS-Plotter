@@ -48,10 +48,13 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
     mode = sys.argv[1]
     log_path = Path(sys.argv[2])
     configure_logging(log_file=log_path, force=True)
-    main_window._APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = (
-        1.5 if mode == "graceful" else 0.45
-    )
-    main_window._APPLICATION_SHUTDOWN_DIAGNOSTIC_GRACE_SECONDS = 0.10
+    # Grace is capped at one quarter of the total timeout. Give real file I/O
+    # the production 0.25 s grace; blocked I/O still faces the 0.45 s deadline.
+    main_window._APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = {
+        "graceful": 1.5,
+        "stuck": 1.0,
+        "blocked-diagnostics": 0.45,
+    }[mode]
 
     if mode == "blocked-diagnostics":
         diagnostic_gate = threading.Event()
@@ -230,7 +233,7 @@ _SUPERVISOR_DRIVER = textwrap.dedent(
             child_argv,
             env=os.environ,
             # This probe imports PyQt before it can authenticate.  Give cold
-            # CI imports their own bounded setup budget; the asserted 0.45 s
+            # CI imports their own bounded setup budget; the asserted
             # shutdown deadline below is unchanged and starts only after
             # SHUTDOWN_REQUEST_AT is published.
             startup_timeout=30.0,
@@ -659,8 +662,8 @@ def test_real_qthreadpool_stall_forces_os_process_exit_after_diagnostics(
     failsafe_deadline = float(
         _probe_value(completed.stdout, "SHUTDOWN_ARMED", "failsafe_hard")
     )
-    assert 0.42 <= hard_deadline - shutdown_started_at <= 0.48
-    assert 0.07 <= hard_deadline - diagnostic_deadline <= 0.13
+    assert 0.97 <= hard_deadline - shutdown_started_at <= 1.03
+    assert 0.22 <= hard_deadline - diagnostic_deadline <= 0.28
     assert failsafe_deadline == hard_deadline
     assert hard_deadline - 0.04 <= completed_at <= hard_deadline + 0.20
     assert "RUNNABLE_STARTED" in completed.stdout
