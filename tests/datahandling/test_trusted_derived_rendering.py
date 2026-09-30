@@ -382,10 +382,10 @@ def test_single_finite_1d_point_is_visibly_rendered() -> None:
     assert rgba.count(b"\xff\xff\xff\xff") == width * height - 1
 
 
-def test_scientifically_corrected_renderer_version_is_after_v2() -> None:
+def test_dependency_aware_renderer_invalidates_v3_cache_entries() -> None:
     renderer_prefix = "trusted-derived-renderer-v"
     assert TRUSTED_DERIVED_RENDERER_VERSION.startswith(renderer_prefix)
-    assert int(TRUSTED_DERIVED_RENDERER_VERSION.removeprefix(renderer_prefix)) > 2
+    assert int(TRUSTED_DERIVED_RENDERER_VERSION.removeprefix(renderer_prefix)) > 3
 
 
 def test_2d_rendering_uses_two_dependencies() -> None:
@@ -964,6 +964,51 @@ def test_unvalidated_2d_layout_is_an_honest_placeholder() -> None:
     assert payload["status"] == "unsupported"
     assert payload["images"] == ()
     assert "validated" in str(payload["description"]).lower()
+
+
+def test_missing_dependency_cannot_be_projected_to_one_dimension() -> None:
+    observation = _observation(dimensions=2)
+    signal = observation.parameters[-1]
+    missing = replace(
+        observation,
+        parameters=(
+            *observation.parameters[:-1],
+            replace(signal, depends_on=("x", "absent")),
+        ),
+        validated_2d_layouts=(),
+    )
+
+    payload = render_trusted_derived_payload(missing, TrustedWorkKind.PREVIEW)
+
+    assert payload["status"] == "unsupported"
+    assert payload["images"] == ()
+    assert "sweep parameters is unavailable" in str(payload["description"])
+
+
+def test_validated_2d_dependent_renders_beside_unsupported_3d() -> None:
+    observation = _observation(dimensions=2)
+    mixed = replace(
+        observation,
+        result_columns=(*observation.result_columns, "z", "volume"),
+        sample_columns=(*observation.sample_columns, "z", "volume"),
+        sample_rows=tuple(
+            (*row, float(index), float(index))
+            for index, row in enumerate(observation.sample_rows)
+        ),
+        parameters=(
+            *observation.parameters,
+            TrustedParameterView("z", "Z", "V", (), "numeric"),
+            TrustedParameterView("volume", "Volume", "A", ("x", "y", "z"), "numeric"),
+        ),
+        dependent_parameters=("signal", "volume"),
+    )
+
+    payload = render_trusted_derived_payload(mixed, TrustedWorkKind.PREVIEW)
+
+    assert payload["status"] == "ok"
+    assert tuple(dict(image)["dependent"] for image in payload["images"]) == ("signal",)
+    assert dict(payload["images"][0])["dimensions"] == 2
+    assert "more than two sweep dimensions" in str(payload["description"])
 
 
 def test_metadata_payload_carries_self_contained_run_fields() -> None:

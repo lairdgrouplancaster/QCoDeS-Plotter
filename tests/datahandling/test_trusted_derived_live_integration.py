@@ -150,6 +150,125 @@ def _create_completed_rectangular_qcodes_run(
     return run_id, table_name, missing_row_id
 
 
+def _create_independent_qcodes_run(
+    database_path: Path, *, include_1d: bool, include_3d: bool
+) -> int:
+    """Create independent public-QCoDeS dependents with distinct setpoints."""
+
+    experiment: Any = None
+    dataset: Any = None
+    original_database_path = qcodes.config.core.db_location
+    try:
+        initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+        experiment = load_or_create_experiment(
+            "trusted_independent_dimensions", sample_name="independent"
+        )
+        measurement = Measurement(exp=experiment, name="independent_dimensions")
+        axes = tuple(ManualParameter(f"x{index}") for index in range(3))
+        signals = tuple(ManualParameter(f"z{index}") for index in range(3))
+        if include_1d:
+            for axis, signal in zip(axes, signals, strict=True):
+                measurement.register_parameter(axis)
+                measurement.register_parameter(signal, setpoints=(axis,))
+        if include_3d:
+            for axis in axes:
+                if not include_1d:
+                    measurement.register_parameter(axis)
+            signal_3d = ManualParameter("z3d")
+            measurement.register_parameter(signal_3d, setpoints=axes)
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for index in range(8):
+                if include_1d:
+                    for axis, signal in zip(axes, signals, strict=True):
+                        datasaver.add_result(
+                            (axis, float(index)), (signal, float(index * 10))
+                        )
+                if include_3d:
+                    datasaver.add_result(
+                        *((axis, float(index)) for axis in axes),
+                        (signal_3d, float(index * 100)),
+                    )
+            datasaver.flush_data_to_database(block=True)
+        return int(dataset.run_id)
+    finally:
+        connections = tuple(
+            {
+                id(connection): connection
+                for connection in (
+                    getattr(dataset, "conn", None),
+                    getattr(experiment, "conn", None),
+                )
+                if connection is not None
+            }.values()
+        )
+        try:
+            for connection in connections:
+                connection.close()
+        finally:
+            qcodes.config.core.db_location = original_database_path
+
+
+@pytest.mark.parametrize(
+    ("include_1d", "include_3d", "expected_dependents"),
+    (
+        (True, False, {"z0", "z1", "z2"}),
+        (True, True, {"z0", "z1", "z2"}),
+        (False, True, set()),
+    ),
+)
+def test_real_qcodes_derived_dimensions_are_per_dependent(
+    tmp_path: Path,
+    include_1d: bool,
+    include_3d: bool,
+    expected_dependents: set[str],
+) -> None:
+    database_path = tmp_path / "independent.db"
+    run_id = _create_independent_qcodes_run(
+        database_path, include_1d=include_1d, include_3d=include_3d
+    )
+    accepted = database_instance(database_path)
+    before = _stable_artifact_state(
+        database_path, consecutive_observations=2, observation_interval=0.02
+    )
+    service = TrustedLiveReadService(
+        database_path,
+        expected_database_instance=accepted,
+        request_timeout_seconds=30.0,
+    )
+    try:
+        bootstrap = service.submit_bootstrap().wait(30.0)
+        page = service.submit_basic_page(0, bootstrap.run_id_watermark).wait(30.0)
+        assert tuple(run.run_id for run in page.runs) == (run_id,)
+        observation = service.submit_derived_source(run_id).wait(30.0)
+        assert observation.database_instance == accepted
+        assert observation.unsupported_reason is None
+        assert set(observation.dependent_parameters) == (
+            expected_dependents | ({"z3d"} if include_3d else set())
+        )
+        for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW):
+            payload = render_trusted_derived_payload(observation, kind)
+            assert dict(payload["source"])["run_guid"] == observation.run_guid
+            assert dict(payload["source"])["result_watermark"] == (
+                observation.result_watermark
+            )
+            images = {
+                dict(image)["dependent"]: dict(image) for image in payload["images"]
+            }
+            assert set(images) == expected_dependents
+            assert all(image["dimensions"] == 1 for image in images.values())
+            assert payload["status"] == ("ok" if include_1d else "unsupported")
+            if include_3d:
+                assert "more than two sweep dimensions" in str(payload["description"])
+                assert "z3d" not in images
+    finally:
+        service.close(timeout=30.0)
+    after = _stable_artifact_state(
+        database_path, consecutive_observations=2, observation_interval=0.02
+    )
+    _assert_protected_artifacts_unchanged(before, after)
+
+
 def test_real_qcodes_observed_grid_infers_and_renders_missing_cell_without_writes(
     tmp_path: Path,
 ) -> None:

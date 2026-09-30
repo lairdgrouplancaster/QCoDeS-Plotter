@@ -2302,10 +2302,6 @@ class TrustedMetadataQueryAdapter:
             unsupported_reason = (
                 "The result has more source columns than the bounded renderer supports."
             )
-        elif len(sweep_parameters) > 2:
-            unsupported_reason = (
-                "Results with more than two sweep dimensions are unsupported."
-            )
 
         storage_bytes = self._estimated_result_storage_bytes(
             watermark,

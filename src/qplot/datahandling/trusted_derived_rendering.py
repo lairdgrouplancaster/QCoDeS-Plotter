@@ -19,7 +19,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     TrustedWorkKind,
 )
 
-TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v3"
+TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v4"
 TRUSTED_DERIVED_MAX_IMAGES = 8
 TRUSTED_DERIVED_MAX_IMAGE_WIDTH = 2_048
 TRUSTED_DERIVED_MAX_IMAGE_HEIGHT = 2_048
@@ -218,11 +218,7 @@ def render_trusted_derived_payload(
     parameter_by_name = {
         parameter.name: parameter for parameter in observation.parameters
     }
-    dependents = tuple(
-        name for name in observation.dependent_parameters if name in column_indexes
-    )
-    if not dependents:
-        dependents = tuple(observation.sample_columns[-1:])
+    dependents = observation.dependent_parameters
     dependents = dependents[:TRUSTED_DERIVED_MAX_IMAGES]
     images: list[DerivedValue] = []
     unavailable_descriptions: list[str] = []
@@ -230,17 +226,20 @@ def render_trusted_derived_payload(
     for dependent_index, dependent in enumerate(dependents):
         cancel_check()
         parameter = parameter_by_name.get(dependent)
-        dependencies = (
-            tuple(name for name in parameter.depends_on if name in column_indexes)
-            if parameter is not None
-            else ()
-        )
-        if not dependencies:
-            candidates = tuple(
-                name for name in observation.sample_columns[1:] if name != dependent
-            )
-            dependencies = candidates[:1]
+        dependencies = parameter.depends_on if parameter is not None else ()
         try:
+            if len(dependencies) > 2:
+                raise _UnsupportedNumericData(
+                    "Results with more than two sweep dimensions are unsupported."
+                )
+            if (
+                not dependencies
+                or dependent not in column_indexes
+                or any(name not in column_indexes for name in dependencies)
+            ):
+                raise _UnsupportedNumericData(
+                    "The dependent or one of its sweep parameters is unavailable."
+                )
             if len(dependencies) == 1:
                 rgba, points = _render_1d(
                     observation,
@@ -273,8 +272,6 @@ def render_trusted_derived_payload(
                     cancel_check,
                 )
                 dimensionality = 2
-            else:
-                continue
         except _UnsupportedNumericData as error:
             unavailable_descriptions.append(str(error))
             continue
@@ -315,7 +312,7 @@ def render_trusted_derived_payload(
         status="ok",
         description=(
             "Bounded trusted result-domain rendering; some dependents remain "
-            "unavailable."
+            f"unavailable: {unavailable_descriptions[0]}"
             if unavailable_descriptions
             else "Bounded trusted result-domain rendering."
         ),
