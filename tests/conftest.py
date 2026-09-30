@@ -10,6 +10,8 @@ import pytest
 import qcodes
 from PyQt6 import QtWidgets as qtw
 
+pytest_plugins = ["tests._ci_scheduling"]
+
 
 def ensure_qapplication():
     """Return the process-wide QApplication, creating it for headless tests."""

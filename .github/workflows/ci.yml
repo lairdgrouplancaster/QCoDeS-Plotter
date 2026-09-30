@@ -186,12 +186,15 @@ jobs:
 
       # Keep each Qt/QCoDeS test file in one process, and cap disk and
       # thread-pool contention at two workers across all source suites.
+      # Full suites use the collection order from tests._ci_scheduling so
+      # slow integration files start before the short unit-test files.
       - name: Run full test suite
         if: matrix.suite == 'full' && runner.os != 'Windows'
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
         run: >-
           python -m pytest --no-cov -n 2 --dist=loadfile
+          --no-loadscope-reorder
           --timeout=90 --timeout-method=thread --durations=20
 
       # The trusted VFS intentionally rejects the hosted runner's elevated
@@ -207,6 +210,7 @@ jobs:
           $arguments = @(
             "-m", "pytest", "--no-cov",
             "-n", "2", "--dist=loadfile",
+            "--no-loadscope-reorder",
             "--timeout=90", "--timeout-method=thread", "--durations=20", "-v"
           )
           # The full suite can exceed the wrapper's seven-minute default on
@@ -342,7 +346,7 @@ jobs:
       - name: Run tests with coverage
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python -m pytest -n 2 --dist=loadfile
+        run: python -m pytest -n 2 --dist=loadfile --no-loadscope-reorder
 
   package:
     name: Linux package artifacts

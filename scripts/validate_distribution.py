@@ -321,7 +321,8 @@ def test_extracted_sdist(artifact: Path, temporary: Path) -> None:
     run(
         [
             str(python), "-m", "pytest", "--no-cov",
-            "-n", "2", "--dist=loadfile", "-o", "pythonpath=",
+            "-n", "2", "--dist=loadfile", "--no-loadscope-reorder",
+            "-o", "pythonpath=",
         ],
         cwd=source,
         env=test_env,
