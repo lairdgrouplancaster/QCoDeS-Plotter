@@ -50,7 +50,7 @@ from ._preferences import (
     PreferencesDialog,
     create_preferences_action,
 )
-from ._run_controls import RunControlsMixin
+from ._run_controls import AUTO_PLOT_KEY, RunControlsMixin
 from ._trusted_derived_qt import TrustedDerivedQtBridge
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
@@ -1483,6 +1483,11 @@ class MainWindow(
         self._sync_theme_actions()
         self._sync_preview_size_actions()
         self._sync_refresh_interval()
+        set_widget_value_without_signals(
+            self.autoPlotBox,
+            self.autoPlotBox.setChecked,
+            self.config.get(AUTO_PLOT_KEY),
+            )
         self._sync_thread_pool_settings()
         run_list = getattr(self, "RunList", None)
         if run_list is not None:

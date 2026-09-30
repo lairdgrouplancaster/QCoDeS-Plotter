@@ -19,6 +19,7 @@ from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
 from qplot.configuration.themes import dark
 from qplot.windows import main as main_window
+from qplot.windows._database_actions import DatabaseActionsMixin
 from qplot.windows._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
@@ -1023,6 +1024,36 @@ class TemporaryConfigTestCase(unittest.TestCase):
             window.autoPlotBox.setChecked(True)
 
             self.assertTrue(config().get(AUTO_PLOT_KEY))
+        finally:
+            close_main_window(window)
+
+    def test_reset_settings_disables_auto_plot_in_running_window(self):
+        window = main_window.MainWindow()
+
+        try:
+            window.autoPlotBox.setChecked(True)
+            self.assertTrue(config().get(AUTO_PLOT_KEY))
+            toggles = []
+            window.autoPlotBox.toggled.connect(toggles.append)
+
+            with patch.object(
+                qtw.QMessageBox,
+                "question",
+                return_value=qtw.QMessageBox.StandardButton.Yes,
+            ):
+                self.assertTrue(window.restore_default_settings())
+
+            self.assertFalse(config().get(AUTO_PLOT_KEY))
+            self.assertFalse(window.autoPlotBox.isChecked())
+            self.assertEqual(toggles, [])
+
+            new_runs = {11: {"guid": "new-run"}}
+            with (
+                patch.object(DatabaseActionsMixin, "_apply_basic_new_runs"),
+                patch.object(window, "openPlot") as open_plot,
+            ):
+                window._apply_database_refresh_result(new_runs, {})
+            open_plot.assert_not_called()
         finally:
             close_main_window(window)
 
