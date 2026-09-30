@@ -858,6 +858,92 @@ class TemporaryConfigTestCase(unittest.TestCase):
             )
         self.assertEqual(config().get("user_preference.theme"), "light")
 
+    def test_invalid_utf8_is_backed_up_byte_for_byte_and_reset(self):
+        settings = Path(config.default_file)
+        settings.parent.mkdir(parents=True)
+        settings.write_bytes(b"\x81")
+
+        recovered = config()
+
+        recovered.validate(recovered.config)
+        self.assertEqual(recovered.get("user_preference.theme"), "light")
+        self.assertIsNotNone(recovered.startup_warning)
+        self.assertEqual(Path(recovered.invalid_config_backup_file).read_bytes(), b"\x81")
+        self.assertEqual(config().get("user_preference.theme"), "light")
+
+    def test_user_settings_read_failure_preserves_original(self):
+        settings = Path(config.default_file)
+        settings.parent.mkdir(parents=True)
+        original_contents = b'{"user_preference": "unreadable"}'
+        settings.write_bytes(original_contents)
+        real_open = open
+
+        for failure in (
+            PermissionError("simulated user settings read failure"),
+            FileNotFoundError("simulated missing read target"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                def fail_user_read(filename, *args, **kwargs):
+                    if os.fspath(filename) == config.default_file:
+                        raise failure
+                    return real_open(filename, *args, **kwargs)
+
+                with (
+                    patch("builtins.open", side_effect=fail_user_read),
+                    patch.object(config, "save_config") as save_config,
+                    ):
+                    recovered = config()
+
+                recovered.validate(recovered.config)
+                self.assertEqual(recovered.get("user_preference.theme"), "light")
+                self.assertIsNotNone(recovered.startup_warning)
+                self.assertFalse(hasattr(recovered, "invalid_config_backup_file"))
+                save_config.assert_not_called()
+                self.assertEqual(settings.read_bytes(), original_contents)
+
+    def test_invalid_utf8_recovery_save_failure_keeps_original_and_backup(self):
+        settings = Path(config.default_file)
+        settings.parent.mkdir(parents=True)
+        settings.write_bytes(b"\x81")
+
+        with patch.object(
+            config,
+            "save_config",
+            side_effect=PermissionError("simulated recovery save failure"),
+            ) as save_config:
+            recovered = config()
+
+        recovered.validate(recovered.config)
+        self.assertEqual(recovered.get("user_preference.theme"), "light")
+        self.assertIsNotNone(recovered.startup_warning)
+        self.assertEqual(settings.read_bytes(), b"\x81")
+        self.assertEqual(Path(recovered.invalid_config_backup_file).read_bytes(), b"\x81")
+        save_config.assert_called_once_with(config.default_file)
+
+    def test_valid_utf8_unicode_settings_load_without_recovery(self):
+        initial = config()
+        stored = deepcopy(initial.config)
+        stored["file"]["default_load_path"] = "C:/測定/échantillons/π"
+        settings = Path(config.default_file)
+        settings.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+
+        reloaded = config()
+
+        self.assertEqual(reloaded.get("file.default_load_path"), "C:/測定/échantillons/π")
+        self.assertIsNone(reloaded.startup_warning)
+        self.assertFalse(hasattr(reloaded, "invalid_config_backup_file"))
+        self.assertEqual(settings.read_bytes(), json.dumps(stored, ensure_ascii=False).encode("utf-8"))
+
+    def test_packaged_schema_decode_failure_is_not_user_settings_recovery(self):
+        schema = Path(self.temp_dir.name) / "broken_schema.json"
+        schema.write_bytes(b"\x81")
+
+        with patch.object(config, "default__schema_file", str(schema)):
+            with self.assertRaises(UnicodeDecodeError):
+                config()
+
+        self.assertFalse(Path(config.default_file).exists())
+
     def test_schema_invalid_json_is_backed_up_and_replaced_with_defaults(self):
         config()
         original_contents = b"[]\n"

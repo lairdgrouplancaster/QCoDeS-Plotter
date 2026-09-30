@@ -76,8 +76,21 @@ class config:
         self.schema = self.load_config(self.default__schema_file)
         self.startup_warning = None
         
-        # Make config file if missing
-        if not path.isfile(self.default_file):
+        try:
+            loaded_config = self.load_config(self.default_file)
+        except FileNotFoundError as error:
+            # A read can fail with ENOENT even when the settings path still
+            # exists (for example, a dangling link). Keep that original.
+            try:
+                os.lstat(self.default_file)
+            except FileNotFoundError:
+                pass
+            except OSError as stat_error:
+                self._recover_unreadable_config(stat_error)
+                return
+            else:
+                self._recover_unreadable_config(error)
+                return
             self.config = self.build_default_config()
             try:
                 self.save_config(self.default_file)
@@ -87,9 +100,12 @@ class config:
                     f"{self.default_file}",
                     error,
                     )
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            self._recover_invalid_config(error)
+        except OSError as error:
+            self._recover_unreadable_config(error)
         else:
             try:
-                loaded_config = self.load_config(self.default_file)
                 if not isinstance(loaded_config, dict):
                     raise jsonschema.ValidationError(
                         "config.json root must be a JSON object"
@@ -107,9 +123,7 @@ class config:
                             f"{self.default_file}",
                             error,
                             )
-
-            # config.json does not meet schema requirements
-            except (json.JSONDecodeError, jsonschema.ValidationError) as error:
+            except jsonschema.ValidationError as error:
                 self._recover_invalid_config(error)
         
     
@@ -257,7 +271,7 @@ class config:
             if config is missing
 
         """
-        with open(path) as fp:
+        with open(path, encoding="utf-8") as fp:
             config = json.load(fp, parse_constant=_reject_json_constant)
         return config
 
@@ -367,6 +381,10 @@ class config:
             __name__,
             )
         self.config = self.build_default_config()
+        self.startup_warning = (
+            "Invalid configuration was reset to defaults; the original "
+            "settings were backed up."
+            )
         try:
             self.invalid_config_backup_file = self.backup_invalid_config()
         except OSError as error:
@@ -385,6 +403,21 @@ class config:
                 f"{self.default_file}",
                 error,
                 )
+
+
+    def _recover_unreadable_config(self, original_error):
+        """Use defaults without changing a settings file that could not be read."""
+
+        log_exception(
+            f"Could not read configuration at {self.default_file}",
+            original_error,
+            __name__,
+            )
+        self.config = self.build_default_config()
+        self.startup_warning = (
+            "Could not read configuration; using defaults for this session. "
+            "The original settings were left untouched."
+            )
 
 
     def _record_startup_persistence_failure(self, context, error):
