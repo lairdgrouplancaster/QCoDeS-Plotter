@@ -437,6 +437,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
             self.axis_options,
             **loader_kwargs,
             )
+        worker._qplot_operation_apply_generation = int(
+            getattr(self.oper_widget, "_apply_generation", 0)
+            )
         dataset_key = getattr(self, "_dataset_key", None)
         if dataset_key is not None:
             worker.expected_database_path = dataset_key.database_path

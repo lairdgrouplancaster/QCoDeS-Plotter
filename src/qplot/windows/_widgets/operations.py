@@ -104,6 +104,8 @@ class operations_options_base(qtw.QWidget):
         but_l = self._window.oper_dock.HBox_context(self.filter)
         self.apply_but = qtw.QPushButton("Apply/Refresh")
         self.apply_but.setToolTip("Apply selected operations and refresh the plot")
+        self._apply_generation = 0
+        self.apply_but.clicked.connect(self._record_apply_request)
         but_l.addWidget(self.apply_but)
         clear_but = qtw.QPushButton("Clear")
         clear_but.setToolTip("Clear all selected operations")
@@ -127,6 +129,12 @@ class operations_options_base(qtw.QWidget):
         self.main_layout.addWidget(self.list_options)
         
         self.add_all_options()
+
+
+    def _record_apply_request(self) -> None:
+        """Identify refreshes explicitly requested from the operations panel."""
+
+        self._apply_generation += 1
         
         
     def add_option(

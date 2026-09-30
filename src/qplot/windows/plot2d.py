@@ -77,7 +77,7 @@ class plot2d(
             self._reload_visible_heatmap_data
             )
         self._connect_heatmap_range_controls()
-        self._install_axes_dock_view_range_preserver()
+        self._install_plot_control_view_range_preserver()
 
         for side in ("left", "right", "top", "bottom"):
             _install_flush_axis_draw_specs(self.plot.getAxis(side))
@@ -115,46 +115,122 @@ class plot2d(
             )
 
 
-    def _install_axes_dock_view_range_preserver(self) -> None:
-        """Keep a heatmap's viewport stable while its side dock is relaid out."""
+    def _plot_layout_controls(self) -> tuple[Any, ...]:
+        """Return controls whose visibility changes resize the plot canvas."""
 
-        axes_dock = self.__dict__.get("axes_dock")
-        if axes_dock is not None:
-            axes_dock.installEventFilter(self)
+        return tuple(
+            control
+            for name in (
+                "axes_dock",
+                "oper_dock",
+                "toolbarRef",
+                "toolbarCo_ord",
+                )
+            if (control := self.__dict__.get(name)) is not None
+            )
 
 
-    def _preserve_heatmap_view_range_after_axes_dock_layout(self) -> None:
-        """Restore the viewport after the Data axes dock changes visibility."""
+    def _install_plot_control_view_range_preserver(self) -> None:
+        """Watch every dock and toolbar that can resize the heatmap canvas."""
+
+        installed = self.__dict__.setdefault(
+            "_plot_control_view_range_filters",
+            set(),
+            )
+        for control in self._plot_layout_controls():
+            control_id = id(control)
+            if control_id in installed:
+                continue
+            control.installEventFilter(self)
+            installed.add(control_id)
+
+
+    def _preserve_heatmap_view_range_after_control_layout(self) -> None:
+        """Restore a loaded heatmap's viewport after controls are relaid out."""
+
+        worker = self.__dict__.get("worker")
+        if worker is None or getattr(worker, "running", False):
+            # Never restore a pre-refresh range over a newly published heatmap.
+            return
+        try:
+            if not self._has_plottable_heatmap_data():
+                return
+        except (AttributeError, TypeError, ValueError):
+            return
 
         try:
             viewbox = self._primary_heatmap_viewbox()
-            view_range = viewbox.viewRange()
-            saved_range = (
-                tuple(float(value) for value in view_range[0]),
-                tuple(float(value) for value in view_range[1]),
+            publication_generation = self.__dict__.get(
+                "_qplot_publication_generation",
+                0,
                 )
+            pending = self.__dict__.get("_plot_control_layout_restore")
+            if (
+                    isinstance(pending, dict)
+                    and pending.get("viewbox") is viewbox
+                    and pending.get("worker") is worker
+                    and pending.get("publication_generation")
+                    == publication_generation
+                    ):
+                saved_range = pending["view_range"]
+            else:
+                view_range = viewbox.viewRange()
+                saved_range = (
+                    tuple(float(value) for value in view_range[0]),
+                    tuple(float(value) for value in view_range[1]),
+                    )
         except (AttributeError, IndexError, TypeError, ValueError):
             return
 
-        token = self.__dict__.get("_axes_dock_view_range_token", 0) + 1
-        self.__dict__["_axes_dock_view_range_token"] = token
+        token = self.__dict__.get("_plot_control_layout_token", 0) + 1
+        self.__dict__["_plot_control_layout_token"] = token
+        self.__dict__["_plot_control_layout_restore"] = {
+            "publication_generation": publication_generation,
+            "view_range": saved_range,
+            "viewbox": viewbox,
+            "worker": worker,
+            }
 
-        def restore() -> None:
-            if self.__dict__.get("_axes_dock_view_range_token") != token:
+        def restore(final_pass: bool = False) -> None:
+            if self.__dict__.get("_plot_control_layout_token") != token:
+                return
+            if (
+                    self.__dict__.get("worker") is not worker
+                    or getattr(worker, "running", False)
+                    or self.__dict__.get("_qplot_publication_generation", 0)
+                    != publication_generation
+                    ):
+                self.__dict__.pop("_plot_control_layout_restore", None)
                 return
             try:
+                if getattr(viewbox, "_autoRangeNeedsUpdate", False):
+                    # Consume the auto-range queued by ViewBox.resizeEvent so
+                    # it cannot run later and overwrite the saved viewport.
+                    viewbox.updateAutoRange()
                 current_range = viewbox.viewRange()
             except (AttributeError, TypeError):
+                self.__dict__.pop("_plot_control_layout_restore", None)
                 return
-            if np.allclose(current_range, saved_range, rtol=1e-12, atol=1e-12):
-                return
-            viewbox.setRange(
-                xRange=saved_range[0],
-                yRange=saved_range[1],
-                padding=0,
-                disableAutoRange=False,
-                )
-            self._sync_secondary_heatmap_view_ranges()
+            if not np.allclose(
+                    current_range,
+                    saved_range,
+                    rtol=1e-12,
+                    atol=1e-12,
+                    ):
+                viewbox.setRange(
+                    xRange=saved_range[0],
+                    yRange=saved_range[1],
+                    padding=0,
+                    disableAutoRange=False,
+                    )
+                self._sync_secondary_heatmap_view_ranges()
+
+            if final_pass:
+                self.__dict__.pop("_plot_control_layout_restore", None)
+            else:
+                # A dock and its canvas resize can arrive in adjacent event-loop
+                # turns. Recheck once after both layout passes have settled.
+                QtCore.QTimer.singleShot(0, lambda: restore(True))
 
         QtCore.QTimer.singleShot(0, restore)
 
@@ -240,6 +316,7 @@ class plot2d(
         
     def initLabels(self) -> None:
         super().initLabels()
+        self._install_plot_control_view_range_preserver()
         self.__dict__["z_index"] = None
         
         self.pos_labels["y"].setText(self.pos_labels["y"].text() + ";")
@@ -348,6 +425,14 @@ class plot2d(
                 return
 
             autoLevels = self.relevel_refresh.isChecked()
+            operation_apply_generation = int(
+                getattr(plot_worker, "_qplot_operation_apply_generation", 0)
+                )
+            operation_auto_levels = bool(
+                operation_apply_generation
+                > self.__dict__.get("_colorbar_operation_apply_generation", 0)
+                and self._colorbar_manual_levels is None
+                )
             self._render_heatmap()
             if not self._refresh_publication_source_is_current(
                     plot_worker,
@@ -381,7 +466,7 @@ class plot2d(
             # The dependent-variable label may have changed when an operation
             # such as differentiation was added or removed.
             self._sync_colorbar_axis_scaling()
-            if autoLevels:
+            if autoLevels or operation_auto_levels:
                 self.__dict__["_colorbar_manual_levels"] = None
                 self.scaleColorbar()
             elif self._colorbar_manual_levels is not None:
@@ -399,6 +484,10 @@ class plot2d(
                     clear_display=clear_display,
                     ):
                 return
+            self.__dict__["_colorbar_operation_apply_generation"] = max(
+                operation_apply_generation,
+                self.__dict__.get("_colorbar_operation_apply_generation", 0),
+                )
             self._mark_display_synchronized(plot_worker)
             if getattr(plot_worker, "_qplot_source_rejected", False):
                 clear_display()
@@ -511,13 +600,13 @@ class plot2d(
 
     def eventFilter(self, source, event):
         if (
-                source is self.__dict__.get("axes_dock")
+                any(source is control for control in self._plot_layout_controls())
                 and event.type() in {
                     QtCore.QEvent.Type.Show,
                     QtCore.QEvent.Type.Hide,
                     }
                 ):
-            self._preserve_heatmap_view_range_after_axes_dock_layout()
+            self._preserve_heatmap_view_range_after_control_layout()
 
         if (
                 event.type() == QtCore.QEvent.Type.Resize

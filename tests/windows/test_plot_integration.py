@@ -979,9 +979,11 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
             == "Subtract Row Mean"
         )
         before_operation = np.asarray(nonuniform_window.dataGrid).copy()
+        assert nonuniform_window._colorbar_manual_levels is None
+        assert not nonuniform_window.relevel_refresh.isChecked()
         previous_worker = nonuniform_window.worker
         subtract_row_mean.input.setChecked(True)
-        nonuniform_window.refreshWindow(force=True)
+        nonuniform_window.oper_widget.apply_but.click()
         wait_for(
             lambda: (
                 nonuniform_window.worker is not previous_worker
@@ -992,6 +994,16 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
             nonuniform_window.dataGrid,
             before_operation,
             equal_nan=True,
+        )
+        finite_operated_values = nonuniform_window.dataGrid[
+            np.isfinite(nonuniform_window.dataGrid)
+        ]
+        np.testing.assert_allclose(
+            nonuniform_window.bar.levels(),
+            (
+                np.min(finite_operated_values),
+                np.max(finite_operated_values),
+            ),
         )
 
         operated_target = Path(tmp_path) / "operated.csv"
@@ -1214,7 +1226,7 @@ def test_missing_array_cells_survive_plot_export_and_cuts(
         close_main_window(window)
 
 
-def test_hiding_data_axes_preserves_heatmap_view_range(tmp_path, monkeypatch):
+def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypatch):
     configure_temp_qplot(monkeypatch, tmp_path)
     database_path = Path(tmp_path) / "data-axes-view-range.db"
     _line_run_id, heatmap_run_id = build_synthetic_database(database_path)
@@ -1242,6 +1254,17 @@ def test_hiding_data_axes_preserves_heatmap_view_range(tmp_path, monkeypatch):
         )
         window.openPlot(params=[heatmap_param], show=True)
         heatmap_window = window.windows[-1]
+
+        # Reproduce the layout race by exposing the initially hidden controls
+        # before the first heatmap worker has published its data.
+        for control in (
+            heatmap_window.axes_dock,
+            heatmap_window.oper_dock,
+            heatmap_window.toolbarRef,
+        ):
+            assert control.isHidden()
+            control.toggleViewAction().trigger()
+
         wait_for(
             lambda: (
                 hasattr(heatmap_window, "dataGrid")
@@ -1256,16 +1279,81 @@ def test_hiding_data_axes_preserves_heatmap_view_range(tmp_path, monkeypatch):
             "heatmapLayerRow",
         )
 
-        # Data axes are initially hidden; expose the dock so this test exercises
-        # the hide transition rather than the corresponding show transition.
-        heatmap_window.axes_dock.show()
-        wait_for(lambda: heatmap_window.axes_dock.isVisible())
-        initial_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
-        heatmap_window.axes_dock.toggleViewAction().trigger()
-        wait_for(lambda: heatmap_window.axes_dock.isHidden())
+        loaded_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
+        heatmap_window.vb.autoRange()
         qtw.QApplication.processEvents()
+        expected_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
+        np.testing.assert_allclose(
+            loaded_range,
+            expected_range,
+            err_msg="showing controls while loading changed the initial view range",
+        )
 
-        np.testing.assert_allclose(heatmap_window.vb.viewRange(), initial_range)
+        # A control visibility event must not restore its captured range over a
+        # heatmap that finishes loading before the deferred layout callback.
+        stale_range = ((-15.0, 25.0), (-0.4, 1.1))
+        heatmap_window.vb.setRange(
+            xRange=stale_range[0],
+            yRange=stale_range[1],
+            padding=0,
+        )
+        heatmap_window.worker.running = True
+        heatmap_window.axes_dock.toggleViewAction().trigger()
+        assert heatmap_window.axes_dock.isHidden()
+        heatmap_window.vb.setRange(
+            xRange=expected_range[0],
+            yRange=expected_range[1],
+            padding=0,
+        )
+        heatmap_window.worker.running = False
+        qtw.QApplication.processEvents()
+        np.testing.assert_allclose(
+            heatmap_window.vb.viewRange(),
+            expected_range,
+            err_msg="a control layout restored a stale pre-refresh range",
+        )
+
+        heatmap_window.axes_dock.toggleViewAction().trigger()
+        wait_for(heatmap_window.axes_dock.isVisible)
+
+        for control in (
+            heatmap_window.axes_dock,
+            heatmap_window.oper_dock,
+            heatmap_window.toolbarRef,
+            heatmap_window.toolbarCo_ord,
+        ):
+            assert control.isVisible()
+            control.toggleViewAction().trigger()
+            wait_for(control.isHidden)
+            qtw.QApplication.processEvents()
+            np.testing.assert_allclose(
+                heatmap_window.vb.viewRange(),
+                expected_range,
+                err_msg=f"hiding {control.windowTitle()} changed the view range",
+            )
+
+        heatmap_window.vb.setRange(
+            xRange=expected_range[0],
+            yRange=expected_range[1],
+            padding=0,
+        )
+        manual_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
+        for control in (
+            heatmap_window.axes_dock,
+            heatmap_window.oper_dock,
+            heatmap_window.toolbarRef,
+            heatmap_window.toolbarCo_ord,
+        ):
+            control.toggleViewAction().trigger()
+            wait_for(control.isVisible)
+            qtw.QApplication.processEvents()
+            np.testing.assert_allclose(
+                heatmap_window.vb.viewRange(),
+                manual_range,
+                err_msg=(
+                    f"showing {control.windowTitle()} changed a fixed view range"
+                ),
+            )
     finally:
         close_main_window(window)
 
