@@ -117,7 +117,7 @@ jobs:
       - name: Install package and test tools
         run: >-
           uv pip install --system -e .
-          "pytest>=8.0" "pytest-cov>=6.0" "pytest-timeout>=2.3"
+          "pytest>=8.2" "pytest-cov>=6.0" "pytest-timeout>=2.3"
           "pytest-xdist>=3.8"
 
       - name: Verify the elevated Windows runner is rejected
@@ -213,6 +213,8 @@ jobs:
             -ArgumentList $arguments `
             -TimeoutSeconds 900
 
+      # Share the test list through a pytest argument file to stay below the
+      # Windows standard-user launcher's 1024-character command-line limit.
       - name: Run compatibility test suite
         if: matrix.suite == 'compatibility' && runner.os != 'Windows'
         env:
@@ -220,24 +222,7 @@ jobs:
         run: >-
           python -m pytest --no-cov --maxfail=1 -n 2 --dist=loadfile
           --timeout=90 --timeout-method=thread --durations=20
-          tests/datahandling/test_read_sql.py
-          tests/datahandling/test_readonly.py
-          tests/datahandling/test_trusted_live.py
-          tests/datahandling/test_trusted_live_partial_frames.py
-          tests/datahandling/test_trusted_live_protocol.py
-          tests/datahandling/test_trusted_live_queries.py
-          tests/datahandling/test_trusted_live_result_limits.py
-          tests/datahandling/test_trusted_live_service.py
-          tests/datahandling/test_trusted_live_stage4_integration.py
-          tests/datahandling/test_trusted_live_supervisor.py
-          tests/datahandling/test_trusted_live_worker_integration.py
-          tests/datahandling/test_trusted_presentation.py
-          tests/datahandling/test_trusted_snapshot.py
-          tests/widgets/test_run_details.py
-          tests/windows/test_bounded_shutdown.py
-          tests/windows/test_heatmap_layer_integration.py
-          tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots
-          tests/windows/test_trusted_live_ui.py
+          @.github/pytest-compatibility.txt
 
       - name: Run compatibility test suite as a standard Windows user
         if: matrix.suite == 'compatibility' && runner.os == 'Windows'
@@ -250,24 +235,7 @@ jobs:
             "-m", "pytest", "--no-cov", "--maxfail=1",
             "-n", "2", "--dist=loadfile",
             "--timeout=90", "--timeout-method=thread", "--durations=20",
-            "tests/datahandling/test_read_sql.py",
-            "tests/datahandling/test_readonly.py",
-            "tests/datahandling/test_trusted_live.py",
-            "tests/datahandling/test_trusted_live_partial_frames.py",
-            "tests/datahandling/test_trusted_live_protocol.py",
-            "tests/datahandling/test_trusted_live_queries.py",
-            "tests/datahandling/test_trusted_live_result_limits.py",
-            "tests/datahandling/test_trusted_live_service.py",
-            "tests/datahandling/test_trusted_live_stage4_integration.py",
-            "tests/datahandling/test_trusted_live_supervisor.py",
-            "tests/datahandling/test_trusted_live_worker_integration.py",
-            "tests/datahandling/test_trusted_presentation.py",
-            "tests/datahandling/test_trusted_snapshot.py",
-            "tests/widgets/test_run_details.py",
-            "tests/windows/test_bounded_shutdown.py",
-            "tests/windows/test_heatmap_layer_integration.py",
-            "tests/windows/test_plot_integration.py::test_main_window_opens_real_1d_and_2d_plots",
-            "tests/windows/test_trusted_live_ui.py"
+            "@.github/pytest-compatibility.txt"
           )
           & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
@@ -357,7 +325,7 @@ jobs:
       - name: Install package
         run: |
           python -m pip install -U pip
-          python -m pip install -e . "pytest>=8.0" "pytest-cov>=6.0" "pytest-xdist>=3.8"
+          python -m pip install -e . "pytest>=8.2" "pytest-cov>=6.0" "pytest-xdist>=3.8"
 
       - name: Install Qt system libraries
         run: |

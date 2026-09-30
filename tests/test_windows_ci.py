@@ -36,6 +36,35 @@ def test_full_windows_suite_has_its_own_bounded_time_budget(
     assert '"-n", "2", "--dist=loadfile"' in full_suite
 
 
+@pytest.mark.parametrize("suite", ["full", "compatibility"])
+@pytest.mark.parametrize("python_version", ["3.12.10", "3.13.15"])
+def test_windows_source_suite_fits_standard_user_command_line(
+    github_directory: Path, suite: str, python_version: str
+) -> None:
+    workflow = (github_directory / "workflows/ci.yml").read_text(encoding="utf-8")
+    step = workflow.split(
+        f"      - name: Run {suite} test suite as a standard Windows user\n", 1
+    )[1].split("      - name:", 1)[0]
+    argument_array = re.search(r"\$arguments = @\((.*?)\n          \)", step, re.S)
+    assert argument_array is not None
+    arguments = re.findall(r'"([^"\n]*)"', argument_array[1])
+    assert arguments
+    # Require a literal array so future dynamic arguments cannot silently
+    # evade this length check.
+    assert not re.sub(r'"[^"\n]*"', "", argument_array[1]).strip(" ,\r\n\t")
+    executable = (
+        rf"C:\hostedtoolcache\windows\Python\{python_version}\x64\python.exe"
+    )
+    # .NET quotes the executable before appending its escaped argument list.
+    # Credentialed Process.Start uses CreateProcessWithLogonW, whose command
+    # line is limited to 1024 characters. Reserve the terminating NUL too.
+    command_line = f'"{executable}" {subprocess.list2cmdline(arguments)}\0'
+    assert len(command_line) <= 1024, (
+        f"The {suite} suite needs {len(command_line)} command-line characters; "
+        "the standard-user Windows launcher permits only 1024."
+    )
+
+
 @pytest.mark.parametrize(
     "message",
     [
