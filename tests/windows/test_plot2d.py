@@ -2920,6 +2920,29 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         finally:
             host.deleteLater()
 
+    def test_exact_grid_still_discloses_interpolation(self):
+        host = plot2d.__new__(plot2d)
+        host._heatmap_downsample_info = {
+            "source_sampled": True,
+            "source_aggregated": False,
+            "loaded_point_count": 2,
+            "source_sample_limit": 2,
+            "source_sample_stride": None,
+            "grid_columns": 2,
+            "grid_rows": 2,
+            "grid_cell_count": 4,
+            "grid_binned": False,
+            "empty_bins_filled": True,
+        }
+
+        text = host._heatmap_downsample_dialog_text()
+
+        self.assertIn("displayed on an exact 2 x 2 grid", text)
+        self.assertIn(
+            "Empty sampled display bins were filled by interpolation.",
+            text,
+        )
+
     def test_grid_reduced_heatmap_shows_warning_without_worker_info(self):
         class Worker:
             heatmap_downsample_info = None

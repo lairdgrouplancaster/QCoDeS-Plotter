@@ -709,6 +709,37 @@ class ToolFunctionTestCase(unittest.TestCase):
 
         self.assertEqual(data_grid.shape, (10, 10))
         self.assertTrue(np.isfinite(data_grid).all())
+        self.assertTrue(worker._heatmap_grid_info["empty_bins_filled"])
+
+    def test_spatial_aggregation_grid_preserves_unobserved_exact_cells(self):
+        worker = self._sql_heatmap_worker("")
+        worker.aggregated_heatmap_source = True
+        worker._spatial_heatmap_axes = (
+            np.array([0.0, 1.0]),
+            np.array([0.0, 1.0]),
+        )
+        worker._spatial_heatmap_indices = (
+            np.array([0, 1]),
+            np.array([0, 1]),
+        )
+        worker._spatial_heatmap_source_unique_counts = (2, 2)
+        worker._array_heatmap_cardinality_exact = (True, True)
+        worker.heatmap_source_grid_shape = None
+
+        _x_axis, _y_axis, data_grid = loader._spatial_aggregation_grid(
+            worker,
+            np.array([10.0, 20.0]),
+            2,
+            2,
+        )
+
+        np.testing.assert_allclose(
+            data_grid,
+            [[10.0, np.nan], [np.nan, 20.0]],
+            equal_nan=True,
+        )
+        self.assertFalse(worker._heatmap_grid_info["grid_binned"])
+        self.assertFalse(worker._heatmap_grid_info["empty_bins_filled"])
 
     def test_large_heatmap_sql_mode_uses_configured_full_resolution_limit(self):
         worker = self._sql_heatmap_worker("")

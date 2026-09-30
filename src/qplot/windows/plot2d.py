@@ -555,6 +555,7 @@ class plot2d(
                 info.get("source_sampled")
                 or info.get("source_aggregated")
                 or info.get("grid_binned")
+                or info.get("empty_bins_filled")
                 ):
             return dict(info)
 
@@ -1070,20 +1071,21 @@ class plot2d(
                 "The source x/y positions would form up to "
                 f"{unique_x} x {unique_y} cells."
                 )
-            if info.get("empty_bins_filled"):
-                if info.get("source_sampled"):
-                    lines.append(
-                        "Empty sampled display bins were filled by interpolation."
-                        )
-                else:
-                    lines.append(
-                        "Empty display bins were filled by interpolation."
-                        )
         else:
             lines.append(
-                "The sampled source rows were displayed on an exact "
+                "Loaded values were displayed on an exact "
                 f"{grid_columns} x {grid_rows} grid."
                 )
+
+        if info.get("empty_bins_filled"):
+            if info.get("source_sampled"):
+                lines.append(
+                    "Empty sampled display bins were filled by interpolation."
+                    )
+            else:
+                lines.append(
+                    "Empty display bins were filled by interpolation."
+                    )
 
         return "\n".join(lines)
 

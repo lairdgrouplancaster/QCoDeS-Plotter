@@ -181,6 +181,43 @@ def test_array_heatmap_aggregates_every_paired_sample_in_bounded_chunks(tmp_path
         np.testing.assert_array_equal(worker.dataGrid, [[3, 4, 8], [10, 11, 12]])
 
 
+@pytest.mark.parametrize(
+    "max_full_heatmap_points, source_aggregated",
+    [(100, False), (4, True)],
+    ids=["full-resolution", "bounded-spatial-aggregation"],
+)
+def test_array_heatmap_missing_coordinate_pairs_survive_loading_threshold(
+    tmp_path,
+    monkeypatch,
+    max_full_heatmap_points,
+    source_aggregated,
+):
+    monkeypatch.setattr(worker_module, "MAX_SQL_HEATMAP_SOURCE_ROWS", 4)
+    records = [
+        (0, np.zeros(5), np.full(5, 10.0)),
+        (1, np.ones(5), np.full(5, 20.0)),
+    ]
+    with heatmap_dataset(tmp_path, shaped=False, records=records) as dataset:
+        worker = make_worker(
+            dataset,
+            max_full_heatmap_points=max_full_heatmap_points,
+        )
+        run_worker(worker)
+
+        np.testing.assert_array_equal(worker.axis_data["x"], [0.0, 1.0])
+        np.testing.assert_array_equal(worker.axis_data["y"], [0.0, 1.0])
+        np.testing.assert_allclose(
+            worker.dataGrid,
+            [[10.0, np.nan], [np.nan, 20.0]],
+            equal_nan=True,
+        )
+        assert worker.aggregated_heatmap_source is source_aggregated
+        if source_aggregated:
+            assert worker.heatmap_downsample_info["source_aggregated"]
+            assert not worker.heatmap_downsample_info["grid_binned"]
+            assert not worker.heatmap_downsample_info["empty_bins_filled"]
+
+
 @pytest.mark.parametrize("arrays", [False, True], ids=["scalar", "array"])
 @pytest.mark.parametrize("visible", [False, True])
 def test_bounded_heatmap_spatial_means_and_visible_range(tmp_path, monkeypatch, arrays, visible):

@@ -166,6 +166,34 @@ def append_nonuniform_heatmap_run():
         return datasaver.dataset.run_id, missing_coordinate
 
 
+def build_missing_cell_array_database(db_path):
+    initialise_or_create_database_at(str(db_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment(
+        "qplot_missing_array_cells",
+        sample_name="synthetic",
+    )
+    measurement = Measurement(exp=experiment, name="missing_array_cells")
+    measurement.register_custom_parameter("slow")
+    measurement.register_custom_parameter("fast", paramtype="array")
+    measurement.register_custom_parameter(
+        "signal",
+        setpoints=("slow", "fast"),
+        paramtype="array",
+    )
+    with measurement.run() as datasaver:
+        datasaver.add_result(
+            ("slow", 0.0),
+            ("fast", np.zeros(5)),
+            ("signal", np.full(5, 10.0)),
+        )
+        datasaver.add_result(
+            ("slow", 1.0),
+            ("fast", np.ones(5)),
+            ("signal", np.full(5, 20.0)),
+        )
+        return datasaver.dataset.run_id
+
+
 def export_real_plot_csv(monkeypatch, plot_window, target):
     """Run qPlot's real exporter entry point with only the dialogs automated."""
     monkeypatch.setattr(
@@ -1099,6 +1127,89 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
             ]
         )
         np.testing.assert_allclose(rows, expected, equal_nan=True)
+    finally:
+        close_main_window(window)
+
+
+@pytest.mark.parametrize(
+    "max_full_heatmap_points",
+    [100, 4],
+    ids=["full-resolution", "bounded-spatial-aggregation"],
+)
+def test_missing_array_cells_survive_plot_export_and_cuts(
+    tmp_path,
+    monkeypatch,
+    max_full_heatmap_points,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    monkeypatch.setattr(worker_module, "MAX_SQL_HEATMAP_SOURCE_ROWS", 4)
+    database_path = Path(tmp_path) / "missing-array-cells.db"
+    run_id = build_missing_cell_array_database(database_path)
+    expected = np.array([[10.0, np.nan], [np.nan, 20.0]])
+
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.config.config["runtime_settings"]["max_full_heatmap_points"] = (
+            max_full_heatmap_points
+        )
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(lambda: not window._database_load_active)
+
+        dataset = load_by_id(run_id)
+        parameter = dependent_parameter(dataset, 2)
+        window._replace_selected_dataset(
+            dataset,
+            window._current_dataset_key(dataset.guid),
+        )
+        window.openPlot(params=[parameter], show=False)
+        heatmap_window = window.windows[-1]
+        wait_for(
+            lambda: (
+                hasattr(heatmap_window, "dataGrid")
+                and not getattr(heatmap_window.worker, "running", False)
+            )
+        )
+
+        np.testing.assert_array_equal(heatmap_window.axis_data["x"], [0.0, 1.0])
+        np.testing.assert_array_equal(heatmap_window.axis_data["y"], [0.0, 1.0])
+        np.testing.assert_allclose(
+            heatmap_window.dataGrid,
+            expected,
+            equal_nan=True,
+        )
+
+        target = Path(tmp_path) / "missing-array-cells.csv"
+        assert export_real_plot_csv(monkeypatch, heatmap_window, target)
+        exported = np.asarray(csv_rows(target)[1:], dtype=float)
+        np.testing.assert_allclose(
+            exported[:, 2].reshape(expected.shape),
+            expected,
+            equal_nan=True,
+        )
+
+        heatmap_window.z_index = [0, 0]
+        heatmap_window.openSweep("h")
+        horizontal_cut = window.windows[-1]
+        wait_for(lambda: not getattr(horizontal_cut.worker, "running", False))
+        np.testing.assert_allclose(
+            horizontal_cut.axis_data["y"],
+            expected[0, :],
+            equal_nan=True,
+        )
+
+        heatmap_window.z_index = [0, 0]
+        heatmap_window.openSweep("v")
+        vertical_cut = window.windows[-1]
+        wait_for(lambda: not getattr(vertical_cut.worker, "running", False))
+        np.testing.assert_allclose(
+            vertical_cut.axis_data["y"],
+            expected[:, 0],
+            equal_nan=True,
+        )
     finally:
         close_main_window(window)
 

@@ -1382,23 +1382,34 @@ class loader(QtCore.QRunnable):
                 }
             return x_axis, y_axis, data_grid
 
-        fill_empty = False
         if getattr(self, "sampled_heatmap_source", False):
             max_cells = min(
                 max_cells,
                 max(1, int(z_data.size) // SQL_HEATMAP_SAMPLES_PER_CELL),
                 )
-            fill_empty = True
-
-        x_axis, y_axis, data_grid = self._binned_heatmap_grid(
-            x_data,
-            y_data,
-            z_data,
-            unique_x,
-            unique_y,
-            max_cells=max_cells,
-            fill_empty=fill_empty,
-            )
+            (
+                x_axis,
+                y_axis,
+                data_grid,
+                empty_bins_filled,
+            ) = self._sampled_overview_grid(
+                x_data,
+                y_data,
+                z_data,
+                unique_x,
+                unique_y,
+                max_cells=max_cells,
+                )
+        else:
+            x_axis, y_axis, data_grid = self._binned_heatmap_grid(
+                x_data,
+                y_data,
+                z_data,
+                unique_x,
+                unique_y,
+                max_cells=max_cells,
+                )
+            empty_bins_filled = False
         self._heatmap_grid_info = {
             "unique_x_count": int(unique_x.size),
             "unique_y_count": int(unique_y.size),
@@ -1411,7 +1422,7 @@ class loader(QtCore.QRunnable):
             "grid_cell_count": int(data_grid.size),
             "grid_binned": True,
             "grid_cell_limit": int(max_cells),
-            "empty_bins_filled": fill_empty,
+            "empty_bins_filled": empty_bins_filled,
             }
         return x_axis, y_axis, data_grid
 
@@ -1432,9 +1443,6 @@ class loader(QtCore.QRunnable):
             )
         data_grid[y_indices, x_indices] = z_data
         self._check_cancelled()
-        empty_bins_filled = bool(np.any(~np.isfinite(data_grid)))
-        if empty_bins_filled:
-            data_grid = self._fill_empty_heatmap_bins(data_grid)
 
         source_x_count, source_y_count = self._spatial_heatmap_source_unique_counts
         source_grid_cell_count = int(source_grid_rows * source_grid_columns)
@@ -1456,7 +1464,10 @@ class loader(QtCore.QRunnable):
                 "max_heatmap_grid_cells",
                 MAX_SQL_HEATMAP_GRID_CELLS,
                 ),
-            "empty_bins_filled": empty_bins_filled,
+            # Spatial aggregation averages only observations assigned to each
+            # cell.  Empty cells represent coordinate pairs that were never
+            # measured and must remain missing.
+            "empty_bins_filled": False,
             }
         # Saturated array axes carry only a lower cardinality bound for
         # choosing bins. Do not present that bound as an exact source size.
@@ -1605,7 +1616,6 @@ class loader(QtCore.QRunnable):
             unique_x,
             unique_y,
             max_cells=None,
-            fill_empty=False,
             ):
         self._check_cancelled()
         x_bins, y_bins = self._bounded_grid_shape(
@@ -1644,10 +1654,37 @@ class loader(QtCore.QRunnable):
             casting="unsafe",
             )
 
-        if fill_empty:
+        return x_centres, y_centres, data_grid
+
+
+    def _sampled_overview_grid(
+            self,
+            x_data,
+            y_data,
+            z_data,
+            unique_x,
+            unique_y,
+            *,
+            max_cells,
+            ):
+        """Build a sampled overview whose display-only gaps are interpolated."""
+
+        x_axis, y_axis, data_grid = self._binned_heatmap_grid(
+            x_data,
+            y_data,
+            z_data,
+            unique_x,
+            unique_y,
+            max_cells=max_cells,
+            )
+        empty_bins_filled = bool(
+            np.any(~np.isfinite(data_grid))
+            and np.any(np.isfinite(data_grid))
+            )
+        if empty_bins_filled:
             data_grid = self._fill_empty_heatmap_bins(data_grid)
 
-        return x_centres, y_centres, data_grid
+        return x_axis, y_axis, data_grid, empty_bins_filled
 
 
     def _fill_empty_heatmap_bins(self, data_grid):
