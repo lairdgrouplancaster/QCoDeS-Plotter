@@ -120,10 +120,6 @@ jobs:
           uv pip install --system --only-binary apsw apsw==3.53.4.0
 
       - name: Install package and test tools
-        env:
-          # Compile once while the installer can write to site-packages, so
-          # standard-user test subprocesses can reuse the bytecode.
-          UV_COMPILE_BYTECODE: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: >-
           uv pip install --system -e .
           "pytest>=8.2" "pytest-cov>=6.0" "pytest-timeout>=2.3"
