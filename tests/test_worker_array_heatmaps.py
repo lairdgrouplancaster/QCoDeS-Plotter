@@ -297,3 +297,59 @@ def test_array_signal_broadcasts_both_scalar_setpoints(tmp_path, monkeypatch):
         np.testing.assert_array_equal(worker.axis_data["x"], [0])
         np.testing.assert_array_equal(worker.axis_data["y"], [0, 1])
         np.testing.assert_array_equal(worker.dataGrid, [[1], [11]])
+
+
+@pytest.mark.parametrize(
+    ("slow_order", "fast_order", "repeat_offset", "expected_x", "expected_grid"),
+    [
+        ([0, 1], [0, 2, 1], 0, [0, 1, 2], [[0, 1, 2], [10, 11, 12]]),
+        ([1, 0], [2, 1, 0], 0, [0, 1, 2], [[0, 1, 2], [10, 11, 12]]),
+        ([0, 1], [0, 2, 0], 2, [0, 2], [[1, 2], [11, 12]]),
+    ],
+    ids=["unordered-fast", "descending-both", "repeated-fast"],
+)
+def test_real_qcodes_shaped_and_unshaped_coordinate_order_equivalent(
+    tmp_path, slow_order, fast_order, repeat_offset, expected_x, expected_grid,
+):
+    path = tmp_path / "coordinate_order.db"
+    initialise_or_create_database_at(str(path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("coordinate_order", sample_name="test")
+    run_ids = []
+    for shaped in (False, True):
+        name = "shaped_scan" if shaped else "unshaped_scan"
+        measurement = Measurement(exp=experiment, name=name)
+        measurement.register_custom_parameter("slow")
+        measurement.register_custom_parameter("fast")
+        measurement.register_custom_parameter("signal", setpoints=("slow", "fast"))
+        if shaped:
+            measurement.set_shapes({"signal": (2, 3)})
+        with measurement.run() as datasaver:
+            for slow in slow_order:
+                for index, fast in enumerate(fast_order):
+                    datasaver.add_result(
+                        ("slow", slow), ("fast", fast),
+                        ("signal", 10 * slow + fast + (
+                            repeat_offset if index == 2 else 0
+                        )),
+                    )
+            run_ids.append(datasaver.dataset.run_id)
+
+    before = hashlib.sha256(path.read_bytes()).digest()
+    results = []
+    for run_id in run_ids:
+        dataset = load_by_id_read_only(run_id, str(path))
+        try:
+            worker = make_worker(dataset)
+            run_worker(worker)
+            results.append((worker.axis_data, worker.dataGrid))
+        finally:
+            dataset.conn.close()
+
+    for axes, grid in results:
+        np.testing.assert_array_equal(axes["x"], expected_x)
+        np.testing.assert_array_equal(axes["y"], [0, 1])
+        np.testing.assert_array_equal(grid, expected_grid)
+    np.testing.assert_array_equal(results[0][1], results[1][1])
+    assert hashlib.sha256(path.read_bytes()).digest() == before
+    assert not path.with_name(path.name + "-journal").exists()
+    assert not path.with_name(path.name + "-wal").exists()

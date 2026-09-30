@@ -1820,16 +1820,17 @@ class loader(QtCore.QRunnable):
             axis_param[axis] = param
             axis_dimension[axis] = dimension
 
-        # QCoDeS shaped data can still contain a serpentine (snake) scan.  In
-        # that case alternate rows of the fast coordinate run in the opposite
-        # direction and the raw result array is not a rectilinear image.  Map
-        # values by their recorded coordinates instead of silently mirroring
-        # those rows.
+        # Snake scans and repeated setpoints need coordinate-based assembly.
+        # In particular, repeated cells must retain the unshaped path's mean.
         if (
                 not shaped_axes_are_rectilinear
                 or axis_dimension["x"] == axis_dimension["y"]
                 or self._requires_bounded_heatmap(
                     int(axis_data["x"].size) * int(axis_data["y"].size)
+                    )
+                or any(
+                    np.unique(axis_data[axis]).size != axis_data[axis].size
+                    for axis in ("x", "y")
                     )
                 ):
             valid_rows = np.isfinite(depvarData)
