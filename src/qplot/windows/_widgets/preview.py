@@ -1258,10 +1258,19 @@ class PreviewImageLabel(qtw.QLabel):
             return
 
         painter = QtGui.QPainter(self)
-        pen = QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.Highlight))
-        pen.setWidth(2)
-        painter.setPen(pen)
-        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
+        color = self.palette().color(QtGui.QPalette.ColorRole.Highlight)
+        rect = self.rect()
+        border_width = 2
+        painter.fillRect(rect.left(), rect.top(), rect.width(), border_width, color)
+        painter.fillRect(
+            rect.left(), rect.bottom() - border_width + 1,
+            rect.width(), border_width, color,
+            )
+        painter.fillRect(rect.left(), rect.top(), border_width, rect.height(), color)
+        painter.fillRect(
+            rect.right() - border_width + 1, rect.top(),
+            border_width, rect.height(), color,
+            )
 
 
     def mouseDoubleClickEvent(self, event):

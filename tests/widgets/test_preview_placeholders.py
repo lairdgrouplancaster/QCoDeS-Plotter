@@ -46,6 +46,30 @@ def test_placeholder_selection_and_actions_work_before_thumbnail_arrives():
         cell.deleteLater()
 
 
+def test_preview_selection_outline_covers_entire_widget_perimeter():
+    label = PreviewImageLabel("signal")
+    label.setFixedSize(22, 22)
+    image = QtGui.QPixmap(label.size())
+    image.fill(QtCore.Qt.GlobalColor.white)
+    label.setPixmap(image)
+    label.set_selected(True)
+    label.show()
+    qtw.QApplication.processEvents()
+    try:
+        rendered = label.grab().toImage()
+        highlight = label.palette().color(QtGui.QPalette.ColorRole.Highlight)
+        edge_points = [
+            QtCore.QPoint(x, y)
+            for x in range(label.width())
+            for y in range(label.height())
+            if x in (0, label.width() - 1) or y in (0, label.height() - 1)
+        ]
+        assert all(rendered.pixelColor(point) == highlight for point in edge_points)
+    finally:
+        label.close()
+        label.deleteLater()
+
+
 def test_placeholder_parameter_updates_even_when_dimensions_are_unchanged():
     cell = RunPreviewCell("guid", 1)
     try:
