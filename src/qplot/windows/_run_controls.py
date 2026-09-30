@@ -43,7 +43,12 @@ class _RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
         )
         editor = self.lineEdit()
         frame = qtw.QStyleOptionFrame()
-        editor.initStyleOption(frame)
+        frame.initFrom(editor)
+        frame.state |= qtw.QStyle.StateFlag.State_Sunken
+        if editor.hasFrame():
+            frame.lineWidth = editor.style().pixelMetric(
+                qtw.QStyle.PixelMetric.PM_DefaultFrameWidth, frame, editor
+            )
         frame.rect = QtCore.QRect(QtCore.QPoint(), edit_rect.size())
         contents = editor.style().subElementRect(
             qtw.QStyle.SubElement.SE_LineEditContents, frame, editor

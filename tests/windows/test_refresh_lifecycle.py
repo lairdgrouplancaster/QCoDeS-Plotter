@@ -144,7 +144,12 @@ def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name
             assert editor.width() >= editor.fontMetrics().horizontalAdvance(spin.text())
 
         frame = qtw.QStyleOptionFrame()
-        editor.initStyleOption(frame)
+        frame.initFrom(editor)
+        frame.state |= qtw.QStyle.StateFlag.State_Sunken
+        if editor.hasFrame():
+            frame.lineWidth = editor.style().pixelMetric(
+                qtw.QStyle.PixelMetric.PM_DefaultFrameWidth, frame, editor
+            )
         contents = editor.style().subElementRect(
             qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
         )
