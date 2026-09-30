@@ -317,8 +317,12 @@ def test_extracted_sdist(artifact: Path, temporary: Path) -> None:
     # Exercise the installed sdist, including compiled extensions.  The
     # repository's normal ``pythonpath = ["src"]`` setting would otherwise
     # shadow that installation with the unbuilt extracted source tree.
+    # Match CI's two-worker, per-file scheduling; coverage has its own CI job.
     run(
-        [str(python), "-m", "pytest", "-o", "pythonpath="],
+        [
+            str(python), "-m", "pytest", "--no-cov",
+            "-n", "2", "--dist=loadfile", "-o", "pythonpath=",
+        ],
         cwd=source,
         env=test_env,
     )
