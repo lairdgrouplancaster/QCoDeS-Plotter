@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import wraps
 from pathlib import Path
 from unittest.mock import patch
 
@@ -125,6 +126,8 @@ def test_real_wal_mixed_size_tiers_do_not_starve_selected_images(
         events.append(("detail", guid, detail))
         return result
 
+    # Preserve Qt's slot signature if this creates the first RunList instance.
+    @wraps(original_thumbnail)
     def record_thumbnail(widget, guid, previews):
         result = original_thumbnail(widget, guid, previews)
         events.append(("thumbnail", str(guid or ""), tuple(previews or ())))

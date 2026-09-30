@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import wraps
 from pathlib import Path
 from unittest.mock import patch
 
@@ -127,6 +128,8 @@ def test_real_wal_partial_two_dependent_grid_populates_detail_before_images(
             events.append(("detail", detail))
         return result
 
+    # Preserve Qt's slot signature if this creates the first RunList instance.
+    @wraps(original_thumbnail)
     def record_thumbnail(widget, published_guid, previews):
         result = original_thumbnail(widget, published_guid, previews)
         if str(published_guid or "") == guid:
