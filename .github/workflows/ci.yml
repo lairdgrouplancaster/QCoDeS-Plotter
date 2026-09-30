@@ -90,9 +90,9 @@ jobs:
           version: "0.12.5"
           python-version: ${{ matrix.python-version }}
           enable-cache: "auto"
-          cache-dependency-glob: |
-            pyproject.toml
-            .github/workflows/ci.yml
+          # Reuse downloaded packages across unrelated workflow edits;
+          # uv still resolves and installs the requested tool versions below.
+          cache-dependency-glob: pyproject.toml
           cache-local-path: ${{ runner.tool_cache }}/uv-cache
           prune-cache: ${{ runner.os == 'Windows' && matrix.python-version == '3.11' }}
 
