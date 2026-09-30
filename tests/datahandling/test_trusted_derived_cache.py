@@ -390,6 +390,96 @@ def test_corrupt_sqlite_index_disables_cache_and_degrades_to_false(
     assert not tuple(root.glob("*.qdc"))
 
 
+def test_foreign_qcodes_inventory_and_existing_sidecars_are_never_modified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
+    source = tmp_path / "source" / "read.db"
+    inventory = tmp_path / "cache" / ".qplot-derived-cache-index.sqlite3"
+    source.parent.mkdir()
+    inventory.parent.mkdir()
+    initialise_or_create_database_at(str(source), journal_mode="DELETE")
+    initialise_or_create_database_at(str(inventory), journal_mode="DELETE")
+    for suffix in ("-wal", "-journal", "-shm"):
+        Path(f"{inventory}{suffix}").write_bytes(
+            f"foreign-sidecar{suffix}".encode()
+        )
+    source_before = _database_family_snapshot(source)
+    inventory_before = _database_family_snapshot(inventory)
+    inventory_connections: list[tuple[str, bool]] = []
+    real_connect = sqlite3.connect
+
+    def recording_connect(database: object, *args: object, **kwargs: object):
+        if ".qplot-derived-cache-index.sqlite3" in os.fspath(database):
+            inventory_connections.append(
+                (os.fspath(database), kwargs.get("uri") is True)
+            )
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(cache_module.sqlite3, "connect", recording_connect)
+    source_status = source.stat()
+    cache = TrustedDerivedDiskCache(inventory.parent)
+    cache.configure_for_database(
+        DatabaseInstance(
+            str(source),
+            str(source.resolve()),
+            (source_status.st_dev, source_status.st_ino),
+        )
+    )
+
+    assert not cache.put(_key(220), _payload("must-remain-uncached"))
+
+    assert not cache.enabled
+    assert _database_family_snapshot(source) == source_before
+    assert _database_family_snapshot(inventory) == inventory_before
+    assert len(inventory_connections) == 1
+    assert "mode=ro&immutable=1" in inventory_connections[0][0]
+    assert inventory_connections[0][1]
+    assert not tuple(inventory.parent.glob("*.qdc"))
+
+
+def test_incompatible_qplot_inventory_and_sidecars_are_never_modified(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cache"
+    inventory = root / ".qplot-derived-cache-index.sqlite3"
+    _seed_cache_index(root, trusted_cache_filename(_key(221)))
+    connection = sqlite3.connect(inventory)
+    try:
+        connection.execute(
+            "UPDATE cache_meta SET value = 'future' WHERE key = 'schema'"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    for suffix in ("-wal", "-journal", "-shm"):
+        Path(f"{inventory}{suffix}").write_bytes(
+            f"incompatible-sidecar{suffix}".encode()
+        )
+    before = _database_family_snapshot(inventory)
+    cache = TrustedDerivedDiskCache(root)
+
+    assert not cache.put(_key(221), _payload("must-remain-uncached"))
+
+    assert not cache.enabled
+    assert _database_family_snapshot(inventory) == before
+    assert not tuple(root.glob("*.qdc"))
+
+
+def test_new_and_existing_qplot_inventories_remain_writable(tmp_path: Path) -> None:
+    root = tmp_path / "cache"
+    first = TrustedDerivedDiskCache(root)
+    assert first.put(_key(222), _payload("new-inventory"))
+
+    second = TrustedDerivedDiskCache(root)
+    assert second.put(_key(223), _payload("existing-inventory"))
+
+    assert second.get(_key(222)) == _payload("new-inventory")
+    assert second.get(_key(223)) == _payload("existing-inventory")
+
+
 @pytest.mark.parametrize(
     "phase",
     ["open", "reservation", "replace", "ready", "commit", "rollback"],
