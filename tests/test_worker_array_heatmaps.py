@@ -19,7 +19,15 @@ from qplot.tools.worker import loader
 
 
 @contextmanager
-def heatmap_dataset(tmp_path, *, arrays=True, shaped=True, records=None, scalar_fast=False):
+def heatmap_dataset(
+    tmp_path,
+    *,
+    arrays=True,
+    shaped=True,
+    records=None,
+    scalar_fast=False,
+    planned_shape=None,
+):
     path = tmp_path / "array_heatmap.db"
     initialise_or_create_database_at(str(path), journal_mode="DELETE")
     experiment = load_or_create_experiment("array_heatmap", sample_name="test")
@@ -33,7 +41,7 @@ def heatmap_dataset(tmp_path, *, arrays=True, shaped=True, records=None, scalar_
         paramtype="array" if arrays else "numeric",
     )
     if shaped:
-        measurement.set_shapes({"signal": (2, 3)})
+        measurement.set_shapes({"signal": planned_shape or (2, 3)})
     if records is None:
         # Reverse the second sweep so independently sorting an array is wrong.
         records = [(0, [0, 1, 2], [0, 1, 2]), (1, [2, 1, 0], [12, 11, 10])]
@@ -147,6 +155,84 @@ def test_heatmap_above_and_below_full_resolution_threshold(tmp_path, arrays, sha
         if limit == 4:
             assert not hasattr(worker, "cache_data")
             assert worker.total_point_count_estimate == 6
+
+
+@pytest.mark.parametrize("streamed", [False, True], ids=["buffered", "streamed"])
+@pytest.mark.parametrize("swapped", [False, True])
+def test_partial_planned_array_scan_preserves_nonuniform_short_axis(
+    tmp_path,
+    monkeypatch,
+    streamed,
+    swapped,
+):
+    slow_values = np.array([0.0, 1.0, 100.0])
+    fast_values = np.arange(1001, dtype=float)
+    records = [
+        (slow, fast_values, np.full(fast_values.size, slow))
+        for slow in slow_values
+    ]
+    if streamed:
+        monkeypatch.setattr(worker_module, "MAX_SQL_HEATMAP_SOURCE_ROWS", 2_000)
+
+    with heatmap_dataset(
+        tmp_path,
+        records=records,
+        planned_shape=(3000, 1001),
+    ) as dataset:
+        worker = make_worker(dataset)
+        if swapped:
+            worker.axes_dict = {"x": "slow", "y": "fast"}
+        run_worker(worker)
+
+        assert worker.loaded_from_sql_heatmap
+        assert worker.aggregated_heatmap_source is streamed
+        if swapped:
+            np.testing.assert_array_equal(worker.axis_data["x"], slow_values)
+            assert worker.axis_data["y"].size == 800
+            assert worker.dataGrid.shape == (800, 3)
+            np.testing.assert_allclose(
+                worker.dataGrid,
+                np.broadcast_to(slow_values, worker.dataGrid.shape),
+            )
+        else:
+            assert worker.axis_data["x"].size == 800
+            np.testing.assert_array_equal(worker.axis_data["y"], slow_values)
+            assert worker.dataGrid.shape == (3, 800)
+            np.testing.assert_allclose(
+                worker.dataGrid,
+                np.broadcast_to(slow_values[:, None], worker.dataGrid.shape),
+            )
+
+
+def test_partial_planned_array_viewport_reload_preserves_nonuniform_short_axis(
+    tmp_path,
+):
+    slow_values = np.array([0.0, 1.0, 100.0])
+    fast_values = np.arange(1001, dtype=float)
+    records = [
+        (slow, fast_values, np.full(fast_values.size, slow))
+        for slow in slow_values
+    ]
+    with heatmap_dataset(
+        tmp_path,
+        records=records,
+        planned_shape=(3000, 1001),
+    ) as dataset:
+        worker = make_worker(
+            dataset,
+            force_sql_heatmap=True,
+            heatmap_axis_ranges={"x": (100.0, 900.0), "y": (-1.0, 101.0)},
+            heatmap_full_axis_ranges={"x": (0.0, 1000.0), "y": (0.0, 100.0)},
+        )
+        run_worker(worker)
+
+        assert worker.axis_data["x"].size == 800
+        np.testing.assert_array_equal(worker.axis_data["y"], slow_values)
+        assert worker.dataGrid.shape == (3, 800)
+        for row, slow in zip(worker.dataGrid, slow_values, strict=True):
+            finite = np.isfinite(row)
+            assert np.any(finite)
+            np.testing.assert_allclose(row[finite], slow)
 
 
 def test_array_heatmap_aggregates_every_paired_sample_in_bounded_chunks(tmp_path, monkeypatch):

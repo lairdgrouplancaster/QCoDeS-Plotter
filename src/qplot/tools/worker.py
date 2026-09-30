@@ -1623,13 +1623,15 @@ class loader(QtCore.QRunnable):
             unique_y.size,
             max_cells=max_cells,
             )
-        x_centres, x_index = self._scaled_axis_indices(
+        x_centres, x_index = self._heatmap_axis_indices(
             x_data,
+            unique_x,
             x_bins,
             self._grid_axis_bounds("x"),
             )
-        y_centres, y_index = self._scaled_axis_indices(
+        y_centres, y_index = self._heatmap_axis_indices(
             y_data,
+            unique_y,
             y_bins,
             self._grid_axis_bounds("y"),
             )
@@ -1655,6 +1657,18 @@ class loader(QtCore.QRunnable):
             )
 
         return x_centres, y_centres, data_grid
+
+
+    def _heatmap_axis_indices(self, values, unique_values, bin_count, bounds=None):
+        """Preserve an axis exactly unless its own cardinality needs binning."""
+
+        self._check_cancelled()
+        if unique_values.size <= bin_count:
+            indices = np.searchsorted(unique_values, values)
+            self._check_cancelled()
+            return unique_values, indices
+
+        return self._scaled_axis_indices(values, bin_count, bounds)
 
 
     def _sampled_overview_grid(
