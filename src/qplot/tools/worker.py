@@ -1,5 +1,6 @@
 import math
 import threading
+from contextlib import ExitStack, closing
 from copy import copy
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +51,58 @@ class PlotWorkCancelled(InterruptedError):
 
 def _sqlite_identifier(name):
     return '"' + str(name).replace('"', '""') + '"'
+
+
+class _HeatmapArrayReader:
+    """Read numeric NPY slices from a physically read-only SQLite BLOB."""
+
+    def __init__(self, blob):
+        self.blob = blob
+        version = np.lib.format.read_magic(blob)
+        # QCoDeS writes NPY v3: its length field matches v2 and its numeric
+        # dtype headers are ASCII (v3 only changes the text encoding).
+        if version == (1, 0):
+            read_header = np.lib.format.read_array_header_1_0
+        elif version in ((2, 0), (3, 0)):
+            read_header = np.lib.format.read_array_header_2_0
+        else:
+            raise ValueError("Unsupported heatmap array format.")
+        self.shape, self.fortran_order, self.dtype = read_header(blob)
+        self.offset = blob.tell()
+        self.size = math.prod(self.shape)
+        if self.dtype.kind not in "biufc":
+            raise ValueError("Heatmap arrays must contain numeric values.")
+        if self.offset + self.size * self.dtype.itemsize != len(blob):
+            raise ValueError("Heatmap array payload does not match its shape.")
+
+    def read(self, start, stop, check_cancelled):
+        check_cancelled()
+        if not self.fortran_order or len(self.shape) <= 1:
+            self.blob.seek(self.offset + start * self.dtype.itemsize)
+            return np.frombuffer(
+                self.blob.read((stop - start) * self.dtype.itemsize),
+                dtype=self.dtype,
+            )
+
+        # Flatten every column in the same logical (C) order, even when
+        # signal and setpoints were saved with different memory layouts.
+        positions = np.ravel_multi_index(
+            np.unravel_index(np.arange(start, stop), self.shape),
+            self.shape, order="F",
+        )
+        order = np.argsort(positions)
+        ordered_positions = positions[order]
+        boundaries = np.r_[0, np.flatnonzero(np.diff(ordered_positions) != 1) + 1,
+                           stop - start]
+        values = np.empty(stop - start, dtype=self.dtype)
+        for first, last in zip(boundaries[:-1], boundaries[1:], strict=True):
+            check_cancelled()
+            self.blob.seek(self.offset + int(ordered_positions[first]) * self.dtype.itemsize)
+            values[order[first:last]] = np.frombuffer(
+                self.blob.read(int(last - first) * self.dtype.itemsize),
+                dtype=self.dtype,
+            )
+        return values
 
 
 class loader(QtCore.QRunnable):
@@ -550,7 +603,17 @@ class loader(QtCore.QRunnable):
         self._set_sql_connection(conn)
         try:
             self._check_cancelled()
-            setpoint_count = self._selected_parameter_row_count(conn)
+            if self._has_array_heatmap_columns():
+                # A storage row can contain millions of samples. Inspect
+                # bounded NPY headers, stopping as soon as the limit is crossed.
+                setpoint_count = 0
+                with closing(self._array_heatmap_records(conn)) as records:
+                    for _values, size in records:
+                        setpoint_count += size
+                        if setpoint_count > self.max_full_heatmap_points:
+                            break
+            else:
+                setpoint_count = self._selected_parameter_row_count(conn)
         finally:
             self._close_sql_connection(conn)
 
@@ -662,6 +725,9 @@ class loader(QtCore.QRunnable):
                 np.array([], dtype=float),
                 )
 
+        if self._has_array_heatmap_columns():
+            return self._read_array_heatmap_arrays(conn)
+
         table = _sqlite_identifier(self.table_name)
         x_column = _sqlite_identifier(self.axes_dict["x"])
         y_column = _sqlite_identifier(self.axes_dict["y"])
@@ -744,6 +810,191 @@ class loader(QtCore.QRunnable):
             (),
             summary,
             )
+
+
+    def _has_array_heatmap_columns(self):
+        return any(
+            getattr(param, "type", None) == "array"
+            for param in (
+                self.param,
+                self.param_dict[self.axes_dict["x"]],
+                self.param_dict[self.axes_dict["y"]],
+            )
+        )
+
+
+    def _array_heatmap_records(self, conn):
+        """Yield one aligned record, without materialising any array BLOB."""
+        names = (self.axes_dict["x"], self.axes_dict["y"], self.param.name)
+        array_columns = [
+            getattr(self.param_dict[name], "type", None) == "array"
+            for name in names
+        ]
+        columns = ", ".join(
+            "NULL" if is_array else _sqlite_identifier(name)
+            for name, is_array in zip(names, array_columns, strict=True)
+        )
+        table = _sqlite_identifier(self.table_name)
+        selected = f"{_sqlite_identifier(self.param.name)} IS NOT NULL"
+        last_rowid = 0
+        while True:
+            self._check_cancelled()
+            # Finish each bounded row query before decoding. Array payloads
+            # are opened separately and always with readonly=True.
+            rows = conn.execute(
+                f"SELECT rowid, {columns} FROM {table} "
+                f"WHERE rowid > ? AND {selected} ORDER BY rowid LIMIT 128",
+                (last_rowid,),
+            ).fetchall()
+            if not rows:
+                return
+            for rowid, *values in rows:
+                self._check_cancelled()
+                with ExitStack() as stack:
+                    for index, (name, is_array) in enumerate(zip(names, array_columns, strict=True)):
+                        self._check_cancelled()
+                        if is_array:
+                            blob = stack.enter_context(conn.blobopen(
+                                self.table_name, name, rowid, readonly=True,
+                            ))
+                            values[index] = _HeatmapArrayReader(blob)
+                            if values[index].dtype.kind == "c":
+                                self._reject_complex_heatmap()
+                    sizes = [value.size if isinstance(value, _HeatmapArrayReader) else 1
+                             for value in values]
+                    size = sizes[2]
+                    if any(value_size not in (1, size) for value_size in sizes):
+                        raise ValueError("Heatmap setpoint and measurement shapes do not match.")
+                    yield values, size
+            last_rowid = rows[-1][0]
+
+
+    def _array_heatmap_chunks(self, conn):
+        chunk_size = max(1, min(CANCELLATION_CHUNK_SIZE, MAX_SQL_HEATMAP_SOURCE_ROWS))
+        with closing(self._array_heatmap_records(conn)) as records:
+            for values, size in records:
+                for start in range(0, size, chunk_size):
+                    self._check_cancelled()
+                    stop = min(size, start + chunk_size)
+                    decoded = [
+                        value.read(0 if value.size == 1 else start,
+                                   1 if value.size == 1 else stop,
+                                   self._check_cancelled)
+                        if isinstance(value, _HeatmapArrayReader) else value
+                        for value in values
+                    ]
+                    yield stop - start, self._arrays_from_values(*decoded)
+
+
+    def _array_heatmap_visible_values(self, arrays):
+        x_data, y_data, z_data = arrays
+        valid = np.ones(z_data.size, dtype=bool)
+        for axis, values in (("x", x_data), ("y", y_data)):
+            bounds = self._grid_axis_bounds(axis)
+            if bounds is not None:
+                valid &= (values >= bounds[0]) & (values <= bounds[1])
+        return x_data[valid], y_data[valid], z_data[valid]
+
+
+    def _read_array_heatmap_arrays(self, conn):
+        """Keep a bounded sample buffer, or stream two passes into a mean grid."""
+        buffered: list[tuple[np.ndarray, np.ndarray, np.ndarray]] | None = []
+        source_count = matching_count = 0
+        # Keep exact coordinates only while an axis could fit on screen.
+        # Once saturated, retain its extrema and bin it on the second pass.
+        axis_limit = max(1, self.max_heatmap_grid_side)
+        unique: list[set[float] | None] = [set(), set()]
+        lower = [np.inf, np.inf]
+        upper = [-np.inf, -np.inf]
+        with closing(self._array_heatmap_chunks(conn)) as chunks:
+            for size, arrays in chunks:
+                self._check_cancelled()
+                source_count += size
+                arrays = self._array_heatmap_visible_values(arrays)
+                matching_count += arrays[2].size
+                if buffered is not None:
+                    if matching_count <= MAX_SQL_HEATMAP_SOURCE_ROWS:
+                        if arrays[2].size:
+                            buffered.append(arrays)
+                    else:
+                        buffered = None
+                for axis, values in enumerate(arrays[:2]):
+                    if not values.size:
+                        continue
+                    lower[axis] = min(lower[axis], float(np.min(values)))
+                    upper[axis] = max(upper[axis], float(np.max(values)))
+                    axis_unique = unique[axis]
+                    if axis_unique is not None:
+                        axis_unique.update(np.unique(values))
+                        if len(axis_unique) > axis_limit:
+                            unique[axis] = None
+
+        self.total_point_count_estimate = source_count
+        self.sampled_heatmap_source = False
+        self.aggregated_heatmap_source = buffered is None
+        self._heatmap_source_info = {
+            "row_count": source_count,
+            "estimated_range_rows": matching_count,
+            "sampled": False,
+            "aggregated": buffered is None,
+            "sample_limit": MAX_SQL_HEATMAP_SOURCE_ROWS,
+            "sample_stride": None,
+            "strategy": "spatial mean" if buffered is None else "all",
+            "axis_ranges": self._normalised_heatmap_axis_ranges(self.heatmap_axis_ranges),
+        }
+        if buffered is not None:
+            self._check_cancelled()
+            return tuple(
+                np.concatenate([arrays[axis] for arrays in buffered])
+                if buffered else np.array([], dtype=float)
+                for axis in range(3)
+            )
+
+        counts = tuple(len(values) if values is not None else axis_limit + 1
+                       for values in unique)
+        bins = self._bounded_grid_shape(*counts)
+        exact = [values is not None and len(values) <= count
+                 for values, count in zip(unique, bins, strict=True)]
+        axes = [
+            np.array(sorted(values), dtype=float) if exact[axis] and values is not None
+            else self._scaled_axis_indices(
+                np.array([lower[axis], upper[axis]]), bins[axis],
+                (lower[axis], upper[axis]),
+            )[0]
+            for axis, values in enumerate(unique)
+        ]
+        grid_sum = np.zeros((axes[1].size, axes[0].size), dtype=float)
+        grid_count = np.zeros(grid_sum.shape, dtype=np.int64)
+        with closing(self._array_heatmap_chunks(conn)) as chunks:
+            for _size, arrays in chunks:
+                self._check_cancelled()
+                x_data, y_data, z_data = self._array_heatmap_visible_values(arrays)
+                indices = [
+                    np.searchsorted(axes[axis], values) if exact[axis]
+                    else self._scaled_axis_indices(
+                        values, bins[axis], (lower[axis], upper[axis]),
+                    )[1]
+                    for axis, values in enumerate((x_data, y_data))
+                ]
+                np.add.at(grid_sum, (indices[1], indices[0]), z_data)
+                np.add.at(grid_count, (indices[1], indices[0]), 1)
+
+        self._check_cancelled()
+        y_indices, x_indices = np.nonzero(grid_count)
+        z_data = grid_sum[y_indices, x_indices] / grid_count[y_indices, x_indices]
+        self._spatial_heatmap_axes: tuple[np.ndarray, np.ndarray] = (axes[0], axes[1])
+        self._spatial_heatmap_indices: tuple[np.ndarray, np.ndarray] = (x_indices, y_indices)
+        self._spatial_heatmap_source_unique_counts: tuple[int, int] = (counts[0], counts[1])
+        self._array_heatmap_cardinality_exact = tuple(values is not None for values in unique)
+        self._heatmap_aggregated_source_rows: int = matching_count
+        full_ranges = self._normalised_heatmap_axis_ranges(self.heatmap_full_axis_ranges)
+        if full_ranges is not None:
+            self.heatmap_source_axis_ranges = full_ranges
+        elif self.heatmap_axis_ranges is None:
+            self.heatmap_source_axis_ranges = {
+                axis: (lower[index], upper[index]) for index, axis in enumerate(("x", "y"))
+            }
+        return axes[0][x_indices], axes[1][y_indices], z_data
 
 
     def _heatmap_spatial_summary(self, conn, where_sql, parameters):
@@ -1020,11 +1271,14 @@ class loader(QtCore.QRunnable):
         z_values = np.asarray(z_values)
         if np.iscomplexobj(z_values):
             self._reject_complex_heatmap()
-        x_data = np.asarray(x_values, dtype=float)
+        # Broadcast within a decoded record/chunk, before flattening or
+        # masking, so a scalar slow setpoint accompanies every array sample.
+        x_values, y_values, z_values = np.broadcast_arrays(x_values, y_values, z_values)
+        x_data = np.asarray(x_values, dtype=float).reshape(-1)
         self._check_cancelled()
-        y_data = np.asarray(y_values, dtype=float)
+        y_data = np.asarray(y_values, dtype=float).reshape(-1)
         self._check_cancelled()
-        z_data = np.asarray(z_values, dtype=float)
+        z_data = np.asarray(z_values, dtype=float).reshape(-1)
         self._check_cancelled()
         finite = np.isfinite(x_data) & np.isfinite(y_data) & np.isfinite(z_data)
         self._check_cancelled()
@@ -1197,6 +1451,17 @@ class loader(QtCore.QRunnable):
                 ),
             "empty_bins_filled": empty_bins_filled,
             }
+        # Saturated array axes carry only a lower cardinality bound for
+        # choosing bins. Do not present that bound as an exact source size.
+        cardinality_exact = getattr(self, "_array_heatmap_cardinality_exact", (True, True))
+        for axis, dimension, is_exact in zip(
+                ("x", "y"), ("columns", "rows"), cardinality_exact, strict=True):
+            if not is_exact:
+                self._heatmap_grid_info[f"unique_{axis}_count"] = None
+                self._heatmap_grid_info["exact_cell_count"] = None
+                if self.heatmap_source_grid_shape is None:
+                    self._heatmap_grid_info[f"source_grid_{dimension}"] = None
+                    self._heatmap_grid_info["source_grid_cell_count"] = None
         return x_axis, y_axis, data_grid
 
 
