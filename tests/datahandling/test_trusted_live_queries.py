@@ -330,12 +330,13 @@ class _FakeExecutor:
             bindings = self._bindings(query)
             if 'WHERE "id" > ? AND "id" <= ?' in sql:
                 lower, upper, limit = bindings
+                # Apply SQL LIMIT before materializing the virtual result set.
                 row_ids = tuple(
                     range(
                         lower + 1,
                         min(upper, self.result_counts[table_name]) + 1,
-                    )
-                )[:limit]
+                    )[:limit]
+                )
             elif 'WHERE "id" IN (' in sql:
                 *requested, through = bindings
                 row_ids = tuple(
