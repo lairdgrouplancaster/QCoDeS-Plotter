@@ -883,9 +883,9 @@ class TemporaryConfigTestCase(unittest.TestCase):
             FileNotFoundError("simulated missing read target"),
         ):
             with self.subTest(failure=type(failure).__name__):
-                def fail_user_read(filename, *args, **kwargs):
+                def fail_user_read(filename, *args, read_error=failure, **kwargs):
                     if os.fspath(filename) == config.default_file:
-                        raise failure
+                        raise read_error
                     return real_open(filename, *args, **kwargs)
 
                 with (

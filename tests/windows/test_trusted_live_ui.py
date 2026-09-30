@@ -1153,9 +1153,17 @@ def _wait_for_gui_event(event: threading.Event, timeout: float = 2.0) -> None:
     assert event.is_set()
 
 
-def _assert_gui_timer_advances(ticks: list[float]) -> None:
+def _assert_gui_timer_advances(
+    ticks: list[float], blocked_release: threading.Event
+) -> None:
+    assert not blocked_release.is_set()
     previous = len(ticks)
-    QtTest.QTest.qWait(30)
+    # Timer delivery can be delayed on a busy runner. Keep pumping events until
+    # a fresh tick arrives, while the worker's release gate remains closed.
+    deadline = time.monotonic() + 2.0
+    while len(ticks) == previous and time.monotonic() < deadline:
+        QtTest.QTest.qWait(5)
+    assert not blocked_release.is_set()
     assert len(ticks) > previous
 
 
@@ -4140,24 +4148,24 @@ def test_delayed_trusted_open_query_cancel_and_close_keep_gui_responsive():
             request = service.submit_bootstrap()
 
             _wait_for_gui_event(open_entered)
-            _assert_gui_timer_advances(ticks)
+            _assert_gui_timer_advances(ticks, open_release)
             open_release.set()
 
             _wait_for_gui_event(supervisor.query_entered)
-            _assert_gui_timer_advances(ticks)
+            _assert_gui_timer_advances(ticks, supervisor.job.release)
 
             started = time.monotonic()
             assert request.cancel()
             assert time.monotonic() - started < 0.5
             _wait_for_gui_event(supervisor.cancel_entered)
-            _assert_gui_timer_advances(ticks)
+            _assert_gui_timer_advances(ticks, supervisor.cancel_release)
 
             started = time.monotonic()
             harness.close_database(status=False)
             assert time.monotonic() - started < 0.5
             assert harness._trusted_read_service is None
             _wait_for_gui_event(supervisor.close_entered)
-            _assert_gui_timer_advances(ticks)
+            _assert_gui_timer_advances(ticks, supervisor.close_release)
     finally:
         open_release.set()
         supervisor.cancel_release.set()
