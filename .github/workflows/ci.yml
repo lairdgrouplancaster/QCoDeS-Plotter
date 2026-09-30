@@ -247,7 +247,8 @@ jobs:
             -ArgumentList $arguments
 
       - name: Publish bounded Windows source-test diagnostics
-        if: failure() && runner.os == 'Windows'
+        # Successful runs include pytest's duration report in child stdout.
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: pwsh
         run: |
           function Write-BoundedLogTail {

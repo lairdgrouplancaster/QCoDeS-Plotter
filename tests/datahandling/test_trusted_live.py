@@ -21,14 +21,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from qcodes.dataset import (
-    Measurement,
-    initialise_or_create_database_at,
-    load_or_create_experiment,
-)
-from qcodes.dataset.sqlite.connection import atomic
-from qcodes.dataset.sqlite.database import connect
-from qcodes.parameters import ManualParameter
 
 from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_live import (
@@ -128,6 +120,14 @@ def _start_qcodes_run(
     database_path: str,
 ) -> tuple[Any, Any, Any, Any, Any, Any]:
     """Start an acquisition through public QCoDeS measurement APIs."""
+    # Reader-only spawn probes must not import QCoDeS and its dependencies.
+    from qcodes.dataset import (
+        Measurement,
+        initialise_or_create_database_at,
+        load_or_create_experiment,
+    )
+    from qcodes.parameters import ManualParameter
+
     initialise_or_create_database_at(database_path, journal_mode="WAL")
     experiment = load_or_create_experiment(
         "trusted_live_experiment",
@@ -162,6 +162,9 @@ def _qcodes_wal_writer_process(
     datasaver = None
     dataset = None
     try:
+        from qcodes.dataset.sqlite.connection import atomic
+        from qcodes.dataset.sqlite.database import connect
+
         (
             experiment,
             setpoint,
@@ -375,6 +378,9 @@ def _clean_qcodes_wal_database_process(
     dataset = None
     writer = None
     try:
+        from qcodes.dataset.sqlite.connection import atomic
+        from qcodes.dataset.sqlite.database import connect
+
         (
             experiment,
             _setpoint,
@@ -1660,6 +1666,8 @@ def test_open_reader_rejects_source_file_replacement(
 def test_actual_main_handle_rejects_deterministic_aba_replacement(
     tmp_path: Path,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     selected = tmp_path / "aba-main.db"
     replacement = tmp_path / "aba-main-b.db"
     initialise_or_create_database_at(selected, journal_mode="DELETE")
@@ -1790,6 +1798,8 @@ def test_rejection_before_native_session_configuration_is_reusable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     from qplot.datahandling import trusted_live as trusted_live_module
 
     database_path = tmp_path / "preconfiguration-rejection.db"
@@ -1813,6 +1823,8 @@ def test_rejection_before_native_session_configuration_is_reusable(
 
 @pytest.mark.skipif(os.name != "nt", reason="NTFS alternate streams are Windows-only")
 def test_open_reader_rejects_ntfs_alternate_data_stream(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "ordinary.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     host_path = tmp_path / "stream-host.bin"
@@ -1868,6 +1880,8 @@ def test_open_reader_rejects_nonregular_sidecar(
 def test_expected_instance_rejects_replacement_before_native_open(
     tmp_path: Path,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     selected = tmp_path / "selected-rollback.db"
     replacement = tmp_path / "replacement-rollback.db"
     initialise_or_create_database_at(selected, journal_mode="DELETE")
@@ -1884,6 +1898,8 @@ def test_expected_instance_rejects_replacement_before_native_open(
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission fixture")
 def test_native_proof_permission_failure_is_source_io(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "permission.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     original_mode = stat.S_IMODE(database_path.stat().st_mode)
@@ -2017,6 +2033,8 @@ def test_ordinary_query_failure_is_not_relabelled_as_policy_or_source_change(
 
 
 def test_corrupt_database_has_distinct_invalid_database_error(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "corrupt.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     with database_path.open("r+b", buffering=0) as database_file:
@@ -2053,6 +2071,8 @@ def test_retained_malformed_wal_is_unsupported(
 
 
 def test_retained_malformed_rollback_journal_is_unsupported(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "malformed-journal.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     journal_path = Path(f"{database_path}-journal")
@@ -2068,6 +2088,8 @@ def test_retained_malformed_rollback_journal_is_unsupported(tmp_path: Path) -> N
 def test_rollback_journal_appearing_after_capture_is_unsupported(
     tmp_path: Path,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "appearing-journal.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     journal_path = Path(f"{database_path}-journal")
@@ -2099,6 +2121,8 @@ def test_rollback_journal_appearing_after_capture_is_unsupported(
 def test_rollback_journal_appearing_between_operations_invalidates_reader(
     tmp_path: Path,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "operation-journal.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     journal_path = Path(f"{database_path}-journal")
@@ -2125,6 +2149,8 @@ def test_rollback_journal_appearing_between_operations_invalidates_reader(
 
 
 def test_busy_wait_is_bounded_and_connection_recovers(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "busy.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     before = _artifact_state(database_path)
@@ -2356,6 +2382,8 @@ def test_forced_cleanup_uncertainty_is_chained_and_quarantined(
     tmp_path: Path,
     failure_phase: str,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / f"{failure_phase}-cleanup.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
 
@@ -2386,6 +2414,8 @@ def test_preflight_close_uncertainty_quarantines_process_session(
     tmp_path: Path,
     fault: str,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / f"preflight-{fault}.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
 
@@ -2422,6 +2452,8 @@ def test_rejected_second_reader_does_not_drop_first_reader_main_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "exclusive-rollback.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     context = multiprocessing.get_context("spawn")
@@ -2510,6 +2542,8 @@ def test_abandoned_reader_finalizer_releases_session_and_temp_directory(
 
 
 def test_sidecar_free_qcodes_rollback_database_is_readable(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "rollback.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     assert all(
