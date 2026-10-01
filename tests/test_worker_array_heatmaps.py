@@ -49,7 +49,7 @@ def heatmap_dataset(
         for slow, fast, signal in records:
             if arrays:
                 datasaver.add_result(
-                    ("slow", slow), ("fast", np.asarray(fast, dtype=float)),
+                    ("slow", slow), ("fast", np.asarray(fast)),
                     ("signal", np.asarray(signal)),
                 )
             else:
@@ -410,6 +410,30 @@ def test_complex_array_heatmap_is_rejected_without_losing_imaginary_values(tmp_p
         assert finished == [False]
         assert len(errors) == 1
         assert "Complex-valued heatmaps" in str(errors[0])
+        assert not hasattr(worker, "dataGrid")
+
+
+@pytest.mark.parametrize("shaped", [False, True], ids=["unshaped", "shaped"])
+@pytest.mark.parametrize("limit", [100, 4], ids=["cache", "bounded-sql"])
+def test_complex_array_setpoint_is_rejected_without_losing_imaginary_values(
+    tmp_path, shaped, limit,
+):
+    records = [
+        (0, [1 + 10j, 2 + 20j, 3 + 30j], [0, 1, 2]),
+        (1, [1 + 10j, 2 + 20j, 3 + 30j], [10, 11, 12]),
+    ]
+    with heatmap_dataset(tmp_path, shaped=shaped, records=records) as dataset:
+        worker = make_worker(dataset, max_full_heatmap_points=limit)
+        errors, finished = [], []
+        worker.emitter.errorOccurred.connect(errors.append)
+        worker.emitter.finished.connect(finished.append)
+        worker.run()
+
+        assert finished == [False]
+        assert len(errors) == 1
+        assert "complex" in str(errors[0]).lower()
+        assert "coordinate" in str(errors[0]).lower()
+        assert "fast" in str(errors[0])
         assert not hasattr(worker, "dataGrid")
 
 

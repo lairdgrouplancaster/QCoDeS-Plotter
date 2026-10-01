@@ -337,6 +337,8 @@ class loader(QtCore.QRunnable):
                 getattr(self.param, "name", "Measurement"),
                 getattr(self.param, "depends_on_", ()),
             )
+            if len(getattr(self.param, "depends_on_", ())) > 1:
+                self._validate_heatmap_parameter_types()
             cache = self.cache
             cache_live = cache_is_live(cache)
 
@@ -654,9 +656,9 @@ class loader(QtCore.QRunnable):
 
     def _load_large_heatmap_from_sql(self):
         # SQLite aggregates treat QCoDeS complex BLOBs as numbers, so reject
-        # them before the bounded SQL path can compute a misleading grid.
-        if getattr(self.param, "type", None) == "complex":
-            self._reject_complex_heatmap()
+        # every declared complex column before the bounded SQL path can
+        # compute a misleading grid.
+        self._validate_heatmap_parameter_types()
         conn = sqlite_read_only_connection(
             cache_database_path(self.cache),
             **self._read_only_open_kwargs(),
@@ -866,7 +868,10 @@ class loader(QtCore.QRunnable):
                             ))
                             values[index] = _HeatmapArrayReader(blob)
                             if values[index].dtype.kind == "c":
-                                self._reject_complex_heatmap()
+                                self._reject_complex_heatmap(
+                                    name,
+                                    coordinate=name != self.param.name,
+                                )
                     sizes = [value.size if isinstance(value, _HeatmapArrayReader) else 1
                              for value in values]
                     size = sizes[2]
@@ -1266,18 +1271,57 @@ class loader(QtCore.QRunnable):
         return self._arrays_from_values(x_values, y_values, z_values)
 
 
-    def _reject_complex_heatmap(self):
+    def _reject_complex_heatmap(self, parameter_name=None, *, coordinate=False):
+        if parameter_name is None:
+            parameter_name = getattr(self.param, "name", "measurement")
+        detail = "a coordinate" if coordinate else "measurement data"
         raise ValueError(
-            f"Complex-valued heatmaps are not supported for parameter "
-            f"'{self.param.name}'."
+            "Complex-valued heatmaps are not supported: "
+            f"parameter '{parameter_name}' contains {detail}."
         )
+
+
+    def _validate_heatmap_parameter_types(self):
+        """Reject declared complex columns before any SQLite arithmetic."""
+
+        for axis in ("x", "y"):
+            name = self.axes_dict[axis]
+            if getattr(self.param_dict[name], "type", None) == "complex":
+                self._reject_complex_heatmap(name, coordinate=True)
+        if getattr(self.param, "type", None) == "complex":
+            self._reject_complex_heatmap()
+
+
+    def _real_heatmap_values(self, values, parameter_name, *, coordinate=False):
+        """Return an array only when conversion to float cannot lose phase."""
+
+        result = np.asarray(values)
+        if np.iscomplexobj(result):
+            self._reject_complex_heatmap(
+                parameter_name,
+                coordinate=coordinate,
+            )
+        return result
 
 
     def _arrays_from_values(self, x_values, y_values, z_values):
         self._check_cancelled()
-        z_values = np.asarray(z_values)
-        if np.iscomplexobj(z_values):
-            self._reject_complex_heatmap()
+        x_values = self._real_heatmap_values(
+            x_values,
+            self.axes_dict["x"],
+            coordinate=True,
+        )
+        self._check_cancelled()
+        y_values = self._real_heatmap_values(
+            y_values,
+            self.axes_dict["y"],
+            coordinate=True,
+        )
+        self._check_cancelled()
+        z_values = self._real_heatmap_values(
+            z_values,
+            getattr(self.param, "name", "measurement"),
+        )
         # Broadcast within a decoded record/chunk, before flattening or
         # masking, so a scalar slow setpoint accompanies every array sample.
         x_values, y_values, z_values = np.broadcast_arrays(x_values, y_values, z_values)
@@ -1853,9 +1897,10 @@ class loader(QtCore.QRunnable):
         axis_dimension = {}
         valid = {}
         shaped_axes_are_rectilinear = True
-        depvarData = np.asarray(depvarData)
-        if np.iscomplexobj(depvarData):
-            self._reject_complex_heatmap()
+        depvarData = self._real_heatmap_values(
+            depvarData,
+            getattr(self.param, "name", "measurement"),
+        )
         depvarData = np.asarray(depvarData, dtype=float)
         self._check_cancelled()
         
@@ -1865,7 +1910,12 @@ class loader(QtCore.QRunnable):
             name = self.axes_dict[axis]
             param = self.param_dict[name]
 
-            param_data = np.asarray(data[name], dtype=float)
+            param_data = self._real_heatmap_values(
+                data[name],
+                name,
+                coordinate=True,
+            )
+            param_data = np.asarray(param_data, dtype=float)
             dimension = self._shaped_axis_dimension(name, param_data, depvarData)
             shaped_axes_are_rectilinear &= self._shaped_axis_is_rectilinear(
                 param_data,
