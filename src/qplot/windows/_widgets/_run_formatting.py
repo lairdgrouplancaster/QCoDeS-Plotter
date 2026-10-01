@@ -247,7 +247,7 @@ def time_taken_seconds(metadata):
     elif metadata.get("database_modified_timestamp"):
         end = metadata.get("database_modified_timestamp")
     else:
-        end = datetime.now().timestamp()
+        return None
     try:
         return max(0, float(end) - float(started))
     except (TypeError, ValueError):

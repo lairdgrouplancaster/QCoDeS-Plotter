@@ -13,6 +13,7 @@ from qplot.datahandling.readonly import (
     qcodes_read_only_connection,
     sqlite_read_only_connection,
 )
+from qplot.datahandling.source_activity import source_activity_timestamp
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES,
     TRUSTED_PRESENTATION_MAX_PARAMETER_TEXT_BYTES,
@@ -458,12 +459,9 @@ def get_snapshot_selected_run_detail(
         )
         materialized["guid"] = guid
         materialized["run_id"] = run_id
-        try:
-            materialized["database_modified_timestamp"] = os.path.getmtime(
-                database_path
-            )
-        except OSError:
-            materialized.setdefault("database_modified_timestamp", None)
+        materialized["database_modified_timestamp"] = _database_modified_timestamp(
+            cursor
+        )
 
         layout_rows, layout_unavailable = _snapshot_selected_layout_rows(
             cursor,
@@ -1749,6 +1747,9 @@ def _shape_size(shape):
 
 
 def _database_modified_timestamp(cursor):
+    connection = cursor.connection
+    if hasattr(connection, "_qplot_source_activity_timestamp"):
+        return connection._qplot_source_activity_timestamp
     try:
         cursor.execute("PRAGMA database_list")
         databases = cursor.fetchall()
@@ -1760,10 +1761,7 @@ def _database_modified_timestamp(cursor):
     for database in databases:
         if len(database) < 3 or database[1] != "main" or not database[2]:
             continue
-        try:
-            return os.path.getmtime(database[2])
-        except OSError:
-            return None
+        return source_activity_timestamp(database[2])
 
     return None
 

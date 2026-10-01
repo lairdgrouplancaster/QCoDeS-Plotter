@@ -932,6 +932,9 @@ def qcodes_read_only_connection(
                 continue
             _require_publication_complete(source_path)
             conn.path_to_dbfile = str(source_path)
+            conn._qplot_source_activity_timestamp = _prepared_activity_timestamp(
+                prepared_source, ignore_wal=ignore_wal
+            )
             if snapshot is not None:
                 _attach_snapshot_cleanup(conn, snapshot)
                 snapshot = None
@@ -1136,6 +1139,9 @@ def sqlite_read_only_connection(
                     )
                 attach_snapshot(snapshot)
                 snapshot = None
+            conn._qplot_source_activity_timestamp = _prepared_activity_timestamp(
+                prepared_source, ignore_wal=ignore_wal
+            )
             configured = configure_read_only_sqlite_connection(conn)
             _raise_if_read_interrupted(cancelled_callback, deadline)
             return configured
@@ -1413,6 +1419,20 @@ def replacement_wal_is_quarantined(database_path):
 
     _database_identity, quarantined = _observe_database_instance(database_path)
     return bool(quarantined)
+
+
+def _prepared_activity_timestamp(source, *, ignore_wal):
+    """Keep source activity bound to the validated copy, before SQLite replay.
+
+    Snapshot creation/recovery timestamps are never acquisition timestamps.
+    Omitted WAL files do not contribute evidence for the copied database.
+    """
+    signatures = (source.database, None if ignore_wal else source.wal)
+    return max(
+        (signature[3] / 1_000_000_000 for signature in signatures
+         if signature is not None and signature[2]),
+        default=None,
+    )
 
 
 def _stat_signature(stat_result):

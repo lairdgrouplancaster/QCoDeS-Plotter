@@ -24,6 +24,7 @@ from qplot.datahandling.readSQL import (
     materialize_run_basic_fields,
     materialize_run_observation,
 )
+from qplot.datahandling.source_activity import source_activity_timestamp
 from qplot.datahandling.trusted_live import (
     TRUSTED_LIVE_MAX_SCALAR_BYTES,
     SqliteBindings,
@@ -1817,6 +1818,9 @@ class TrustedMetadataQueryAdapter:
         latest = self._require_cached_run(run_id)
         merged = dict(latest)
         merged.update(refreshed)
+        merged["database_modified_timestamp"] = source_activity_timestamp(
+            self._database_path
+        )
         observed = _materialize_refreshed_basic_fields(merged, latest)
         self._runs[run_id] = _bounded_public_run_fields(observed)
         unavailable_fields = self._cache_unavailable_fields(
@@ -2628,6 +2632,9 @@ class TrustedMetadataQueryAdapter:
             merged = dict(latest_cached)
             for key, value in selected_standard.items():
                 merged.setdefault(key, value)
+        merged["database_modified_timestamp"] = source_activity_timestamp(
+            self._database_path
+        )
         merged = _materialize_refreshed_basic_fields(merged, latest_cached)
         self._runs[run_id] = _bounded_public_run_fields(merged)
 
@@ -3080,10 +3087,7 @@ class TrustedMetadataQueryAdapter:
         self,
         result: TrustedQueryResult,
     ) -> list[TrustedRunRecord]:
-        try:
-            modified = os.path.getmtime(self._database_path)
-        except OSError:
-            modified = None
+        modified = source_activity_timestamp(self._database_path)
         records: list[TrustedRunRecord] = []
         prior = 0
         for row in result.rows:

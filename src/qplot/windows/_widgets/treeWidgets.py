@@ -2390,7 +2390,11 @@ class moreInfo(qtw.QTabWidget):
         if not self._has_value(started):
             return ""
 
-        end = completed if self._has_value(completed) else datetime.now().timestamp()
+        end = completed if self._has_value(completed) else (
+            (run_metadata or {}).get("database_modified_timestamp")
+        )
+        if not self._has_value(end):
+            return ""
         try:
             seconds = max(
                 0, self._timestamp_seconds(end) - self._timestamp_seconds(started)
@@ -2404,25 +2408,8 @@ class moreInfo(qtw.QTabWidget):
         return f"{seconds:.2f} s\t({format_duration_dhms(seconds)})"
 
     def _time_taken_from_metadata(self, run_metadata):
-        started = run_metadata.get("run_timestamp")
-        if not self._has_value(started):
-            return ""
-
-        completed = run_metadata.get("is_completed")
-        if completed is None:
-            return ""
-        if bool(completed):
-            end = run_metadata.get("completed_timestamp")
-            if not self._has_value(end):
-                return ""
-        else:
-            end = datetime.now().timestamp()
-
-        try:
-            seconds = max(
-                0, self._timestamp_seconds(end) - self._timestamp_seconds(started)
-            )
-        except (TypeError, ValueError):
+        seconds = time_taken_seconds(run_metadata)
+        if seconds is None:
             return ""
 
         points = self._trusted_logical_point_count(run_metadata)

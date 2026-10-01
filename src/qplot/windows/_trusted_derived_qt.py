@@ -957,6 +957,13 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             type(derived_count) is not int or current_count > derived_count
         ):
             merged["result_count"] = current_count
+        current_activity = current.get("database_modified_timestamp")
+        derived_activity = derived.get("database_modified_timestamp")
+        if isinstance(current_activity, (int, float)) and (
+            not isinstance(derived_activity, (int, float))
+            or current_activity > derived_activity
+        ):
+            merged["database_modified_timestamp"] = current_activity
         if bool(current.get("is_completed")):
             merged["is_completed"] = True
         if current.get("completed_timestamp") is not None:

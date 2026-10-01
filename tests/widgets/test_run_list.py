@@ -1343,9 +1343,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(
                 items["unfinished-guid"].text(status_col), "Running (10.0%)"
             )
-            self.assertRegex(
-                items["unfinished-guid"].text(duration_col), r"^[\d,]+\.\d s$"
-            )
+            self.assertEqual(items["unfinished-guid"].text(duration_col), "unknown")
             self.assertEqual(items["unfinished-guid"].text(size_col), "100 KB")
             self.assertEqual(items["unfinished-guid"].text(column("Experiment")), "exp")
             self.assertEqual(items["unfinished-guid"].text(column("Sample")), "sample")
