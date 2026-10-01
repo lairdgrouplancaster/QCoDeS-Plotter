@@ -115,7 +115,10 @@ def log_event(message, *args, level=logging.INFO, logger_name=None):
 
 def log_exception(context, error=None, logger_name=None):
     """
-    Logs an exception with traceback details.
+    Logs an exception or sanitized worker error text.
+
+    Only actual exceptions supply traceback details. Worker text is already
+    bounded and detached from its originating exception before Qt transport.
 
     """
     configure_logging()
@@ -127,7 +130,8 @@ def log_exception(context, error=None, logger_name=None):
             "%s: %s",
             context,
             error,
-            exc_info=(type(error), error, error.__traceback__),
+            exc_info=(type(error), error, error.__traceback__)
+            if isinstance(error, BaseException) else None,
             )
 
 

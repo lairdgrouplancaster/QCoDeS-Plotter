@@ -1650,12 +1650,7 @@ class DatabaseActionsMixin:
                 current_instance,
             )
             if error is not None:
-                logged_error = (
-                    error
-                    if isinstance(error, BaseException)
-                    else RuntimeError(str(error))
-                )
-                log_exception("Main-window refresh failed", logged_error, __name__)
+                log_exception("Main-window refresh failed", error, __name__)
                 if isinstance(error, UnverifiableDatabaseWalError):
                     self.show_error(
                         "Unverifiable Database WAL",
