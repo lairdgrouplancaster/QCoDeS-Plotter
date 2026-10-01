@@ -672,10 +672,18 @@ class PlotExportMixin(_PlotExportBase):
                 default_suffix=default_suffix,
                 replace_title="Replace Plot Export?",
                 file_description=description,
+                match_selected_filter=type(exporter) is CSVExporter,
             )
             if destination is None:
                 self.show_status("Plot export cancelled.", 3000)
                 return False
+            if type(exporter) is CSVExporter:
+                # Resolve the delimiter from the exact, already-approved target
+                # for both PyQtGraph's line writer and qPlot's heatmap writer.
+                exporter.params["separator"] = (
+                    "tab" if path.splitext(destination.filename)[1].casefold()
+                    == ".tsv" else "comma"
+                )
             writer = lambda staging_path: exporter.export(fileName=staging_path)
             if (
                     type(exporter) is CSVExporter

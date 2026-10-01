@@ -828,6 +828,155 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
         close_main_window(window)
 
 
+@pytest.mark.parametrize("dimensions", [1, 2], ids=["line", "heatmap"])
+def test_real_plot_export_format_controls_suffix_and_delimiter(
+    tmp_path, monkeypatch, dimensions,
+):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = tmp_path / "plot-delimiters.db"
+    run_ids = build_synthetic_database(database_path)
+    source_before = database_artifact_state(database_path)
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(lambda: not window._database_load_active)
+        dataset = load_by_id(run_ids[dimensions - 1])
+        parameter = dependent_parameter(dataset, dimensions)
+        window._replace_selected_dataset(
+            dataset, window._current_dataset_key(dataset.guid),
+        )
+        window.openPlot(params=[parameter], show=False)
+        plot_window = window.windows[-1]
+        wait_for(lambda: (
+            hasattr(plot_window, "axis_data")
+            and not getattr(plot_window.worker, "running", False)
+        ))
+
+        if dimensions == 1:
+            # Exercise CSV/TSV quoting through a real plot legend name.
+            plot_window.line.setData(
+                plot_window.axis_data["x"], plot_window.axis_data["y"],
+                name="Current,\tmeasured\n(nA)",
+            )
+            expected_header = []
+            columns = []
+            for item in plot_window.plot.items:
+                if not (hasattr(item, "implements") and item.implements("plotData")):
+                    continue
+                x, y = item.getOriginalDataset()
+                if x is None:
+                    continue
+                index = len(columns) // 2
+                name = item.name()
+                expected_header.extend(
+                    [f"{name}_x", f"{name}_y"] if name is not None
+                    else [f"x{index:04}", f"y{index:04}"]
+                )
+                columns.extend((x, y))
+            expected_values = [
+                [float(column[row]) if row < len(column) else "" for column in columns]
+                for row in range(max(map(len, columns)))
+            ]
+        else:
+            expected_header = [
+                plot_window.axis_param["x"].name,
+                plot_window.axis_param["y"].name,
+                plot_window.display_param.name,
+            ]
+            expected_values = [
+                [float(x), float(y), float(plot_window.dataGrid[row, column])]
+                for row, y in enumerate(plot_window.axis_data["y"])
+                for column, x in enumerate(plot_window.axis_data["x"])
+            ]
+
+        cases = (
+            # Default exporter settings, then explicitly conflicting settings.
+            ("csv", None, ".csv", True),
+            ("tsv", None, ".tsv", True),
+            ("csv", "tab", ".csv", True),
+            ("tsv", "comma", ".tsv", True),
+            # Resolve suffix/filter conflicts before confirming replacement.
+            ("csv", "tab", ".tsv", True),
+            ("tsv", "comma", ".csv", True),
+            ("csv", None, "", True),
+            ("tsv", None, "", True),
+            ("tsv", None, ".TSV", True),
+            # A dialog without a selected filter uses the approved suffix.
+            ("csv", "tab", ".csv", False),
+            ("tsv", "comma", ".tsv", False),
+        )
+        for index, (format_name, separator, typed_suffix, use_filter) in enumerate(cases):
+            stem = tmp_path / f"export-{index}"
+            selected_path = Path(f"{stem}{typed_suffix}")
+            approved_suffix = (
+                typed_suffix if typed_suffix.casefold() == f".{format_name}"
+                else f".{format_name}"
+            )
+            target = Path(f"{stem}{approved_suffix}")
+            sentinel = b"existing export must survive declined replacement"
+            target.write_bytes(sentinel)
+            if selected_path != target and typed_suffix:
+                selected_path.write_bytes(b"different format must remain untouched")
+            selected_filter = (
+                f"{format_name.upper()} files (*.{format_name})" if use_filter else ""
+            )
+            monkeypatch.setattr(
+                qtw.QFileDialog, "getSaveFileName",
+                lambda *_args, _path=selected_path, _filter=selected_filter,
+                **_kwargs: (str(_path), _filter),
+            )
+            replies = [
+                qtw.QMessageBox.StandardButton.No,
+                qtw.QMessageBox.StandardButton.Yes,
+            ]
+            prompts = []
+
+            def confirm(
+                _parent, _title, message, *_args, _prompts=prompts,
+                _target=target, _sentinel=sentinel, _replies=replies,
+            ):
+                _prompts.append(message)
+                assert str(_target) in message
+                assert _target.read_bytes() == _sentinel
+                return _replies.pop(0)
+
+            monkeypatch.setattr(qtw.QMessageBox, "question", confirm)
+            exporter = CSVExporter(plot_window.plot)
+            if separator is not None:
+                exporter.params["separator"] = separator
+            assert not plot_window._export_pyqtgraph_exporter(exporter)
+            assert target.read_bytes() == sentinel
+            assert len(prompts) == 1
+
+            assert plot_window._export_pyqtgraph_exporter(exporter)
+            assert len(prompts) == 2
+            with target.open(newline="", encoding="utf-8") as exported_file:
+                rows = list(csv.reader(
+                    exported_file, delimiter="\t" if format_name == "tsv" else ",",
+                ))
+            assert rows[0] == expected_header
+            assert len(rows) == len(expected_values) + 1
+            for actual, expected in zip(rows[1:], expected_values, strict=True):
+                assert len(actual) == len(expected)
+                for value, expected_value in zip(actual, expected, strict=True):
+                    if expected_value == "":
+                        assert value == ""
+                    else:
+                        assert float(value) == pytest.approx(
+                            expected_value, abs=5e-11, rel=0,
+                        )
+            assert not list(tmp_path.glob(f".{target.name}.*"))
+            if selected_path != target and typed_suffix:
+                assert selected_path.read_bytes() == b"different format must remain untouched"
+            assert database_artifact_state(database_path) == source_before
+    finally:
+        close_main_window(window)
+
+
 def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
     tmp_path,
     monkeypatch,

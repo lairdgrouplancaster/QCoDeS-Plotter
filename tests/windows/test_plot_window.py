@@ -1632,6 +1632,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         original = b"existing export sentinel"
                         target.write_bytes(original)
                         exporter = exporter_type.__new__(exporter_type)
+                        if exporter_type is CSVExporter:
+                            exporter.params = {"separator": "comma"}
                         staged_paths = []
 
                         def export(

@@ -158,8 +158,13 @@ def choose_export_path_with_suffixes(
     default_suffix: str,
     replace_title: str,
     file_description: str,
+    match_selected_filter: bool = False,
 ) -> ExportDestinationTransaction | None:
-    """Choose an export whose format may use one of several suffixes."""
+    """Choose and approve an export, optionally enforcing its selected format.
+
+    When matching the filter, replace a conflicting allowed suffix before
+    approval. An absent/unrecognized filter leaves an allowed suffix intact.
+    """
     suffixes = tuple(
         suffix.casefold() if suffix.startswith(".") else f".{suffix.casefold()}"
         for suffix in allowed_suffixes
@@ -189,12 +194,21 @@ def choose_export_path_with_suffixes(
         return None
 
     selected_suffix = os.path.splitext(filename)[1].casefold()
+    selected_match = re.search(r"\*\.([A-Za-z0-9]+)\b", selected_filter)
+    filtered_suffix = (
+        f".{selected_match.group(1).casefold()}"
+        if selected_match is not None else None
+    )
+    if match_selected_filter and filtered_suffix in suffixes:
+        if selected_suffix in suffixes and selected_suffix != filtered_suffix:
+            filename = f"{os.path.splitext(filename)[0]}{filtered_suffix}"
+            selected_suffix = filtered_suffix
+        elif selected_suffix not in suffixes:
+            selected_suffix = filtered_suffix
+            filename = f"{filename}{selected_suffix}"
     if selected_suffix not in suffixes:
-        selected_match = re.search(r"\*\.([A-Za-z0-9]+)\b", selected_filter)
-        if selected_match is not None:
-            filtered_suffix = f".{selected_match.group(1).casefold()}"
-            if filtered_suffix in suffixes:
-                selected_suffix = filtered_suffix
+        if filtered_suffix in suffixes:
+            selected_suffix = filtered_suffix
         if selected_suffix not in suffixes:
             selected_suffix = default_suffix
         filename = f"{filename}{selected_suffix}"
