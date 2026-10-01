@@ -5,6 +5,7 @@ and single parameter loading. See:
     qcodes.dataset.sqlite.queries
 for the original functions of similar names as well as typing.
 """
+from math import prod
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -72,6 +73,7 @@ def append_shaped_parameter_data_to_existing_arrays(
     else:
         shape = None
 
+    overflow_count = None
     # QCoDeS inserts shaped refreshes into existing arrays in place. Work on
     # private copies so a concurrent worker cannot mutate the shared cache
     # before qPlot's monotonic commit check.
@@ -100,6 +102,21 @@ def append_shaped_parameter_data_to_existing_arrays(
             private_data[name] = values.astype(dtype, order="C", copy=True)
         existing_data_1_tree = private_data
         check_cancelled()
+        acquired_before = write_status.get(meas_parameter) or 0
+        incoming = new_data_1_tree.get(meas_parameter)
+        acquired_after = acquired_before + (incoming.size if incoming is not None else 0)
+        if acquired_after > prod(shape):
+            # Retain the flattened fallback for scans exceeding their plan,
+            # but append to acquired samples, never to unused cache padding.
+            existing_data_1_tree = {
+                name: values.ravel()[:acquired_before]
+                for name, values in existing_data_1_tree.items()
+            }
+            new_data_1_tree = {
+                name: values.reshape(-1) for name, values in new_data_1_tree.items()
+            }
+            shape = None
+            overflow_count = acquired_after
 
     (merged_data[meas_parameter], updated_write_status[meas_parameter]) = (
         _merge_data(
@@ -110,6 +127,10 @@ def append_shaped_parameter_data_to_existing_arrays(
             meas_parameter=meas_parameter,
         )
     )
+    if overflow_count is not None:
+        # Unshaped QCoDeS appends reset this status; planned trees still need
+        # their acquired sample extent for subsequent reads and processing.
+        updated_write_status[meas_parameter] = overflow_count
     check_cancelled()
     return updated_write_status, merged_data
 

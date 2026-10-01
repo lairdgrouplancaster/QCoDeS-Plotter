@@ -18,7 +18,6 @@ from qplot.datahandling.qcodes_cache import (
     cache_database_path,
     cache_dataset_completed,
     cache_is_live,
-    cache_parameter_data,
     cache_rundescriber,
     cache_table_name,
     snapshot_cache_parameter_state,
@@ -414,18 +413,25 @@ class loader(QtCore.QRunnable):
 
                     self._check_cancelled()
                     data = self.cache_data[self.param.name]
+                    write_status = self.updated_write_status
 
                 else:
-                    data = cache_parameter_data(cache, self.param.name)
+                    # Capture the acquired extent with its arrays, including
+                    # cache-only processing after a run's final publication.
+                    write_status, _, cached_data = snapshot_cache_parameter_state(
+                        cache, self.param.name,
+                    )
+                    data = cached_data[self.param.name]
 
                 self._check_cancelled()
                 data = self._normalise_array_records(data)
                 depvarData = data[self.param.name]
+                acquired = self._acquired_sample_mask(depvarData, write_status)
 
                 # A QCoDeS array record adds a storage dimension, not an
                 # independent setpoint. Select the plot by declared axes.
                 if len(self.param.depends_on_) == 1:
-                    axis_data, axis_param = self.for_1d(data, ~np.isnan(depvarData))
+                    axis_data, axis_param = self.for_1d(data, acquired & ~np.isnan(depvarData))
 
                 # for shaped 2d plots
                 elif len(depvarData.shape) == 2:
@@ -435,12 +441,13 @@ class loader(QtCore.QRunnable):
                         dataGrid
                     ) = self.for_shaped_2d(
                         data,
-                        depvarData
+                        depvarData,
+                        acquired=acquired,
                         )
 
                 else:
                     #Remove nan values
-                    valid_rows = ~np.isnan(depvarData)
+                    valid_rows = acquired & ~np.isnan(depvarData)
 
                     # for unshaped 2d plots
                     (
@@ -546,6 +553,22 @@ class loader(QtCore.QRunnable):
 
         # Callback
         self._emit_finished(True)
+
+
+    def _acquired_sample_mask(self, values, write_status):
+        """Separate acquired samples from dtype-dependent planned padding."""
+        self._check_cancelled()
+        if self._parameter_shape() is None:
+            # Unshaped caches have no planned padding; their write status
+            # does not count all acquired samples.
+            acquired = np.ones(values.shape, dtype=bool)
+        else:
+            acquired = np.zeros(values.shape, dtype=bool)
+            count = write_status.get(self.param.name)
+            if count is not None:
+                acquired.ravel()[:count] = True
+        self._check_cancelled()
+        return acquired
 
 
     def _normalise_array_records(self, data):
@@ -2055,7 +2078,7 @@ class loader(QtCore.QRunnable):
         return axis_data, axis_param
         
     
-    def for_shaped_2d(self, data, depvarData):
+    def for_shaped_2d(self, data, depvarData, *, acquired=None):
         self._check_cancelled()
         axis_data = {}
         axis_param = {}
@@ -2067,6 +2090,10 @@ class loader(QtCore.QRunnable):
             getattr(self.param, "name", "measurement"),
         )
         depvarData = np.asarray(depvarData, dtype=float)
+        if acquired is not None:
+            # Plotting-only missing values preserve the planned shape and
+            # source dtypes. Never infer acquisition from zeros or completion.
+            depvarData = np.where(acquired, depvarData, np.nan)
         self._check_cancelled()
         
         # Find correct data for each axis
@@ -2081,6 +2108,10 @@ class loader(QtCore.QRunnable):
                 coordinate=True,
             )
             param_data = np.asarray(param_data, dtype=float)
+            if acquired is not None:
+                # Unwritten coordinates must not choose axis representatives
+                # or make a rectilinear acquired prefix appear serpentine.
+                param_data = np.where(acquired, param_data, np.nan)
             dimension = self._shaped_axis_dimension(name, param_data, depvarData)
             shaped_axes_are_rectilinear &= self._shaped_axis_is_rectilinear(
                 param_data,
