@@ -684,10 +684,11 @@ class PlotExportMixin(_PlotExportBase):
             if destination is None:
                 self.show_status("Plot export cancelled.", 3000)
                 return False
+            csv_separator = None
             if type(exporter) is CSVExporter:
                 # Resolve the delimiter from the exact, already-approved target
-                # for both PyQtGraph's line writer and qPlot's heatmap writer.
-                exporter.params["separator"] = (
+                # without changing the options in the reused export dialog.
+                csv_separator = (
                     "tab" if path.splitext(destination.filename)[1].casefold()
                     == ".tsv" else "comma"
                 )
@@ -695,11 +696,11 @@ class PlotExportMixin(_PlotExportBase):
             if type(exporter) is CSVExporter:
                 if getattr(self, "operation_kind", None) == "plot2d":
                     writer = lambda staging_path: self._write_heatmap_csv_stage(
-                        staging_path, exporter,
+                        staging_path, exporter, separator=csv_separator,
                     )
                 else:
                     writer = lambda staging_path: self._write_line_csv_stage(
-                        staging_path, exporter,
+                        staging_path, exporter, separator=csv_separator,
                     )
             saved = write_export_atomically(
                 destination,
@@ -727,6 +728,8 @@ class PlotExportMixin(_PlotExportBase):
             self,
             staging_path: str,
             exporter: CSVExporter,
+            *,
+            separator: str | None = None,
             ) -> bool:
         """Retain original line data with round-trip-safe numeric text.
 
@@ -734,13 +737,18 @@ class PlotExportMixin(_PlotExportBase):
         original (unmapped, non-downsampled) datasets, but never its positional
         decimal-place formatter. Python's float representation round-trips
         QCoDeS's binary64 numbers; integers are written without float coercion.
-        A fresh collector also keeps repeated/failed exports free of stale data.
+        Every attempt owns a fresh collector: copy only parameter settings,
+        never the dialog exporter's counter, headers or accumulated data. This
+        also isolates failures and leaves options intact for a retry or mode
+        switch. The earlier round-trip numeric serialization is unchanged.
         """
         if not isinstance(exporter.item, PlotItem):
             raise TypeError("Must have a PlotItem selected for CSV export.")
 
         collector = CSVExporter(exporter.item)
-        collector.params["columnMode"] = exporter.params["columnMode"]
+        collector.params.restoreState(exporter.params.saveState())
+        if separator is not None:
+            collector.params["separator"] = separator
         for item in exporter.item.items:
             if isinstance(item, ErrorBarItem):
                 collector._exportErrorBarItem(item)
@@ -748,7 +756,7 @@ class PlotExportMixin(_PlotExportBase):
                 collector._exportPlotDataItem(item)
 
         columns = [column for dataset in collector.data for column in dataset]
-        delimiter = "\t" if exporter.params["separator"] == "tab" else ","
+        delimiter = "\t" if collector.params["separator"] == "tab" else ","
         with open(staging_path, "w", encoding="utf-8", newline="") as csv_file:
             csv_writer = csv.writer(
                 csv_file, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL,
@@ -767,6 +775,8 @@ class PlotExportMixin(_PlotExportBase):
             self,
             staging_path: str,
             exporter: CSVExporter,
+            *,
+            separator: str | None = None,
             ) -> bool:
         """Write the canonical, currently plotted heatmap as long-form rows.
 
@@ -793,7 +803,9 @@ class PlotExportMixin(_PlotExportBase):
         if data_grid.size == 0:
             raise ValueError("The currently plotted heatmap is empty.")
 
-        delimiter = "\t" if exporter.params["separator"] == "tab" else ","
+        if separator is None:
+            separator = exporter.params["separator"]
+        delimiter = "\t" if separator == "tab" else ","
         column_names = self._heatmap_csv_column_names()
         rows_written = 0
         with open(staging_path, "w", encoding="utf-8", newline="") as csv_file:

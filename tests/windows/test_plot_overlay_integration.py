@@ -398,10 +398,10 @@ def test_secondary_axis_csv_failure_preserves_existing_export(
     errors = []
     monkeypatch.setattr(window, "show_error", lambda *error: errors.append(error))
 
-    def fail_after_serialization(staging_path, exporter):
+    def fail_after_serialization(staging_path, exporter, *, separator=None):
         staging_paths.append(staging_path)
         assert staging_path != str(target)
-        native_export(staging_path, exporter)
+        native_export(staging_path, exporter, separator=separator)
         raise RuntimeError("CSV writer failed after serialization")
 
     monkeypatch.setattr(window, "_write_line_csv_stage", fail_after_serialization)
