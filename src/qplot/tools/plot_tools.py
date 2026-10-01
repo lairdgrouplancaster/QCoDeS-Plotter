@@ -125,7 +125,8 @@ def differentiate(
     data_dict : dict{str : np.ndarry}
         The data array to operate on.
         This uses the dependant parameter data. (data_dict["y"] or data_dict["z"])
-        and an independant to find spacing.
+        and an independant to find spacing. Coordinates must be finite and
+        strictly increasing or decreasing in their supplied order.
 
     Returns
     -------
@@ -155,8 +156,16 @@ def differentiate(
         raise ValueError("Differentiation requires at least two axis coordinates.")
     if not np.all(np.isfinite(coordinates)):
         raise ValueError("Differentiation axis coordinates must be finite.")
-    if np.any(np.diff(coordinates) == 0):
+    spacing = np.diff(coordinates)
+    if np.any(spacing == 0):
         raise ValueError("Differentiation axis coordinates must not repeat.")
+    # Reversals can make gradient's three-point stencils singular. Keep the
+    # acquisition order: sorting or merging samples would erase hysteresis.
+    if not (np.all(spacing > 0) or np.all(spacing < 0)):
+        raise ValueError(
+            "Differentiation axis coordinates must be strictly increasing or "
+            "decreasing; reversing sweeps are not supported."
+        )
 
     _check_cancelled(cancelled_callback)
     new_data = np.gradient(data, coordinates, axis=axis_num)
