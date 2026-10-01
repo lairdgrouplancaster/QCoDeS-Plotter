@@ -1375,7 +1375,7 @@ class RunList(qtw.QTreeWidget):
                 )
 
             completion_metadata_changed = False
-            if status.get("read_setpoint_count") is not None:
+            if "read_setpoint_count" in status:
                 run.run_metadata["read_setpoint_count"] = status["read_setpoint_count"]
                 completion_metadata_changed = True
 
@@ -2059,6 +2059,15 @@ class moreInfo(qtw.QTabWidget):
         data_points = self._trusted_data_points_text(run_metadata)
         if data_points is not None:
             updates["Data points"] = data_points
+        elif any(
+            field in run_metadata
+            for field in ("read_setpoint_count", "setpoint_count")
+        ):
+            # An explicit unavailable count invalidates the previously shown
+            # value. A status-only update carries no count observation.
+            row = self._overview_row("Data points")
+            if row is not None:
+                self.overview.removeRow(row)
         if bool(is_completed):
             updates["Completed"] = self._run_timestamp(
                 None,

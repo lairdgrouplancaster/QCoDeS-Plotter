@@ -2040,20 +2040,10 @@ class TrustedMetadataQueryAdapter:
         # entry snapshot would otherwise regress fresher run-table fields when
         # the outer operation resumes.
         latest_metadata = self._require_cached_run(run_id)
-        retained_observed_fields = (
-            {
-                name: latest_metadata[name]
-                for name in (*_OBSERVED_SHAPE_FIELDS, "read_setpoint_count")
-                if name in latest_metadata
-            }
-            if regular_observation is None
-            and latest_metadata.get("setpoint_shape_source") == "observed"
-            else {}
-        )
         read_setpoint_count = max((count for _, count, _ in observations), default=None)
         setpoint_shape: tuple[int, ...] | None = None
         setpoint_count: int | None = None
-        if not latest_metadata.get("point_shape") and observations:
+        if latest_metadata.get("setpoint_shape_source") != "planned" and observations:
             dependency_names = {names for names, _, _ in observations}
             shapes = [shape for _, _, shape in observations]
             if (
@@ -2082,12 +2072,11 @@ class TrustedMetadataQueryAdapter:
             storage_bytes=storage_bytes,
             storage_bytes_estimated=True,
         )
-        observed.update(retained_observed_fields)
-        # Keep the trusted expensive/derived field contract stable when a
-        # partial run has no structurally proven logical count.  ``None`` is
-        # the honest bounded result; absence would make identical observations
-        # depend on whether an older enrichment happened to populate the key.
-        observed.setdefault("read_setpoint_count", None)
+        # No current proof means an unavailable logical count, including when
+        # a previously regular prefix has grown irregular or verification is
+        # still pending. Publish the explicit None above and the regenerated
+        # basic shape fields; retaining an older proof would misdescribe the
+        # newly observed watermark. Planned shapes remain separate evidence.
         self._runs[run_id] = _bounded_public_run_fields(observed)
         return _bounded_run_record(
             run_id,

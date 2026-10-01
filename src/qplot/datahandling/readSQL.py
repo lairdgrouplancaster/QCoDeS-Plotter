@@ -1323,6 +1323,9 @@ def materialize_run_basic_fields(metadata):
     return materialized
 
 
+_OBSERVATION_UNSET = object()
+
+
 def materialize_run_observation(
     metadata,
     *,
@@ -1331,13 +1334,15 @@ def materialize_run_observation(
     setpoint_count=None,
     storage_bytes=None,
     storage_bytes_estimated=None,
-    read_setpoint_count=None,
+    read_setpoint_count=_OBSERVATION_UNSET,
 ):
     """Return shared detail fields from already-bounded observations.
 
     All database work happens before this function.  The snapshot path can
     continue collecting observations with cursors, while the trusted adapter
     supplies the same values from fixed supervisor queries.
+    An omitted acquired count retains the prior observation; explicit ``None``
+    clears a count whose structural evidence is no longer available.
     """
     materialized = materialize_run_basic_fields(metadata)
     if result_count is not None:
@@ -1365,8 +1370,10 @@ def materialize_run_observation(
         materialized["expected_results"] = None
         materialized["expected_results_source"] = None
 
-    if read_setpoint_count is not None:
-        materialized["read_setpoint_count"] = int(read_setpoint_count)
+    if read_setpoint_count is not _OBSERVATION_UNSET:
+        materialized["read_setpoint_count"] = (
+            int(read_setpoint_count) if read_setpoint_count is not None else None
+        )
 
     if storage_bytes is not None or storage_bytes_estimated is not None:
         materialized["storage_bytes"] = (
