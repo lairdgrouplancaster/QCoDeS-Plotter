@@ -85,6 +85,263 @@ def run_worker(worker):
     assert finished == [True]
 
 
+@contextmanager
+def multidimensional_heatmap_dataset(tmp_path, *, widths=(2, 3), shaped=False, missing=False):
+    path = tmp_path / "multidimensional_heatmap.db"
+    initialise_or_create_database_at(str(path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("multidimensional", sample_name="test")
+    measurement = Measurement(exp=experiment)
+    measurement.register_custom_parameter("slow", paramtype="array")
+    measurement.register_custom_parameter("fast", paramtype="array")
+    measurement.register_custom_parameter(
+        "signal", paramtype="array", setpoints=("slow", "fast"),
+    )
+    if shaped:
+        measurement.set_shapes({"signal": (4, max(widths))})
+    try:
+        with measurement.run() as datasaver:
+            for offset, width in zip((0, 2), widths, strict=True):
+                fast = np.tile(np.arange(width, dtype=float), (2, 1))
+                slow = np.repeat(
+                    np.arange(offset, offset + 2, dtype=float)[:, None], width, axis=1,
+                )
+                signal = 10 * slow + fast
+                if missing:
+                    if offset == 0:
+                        signal[0, 1] = np.nan
+                    else:
+                        fast[0, 1] = np.nan
+                # Different memory layouts must still use the same logical order.
+                datasaver.add_result(
+                    ("slow", slow), ("fast", np.asfortranarray(fast)),
+                    ("signal", signal),
+                )
+            run_id = datasaver.dataset.run_id
+    finally:
+        datasaver.dataset.conn.close()
+        experiment.conn.close()
+
+    before = path.read_bytes()
+    before_mtime = path.stat().st_mtime_ns
+    dataset = load_by_id_read_only(run_id, str(path))
+    try:
+        yield dataset
+    finally:
+        dataset.conn.close()
+        assert path.read_bytes() == before
+        assert path.stat().st_mtime_ns == before_mtime
+        assert not path.with_name(path.name + "-wal").exists()
+        assert not path.with_name(path.name + "-journal").exists()
+
+
+@pytest.mark.parametrize("swapped", [False, True])
+@pytest.mark.parametrize("shaped", [False, True])
+@pytest.mark.parametrize("widths", [(2, 3), (3, 3)], ids=["varying", "equal"])
+def test_normal_multidimensional_array_heatmap(tmp_path, swapped, shaped, widths):
+    with multidimensional_heatmap_dataset(tmp_path, widths=widths, shaped=shaped) as dataset:
+        worker = make_worker(dataset)
+        worker.axes_dict = {
+            "x": "slow" if swapped else "fast",
+            "y": "fast" if swapped else "slow", "z": "signal",
+        }
+        run_worker(worker)
+        expected = np.array([[0, 1, 2], [10, 11, 12], [20, 21, 22], [30, 31, 32]], dtype=float)
+        if widths[0] == 2:
+            expected[:2, 2] = np.nan
+        np.testing.assert_array_equal(worker.axis_data["x"], [0, 1, 2, 3] if swapped else [0, 1, 2])
+        np.testing.assert_array_equal(worker.axis_data["y"], [0, 1, 2] if swapped else [0, 1, 2, 3])
+        np.testing.assert_array_equal(worker.dataGrid, expected.T if swapped else expected)
+        assert np.count_nonzero(np.isfinite(worker.dataGrid)) == 2 * sum(widths)
+        assert worker.loaded_from_sql_heatmap == (widths[0] != widths[1])
+
+
+@pytest.mark.parametrize("swapped", [False, True])
+def test_normal_multidimensional_heatmap_preserves_missing_pairs(tmp_path, swapped):
+    with multidimensional_heatmap_dataset(tmp_path, missing=True) as dataset:
+        worker = make_worker(dataset)
+        if swapped:
+            worker.axes_dict = {"x": "slow", "y": "fast"}
+        run_worker(worker)
+        expected = np.array([
+            [0, np.nan, np.nan], [10, 11, np.nan],
+            [20, np.nan, 22], [30, 31, 32],
+        ])
+        np.testing.assert_array_equal(worker.axis_data["x"], [0, 1, 2, 3] if swapped else [0, 1, 2])
+        np.testing.assert_array_equal(worker.axis_data["y"], [0, 1, 2] if swapped else [0, 1, 2, 3])
+        np.testing.assert_array_equal(worker.dataGrid, expected.T if swapped else expected)
+        assert worker.loaded_point_count == 8
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_normal_multidimensional_decoder_is_bounded_readonly_and_cancellable(
+    tmp_path, monkeypatch, cancel,
+):
+    monkeypatch.setattr(worker_module, "CANCELLATION_CHUNK_SIZE", 2)
+    with multidimensional_heatmap_dataset(tmp_path) as dataset:
+        worker = make_worker(dataset)
+        connect = worker_module.sqlite_read_only_connection
+        chunks = worker._arrays_from_values
+        decoded = []
+        blobs = []
+
+        class Blob:
+            def __init__(self, blob):
+                self.blob = blob
+                blobs.append(blob)
+
+            def __getattr__(self, name):
+                return getattr(self.blob, name)
+
+            def __len__(self):
+                return len(self.blob)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.blob.close()
+
+            def read(self, size=-1):
+                # NPY headers are bounded separately from numeric slices.
+                assert 0 <= size <= 128
+                return self.blob.read(size)
+
+        class Connection:
+            def __init__(self, *args, **kwargs):
+                self.conn = connect(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+
+            def blobopen(self, *args, **kwargs):
+                assert kwargs["readonly"] is True
+                return Blob(self.conn.blobopen(*args, **kwargs))
+
+        def record_chunk(x, y, z):
+            result = chunks(x, y, z)
+            if np.asarray(z).size <= 2:
+                decoded.append(result)
+                if cancel:
+                    worker.cancel()
+            return result
+
+        monkeypatch.setattr(worker_module, "sqlite_read_only_connection", Connection)
+        monkeypatch.setattr(worker, "_arrays_from_values", record_chunk)
+        monkeypatch.setattr(worker_module, "load_param_data_from_db",
+                            lambda *args, **kwargs: pytest.fail("QCoDeS array decoder used"))
+        finished, errors = [], []
+        worker.emitter.finished.connect(finished.append)
+        worker.emitter.errorOccurred.connect(errors.append)
+        worker.run()
+        assert errors == []
+        assert finished == [not cancel]
+        assert worker._sql_connection is None
+        assert not hasattr(worker, "cache_data")
+        assert blobs
+        for blob in blobs:
+            with pytest.raises(Exception, match="closed"):
+                blob.read(1)
+        if cancel:
+            assert len(decoded) == 1
+            assert not hasattr(worker, "dataGrid")
+        else:
+            assert len(decoded) == 5
+            x, y, z = (np.concatenate([chunk[axis] for chunk in decoded])
+                       for axis in range(3))
+            np.testing.assert_array_equal(x, [0, 1, 0, 1, 0, 1, 2, 0, 1, 2])
+            np.testing.assert_array_equal(y, [0, 0, 1, 1, 2, 2, 2, 3, 3, 3])
+            np.testing.assert_array_equal(z, [0, 1, 10, 11, 20, 21, 22, 30, 31, 32])
+
+
+def test_normal_multidimensional_heatmap_keeps_full_resolution_operations(tmp_path):
+    with multidimensional_heatmap_dataset(tmp_path) as dataset:
+        seen = []
+
+        def add_one(data):
+            seen.append(data["z"].copy())
+            return {"z": data["z"] + 1}
+
+        # A small display limit must be applied only after the operation.
+        worker = make_worker(dataset, operations=[OperationCall("Add one", add_one)],
+                             max_heatmap_grid_cells=4, max_heatmap_grid_side=2)
+        run_worker(worker)
+        expected = np.array([[0, 1, np.nan], [10, 11, np.nan], [20, 21, 22], [30, 31, 32]])
+        np.testing.assert_array_equal(seen[0], expected)
+        np.testing.assert_array_equal(worker.dataGrid, expected + 1)
+
+
+@pytest.mark.parametrize("limit", [9, 10], ids=["sample-limit", "sparse-grid-limit"])
+def test_normal_multidimensional_operations_respect_resolution_limit(tmp_path, limit):
+    with multidimensional_heatmap_dataset(tmp_path) as dataset:
+        worker = make_worker(
+            dataset, max_full_heatmap_points=limit,
+            operations=[OperationCall("Must not run", lambda data: pytest.fail("Operation ran"))],
+        )
+        finished, errors = [], []
+        worker.emitter.finished.connect(finished.append)
+        worker.emitter.errorOccurred.connect(errors.append)
+        worker.run()
+        assert finished == [False]
+        assert len(errors) == 1
+        assert "full-resolution operation limit" in str(errors[0])
+        assert worker._sql_connection is None
+        assert not hasattr(worker, "dataGrid")
+
+
+@pytest.mark.parametrize("operations", [False, True])
+def test_multidimensional_decoder_bounds_growth_since_preflight(tmp_path, monkeypatch, operations):
+    with multidimensional_heatmap_dataset(tmp_path) as dataset:
+        worker = make_worker(
+            dataset, max_full_heatmap_points=8,
+            operations=[OperationCall("Must not run", lambda data: pytest.fail("Operation ran"))]
+            if operations else [],
+        )
+        count = worker._large_heatmap_point_count
+
+        def earlier_count():
+            count()  # Inspect the real headers and select the compatibility decoder.
+            worker.total_point_count_estimate = 6
+            return 6  # Simulate more records becoming visible after this preflight.
+
+        monkeypatch.setattr(worker, "_large_heatmap_point_count", earlier_count)
+        finished, errors = [], []
+        worker.emitter.finished.connect(finished.append)
+        worker.emitter.errorOccurred.connect(errors.append)
+        worker.run()
+        assert finished == [not operations]
+        assert worker._sql_connection is None
+        if operations:
+            assert len(errors) == 1
+            assert "full-resolution operation limit" in str(errors[0])
+            assert not hasattr(worker, "dataGrid")
+        else:
+            assert errors == []
+            assert worker.loaded_from_sql_heatmap
+            assert worker.loaded_point_count == 10
+            np.testing.assert_array_equal(worker.dataGrid, [
+                [0, 1, np.nan], [10, 11, np.nan], [20, 21, 22], [30, 31, 32],
+            ])
+
+
+def test_normal_loader_does_not_fallback_for_unrelated_decode_errors(tmp_path, monkeypatch):
+    with multidimensional_heatmap_dataset(tmp_path, widths=(3, 3)) as dataset:
+        worker = make_worker(dataset)
+        failure = ValueError("Unrelated decoding failure")
+
+        def fail(*args, **kwargs):
+            raise failure
+
+        monkeypatch.setattr(worker_module, "load_param_data_from_db", fail)
+        finished, errors = [], []
+        worker.emitter.finished.connect(finished.append)
+        worker.emitter.errorOccurred.connect(errors.append)
+        worker.run()
+        assert finished == [False]
+        assert errors == [failure]
+        assert not worker.loaded_from_sql_heatmap
+        assert worker._sql_connection is None
+
+
 def paired_shaped_unshaped_results(
     tmp_path, slow_order, fast_order, signal_value, operation,
 ):

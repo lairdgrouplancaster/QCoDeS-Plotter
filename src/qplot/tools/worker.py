@@ -655,7 +655,10 @@ class loader(QtCore.QRunnable):
         if setpoint_count is None:
             return False
 
-        return self._requires_bounded_heatmap(setpoint_count)
+        requires_bounded_load = self._requires_bounded_heatmap(setpoint_count)
+        return requires_bounded_load or getattr(
+            self, "_variable_multidimensional_array_records", False,
+        )
 
 
     def _requires_bounded_heatmap(self, point_count):
@@ -678,13 +681,18 @@ class loader(QtCore.QRunnable):
 
 
     def _large_heatmap_point_count(self):
+        self._variable_multidimensional_array_records = False
         source_grid_shape = self._heatmap_source_grid_shape_from_metadata()
+        planned_count = 0
         if source_grid_shape is not None:
             source_grid_rows, source_grid_columns = source_grid_shape
-            setpoint_count = int(source_grid_rows * source_grid_columns)
+            planned_count = int(source_grid_rows * source_grid_columns)
             self.heatmap_source_grid_shape = source_grid_shape
-            self.total_point_count_estimate = setpoint_count
-            return setpoint_count
+            # Small planned shapes still need array-header inspection: the
+            # stored record shapes need not be identical to the scan shape.
+            if planned_count > self.max_full_heatmap_points or not self._has_array_heatmap_columns():
+                self.total_point_count_estimate = planned_count
+                return planned_count
 
         conn = sqlite_read_only_connection(
             cache_database_path(self.cache),
@@ -697,11 +705,23 @@ class loader(QtCore.QRunnable):
                 # A storage row can contain millions of samples. Inspect
                 # bounded NPY headers, stopping as soon as the limit is crossed.
                 setpoint_count = 0
+                first_shapes = None
                 with closing(self._array_heatmap_records(conn)) as records:
-                    for _values, size in records:
+                    for values, size in records:
+                        shapes = tuple(value.shape if isinstance(value, _HeatmapArrayReader)
+                                       else () for value in values)
+                        if first_shapes is None:
+                            first_shapes = shapes
+                        elif any(shape != first and max(len(shape), len(first)) > 1
+                                 for first, shape in zip(first_shapes, shapes, strict=True)):
+                            # QCoDeS' np.array(records, dtype=object) retry can
+                            # also broadcast/fail for ragged multidimensional
+                            # records, before our normaliser ever receives data.
+                            self._variable_multidimensional_array_records = True
                         setpoint_count += size
                         if setpoint_count > self.max_full_heatmap_points:
                             break
+                setpoint_count = max(planned_count, setpoint_count)
             else:
                 setpoint_count = self._selected_parameter_row_count(conn)
         finally:
@@ -745,6 +765,7 @@ class loader(QtCore.QRunnable):
             **self._read_only_open_kwargs(),
         )
         self._set_sql_connection(conn)
+        full_arrays = None
         try:
             self._check_cancelled()
             rowid_min, rowid_max = self._rowid_span(conn)
@@ -752,19 +773,33 @@ class loader(QtCore.QRunnable):
             self.heatmap_source_grid_shape = (
                 self._heatmap_source_grid_shape_from_metadata()
                 )
-            x_data, y_data, z_data = self._read_heatmap_arrays(
-                conn,
-                rowid_min,
-                rowid_max,
-                )
+            if (
+                getattr(self, "_variable_multidimensional_array_records", False)
+                and self.total_point_count_estimate <= self.max_full_heatmap_points
+            ):
+                full_arrays = self._read_full_array_heatmap_arrays(conn)
+            x_data, y_data, z_data = (
+                full_arrays if full_arrays is not None
+                else self._read_heatmap_arrays(conn, rowid_min, rowid_max)
+            )
         finally:
             self._close_sql_connection(conn)
 
         self._check_cancelled()
-        x_axis, y_axis, data_grid = self._heatmap_grid_from_arrays(
-            x_data,
-            y_data,
-            z_data,
+        if full_arrays is not None:
+            # Keep normal full-resolution pivot/operation semantics for the
+            # compatibility decoder, including sparse-grid size checks.
+            data = dict(zip(
+                (self.axes_dict["x"], self.axes_dict["y"], self.param.name),
+                full_arrays, strict=True,
+            ))
+            axes, _params, data_grid = self.for_unshaped_2d(
+                data, np.ones(z_data.size, dtype=bool), z_data,
+            )
+            x_axis, y_axis = axes["x"], axes["y"]
+        else:
+            x_axis, y_axis, data_grid = self._heatmap_grid_from_arrays(
+                x_data, y_data, z_data,
             )
         self.axis_data = {
             "x": x_axis,
@@ -782,6 +817,29 @@ class loader(QtCore.QRunnable):
         # The direct SQL path deliberately does not populate QCoDeS' full
         # in-memory cache. Keep future refreshes on the database path.
         self.read_data = False
+
+
+    def _read_full_array_heatmap_arrays(self, conn):
+        """Decode compatible small records in order, with bounded BLOB reads."""
+        buffered = []
+        source_count = 0
+        with closing(self._array_heatmap_chunks(conn)) as chunks:
+            for size, arrays in chunks:
+                self._check_cancelled()
+                source_count += size
+                # A live acquisition may grow after the header preflight.
+                # Switch to bounded rendering rather than grow the buffer;
+                # operations instead raise their usual resolution-limit error.
+                if self._requires_bounded_heatmap(source_count):
+                    return None
+                buffered.append(arrays)
+        self._check_cancelled()
+        self.total_point_count_estimate = source_count
+        return tuple(
+            np.concatenate([arrays[axis] for arrays in buffered])
+            if buffered else np.array([], dtype=float)
+            for axis in range(3)
+        )
 
 
     def _rowid_span(self, conn):
