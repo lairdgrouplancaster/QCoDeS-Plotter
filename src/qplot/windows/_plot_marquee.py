@@ -63,7 +63,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         self.marquee_highlight.setZValue(18)
         self.marquee_highlight.hide()
         self.marquee_highlight.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
-        self.plot.addItem(self.marquee_highlight)
+        self._add_plot_overlay(self.marquee_highlight)
 
         self.marquee_outline = qtw.QGraphicsRectItem()
         pen = QtGui.QPen(QtGui.QColor(65, 65, 65, 220))
@@ -75,7 +75,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         self.marquee_outline.setZValue(19)
         self.marquee_outline.hide()
         self.marquee_outline.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
-        self.plot.addItem(self.marquee_outline)
+        self._add_plot_overlay(self.marquee_outline)
 
         self.marquee_handles = pg.ScatterPlotItem(
             symbol="s",
@@ -86,7 +86,15 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         self.marquee_handles.setZValue(20)
         self.marquee_handles.hide()
         self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
-        self.plot.addItem(self.marquee_handles)
+        self._add_plot_overlay(self.marquee_handles)
+
+    def _add_plot_overlay(self, item: Any, viewbox: Any = None) -> None:
+        """Attach decorations without registering plot data or affecting bounds."""
+
+        viewbox = viewbox if viewbox is not None else self._marquee_viewbox()
+        item._qplot_ui_overlay = True
+        viewbox.addItem(item, ignoreBounds=True)
+        self.__dict__.setdefault("_plot_overlay_viewboxes", {})[id(item)] = viewbox
 
     def _marquee_viewbox(self) -> Any:
         """Return the coordinate owner for marquee graphics and navigation."""

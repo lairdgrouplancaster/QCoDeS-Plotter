@@ -97,7 +97,7 @@ class plot2d(
         self.hover_pixel_outline.setBrush(QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush))
         self.hover_pixel_outline.setZValue(10)
         self.hover_pixel_outline.hide()
-        self.plot.addItem(self.hover_pixel_outline)
+        self._add_plot_overlay(self.hover_pixel_outline)
         self._init_heatmap_layers()
         
         # Wait for loader to finish to enure needed data is collected.

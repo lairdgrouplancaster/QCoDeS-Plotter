@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         def formatNum(num: float, sf: int = 3) -> str: ...
 
         def _set_cursor_index_label(self, text: str) -> None: ...
+        def _cursor_1d_x_data(self) -> Any: ...
 else:
     class _Plot1DSnapBase:
         pass
@@ -137,7 +138,12 @@ def _line_is_snap_visible(line: object) -> bool:
 
 def _line_snap_data(line: object | None) -> _LineData | None:
     """
-    Return line data when the item is usable for snap selection.
+    Return full trace samples with aligned physical and view coordinates.
+
+    Downsampling, clipping and dynamic range limiting only change rendering.
+    Neither display positions nor peak/mean aggregates identify raw samples.
+    Apply native processing before log mapping, keeping the resulting arrays
+    aligned for snapping and selection statistics.
 
     """
     if line is None or not _line_is_snap_visible(line):
@@ -155,6 +161,32 @@ def _line_snap_data(line: object | None) -> _LineData | None:
     raw_data = get_original() if callable(get_original) else view_data
     if raw_data is None or raw_data[0] is None or raw_data[1] is None:
         raw_data = view_data
+    if callable(get_original):
+        opts = getattr(line, "opts", {})
+        processing = {
+            key: opts.get(key, False)
+            for key in ("subtractMeanMode", "fftMode", "derivativeMode", "phasemapMode")
+        }
+        if any(processing.values()):
+            # Use PyQtGraph's public processing API without display reduction.
+            analysis_line = pg.PlotDataItem(
+                x=raw_data[0], y=raw_data[1], **processing,
+            )
+            raw_data = analysis_line.getData()
+            if raw_data[0] is None or raw_data[1] is None:
+                return None
+            if processing["fftMode"] and opts.get("logMode", (False, False))[0]:
+                raw_data = (raw_data[0][1:], raw_data[1][1:])
+        view_data = tuple(np.asarray(values, dtype=float) for values in raw_data)
+        log_mode = opts.get("logMode", (False, False))
+        mapped = []
+        for values, logarithmic in zip(view_data, log_mode, strict=True):
+            if logarithmic:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    values = np.log10(values)
+                values[~np.isfinite(values)] = np.nan
+            mapped.append(values)
+        view_data = tuple(mapped)
     return _LineData(
         x_view=view_data[0],
         y_view=view_data[1],
@@ -176,6 +208,15 @@ def _scene_distance_squared(
 
 class Plot1DSnapMixin(_Plot1DSnapBase):
     """Snap-to-trace cursor readout for 1D plot windows."""
+
+    def _cursor_1d_x_data(self):
+        """Keep free-cursor indices consistent with full trace snap indices."""
+
+        line = self.__dict__.get("line")
+        if line is not None:
+            data = _line_snap_data(line)
+            return data.x_view if data is not None else None
+        return super()._cursor_1d_x_data()
 
     def initLabels(self):
         """
@@ -449,7 +490,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             raw_x_data=None,
             raw_y_data=None,
             ):
-        """Return the nearest display sample with its aligned physical values."""
+        """Return the nearest full trace sample with aligned physical values."""
 
         x_data = np.asarray(x_data, dtype=float)
         y_data = np.asarray(y_data, dtype=float)
@@ -548,7 +589,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
         if self._snap_marker_view is not viewbox:
             self._hide_snap_marker()
-            viewbox.addItem(self.snap_marker)
+            viewbox.addItem(self.snap_marker, ignoreBounds=True)
             self._snap_marker_view = viewbox
 
         self.snap_marker.setData([x_value], [y_value])

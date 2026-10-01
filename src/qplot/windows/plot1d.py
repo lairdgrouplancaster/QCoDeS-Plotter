@@ -6,7 +6,7 @@ from PyQt6 import (
     QtCore,
 )
 
-from ._plot1d_snap import Plot1DSnapMixin
+from ._plot1d_snap import Plot1DSnapMixin, _line_snap_data
 from ._plot1d_traces import Plot1DTraceMixin
 from ._plotWin import plotWidget
 
@@ -85,15 +85,15 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
 
     def _marquee_x_boundaries(self) -> npt.NDArray[np.float64] | None:
         """
-        Return X coordinates halfway between visible 1d sample points.
+        Return X coordinates halfway between full trace sample points.
 
         """
         x_data = None
         line = self.__dict__.get("line")
-        if line is not None and hasattr(line, "getData"):
-            data = line.getData()
+        if line is not None:
+            data = _line_snap_data(line)
             if data is not None:
-                x_data = data[0]
+                x_data = data.x_view
 
         if x_data is None:
             x_data = self.__dict__.get("axis_data", {}).get("x")
@@ -135,15 +135,11 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
             return None
 
         line = self.__dict__.get("line")
-        if line is not None and hasattr(line, "getData"):
-            view_data = line.getData()
-            if view_data is not None:
-                x_data, y_data = view_data
-            else:
-                x_data, y_data = None, None
-            get_original = getattr(line, "getOriginalDataset", None)
-            raw_data = get_original() if callable(get_original) else view_data
-            raw_y_data = raw_data[1] if raw_data is not None else None
+        if line is not None:
+            data = _line_snap_data(line)
+            if data is None:
+                return None
+            x_data, y_data, raw_y_data = data.x_view, data.y_view, data.y_raw
         else:
             axis_data = self.__dict__.get("axis_data", {})
             x_data = axis_data.get("x")

@@ -1361,6 +1361,14 @@ class Plot2DLayerMixin:
 
         if target is None:
             return
+        if getattr(item, "_qplot_ui_overlay", False):
+            overlays = self.__dict__.get("_plot_overlay_viewboxes", {})
+            current = overlays.get(id(item))
+            if current is not target:
+                if current is not None:
+                    current.removeItem(item)
+                self._add_plot_overlay(item, target)
+            return
         tracked = self.__dict__.setdefault("_heatmap_renderer_viewboxes", {})
         get_viewbox = getattr(item, "getViewBox", None)
         current = get_viewbox() if callable(get_viewbox) else None
