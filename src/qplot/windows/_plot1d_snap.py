@@ -527,22 +527,27 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         y_values = y_data[finite]
         raw_x_values = raw_x_data[finite]
         raw_y_values = raw_y_data[finite]
-        origin = viewbox.mapViewToScene(QtCore.QPointF(0.0, 0.0))
-        x_basis = viewbox.mapViewToScene(QtCore.QPointF(1.0, 0.0))
-        y_basis = viewbox.mapViewToScene(QtCore.QPointF(0.0, 1.0))
-        scene_x = (
-            origin.x()
-            + x_values * (x_basis.x() - origin.x())
-            + y_values * (y_basis.x() - origin.x())
+        # Read the affine coefficients directly: subtracting mapped unit
+        # points loses precision when a narrow sweep is far from zero.
+        # childTransform also updates the matrix after a range/geometry change.
+        transform = viewbox.childTransform() * viewbox.sceneTransform()
+        origin = viewbox.mapSceneToView(scene_pos)
+        scene_origin = viewbox.mapViewToScene(origin)
+        x_offsets = x_values - origin.x()
+        y_offsets = y_values - origin.y()
+        # Work near the pointer so neither the large absolute data coordinates
+        # nor the transform's large translation enter the vectorized mapping.
+        scene_dx = (
+            (scene_origin.x() - scene_pos.x())
+            + x_offsets * transform.m11()
+            + y_offsets * transform.m21()
             )
-        scene_y = (
-            origin.y()
-            + x_values * (x_basis.y() - origin.y())
-            + y_values * (y_basis.y() - origin.y())
+        scene_dy = (
+            (scene_origin.y() - scene_pos.y())
+            + x_offsets * transform.m12()
+            + y_offsets * transform.m22()
             )
-        distances = np.square(scene_x - scene_pos.x()) + np.square(
-            scene_y - scene_pos.y()
-            )
+        distances = np.square(scene_dx) + np.square(scene_dy)
         index = int(np.argmin(distances))
         sample = _SnapTraceSample(
             x_value=float(raw_x_values[index]),
