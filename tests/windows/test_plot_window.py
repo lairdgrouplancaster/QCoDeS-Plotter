@@ -3074,6 +3074,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 plotWidget._install_axis_scale_viewbox_range_handlers
             )
             _axis_scale_range_changed = plotWidget._axis_scale_range_changed
+            _refresh_axis_scale_visible_auto = plotWidget._refresh_axis_scale_visible_auto
             force_all_axes_autoscale = plotWidget.force_all_axes_autoscale
             _menu_control_widget = plotWidget._menu_control_widget
             _connect_mouse_mode_menu_to_preferences = (

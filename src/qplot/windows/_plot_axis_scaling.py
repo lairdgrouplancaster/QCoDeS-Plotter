@@ -240,12 +240,71 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             installed.add(key)
 
     def _axis_scale_range_changed(self, axis: _AxisName) -> None:
-        """Reflect wheel, drag, and linked-view changes in an open dialog."""
+        """Synchronize controls and refresh Auto axes using this visible range."""
 
         if self.__dict__.get("_axis_scale_programmatic_change_depth", 0) == 0:
             self.__dict__.get("_axis_scale_custom_auto_axes", set()).discard(axis)
         if axis in self.__dict__.get("_axis_scale_controls", {}):
             self._sync_axis_scale_controls(axis)
+        if (
+                self.__dict__.get("_axis_scale_custom_auto_axes")
+                and not self.__dict__.get("_axis_scale_visible_refresh_active", False)
+                ):
+            self.__dict__.setdefault("_axis_scale_changed_axes", set()).add(axis)
+            timer = self.__dict__.get("_axis_scale_visible_refresh_timer")
+            if timer is None:
+                timer = QtCore.QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._refresh_axis_scale_visible_auto)
+                self._axis_scale_visible_refresh_timer = timer
+            # Linked axis-pair ViewBoxes may receive the same signal after us.
+            # Read their final ranges once the current signal delivery finishes.
+            timer.start(0)
+
+    def _refresh_axis_scale_visible_auto(self) -> None:
+        """Apply one bounded refresh of dependent semantic axes after a change."""
+
+        changed_axes = self.__dict__.pop("_axis_scale_changed_axes", set())
+        limits_by_axis: dict[_AxisName, tuple[float, float]] = {}
+        for axis, _label, _side in _AXIS_SPECS:
+            if axis not in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
+                continue
+            number = self._axis_scale_axis_number(axis)
+            state = self._axis_scale_viewbox(axis).getState(copy=False)
+            if not state["autoVisibleOnly"][number]:
+                continue
+            for bounds_viewbox, _items in self._axis_scale_bound_item_groups(axis):
+                # The containing ViewBox identifies the perpendicular axis of
+                # these assigned items, independently of the tab's owner.
+                if number == 0:
+                    perpendicular: _AxisName = (
+                        "y2" if bounds_viewbox in (
+                            self.__dict__.get("right_vb"),
+                            self.__dict__.get("top_right_vb"),
+                        ) else "y"
+                    )
+                else:
+                    perpendicular = (
+                        "x2" if bounds_viewbox in (
+                            self.__dict__.get("top_vb"),
+                            self.__dict__.get("top_right_vb"),
+                        ) else "x"
+                    )
+                if perpendicular in changed_axes:
+                    limits = self._axis_scale_auto_limits(axis)
+                    if limits is not None:
+                        limits_by_axis[axis] = limits
+                    break
+
+        # Calculate every range before applying any of them. Mutually dependent
+        # axes then use the same visible region, without chasing each other's
+        # padding or auto-pan updates across successive event-loop turns.
+        self._axis_scale_visible_refresh_active = True
+        try:
+            for axis, limits in limits_by_axis.items():
+                self._apply_axis_scale_filtered_auto(axis, limits=limits)
+        finally:
+            self._axis_scale_visible_refresh_active = False
 
     def force_all_axes_autoscale(self) -> None:
         """Return every active plot axis to automatic scaling mode."""
@@ -926,10 +985,16 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             )
         )
 
-    def _apply_axis_scale_filtered_auto(self, axis: _AxisName) -> None:
+    def _apply_axis_scale_filtered_auto(
+            self,
+            axis: _AxisName,
+            *,
+            limits: tuple[float, float] | None = None,
+            ) -> None:
         """Apply an item-filtered auto range while retaining Auto mode in the UI."""
 
-        limits = self._axis_scale_auto_limits(axis)
+        if limits is None:
+            limits = self._axis_scale_auto_limits(axis)
         if limits is None:
             return
         viewbox = self._axis_scale_viewbox(axis)
