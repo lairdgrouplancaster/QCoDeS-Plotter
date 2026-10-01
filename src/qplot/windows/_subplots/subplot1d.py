@@ -379,7 +379,7 @@ class custom_viewbox(pg.ViewBox):
                 return False
 
             owner.begin_marquee_drag(
-                self.mapSceneToView(ev.buttonDownScenePos()),
+                owner._marquee_viewbox().mapSceneToView(ev.buttonDownScenePos()),
                 mode,
                 )
 
@@ -388,7 +388,7 @@ class custom_viewbox(pg.ViewBox):
 
         self._update_marquee_cursor(ev.scenePos(), ev.modifiers())
         owner.drag_marquee_to(
-            self.mapSceneToView(ev.scenePos()),
+            owner._marquee_viewbox().mapSceneToView(ev.scenePos()),
             ev.modifiers(),
             )
         if ev.isFinish():

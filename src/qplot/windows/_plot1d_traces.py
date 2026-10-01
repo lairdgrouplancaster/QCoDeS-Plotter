@@ -61,6 +61,8 @@ if TYPE_CHECKING:
 
         def update_theme(self, config: Any) -> None: ...
 
+        def _marquee_axis_assignment_changed(self) -> None: ...
+
         def closeEvent(self, event: object) -> None: ...
 
         def add_trace_from_dialog(self, label: str, trace_key: Any) -> None: ...
@@ -250,6 +252,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if current is not None:
             current.removeItem(line)
         target.addItem(line)
+        if line is self.__dict__.get("line"):
+            self._marquee_axis_assignment_changed()
 
     @QtCore.pyqtSlot()
     def _trace_axis_auto_button_clicked(self) -> None:

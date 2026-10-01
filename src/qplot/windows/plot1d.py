@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -59,6 +59,22 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
         self.show_status("Line plot ready; loading data...", 5000)
+
+
+    def _marquee_viewbox(self) -> Any:
+        """Use the main trace's coordinate system for selection and hit tests."""
+
+        line = self.__dict__.get("line")
+        get_viewbox = getattr(line, "getViewBox", None)
+        viewbox = get_viewbox() if callable(get_viewbox) else None
+        return viewbox if viewbox is not None else super()._marquee_viewbox()
+
+
+    def _marquee_zoom_viewbox(self, axis: Literal["x", "y"]) -> Any:
+        # Axis-pair ViewBoxes contain linked dimensions. Change the actual
+        # range owner so a later link update cannot undo the selection zoom.
+        line = self.__dict__.get("line")
+        return self._axis_scale_viewbox(self._axis_scale_axis_for_line(line, axis))
 
 
     def _snap_marquee_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:

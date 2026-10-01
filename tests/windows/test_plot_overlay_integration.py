@@ -83,10 +83,11 @@ def _assert_overlays(window, viewbox):
         assert item not in window.plot.curves
 
 
-def _drag_in_view(window, start, end, modifiers):
+def _drag_in_view(window, start, end, modifiers, viewbox=None):
+    viewbox = window.vb if viewbox is None else viewbox
     viewport = window.widget.viewport()
-    start = window.widget.mapFromScene(window.vb.mapViewToScene(start))
-    end = window.widget.mapFromScene(window.vb.mapViewToScene(end))
+    start = window.widget.mapFromScene(viewbox.mapViewToScene(start))
+    end = window.widget.mapFromScene(viewbox.mapViewToScene(end))
     QTest.mousePress(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, start)
     # Supply pressed-button state explicitly; offscreen QTest.mouseMove does
     # not retain it on every Qt platform.
@@ -108,6 +109,161 @@ def _assign_trace_axes(window, key, x_axis, y_axis):
     window._apply_trace_style(key, window.lines[key])
     qtw.QApplication.processEvents()
     return window._trace_axis_viewbox(style)
+
+
+@pytest.mark.parametrize("axes", [
+    ("Bottom", "Left"), ("Bottom", "Right"),
+    ("Top", "Left"), ("Top", "Right"),
+])
+@pytest.mark.parametrize("log_modes", [(False, False), (True, False), (False, True), (True, True)])
+def test_qt_marquee_drag_uses_main_trace_axes(loaded_plot, axes, log_modes):
+    window = loaded_plot
+    window._ensure_trace_axis_viewboxes(top=True, right=True)
+    owner = _assign_trace_axes(window, window.label, *axes)
+    x_axis = "x2" if axes[0] == "Top" else "x"
+    y_axis = "y2" if axes[1] == "Right" else "y"
+    for axis, logarithmic in zip((x_axis, y_axis), log_modes, strict=True):
+        window._axis_scale_log_toggled(axis, logarithmic)
+    window.plot.setDownsampling(ds=8, auto=False, mode="peak")
+    assert len(window.line.getData()[0]) < 64
+
+    def set_ranges():
+        # Unused axes must remain independent of selection and zoom.
+        window.vb.setRange(xRange=[0, 630], yRange=[0, 1000], padding=0)
+        if window.top_vb is not None:
+            window.top_vb.setXRange(0, 630, padding=0)
+        if window.right_vb is not None:
+            window.right_vb.setYRange(0, 1000, padding=0)
+        x_limits = [1, 63] if log_modes[0] else [0, 63]
+        y_limits = [1, 100] if log_modes[1] else [0, 100]
+        window._axis_scale_viewbox(x_axis).setXRange(
+            *window.data_to_view(x_axis, x_limits), padding=0,
+        )
+        window._axis_scale_viewbox(y_axis).setYRange(
+            *window.data_to_view(y_axis, y_limits), padding=0,
+        )
+        qtw.QApplication.processEvents()
+
+    for zoom_axes in ("y", "x", "xy"):
+        window.clear_marquee()
+        set_ranges()
+        before = {
+            axis: window._axis_scale_viewbox(axis).viewRange()[dimension][:]
+            for axis, dimension in (("x", 0), ("y", 1), ("x2", 0), ("y2", 1))
+        }
+        owner_before = owner.viewRange()
+        points = [
+            QtCore.QPointF(window.data_to_view(x_axis, x), window.data_to_view(y_axis, y))
+            for x, y in ((20, 29), (30, 41))
+        ]
+        _drag_in_view(window, *points, QtCore.Qt.KeyboardModifier.AltModifier, owner)
+        assert window.marquee is not None
+        np.testing.assert_array_equal(window._marquee_line_values(), np.arange(30, 41))
+        stats = window._marquee_stats_text()
+        assert stats.startswith("11 points")
+        assert f"Average: {window.formatNum(35)}" in stats
+        assert f"Standard deviation: {window.formatNum(np.std(np.arange(30, 41)))}" in stats
+        rect = window.marquee.normalized()
+        for name, axis, limits in (
+            ("X", x_axis, [rect.left(), rect.right()]),
+            ("Y", y_axis, [rect.top(), rect.bottom()]),
+        ):
+            low, high = window.view_to_data(axis, limits)
+            assert f"{name} range: {window.formatNum(low)} to {window.formatNum(high)}" in stats
+        assert rect.top() == pytest.approx(points[0].y(), abs=0.5 if not log_modes[1] else 0.01)
+        assert rect.bottom() == pytest.approx(points[1].y(), abs=0.5 if not log_modes[1] else 0.01)
+        _assert_overlays(window, owner)
+        assert window.marquee_contains_scene_pos(owner.mapViewToScene(rect.center()))
+        assert not window.marquee_contains_scene_pos(owner.mapViewToScene(QtCore.QPointF(rect.left() - 1, rect.top() - 1)))
+        handle = window._marquee_handle_points()["ne"]
+        assert window.marquee_drag_mode_at(owner.mapViewToScene(handle)) == "ne"
+        assert window.zoom_marquee(zoom_axes)
+        qtw.QApplication.processEvents()
+        for axis, dimension in (("x", 0), ("y", 1), ("x2", 0), ("y2", 1)):
+            expected = before[axis]
+            if axis == x_axis and "x" in zoom_axes:
+                expected = [rect.left(), rect.right()]
+            if axis == y_axis and "y" in zoom_axes:
+                expected = [rect.top(), rect.bottom()]
+            np.testing.assert_allclose(window._axis_scale_viewbox(axis).viewRange()[dimension], expected)
+        for dimension, name, limits, pixels in (
+            (0, "x", [rect.left(), rect.right()], owner.width()),
+            (1, "y", [rect.top(), rect.bottom()], owner.height()),
+        ):
+            if name in zoom_axes:
+                # PyQtGraph aligns linked ViewBoxes by screen pixels; their
+                # sceneBoundingRects can differ by one pixel at the edge.
+                np.testing.assert_allclose(owner.viewRange()[dimension], limits,
+                                           atol=2 * (limits[1] - limits[0]) / pixels)
+            else:
+                np.testing.assert_allclose(owner.viewRange()[dimension], owner_before[dimension])
+
+    # Resize through real Qt events as well as checking handle hit testing.
+    set_ranges()
+    handle = window._marquee_handle_points()["e"]
+    _drag_in_view(
+        window, handle, QtCore.QPointF(window.data_to_view(x_axis, 24), handle.y()),
+        QtCore.Qt.KeyboardModifier.NoModifier, owner,
+    )
+    assert not window.is_marquee_dragging()
+    np.testing.assert_array_equal(window._marquee_line_values(), np.arange(30, 35))
+    owner.autoRange(padding=0)
+    bounds = owner.viewRange()
+    # Deliberately extend every decoration far beyond the measurement.
+    window.marquee = QtCore.QRectF(-1000, -1000, 2000, 2000)
+    window.marquee_outline.setRect(window.marquee)
+    window.marquee_highlight.setRect(window.marquee)
+    window._update_marquee_handles()
+    owner.autoRange(padding=0)
+    np.testing.assert_allclose(owner.viewRange(), bounds)
+
+
+@pytest.mark.parametrize("loaded_plot", [True], indirect=True)
+def test_main_axis_reassignment_clears_selection_and_moves_overlays(loaded_plot):
+    window = loaded_plot
+    secondary_key = next(key for key, line in window.lines.items() if line is not window.line)
+    for axes in (("Bottom", "Left"), ("Bottom", "Right"), ("Top", "Left"), ("Top", "Right")):
+        owner = _assign_trace_axes(window, window.label, *axes)
+        window.set_marquee_rect(QtCore.QRectF(20, 29, 10, 12))
+        selected = QtCore.QRectF(window.marquee)
+        window._apply_trace_style(window.label, window.line)
+        _assign_trace_axes(window, secondary_key, *axes)
+        assert window.marquee == selected
+        _assert_overlays(window, owner)
+        handle = window._marquee_handle_points()["e"]
+        window.begin_marquee_drag(handle, "e")
+        assert window.is_marquee_dragging()
+        # The replacement axes can have different log transforms.
+        new_axes = ("Top" if axes[0] == "Bottom" else "Bottom",
+                    "Right" if axes[1] == "Left" else "Left")
+        for side in ("top", "right"):
+            window.plot.getAxis(side).setLogMode(True)
+        target = _assign_trace_axes(window, window.label, *new_axes)
+        assert window.marquee is None
+        assert not window.is_marquee_dragging()
+        assert window._marquee_line_values() is None
+        assert all(not item.isVisible() for item in (
+            window.marquee_outline, window.marquee_highlight, window.marquee_handles,
+        ))
+        _assert_overlays(window, target)
+        window.drag_marquee_to(handle)
+        assert window.marquee is None
+        # A fresh selection uses the new axes, including their log modes.
+        x_axis = "x2" if new_axes[0] == "Top" else "x"
+        y_axis = "y2" if new_axes[1] == "Right" else "y"
+        window._axis_scale_viewbox(x_axis).setXRange(
+            *window.data_to_view(x_axis, [1, 63]), padding=0,
+        )
+        window._axis_scale_viewbox(y_axis).setYRange(
+            *window.data_to_view(y_axis, [1, 100]), padding=0,
+        )
+        qtw.QApplication.processEvents()
+        points = [
+            QtCore.QPointF(window.data_to_view(x_axis, x), window.data_to_view(y_axis, y))
+            for x, y in ((20, 29), (30, 41))
+        ]
+        _drag_in_view(window, *points, QtCore.Qt.KeyboardModifier.AltModifier, target)
+        np.testing.assert_array_equal(window._marquee_line_values(), np.arange(30, 41))
 
 
 @pytest.mark.parametrize("loaded_plot", [False, True], indirect=True, ids=["single", "merged"])
@@ -430,6 +586,9 @@ def test_native_processing_readouts_remain_aligned_after_downsampling(
 
 def test_automatic_downsampling_keeps_measurement_indices_and_statistics(loaded_plot):
     window = loaded_plot
+    # Automatic reduction depends on viewport pixels, including on native Qt.
+    window.widget.setFixedWidth(600)
+    qtw.QApplication.processEvents()
     x = np.arange(12000, dtype=float)
     window.line.setData(x=x, y=x + 10)
     window.plot.setDownsampling(auto=True, mode="peak")

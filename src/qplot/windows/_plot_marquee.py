@@ -109,6 +109,27 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
                 return viewbox
         return self.__dict__.get("vb") or self.plot.vb
 
+    def _marquee_zoom_viewbox(self, axis: Literal["x", "y"]) -> Any:
+        """Return the range owner for one dimension of the selection."""
+
+        return self._marquee_viewbox()
+
+    def _marquee_axis_assignment_changed(self) -> None:
+        """Discard old coordinates and move decorations to their new owner."""
+
+        self.finish_marquee_drag()
+        if "marquee_outline" not in self.__dict__:
+            return
+        self.clear_marquee()
+        target = self._marquee_viewbox()
+        overlays = self.__dict__.get("_plot_overlay_viewboxes", {})
+        for item in (self.marquee_highlight, self.marquee_outline, self.marquee_handles):
+            current = overlays.get(id(item))
+            if current is not target:
+                if current is not None:
+                    current.removeItem(item)
+                self._add_plot_overlay(item, target)
+
     def is_marquee_dragging(self) -> bool:
         return self._marquee_drag_state is not None
 
@@ -285,13 +306,13 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             return False
 
         if "x" in axes:
-            self._marquee_viewbox().setXRange(
+            self._marquee_zoom_viewbox("x").setXRange(
                 rect.left(),
                 rect.right(),
                 padding=0,
             )
         if "y" in axes:
-            self._marquee_viewbox().setYRange(
+            self._marquee_zoom_viewbox("y").setYRange(
                 rect.top(),
                 rect.bottom(),
                 padding=0,
