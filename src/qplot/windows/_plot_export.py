@@ -40,6 +40,7 @@ from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
 )
+from ._svg_export import svg_bytes, write_svg_stage
 
 if TYPE_CHECKING:
     from ._dataset_handle import DatasetKey
@@ -693,7 +694,9 @@ class PlotExportMixin(_PlotExportBase):
                     == ".tsv" else "comma"
                 )
             writer = lambda staging_path: exporter.export(fileName=staging_path)
-            if type(exporter) is CSVExporter:
+            if type(exporter) is SVGExporter:
+                writer = lambda staging_path: write_svg_stage(staging_path, exporter)
+            elif type(exporter) is CSVExporter:
                 if getattr(self, "operation_kind", None) == "plot2d":
                     writer = lambda staging_path: self._write_heatmap_csv_stage(
                         staging_path, exporter, separator=csv_separator,
@@ -861,7 +864,16 @@ class PlotExportMixin(_PlotExportBase):
             self.show_status("Copy is disabled for that export format.", 5000)
             return False
         try:
-            result = exporter.export(copy=True)
+            if type(exporter) is SVGExporter:
+                clipboard = qtw.QApplication.clipboard()
+                if clipboard is None:
+                    raise RuntimeError("No clipboard available.")
+                mime_data = QtCore.QMimeData()
+                mime_data.setData("image/svg+xml", QtCore.QByteArray(svg_bytes(exporter)))
+                clipboard.setMimeData(mime_data)
+                result = None
+            else:
+                result = exporter.export(copy=True)
         except Exception as err:
             log_exception("PyQtGraph plot copy failed", err, __name__)
             self.show_status("Could not copy plot.", 5000)

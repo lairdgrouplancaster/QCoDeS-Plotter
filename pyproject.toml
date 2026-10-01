@@ -162,6 +162,7 @@ files = [
     "src/qplot/windows/_plot_state.py",
     "src/qplot/windows/_preferences.py",
     "src/qplot/windows/_shortcuts.py",
+    "src/qplot/windows/_svg_export.py",
     "src/qplot/windows/_window_controls.py",
     "src/qplot/windows/_subplots/__init__.py",
     "src/qplot/windows/_subplots/subplot1d.py",

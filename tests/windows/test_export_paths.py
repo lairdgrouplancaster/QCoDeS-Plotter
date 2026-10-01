@@ -355,7 +355,7 @@ def test_atomic_export_before_publish_failure_preserves_target_and_cleans_stage(
     assert set(tmp_path.iterdir()) == {target}
 
 
-@pytest.mark.parametrize("export_suffix", [".pdf", ".csv", ".png"])
+@pytest.mark.parametrize("export_suffix", [".pdf", ".csv", ".png", ".svg"])
 def test_loaded_database_named_for_export_format_is_rejected(
     tmp_path,
     export_suffix,
@@ -376,7 +376,7 @@ def test_loaded_database_named_for_export_format_is_rejected(
     _assert_database_unchanged(database_path, source_before)
 
 
-@pytest.mark.parametrize("export_suffix", [".pdf", ".csv", ".png"])
+@pytest.mark.parametrize("export_suffix", [".pdf", ".csv", ".png", ".svg"])
 def test_real_qcodes_database_named_for_export_format_is_rejected(
     tmp_path,
     export_suffix,

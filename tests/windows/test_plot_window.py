@@ -1668,6 +1668,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         exporter.export = export
                         with (
                             patch.object(
+                                plot_export_module,
+                                "write_svg_stage",
+                                side_effect=lambda filename, _exporter: export(fileName=filename),
+                            ),
+                            patch.object(
                                 qtw.QFileDialog,
                                 "getSaveFileName",
                                 return_value=(str(target), ""),
