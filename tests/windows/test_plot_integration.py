@@ -558,8 +558,18 @@ def generation_database_view(window):
     }
 
 
+def wait_for_trusted_derived_work(window):
+    """Finish all rows' metadata and previews before comparing a restored view."""
+
+    coordinator = window._trusted_derived_bridge.coordinator
+    assert coordinator is not None
+    wait_for(
+        lambda: not coordinator.active and coordinator.snapshot().pending_count == 0
+    )
+
+
 def select_nondefault_run_and_finish_previews(window):
-    """Select a non-default trusted run and wait for its DB-free details."""
+    """Select a non-default trusted run and finish the whole derived view."""
 
     run_ids = sorted(window.RunList.all_run_metadata())
     assert len(run_ids) >= 2
@@ -583,10 +593,7 @@ def select_nondefault_run_and_finish_previews(window):
     )
     wait_for(
         lambda: (
-            not window.infoBox.preview._workers
-            and not window.infoBox.preview.queue
-            and not window.infoBox.preview.active
-            and window.infoBox.preview._trusted_derived_mode
+            window.infoBox.preview._trusted_derived_mode
             and window.infoBox.preview.current_guid == target_guid
             and (
                 target_guid in window.infoBox.preview.cache
@@ -594,6 +601,9 @@ def select_nondefault_run_and_finish_previews(window):
             )
         )
     )
+    # The view comparison includes every row and cached preview. Selected-run
+    # readiness alone leaves other runs loading, so reload timing changes it.
+    wait_for_trusted_derived_work(window)
     return target_run_id
 
 
@@ -3404,6 +3414,7 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
                 and not window._database_expensive_detail_active
             )
         )
+        wait_for_trusted_derived_work(window)
         wait_for(lambda: generation_database_view(window) == original_view)
 
         assert errors == [
@@ -3532,6 +3543,7 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
                 and not window._database_expensive_detail_active
             )
         )
+        wait_for_trusted_derived_work(window)
         wait_for(lambda: generation_database_view(window) == original_view)
 
         assert errors == [
