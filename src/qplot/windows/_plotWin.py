@@ -311,8 +311,13 @@ def _clean_tick_strings(axis, values, scale, spacing):
             spacing,
             )
 
-    tolerance = max(abs(spacing) * 1e-10, 1e-15)
-    clean_values = [0.0 if abs(value) < tolerance else value for value in values]
+    # Work in tick coordinates: an absolute floor erases small measurements
+    # before SI scaling. Allow floating-point round-off, but never a meaningful
+    # fraction of a tick interval, even if distant ticks have coarse precision.
+    interval = abs(spacing)
+    precision = max((ulp(value) for value in values), default=ulp(interval))
+    tolerance = min(interval * 1e-6, max(interval * 1e-10, precision * 4))
+    clean_values = [0.0 if abs(value) <= tolerance else value for value in values]
     if axis.logMode:
         return axis._qplot_original_tick_strings(
             clean_values,
