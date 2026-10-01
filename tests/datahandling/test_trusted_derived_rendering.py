@@ -382,10 +382,10 @@ def test_single_finite_1d_point_is_visibly_rendered() -> None:
     assert rgba.count(b"\xff\xff\xff\xff") == width * height - 1
 
 
-def test_dependency_aware_renderer_invalidates_v3_cache_entries() -> None:
+def test_independent_grid_renderer_invalidates_v4_cache_entries() -> None:
     renderer_prefix = "trusted-derived-renderer-v"
     assert TRUSTED_DERIVED_RENDERER_VERSION.startswith(renderer_prefix)
-    assert int(TRUSTED_DERIVED_RENDERER_VERSION.removeprefix(renderer_prefix)) > 3
+    assert int(TRUSTED_DERIVED_RENDERER_VERSION.removeprefix(renderer_prefix)) > 4
 
 
 def test_2d_rendering_uses_two_dependencies() -> None:

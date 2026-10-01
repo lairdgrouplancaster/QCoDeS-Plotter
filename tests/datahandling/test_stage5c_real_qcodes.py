@@ -6,6 +6,7 @@ import hashlib
 import os
 import sqlite3
 from collections.abc import Mapping
+from itertools import chain, zip_longest
 from pathlib import Path
 
 import numpy as np
@@ -29,7 +30,7 @@ from qplot.datahandling.trusted_live_queries import (
     trusted_derived_source_revision,
 )
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
-from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
+from qplot.datahandling.trusted_work_scheduler import RenderingOptions, TrustedWorkKind
 from qplot.testdata import RunSpecification, generate_database
 from qplot.windows._trusted_derived_qt import TrustedDerivedQtBridge
 from qplot.windows._widgets.preview import PreviewImageLabel
@@ -378,8 +379,12 @@ def test_real_qcodes_mixed_null_cell_does_not_suppress_compatible_grid(
                 layout.dependent: layout.shape
                 for layout in observation.validated_2d_layouts
             } == shapes
-            payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
-            images = {dict(image)["dependent"]: dict(image) for image in payload["images"]}
+            payload = render_trusted_derived_payload(
+                observation, TrustedWorkKind.PREVIEW
+            )
+            images = {
+                dict(image)["dependent"]: dict(image) for image in payload["images"]
+            }
             assert set(images) == {"z1", *shapes}
             assert images["z2"]["sampled_points"] == 5
             assert images["z_reordered"]["sampled_points"] == 6
@@ -428,16 +433,23 @@ def test_real_qcodes_cross_dependent_row_ownership(
                 for y_index in range(3):
                     values = (
                         (good, 100 + x_index * 10 + y_index),
-                        (bad, first_bad if x_index == y_index == 0 else x_index * 10 + y_index),
+                        (
+                            bad,
+                            first_bad
+                            if x_index == y_index == 0
+                            else x_index * 10 + y_index,
+                        ),
                     )
-                    for parameter, value in (values[::-1] if bad_first else values):
+                    for parameter, value in values[::-1] if bad_first else values:
                         y_coordinate = y_index
                         if parameter is bad and x_index == 1 and y_index == 2:
                             if invalid_coordinates == "duplicate":
                                 y_coordinate = 1
                             elif invalid_coordinates == "invalid-axis":
                                 y_coordinate = float("nan")
-                        datasaver.add_result((x, x_index), (y, y_coordinate), (parameter, value))
+                        datasaver.add_result(
+                            (x, x_index), (y, y_coordinate), (parameter, value)
+                        )
             run_id = datasaver.run_id
     finally:
         if dataset is not None:
@@ -457,7 +469,9 @@ def test_real_qcodes_cross_dependent_row_ownership(
                 namespace=TrustedSourceRevisionNamespace(b"cross-dependent"),
             )
             assert not observation.progressive_layout_pending
-            expected_shapes = {"good": shapes["good"]} if invalid_coordinates else shapes
+            expected_shapes = (
+                {"good": shapes["good"]} if invalid_coordinates else shapes
+            )
             assert {
                 layout.dependent: layout.shape
                 for layout in observation.validated_2d_layouts
@@ -466,19 +480,358 @@ def test_real_qcodes_cross_dependent_row_ownership(
                 expected_first = 1 if (layout.dependent == "bad") == bad_first else 2
                 assert layout.first_row_id == expected_first
                 assert layout.fast_id_stride == 2
-            payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
+            payload = render_trusted_derived_payload(
+                observation, TrustedWorkKind.PREVIEW
+            )
             assert payload["status"] == "ok"
-            images = {dict(image)["dependent"]: dict(image) for image in payload["images"]}
+            images = {
+                dict(image)["dependent"]: dict(image) for image in payload["images"]
+            }
             assert set(images) == set(expected_shapes)
             assert images["good"]["sampled_points"] == 6
             if not invalid_coordinates:
-                assert images["bad"]["sampled_points"] == (6 if np.isfinite(first_bad) else 5)
+                assert images["bad"]["sampled_points"] == (
+                    6 if np.isfinite(first_bad) else 5
+                )
             if _request:
                 assert not any(
                     query.sql.endswith('ORDER BY "id" LIMIT ?')
                     and 'AS "qplot_present_0"' in query.sql
                     for query in executor.queries[start:]
                 )
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
+def _create_same_dependency_grids(
+    database_path: Path,
+    *,
+    planned: bool,
+    second_first: bool,
+    scenario: str,
+    mixed: bool,
+    large: bool = False,
+    interleaved: bool = False,
+    include_solo: bool = True,
+) -> tuple[dict[tuple[str, ...], int], dict[str, tuple[int, int]]]:
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("same_dependencies", sample_name=scenario)
+    shapes = {"z1": (2, 3), "z2": (3, 2)}
+    if scenario == "same-shape-extents":
+        shapes["z2"] = (2, 3)
+    elif scenario == "different-count":
+        shapes["z2"] = (3, 4)
+    if large:
+        shapes = {"z1": (33, 65), "z2": (65, 33)}
+    if scenario in {"compatible", "planned-mismatch"}:
+        shapes["z2"] = shapes["z1"]
+    runs = {}
+    dataset = None
+    try:
+        for names in (
+            (("z1",), ("z2",), ("z1", "z2")) if include_solo else (("z1", "z2"),)
+        ):
+            x, y, z1, z2, other = (
+                ManualParameter(name) for name in ("x", "y", "z1", "z2", "other")
+            )
+            dependents = {"z1": z1, "z2": z2}
+            measurement = Measurement(exp=experiment, name="same_dependencies")
+            measurement.register_parameter(x)
+            measurement.register_parameter(y)
+            for name in names:
+                measurement.register_parameter(dependents[name], setpoints=(x, y))
+            if mixed:
+                measurement.register_parameter(other, setpoints=(x,))
+            if planned:
+                declared = {name: shapes[name] for name in names}
+                if scenario == "planned-mismatch" and "z2" in names:
+                    declared["z2"] = (3, 2)
+                measurement.set_shapes(
+                    {**declared, **({"other": (2,)} if mixed else {})}
+                )
+
+            def points(name, x=x, y=y, dependents=dependents):
+                shape = shapes[name]
+                coordinates = (
+                    ((i, j) for j in range(shape[1]) for i in range(shape[0]))
+                    if interleaved and name == "z2"
+                    else ((i, j) for i in range(shape[0]) for j in range(shape[1]))
+                )
+                for x_index, y_index in coordinates:
+                    # Same names, independently chosen finite coordinate vectors.
+                    shared = name == "z1" or scenario in {
+                        "compatible",
+                        "planned-mismatch",
+                    }
+                    x_value = x_index if shared else 20 - 2 * x_index
+                    y_value = y_index if shared else 100 + 3 * y_index
+                    if (
+                        name == "z2"
+                        and x_index == shape[0] - 1
+                        and y_index == shape[1] - 1
+                    ):
+                        if scenario == "duplicate":
+                            y_value -= 3
+                        elif scenario == "warped":
+                            y_value += 1
+                    yield (
+                        (x, x_value),
+                        (y, y_value),
+                        (dependents[name], x_index * 10 + y_index),
+                    )
+
+            with measurement.run(write_in_background=False) as datasaver:
+                dataset = datasaver.dataset
+                if mixed:
+                    datasaver.add_result((x, -10), (other, 1))
+                streams = [
+                    points(name) for name in (names[::-1] if second_first else names)
+                ]
+                acquisition = (
+                    chain.from_iterable(zip_longest(*streams))
+                    if interleaved
+                    else chain.from_iterable(streams)
+                )
+                for results in acquisition:
+                    if results is not None:
+                        datasaver.add_result(*results)
+                if mixed:
+                    datasaver.add_result((x, -9), (other, 2))
+                runs[names] = datasaver.run_id
+    finally:
+        if dataset is not None:
+            dataset.conn.close()
+        experiment.conn.close()
+    return runs, shapes
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+@pytest.mark.parametrize("second_first", [False, True], ids=["z1-first", "z2-first"])
+@pytest.mark.parametrize("mixed", [False, True], ids=["same-tuple", "another-group"])
+@pytest.mark.parametrize(
+    ("scenario", "interleaved"),
+    [
+        (scenario, interleaved)
+        for scenario in (
+            "different-shape",
+            "same-shape-extents",
+            "different-count",
+            "duplicate",
+            "warped",
+            "planned-mismatch",
+        )
+        for interleaved in (
+            (False,) if scenario == "different-count" else (False, True)
+        )
+    ],
+    ids=lambda value: (
+        ("interleaved-fast-first" if value else "blocked")
+        if isinstance(value, bool)
+        else value
+    ),
+)
+def test_real_qcodes_same_dependencies_keep_independent_previews(
+    tmp_path: Path,
+    planned: bool,
+    second_first: bool,
+    mixed: bool,
+    interleaved: bool,
+    scenario: str,
+) -> None:
+    database_path = tmp_path / "same-dependencies.db"
+    runs, shapes = _create_same_dependency_grids(
+        database_path,
+        planned=planned,
+        second_first=second_first,
+        scenario=scenario,
+        mixed=mixed,
+        interleaved=interleaved,
+    )
+    protected_before = _protected_artifact_state(database_path)
+    executor = _ReadOnlySqliteExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        _load_basic_runs(adapter)
+        solo_images = {}
+        revisions = {}
+        options = RenderingOptions.from_mapping({"width": 60, "height": 60})
+        for names, run_id in runs.items():
+            expected = {
+                name: shapes[name]
+                for name in names
+                if not (
+                    name == "z2"
+                    and (
+                        scenario in {"duplicate", "warped"}
+                        or (planned and scenario == "planned-mismatch")
+                    )
+                )
+            }
+            for request in range(3):
+                start = len(executor.queries)
+                observation = adapter.derived_source_observation(
+                    run_id,
+                    database_instance=database_instance(database_path),
+                    namespace=TrustedSourceRevisionNamespace(b"same-dependencies"),
+                )
+                assert not observation.progressive_layout_pending
+                assert {
+                    layout.dependent: layout.shape
+                    for layout in observation.validated_2d_layouts
+                } == expected
+                revision = trusted_derived_source_revision(observation)
+                if request:
+                    assert revision == revisions[run_id]
+                    if expected or len(names) > 1 or mixed:
+                        assert not any(
+                            query.sql.endswith('ORDER BY "id" LIMIT ?')
+                            and 'AS "qplot_present_0"' in query.sql
+                            for query in executor.queries[start:]
+                        )
+                revisions[run_id] = revision
+                for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW):
+                    payload = render_trusted_derived_payload(observation, kind, options)
+                    images = {
+                        dict(image)["dependent"]: dict(image)
+                        for image in payload["images"]
+                    }
+                    assert set(images) == {*expected, *({"other"} if mixed else set())}
+                    for name in expected:
+                        assert images[name]["sampled_points"] == np.prod(shapes[name])
+                        assert images[name]["bytes"].startswith(b"\x89PNG\r\n\x1a\n")
+                        if len(names) == 1:
+                            solo_images[name, kind] = images[name]["bytes"]
+                        else:
+                            assert images[name]["bytes"] == solo_images[name, kind]
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+@pytest.mark.parametrize("scenario", ["different-shape", "compatible", "duplicate"])
+def test_real_qcodes_same_tuple_shares_scan_budget_and_preserves_cancellation(
+    tmp_path: Path, planned: bool, scenario: str
+) -> None:
+    database_path = tmp_path / "same-tuple-progressive.db"
+    runs, shapes = _create_same_dependency_grids(
+        database_path,
+        planned=planned,
+        second_first=False,
+        scenario=scenario,
+        mixed=False,
+        large=True,
+        include_solo=False,
+    )
+    run_id = runs["z1", "z2"]
+    protected_before = _protected_artifact_state(database_path)
+
+    def is_layout_page(query):
+        return (
+            'AS "qplot_present_0"' in query.sql
+            and query.sql.endswith('ORDER BY "id" LIMIT ?')
+            and query.bindings[-1] == 4096
+        )
+
+    class RecordingExecutor(_ReadOnlySqliteExecutor):
+        def __init__(self, path):
+            super().__init__(path)
+            self.results = []
+            self.cancel_next_page = False
+
+        def _execute(self, query):
+            if is_layout_page(query) and self.cancel_next_page:
+                self.cancel_next_page = False
+                raise InterruptedError("cancelled same-tuple layout page")
+            result = super()._execute(query)
+            self.results.append((query, result))
+            return result
+
+    executor = RecordingExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        _load_basic_runs(adapter)
+        observations = []
+        namespace = TrustedSourceRevisionNamespace(b"same-tuple-progressive")
+        for request in range(2):
+            if request:
+                previous = adapter._independent_layouts[run_id]
+                executor.cancel_next_page = True
+                with pytest.raises(InterruptedError, match="same-tuple layout page"):
+                    adapter.derived_source_observation(
+                        run_id,
+                        database_instance=database_instance(database_path),
+                        namespace=namespace,
+                    )
+                assert adapter._independent_layouts[run_id] == previous
+                assert not executor._connection.in_transaction
+            start = len(executor.results)
+            observation = adapter.derived_source_observation(
+                run_id,
+                database_instance=database_instance(database_path),
+                namespace=namespace,
+            )
+            observations.append(observation)
+            results = executor.results[start:]
+            pages = [result for query, result in results if is_layout_page(query)]
+            assert len(pages) == 1
+            assert len(pages[0].rows) <= 4096
+            assert (
+                sum(len(row) for row in pages[0].rows)
+                <= TRUSTED_DERIVED_MAX_SAMPLE_CELLS
+            )
+            samples = [
+                result
+                for query, result in results
+                if query.sql.startswith('SELECT "id", CASE WHEN')
+                and 'AS "qplot_axis_0"' not in query.sql
+            ]
+            assert (
+                sum(len(result.rows) for result in samples)
+                <= TRUSTED_DERIVED_MAX_SAMPLE_ROWS
+            )
+            assert (
+                sum(len(row) for result in samples for row in result.rows)
+                <= TRUSTED_DERIVED_MAX_SAMPLE_CELLS
+            )
+            state = adapter._independent_layouts[run_id]
+            assert len(state.states) == 2
+            assert len(repr(state)) < 8192
+            assert not executor._connection.in_transaction
+        assert observations[0].progressive_layout_cursor == 4096
+        assert observations[0].progressive_layout_pending
+        assert not observations[1].progressive_layout_pending
+        assert trusted_derived_source_revision(
+            observations[0]
+        ) != trusted_derived_source_revision(observations[1])
+        expected = {
+            name: shape
+            for name, shape in shapes.items()
+            if name != "z2" or scenario != "duplicate"
+        }
+        assert {
+            layout.dependent: layout.shape
+            for layout in observations[1].validated_2d_layouts
+        } == expected
+        for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW):
+            first = render_trusted_derived_payload(observations[1], kind)
+            start = len(executor.results)
+            cached = adapter.derived_source_observation(
+                run_id,
+                database_instance=database_instance(database_path),
+                namespace=namespace,
+            )
+            assert not any(
+                is_layout_page(query) for query, _result in executor.results[start:]
+            )
+            assert trusted_derived_source_revision(
+                cached
+            ) == trusted_derived_source_revision(observations[1])
+            assert render_trusted_derived_payload(cached, kind) == first
+            assert {dict(image)["dependent"] for image in first["images"]} == set(
+                expected
+            )
     finally:
         executor.close()
     assert _protected_artifact_state(database_path) == protected_before
@@ -545,7 +898,10 @@ def test_real_qcodes_mixed_progressive_scan_shares_read_budget(
             ]
             assert len(pages) == 1
             assert len(pages[0].rows) <= 4096
-            assert sum(len(row) for row in pages[0].rows) <= TRUSTED_DERIVED_MAX_SAMPLE_CELLS
+            assert (
+                sum(len(row) for row in pages[0].rows)
+                <= TRUSTED_DERIVED_MAX_SAMPLE_CELLS
+            )
             samples = [
                 result
                 for query, result in request_results
@@ -839,9 +1195,11 @@ def test_real_qcodes_progressive_shape_enriches_cached_setpoint_steps(
                 "x": 70,
                 "y": 70,
             }
-            assert [(summary.first, summary.last) for summary in summaries] == [
-                (summary.first, summary.last) for summary in initial_summaries
-            ] == [(0.0, 69.0), (0.0, 69.0)]
+            assert (
+                [(summary.first, summary.last) for summary in summaries]
+                == [(summary.first, summary.last) for summary in initial_summaries]
+                == [(0.0, 69.0), (0.0, 69.0)]
+            )
             assert adapter.expensive_run(run_id).as_dict()["setpoint_shape"] == [70, 70]
         assert edge_queries() == cached_edge_queries
         assert _protected_artifact_state(database_path) == protected_before
@@ -1008,9 +1366,7 @@ def test_real_generated_unplanned_grids_get_exact_shapes_and_full_domain_sample(
         layout = observation.validated_2d_layouts[0]
         assert layout.shape == (301, 451)
         assert layout.fast_axis_index == 1
-        indexes = {
-            name: index for index, name in enumerate(observation.sample_columns)
-        }
+        indexes = {name: index for index, name in enumerate(observation.sample_columns)}
         slow_values = {
             row[indexes["V_SD"]]
             for row in observation.sample_rows

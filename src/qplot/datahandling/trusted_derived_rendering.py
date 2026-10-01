@@ -19,7 +19,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     TrustedWorkKind,
 )
 
-TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v4"
+TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v5"
 TRUSTED_DERIVED_MAX_IMAGES = 8
 TRUSTED_DERIVED_MAX_IMAGE_WIDTH = 2_048
 TRUSTED_DERIVED_MAX_IMAGE_HEIGHT = 2_048

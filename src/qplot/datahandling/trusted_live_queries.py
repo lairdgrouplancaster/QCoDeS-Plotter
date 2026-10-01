@@ -586,7 +586,7 @@ class _ProgressiveRegularLayout:
 
 @dataclass(frozen=True, slots=True)
 class _IndependentDependentLayout:
-    """Constant-size verifier for one dependent in a mixed-dependency run."""
+    """Constant-size verifier for one dependent's own physical grid."""
 
     dependencies: tuple[str, str]
     dependent: str
@@ -1748,7 +1748,11 @@ class TrustedMetadataQueryAdapter:
             if name != "run_id" and name in fresh:
                 merged[name] = fresh[name]
         if fresh.get("preview_dimensions"):
-            for name in ("preview_dimensions", "measure_parameters", "sweep_parameters"):
+            for name in (
+                "preview_dimensions",
+                "measure_parameters",
+                "sweep_parameters",
+            ):
                 merged[name] = fresh[name]
         merged = _materialize_refreshed_basic_fields(merged, cached)
         unavailable_fields = tuple(
@@ -1873,8 +1877,16 @@ class TrustedMetadataQueryAdapter:
         )
 
         result_watermark = self._result_id_watermark(table_name)
-        if len({names for names, _dependent in dependency_sets}) > 1:
-            self._advance_independent_layouts(
+        independent_signature = self._independent_layout_signature(
+            dependency_sets, run_description
+        )
+        independent_page = None
+        use_independent_layouts = (
+            len({names for names, _dependent in dependency_sets}) > 1
+            or len(independent_signature) > 1
+        )
+        if use_independent_layouts:
+            independent_page = self._advance_independent_layouts(
                 run_id,
                 table_name,
                 dependency_sets,
@@ -1919,7 +1931,17 @@ class TrustedMetadataQueryAdapter:
                 self._regular_layout_progress.pop(run_id, None)
                 progress = None
             candidate = None
-            if progress is None or progress.result_watermark != result_watermark:
+            # A shared grid is only an optional compatibility proof. Reuse the
+            # independent scan page, and never restart a failed shared verifier
+            # with a second full-prefix read in this request.
+            can_advance_regular = not use_independent_layouts or (
+                independent_page is not None
+                and len(expected_dependencies) == 2
+                and len(expected_dependents) <= _TRUSTED_REGULAR_LAYOUT_MAX_DEPENDENTS
+            )
+            if can_advance_regular and (
+                progress is None or progress.result_watermark != result_watermark
+            ):
                 candidate = self._infer_regular_setpoint_observation(
                     table_name,
                     dependency_sets,
@@ -1948,17 +1970,40 @@ class TrustedMetadataQueryAdapter:
                     or candidate.shape != planned_candidate.shape
                 ):
                     candidate = planned_candidate
-            regular_observation = self._advance_progressive_regular_layout(
-                run_id,
-                table_name,
-                expected_dependencies,
-                expected_dependents,
-                result_watermark,
-                proof_source=shape_source,
-                candidate=candidate,
-            )
+            if can_advance_regular:
+                regular_observation = self._advance_progressive_regular_layout(
+                    run_id,
+                    table_name,
+                    expected_dependencies,
+                    expected_dependents,
+                    result_watermark,
+                    proof_source=shape_source,
+                    candidate=candidate,
+                    shared_page=(
+                        self._materialize_regular_layout_rows(
+                            independent_page,
+                            len(expected_dependencies),
+                            max(1, len(expected_dependents)),
+                        )
+                        if independent_page is not None and expected_dependencies
+                        else None
+                    ),
+                    page_is_shared=use_independent_layouts,
+                )
             if regular_observation is not None:
                 self._regular_setpoint_observations[run_id] = regular_observation
+
+        if regular_observation is not None and regular_observation.proof_2d is not None:
+            if any(
+                shape is not None and shape != regular_observation.shape
+                for _dependencies, _dependent, shape in independent_signature
+            ):
+                # A common physical grid cannot override an individual
+                # dependent's declaration. Its valid peers keep their proofs.
+                regular_observation = None
+                self._regular_setpoint_observations.pop(run_id, None)
+                self._validated_grid_layouts.pop(run_id, None)
+                self._verified_regular_layouts.pop(run_id, None)
 
         observations: list[tuple[tuple[str, ...], int, tuple[int, ...] | None]] = []
         raw_public_shape = metadata.get("setpoint_shape")
@@ -2148,6 +2193,24 @@ class TrustedMetadataQueryAdapter:
             if independent is not None
             else ((layout_proof,) if layout_proof is not None else ())
         )
+        if independent is not None and layout_proof is not None:
+            independently_proven = {
+                pattern.dependent
+                for proof in independent.proofs
+                for pattern in proof.dependent_rows
+            }
+            compatible_rows = tuple(
+                pattern
+                for pattern in layout_proof.dependent_rows
+                if pattern.dependent not in independently_proven
+            )
+            if compatible_rows:
+                # Full-prefix shared verification can establish ownership of
+                # NULL cells that an isolated dependent cannot infer safely.
+                layout_proofs = (
+                    *layout_proofs,
+                    replace(layout_proof, dependent_rows=compatible_rows),
+                )
         layout_proofs = tuple(
             proof
             for proof in layout_proofs
@@ -2439,7 +2502,7 @@ class TrustedMetadataQueryAdapter:
                     proof.dependencies,
                     plan.pattern.dependent,
                 ) in authoritative_dependencies
-                if independent is not None:
+                if independent is not None and proof in independent.proofs:
                     proof_matches = proof_matches and (
                         independent.result_watermark == watermark
                         and independent.signature
@@ -2456,7 +2519,11 @@ class TrustedMetadataQueryAdapter:
                         pattern.first_row_id
                         + (slow_count - 1) * pattern.slow_id_stride
                         + (fast_count - 1) * pattern.fast_id_stride
-                        for pattern in proof.dependent_rows
+                        for pattern in (
+                            layout_proof.dependent_rows
+                            if layout_proof is not None
+                            else proof.dependent_rows
+                        )
                     )
                     proof_matches = proof_matches and (
                         isinstance(public_shape, (list, tuple))
@@ -2829,7 +2896,7 @@ class TrustedMetadataQueryAdapter:
         if "run_description" in run_columns:
             run_select += (
                 ', CASE WHEN octet_length(runs."run_description") <= '
-                f'{_TRUSTED_PLACEHOLDER_DESCRIPTION_MAX_BYTES} '
+                f"{_TRUSTED_PLACEHOLDER_DESCRIPTION_MAX_BYTES} "
                 'THEN runs."run_description" ELSE NULL END AS "run_description"'
             )
         experiment_expressions = []
@@ -3037,15 +3104,21 @@ class TrustedMetadataQueryAdapter:
             interdependencies = description.get("interdependencies_", {})
             dependencies = (
                 interdependencies.get("dependencies", {})
-                if isinstance(interdependencies, dict) else {}
+                if isinstance(interdependencies, dict)
+                else {}
             )
-            dimensions = {
-                name: len(axes)
-                for name, axes in dependencies.items()
-                if name in materialized.get("measure_parameters", ())
-                and isinstance(axes, list) and axes
-                and all(isinstance(axis, str) for axis in axes)
-            } if isinstance(dependencies, dict) else {}
+            dimensions = (
+                {
+                    name: len(axes)
+                    for name, axes in dependencies.items()
+                    if name in materialized.get("measure_parameters", ())
+                    and isinstance(axes, list)
+                    and axes
+                    and all(isinstance(axis, str) for axis in axes)
+                }
+                if isinstance(dependencies, dict)
+                else {}
+            )
             materialized["preview_dimensions"] = [
                 dimensions.get(name)
                 for name in materialized.get("measure_parameters", ())
@@ -3253,13 +3326,14 @@ class TrustedMetadataQueryAdapter:
         run_description: dict[str, Any],
         result_columns: tuple[str, ...],
         result_watermark: int,
-    ) -> None:
+    ) -> TrustedQueryResult | None:
         """Share one bounded keyset page across all independent verifiers.
 
         Filtering happens after the physical page is read, so a missing or
         invalid group cannot increase the scan budget or starve another group.
         State is committed only after the query succeeds; cancellation leaves
-        the previous accepted cursor intact. No result rows survive the page.
+        the previous accepted cursor intact. Return the transient page for
+        optional shared-grid verification; no result rows enter the cache.
         """
 
         signature = self._independent_layout_signature(dependency_sets, run_description)
@@ -3273,7 +3347,7 @@ class TrustedMetadataQueryAdapter:
         )
         if not signature or result_watermark <= 0:
             self._independent_layouts.pop(run_id, None)
-            return
+            return None
         previous = self._independent_layouts.get(run_id)
         if (
             previous is None
@@ -3286,17 +3360,20 @@ class TrustedMetadataQueryAdapter:
                 tuple(_IndependentDependentLayout(*item) for item in signature),
             )
         if previous.after_row_id == result_watermark:
-            return
+            return None
         table = quote_sqlite_identifier(table_name)
-        owners = {
-            dependent: frozenset(names)
-            for names, dependent in dependency_sets
+        owner_names = tuple(
+            dependent
+            for _names, dependent in dependency_sets
             if dependent is not None and dependent in columns
-        }
-        axis_names = tuple(
-            name for name in columns if any(name in item[0] for item in signature)
         )
-        owner_names = tuple(owners)
+        axis_names = tuple(
+            dict.fromkeys(
+                name
+                for dependencies, _dependent, _shape in signature
+                for name in dependencies
+            )
+        )
         # Ownership comes from the stored value's presence, not its numeric
         # projection. QCoDeS can store NaN as non-numeric text: it still owns
         # its row even though it cannot supply a finite measured sample.
@@ -3327,8 +3404,7 @@ class TrustedMetadataQueryAdapter:
         states = list(previous.states)
         positions = {name: index + 1 for index, name in enumerate(axis_names)}
         owner_positions = {
-            name: 1 + len(axis_names) + index
-            for index, name in enumerate(owner_names)
+            name: 1 + len(axis_names) + index for index, name in enumerate(owner_names)
         }
         after_row_id = previous.after_row_id
         for row in page.rows:
@@ -3354,16 +3430,13 @@ class TrustedMetadataQueryAdapter:
                 axes = tuple(row[positions[name]] for name in state.dependencies)
                 owns_row = bool(row[owner_positions[state.dependent]])
                 if not owns_row:
-                    # Other dependency groups have no ownership of this grid.
-                    # Within a compatible group, the established physical
-                    # pattern can identify NULL measured values. Before that
-                    # evidence exists, retain an honest missing-layout result.
-                    if any(
-                        owners[name] != frozenset(state.dependencies)
-                        for name in present_owners
-                    ):
+                    # A peer-owned row cannot be a missing sample of this
+                    # grid merely because dependency names or ids match.
+                    # Only unowned rows can fill an inferred physical phase;
+                    # shared verification separately proves compatible NULLs.
+                    if present_owners:
                         continue
-                    if present_owners or state.fast_axis_index is not None:
+                    if state.fast_axis_index is not None:
                         expected_id = (
                             state.first_row_id
                             + state.axis.next_slow_index * state.slow_id_stride
@@ -3379,8 +3452,12 @@ class TrustedMetadataQueryAdapter:
                     if owns_row:
                         states[index] = replace(state, viable=False)
                     continue
-                if state.count == 1 and state.first_value_missing and axes == state.first_axes:
-                    # An initially NULL compatible phase has ambiguous
+                if (
+                    state.count == 1
+                    and state.first_value_missing
+                    and axes == state.first_axes
+                ):
+                    # An initially unowned NULL phase has ambiguous
                     # ownership. A present value at the same coordinate
                     # identifies this dependent's actual first physical row.
                     if owns_row:
@@ -3413,6 +3490,7 @@ class TrustedMetadataQueryAdapter:
             after_row_id,
             proofs,
         )
+        return page
 
     @staticmethod
     def _finish_independent_first_row(
@@ -3443,7 +3521,10 @@ class TrustedMetadataQueryAdapter:
             if len(changed) != 1:
                 return replace(state, viable=False)
             initial_fast_axis = changed[0]
-            if state.planned_shape is not None and state.planned_shape[initial_fast_axis] == 1:
+            if (
+                state.planned_shape is not None
+                and state.planned_shape[initial_fast_axis] == 1
+            ):
                 initial_fast_axis = 1 - initial_fast_axis
             fast_count = (
                 state.planned_shape[initial_fast_axis] if state.planned_shape else 0
@@ -3936,6 +4017,8 @@ class TrustedMetadataQueryAdapter:
         *,
         proof_source: str,
         candidate: _RegularSetpointObservation | None = None,
+        shared_page: tuple[_RegularLayoutRow, ...] | None = None,
+        page_is_shared: bool = False,
     ) -> _RegularSetpointObservation | None:
         """Verify exactly one bounded full-prefix keyset page per invocation."""
 
@@ -3944,7 +4027,10 @@ class TrustedMetadataQueryAdapter:
             self._verified_regular_layouts.pop(run_id, None)
             return None
         state = self._regular_layout_progress.get(run_id)
-        page: tuple[_RegularLayoutRow, ...] | None = None
+        page = shared_page
+        if page_is_shared and page is None:
+            self._regular_layout_progress.pop(run_id, None)
+            return None
         if (
             state is not None
             and state.result_watermark != result_watermark
@@ -3960,13 +4046,14 @@ class TrustedMetadataQueryAdapter:
             if state is None:
                 self._verified_regular_layouts.pop(run_id, None)
                 if candidate is None:
-                    page = self._progressive_regular_layout_page(
-                        table_name,
-                        dependencies,
-                        dependents,
-                        0,
-                        result_watermark,
-                    )
+                    if page is None:
+                        page = self._progressive_regular_layout_page(
+                            table_name,
+                            dependencies,
+                            dependents,
+                            0,
+                            result_watermark,
+                        )
                     if not page or tuple(row.row_id for row in page) != tuple(
                         range(1, len(page) + 1)
                     ):
