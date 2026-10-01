@@ -325,6 +325,36 @@ class _FakeExecutor:
                 ((self.result_counts[table_name],),),
             )
 
+        if (
+            sql.startswith('SELECT "id", CASE WHEN typeof(')
+            and 'ORDER BY "id" LIMIT ?' in sql
+            and 'AS "qplot_axis_0"' not in sql
+        ):
+            table_name = self._result_table_for_sql(sql)
+            lower, upper, limit = self._bindings(query)
+            columns = self.result_columns[table_name]
+            axes = tuple(
+                name
+                for name in columns
+                if name not in ("id", *self.result_dependents[table_name])
+            )
+            rows = []
+            for row_id in range(lower + 1, min(upper, lower + limit) + 1):
+                regular = self._regular_result_row(table_name, row_id)
+                values = dict(zip(axes, regular[1 : 1 + len(axes)], strict=True))
+                values.update(
+                    {
+                        name: float(row_id) if present else None
+                        for name, present in zip(
+                            self.result_dependents[table_name],
+                            regular[1 + len(axes) :],
+                            strict=True,
+                        )
+                    }
+                )
+                rows.append((row_id, *(values[name] for name in columns[1:])))
+            return TrustedQueryResult(columns, tuple(rows))
+
         if ' AS "qplot_axis_0"' in sql and ' AS "qplot_present_0"' in sql:
             table_name = self._result_table_for_sql(sql)
             bindings = self._bindings(query)

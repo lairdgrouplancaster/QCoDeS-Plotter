@@ -15,7 +15,7 @@ import math
 import os
 import re
 import secrets
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from itertools import islice
 from typing import Any, Protocol, TypeAlias, cast
 
@@ -585,6 +585,36 @@ class _ProgressiveRegularLayout:
 
 
 @dataclass(frozen=True, slots=True)
+class _IndependentDependentLayout:
+    """Constant-size verifier for one dependent in a mixed-dependency run."""
+
+    dependencies: tuple[str, str]
+    dependent: str
+    planned_shape: tuple[int, int] | None
+    first_row_id: int = 0
+    first_axes: tuple[int | float, ...] = ()
+    first_value_missing: bool = False
+    fast_axis_index: int | None = None
+    fast_count: int = 0
+    fast_id_stride: int = 1
+    slow_id_stride: int = 0
+    count: int = 0
+    axis: _ProgressiveAxisState = field(default_factory=_ProgressiveAxisState)
+    viable: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _IndependentRunLayouts:
+    """One shared physical cursor, with independent proofs and failures."""
+
+    signature: tuple[tuple[tuple[str, str], str, tuple[int, int] | None], ...]
+    result_watermark: int
+    states: tuple[_IndependentDependentLayout, ...]
+    after_row_id: int = 0
+    proofs: tuple[Trusted2DLayoutProof, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TrustedSelectedRunDetail:
     """Plain selected-run view data; never a fake QCoDeS DataSet."""
 
@@ -870,6 +900,8 @@ class _Trusted2DSamplePlan:
 
 def _trusted_2d_sample_plans(
     proof: Trusted2DLayoutProof,
+    *,
+    maximum_rows: int = TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS,
 ) -> tuple[_Trusted2DSamplePlan, ...]:
     physical_patterns = {
         (
@@ -881,7 +913,7 @@ def _trusted_2d_sample_plans(
     }
     per_pattern_budget = max(
         1,
-        TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS // len(physical_patterns),
+        maximum_rows // len(physical_patterns),
     )
     slow_count = proof.shape[1 - proof.fast_axis_index]
     fast_count = proof.shape[proof.fast_axis_index]
@@ -989,6 +1021,11 @@ def _validated_sampled_grid_layout(
 
     grouped: dict[int, list[tuple[int, float, float]]] = {}
     for row_id, row in returned.items():
+        # The shared extraction can also contain another layout's samples or
+        # 1D windows. Orientation belongs to this plan's Cartesian sample;
+        # extra rows must not change its per-row coordinate-vector coverage.
+        if row_id not in expected:
+            continue
         grid_index = _pattern_grid_index(
             pattern,
             row_id,
@@ -1495,6 +1532,7 @@ class TrustedMetadataQueryAdapter:
         ] = {}
         self._regular_layout_progress: dict[int, _ProgressiveRegularLayout] = {}
         self._verified_regular_layouts: dict[int, _ProgressiveRegularLayout] = {}
+        self._independent_layouts: dict[int, _IndependentRunLayouts] = {}
         self._last_run_id = 0
         self._data_version: int | None = None
         self._data_version_incarnation: int | None = None
@@ -1534,6 +1572,7 @@ class TrustedMetadataQueryAdapter:
         self._regular_setpoint_observations.clear()
         self._regular_layout_progress.clear()
         self._verified_regular_layouts.clear()
+        self._independent_layouts.clear()
         self._last_run_id = 0
         self._pending_watermark = watermark
         self._data_version = baseline
@@ -1693,6 +1732,7 @@ class TrustedMetadataQueryAdapter:
             self._regular_setpoint_observations.pop(record.run_id, None)
             self._regular_layout_progress.pop(record.run_id, None)
             self._verified_regular_layouts.pop(record.run_id, None)
+            self._independent_layouts.pop(record.run_id, None)
             self._unavailable_run_fields.pop(record.run_id, None)
             return record
 
@@ -1833,6 +1873,17 @@ class TrustedMetadataQueryAdapter:
         )
 
         result_watermark = self._result_id_watermark(table_name)
+        if len({names for names, _dependent in dependency_sets}) > 1:
+            self._advance_independent_layouts(
+                run_id,
+                table_name,
+                dependency_sets,
+                run_description,
+                result_columns,
+                result_watermark,
+            )
+        else:
+            self._independent_layouts.pop(run_id, None)
         regular_observation = self._regular_setpoint_observations.get(run_id)
         expected_dependencies = (
             dependency_sets[0][0]
@@ -2088,7 +2139,7 @@ class TrustedMetadataQueryAdapter:
             cached_sweep_parameters,
             result_columns,
         )
-        cached_proof = getattr(self, "_validated_grid_layouts", {}).get(run_id)
+        cached_proof = self._validated_grid_layouts.get(run_id)
         layout_proof = (
             cached_proof
             if isinstance(cached_proof, Trusted2DLayoutProof)
@@ -2102,8 +2153,41 @@ class TrustedMetadataQueryAdapter:
             )
         ):
             layout_proof = None
-        grid_sample_plans = (
-            _trusted_2d_sample_plans(layout_proof) if layout_proof is not None else ()
+        independent = self._independent_layouts.get(run_id)
+        layout_proofs = (
+            independent.proofs
+            if independent is not None
+            else ((layout_proof,) if layout_proof is not None else ())
+        )
+        layout_proofs = tuple(
+            proof
+            for proof in layout_proofs
+            if all(
+                name in retained_columns
+                for name in (
+                    *proof.dependencies,
+                    *(pattern.dependent for pattern in proof.dependent_rows),
+                )
+            )
+        )
+        grid_dependents = {
+            pattern.dependent
+            for proof in layout_proofs
+            for pattern in proof.dependent_rows
+        }
+        needs_other_samples = bool(layout_proofs) and any(
+            dependent not in grid_dependents for dependent in cached_measure_parameters
+        )
+        grid_budget = TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS - (
+            TRUSTED_DERIVED_ROWS_PER_WINDOW if needs_other_samples else 0
+        )
+        grid_sample_plans = tuple(
+            plan
+            for proof in layout_proofs
+            for plan in _trusted_2d_sample_plans(
+                proof,
+                maximum_rows=grid_budget // len(layout_proofs),
+            )
         )
 
         numeric_expressions = tuple(
@@ -2135,24 +2219,31 @@ class TrustedMetadataQueryAdapter:
                 )
             ]
         else:
-            sample_queries = [
+            sample_queries = []
+        if not grid_sample_plans or needs_other_samples:
+            window_rows = (
+                TRUSTED_DERIVED_ROWS_PER_WINDOW // (TRUSTED_DERIVED_SAMPLE_WINDOWS + 1)
+                if grid_sample_plans
+                else TRUSTED_DERIVED_ROWS_PER_WINDOW
+            )
+            sample_queries.extend(
                 TrustedQuery(
                     f"SELECT {selected} FROM {table} "
                     f'WHERE "id" > MAX(0, (({maximum_expression} * ?) / '
                     f"{TRUSTED_DERIVED_SAMPLE_WINDOWS}) - 1) "
                     f'AND "id" <= {maximum_expression} '
-                    f'ORDER BY "id" LIMIT {TRUSTED_DERIVED_ROWS_PER_WINDOW}',
+                    f'ORDER BY "id" LIMIT {window_rows}',
                     (index,),
                 )
                 for index in range(TRUSTED_DERIVED_SAMPLE_WINDOWS)
-            ]
+            )
             # Preserve the established 1D newest-edge sample even when the
             # cached count was stale before this transaction began.
             sample_queries.append(
                 TrustedQuery(
                     f"SELECT {selected} FROM {table} "
                     f'WHERE "id" <= {maximum_expression} ORDER BY "id" DESC '
-                    f"LIMIT {TRUSTED_DERIVED_ROWS_PER_WINDOW}"
+                    f"LIMIT {window_rows}"
                 )
             )
 
@@ -2345,55 +2436,70 @@ class TrustedMetadataQueryAdapter:
         self._runs[run_id] = bounded_run
 
         validated_layouts: tuple[Trusted2DGridLayout, ...] = ()
-        if layout_proof is not None and grid_sample_plans:
+        if grid_sample_plans:
             authoritative_dependencies = {
                 (setpoints, dependent)
                 for setpoints, dependent in dependency_sets
                 if dependent is not None
             }
-            proof_shape = tuple(layout_proof.shape)
-            public_shape = materialized.get("setpoint_shape")
             completed = bool(materialized.get("is_completed"))
-            slow_count = proof_shape[1 - layout_proof.fast_axis_index]
-            fast_count = proof_shape[layout_proof.fast_axis_index]
-            last_pattern_ids = tuple(
-                pattern.first_row_id
-                + (slow_count - 1) * pattern.slow_id_stride
-                + (fast_count - 1) * pattern.fast_id_stride
-                for pattern in layout_proof.dependent_rows
-            )
-            proof_matches = (
-                isinstance(public_shape, (list, tuple))
-                and tuple(public_shape) == proof_shape
-                and materialized.get("setpoint_shape_source") == layout_proof.source
-                and all(
-                    (layout_proof.dependencies, pattern.dependent)
-                    in authoritative_dependencies
-                    for pattern in layout_proof.dependent_rows
-                )
-                and watermark <= max(last_pattern_ids)
-                and (not completed or watermark == max(last_pattern_ids))
-            )
-            if proof_matches:
-                layouts = tuple(
-                    layout
-                    for plan in grid_sample_plans
-                    if (
-                        layout := _validated_sampled_grid_layout(
-                            plan,
-                            sample_columns=expected_columns,
-                            sample_rows=sample_rows,
-                            result_watermark=watermark,
-                            completed=completed,
+            layouts = []
+            for plan in grid_sample_plans:
+                proof = plan.proof
+                proof_matches = (
+                    proof.dependencies,
+                    plan.pattern.dependent,
+                ) in authoritative_dependencies
+                if independent is not None:
+                    proof_matches = proof_matches and (
+                        independent.result_watermark == watermark
+                        and independent.signature
+                        == self._independent_layout_signature(
+                            dependency_sets,
+                            run_description,
                         )
                     )
-                    is not None
+                else:
+                    public_shape = materialized.get("setpoint_shape")
+                    slow_count = proof.shape[1 - proof.fast_axis_index]
+                    fast_count = proof.shape[proof.fast_axis_index]
+                    last_pattern_ids = tuple(
+                        pattern.first_row_id
+                        + (slow_count - 1) * pattern.slow_id_stride
+                        + (fast_count - 1) * pattern.fast_id_stride
+                        for pattern in proof.dependent_rows
+                    )
+                    proof_matches = proof_matches and (
+                        isinstance(public_shape, (list, tuple))
+                        and tuple(public_shape) == proof.shape
+                        and materialized.get("setpoint_shape_source") == proof.source
+                        and watermark <= max(last_pattern_ids)
+                        and (not completed or watermark == max(last_pattern_ids))
+                    )
+                layout = (
+                    _validated_sampled_grid_layout(
+                        plan,
+                        sample_columns=expected_columns,
+                        sample_rows=sample_rows,
+                        result_watermark=watermark,
+                        completed=completed,
+                    )
+                    if proof_matches
+                    else None
                 )
-                if len(layouts) == len(grid_sample_plans):
-                    validated_layouts = layouts
+                if layout is not None:
+                    layouts.append(layout)
+            validated_layouts = tuple(layouts)
 
         progress = self._regular_layout_progress.get(run_id)
         progressive_layout_cursor = progress.after_row_id if progress is not None else 0
+        independent_pending = (
+            independent is not None
+            and independent.after_row_id < independent.result_watermark
+        )
+        if independent_pending:
+            assert independent is not None
+            progressive_layout_cursor = independent.after_row_id
 
         return TrustedDerivedSourceObservation(
             format_version=1,
@@ -2416,7 +2522,7 @@ class TrustedMetadataQueryAdapter:
             unsupported_reason=unsupported_reason,
             run_fields=_freeze_fields(bounded_run),
             validated_2d_layouts=validated_layouts,
-            progressive_layout_pending=progress is not None,
+            progressive_layout_pending=progress is not None or independent_pending,
             progressive_layout_cursor=progressive_layout_cursor,
         )
 
@@ -3121,6 +3227,311 @@ class TrustedMetadataQueryAdapter:
         ):
             planned.append((sweep_parameters, None))
         return tuple(planned)
+
+    @staticmethod
+    def _independent_layout_signature(
+        dependency_sets: tuple[tuple[tuple[str, ...], str | None], ...],
+        run_description: dict[str, Any],
+    ) -> tuple[tuple[tuple[str, str], str, tuple[int, int] | None], ...]:
+        shapes = run_description.get("shapes")
+        signatures = []
+        for dependencies, dependent in dependency_sets[:TRUSTED_DERIVED_MAX_DEPENDENTS]:
+            if (
+                dependent is None
+                or len(dependencies) != 2
+                or len(set(dependencies)) != 2
+            ):
+                continue
+            raw_shape = shapes.get(dependent) if isinstance(shapes, dict) else None
+            planned_shape = (
+                cast(tuple[int, int], tuple(raw_shape))
+                if isinstance(raw_shape, (list, tuple))
+                and len(raw_shape) == 2
+                and all(type(value) is int and value > 0 for value in raw_shape)
+                and math.prod(raw_shape) <= (1 << 63) - 1
+                else None
+            )
+            signatures.append(
+                (cast(tuple[str, str], dependencies), dependent, planned_shape)
+            )
+        return tuple(signatures)
+
+    def _advance_independent_layouts(
+        self,
+        run_id: int,
+        table_name: str,
+        dependency_sets: tuple[tuple[tuple[str, ...], str | None], ...],
+        run_description: dict[str, Any],
+        result_columns: tuple[str, ...],
+        result_watermark: int,
+    ) -> None:
+        """Share one bounded keyset page across all independent verifiers.
+
+        Filtering happens after the physical page is read, so a missing or
+        invalid group cannot increase the scan budget or starve another group.
+        State is committed only after the query succeeds; cancellation leaves
+        the previous accepted cursor intact. No result rows survive the page.
+        """
+
+        signature = self._independent_layout_signature(dependency_sets, run_description)
+        columns = tuple(name for name in result_columns if name != "id")[
+            :TRUSTED_DERIVED_MAX_SOURCE_COLUMNS
+        ]
+        signature = tuple(
+            item
+            for item in signature
+            if all(name in columns for name in (*item[0], item[1]))
+        )
+        if not signature or result_watermark <= 0:
+            self._independent_layouts.pop(run_id, None)
+            return
+        previous = self._independent_layouts.get(run_id)
+        if (
+            previous is None
+            or previous.signature != signature
+            or previous.result_watermark > result_watermark
+        ):
+            previous = _IndependentRunLayouts(
+                signature,
+                result_watermark,
+                tuple(_IndependentDependentLayout(*item) for item in signature),
+            )
+        if previous.after_row_id == result_watermark:
+            return
+        table = quote_sqlite_identifier(table_name)
+        projection = ", ".join(
+            (
+                '"id"',
+                *(
+                    "CASE WHEN typeof({column}) IN ('integer', 'real') "
+                    "THEN {column} ELSE NULL END AS {column}".format(
+                        column=quote_sqlite_identifier(name)
+                    )
+                    for name in columns
+                ),
+            )
+        )
+        page = self._executor.query(
+            f"SELECT {projection} FROM {table} "
+            'WHERE "id" > ? AND "id" <= ? ORDER BY "id" LIMIT ?',
+            (
+                previous.after_row_id,
+                result_watermark,
+                _TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS,
+            ),
+        )
+        if page.columns != ("id", *columns) or not page.rows:
+            raise TrustedMetadataQueryError(
+                "An independent layout page has an invalid schema or cursor."
+            )
+        states = list(previous.states)
+        positions = {name: index + 1 for index, name in enumerate(columns)}
+        owners = {
+            dependent: frozenset(names)
+            for names, dependent in dependency_sets
+            if dependent is not None and dependent in positions
+        }
+        after_row_id = previous.after_row_id
+        for row in page.rows:
+            if (
+                len(row) != len(page.columns)
+                or type(row[0]) is not int
+                or row[0] != after_row_id + 1
+            ):
+                raise TrustedMetadataQueryError(
+                    "An independent layout page has nonconsecutive result ids."
+                )
+            after_row_id = row[0]
+            present_owners = {
+                name for name in owners if row[positions[name]] is not None
+            }
+            for index, state in enumerate(states):
+                if not state.viable:
+                    continue
+                axes = tuple(row[positions[name]] for name in state.dependencies)
+                own_value = row[positions[state.dependent]] is not None
+                if not own_value:
+                    # Other dependency groups have no ownership of this grid.
+                    # Within a compatible group, the established physical
+                    # pattern can identify NULL measured values. Before that
+                    # evidence exists, retain an honest missing-layout result.
+                    if any(
+                        owners[name] != frozenset(state.dependencies)
+                        for name in present_owners
+                    ):
+                        continue
+                    if present_owners or state.fast_axis_index is not None:
+                        expected_id = (
+                            state.first_row_id
+                            + state.axis.next_slow_index * state.slow_id_stride
+                            + state.axis.next_fast_index * state.fast_id_stride
+                        )
+                        if state.fast_axis_index is None or expected_id != row[0]:
+                            continue
+                valid_axes = all(
+                    type(value) in (int, float) and math.isfinite(float(value))
+                    for value in axes
+                )
+                if not valid_axes:
+                    if own_value:
+                        states[index] = replace(state, viable=False)
+                    continue
+                if state.count == 1 and state.first_value_missing and axes == state.first_axes:
+                    # An initially NULL compatible phase has ambiguous
+                    # ownership. A present value at the same coordinate
+                    # identifies this dependent's actual first physical row.
+                    if own_value:
+                        states[index] = replace(
+                            state, first_row_id=row[0], first_value_missing=False
+                        )
+                    continue
+                states[index] = self._consume_independent_layout_row(
+                    state,
+                    row[0],
+                    cast(tuple[int | float, ...], axes),
+                )
+                if state.count == 0:
+                    states[index] = replace(
+                        states[index], first_value_missing=not own_value
+                    )
+        proofs = (
+            tuple(
+                proof
+                for state in states
+                if (proof := self._finish_independent_layout(state)) is not None
+            )
+            if after_row_id == result_watermark
+            else ()
+        )
+        self._independent_layouts[run_id] = _IndependentRunLayouts(
+            signature,
+            result_watermark,
+            tuple(states),
+            after_row_id,
+            proofs,
+        )
+
+    @staticmethod
+    def _finish_independent_first_row(
+        axis: _ProgressiveAxisState,
+    ) -> _ProgressiveAxisState:
+        """Close an inferred first row once its actual fast extent is known."""
+
+        return _ProgressiveAxisState(
+            next_slow_index=1,
+            previous_slow_value=axis.current_slow_value,
+            reference_forward=axis.current_forward,
+            reference_reverse=axis.current_reverse,
+            reference_fast_direction=axis.current_fast_direction,
+            completed_rows=1,
+        )
+
+    @classmethod
+    def _consume_independent_layout_row(
+        cls,
+        state: _IndependentDependentLayout,
+        row_id: int,
+        axes: tuple[int | float, ...],
+    ) -> _IndependentDependentLayout:
+        if state.count == 0:
+            return replace(state, first_row_id=row_id, first_axes=axes, count=1)
+        if state.fast_axis_index is None:
+            changed = cls._changed_axis_indexes(state.first_axes, axes)
+            if len(changed) != 1:
+                return replace(state, viable=False)
+            initial_fast_axis = changed[0]
+            if state.planned_shape is not None and state.planned_shape[initial_fast_axis] == 1:
+                initial_fast_axis = 1 - initial_fast_axis
+            fast_count = (
+                state.planned_shape[initial_fast_axis] if state.planned_shape else 0
+            )
+            first_axis, _event = cls._consume_progressive_axis_value(
+                _ProgressiveAxisState(),
+                slow_index=0,
+                fast_index=0,
+                slow_value=state.first_axes[1 - initial_fast_axis],
+                fast_value=state.first_axes[initial_fast_axis],
+                fast_count=fast_count or (1 << 63) - 1,
+                checkpoint_count=0,
+            )
+            state = replace(
+                state,
+                fast_axis_index=initial_fast_axis,
+                fast_count=fast_count,
+                fast_id_stride=(row_id - state.first_row_id if fast_count != 1 else 1),
+                axis=first_axis,
+            )
+        fast_axis = state.fast_axis_index
+        assert fast_axis is not None
+        axis = state.axis
+        if not state.fast_count and axes[1 - fast_axis] != axis.current_slow_value:
+            state = replace(
+                state,
+                fast_count=axis.next_fast_index,
+                axis=cls._finish_independent_first_row(axis),
+            )
+            axis = state.axis
+        if (
+            axis.next_slow_index == 1
+            and axis.next_fast_index == 0
+            and not state.slow_id_stride
+        ):
+            state = replace(state, slow_id_stride=row_id - state.first_row_id)
+            if state.slow_id_stride <= (state.fast_count - 1) * state.fast_id_stride:
+                return replace(state, viable=False)
+        expected_id = (
+            state.first_row_id
+            + axis.next_slow_index * state.slow_id_stride
+            + axis.next_fast_index * state.fast_id_stride
+        )
+        if row_id != expected_id:
+            return replace(state, viable=False)
+        updated, _event = cls._consume_progressive_axis_value(
+            axis,
+            slow_index=axis.next_slow_index,
+            fast_index=axis.next_fast_index,
+            slow_value=axes[1 - fast_axis],
+            fast_value=axes[fast_axis],
+            fast_count=state.fast_count or (1 << 63) - 1,
+            checkpoint_count=0,
+        )
+        return replace(
+            state, axis=updated, count=state.count + 1, viable=updated.viable
+        )
+
+    @classmethod
+    def _finish_independent_layout(
+        cls, state: _IndependentDependentLayout
+    ) -> Trusted2DLayoutProof | None:
+        if not state.viable or state.fast_axis_index is None:
+            return None
+        fast_count = state.fast_count or state.count
+        axis = (
+            state.axis
+            if state.fast_count
+            else cls._finish_independent_first_row(state.axis)
+        )
+        if axis.next_fast_index or state.count % fast_count:
+            return None
+        shape = [0, 0]
+        shape[state.fast_axis_index] = fast_count
+        shape[1 - state.fast_axis_index] = axis.completed_rows
+        if state.planned_shape is not None and tuple(shape) != state.planned_shape:
+            return None
+        return Trusted2DLayoutProof(
+            state.dependencies,
+            cast(tuple[int, int], tuple(shape)),
+            state.fast_axis_index,
+            (
+                Trusted2DDependentRowPattern(
+                    state.dependent,
+                    state.first_row_id,
+                    state.fast_id_stride,
+                    state.slow_id_stride or fast_count * state.fast_id_stride,
+                ),
+            ),
+            "planned" if state.planned_shape else "observed",
+        )
 
     def _infer_regular_setpoint_observation(
         self,

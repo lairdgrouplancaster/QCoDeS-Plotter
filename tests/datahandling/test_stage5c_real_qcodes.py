@@ -22,9 +22,13 @@ from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_derived_rendering import render_trusted_derived_payload
 from qplot.datahandling.trusted_live import TrustedQuery, TrustedQueryResult
 from qplot.datahandling.trusted_live_queries import (
+    TRUSTED_DERIVED_MAX_SAMPLE_CELLS,
+    TRUSTED_DERIVED_MAX_SAMPLE_ROWS,
     TrustedMetadataQueryAdapter,
     TrustedSourceRevisionNamespace,
+    trusted_derived_source_revision,
 )
+from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
 from qplot.testdata import RunSpecification, generate_database
 from qplot.windows._trusted_derived_qt import TrustedDerivedQtBridge
@@ -89,7 +93,9 @@ class _ReadOnlySqliteExecutor:
             bindings = dict(bindings)
         cursor = self._connection.execute(query.sql, bindings or ())
         columns = tuple(item[0] for item in (cursor.description or ()))
-        return TrustedQueryResult(columns, tuple(tuple(row) for row in cursor.fetchall()))
+        return TrustedQueryResult(
+            columns, tuple(tuple(row) for row in cursor.fetchall())
+        )
 
 
 def _sha256(path: Path) -> str:
@@ -147,6 +153,510 @@ def _drain_expensive_run(
         if run_id not in adapter._regular_layout_progress:
             return fields
     raise AssertionError("The real progressive layout verifier did not drain.")
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+@pytest.mark.parametrize("mixed", [False, True], ids=["z2-only", "mixed"])
+def test_real_qcodes_mixed_dependency_preview(tmp_path: Path, planned, mixed) -> None:
+    database_path = tmp_path / "mixed-dependencies.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("mixed_dependencies", sample_name="2x3")
+    dataset = None
+    try:
+        x, y, z1, z2 = (ManualParameter(name) for name in ("x", "y", "z1", "z2"))
+        measurement = Measurement(exp=experiment, name="mixed_dependencies")
+        measurement.register_parameter(x)
+        measurement.register_parameter(y)
+        if mixed:
+            measurement.register_parameter(z1, setpoints=(x,))
+        measurement.register_parameter(z2, setpoints=(x, y))
+        if planned:
+            measurement.set_shapes({**({"z1": (2,)} if mixed else {}), "z2": (2, 3)})
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for x_index in range(2):
+                if mixed:
+                    datasaver.add_result((x, x_index), (z1, 10 + x_index))
+                for y_index in range(3):
+                    datasaver.add_result(
+                        (x, x_index), (y, y_index), (z2, x_index * 10 + y_index)
+                    )
+            run_id = datasaver.run_id
+    finally:
+        if dataset is not None:
+            dataset.conn.close()
+        experiment.conn.close()
+
+    protected_before = _protected_artifact_state(database_path)
+    executor = _ReadOnlySqliteExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        _load_basic_runs(adapter)
+        for _request in range(3):
+            observation = adapter.derived_source_observation(
+                run_id,
+                database_instance=database_instance(database_path),
+                namespace=TrustedSourceRevisionNamespace(b"mixed-dependencies"),
+            )
+            assert not observation.progressive_layout_pending
+            assert [
+                (layout.dependent, layout.shape)
+                for layout in observation.validated_2d_layouts
+            ] == [("z2", (2, 3))]
+            payload = render_trusted_derived_payload(
+                observation, TrustedWorkKind.PREVIEW
+            )
+            assert payload["status"] == "ok"
+            assert {dict(image)["dependent"] for image in payload["images"]} == (
+                {"z1", "z2"} if mixed else {"z2"}
+            )
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
+def _create_multiple_dependency_groups(
+    database_path: Path,
+    *,
+    planned: bool,
+    large: bool = False,
+    invalid: bool = False,
+    fast_first: bool = False,
+    journal_mode: str = "DELETE",
+    missing: str | None = None,
+) -> tuple[int, dict[str, tuple[int, int]]]:
+    initialise_or_create_database_at(str(database_path), journal_mode=journal_mode)
+    experiment = load_or_create_experiment("multiple_groups", sample_name="independent")
+    dataset = None
+    first_shape = (70, 70) if large else (2, 3)
+    second_shape = (50, 60) if large else (3, 2)
+    expected_shapes = {
+        "z2": first_shape[::-1] if fast_first else first_shape,
+        "z_reordered": first_shape if fast_first else first_shape[::-1],
+        "z_other": second_shape,
+    }
+    try:
+        x, y, t, z1, z2, z_reordered, z_other, z3d = (
+            ManualParameter(name)
+            for name in ("x", "y", "t", "z1", "z2", "z_reordered", "z_other", "z3d")
+        )
+        measurement = Measurement(exp=experiment, name="multiple_groups")
+        for parameter in (x, y, t):
+            measurement.register_parameter(parameter)
+        measurement.register_parameter(z1, setpoints=(x,))
+        measurement.register_parameter(z2, setpoints=(y, x) if fast_first else (x, y))
+        measurement.register_parameter(
+            z_reordered, setpoints=(x, y) if fast_first else (y, x)
+        )
+        measurement.register_parameter(z_other, setpoints=(x, t))
+        measurement.register_parameter(z3d, setpoints=(x, y, t))
+        if planned:
+            measurement.set_shapes({"z1": (2,), **expected_shapes, "z3d": (1, 1, 1)})
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            datasaver.add_result((x, 0), (z1, 10))
+            for x_index in range(first_shape[0]):
+                for y_index in range(first_shape[1]):
+                    datasaver.add_result(
+                        (x, x_index),
+                        (y, y_index),
+                        (
+                            z2,
+                            float("nan")
+                            if (
+                                (missing == "first" and x_index == y_index == 0)
+                                or (
+                                    missing == "interior"
+                                    and x_index == 1
+                                    and y_index == 1
+                                )
+                            )
+                            else x_index * 100 + y_index,
+                        ),
+                        (z_reordered, 10_000 + x_index * 100 + y_index),
+                    )
+            # Another group has a different shape and physically fast axis.
+            for t_index in range(second_shape[1]):
+                for x_index in range(second_shape[0]):
+                    coordinate = x_index
+                    if invalid and t_index == second_shape[1] - 1 and x_index == 1:
+                        coordinate = 0  # duplicate, not a rectangular grid
+                    datasaver.add_result(
+                        (x, coordinate),
+                        (t, t_index),
+                        (z_other, t_index * 100 + x_index),
+                    )
+            datasaver.add_result((x, 0), (y, 0), (t, 0), (z3d, 1))
+            datasaver.add_result((x, 1), (z1, 11))
+            run_id = datasaver.run_id
+    finally:
+        if dataset is not None:
+            dataset.conn.close()
+        experiment.conn.close()
+    return run_id, expected_shapes
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+@pytest.mark.parametrize("fast_first", [False, True], ids=["slow-first", "fast-first"])
+@pytest.mark.parametrize(
+    "invalid", [False, True], ids=["rectangular", "invalid-other-group"]
+)
+def test_real_qcodes_independent_layouts_preserve_dependency_order(
+    tmp_path: Path,
+    planned: bool,
+    fast_first: bool,
+    invalid: bool,
+) -> None:
+    database_path = tmp_path / "multiple-groups.db"
+    run_id, shapes = _create_multiple_dependency_groups(
+        database_path,
+        planned=planned,
+        fast_first=fast_first,
+        invalid=invalid,
+    )
+    protected_before = _protected_artifact_state(database_path)
+    executor = _ReadOnlySqliteExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        _load_basic_runs(adapter)
+        for _request in range(3):
+            observation = adapter.derived_source_observation(
+                run_id,
+                database_instance=database_instance(database_path),
+                namespace=TrustedSourceRevisionNamespace(b"multiple-groups"),
+            )
+            assert not observation.progressive_layout_pending
+            expected = {
+                name: shape
+                for name, shape in shapes.items()
+                if not (invalid and name == "z_other")
+            }
+            assert {
+                layout.dependent: layout.shape
+                for layout in observation.validated_2d_layouts
+            } == expected
+            views = {parameter.name: parameter for parameter in observation.parameters}
+            for layout in observation.validated_2d_layouts:
+                assert layout.dependencies == views[layout.dependent].depends_on
+                assert layout.source == ("planned" if planned else "observed")
+                assert layout.complete
+            for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW):
+                payload = render_trusted_derived_payload(observation, kind)
+                assert {dict(image)["dependent"] for image in payload["images"]} == {
+                    "z1",
+                    *expected,
+                }
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+@pytest.mark.parametrize("missing", ["first", "interior"])
+def test_real_qcodes_mixed_null_cell_does_not_suppress_compatible_grid(
+    tmp_path: Path,
+    planned: bool,
+    missing: str,
+) -> None:
+    database_path = tmp_path / "mixed-null-cell.db"
+    run_id, shapes = _create_multiple_dependency_groups(
+        database_path, planned=planned, missing=missing
+    )
+    protected_before = _protected_artifact_state(database_path)
+    executor = _ReadOnlySqliteExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        _load_basic_runs(adapter)
+        observation = adapter.derived_source_observation(
+            run_id,
+            database_instance=database_instance(database_path),
+            namespace=TrustedSourceRevisionNamespace(b"mixed-null-cell"),
+        )
+        assert {
+            layout.dependent: layout.shape
+            for layout in observation.validated_2d_layouts
+        } == shapes
+        payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
+        images = {dict(image)["dependent"]: dict(image) for image in payload["images"]}
+        assert set(images) == {"z1", *shapes}
+        assert images["z2"]["sampled_points"] == 5
+        assert images["z_reordered"]["sampled_points"] == 6
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+def test_real_qcodes_mixed_progressive_scan_shares_read_budget(
+    tmp_path: Path, planned: bool
+) -> None:
+    database_path = tmp_path / "mixed-progressive.db"
+    run_id, shapes = _create_multiple_dependency_groups(
+        database_path, planned=planned, large=True
+    )
+    protected_before = _protected_artifact_state(database_path)
+
+    def is_layout_page(query):
+        return query.sql.startswith('SELECT "id", CASE WHEN') and query.sql.endswith(
+            'ORDER BY "id" LIMIT ?'
+        )
+
+    class RecordingExecutor(_ReadOnlySqliteExecutor):
+        def __init__(self, path):
+            super().__init__(path)
+            self.results = []
+            self.cancel_next_page = False
+
+        def _execute(self, query):
+            if is_layout_page(query) and self.cancel_next_page:
+                self.cancel_next_page = False
+                raise InterruptedError("cancelled shared layout page")
+            result = super()._execute(query)
+            self.results.append((query, result))
+            return result
+
+    executor = RecordingExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        _load_basic_runs(adapter)
+        revisions = []
+        cursors = []
+        for request_index in range(5):
+            if request_index == 1:
+                previous = adapter._independent_layouts[run_id]
+                executor.cancel_next_page = True
+                with pytest.raises(
+                    InterruptedError, match="cancelled shared layout page"
+                ):
+                    adapter.derived_source_observation(
+                        run_id,
+                        database_instance=database_instance(database_path),
+                        namespace=TrustedSourceRevisionNamespace(b"mixed-progressive"),
+                    )
+                assert adapter._independent_layouts[run_id] == previous
+                assert not executor._connection.in_transaction
+            start = len(executor.results)
+            observation = adapter.derived_source_observation(
+                run_id,
+                database_instance=database_instance(database_path),
+                namespace=TrustedSourceRevisionNamespace(b"mixed-progressive"),
+            )
+            request_results = executor.results[start:]
+            pages = [
+                result for query, result in request_results if is_layout_page(query)
+            ]
+            assert len(pages) == 1
+            assert len(pages[0].rows) <= 4096
+            samples = [
+                result
+                for query, result in request_results
+                if query.sql.startswith('SELECT "id", CASE WHEN')
+                and not is_layout_page(query)
+            ]
+            assert (
+                sum(len(result.rows) for result in samples)
+                <= TRUSTED_DERIVED_MAX_SAMPLE_ROWS
+            )
+            assert (
+                sum(len(row) for result in samples for row in result.rows)
+                <= TRUSTED_DERIVED_MAX_SAMPLE_CELLS
+            )
+            assert len(observation.sample_rows) <= TRUSTED_DERIVED_MAX_SAMPLE_ROWS
+            assert not executor._connection.in_transaction
+            revisions.append(trusted_derived_source_revision(observation))
+            cursors.append(observation.progressive_layout_cursor)
+            if not observation.progressive_layout_pending:
+                break
+            assert not observation.validated_2d_layouts
+        else:
+            pytest.fail("Mixed progressive verification did not complete")
+        assert cursors == [4096, 8192, 12288, 0]
+        assert len(set(revisions)) == len(revisions)
+        assert {
+            layout.dependent: layout.shape
+            for layout in observation.validated_2d_layouts
+        } == shapes
+        payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
+        assert {dict(image)["dependent"] for image in payload["images"]} == {
+            "z1",
+            *shapes,
+        }
+        # Repeated requests reuse all proofs without another verification scan.
+        start = len(executor.results)
+        cached = adapter.derived_source_observation(
+            run_id,
+            database_instance=database_instance(database_path),
+            namespace=TrustedSourceRevisionNamespace(b"mixed-progressive"),
+        )
+        assert cached.validated_2d_layouts == observation.validated_2d_layouts
+        assert not cached.progressive_layout_pending
+        assert not any(
+            is_layout_page(query) for query, _result in executor.results[start:]
+        )
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+def test_real_qcodes_mixed_wal_preview_uses_trusted_reader(
+    tmp_path: Path, planned: bool
+) -> None:
+    database_path = tmp_path / "mixed-wal.db"
+    run_id, shapes = _create_multiple_dependency_groups(
+        database_path, planned=planned, journal_mode="WAL"
+    )
+    # Fixture generation leaves a real committed WAL frame visible throughout
+    # the viewing phase. Keep its writer open until artifact checks finish.
+    writer = sqlite3.connect(database_path)
+    writer.execute(
+        "UPDATE runs SET name = ? WHERE run_id = ?", ("committed mixed WAL", run_id)
+    )
+    writer.commit()
+    assert Path(f"{database_path}-wal").stat().st_size > 0
+    protected_before = _protected_artifact_state(database_path)
+    instance = database_instance(database_path)
+    service = TrustedLiveReadService(
+        database_path, expected_database_instance=instance, request_timeout_seconds=30
+    )
+    try:
+        bootstrap = service.submit_bootstrap().wait(30)
+        service.submit_basic_page(0, bootstrap.run_id_watermark).wait(30)
+        observation = service.submit_derived_source(run_id).wait(30)
+        assert not observation.progressive_layout_pending
+        assert {
+            layout.dependent: layout.shape
+            for layout in observation.validated_2d_layouts
+        } == shapes
+        payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
+        assert {dict(image)["dependent"] for image in payload["images"]} == {
+            "z1",
+            *shapes,
+        }
+    finally:
+        service.close(timeout=30)
+        try:
+            assert _protected_artifact_state(database_path) == protected_before
+        finally:
+            writer.close()
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+def test_real_qcodes_mixed_fast_row_spans_verification_pages(
+    tmp_path: Path,
+    planned: bool,
+) -> None:
+    database_path = tmp_path / "mixed-wide-grid.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("mixed_wide", sample_name="2x4100")
+    dataset = None
+    try:
+        x, y, z1, z2 = (ManualParameter(name) for name in ("x", "y", "z1", "z2"))
+        measurement = Measurement(exp=experiment, name="mixed_wide")
+        measurement.register_parameter(x)
+        measurement.register_parameter(y)
+        measurement.register_parameter(z1, setpoints=(x,))
+        measurement.register_parameter(z2, setpoints=(x, y))
+        if planned:
+            measurement.set_shapes({"z1": (2,), "z2": (2, 4100)})
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for x_index in range(2):
+                datasaver.add_result((x, x_index), (z1, x_index + 10))
+                for y_index in range(4100):
+                    datasaver.add_result(
+                        (x, x_index), (y, y_index), (z2, x_index * 10000 + y_index)
+                    )
+            run_id = datasaver.run_id
+    finally:
+        if dataset is not None:
+            dataset.conn.close()
+        experiment.conn.close()
+    protected_before = _protected_artifact_state(database_path)
+    executor = _ReadOnlySqliteExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        _load_basic_runs(adapter)
+        for expected_cursor in (4096, 8192, 0):
+            observation = adapter.derived_source_observation(
+                run_id,
+                database_instance=database_instance(database_path),
+                namespace=TrustedSourceRevisionNamespace(b"mixed-wide"),
+            )
+            assert observation.progressive_layout_cursor == expected_cursor
+            assert observation.progressive_layout_pending == bool(expected_cursor)
+        assert [
+            (layout.dependent, layout.shape)
+            for layout in observation.validated_2d_layouts
+        ] == [("z2", (2, 4100))]
+        payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
+        assert {dict(image)["dependent"] for image in payload["images"]} == {"z1", "z2"}
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+def test_real_qcodes_mixed_layout_cache_resumes_live_append(
+    tmp_path: Path, planned: bool
+) -> None:
+    database_path = tmp_path / "mixed-live-append.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+    experiment = load_or_create_experiment("mixed_append", sample_name="2x3")
+    dataset = None
+    service = None
+    try:
+        x, y, z1, z2 = (ManualParameter(name) for name in ("x", "y", "z1", "z2"))
+        measurement = Measurement(exp=experiment, name="mixed_append")
+        measurement.register_parameter(x)
+        measurement.register_parameter(y)
+        measurement.register_parameter(z1, setpoints=(x,))
+        measurement.register_parameter(z2, setpoints=(x, y))
+        if planned:
+            measurement.set_shapes({"z1": (2,), "z2": (2, 3)})
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for x_index in range(2):
+                datasaver.add_result((x, x_index), (z1, x_index + 10))
+                for y_index in range(3):
+                    datasaver.add_result(
+                        (x, x_index), (y, y_index), (z2, x_index * 10 + y_index)
+                    )
+                datasaver.flush_data_to_database(block=True)
+                if service is None:
+                    service = TrustedLiveReadService(
+                        database_path,
+                        expected_database_instance=database_instance(database_path),
+                        request_timeout_seconds=30,
+                    )
+                    bootstrap = service.submit_bootstrap().wait(30)
+                    service.submit_basic_page(0, bootstrap.run_id_watermark).wait(30)
+                protected_before = _protected_artifact_state(database_path)
+                observation = service.submit_derived_source(datasaver.run_id).wait(30)
+                assert not observation.progressive_layout_pending
+                if x_index == 1:
+                    assert [
+                        (layout.dependent, layout.shape)
+                        for layout in observation.validated_2d_layouts
+                    ] == [("z2", (2, 3))]
+                    payload = render_trusted_derived_payload(
+                        observation, TrustedWorkKind.PREVIEW
+                    )
+                    assert {
+                        dict(image)["dependent"] for image in payload["images"]
+                    } == {"z1", "z2"}
+                assert _protected_artifact_state(database_path) == protected_before
+        protected_before = _protected_artifact_state(database_path)
+        completed = service.submit_derived_source(datasaver.run_id).wait(30)
+        assert dict(completed.run_fields)["is_completed"] == 1
+        assert completed.validated_2d_layouts[0].complete
+        assert _protected_artifact_state(database_path) == protected_before
+    finally:
+        if service is not None:
+            service.close(timeout=30)
+        if dataset is not None:
+            dataset.conn.close()
+        experiment.conn.close()
 
 
 def test_real_qcodes_progressive_shape_enriches_cached_setpoint_steps(

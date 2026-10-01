@@ -638,6 +638,15 @@ cursor when the candidate pattern and fast extent remain compatible.
 Incompatible or insufficient new evidence fails closed rather than being
 accepted as proof.
 
+Runs with different dependency tuples use one shared physical page and a
+constant-size verifier for each supported 2D dependent. Each verifier learns
+its own first row, physical strides, fast axis, and rectangular extent, using
+that dependent's declared dependency order and shape. Compatible reordered
+dependencies retain their own axis order. A malformed or unsupported group
+does not invalidate another group's proof. The run cursor and independent
+proofs are cached through the accepted watermark, so repeated requests finish
+verification and later appends resume without rescanning the accepted prefix.
+
 Decoded image ownership is intentionally outside the bridge. `PreviewTab` owns
 the only retained full-preview cache and applies independent 512-entry and
 128 MiB limits. Inline run-list cells own the thumbnails they display; when
@@ -658,7 +667,10 @@ spread over both complete logical axes. The sample keeps exact endpoints, full
 small axes, mirror symmetry and adjacent parity/direction evidence while
 honouring separate physical row patterns for multiple dependents. Without a
 grid proof, the bounded generic fallback remains 15 keyset windows of 256 rows
-plus the newest 256-row edge. Every observation retains at most 4,096 rows, 33
+plus the newest 256-row edge. Multiple proofs share the same total grid-row
+budget; mixed 1D/2D extraction reserves 256 rows for generic windows within
+that budget. Sampled orientation is verified separately against each layout's
+Cartesian sample. Every observation retains at most 4,096 rows, 33
 columns, and 135,168 cells, with no OFFSET or full-result
 COUNT/DISTINCT/GROUP BY aggregate. Ordinary appends cannot invalidate the
 captured prefix because every sampled id is at or below that transaction's
