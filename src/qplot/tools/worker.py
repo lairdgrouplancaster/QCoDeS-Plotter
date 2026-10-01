@@ -2041,6 +2041,7 @@ class loader(QtCore.QRunnable):
 
 
     def _shaped_axis_values(self, param_data, dimension):
+        """Choose axis representatives without implying validity of samples."""
         self._check_cancelled()
         moved = np.moveaxis(param_data, dimension, 0)
         rows = moved.reshape(moved.shape[0], -1)
@@ -2070,6 +2071,7 @@ class loader(QtCore.QRunnable):
 
 
     def _shaped_axis_is_rectilinear(self, param_data, dimension):
+        """Check finite coordinates; missing samples can still be rectilinear."""
         self._check_cancelled()
         values = self._shaped_axis_values(param_data, dimension)
         shape = [1] * param_data.ndim
@@ -2103,16 +2105,29 @@ class loader(QtCore.QRunnable):
         x_dimension = axis_dimension["x"]
         y_dimension = axis_dimension["y"]
 
-        if x_dimension == 1 and y_dimension == 0:
-            return depvarData[np.ix_(valid["y"], valid["x"])]
-
-        if x_dimension == 0 and y_dimension == 1:
-            return depvarData[np.ix_(valid["x"], valid["y"])].transpose()
-
+        # Axis representatives may come from another row or column. Retain
+        # each sample's recorded coordinate validity before using those axes
+        # to publish the grid or pass it to operations.
         valid_rows = np.isfinite(depvarData)
         for axis in ["x", "y"]:
+            self._check_cancelled()
             name = self.axes_dict[axis]
-            valid_rows = valid_rows & np.isfinite(np.asarray(data[name], dtype=float))
+            valid_rows &= np.isfinite(np.asarray(data[name], dtype=float))
+        self._check_cancelled()
+
+        if {x_dimension, y_dimension} == {0, 1}:
+            selection = (
+                np.ix_(valid["y"], valid["x"])
+                if x_dimension == 1
+                else np.ix_(valid["x"], valid["y"])
+                )
+            # Advanced indexing creates a private grid, leaving the QCoDeS
+            # cache intact for later loads and different axis selections.
+            data_grid = depvarData[selection]
+            self._check_cancelled()
+            data_grid[~valid_rows[selection]] = np.nan
+            self._check_cancelled()
+            return data_grid if x_dimension == 1 else data_grid.transpose()
 
         return self.for_unshaped_2d(data, valid_rows, depvarData)[2]
     
