@@ -12,7 +12,10 @@ from qplot.datahandling.file_identity import (
     DatabaseInstance,
     logical_database_path,
 )
-from qplot.datahandling.parameter_data import parameter_data_for_export
+from qplot.datahandling.parameter_data import (
+    concatenate_record_samples,
+    parameter_data_for_export,
+)
 from qplot.datahandling.readonly import (
     DatabaseInstanceChangedError,
     load_by_guid_read_only,
@@ -92,7 +95,9 @@ def _csv_scalar_samples(values):
             samples.extend(_csv_scalar_samples(value))
         else:
             samples.append(value)
-    return np.asarray(samples)
+    # These cells can mix signed/unsigned integers (or integers and floats).
+    # Inferring a dtype again would undo extraction's precision protection.
+    return np.asarray(samples, dtype=object)
 
 
 def _csv_scalar_columns(param_data):
@@ -125,7 +130,7 @@ def _csv_scalar_columns(param_data):
                     f"{values.size} samples instead of {sample_count}."
                 )
     return {
-        name: np.concatenate(parts) if parts else np.array([], dtype=arrays[name].dtype)
+        name: concatenate_record_samples(parts) if parts else np.array([], dtype=arrays[name].dtype)
         for name, parts in chunks.items()
     }
 
@@ -2281,7 +2286,9 @@ class PlotActionsMixin:
             columns = {}
             for name, values in _csv_scalar_columns(param_data).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name
-                dtype = None
+                # Object samples may need both uint64 and negative int64, or
+                # exact integers alongside floats. Disable pandas' inference.
+                dtype: str | type[object] | None = object if values.dtype.hasobject else None
                 if values.dtype.kind in "iu":
                     # Alignment adds blanks to shorter columns. Nullable
                     # integers retain exact values instead of becoming floats.

@@ -19,33 +19,62 @@ def _check_noop():
     pass
 
 
-def _record_column(values, dtype, check_cancelled):
+def integer_preserving_dtype(dtypes):
+    """Use object cells when common-dtype promotion would convert integers.
+
+    In particular, NumPy combines uint64 and int64 as float64, which cannot
+    represent every stored integer. Mixed integer/float or integer/complex
+    records need the same protection. Homogeneous numeric arrays stay dense.
+    """
+    dtypes = set(dtypes)
+    common = np.result_type(*dtypes) if dtypes else np.dtype(float)
+    if common.kind not in "iuO" and any(dtype.kind in "iu" for dtype in dtypes):
+        return np.dtype(object)
+    return common
+
+
+def concatenate_record_samples(parts):
+    """Join flattened records without rounding any original integer samples."""
+    dtype = integer_preserving_dtype(part.dtype for part in parts)
+    return np.concatenate(parts, dtype=dtype) if parts else np.array([], dtype=dtype)
+
+
+def _record_column(values, dtype, check_cancelled, *, preserve_integers=False):
     """Keep equal shapes dense and unequal shapes in separate object cells."""
     shapes = set()
+    dtypes = set()
+    arrays = []
     for value in values:
         check_cancelled()
-        shapes.add(np.shape(value))
+        array = np.asarray(value, dtype=dtype)
+        shapes.add(array.shape)
+        dtypes.add(array.dtype)
+        arrays.append(array)
     if len(shapes) <= 1:
         check_cancelled()
-        return np.array(values, dtype=dtype)
+        if preserve_integers:
+            dtype = integer_preserving_dtype(dtypes)
+        return np.array(arrays, dtype=dtype)
 
     column = np.empty(len(values), dtype=object)
-    for index, value in enumerate(values):
+    for index, array in enumerate(arrays):
         check_cancelled()
         # Assign one cell at a time: slice assignment also tries broadcasting.
-        column[index] = np.asarray(value, dtype=dtype)
+        column[index] = array
     return column
 
 
 def get_parameter_data_for_one_paramtree(
     conn, table_name, rundescriber, output_param, start=None, end=None,
     *, check_cancelled: Callable[[], None] = _check_noop,
+    preserve_integers=False,
 ):
     """Decode one tree on an existing read-only connection.
 
     start/end and the returned count refer to non-NULL storage records, not
     flattened samples. No connections, transactions or cache writes are added.
     Errors from reading, expansion or dtype conversion propagate unchanged.
+    CSV requests lossless stacking; plotting retains its numeric cache dtypes.
     """
     check_cancelled()
     records, specs, count = _get_data_for_one_param_tree(
@@ -69,7 +98,9 @@ def get_parameter_data_for_one_paramtree(
         # Match QCoDeS' numeric SQL-column convention. Array dtypes retain
         # their precision, including integers and complex values for export.
         dtype = np.float64 if spec.type == "numeric" else None
-        data[spec.name] = _record_column(values, dtype, check_cancelled)
+        data[spec.name] = _record_column(
+            values, dtype, check_cancelled, preserve_integers=preserve_integers,
+        )
     check_cancelled()
     return data, count
 
@@ -79,6 +110,7 @@ def parameter_data_for_export(dataset, parameter_name):
     if isinstance(dataset, DataSet):
         data, _ = get_parameter_data_for_one_paramtree(
             dataset.conn, dataset.table_name, dataset.description, parameter_name,
+            preserve_integers=True,
         )
         return data
     return dataset.get_parameter_data(parameter_name).get(parameter_name, {})
