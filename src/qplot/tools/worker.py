@@ -339,6 +339,10 @@ class loader(QtCore.QRunnable):
             )
             if len(getattr(self.param, "depends_on_", ())) > 1:
                 self._validate_heatmap_parameter_types()
+            elif len(self.param.depends_on_) == 1:
+                for name in (self.param.name, *self.param.depends_on_):
+                    if getattr(self.param_dict[name], "type", None) == "complex":
+                        self._reject_complex_line(name)
             cache = self.cache
             cache_live = cache_is_live(cache)
 
@@ -494,6 +498,14 @@ class loader(QtCore.QRunnable):
                 self._apply_operation_metadata()
 
             self._check_cancelled()
+            if len(self.param.depends_on_) == 1:
+                # Operations can replace either axis. Validate their output
+                # before finished(True) permits any GUI/cache publication.
+                for axis in ("x", "y"):
+                    self._real_line_values(
+                        self.axis_data[axis], self.axis_param[axis].name,
+                    )
+                    self._check_cancelled()
             self._aggregate_operated_heatmap_if_needed()
             self._check_cancelled()
             # Operations may return replacement coordinates or grids, so keep
@@ -564,6 +576,8 @@ class loader(QtCore.QRunnable):
                         self._real_heatmap_values(
                             value, name, coordinate=name != self.param.name,
                         )
+                    else:
+                        self._real_line_values(value, name)
                     if value.dtype.kind not in "biufc":
                         raise ValueError("Array records must contain numeric values.")
                     if value.size not in (1, size):
@@ -571,8 +585,8 @@ class loader(QtCore.QRunnable):
                 yield values, size
 
         # Count actual samples first: padding to the longest record can grow
-        # quadratically. Preserve complex dtypes for 1D and reject them above
-        # for heatmaps before allocating or converting any numeric output.
+        # quadratically. Reject complex records above before allocating or
+        # converting any numeric output; the raw cache remains untouched.
         total = 0
         dtypes: list[np.dtype | None] = [None for _ in names]
         for values, size in records():
@@ -1926,6 +1940,26 @@ class loader(QtCore.QRunnable):
         return centres, indices
 
 
+    def _reject_complex_line(self, parameter_name):
+        detail = (
+            "measurement data" if parameter_name == self.param.name
+            else "a coordinate"
+        )
+        raise ValueError(
+            "Complex-valued 1D plots are not supported: "
+            f"parameter '{parameter_name}' contains {detail}."
+        )
+
+
+    def _real_line_values(self, values, parameter_name):
+        """Reject complex samples without converting or changing raw data."""
+
+        result = np.asarray(values)
+        if np.iscomplexobj(result):
+            self._reject_complex_line(parameter_name)
+        return result
+
+
     def for_1d(self, data, valid_rows):
         self._check_cancelled()
         axis_data = {}
@@ -1938,8 +1972,8 @@ class loader(QtCore.QRunnable):
         )
         # Flatten both arrays with the same mask in QCoDeS record order.
         # Sorting or uniquing either axis would break sample alignment.
-        x_values = np.asarray(data[x_name])
-        y_values = np.asarray(data[y_name])
+        x_values = self._real_line_values(data[x_name], x_name)
+        y_values = self._real_line_values(data[y_name], y_name)
         if x_values.shape != y_values.shape:
             raise ValueError("1D setpoint and measurement shapes do not match")
         valid_rows = (

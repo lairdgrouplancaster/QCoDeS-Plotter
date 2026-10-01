@@ -354,6 +354,10 @@ more independent variables are not projected or averaged implicitly: qPlot
 shows an `nD` unsupported placeholder in the run table and leaves the data
 available for CSV export. Create an explicit 1D/2D slice before plotting it.
 
+Line plots require real-valued measurements and coordinates, including samples
+stored in QCoDeS array parameters. Complex values produce a `Plot Error` naming
+the unsupported parameter. Raw measurement CSV exports preserve complex values.
+
 Plot and CSV requests are the deliberate Stage 4 boundary: the action addresses
 the selected GUID and exact database instance, then acquires an action-owned
 snapshot and materialises the QCoDeS dataset. Merely loading, selecting, or
