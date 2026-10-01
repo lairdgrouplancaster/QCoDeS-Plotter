@@ -127,12 +127,18 @@ def test_sidecar_swap_during_worker_read_is_rejected_before_publication(
     class Param:
         name = "signal"
         depends_on_ = ("x",)
+        type = "numeric"
 
     class Connection:
         def close(self):
             return None
 
-    plot_worker = loader(Cache(), Param(), {}, {})
+    param = Param()
+    param_dict = {
+        "signal": param,
+        "x": SimpleNamespace(name="x", type="numeric"),
+    }
+    plot_worker = loader(Cache(), param, param_dict, {})
     plot_worker.database_identity = key.database_identity
     plot_worker.expected_database_path = key.database_path
     plot_worker.expected_resolved_database_path = key.resolved_database_path

@@ -3,7 +3,8 @@
 import numpy as np
 import pyqtgraph as pg
 import pytest
-from PyQt6 import QtCore, QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows.plot2d import plot2d
 
@@ -49,7 +50,7 @@ def heatmap(request, qapplication):
 ])
 def test_manual_input_has_validator_numeric_meaning(heatmap, texts, expected):
     fields = (heatmap.colorbar_min_text, heatmap.colorbar_max_text)
-    for field, text in zip(fields, texts):
+    for field, text in zip(fields, texts, strict=True):
         field.setText(text)
         assert field.hasAcceptableInput()
         value, ok = field.validator().locale().toDouble(text)
@@ -96,7 +97,7 @@ def test_reopening_manual_limits_preserves_values(heatmap, limits, qapplication)
     heatmap.open_colorbar_scale_dialog()
     qapplication.processEvents()
     for field, value in zip(
-        (heatmap.colorbar_min_text, heatmap.colorbar_max_text), limits
+        (heatmap.colorbar_min_text, heatmap.colorbar_max_text), limits, strict=True
     ):
         assert field.hasAcceptableInput()
         assert float(field.text()) == value

@@ -859,7 +859,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         axis_number = self._axis_scale_axis_number(axis)
         viewbox = self._axis_scale_viewbox(axis)
         previous_view_values = list(viewbox.viewRange()[axis_number])
-        previous_values = self.view_to_data(axis, previous_view_values)
+        previous_values = np.asarray(self.view_to_data(axis, previous_view_values))
         try:
             values = [float(ui.minText.text()), float(ui.maxText.text())]
         except ValueError:
