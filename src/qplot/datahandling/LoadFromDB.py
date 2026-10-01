@@ -7,6 +7,7 @@ for the original functions of similar names as well as typing.
 """
 from typing import TYPE_CHECKING
 
+import numpy as np
 import numpy.typing as npt
 from qcodes.dataset.data_set_cache import _merge_data
 from qcodes.dataset.sqlite.queries import completed
@@ -80,10 +81,25 @@ def append_shaped_parameter_data_to_existing_arrays(
         # still apply, including the same missing-value handling.
         if any(values.dtype.kind == "O" for values in new_data_1_tree.values()):
             new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
-        existing_data_1_tree = {
-            name: values.copy()
-            for name, values in existing_data_1_tree.items()
-            }
+        private_data = {}
+        for name, values in existing_data_1_tree.items():
+            check_cancelled()
+            incoming = new_data_1_tree.get(name)
+            dtype = values.dtype
+            if (
+                values.size and incoming is not None and incoming.size
+                and values.dtype.kind in "biufc" and incoming.dtype.kind in "biufc"
+            ):
+                # QCoDeS' shaped insertion assigns into the cached dtype.
+                # Promote every numeric column before insertion, including
+                # coordinates and complex values that plot validation rejects.
+                # Empty cache placeholders must not dictate the first dtype.
+                dtype = np.result_type(values.dtype, incoming.dtype)
+            # Shaped insertion writes through ravel(), so retain the old
+            # copy() behavior of making C-contiguous working arrays.
+            private_data[name] = values.astype(dtype, order="C", copy=True)
+        existing_data_1_tree = private_data
+        check_cancelled()
 
     (merged_data[meas_parameter], updated_write_status[meas_parameter]) = (
         _merge_data(
@@ -94,6 +110,7 @@ def append_shaped_parameter_data_to_existing_arrays(
             meas_parameter=meas_parameter,
         )
     )
+    check_cancelled()
     return updated_write_status, merged_data
 
 

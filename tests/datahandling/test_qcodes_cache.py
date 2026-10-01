@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from qplot.datahandling import LoadFromDB as load_from_db
 from qplot.datahandling.qcodes_cache import (
@@ -249,6 +250,74 @@ def test_shaped_merge_does_not_mutate_shared_existing_array():
     np.testing.assert_array_equal(existing["signal"]["signal"], [1.0, np.nan])
     np.testing.assert_array_equal(merged["signal"]["signal"], [1.0, 2.0])
     assert write_status["signal"] == 2
+
+
+def test_shaped_merge_promotes_every_column_without_narrowing_existing_values():
+    class RunDescriber:
+        shapes = {"signal": (2, 3)}
+
+    existing = {"signal": {
+        "signal": np.array([[10, 20, 0], [0, 0, 0]], dtype=np.int64),
+        "fast": np.array([[0, 1, np.nan], [np.nan, np.nan, np.nan]], dtype=np.float32),
+        "slow": np.array([[1 + 2j, 3 + 4j, np.nan], [np.nan, np.nan, np.nan]]),
+    }}
+    incoming = {"signal": {
+        "signal": np.array([30.5, 40.5]),
+        "fast": np.array([2 + 5j, 3 + 6j]),
+        "slow": np.array([5, 6], dtype=np.float32),
+    }}
+    existing["signal"] = {
+        name: np.asfortranarray(values) for name, values in existing["signal"].items()
+    }
+    saved = {name: values.copy() for name, values in existing["signal"].items()}
+    write_status = {"signal": 2}
+    updated, merged = load_from_db.append_shaped_parameter_data_to_existing_arrays(
+        RunDescriber(), "signal", write_status, existing, incoming,
+    )
+    assert write_status == {"signal": 2}
+    assert updated == {"signal": 4}
+    for name, values in merged["signal"].items():
+        assert values.shape == (2, 3)
+        assert values.dtype == np.result_type(saved[name].dtype, incoming["signal"][name].dtype)
+        np.testing.assert_array_equal(values.ravel()[:2], saved[name].ravel()[:2])
+        np.testing.assert_array_equal(values.ravel()[2:4], incoming["signal"][name])
+        np.testing.assert_array_equal(values.ravel()[4:], saved[name].ravel()[4:])
+        np.testing.assert_array_equal(existing["signal"][name], saved[name])
+        assert not np.shares_memory(values, existing["signal"][name])
+
+
+@pytest.mark.parametrize("cancel_at", [2, 4], ids=["during-copy", "after-insertion"])
+def test_shaped_dtype_promotion_cancellation_keeps_cache_and_offsets_private(cancel_at):
+    class RunDescriber:
+        shapes = {"signal": (4,)}
+
+    existing = {"signal": {
+        name: np.array([10, 20, 0, 0], dtype=np.int64)
+        for name in ("signal", "fast")
+    }}
+    incoming = {"signal": {
+        name: np.array([30.5, 40.5]) for name in ("signal", "fast")
+    }}
+    write_status = {"signal": 2}
+    calls = 0
+
+    def check_cancelled():
+        nonlocal calls
+        calls += 1
+        if calls == cancel_at:
+            raise RuntimeError("cancelled")
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        load_from_db.append_shaped_parameter_data_to_existing_arrays(
+            RunDescriber(), "signal", write_status, existing, incoming,
+            check_cancelled=check_cancelled,
+        )
+    assert write_status == {"signal": 2}
+    for values in existing["signal"].values():
+        np.testing.assert_array_equal(values, [10, 20, 0, 0])
+        assert values.dtype == np.int64
+    for values in incoming["signal"].values():
+        np.testing.assert_array_equal(values, [30.5, 40.5])
 
 
 def test_load_param_data_from_db_prep_defers_parameter_completion_until_commit(monkeypatch):
