@@ -822,8 +822,19 @@ class loader(QtCore.QRunnable):
         x_column = _sqlite_identifier(self.axes_dict["x"])
         y_column = _sqlite_identifier(self.axes_dict["y"])
         z_column = _sqlite_identifier(self.param.name)
-        selected_where_sql = f"{z_column} IS NOT NULL"
+        # Match _arrays_from_values: an observation contributes only when
+        # both coordinates and its signal are finite. Apply this before
+        # MIN/MAX, cardinalities and AVG so invalid samples cannot distort
+        # bounds or poison a bin containing valid samples. BETWEEN also
+        # excludes missing values, including SQLite NULLs.
+        max_finite = float(np.finfo(float).max)
+        finite_where_sql = " AND ".join(
+            f"{column} BETWEEN {-max_finite} AND {max_finite}"
+            for column in (x_column, y_column, z_column)
+            )
         selected_count = self._selected_parameter_row_count(conn)
+        # Retain the acquired row count as a conservative loading bound;
+        # summaries and returned arrays count only valid observations.
         row_count = selected_count
         if row_count is None:
             row_count = rowid_max - rowid_min + 1
@@ -843,14 +854,10 @@ class loader(QtCore.QRunnable):
 
         axis_where_sql, parameters = self._heatmap_where_clause()
         if axis_where_sql:
-            where_sql = f"{selected_where_sql} AND {axis_where_sql}"
-            spatial_where_sql = (
-                f"{where_sql} AND {x_column} IS NOT NULL "
-                f"AND {y_column} IS NOT NULL"
-                )
+            where_sql = f"{finite_where_sql} AND {axis_where_sql}"
             range_summary = self._heatmap_spatial_summary(
                 conn,
-                spatial_where_sql,
+                where_sql,
                 parameters,
                 )
             range_row_count = range_summary[0]
@@ -862,7 +869,7 @@ class loader(QtCore.QRunnable):
             if range_row_count > MAX_SQL_HEATMAP_SOURCE_ROWS:
                 return self._spatially_aggregated_heatmap_arrays(
                     conn,
-                    spatial_where_sql,
+                    where_sql,
                     parameters,
                     range_summary,
                     )
@@ -884,19 +891,17 @@ class loader(QtCore.QRunnable):
             cursor = conn.execute(
                 (
                     f"SELECT {columns} FROM {table} "
-                    f"WHERE {selected_where_sql} ORDER BY rowid"
+                    f"WHERE {finite_where_sql} ORDER BY rowid"
                     ),
                 )
-            return self._arrays_from_cursor(cursor)
+            arrays = self._arrays_from_cursor(cursor)
+            self._heatmap_source_info["estimated_range_rows"] = int(arrays[2].size)
+            return arrays
 
-        spatial_where_sql = (
-            f"{selected_where_sql} AND {x_column} IS NOT NULL "
-            f"AND {y_column} IS NOT NULL"
-            )
-        summary = self._heatmap_spatial_summary(conn, spatial_where_sql, ())
+        summary = self._heatmap_spatial_summary(conn, finite_where_sql, ())
         return self._spatially_aggregated_heatmap_arrays(
             conn,
-            spatial_where_sql,
+            finite_where_sql,
             (),
             summary,
             )
