@@ -12,6 +12,7 @@ from qcodes.dataset import (
 )
 
 import qplot.tools.worker as worker_module
+from qplot.datahandling.qcodes_cache import update_cache_parameter_data
 from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.tools.operation_registry import OperationCall
 from qplot.tools.plot_tools import differentiate, fill_heatmap
@@ -155,6 +156,142 @@ def test_heatmap_above_and_below_full_resolution_threshold(tmp_path, arrays, sha
         if limit == 4:
             assert not hasattr(worker, "cache_data")
             assert worker.total_point_count_estimate == 6
+
+
+@pytest.mark.parametrize("limit", [None, 4], ids=["default", "bounded"])
+@pytest.mark.parametrize("swapped", [False, True])
+@pytest.mark.parametrize("missing", [False, True])
+def test_variable_length_array_heatmap(tmp_path, limit, swapped, missing):
+    records = [(0, [0, 2, 1], [0, 2, 1]), (1, [3, 2, 1, 0], [13, 12, 11, 10])]
+    expected = np.array([[0, 1, 2, np.nan], [10, 11, 12, 13]])
+    if missing:
+        records = [(0, [0, 2, 1], [0, np.nan, 1]),
+                   (1, [3, 2, np.nan, 0], [13, 12, 11, 10])]
+        expected[0, 2] = np.nan
+        expected[1, 1] = np.nan
+    with heatmap_dataset(tmp_path, shaped=False, records=records) as dataset:
+        worker = make_worker(dataset, **({} if limit is None else {
+            "max_full_heatmap_points": limit,
+        }))
+        if swapped:
+            worker.axes_dict = {"x": "slow", "y": "fast"}
+        run_worker(worker)
+        assert worker.loaded_from_sql_heatmap == (limit == 4)
+
+        def assert_result(result):
+            np.testing.assert_array_equal(result.axis_data["x"], [0, 1] if swapped else [0, 1, 2, 3])
+            np.testing.assert_array_equal(result.axis_data["y"], [0, 1, 2, 3] if swapped else [0, 1])
+            np.testing.assert_array_equal(result.dataGrid, expected.T if swapped else expected)
+
+        assert_result(worker)
+        if limit is None:
+            source = worker.cache_data["signal"]
+            assert all(values.dtype == object for values in source.values())
+            original = {name: [record.copy() for record in values]
+                        for name, values in source.items()}
+            assert update_cache_parameter_data(
+                dataset.cache, "signal", worker.updated_read_status,
+                worker.updated_write_status, worker.cache_data,
+            )
+            cached = make_worker(dataset, read_data=False)
+            cached.axes_dict = worker.axes_dict.copy()
+            run_worker(cached)
+            assert_result(cached)
+            for name, values in source.items():
+                for value, original_value in zip(values, original[name], strict=True):
+                    np.testing.assert_array_equal(value, original_value)
+
+
+@pytest.mark.parametrize("complex_column", ["fast", "signal"])
+@pytest.mark.parametrize("limit", [None, 4], ids=["cached", "bounded"])
+def test_variable_length_complex_records_are_rejected(tmp_path, complex_column, limit):
+    records = [(0, np.array([0, 2, 1]), np.array([0, 2, 1])),
+               (1, np.array([3, 2, 1, 0]), np.array([13, 12, 11, 10]))]
+    index = 1 if complex_column == "fast" else 2
+    records = [tuple(value + 1j if position == index else value
+                     for position, value in enumerate(record)) for record in records]
+    with heatmap_dataset(tmp_path, shaped=False, records=records) as dataset:
+        if limit is None:
+            # Use the real QCoDeS object arrays from an already populated
+            # cache, bypassing SQL's independent complex BLOB validation.
+            source = dataset.get_parameter_data()
+            assert source["signal"][complex_column].dtype == object
+            assert update_cache_parameter_data(
+                dataset.cache, "signal", {"signal": 2}, {"signal": 0}, source,
+            )
+        worker = make_worker(dataset, read_data=limit is not None,
+                             **({} if limit is None else {"max_full_heatmap_points": limit}))
+        errors, finished = [], []
+        worker.emitter.errorOccurred.connect(errors.append)
+        worker.emitter.finished.connect(finished.append)
+        worker.run()
+        assert finished == [False]
+        assert len(errors) == 1
+        assert "Complex-valued heatmaps" in str(errors[0])
+        assert complex_column in str(errors[0])
+        assert not hasattr(worker, "dataGrid")
+
+
+@pytest.mark.parametrize("phase", ["count", "copy", None], ids=["cancel-count", "cancel-copy", "complete"])
+def test_record_normalisation_is_private_linear_and_cancellable(tmp_path, monkeypatch, phase):
+    monkeypatch.setattr(worker_module, "CANCELLATION_CHUNK_SIZE", 2)
+    records = [(0, [0, 2, 1], [0, 2, 1]), (1, [3, 2, 1, 0], [13, 12, 11, 10])]
+    with heatmap_dataset(tmp_path, shaped=False, records=records) as dataset:
+        source = dataset.get_parameter_data()["signal"]
+        original = {name: [record.copy() for record in values]
+                    for name, values in source.items()}
+        assert update_cache_parameter_data(
+            dataset.cache, "signal", {"signal": 2}, {"signal": 0}, {"signal": source},
+        )
+        worker = make_worker(dataset, read_data=False)
+        normalise = worker._normalise_array_records
+        check = worker._check_cancelled
+        empty = np.empty
+        allocations = []
+
+        def allocate(size, *, dtype):
+            # Seven actual samples, never records * longest-record padding.
+            assert size == 7
+            result = empty(size, dtype=dtype)
+            result.fill(-999)
+            allocations.append(result)
+            return result
+
+        def check_normalisation():
+            if phase == "count" and not allocations:
+                worker.cancel()
+            if phase == "copy" and any(np.any(values != -999) for values in allocations):
+                # Cancellation is observed after at most one two-sample copy.
+                assert sum(np.count_nonzero(values != -999) for values in allocations) <= 2
+                worker.cancel()
+            check()
+
+        def normalise_with_checks(data):
+            # Represent scalar slow setpoints as one value per record. QCoDeS
+            # usually expands them already; the normaliser must also broadcast
+            # this representation within each record rather than globally.
+            data = {**data, "slow": np.array([0., 1.])}
+            with monkeypatch.context() as patch:
+                patch.setattr(worker, "_check_cancelled", check_normalisation)
+                patch.setattr(worker_module.np, "empty", allocate)
+                return normalise(data)
+
+        monkeypatch.setattr(worker, "_normalise_array_records", normalise_with_checks)
+        errors, finished = [], []
+        worker.emitter.errorOccurred.connect(errors.append)
+        worker.emitter.finished.connect(finished.append)
+        worker.run()
+        assert errors == []
+        assert finished == [phase is None]
+        if phase is None:
+            np.testing.assert_array_equal(worker.dataGrid, [[0, 1, 2, np.nan], [10, 11, 12, 13]])
+        else:
+            assert not hasattr(worker, "dataGrid")
+            assert not hasattr(worker, "axis_data")
+        assert len(allocations) == (0 if phase == "count" else 3)
+        for name, values in source.items():
+            for value, original_value in zip(values, original[name], strict=True):
+                np.testing.assert_array_equal(value, original_value)
 
 
 @pytest.mark.parametrize("streamed", [False, True], ids=["buffered", "streamed"])

@@ -414,6 +414,7 @@ class loader(QtCore.QRunnable):
                     data = cache_parameter_data(cache, self.param.name)
 
                 self._check_cancelled()
+                data = self._normalise_array_records(data)
                 depvarData = data[self.param.name]
 
                 # A QCoDeS array record adds a storage dimension, not an
@@ -532,6 +533,72 @@ class loader(QtCore.QRunnable):
 
         # Callback
         self._emit_finished(True)
+
+
+    def _normalise_array_records(self, data):
+        """Flatten ragged QCoDeS records together, without touching the cache."""
+
+        heatmap = len(self.param.depends_on_) > 1
+        setpoints = (
+            [self.axes_dict[axis] for axis in ("x", "y")]
+            if heatmap else self.param.depends_on_
+        )
+        names = list(dict.fromkeys((self.param.name, *setpoints)))
+        columns = [np.asarray(data[name]) for name in names]
+        if not any(column.dtype.kind == "O" for column in columns):
+            return data
+
+        # An object array represents acquisition records, not numeric samples.
+        # Other columns may still hold one scalar or a dense array per record.
+        record_count = len(columns[0])
+        if any(column.ndim == 0 or len(column) != record_count for column in columns):
+            raise ValueError("Setpoint and measurement record counts do not match.")
+
+        def records():
+            for index in range(record_count):
+                self._check_cancelled()
+                values = [np.asarray(column[index]) for column in columns]
+                size = values[0].size
+                for name, value in zip(names, values, strict=True):
+                    if heatmap:
+                        self._real_heatmap_values(
+                            value, name, coordinate=name != self.param.name,
+                        )
+                    if value.dtype.kind not in "biufc":
+                        raise ValueError("Array records must contain numeric values.")
+                    if value.size not in (1, size):
+                        raise ValueError("Setpoint and measurement shapes do not match.")
+                yield values, size
+
+        # Count actual samples first: padding to the longest record can grow
+        # quadratically. Preserve complex dtypes for 1D and reject them above
+        # for heatmaps before allocating or converting any numeric output.
+        total = 0
+        dtypes: list[np.dtype | None] = [None for _ in names]
+        for values, size in records():
+            total += size
+            dtypes = [value.dtype if dtype is None else np.result_type(dtype, value.dtype)
+                      for dtype, value in zip(dtypes, values, strict=True)]
+        self._check_cancelled()
+        if heatmap:
+            self._requires_bounded_heatmap(total)
+        normalised = {name: np.empty(total, dtype=dtype)
+                      for name, dtype in zip(names, dtypes, strict=True)}
+        offset = 0
+        chunk_size = max(1, CANCELLATION_CHUNK_SIZE)
+        for values, size in records():
+            for start in range(0, size, chunk_size):
+                stop = min(size, start + chunk_size)
+                for name, value in zip(names, values, strict=True):
+                    self._check_cancelled()
+                    # flat slices use logical C order and copy at most one
+                    # chunk, even when a record has Fortran storage order.
+                    normalised[name][offset + start:offset + stop] = (
+                        value.item() if value.size == 1 else value.flat[start:stop]
+                    )
+            offset += size
+        self._check_cancelled()
+        return normalised
 
 
     def _canonicalize_heatmap(self) -> None:
