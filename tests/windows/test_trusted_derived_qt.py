@@ -1676,6 +1676,44 @@ def test_reselection_rejects_stale_selected_detail_and_preserves_newer_tabs(
         _shutdown_real_bridge(window, bridge)
 
 
+def test_selected_metadata_clears_count_in_overview_and_preview(bound_bridge):
+    window, bridge, coordinator, _runs = bound_bridge
+    info_box = _TrackingSnapshotInfoBox(window)
+    window.infoBox = info_box
+    window.layout().addWidget(info_box)
+    info_box.preview.set_trusted_derived_runs(window.RunList.all_run_metadata())
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    base = _publication(bridge, coordinator, "guid-1", TrustedWorkKind.METADATA)
+
+    def publish(fields):
+        payload = dict(base.result)
+        metadata = dict(payload["metadata"])
+        metadata["run_fields"] = tuple(
+            {"run_id": 1, "guid": "guid-1", **fields}.items()
+        )
+        payload["metadata"] = tuple(metadata.items())
+        bridge._publish(replace(base, result=payload))
+
+    def overview():
+        return {
+            info_box.overview.item(row, 0).text():
+            info_box.overview.item(row, 1).text()
+            for row in range(info_box.overview.rowCount())
+        }
+
+    publish({"result_count": 6, "read_setpoint_count": 6})
+    assert overview()["Data points"] == "6"
+    publish({})
+    assert overview()["Data points"] == "6"
+    for _ in range(3):
+        publish({"result_count": 106, "read_setpoint_count": None})
+        assert "Data points" not in overview()
+        assert info_box.preview.run_metadata["guid-1"]["read_setpoint_count"] is None
+        publish({})
+        assert "Data points" not in overview()
+
+
 def test_metadata_revision_change_invalidates_viewer_until_current_detail_arrives(
     bound_bridge,
 ) -> None:

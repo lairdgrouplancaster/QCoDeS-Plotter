@@ -887,8 +887,9 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         run_fields: dict[str, object] = {
             str(name): self._thaw_payload_value(value)
             for name, value in raw_run_fields.items()
-            if value is not None
         }
+        # An omitted field leaves existing metadata alone; an explicit None
+        # invalidates earlier evidence (including acquired counts and shapes).
         run_fields["run_id"] = run_id
         run_fields["guid"] = guid
         item = self._window.RunList._item_for_guid(guid)
@@ -911,7 +912,12 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._parameters_by_guid[guid] = parameters
         self._summaries_by_guid[guid] = summaries
         self._window.RunList.updateRuns({run_id: run_fields})
-        self._window.infoBox.preview.add_trusted_derived_runs({run_id: run_fields})
+        # PreviewTab replaces each run record, while RunList merges patches.
+        # Give both consumers the same accepted facts, including omitted fields
+        # retained by RunList and explicit clears from this publication.
+        item = self._window.RunList._item_for_guid(guid)
+        current_run = dict(getattr(item, "run_metadata", {}) or run_fields)
+        self._window.infoBox.preview.add_trusted_derived_runs({run_id: current_run})
         if guid != getattr(self._window, "_selected_run_guid", None):
             return
         retained = self._selected_detail_publication
