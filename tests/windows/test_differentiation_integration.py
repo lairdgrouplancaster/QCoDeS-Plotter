@@ -1,6 +1,7 @@
 """Differentiate real QCoDeS sweeps through qPlot's registered operations."""
 
 import warnings
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -83,18 +84,60 @@ def operation_option(plot, name):
 
 def apply_operations(plot):
     previous = plot.worker
-    with warnings.catch_warnings(record=True) as emitted:
-        warnings.simplefilter("always", RuntimeWarning)
-        plot.oper_widget.apply_but.click()
-        worker = plot.worker
-        assert worker is not previous
-        finished, errors = [], []
+    finished, errors = [], []
+    submitted = []
+    start_worker = plot.threadPool.start
+
+    def observe_and_start(worker):
+        # A short sweep can finish before click() returns. Connect before
+        # submission so the test observes both success and error signals.
         worker.emitter.finished.connect(finished.append)
         worker.emitter.errorOccurred.connect(errors.append)
+        submitted.append(worker)
+        start_worker(worker)
+
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always", RuntimeWarning)
+        with patch.object(plot.threadPool, "start", side_effect=observe_and_start):
+            plot.oper_widget.apply_but.click()
+        worker = plot.worker
+        assert worker is not previous
+        assert submitted == [worker]
         wait_for(lambda: bool(finished) and not worker.running)
     plot.monitor.stop()
     assert not [warning for warning in emitted if issubclass(warning.category, RuntimeWarning)]
     return worker, finished, errors
+
+
+@pytest.mark.parametrize("sweep_plot", [
+    ([0, 1, 2, 1, 0], [0, 3, 6, 3, 0]),
+], indirect=True)
+@pytest.mark.parametrize("reject_derivative", [False, True], ids=["success", "error"])
+def test_apply_observes_worker_completion_before_button_returns(
+    sweep_plot, monkeypatch, reject_derivative,
+):
+    plot = sweep_plot
+    operation_option(plot, "dy/dx").input.setChecked(reject_derivative)
+    start_worker = plot.threadPool.start
+    completed_before_return = []
+
+    def start_and_finish(worker):
+        # Keep the real threaded worker and GUI callbacks, but force completion
+        # while the Apply button's clicked handler is still on the stack.
+        start_worker(worker)
+        wait_for(lambda: not worker.running)
+        completed_before_return.append(worker)
+
+    monkeypatch.setattr(plot.threadPool, "start", start_and_finish)
+    worker, finished, errors = apply_operations(plot)
+
+    assert completed_before_return == [worker]
+    assert finished == [not reject_derivative]
+    if reject_derivative:
+        assert len(errors) == 1
+        assert isinstance(errors[0], OperationExecutionError)
+    else:
+        assert errors == []
 
 
 @pytest.mark.parametrize("sweep_plot", [
