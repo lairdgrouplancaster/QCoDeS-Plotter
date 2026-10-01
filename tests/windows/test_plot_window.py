@@ -3100,6 +3100,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 plotWidget._update_axis_scale_auto_limits_tooltip
                 )
             _axis_scale_copy_auto_limits = plotWidget._axis_scale_copy_auto_limits
+            _apply_axis_scale_manual_limits = plotWidget._apply_axis_scale_manual_limits
             _axis_scale_mouse_toggled = plotWidget._axis_scale_mouse_toggled
             _axis_scale_manual_clicked = plotWidget._axis_scale_manual_clicked
             _axis_scale_range_text_changed = plotWidget._axis_scale_range_text_changed
@@ -3241,7 +3242,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             copy_button = x_controls.copyAutoLimitsButton
             self.assertEqual(
                 copy_button.toolTip(),
-                f"Set manual limits to {auto_limits[0]:.5g} and {auto_limits[1]:.5g}.",
+                f"Set manual limits to {auto_limits[0]:.17g} and {auto_limits[1]:.17g}.",
                 )
 
             host._axis_scale_custom_auto_axes.add("x")

@@ -586,8 +586,10 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         try:
             target_range = state["targetRange"][axis_number]
             data_range = self.view_to_data(axis, target_range)
-            ui.minText.setText(f"{data_range[0]:.5g}")
-            ui.maxText.setText(f"{data_range[1]:.5g}")
+            # Editable limits must round-trip doubles, even for a narrow range
+            # at a large offset. Tick-label precision is insufficient here.
+            ui.minText.setText(f"{data_range[0]:.17g}")
+            ui.maxText.setText(f"{data_range[1]:.17g}")
 
             auto_range = (
                 True
@@ -815,7 +817,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
         assert data_limits is not None
         button.setToolTip(
-            f"Set manual limits to {data_limits[0]:.5g} and {data_limits[1]:.5g}."
+            f"Set manual limits to {data_limits[0]:.17g} and {data_limits[1]:.17g}."
         )
 
     def _axis_scale_copy_auto_limits(self, axis: _AxisName) -> None:
@@ -833,11 +835,10 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 ):
             self._update_axis_scale_auto_limits_tooltip(axis)
             return
-        ui = self._axis_scale_controls[axis]
-        ui.minText.setText(f"{data_limits[0]:.5g}")
-        ui.maxText.setText(f"{data_limits[1]:.5g}")
-        self._axis_scale_range_text_changed(axis)
-        self._update_axis_scale_auto_limits_tooltip(axis)
+        # Auto limits already use ViewBox coordinates. Do not pass them through
+        # editable text or a log -> physical -> log conversion before applying.
+        self._apply_axis_scale_manual_limits(axis, limits)
+        self._sync_axis_scale_controls(axis)
 
     def _axis_scale_mouse_toggled(self, axis: _AxisName, checked: bool) -> None:
         viewbox = self._axis_scale_viewbox(axis)
@@ -869,8 +870,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 or not all(isfinite(value) for value in values)
                 or values[0] >= values[1]
                 ):
-            ui.minText.setText(f"{previous_values[0]:.5g}")
-            ui.maxText.setText(f"{previous_values[1]:.5g}")
+            ui.minText.setText(f"{previous_values[0]:.17g}")
+            ui.maxText.setText(f"{previous_values[1]:.17g}")
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -880,8 +881,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
 
         if self._axis_scale_log_mode(axis) and any(value <= 0 for value in values):
-            ui.minText.setText(f"{previous_values[0]:.5g}")
-            ui.maxText.setText(f"{previous_values[1]:.5g}")
+            ui.minText.setText(f"{previous_values[0]:.17g}")
+            ui.maxText.setText(f"{previous_values[1]:.17g}")
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -890,10 +891,24 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                     )
             return
 
-        view_values = [
-            float(value) for value in self.data_to_view(axis, values)
-        ]
+        # Accepting unchanged physical fields should also preserve the original
+        # log coordinates exactly rather than accumulate inverse-transform error.
+        view_values = (
+            previous_view_values
+            if values == list(previous_values)
+            else [float(value) for value in self.data_to_view(axis, values)]
+        )
+        self._apply_axis_scale_manual_limits(axis, view_values)
 
+    def _apply_axis_scale_manual_limits(
+            self,
+            axis: _AxisName,
+            view_values: tuple[float, float] | list[float],
+            ) -> None:
+        """Apply validated numeric ViewBox limits without parsing UI text."""
+
+        ui = self._axis_scale_controls[axis]
+        viewbox = self._axis_scale_viewbox(axis)
         ui.manualRadio.setChecked(True)
         self.__dict__.get("_axis_scale_custom_auto_axes", set()).discard(axis)
         if self._axis_scale_dimension(axis) == "x":
