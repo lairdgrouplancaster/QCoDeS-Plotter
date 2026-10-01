@@ -1,9 +1,11 @@
 """Native Options/Transforms labels and values in real Qt/QCoDeS plots."""
 
 import csv
+import sys
 
 import numpy as np
 import pytest
+from PyQt6 import QtCore, QtTest
 from pyqtgraph.exporters import CSVExporter
 from qcodes.dataset import (
     Measurement,
@@ -40,18 +42,15 @@ heatmap_cut = _heatmap_cut_fixture
 
 
 def set_controls(plot, controls, enabled=True):
-    # Phase map resets both coordinates. Set it first and unset it last so
-    # FFT+derivative never briefly produces unequal arrays in PyQtGraph.
-    ordered = ("phasemapCheck", "fftCheck", "derivativeCheck", "subtractMeanCheck")
-    for name in ordered if enabled else reversed(ordered):
-        if name in controls:
-            getattr(plot.plot.ctrl, name).setChecked(enabled)
+    for name in controls:
+        getattr(plot.plot.ctrl, name).setChecked(enabled)
 
 
 def assert_display(line, x, y):
     actual_x, actual_y = line.getData()
+    assert len(actual_x) == len(actual_y)
     np.testing.assert_allclose(actual_x, x, equal_nan=True)
-    np.testing.assert_allclose(actual_y, y, equal_nan=True)
+    np.testing.assert_allclose(actual_y, y, equal_nan=True, atol=1e-14)
 
 
 def expected_mapping(x, y, controls):
@@ -76,8 +75,8 @@ def expected_mapping(x, y, controls):
 
 
 SUPPORTED_CONTROLS = [
-    # FFT + derivative without phase map is not supported by PyQtGraph 0.14:
-    # FFT shortens X but derivative restores the longer input-sample Y.
+    # qPlot excludes FFT + derivative without phase map: native FFT shortens
+    # X but the native derivative restores the longer input-sample Y.
     ("derivativeCheck",),
     ("fftCheck",),
     ("phasemapCheck",),
@@ -85,6 +84,146 @@ SUPPORTED_CONTROLS = [
     ("phasemapCheck", "fftCheck"),
     ("phasemapCheck", "fftCheck", "derivativeCheck"),
 ]
+
+
+@pytest.fixture
+def no_callback_errors(monkeypatch, qapplication):
+    """Qt slot failures go to excepthook instead of raising from mouseClick."""
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *error: errors.append(error))
+    yield
+    qapplication.processEvents()
+    assert not errors, [(kind.__name__, str(error)) for kind, error, _tb in errors]
+
+
+def click_control(plot, name):
+    control = getattr(plot.plot.ctrl, name)
+    # Exercise the actual checkbox and its synchronous Qt signal connections.
+    control.show()
+    QtTest.QTest.mouseClick(control, QtCore.Qt.MouseButton.LeftButton,
+                           pos=QtCore.QPoint(8, control.height() // 2))
+
+
+def assert_native_state(plot, x, y, controls):
+    saved_controls = plot.plot.saveState()
+    for name in ("fftCheck", "derivativeCheck", "phasemapCheck", "subtractMeanCheck"):
+        assert getattr(plot.plot.ctrl, name).isChecked() == (name in controls)
+        assert saved_controls[name] == (name in controls)
+    phase = "phasemapCheck" in controls
+    fft = "fftCheck" in controls
+    derivative = phase or "derivativeCheck" in controls
+    x_label = "Signal" if phase else "Frequency of Gate voltage" if fft else "Gate voltage"
+    x_unit = "nA" if phase else "1/V" if fft else "V"
+    y_label = "Signal - mean(Signal)" if "subtractMeanCheck" in controls else "Signal"
+    if derivative:
+        y_label = "d(Signal)/d(Gate voltage)"
+    elif fft:
+        fft_input = f"({y_label})" if "subtractMeanCheck" in controls else y_label
+        y_label = f"FFT magnitude of {fft_input}"
+    y_unit = "nA/V" if derivative else "nA"
+    expected_x, expected_y = expected_mapping(x, y, controls)
+    traces = [(plot.line, "bottom", "left")]
+    for key, line in plot.lines.items():
+        style = plot._trace_styles[key]
+        traces.append((line, style.x_axis.lower(), style.y_axis.lower()))
+    for line, x_axis, y_axis in traces:
+        assert_display(line, expected_x, expected_y)
+        # Check rendered curve data too, so a stale curve cannot mask bad mapping.
+        actual_x, actual_y = line.curve.getData()
+        assert len(actual_x) == len(actual_y)
+        np.testing.assert_allclose(actual_x, expected_x)
+        np.testing.assert_allclose(actual_y, expected_y, atol=1e-14)
+        assert_samples(line, x, y)
+        for option, control in (("fftMode", "fftCheck"), ("derivativeMode", "derivativeCheck"),
+                                ("phasemapMode", "phasemapCheck"),
+                                ("subtractMeanMode", "subtractMeanCheck")):
+            assert line.opts[option] == (control in controls)
+        assert_axis(plot, x_axis, x_label, x_unit)
+        assert_axis(plot, y_axis, y_label, y_unit)
+
+
+@pytest.mark.parametrize("merged_plots", [np.linspace(0, 3, 64)], indirect=True)
+@pytest.mark.parametrize("order", [("fftCheck", "derivativeCheck"),
+                                  ("derivativeCheck", "fftCheck")])
+@pytest.mark.parametrize("axes", [("Bottom", "Left"), ("Bottom", "Right"),
+                                 ("Top", "Left"), ("Top", "Right")])
+def test_incompatible_native_activation_and_recovery(
+    merged_plots, no_callback_errors, qapplication, order, axes,
+):
+    window, (host, source, other), x, y = merged_plots
+    merge(window, host, source, x_axis=axes[0], y_axis=axes[1])
+    for _ in range(2):
+        for name in order:
+            click_control(host, name)
+            qapplication.processEvents()
+            assert_native_state(host, x, y, (name,))
+        click_control(host, order[-1])
+        assert_native_state(host, x, y, ())
+    # New traces inherit the normalized control state on every axis pair.
+    click_control(host, order[0])
+    click_control(host, order[1])
+    merge(window, host, other, x_axis=axes[0], y_axis=axes[1])
+    host.refresh_secondary_lines()
+    host.refreshWindow(force=True)
+    wait_for(lambda: not host.worker.running)
+    host.monitor.stop()
+    assert_native_state(host, x, y, (order[1],))
+    click_control(host, order[1])
+    assert_native_state(host, x, y, ())
+
+
+@pytest.mark.parametrize("merged_plots", [np.linspace(0, 3, 64)], indirect=True)
+@pytest.mark.parametrize("order", [("fftCheck", "derivativeCheck"),
+                                  ("derivativeCheck", "fftCheck")])
+@pytest.mark.parametrize("merge_after_toggle", [False, True])
+def test_leaving_phase_map_and_recovering_native_transforms(
+    merged_plots, no_callback_errors, qapplication, order, merge_after_toggle,
+):
+    window, (host, source, other), x, y = merged_plots
+    if not merge_after_toggle:
+        merge(window, host, source, x_axis="Top", y_axis="Right")
+    click_control(host, "subtractMeanCheck")
+    click_control(host, "phasemapCheck")
+    controls = ["subtractMeanCheck", "phasemapCheck"]
+    assert_native_state(host, x, y, controls)
+    for name in order:
+        click_control(host, name)
+        controls.append(name)
+        assert_native_state(host, x, y, controls)
+    if merge_after_toggle:
+        merge(window, host, source, x_axis="Top", y_axis="Right")
+    assert_native_state(host, x, y, controls)
+    click_control(host, "phasemapCheck")
+    qapplication.processEvents()
+    assert_native_state(host, x, y, ("subtractMeanCheck", "derivativeCheck"))
+    merge(window, host, other, x_axis="Bottom", y_axis="Right")
+    for controls, name in [
+        (("subtractMeanCheck", "fftCheck"), "fftCheck"),
+        (("subtractMeanCheck", "fftCheck", "phasemapCheck"), "phasemapCheck"),
+        (("subtractMeanCheck", "fftCheck", "phasemapCheck", "derivativeCheck"), "derivativeCheck"),
+        (("subtractMeanCheck", "derivativeCheck"), "phasemapCheck"),
+        (("subtractMeanCheck",), "derivativeCheck"),
+        ((), "subtractMeanCheck"),
+    ]:
+        click_control(host, name)
+        qapplication.processEvents()
+        assert_native_state(host, x, y, controls)
+
+
+@pytest.mark.parametrize("merged_plots", [np.linspace(0, 3, 64)], indirect=True)
+@pytest.mark.parametrize("controls", [(), ("fftCheck",), ("derivativeCheck",)])
+def test_leaving_phase_map_preserves_individual_transforms(
+    merged_plots, no_callback_errors, qapplication, controls,
+):
+    window, (host, source, _other), x, y = merged_plots
+    merge(window, host, source, x_axis="Top", y_axis="Right")
+    # Also exercise entering phase map from an active FFT/derivative.
+    set_controls(host, controls)
+    click_control(host, "phasemapCheck")
+    assert_native_state(host, x, y, (*controls, "phasemapCheck"))
+    click_control(host, "phasemapCheck")
+    qapplication.processEvents()
+    assert_native_state(host, x, y, controls)
 
 
 @pytest.mark.parametrize("controls", SUPPORTED_CONTROLS)

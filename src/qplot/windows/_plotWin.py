@@ -592,10 +592,47 @@ class plotWidget(
         self._set_param_axis_label("left", parameters["y"])
 
     def _init_native_transform_labels(self):
-        """Observe native controls after PlotItem has applied their mapping."""
-        for name in ("fftCheck", "derivativeCheck", "phasemapCheck", "subtractMeanCheck"):
-            getattr(self.plot.ctrl, name).toggled.connect(self._native_transform_labels_changed)
+        """Coordinate line transforms before any native curve update runs."""
+        native_slots = {
+            "fftCheck": self.plot.updateSpectrumMode,
+            "derivativeCheck": self.plot.updateDerivativeMode,
+            "phasemapCheck": self.plot.updatePhasemapMode,
+            "subtractMeanCheck": self.plot.updateSubtractMeanMode,
+        }
+        self._qplot_native_transform_update = False
+        for name, slot in native_slots.items():
+            control = getattr(self.plot.ctrl, name)
+            if self.__dict__.get("line") is None:
+                control.toggled.connect(self._native_transform_labels_changed)
+                continue
+            # PlotItem connected these first. A later label/validation slot is
+            # too late: its native setters synchronously rebuild curve data.
+            control.toggled.disconnect(slot)
+            control.toggled.connect(
+                lambda value, name=name: self._native_transform_controls_changed(name, value)
+            )
         self._install_native_transform_trace_handler(self.__dict__.get("line"))
+
+    def _native_transform_controls_changed(self, name, _value):
+        if self._qplot_native_transform_update:
+            return
+        self._qplot_native_transform_update = True
+        try:
+            ctrl = self.plot.ctrl
+            if (not ctrl.phasemapCheck.isChecked()
+                    and ctrl.fftCheck.isChecked() and ctrl.derivativeCheck.isChecked()):
+                # Outside phase map, the newly enabled transform wins. Leaving
+                # phase map retains derivative, whose input samples it used.
+                incompatible = ctrl.derivativeCheck if name == "fftCheck" else ctrl.fftCheck
+                incompatible.setChecked(False)
+            for line in tuple(self.plot.items):
+                if isinstance(line, pg.PlotDataItem):
+                    self._sync_native_trace_transforms(line)
+            self._native_transform_labels_changed()
+            self.plot.enableAutoRange()
+            self.plot.recomputeAverages()
+        finally:
+            self._qplot_native_transform_update = False
 
     def _native_transform_labels_changed(self, _value=None):
         if {"x", "y"}.issubset(self.__dict__.get("axis_param", {})):
@@ -608,13 +645,27 @@ class plotWidget(
         line._qplot_transform_label_handler = True
 
     def _sync_native_trace_transforms(self, line):
-        """New traces inherit controls, including modes PlotItem.addItem omits."""
-        line.setSubtractMeanMode(self.plot.ctrl.subtractMeanCheck.isChecked())
-        # Phase map resets both coordinates; apply it before the other modes
-        # so adding a trace with all controls enabled has valid array lengths.
-        line.setPhasemapMode(self.plot.ctrl.phasemapCheck.isChecked())
-        line.setFftMode(self.plot.ctrl.fftCheck.isChecked())
-        line.setDerivativeMode(self.plot.ctrl.derivativeCheck.isChecked())
+        """Apply validated controls through valid intermediate curve states.
+
+        Native setters update immediately. Clear outgoing FFT/derivative modes
+        first, enable phase map before combining them, and disable phase map
+        last. This also covers new traces and traces on secondary viewboxes.
+        """
+        ctrl = self.plot.ctrl
+        fft = ctrl.fftCheck.isChecked()
+        derivative = ctrl.derivativeCheck.isChecked()
+        phase = ctrl.phasemapCheck.isChecked()
+        if not fft:
+            line.setFftMode(False)
+        if not derivative:
+            line.setDerivativeMode(False)
+        if phase:
+            line.setPhasemapMode(True)
+        line.setSubtractMeanMode(ctrl.subtractMeanCheck.isChecked())
+        line.setFftMode(fft)
+        line.setDerivativeMode(derivative)
+        if not phase:
+            line.setPhasemapMode(False)
         self._install_native_transform_trace_handler(line)
 
     def dragEnterEvent(self, event):

@@ -486,6 +486,16 @@ Cut-plot operations:
 Select operations in the panel, drag active operations to control order, then
 choose `Apply/Refresh`.
 
+Line plots and 1D cuts also expose native controls in the plot context menu
+under `Plot Options -> Transforms`. FFT and `dy/dx` can each be used alone or
+with mean subtraction. Outside phase map, enabling FFT clears `dy/dx`, and
+enabling `dy/dx` clears FFT. Phase map allows both controls to remain checked;
+it plots the original Y samples against their derivative, overriding the FFT
+and mean-subtraction mappings. Disabling phase map with both FFT and `dy/dx`
+checked clears FFT and keeps `dy/dx`. If only one is checked, that transform is
+retained. These controls update all traces in the window, including traces on
+secondary axes, and the axis labels follow the displayed quantities.
+
 ## Export
 
 The main window can export measurement data as CSV:

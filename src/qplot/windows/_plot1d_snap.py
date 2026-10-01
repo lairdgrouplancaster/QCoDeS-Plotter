@@ -175,7 +175,11 @@ def _line_snap_data(line: object | None) -> _LineData | None:
             raw_data = analysis_line.getData()
             if raw_data[0] is None or raw_data[1] is None:
                 return None
-            if processing["fftMode"] and opts.get("logMode", (False, False))[0]:
+            # Native log-X drops DC within the FFT stage. Phase map runs later
+            # and replaces both coordinates with full input-derived samples,
+            # so that FFT slice must not remove a valid phase-map point here.
+            if (processing["fftMode"] and not processing["phasemapMode"]
+                    and opts.get("logMode", (False, False))[0]):
                 raw_data = (raw_data[0][1:], raw_data[1][1:])
         view_data = tuple(np.asarray(values, dtype=float) for values in raw_data)
         log_mode = opts.get("logMode", (False, False))
