@@ -12,6 +12,7 @@ from ._plot_appearance import (
     configure_appearance_table,
 )
 from ._plot_refresh import plot_refresh_required
+from ._plot_transform_labels import native_axis_quantities
 from ._subplots import subplot1d
 from ._widgets import picker_1d
 
@@ -313,7 +314,15 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self._refresh_trace_axis_auto_ranges()
 
     def _trace_axis_parameter(self, trace: Any, display_axis: str) -> Any:
-        """Return the parameter plotted on one display axis for ``trace``."""
+        """Describe this trace's actual native mapping of published samples."""
+        return native_axis_quantities(
+            self._trace_input_axis_parameter(trace, "x"),
+            self._trace_input_axis_parameter(trace, "y"),
+            getattr(trace, "opts", {}),
+        )[display_axis]
+
+    def _trace_input_axis_parameter(self, trace: Any, display_axis: str) -> Any:
+        """Return metadata for samples before native display transforms."""
 
         host_axis_param = self.__dict__.get("axis_param", {})
         if trace is self.__dict__.get("line"):
@@ -449,6 +458,14 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def _sync_trace_axis_labels(self) -> None:
         """Resolve labels from the first trace on each currently assigned axis."""
 
+        plot = self.__dict__.get("plot")
+        if plot is not None and {"x", "y"}.issubset(self.__dict__.get("axis_param", {})):
+            styles = self._ensure_trace_styles()
+            for key, line in self.__dict__.get("lines", {}).items():
+                if line is not None and styles.get(key, self._initial_trace_style()).x_axis == "Bottom":
+                    parameter = self._trace_axis_parameter(line, "x")
+                    plot.getAxis("bottom").setLabel(text=parameter.label, units=parameter.unit)
+                    break
         self._sync_left_axis_visibility()
         self._sync_right_axis_visibility()
         self._sync_top_axis_visibility()
@@ -866,6 +883,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # has been constructed successfully.
         self.add_option_box()
         self.lines[trace_key] = subplot
+        sync_transforms = getattr(self, "_sync_native_trace_transforms", None)
+        if callable(sync_transforms):
+            sync_transforms(subplot)
         
         # Connect box options to line
         selected_box = None
@@ -1266,9 +1286,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             if callable(sync_log_mode):
                 sync_log_mode(label, line)
 
-        self._sync_left_axis_visibility()
-        self._sync_right_axis_visibility()
-        self._sync_top_axis_visibility()
+        self._sync_trace_axis_labels()
 
         z = style.order
         set_z = getattr(line, "setZValue", None)

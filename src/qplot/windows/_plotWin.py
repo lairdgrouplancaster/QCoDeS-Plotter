@@ -35,6 +35,7 @@ from ._plot_feedback import PlotWindowFeedbackMixin
 from ._plot_marquee import PlotMarqueeMixin
 from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
+from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     AXIS_MAJOR_TICK_COUNT_KEY,
     MOUSE_MODE_KEY,
@@ -524,6 +525,7 @@ class plotWidget(
         self.initOperations()
         self.initRefresh(refrate)
         self.initFrame() # See plot1d, plot2d
+        self._init_native_transform_labels()
         
         if self.visible: #dont run non essential GUI functions if not displaying
             self.initLabels()
@@ -580,8 +582,40 @@ class plotWidget(
 
 
     def _set_param_axis_labels(self):
-        self._set_param_axis_label("bottom", self.axis_param["x"])
-        self._set_param_axis_label("left", self.axis_param["y"])
+        parameters = self.axis_param
+        line = self.__dict__.get("line")
+        if line is not None:
+            parameters = native_axis_quantities(
+                parameters["x"], parameters["y"], line.opts,
+            )
+        self._set_param_axis_label("bottom", parameters["x"])
+        self._set_param_axis_label("left", parameters["y"])
+
+    def _init_native_transform_labels(self):
+        """Observe native controls after PlotItem has applied their mapping."""
+        for name in ("fftCheck", "derivativeCheck", "phasemapCheck", "subtractMeanCheck"):
+            getattr(self.plot.ctrl, name).toggled.connect(self._native_transform_labels_changed)
+        self._install_native_transform_trace_handler(self.__dict__.get("line"))
+
+    def _native_transform_labels_changed(self, _value=None):
+        if {"x", "y"}.issubset(self.__dict__.get("axis_param", {})):
+            self._set_param_axis_labels()
+
+    def _install_native_transform_trace_handler(self, line):
+        if line is None or getattr(line, "_qplot_transform_label_handler", False):
+            return
+        line.sigPlotChanged.connect(self._native_transform_labels_changed)
+        line._qplot_transform_label_handler = True
+
+    def _sync_native_trace_transforms(self, line):
+        """New traces inherit controls, including modes PlotItem.addItem omits."""
+        line.setSubtractMeanMode(self.plot.ctrl.subtractMeanCheck.isChecked())
+        # Phase map resets both coordinates; apply it before the other modes
+        # so adding a trace with all controls enabled has valid array lengths.
+        line.setPhasemapMode(self.plot.ctrl.phasemapCheck.isChecked())
+        line.setFftMode(self.plot.ctrl.fftCheck.isChecked())
+        line.setDerivativeMode(self.plot.ctrl.derivativeCheck.isChecked())
+        self._install_native_transform_trace_handler(line)
 
     def dragEnterEvent(self, event):
         if self._handle_preview_drag_drop(event):
