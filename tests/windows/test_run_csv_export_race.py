@@ -269,6 +269,84 @@ def _artifact_state(database_path: Path):
     return state
 
 
+@pytest.mark.parametrize(
+    "dtype,values",
+    (
+        (np.uint64, [9007199254740993, 9007199254740995]),
+        (np.int64, [-9007199254740993, -9007199254740995]),
+        (np.uint64, [2**64 - 2, 2**64 - 1]),
+        (np.int64, [-(2**63), 2**63 - 1]),
+    ),
+    ids=("uint64-above-float-range", "negative-int64", "uint64-max", "int64-limits"),
+)
+@pytest.mark.parametrize("lengths", ("z1-shorter", "equal", "z2-shorter"))
+@pytest.mark.parametrize("selection", ("*", "1"))
+def test_run_csv_preserves_exact_array_integers(
+        tmp_path, dtype, values, lengths, selection
+        ):
+    source = tmp_path / "integers.db"
+    initialise_or_create_database_at(str(source), journal_mode="DELETE")
+    experiment = load_or_create_experiment("integer_csv", sample_name="sample")
+    measurement = Measurement(exp=experiment, name="integer_csv")
+    z1 = ManualParameter("z1")
+    z2 = ManualParameter("z2")
+    measurement.register_parameter(z1, paramtype="array")
+    measurement.register_parameter(z2, paramtype="array")
+    z2_values = [11, 12, 13] if lengths == "z1-shorter" else [11, 12]
+    z1_values = values + [7] if lengths == "z2-shorter" else values
+    dataset = None
+    try:
+        with measurement.run(write_in_background=False) as datasaver:
+            # Keep a multidimensional raw array to exercise flattening too.
+            datasaver.add_result((z1, np.array([z1_values], dtype=dtype)))
+            datasaver.add_result((z2, np.array(z2_values, dtype=np.int64)))
+            dataset = datasaver.dataset
+            run_id, guid = dataset.run_id, dataset.guid
+    finally:
+        if dataset is not None:
+            dataset.conn.close()
+        experiment.conn.close()
+
+    protected = _artifact_state(source)
+    timestamps = {
+        suffix: Path(f"{source}{suffix}").stat().st_mtime_ns
+        for suffix, state in protected.items() if state is not None
+    }
+    destination = tmp_path / "integers.csv"
+    harness = _RunCsvHarness(source, destination, run_id, guid)
+    harness.RunList._runs[run_id]["measure_parameters"] = ["z1", "z2"]
+    harness.measurementBox.value = selection
+
+    harness.exportRunCsv()
+
+    assert harness.errors == []
+    assert harness.status_messages[-1][0] == f"Exported CSV: {destination}"
+    assert len(harness.loaded_datasets) == 1
+    with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+        harness.loaded_datasets[0].conn.cursor()
+    assert _artifact_state(source) == protected
+    assert {
+        suffix: Path(f"{source}{suffix}").stat().st_mtime_ns
+        for suffix in timestamps
+    } == timestamps
+    _assert_no_staging_artifacts(destination)
+    with destination.open(newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.reader(csv_file))
+    if selection == "1":
+        assert rows == [["z1"], *[[str(value)] for value in z1_values]]
+    else:
+        assert rows == [
+            ["z1.z1", "z2.z2"],
+            *[
+                [
+                    str(z1_values[index]) if index < len(z1_values) else "",
+                    str(z2_values[index]) if index < len(z2_values) else "",
+                ]
+                for index in range(max(len(z1_values), len(z2_values)))
+            ],
+        ]
+
+
 @pytest.mark.parametrize("export_path", ("run", "selected_preview", "run_preview"))
 @pytest.mark.parametrize("mixed", (False, True))
 @pytest.mark.parametrize("kind", ("variable", "fixed", "scalar_setpoint", "multidimensional"))

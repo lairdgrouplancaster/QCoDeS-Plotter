@@ -2281,7 +2281,13 @@ class PlotActionsMixin:
             columns = {}
             for name, values in _csv_scalar_columns(param_data).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name
-                columns[column_name] = pd.Series(values)
+                dtype = None
+                if values.dtype.kind in "iu":
+                    # Alignment adds blanks to shorter columns. Nullable
+                    # integers retain exact values instead of becoming floats.
+                    prefix = "U" if values.dtype.kind == "u" else ""
+                    dtype = f"{prefix}Int{values.dtype.itemsize * 8}"
+                columns[column_name] = pd.Series(values, dtype=dtype)
             frames.append(pd.DataFrame(columns))
 
         return pd.concat(frames, axis=1) if frames else pd.DataFrame()
