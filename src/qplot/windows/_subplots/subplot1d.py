@@ -79,6 +79,7 @@ class subplot1d(pg.PlotDataItem):
         self._source_interval_slot = None
 
         self.choose_from: tuple[str, str] | None = None
+        self.axis_param = {}
         self._source_update_signal = getattr(from_win, "trace_updated", None)
         if self._source_update_signal is not None:
             self._source_update_signal.connect(self._source_trace_updated)
@@ -137,7 +138,7 @@ class subplot1d(pg.PlotDataItem):
 
     @QtCore.pyqtSlot()
     def _source_trace_updated(self):
-        """Refresh immediately after a cut publishes new, ready-to-use data."""
+        """Refresh immediately after the source publishes ready-to-use data."""
 
         self.refresh(source_ready=True)
 
@@ -218,7 +219,7 @@ class subplot1d(pg.PlotDataItem):
 
 
     def disconnect_source_updates(self):
-        """Release the persistent cut-update connection when a trace is removed."""
+        """Release source-update connections when a trace is removed."""
 
         if self._source_update_signal is not None:
             try:
@@ -261,6 +262,18 @@ class subplot1d(pg.PlotDataItem):
             x=data["x"], 
             y=data["y"],
             )
+
+        # Keep metadata with the samples we actually copied. Axis selections
+        # and operation controls can change before replacement data is ready.
+        source_params = getattr(self.from_win, "axis_param", {})
+        self.axis_param = {
+            axis: source_params[source_axis]
+            for axis, source_axis in zip(("x", "y"), choose_from, strict=True)
+            if source_axis in source_params
+            }
+        sync_labels = getattr(self.parent, "_sync_trace_axis_labels", None)
+        if callable(sync_labels):
+            sync_labels()
         
         self._disconnect_pending_update()
     

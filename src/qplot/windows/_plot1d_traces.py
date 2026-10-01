@@ -319,6 +319,13 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if trace is self.__dict__.get("line"):
             return host_axis_param.get(display_axis) or getattr(self, "param", None)
 
+        # A merged trace owns metadata mapped at its last sample publication.
+        # Reading the source's current selection can describe pending data.
+        trace_axis_param = getattr(trace, "axis_param", {})
+        param = trace_axis_param.get(display_axis)
+        if param is not None:
+            return param
+
         source = getattr(trace, "from_win", None)
         if source is None:
             return host_axis_param.get(display_axis)
@@ -437,6 +444,11 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         """Update primary labels, then restore any selected top trace axis."""
 
         super()._set_param_axis_labels()
+        self._sync_trace_axis_labels()
+
+    def _sync_trace_axis_labels(self) -> None:
+        """Resolve labels from the first trace on each currently assigned axis."""
+
         self._sync_left_axis_visibility()
         self._sync_right_axis_visibility()
         self._sync_top_axis_visibility()
