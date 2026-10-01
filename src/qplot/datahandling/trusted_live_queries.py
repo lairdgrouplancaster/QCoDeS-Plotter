@@ -2040,20 +2040,10 @@ class TrustedMetadataQueryAdapter:
         # entry snapshot would otherwise regress fresher run-table fields when
         # the outer operation resumes.
         latest_metadata = self._require_cached_run(run_id)
-        retained_observed_fields = (
-            {
-                name: latest_metadata[name]
-                for name in (*_OBSERVED_SHAPE_FIELDS, "read_setpoint_count")
-                if name in latest_metadata
-            }
-            if regular_observation is None
-            and latest_metadata.get("setpoint_shape_source") == "observed"
-            else {}
-        )
         read_setpoint_count = max((count for _, count, _ in observations), default=None)
         setpoint_shape: tuple[int, ...] | None = None
         setpoint_count: int | None = None
-        if not latest_metadata.get("point_shape") and observations:
+        if latest_metadata.get("setpoint_shape_source") != "planned" and observations:
             dependency_names = {names for names, _, _ in observations}
             shapes = [shape for _, _, shape in observations]
             if (
@@ -2082,12 +2072,11 @@ class TrustedMetadataQueryAdapter:
             storage_bytes=storage_bytes,
             storage_bytes_estimated=True,
         )
-        observed.update(retained_observed_fields)
-        # Keep the trusted expensive/derived field contract stable when a
-        # partial run has no structurally proven logical count.  ``None`` is
-        # the honest bounded result; absence would make identical observations
-        # depend on whether an older enrichment happened to populate the key.
-        observed.setdefault("read_setpoint_count", None)
+        # No current proof means an unavailable logical count, including when
+        # a previously regular prefix has grown irregular or verification is
+        # still pending. Publish the explicit None above and the regenerated
+        # basic shape fields; retaining an older proof would misdescribe the
+        # newly observed watermark. Planned shapes remain separate evidence.
         self._runs[run_id] = _bounded_public_run_fields(observed)
         return _bounded_run_record(
             run_id,
@@ -3299,17 +3288,28 @@ class TrustedMetadataQueryAdapter:
         if previous.after_row_id == result_watermark:
             return
         table = quote_sqlite_identifier(table_name)
-        projection = ", ".join(
-            (
-                '"id"',
-                *(
-                    "CASE WHEN typeof({column}) IN ('integer', 'real') "
-                    "THEN {column} ELSE NULL END AS {column}".format(
-                        column=quote_sqlite_identifier(name)
-                    )
-                    for name in columns
-                ),
-            )
+        owners = {
+            dependent: frozenset(names)
+            for names, dependent in dependency_sets
+            if dependent is not None and dependent in columns
+        }
+        axis_names = tuple(
+            name for name in columns if any(name in item[0] for item in signature)
+        )
+        owner_names = tuple(owners)
+        # Ownership comes from the stored value's presence, not its numeric
+        # projection. QCoDeS can store NaN as non-numeric text: it still owns
+        # its row even though it cannot supply a finite measured sample.
+        projection = self._regular_probe_projection(axis_names, owner_names)
+        expected_columns = (
+            "id",
+            *(f"qplot_axis_{index}" for index in range(len(axis_names))),
+            *(f"qplot_present_{index}" for index in range(len(owner_names))),
+        )
+        page_rows = min(
+            _TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS,
+            # An axis can itself be a dependent, needing both projections.
+            TRUSTED_DERIVED_MAX_SAMPLE_CELLS // len(expected_columns),
         )
         page = self._executor.query(
             f"SELECT {projection} FROM {table} "
@@ -3317,19 +3317,18 @@ class TrustedMetadataQueryAdapter:
             (
                 previous.after_row_id,
                 result_watermark,
-                _TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS,
+                page_rows,
             ),
         )
-        if page.columns != ("id", *columns) or not page.rows:
+        if page.columns != expected_columns or not page.rows:
             raise TrustedMetadataQueryError(
                 "An independent layout page has an invalid schema or cursor."
             )
         states = list(previous.states)
-        positions = {name: index + 1 for index, name in enumerate(columns)}
-        owners = {
-            dependent: frozenset(names)
-            for names, dependent in dependency_sets
-            if dependent is not None and dependent in positions
+        positions = {name: index + 1 for index, name in enumerate(axis_names)}
+        owner_positions = {
+            name: 1 + len(axis_names) + index
+            for index, name in enumerate(owner_names)
         }
         after_row_id = previous.after_row_id
         for row in page.rows:
@@ -3337,20 +3336,24 @@ class TrustedMetadataQueryAdapter:
                 len(row) != len(page.columns)
                 or type(row[0]) is not int
                 or row[0] != after_row_id + 1
+                or any(
+                    type(row[position]) is not int or row[position] not in (0, 1)
+                    for position in owner_positions.values()
+                )
             ):
                 raise TrustedMetadataQueryError(
-                    "An independent layout page has nonconsecutive result ids."
+                    "An independent layout page has invalid result ids or ownership markers."
                 )
             after_row_id = row[0]
             present_owners = {
-                name for name in owners if row[positions[name]] is not None
+                name for name, position in owner_positions.items() if row[position]
             }
             for index, state in enumerate(states):
                 if not state.viable:
                     continue
                 axes = tuple(row[positions[name]] for name in state.dependencies)
-                own_value = row[positions[state.dependent]] is not None
-                if not own_value:
+                owns_row = bool(row[owner_positions[state.dependent]])
+                if not owns_row:
                     # Other dependency groups have no ownership of this grid.
                     # Within a compatible group, the established physical
                     # pattern can identify NULL measured values. Before that
@@ -3373,14 +3376,14 @@ class TrustedMetadataQueryAdapter:
                     for value in axes
                 )
                 if not valid_axes:
-                    if own_value:
+                    if owns_row:
                         states[index] = replace(state, viable=False)
                     continue
                 if state.count == 1 and state.first_value_missing and axes == state.first_axes:
                     # An initially NULL compatible phase has ambiguous
                     # ownership. A present value at the same coordinate
                     # identifies this dependent's actual first physical row.
-                    if own_value:
+                    if owns_row:
                         states[index] = replace(
                             state, first_row_id=row[0], first_value_missing=False
                         )
@@ -3392,7 +3395,7 @@ class TrustedMetadataQueryAdapter:
                 )
                 if state.count == 0:
                     states[index] = replace(
-                        states[index], first_value_missing=not own_value
+                        states[index], first_value_missing=not owns_row
                     )
         proofs = (
             tuple(

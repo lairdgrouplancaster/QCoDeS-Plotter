@@ -367,20 +367,118 @@ def test_real_qcodes_mixed_null_cell_does_not_suppress_compatible_grid(
     try:
         adapter = TrustedMetadataQueryAdapter(executor, database_path)
         _load_basic_runs(adapter)
-        observation = adapter.derived_source_observation(
-            run_id,
-            database_instance=database_instance(database_path),
-            namespace=TrustedSourceRevisionNamespace(b"mixed-null-cell"),
-        )
-        assert {
-            layout.dependent: layout.shape
-            for layout in observation.validated_2d_layouts
-        } == shapes
-        payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
-        images = {dict(image)["dependent"]: dict(image) for image in payload["images"]}
-        assert set(images) == {"z1", *shapes}
-        assert images["z2"]["sampled_points"] == 5
-        assert images["z_reordered"]["sampled_points"] == 6
+        for _request in range(3):
+            observation = adapter.derived_source_observation(
+                run_id,
+                database_instance=database_instance(database_path),
+                namespace=TrustedSourceRevisionNamespace(b"mixed-null-cell"),
+            )
+            assert not observation.progressive_layout_pending
+            assert {
+                layout.dependent: layout.shape
+                for layout in observation.validated_2d_layouts
+            } == shapes
+            payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
+            images = {dict(image)["dependent"]: dict(image) for image in payload["images"]}
+            assert set(images) == {"z1", *shapes}
+            assert images["z2"]["sampled_points"] == 5
+            assert images["z_reordered"]["sampled_points"] == 6
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
+@pytest.mark.parametrize("planned", [False, True], ids=["unplanned", "planned"])
+@pytest.mark.parametrize("bad_first", [False, True], ids=["good-first", "bad-first"])
+@pytest.mark.parametrize(
+    ("first_bad", "invalid_coordinates"),
+    [
+        (0.0, None),
+        (float("nan"), None),
+        (float("inf"), None),
+        (float("nan"), "duplicate"),
+        (float("nan"), "invalid-axis"),
+    ],
+    ids=["finite", "nan", "inf", "duplicate", "invalid-axis"],
+)
+def test_real_qcodes_cross_dependent_row_ownership(
+    tmp_path: Path,
+    planned: bool,
+    bad_first: bool,
+    first_bad: float,
+    invalid_coordinates: str | None,
+) -> None:
+    database_path = tmp_path / "cross-dependent-ownership.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("cross_dependent", sample_name="2x3")
+    dataset = None
+    shapes = {"good": (2, 3), "bad": (3, 2)}
+    try:
+        x, y, good, bad = (ManualParameter(name) for name in ("x", "y", "good", "bad"))
+        measurement = Measurement(exp=experiment, name="cross_dependent")
+        measurement.register_parameter(x)
+        measurement.register_parameter(y)
+        measurement.register_parameter(good, setpoints=(x, y))
+        measurement.register_parameter(bad, setpoints=(y, x))
+        if planned:
+            measurement.set_shapes(shapes)
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for x_index in range(2):
+                for y_index in range(3):
+                    values = (
+                        (good, 100 + x_index * 10 + y_index),
+                        (bad, first_bad if x_index == y_index == 0 else x_index * 10 + y_index),
+                    )
+                    for parameter, value in (values[::-1] if bad_first else values):
+                        y_coordinate = y_index
+                        if parameter is bad and x_index == 1 and y_index == 2:
+                            if invalid_coordinates == "duplicate":
+                                y_coordinate = 1
+                            elif invalid_coordinates == "invalid-axis":
+                                y_coordinate = float("nan")
+                        datasaver.add_result((x, x_index), (y, y_coordinate), (parameter, value))
+            run_id = datasaver.run_id
+    finally:
+        if dataset is not None:
+            dataset.conn.close()
+        experiment.conn.close()
+
+    protected_before = _protected_artifact_state(database_path)
+    executor = _ReadOnlySqliteExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        _load_basic_runs(adapter)
+        for _request in range(3):
+            start = len(executor.queries)
+            observation = adapter.derived_source_observation(
+                run_id,
+                database_instance=database_instance(database_path),
+                namespace=TrustedSourceRevisionNamespace(b"cross-dependent"),
+            )
+            assert not observation.progressive_layout_pending
+            expected_shapes = {"good": shapes["good"]} if invalid_coordinates else shapes
+            assert {
+                layout.dependent: layout.shape
+                for layout in observation.validated_2d_layouts
+            } == expected_shapes
+            for layout in observation.validated_2d_layouts:
+                expected_first = 1 if (layout.dependent == "bad") == bad_first else 2
+                assert layout.first_row_id == expected_first
+                assert layout.fast_id_stride == 2
+            payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
+            assert payload["status"] == "ok"
+            images = {dict(image)["dependent"]: dict(image) for image in payload["images"]}
+            assert set(images) == set(expected_shapes)
+            assert images["good"]["sampled_points"] == 6
+            if not invalid_coordinates:
+                assert images["bad"]["sampled_points"] == (6 if np.isfinite(first_bad) else 5)
+            if _request:
+                assert not any(
+                    query.sql.endswith('ORDER BY "id" LIMIT ?')
+                    and 'AS "qplot_present_0"' in query.sql
+                    for query in executor.queries[start:]
+                )
     finally:
         executor.close()
     assert _protected_artifact_state(database_path) == protected_before
@@ -447,6 +545,7 @@ def test_real_qcodes_mixed_progressive_scan_shares_read_budget(
             ]
             assert len(pages) == 1
             assert len(pages[0].rows) <= 4096
+            assert sum(len(row) for row in pages[0].rows) <= TRUSTED_DERIVED_MAX_SAMPLE_CELLS
             samples = [
                 result
                 for query, result in request_results
