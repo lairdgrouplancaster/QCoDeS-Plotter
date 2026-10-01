@@ -42,6 +42,7 @@ class RunPreviewCell(qtw.QWidget):
         self._has_rendered_previews = False
         self._placeholder_dimensions = []
         self._placeholder_parameters = []
+        self._previews = []
 
         self.content_layout = qtw.QHBoxLayout()
         self.content_layout.setContentsMargins(2, 0, 2, 0)
@@ -58,6 +59,7 @@ class RunPreviewCell(qtw.QWidget):
     def show_placeholders(self, count=None, generating=None):
         selected_parameter = self._clear_layout()
         self._has_rendered_previews = False
+        self._previews = []
         if generating is not None:
             self._generating = bool(generating)
         placeholder_count = self.placeholder_count if count is None else max(0, int(count))
@@ -72,51 +74,79 @@ class RunPreviewCell(qtw.QWidget):
     def show_previews(self, previews):
         self._generating = False
         selected_parameter = self._clear_layout()
+        self._previews = list(previews or [])
 
         preview_count = 0
-        for preview in previews or []:
-            if preview.get("unsupported"):
-                label = unsupported_preview_label(
-                    preview,
-                    self.icon_size,
-                    "measurementPreviewUnsupported",
-                    )
-                self.content_layout.addWidget(label)
+        parameters = self._placeholder_parameters
+        if parameters:
+            previews_by_parameter: dict[str, list[dict]] = {}
+            for preview in self._previews:
+                if not self._preview_is_displayable(preview):
+                    continue
+                parameter = preview.get("parameter", "")
+                previews_by_parameter.setdefault(parameter, []).append(preview)
+
+            slot_count = max(self.placeholder_count, len(parameters))
+            for index in range(slot_count):
+                preview = None
+                if index < len(parameters):
+                    matches = previews_by_parameter.get(parameters[index]) or []
+                    if matches:
+                        preview = matches.pop(0)
+                if preview is None:
+                    self.content_layout.addWidget(self._placeholder_label(index))
+                else:
+                    self._add_preview_label(preview)
+                    preview_count += 1
+        else:
+            for preview in self._previews:
+                if not self._preview_is_displayable(preview):
+                    continue
+                self._add_preview_label(preview)
                 preview_count += 1
-                continue
-
-            image = preview.get("image")
-            if image is None:
-                continue
-
-            label = DraggablePreviewImageLabel(
-                self.guid,
-                preview.get("parameter", ""),
-                preview.get("axes") or [],
-                )
-            label.setObjectName("measurementPreviewImage")
-            label.setFixedSize(self.icon_size, self.icon_size)
-            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            label.setToolTip(preview.get("title", ""))
-            label.set_preview_accessibility(preview.get("title"))
-            label.setPixmap(
-                QtGui.QPixmap.fromImage(image).scaled(
-                    self.icon_size,
-                    self.icon_size,
-                    QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                    QtCore.Qt.TransformationMode.SmoothTransformation,
-                    )
-                )
-            label.plotRequested.connect(self._emit_plot_requested)
-            label.exportRequested.connect(self._emit_export_requested)
-            self.content_layout.addWidget(label)
-            preview_count += 1
-
-        for index in range(preview_count, self.placeholder_count):
-            self.content_layout.addWidget(self._placeholder_label(index))
+            for index in range(preview_count, self.placeholder_count):
+                self.content_layout.addWidget(self._placeholder_label(index))
         self.content_layout.addStretch()
         self._has_rendered_previews = preview_count > 0
         self._restore_selection(selected_parameter)
+
+
+    @staticmethod
+    def _preview_is_displayable(preview):
+        return bool(preview.get("unsupported") or preview.get("image") is not None)
+
+
+    def _add_preview_label(self, preview):
+        if preview.get("unsupported"):
+            label = unsupported_preview_label(
+                preview,
+                self.icon_size,
+                "measurementPreviewUnsupported",
+                )
+            self.content_layout.addWidget(label)
+            return
+
+        label = DraggablePreviewImageLabel(
+            self.guid,
+            preview.get("parameter", ""),
+            preview.get("axes") or [],
+            )
+        label.setObjectName("measurementPreviewImage")
+        label.setFixedSize(self.icon_size, self.icon_size)
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        label.setToolTip(preview.get("title", ""))
+        label.set_preview_accessibility(preview.get("title"))
+        label.setPixmap(
+            QtGui.QPixmap.fromImage(preview["image"]).scaled(
+                self.icon_size,
+                self.icon_size,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        label.plotRequested.connect(self._emit_plot_requested)
+        label.exportRequested.connect(self._emit_export_requested)
+        self.content_layout.addWidget(label)
 
 
     def set_generating(self, generating):
@@ -143,7 +173,9 @@ class RunPreviewCell(qtw.QWidget):
                 or parameters != self._placeholder_parameters):
             self._placeholder_dimensions = dimensions
             self._placeholder_parameters = parameters
-            if not self._has_rendered_previews:
+            if self._has_rendered_previews:
+                self.show_previews(self._previews)
+            else:
                 self.show_placeholders()
 
 

@@ -27,6 +27,9 @@ from qplot.datahandling.trusted_live_queries import (
 )
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
 from qplot.testdata import RunSpecification, generate_database
+from qplot.windows._trusted_derived_qt import TrustedDerivedQtBridge
+from qplot.windows._widgets.preview import PreviewImageLabel
+from qplot.windows._widgets.run_list_items import RunPreviewCell
 
 pytestmark = pytest.mark.timeout(120)
 
@@ -144,6 +147,101 @@ def _drain_expensive_run(
         if run_id not in adapter._regular_layout_progress:
             return fields
     raise AssertionError("The real progressive layout verifier did not drain.")
+
+
+def test_real_qcodes_partial_thumbnail_keeps_missing_parameter_identity(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "partial-thumbnail-identity.db"
+    original_database_path = qcodes.config.core.db_location
+    executor = None
+    cell = None
+    protected_before = None
+    try:
+        initialise_or_create_database_at(str(database_path))
+        experiment = load_or_create_experiment(
+            "partial_thumbnail_identity",
+            sample_name="missing_first_dependent",
+        )
+        x = ManualParameter("partial_identity_x")
+        first = ManualParameter("partial_identity_first")
+        signal = ManualParameter("partial_identity_signal")
+        measurement = Measurement(exp=experiment, name="partial_thumbnail_identity")
+        measurement.register_parameter(x)
+        measurement.register_parameter(first, setpoints=(x,))
+        measurement.register_parameter(signal, setpoints=(x,))
+        with measurement.run() as datasaver:
+            datasaver.add_result((x, 0.0), (signal, 1.0))
+            datasaver.add_result((x, 1.0), (signal, 2.0))
+            run_id = datasaver.run_id
+            guid = datasaver.dataset.guid
+
+        protected_before = _protected_artifact_state(database_path)
+        executor = _ReadOnlySqliteExecutor(database_path)
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        runs = _load_basic_runs(adapter)
+        run = next(item for item in runs if item.run_id == run_id)
+        metadata = run.as_dict()
+        assert metadata["measure_parameters"] == [
+            "partial_identity_first",
+            "partial_identity_signal",
+        ]
+
+        observation = adapter.derived_source_observation(
+            run_id,
+            database_instance=database_instance(database_path),
+            namespace=TrustedSourceRevisionNamespace(b"partial-thumbnail-identity"),
+        )
+        payload = render_trusted_derived_payload(
+            observation,
+            TrustedWorkKind.THUMBNAIL,
+        )
+        assert [dict(image)["dependent"] for image in payload["images"]] == [
+            "partial_identity_signal",
+        ]
+
+        class _Decoder:
+            _pairs = staticmethod(TrustedDerivedQtBridge._pairs)
+
+        decoder = _Decoder()
+        decoder._parameters_by_guid = {guid: observation.parameters}
+        previews, decode_error = TrustedDerivedQtBridge._decode_images(
+            decoder,
+            guid,
+            payload,
+        )
+        assert decode_error is None
+        assert [preview["parameter"] for preview in previews] == [
+            "partial_identity_signal",
+        ]
+        assert not previews[0]["image"].isNull()
+
+        cell = RunPreviewCell(guid, 2)
+        cell.update_placeholder_metadata(metadata)
+        cell.show_previews(previews)
+        widgets = [
+            cell.content_layout.itemAt(index).widget()
+            for index in range(cell.content_layout.count())
+            if cell.content_layout.itemAt(index).widget() is not None
+        ]
+        assert [widget.objectName() for widget in widgets] == [
+            "measurementPreviewPlaceholder",
+            "measurementPreviewImage",
+        ]
+        assert [widget.parameter for widget in widgets] == [
+            "partial_identity_first",
+            "partial_identity_signal",
+        ]
+        assert all(isinstance(widget, PreviewImageLabel) for widget in widgets)
+    finally:
+        if cell is not None:
+            cell.deleteLater()
+        if executor is not None:
+            executor.close()
+        qcodes.config.core.db_location = original_database_path
+
+    assert protected_before is not None
+    assert _protected_artifact_state(database_path) == protected_before
 
 
 def test_real_generated_unplanned_grids_get_exact_shapes_and_full_domain_sample(

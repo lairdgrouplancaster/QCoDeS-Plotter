@@ -2,12 +2,33 @@ from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.database import _bounded_run_publication
+from qplot.windows._dragdrop import make_run_preview_mime, run_preview_payload_from_mime
 from qplot.windows._widgets.preview import (
+    DraggablePreviewImageLabel,
     PreviewImageLabel,
     PreviewTab,
     preview_placeholder_dimensions,
 )
 from qplot.windows._widgets.run_list_items import RunPreviewCell
+
+
+def _white_preview(parameter, *, axes=("x",)):
+    image = QtGui.QImage(22, 22, QtGui.QImage.Format.Format_RGB32)
+    image.fill(QtCore.Qt.GlobalColor.white)
+    return {
+        "parameter": parameter,
+        "axes": list(axes),
+        "title": f"{parameter} preview",
+        "image": image,
+    }
+
+
+def _preview_widgets(cell):
+    return [
+        cell.content_layout.itemAt(index).widget()
+        for index in range(cell.content_layout.count())
+        if cell.content_layout.itemAt(index).widget() is not None
+    ]
 
 
 def test_placeholder_selection_and_actions_work_before_thumbnail_arrives():
@@ -43,6 +64,145 @@ def test_placeholder_selection_and_actions_work_before_thumbnail_arrives():
         assert [label._selected for label in cell.findChildren(PreviewImageLabel)] == [False, True]
     finally:
         cell.close()
+        cell.deleteLater()
+
+
+def test_partial_previews_keep_missing_first_and_middle_parameter_slots():
+    cell = RunPreviewCell("guid", 3)
+    cell.update_placeholder_metadata({
+        "measure_parameters": ["first", "middle", "signal"],
+        "preview_dimensions": [1, 2, 1],
+    })
+    plots = []
+    exports = []
+    cell.plotRequested.connect(lambda *args: plots.append(args))
+    cell.exportRequested.connect(lambda *args: exports.append(args))
+    try:
+        cell.show_previews([_white_preview("signal")])
+        widgets = _preview_widgets(cell)
+        assert [widget.parameter for widget in widgets] == [
+            "first", "middle", "signal",
+        ]
+        assert [widget.objectName() for widget in widgets] == [
+            "measurementPreviewPlaceholder",
+            "measurementPreviewPlaceholder",
+            "measurementPreviewImage",
+        ]
+        assert [widget.text() for widget in widgets[:2]] == ["1D", "2D"]
+        widgets[0].plotRequested.emit(widgets[0].parameter)
+        widgets[0].exportRequested.emit(widgets[0].parameter)
+        assert plots == [("guid", "first")]
+        assert exports == [("guid", "first")]
+
+        cell.show_previews([
+            _white_preview("signal"),
+            _white_preview("first"),
+        ])
+        widgets = _preview_widgets(cell)
+        assert [widget.parameter for widget in widgets] == [
+            "first", "middle", "signal",
+        ]
+        assert [widget.objectName() for widget in widgets] == [
+            "measurementPreviewImage",
+            "measurementPreviewPlaceholder",
+            "measurementPreviewImage",
+        ]
+        assert widgets[1].text() == "2D"
+    finally:
+        cell.deleteLater()
+
+
+def test_out_of_order_incremental_previews_preserve_selection_and_targets():
+    cell = RunPreviewCell("run-guid", 3)
+    cell.update_placeholder_metadata({
+        "measure_parameters": ["first", "middle", "signal"],
+        "preview_dimensions": [1, 1, 1],
+    })
+    plots = []
+    exports = []
+    cell.plotRequested.connect(lambda *args: plots.append(args))
+    cell.exportRequested.connect(lambda *args: exports.append(args))
+    try:
+        cell.show_previews([_white_preview("signal")])
+        first, middle, signal = _preview_widgets(cell)
+        signal.select_preview()
+
+        cell.show_previews([
+            _white_preview("signal"),
+            _white_preview("first"),
+        ])
+        first, middle, signal = _preview_widgets(cell)
+        assert [widget.parameter for widget in (first, middle, signal)] == [
+            "first", "middle", "signal",
+        ]
+        assert [widget._selected for widget in (first, middle, signal)] == [
+            False, False, True,
+        ]
+        assert isinstance(first, DraggablePreviewImageLabel)
+        assert isinstance(middle, PreviewImageLabel)
+        assert isinstance(signal, DraggablePreviewImageLabel)
+        assert first.guid == signal.guid == "run-guid"
+        assert first.axes == signal.axes == ["x"]
+        assert run_preview_payload_from_mime(
+            make_run_preview_mime(signal.guid, signal.parameter, signal.axes)
+        ) == {
+            "guid": "run-guid",
+            "parameter": "signal",
+            "axes": ["x"],
+        }
+
+        first.plotRequested.emit(first.parameter)
+        middle.exportRequested.emit(middle.parameter)
+        signal.plotRequested.emit(signal.parameter)
+        signal.exportRequested.emit(signal.parameter)
+        assert plots == [
+            ("run-guid", "first"),
+            ("run-guid", "signal"),
+        ]
+        assert exports == [
+            ("run-guid", "middle"),
+            ("run-guid", "signal"),
+        ]
+
+        cell.show_previews([_white_preview("first")])
+        first, middle, signal = _preview_widgets(cell)
+        assert [widget.parameter for widget in (first, middle, signal)] == [
+            "first", "middle", "signal",
+        ]
+        assert [widget._selected for widget in (first, middle, signal)] == [
+            False, False, True,
+        ]
+        assert signal.objectName() == "measurementPreviewPlaceholder"
+    finally:
+        cell.deleteLater()
+
+
+def test_unsupported_preview_keeps_its_declared_position():
+    cell = RunPreviewCell("guid", 3)
+    cell.update_placeholder_metadata({
+        "measure_parameters": ["first", "unsupported", "signal"],
+    })
+    try:
+        cell.show_previews([
+            _white_preview("signal"),
+            {
+                "parameter": "unsupported",
+                "axes": ["x", "y", "z"],
+                "dimension_count": 3,
+                "title": "unsupported has 3 independent axes",
+                "unsupported": True,
+            },
+        ])
+        widgets = _preview_widgets(cell)
+        assert [widget.objectName() for widget in widgets] == [
+            "measurementPreviewPlaceholder",
+            "measurementPreviewUnsupported",
+            "measurementPreviewImage",
+        ]
+        assert widgets[0].parameter == "first"
+        assert widgets[1].text() == "3D"
+        assert widgets[2].parameter == "signal"
+    finally:
         cell.deleteLater()
 
 
