@@ -25,6 +25,8 @@ from ._dragdrop import (
     run_preview_payload_from_mime,
 )
 from ._help import add_help_menu
+from ._native_averaging import NativePlotItem, is_native_source_curve
+from ._native_transforms import native_fft_coordinate_error
 from ._plot1d_snap import _line_snap_data
 from ._plot_axis_scaling import (
     PlotAxisScalingMixin,
@@ -505,7 +507,7 @@ class plotWidget(
         self.vb = custom_viewbox() # Mainly for linking secondary axis
         self.vb.setDefaultPadding(0)
         self.apply_mouse_mode_preference()
-        self.plot = self.widget.addPlot(
+        self.plot = NativePlotItem(
             viewBox=self.vb,
             axisItems={
                 "bottom": _PowerScaledAxisItem("bottom"),
@@ -514,6 +516,7 @@ class plotWidget(
                 "right": _PowerScaledAxisItem("right"),
                 },
             )
+        self.widget.addItem(self.plot)
         self.apply_axis_major_tick_count_preference()
         self.vb.setParent(self.plot)
         self.vb.set_marquee_owner(self)
@@ -617,8 +620,17 @@ class plotWidget(
         if self._qplot_native_transform_update:
             return
         self._qplot_native_transform_update = True
+        error = None
         try:
             ctrl = self.plot.ctrl
+            # Validate every curve before any synchronous native setter runs.
+            # A rejected FFT must also retain an outgoing derivative mode.
+            wants_fft = (ctrl.fftCheck.isChecked() and not ctrl.phasemapCheck.isChecked()
+                         and (not ctrl.derivativeCheck.isChecked() or name == "fftCheck"))
+            if wants_fft:
+                error = self._native_fft_validation_error()
+                if error:
+                    ctrl.fftCheck.setChecked(False)
             if (not ctrl.phasemapCheck.isChecked()
                     and ctrl.fftCheck.isChecked() and ctrl.derivativeCheck.isChecked()):
                 # Outside phase map, the newly enabled transform wins. Leaving
@@ -626,17 +638,45 @@ class plotWidget(
                 incompatible = ctrl.derivativeCheck if name == "fftCheck" else ctrl.fftCheck
                 incompatible.setChecked(False)
             for line in tuple(self.plot.items):
-                if isinstance(line, pg.PlotDataItem):
+                if is_native_source_curve(line):
                     self._sync_native_trace_transforms(line)
-            self._native_transform_labels_changed()
             self.plot.enableAutoRange()
             self.plot.recomputeAverages()
         finally:
             self._qplot_native_transform_update = False
+        self._native_transform_labels_changed()
+        if error:
+            self._qplot_native_fft_error_text = error
+            self.show_status(error, 0)
+        elif self.__dict__.get("_qplot_native_fft_error_text"):
+            self._qplot_native_fft_error_text = None
+            self.show_status("", 0)
+
+    def _native_fft_validation_error(self):
+        for line in tuple(self.plot.items):
+            if is_native_source_curve(line):
+                error = native_fft_coordinate_error(line.getOriginalDataset()[0])
+                if error:
+                    return error
+        return None
 
     def _native_transform_labels_changed(self, _value=None):
+        if self._qplot_native_transform_update:
+            return
+        ctrl = self.plot.ctrl
+        if (ctrl.fftCheck.isChecked() and not ctrl.phasemapCheck.isChecked()
+                and self._native_fft_validation_error()):
+            # setData has a safe empty FFT fallback. Its publication signal
+            # now restores all curves, controls and labels to non-FFT mode.
+            self._native_transform_controls_changed("fftCheck", True)
+            return
         if {"x", "y"}.issubset(self.__dict__.get("axis_param", {})):
             self._set_param_axis_labels()
+        if (self.__dict__.get("_qplot_native_fft_error_text")
+                and self._native_fft_validation_error()):
+            # A worker's load-status message may follow the initial rollback
+            # during an axis change. Keep its FFT explanation after publication.
+            self.show_status(self._qplot_native_fft_error_text, 0)
 
     def _install_native_transform_trace_handler(self, line):
         if line is None or getattr(line, "_qplot_transform_label_handler", False):
@@ -651,7 +691,15 @@ class plotWidget(
         first, enable phase map before combining them, and disable phase map
         last. This also covers new traces and traces on secondary viewboxes.
         """
+        if not is_native_source_curve(line):
+            return
         ctrl = self.plot.ctrl
+        if (not self._qplot_native_transform_update and ctrl.fftCheck.isChecked()
+                and not ctrl.phasemapCheck.isChecked() and self._native_fft_validation_error()):
+            # New traces inherit PlotItem's controls during addItem. Include
+            # them in a window-wide rollback before syncing individual modes.
+            self._native_transform_controls_changed("fftCheck", True)
+            return
         fft = ctrl.fftCheck.isChecked()
         derivative = ctrl.derivativeCheck.isChecked()
         phase = ctrl.phasemapCheck.isChecked()
@@ -667,6 +715,8 @@ class plotWidget(
         if not phase:
             line.setPhasemapMode(False)
         self._install_native_transform_trace_handler(line)
+        if not self._qplot_native_transform_update:
+            self.plot.recomputeAverages()
 
     def dragEnterEvent(self, event):
         if self._handle_preview_drag_drop(event):

@@ -1,4 +1,4 @@
-"""qPlot's integer-safe mapping for PyQtGraph's native line controls."""
+"""qPlot's coordinate-safe mapping for PyQtGraph's native line controls."""
 
 import numpy as np
 import pyqtgraph as pg
@@ -17,10 +17,81 @@ def _safe_difference(values: np.ndarray) -> np.ndarray:
     return np.diff(values)
 
 
+class _FFTCoordinatesError(ValueError):
+    """Coordinates cannot define a native coordinate-domain FFT."""
+
+
+def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
+    """Share control validation and FFT preparation, preserving source order."""
+    message = "FFT requires finite, strictly monotonic coordinates with a nonzero span."
+    if x.dtype.kind == "b":
+        x = x.astype(np.uint8)
+    with np.errstate(over="ignore", invalid="ignore"):
+        dx = _safe_difference(x)
+    if not (np.all(np.isfinite(x)) and np.all(np.isfinite(dx))) or len(x) == 0:
+        raise _FFTCoordinatesError(message)
+    # Retain PyQtGraph's supported one-sample DC spectrum.
+    if len(x) == 1:
+        return x, dx, 1., False
+    reverse = bool(np.all(dx < 0))
+    if reverse:
+        x, dx = x[::-1], -dx[::-1]
+    elif not np.all(dx > 0):
+        raise _FFTCoordinatesError(message)
+    if x.dtype.kind in "iu":
+        # Rebase before float conversion to retain nearby steps above 2**53
+        # without unsigned/signed overflow.
+        x = (x.astype(object) - int(x[0])).astype(np.float64)
+    with np.errstate(over="ignore", invalid="ignore"):
+        spacing = float(x[-1] - x[0]) / (len(x) - 1)
+    if not (np.isfinite(spacing) and spacing > 0 and np.all(np.diff(x) > 0)):
+        raise _FFTCoordinatesError(message)
+    return x, dx, spacing, reverse
+
+
+def native_fft_coordinate_error(x: np.ndarray | None) -> str | None:
+    """Validate populated traces; pending or empty curves have no spectrum."""
+    if x is None or len(x) == 0:
+        return None
+    try:
+        _prepare_fft_coordinates(x)
+    except _FFTCoordinatesError as error:
+        return str(error)
+    return None
+
+
 class NativePlotDataItem(pg.PlotDataItem):
-    """Keep original measurements while mapping derivatives without overflow."""
+    """Keep acquisition order while preparing native derivatives and FFTs."""
 
     _datasetMapped: PlotDataset | None
+    _qplot_fft_error: str | None = None
+
+    def _fourierTransform(self, x, y):
+        """Prepare increasing FFT coordinates without changing source data.
+
+        PyQtGraph's resampling assumes increasing coordinates. Reverse paired
+        samples only for strictly decreasing sweeps; sorting a reversing sweep
+        would merge different acquisition branches into a fictitious signal.
+        The window preflights all traces before enabling FFT. This defensive
+        empty mapping also keeps setData safe until its change signal lets the
+        window roll back FFT after a refresh introduces unsupported coordinates.
+        Mean subtraction has already run in PyQtGraph before this hook.
+        """
+        self._qplot_fft_error = None
+        try:
+            x, dx, spacing, reverse = _prepare_fft_coordinates(x)
+        except _FFTCoordinatesError as error:
+            self._qplot_fft_error = str(error)
+            return np.array([], dtype=float), np.array([], dtype=float)
+        if len(x) == 1:
+            return np.array([0.]), np.abs(y)
+        if reverse:
+            y = y[::-1]
+        # Match PyQtGraph's uniformity tolerance and normalized real FFT.
+        if np.any(np.abs(dx - dx[0]) > abs(dx[0]) / 1000):
+            uniform_x = np.linspace(x[0], x[-1], len(x))
+            y = np.interp(uniform_x, x, y)
+        return np.fft.rfftfreq(len(y), spacing), np.abs(np.fft.rfft(y) / len(y))
 
     def _getDisplayDataset(self) -> PlotDataset | None:
         # Isolate the private PyQtGraph mapping hook here. Seed only the mapped
