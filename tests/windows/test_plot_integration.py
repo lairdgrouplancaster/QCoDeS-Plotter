@@ -867,7 +867,10 @@ def test_real_plot_export_format_controls_suffix_and_delimiter(
             for item in plot_window.plot.items:
                 if not (hasattr(item, "implements") and item.implements("plotData")):
                     continue
-                x, y = item.getOriginalDataset()
+                x, y = (
+                    item.getOriginalDataset() if hasattr(item, "getOriginalDataset")
+                    else item.getData()
+                )
                 if x is None:
                     continue
                 index = len(columns) // 2
