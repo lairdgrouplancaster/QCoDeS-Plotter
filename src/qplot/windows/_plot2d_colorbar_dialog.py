@@ -148,11 +148,12 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         range_layout.setContentsMargins(0, 0, 0, 0)
         range_layout.setHorizontalSpacing(4)
         range_layout.setVerticalSpacing(4)
-        range_layout.addWidget(self.colorbar_manual_radio, 0, 0)
-        range_layout.addWidget(self.colorbar_min_label, 0, 1)
-        range_layout.addWidget(self.colorbar_min_text, 0, 2)
-        range_layout.addWidget(self.colorbar_max_label, 0, 3)
-        range_layout.addWidget(self.colorbar_max_text, 0, 4)
+        align_vcenter = QtCore.Qt.AlignmentFlag.AlignVCenter
+        range_layout.addWidget(self.colorbar_manual_radio, 0, 0, align_vcenter)
+        range_layout.addWidget(self.colorbar_min_label, 0, 1, align_vcenter)
+        range_layout.addWidget(self.colorbar_min_text, 0, 2, align_vcenter)
+        range_layout.addWidget(self.colorbar_max_label, 0, 3, align_vcenter)
+        range_layout.addWidget(self.colorbar_max_text, 0, 4, align_vcenter)
         range_layout.addWidget(self.colorbar_auto_radio, 1, 0)
 
         filter_controls = self._init_colorbar_filter_controls()

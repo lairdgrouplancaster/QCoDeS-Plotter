@@ -3682,6 +3682,14 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 host.colorbar_max_text.accessibleName(),
                 "Color scale maximum",
                 )
+            range_layout = host.colorbar_manual_radio.parentWidget().layout()
+            self.assertIsInstance(range_layout, qtw.QGridLayout)
+            for column in range(5):
+                item = range_layout.itemAtPosition(0, column)
+                self.assertIsNotNone(item)
+                self.assertTrue(
+                    item.alignment() & QtCore.Qt.AlignmentFlag.AlignVCenter
+                    )
             self.assertGreater(host._colorbar_colormap_row("Greys"), -1)
             self.assertGreater(host._colorbar_colormap_row("Purples"), -1)
             self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)
