@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
+import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset.sqlite.database import get_DB_location
@@ -86,6 +87,29 @@ class _RejectedTrustedService:
 
 
 class MeasurementExportDataFrameTestCase(unittest.TestCase):
+    def test_measurement_dataframe_broadcasts_scalars_within_each_record(self):
+        data = {
+            "signal": np.array([np.arange(2), 10 + np.arange(3)], dtype=object),
+            "x": [7, 8],
+        }
+        dataset = SimpleNamespace(get_parameter_data=lambda name: {name: data})
+        frame = PlotActionsMixin._measurement_dataframe(
+            object(), dataset, [SimpleNamespace(name="signal")],
+        )
+        self.assertEqual(frame["signal"].tolist(), [0, 1, 10, 11, 12])
+        self.assertEqual(frame["x"].tolist(), [7, 7, 8, 8, 8])
+
+    def test_measurement_dataframe_rejects_unpaired_array_samples(self):
+        data = {
+            "signal": np.array([np.arange(2), np.arange(3)], dtype=object),
+            "x": np.array([np.arange(3), np.arange(2)], dtype=object),
+        }
+        dataset = SimpleNamespace(get_parameter_data=lambda name: {name: data})
+        with self.assertRaisesRegex(ValueError, "Cannot align CSV record"):
+            PlotActionsMixin._measurement_dataframe(
+                object(), dataset, [SimpleNamespace(name="signal")],
+            )
+
     def test_measurement_dataframe_flattens_and_prefixes_multiple_parameters(self):
         class Param:
             def __init__(self, name):

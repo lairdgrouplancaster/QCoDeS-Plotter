@@ -1,4 +1,4 @@
-"""Database-instance races in normal run CSV export."""
+"""Real-data CSV exports and database-instance races."""
 
 import csv
 import os
@@ -6,6 +6,7 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pytest
 from qcodes.dataset import (
     Measurement,
@@ -266,6 +267,87 @@ def _artifact_state(database_path: Path):
             "bytes": path.read_bytes(),
         }
     return state
+
+
+@pytest.mark.parametrize("export_path", ("run", "selected_preview", "run_preview"))
+@pytest.mark.parametrize("mixed", (False, True))
+@pytest.mark.parametrize("kind", ("variable", "fixed", "scalar_setpoint", "multidimensional"))
+def test_array_csv_exports_every_sample(tmp_path, export_path, mixed, kind):
+    source = tmp_path / "arrays.db"
+    initialise_or_create_database_at(str(source), journal_mode="DELETE")
+    experiment = load_or_create_experiment("array_csv", sample_name="sample")
+    measurement = Measurement(exp=experiment, name="array_csv")
+    x = ManualParameter("x")
+    signal = ManualParameter("signal")
+    temperature = ManualParameter("temperature")
+    measurement.register_parameter(
+        x, paramtype="numeric" if kind == "scalar_setpoint" else "array",
+    )
+    measurement.register_parameter(signal, setpoints=(x,), paramtype="array")
+    if mixed:
+        measurement.register_parameter(temperature)
+    expected_x = []
+    expected_signal = []
+    with measurement.run(write_in_background=False) as datasaver:
+        for index, count in enumerate((1001, 1001 if kind == "fixed" else 1002)):
+            x_values = np.arange(count)
+            signal_values = 10000 * (index + 1) + np.arange(count)
+            if kind == "scalar_setpoint":
+                x_values = index + 7
+            elif kind == "multidimensional":
+                shape = (7, 143) if index == 0 else (3, 334)
+                x_values = x_values.reshape(shape)
+                signal_values = signal_values.reshape(shape)
+            datasaver.add_result((x, x_values), (signal, signal_values))
+            expected_x.extend(
+                [x_values] * count if kind == "scalar_setpoint"
+                else np.asarray(x_values).ravel().tolist()
+            )
+            expected_signal.extend(signal_values.ravel().tolist())
+        if mixed:
+            for value in (20, 21, 22):
+                datasaver.add_result((temperature, value))
+        dataset = datasaver.dataset
+        run_id, guid = dataset.run_id, dataset.guid
+    dataset.conn.close()
+    experiment.conn.close()
+
+    destination = tmp_path / "export.csv"
+    harness = _RunCsvHarness(source, destination, run_id, guid)
+    harness._selected_run_guid = guid
+    if mixed:
+        harness.RunList._runs[run_id]["measure_parameters"].append("temperature")
+    source_before = _artifact_state(source)
+    if export_path == "run":
+        harness.exportRunCsv()
+    elif export_path == "selected_preview":
+        harness.export_preview_csv("signal")
+    else:
+        harness.export_run_preview_csv(guid, "signal")
+
+    assert harness.errors == []
+    assert "exported csv" in harness.status_messages[-1][0].lower()
+    with destination.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        rows = list(reader)
+        prefix = "signal." if mixed and export_path == "run" else ""
+        expected_columns = [f"{prefix}signal", f"{prefix}x"]
+        if prefix:
+            expected_columns.append("temperature.temperature")
+        assert reader.fieldnames == expected_columns
+    assert len(rows) == (2002 if kind == "fixed" else 2003)
+    assert [float(row[f"{prefix}signal"]) for row in rows] == expected_signal
+    assert [float(row[f"{prefix}x"]) for row in rows] == expected_x
+    assert float(rows[500][f"{prefix}signal"]) == 10500
+    if prefix:
+        assert [row["temperature.temperature"] for row in rows] == (
+            ["20.0", "21.0", "22.0"] + [""] * (len(rows) - 3)
+        )
+    assert _artifact_state(source) == source_before
+    _assert_no_staging_artifacts(destination)
+    for loaded in harness.loaded_datasets:
+        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
+            loaded.conn.cursor()
 
 
 def _assert_no_staging_artifacts(destination: Path):

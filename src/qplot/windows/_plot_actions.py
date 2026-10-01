@@ -80,6 +80,55 @@ def _exportable_measurement_params(dataset):
     return dependent + standalone
 
 
+def _csv_scalar_samples(values):
+    """Flatten a record, including arrays held in NumPy object cells."""
+    array = np.asarray(values)
+    if not array.dtype.hasobject:
+        return array.ravel()
+    samples = []
+    for value in array.ravel():
+        if isinstance(value, (np.ndarray, list, tuple)):
+            samples.extend(_csv_scalar_samples(value))
+        else:
+            samples.append(value)
+    return np.asarray(samples)
+
+
+def _csv_scalar_columns(param_data):
+    """Align samples within each QCoDeS record before joining records."""
+    arrays = {name: np.asarray(values) for name, values in param_data.items()}
+    if not arrays:
+        return {}
+    # Regular, already aligned columns need no record-by-record expansion.
+    if (
+            len({values.shape for values in arrays.values()}) == 1
+            and all(not values.dtype.hasobject for values in arrays.values())
+            ):
+        return {name: values.ravel() for name, values in arrays.items()}
+
+    chunks = {name: [] for name in arrays}
+    for record in zip(*arrays.values(), strict=True):
+        samples = {
+            name: _csv_scalar_samples(values)
+            for name, values in zip(arrays, record, strict=True)
+        }
+        sample_count = max(values.size for values in samples.values())
+        for name, values in samples.items():
+            if values.size == sample_count:
+                chunks[name].append(values)
+            elif values.size == 1:
+                chunks[name].append(np.repeat(values, sample_count))
+            else:
+                raise ValueError(
+                    f"Cannot align CSV record column {name}: "
+                    f"{values.size} samples instead of {sample_count}."
+                )
+    return {
+        name: np.concatenate(parts) if parts else np.array([], dtype=arrays[name].dtype)
+        for name, parts in chunks.items()
+    }
+
+
 class PlotActionsMixin:
     """
     Plot launching, preview plotting, CSV export, and plot dataset tracking.
@@ -2229,9 +2278,9 @@ class PlotActionsMixin:
         for param in params:
             param_data = dataset.get_parameter_data(param.name).get(param.name, {})
             columns = {}
-            for name, values in param_data.items():
+            for name, values in _csv_scalar_columns(param_data).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name
-                columns[column_name] = pd.Series(np.asarray(values).ravel())
+                columns[column_name] = pd.Series(values)
             frames.append(pd.DataFrame(columns))
 
         return pd.concat(frames, axis=1) if frames else pd.DataFrame()
