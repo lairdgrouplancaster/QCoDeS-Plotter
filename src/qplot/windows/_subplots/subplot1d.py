@@ -298,13 +298,8 @@ class subplot1d(pg.PlotDataItem):
         if self.side == side:
             return
         
-        # Remove from other viewbox and add to new viewbox
-        if side == "right":
-            parent.plot.removeItem(self)
-            parent.right_vb.addItem(self)
-        else:
-            parent.right_vb.removeItem(self)
-            self.parent.plot.addItem(self)
+        # Use the same registration-preserving path as Trace Appearance.
+        parent._set_trace_y_axis(parent._window_trace_key(self.from_win), side)
             
         parent.vb.enableAutoRange()
         self.side = side

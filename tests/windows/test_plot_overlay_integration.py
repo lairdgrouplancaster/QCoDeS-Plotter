@@ -1,5 +1,6 @@
 """Exercise real qPlot windows, Qt controls and PyQtGraph CSV export."""
 
+import csv
 import sys
 from contextlib import closing
 
@@ -8,6 +9,7 @@ import pytest
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from PyQt6.QtTest import QTest
+from pyqtgraph.exporters import CSVExporter
 
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.windows import main as main_window
@@ -23,10 +25,13 @@ from tests.windows.test_plot_integration import (
 
 
 @pytest.fixture
-def loaded_plot(tmp_path, monkeypatch):
+def loaded_plot(tmp_path, monkeypatch, request):
     configure_temp_qplot(monkeypatch, tmp_path)
     database_path = tmp_path / "overlays.db"
     _run_id, guid, _table = build_line_database(database_path, 64)
+    merged_guid = None
+    if getattr(request, "param", False):
+        _run_id, merged_guid, _table = build_line_database(database_path, 48)
     protected = {
         suffix: (
             path.read_bytes(), path.stat().st_mtime_ns
@@ -47,6 +52,15 @@ def loaded_plot(tmp_path, monkeypatch):
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
         plot.monitor.stop()
+        if merged_guid is not None:
+            window.openPlot(guid=merged_guid, show=False)
+            source = window.windows[-1]
+            wait_for(lambda: hasattr(source, "axis_data") and not source.worker.running)
+            source.monitor.stop()
+            assert window.add_trace_to_plot(
+                plot, source._dataset_key, source.param.name, param=source.param,
+            )
+            wait_for(lambda: len(plot.lines) == 2)
         yield plot
     finally:
         close_main_window(window)
@@ -86,6 +100,190 @@ def _drag_in_view(window, start, end, modifiers):
         qtw.QApplication.sendEvent(viewport, event)
     QTest.mouseRelease(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, end)
     qtw.QApplication.processEvents()
+
+
+def _assign_trace_axes(window, key, x_axis, y_axis):
+    style = window._trace_styles[key]
+    style.x_axis, style.y_axis = x_axis, y_axis
+    window._apply_trace_style(key, window.lines[key])
+    qtw.QApplication.processEvents()
+    return window._trace_axis_viewbox(style)
+
+
+@pytest.mark.parametrize("loaded_plot", [False, True], indirect=True, ids=["single", "merged"])
+@pytest.mark.parametrize("suffix,delimiter", [("csv", ","), ("tsv", "\t")])
+def test_plot_csv_keeps_traces_across_all_axes_with_active_overlays(
+    loaded_plot, tmp_path, monkeypatch, suffix, delimiter,
+):
+    window = loaded_plot
+    lines = list(window.lines.items())
+    expected = [np.column_stack(line.getOriginalDataset()) for _key, line in lines]
+    baseline = None
+    for trace_index, (trace_key, trace) in enumerate(lines):
+        if trace_index:
+            # Also export when both merged measurements use secondary axes.
+            _assign_trace_axes(window, lines[0][0], "Top", "Right")
+        for index, (x_axis, y_axis) in enumerate((
+            ("Bottom", "Left"), ("Bottom", "Right"), ("Top", "Left"),
+            ("Top", "Right"), ("Bottom", "Left"),
+        )):
+            owner = _assign_trace_axes(window, trace_key, x_axis, y_axis)
+            assert trace.getViewBox() is owner
+            window.set_marquee_rect(QtCore.QRectF(20, 25, 30, 40))
+            window._show_snap_marker(47, 57, owner)
+            assert window.marquee_handles.isVisible()
+            assert window.snap_marker.isVisible()
+            target = tmp_path / f"trace-{trace_index}-{index}.{suffix}"
+            assert export_real_plot_csv(monkeypatch, window, target)
+            with target.open(newline="", encoding="utf-8") as exported:
+                rows = list(csv.reader(exported, delimiter=delimiter))
+            assert len(rows[0]) == 2 * len(lines)
+            assert len(rows) == 65
+            for pair, values in enumerate(expected):
+                np.testing.assert_allclose(
+                    np.asarray([row[2 * pair:2 * pair + 2] for row in rows[1:len(values) + 1]], dtype=float),
+                    values,
+                )
+                assert all(row[2 * pair:2 * pair + 2] == ["", ""] for row in rows[len(values) + 1:])
+            if baseline is None:
+                baseline = rows
+            assert rows == baseline
+            for _key, line in lines:
+                assert window.plot.items.count(line) == 1
+                assert window.plot.listDataItems().count(line) == 1
+                assert window.plot.curves.count(line) == 1
+            for overlay in (window.marquee_handles, window.snap_marker):
+                assert overlay not in window.plot.items
+                assert overlay not in window.plot.listDataItems()
+                assert overlay not in window.plot.curves
+
+
+@pytest.mark.parametrize("loaded_plot", [True], indirect=True)
+@pytest.mark.parametrize("control,option", [
+    ("fftCheck", "fftMode"), ("subtractMeanCheck", "subtractMeanMode"),
+    ("derivativeCheck", "derivativeMode"), ("phasemapCheck", "phasemapMode"),
+])
+def test_native_processing_controls_follow_all_trace_axes(
+    loaded_plot, tmp_path, monkeypatch, control, option,
+):
+    window = loaded_plot
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *error: errors.append(error))
+    lines = list(window.lines.items())
+    check = getattr(window.plot.ctrl, control)
+    expected = [np.column_stack(line.getOriginalDataset()) for _key, line in lines]
+    check.setChecked(True)
+    processed = [np.column_stack(line.getData()).copy() for _key, line in lines]
+    window.plot.setDownsampling(ds=4, auto=False, mode="subsample")
+    for index, (x_axis, y_axis) in enumerate((
+        ("Bottom", "Right"), ("Top", "Left"), ("Top", "Right"), ("Bottom", "Left"),
+    )):
+        for key, line in lines:
+            _assign_trace_axes(window, key, x_axis, y_axis)
+            assert line.opts[option]
+            assert line.opts["downsample"] == 4
+        check.setChecked(False)
+        assert all(not line.opts[option] for _key, line in lines)
+        window.plot.setDownsampling(ds=2, auto=False, mode="subsample")
+        check.setChecked(True)
+        for (_key, line), values in zip(lines, processed, strict=True):
+            assert line.opts[option]
+            assert line.opts["downsample"] == 2
+            np.testing.assert_allclose(np.column_stack(line.getData()), values[::2])
+        window.plot.setDownsampling(ds=4, auto=False, mode="subsample")
+        # Native CSV semantics export full data supplied to PlotDataItem,
+        # before PyQtGraph's mapping, FFT and display reduction.
+        target = tmp_path / f"processed-{index}.csv"
+        assert export_real_plot_csv(monkeypatch, window, target)
+        rows = csv_rows(target)
+        assert len(rows[0]) == 4
+        for pair, values in enumerate(expected):
+            np.testing.assert_allclose(
+                np.asarray([row[2 * pair:2 * pair + 2] for row in rows[1:len(values) + 1]], dtype=float),
+                values,
+            )
+    assert errors == []
+
+
+def test_secondary_axis_csv_exports_qplot_processed_measurements(
+    loaded_plot, tmp_path, monkeypatch,
+):
+    window = loaded_plot
+    operation = next(
+        window.oper_widget.list_options.item(index)
+        for index in range(window.oper_widget.list_options.count())
+        if window.oper_widget.list_options.item(index).label == "dy/dx"
+    )
+    previous_worker = window.worker
+    operation.input.setChecked(True)
+    window.oper_widget.apply_but.click()
+    wait_for(lambda: window.worker is not previous_worker and not window.worker.running)
+    np.testing.assert_allclose(window.axis_data["y"], 1)
+    for index, axes in enumerate((("Bottom", "Right"), ("Top", "Left"), ("Top", "Right"))):
+        _assign_trace_axes(window, window.label, *axes)
+        target = tmp_path / f"derivative-{index}.csv"
+        assert export_real_plot_csv(monkeypatch, window, target)
+        np.testing.assert_allclose(
+            np.asarray(csv_rows(target)[1:], dtype=float),
+            np.column_stack((window.axis_data["x"], np.ones(64))),
+        )
+
+
+def test_secondary_axis_csv_failure_preserves_existing_export(
+    loaded_plot, tmp_path, monkeypatch,
+):
+    window = loaded_plot
+    _assign_trace_axes(window, window.label, "Top", "Right")
+    target = tmp_path / "preserved.csv"
+    original = b"existing export\n"
+    target.write_bytes(original)
+    files_before = set(tmp_path.iterdir())
+    native_export = CSVExporter.export
+    staging_paths = []
+    errors = []
+    monkeypatch.setattr(window, "show_error", lambda *error: errors.append(error))
+
+    def fail_after_serialization(exporter, fileName=None):
+        staging_paths.append(fileName)
+        assert fileName != str(target)
+        native_export(exporter, fileName=fileName)
+        raise RuntimeError("CSV writer failed after serialization")
+
+    monkeypatch.setattr(CSVExporter, "export", fail_after_serialization)
+    assert not export_real_plot_csv(monkeypatch, window, target)
+    assert errors[0][0] == "Plot Export Failed"
+    assert len(staging_paths) == 1
+    assert target.read_bytes() == original
+    assert set(tmp_path.iterdir()) == files_before
+
+
+@pytest.mark.parametrize("loaded_plot", [True], indirect=True)
+@pytest.mark.parametrize("axes", [("Bottom", "Right"), ("Top", "Left"), ("Top", "Right")])
+def test_removing_secondary_axis_trace_unregisters_it_for_export_and_controls(
+    loaded_plot, tmp_path, monkeypatch, axes,
+):
+    window = loaded_plot
+    key, line = next((key, line) for key, line in window.lines.items() if line is not window.line)
+    owner = _assign_trace_axes(window, key, *axes)
+    # The legacy side setter must use the same path and retain the top axis.
+    line.set_side("left" if axes[1] == "Right" else "right")
+    assert window._trace_styles[key].x_axis == axes[0]
+    _assign_trace_axes(window, key, *axes)
+    window.remove_line(line.label, key)
+    assert line not in owner.addedItems
+    assert line.scene() is None
+    for registry in (window.plot.items, window.plot.listDataItems(), window.plot.curves):
+        assert line not in registry
+    window.plot.ctrl.fftCheck.setChecked(True)
+    assert not line.opts["fftMode"]
+    target = tmp_path / "removed.csv"
+    assert export_real_plot_csv(monkeypatch, window, target)
+    rows = csv_rows(target)
+    assert len(rows[0]) == 2
+    np.testing.assert_allclose(
+        np.asarray(rows[1:], dtype=float),
+        np.column_stack((np.arange(64), np.arange(64) + 10)),
+    )
 
 
 def test_plot_csv_and_native_controls_exclude_selection_overlays(

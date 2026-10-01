@@ -243,15 +243,13 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if current is target:
             return
 
-        if current is self.vb:
-            self.plot.removeItem(line)
-        elif current is not None:
+        # PlotItem registration belongs to the measurement, not its axis pair.
+        # CSVExporter walks items; native processing controls walk items/curves.
+        # Move only the graphics owner so all of those registries stay intact,
+        # and returning to the primary axes does not reset processing options.
+        if current is not None:
             current.removeItem(line)
-
-        if target is self.vb:
-            self.plot.addItem(line)
-        else:
-            target.addItem(line)
+        target.addItem(line)
 
     @QtCore.pyqtSlot()
     def _trace_axis_auto_button_clicked(self) -> None:
@@ -966,6 +964,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             self.plot.removeItem(line)
         elif viewbox is not None:
             viewbox.removeItem(line)
+            self.plot.removeItem(line)
         else:
             # Compatibility fallback for lightweight test and plugin traces.
             owner = self.plot if side.lower() == "left" else self.right_vb
