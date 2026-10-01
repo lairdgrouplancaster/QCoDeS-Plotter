@@ -6,6 +6,7 @@ from PyQt6 import (
     QtCore,
 )
 
+from ._native_transforms import NativePlotDataItem
 from ._plot1d_snap import Plot1DSnapMixin, _line_snap_data
 from ._plot1d_traces import Plot1DTraceMixin
 from ._plotWin import plotWidget
@@ -53,7 +54,8 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
 
         """
         
-        self.line = self.plot.plot(connect="all")
+        self.line = NativePlotDataItem(connect="all")
+        self.plot.addItem(self.line)
         self._register_main_line()
         
         # Wait for loader to finish to enure needed data is collected.

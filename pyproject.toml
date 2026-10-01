@@ -146,6 +146,7 @@ files = [
     "src/qplot/windows/_dataset_handle.py",
     "src/qplot/windows/_dragdrop.py",
     "src/qplot/windows/_help.py",
+    "src/qplot/windows/_native_transforms.py",
     "src/qplot/windows/_plot1d_snap.py",
     "src/qplot/windows/_plot1d_traces.py",
     "src/qplot/windows/_plot2d_colorbar.py",

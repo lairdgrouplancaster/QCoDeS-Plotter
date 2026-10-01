@@ -2,6 +2,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6.QtGui import QColor
 
+from .._native_transforms import NativePlotDataItem
 from .._plot_refresh import plot_refresh_required
 
 
@@ -61,7 +62,7 @@ def _subplot_shared_parameter(parent) -> str | None:
     return None
 
 
-class subplot1d(pg.PlotDataItem):
+class subplot1d(NativePlotDataItem):
     """
     Class for handling secondary line plots on plot1d
     """

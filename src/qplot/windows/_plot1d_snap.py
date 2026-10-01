@@ -8,6 +8,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._commands import command_spec, command_with_status, create_action
+from ._native_transforms import NativePlotDataItem
 
 if TYPE_CHECKING:
     class _Plot1DSnapBase(qtw.QMainWindow):
@@ -168,8 +169,8 @@ def _line_snap_data(line: object | None) -> _LineData | None:
             for key in ("subtractMeanMode", "fftMode", "derivativeMode", "phasemapMode")
         }
         if any(processing.values()):
-            # Use PyQtGraph's public processing API without display reduction.
-            analysis_line = pg.PlotDataItem(
+            # Share the rendering mapping, without display reduction.
+            analysis_line = NativePlotDataItem(
                 x=raw_data[0], y=raw_data[1], **processing,
             )
             raw_data = analysis_line.getData()
