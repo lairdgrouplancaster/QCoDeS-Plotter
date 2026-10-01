@@ -196,6 +196,11 @@ class _PyqtgraphExportHost(qtw.QMainWindow):
     def _default_plot_pdf_filename(self):
         return self.suggested_path
 
+    def _write_line_csv_stage(self, staging_path, exporter):
+        # These publication tests supply mock payload writers. The real CSV
+        # serializer is exercised through the dialog in integration tests.
+        return exporter.export(fileName=staging_path)
+
     def show_status(self, message, timeout=0):
         self.status_messages.append((message, timeout))
 

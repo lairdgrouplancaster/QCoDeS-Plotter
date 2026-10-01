@@ -1,12 +1,14 @@
 import csv
 import os
 import weakref
+from itertools import zip_longest
 from os import path
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from PyQt6 import QtCore, QtGui, QtPrintSupport, QtSvg
 from PyQt6 import QtWidgets as qtw
+from pyqtgraph import ErrorBarItem, PlotItem
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
 try:
@@ -114,6 +116,11 @@ if (
                 return
             super().exportFormatChanged(item, previous)
             exporter_type = type(self.currentExporter)
+            if isinstance(self.currentExporter, CSVExporter):
+                # Numeric exports always retain the original precision. The
+                # upstream decimal-place control is unused by both our writers.
+                params = self.currentExporter.parameters()
+                params.removeChild(params.child("precision"))
             self.ui.exportBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_FILE_EXPORTERS
             )
@@ -685,13 +692,14 @@ class PlotExportMixin(_PlotExportBase):
                     == ".tsv" else "comma"
                 )
             writer = lambda staging_path: exporter.export(fileName=staging_path)
-            if (
-                    type(exporter) is CSVExporter
-                    and getattr(self, "operation_kind", None) == "plot2d"
-                    ):
-                writer = lambda staging_path: self._write_heatmap_csv_stage(
-                    staging_path,
-                    exporter,
+            if type(exporter) is CSVExporter:
+                if getattr(self, "operation_kind", None) == "plot2d":
+                    writer = lambda staging_path: self._write_heatmap_csv_stage(
+                        staging_path, exporter,
+                    )
+                else:
+                    writer = lambda staging_path: self._write_line_csv_stage(
+                        staging_path, exporter,
                     )
             saved = write_export_atomically(
                 destination,
@@ -712,6 +720,46 @@ class PlotExportMixin(_PlotExportBase):
             self.show_status("Could not export plot.", 5000)
             return False
         self.show_status(f"Exported plot: {destination.filename}", 5000)
+        return True
+
+
+    def _write_line_csv_stage(
+            self,
+            staging_path: str,
+            exporter: CSVExporter,
+            ) -> bool:
+        """Retain original line data with round-trip-safe numeric text.
+
+        Reuse PyQtGraph's column/header collection, including error bars and
+        original (unmapped, non-downsampled) datasets, but never its positional
+        decimal-place formatter. Python's float representation round-trips
+        QCoDeS's binary64 numbers; integers are written without float coercion.
+        A fresh collector also keeps repeated/failed exports free of stale data.
+        """
+        if not isinstance(exporter.item, PlotItem):
+            raise TypeError("Must have a PlotItem selected for CSV export.")
+
+        collector = CSVExporter(exporter.item)
+        collector.params["columnMode"] = exporter.params["columnMode"]
+        for item in exporter.item.items:
+            if isinstance(item, ErrorBarItem):
+                collector._exportErrorBarItem(item)
+            elif hasattr(item, "implements") and item.implements("plotData"):
+                collector._exportPlotDataItem(item)
+
+        columns = [column for dataset in collector.data for column in dataset]
+        delimiter = "\t" if exporter.params["separator"] == "tab" else ","
+        with open(staging_path, "w", encoding="utf-8", newline="") as csv_file:
+            csv_writer = csv.writer(
+                csv_file, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL,
+            )
+            csv_writer.writerow(collector.header)
+            for row in zip_longest(*columns, fillvalue=""):
+                csv_writer.writerow([
+                    repr(float(value)) if isinstance(value, (float, np.floating))
+                    else str(value)
+                    for value in row
+                ])
         return True
 
 
