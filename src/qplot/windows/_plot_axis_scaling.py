@@ -750,16 +750,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             if ui is not None
             else default_fraction
         )
-        visible_only = (
-            ui.visibleOnlyCheck.isChecked()
-            if ui is not None
-            else state["autoVisibleOnly"][axis_number]
-        )
-        auto_pan = (
-            ui.autoPanCheck.isChecked()
-            if ui is not None
-            else state["autoPan"][axis_number]
-        )
+        visible_only = state["autoVisibleOnly"][axis_number]
+        auto_pan = state["autoPan"][axis_number]
         ranges: list[list[float]] = []
         for bounds_viewbox, items in self._axis_scale_bound_item_groups(axis):
             orthogonal_ranges: list[list[float] | None] = [None, None]
@@ -1010,24 +1002,24 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             viewbox.setYLink(str(ui.linkCombo.currentText()))
 
     def _axis_scale_auto_pan_toggled(self, axis: _AxisName, checked: bool) -> None:
-        if axis in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
-            self._apply_axis_scale_filtered_auto(axis)
-            return
+        # Store the option on its semantic axis even when qPlot, rather than
+        # native autoRange, owns the range calculation and refreshes.
         viewbox = self._axis_scale_viewbox(axis)
         if self._axis_scale_dimension(axis) == "x":
             viewbox.setAutoPan(x=checked)
         else:
             viewbox.setAutoPan(y=checked)
-
-    def _axis_scale_visible_only_toggled(self, axis: _AxisName, checked: bool) -> None:
         if axis in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
             self._apply_axis_scale_filtered_auto(axis)
-            return
+
+    def _axis_scale_visible_only_toggled(self, axis: _AxisName, checked: bool) -> None:
         viewbox = self._axis_scale_viewbox(axis)
         if self._axis_scale_dimension(axis) == "x":
             viewbox.setAutoVisible(x=checked)
         else:
             viewbox.setAutoVisible(y=checked)
+        if axis in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
+            self._apply_axis_scale_filtered_auto(axis)
 
     def _axis_scale_invert_toggled(self, axis: _AxisName, checked: bool) -> None:
         viewbox = self._axis_scale_viewbox(axis)
