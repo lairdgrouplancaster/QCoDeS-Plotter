@@ -407,6 +407,7 @@ class loader(QtCore.QRunnable):
                             write_status,
                             read_status,
                             existing_data,
+                            check_cancelled=self._check_cancelled,
                         )
                     finally:
                         self._close_sql_connection(conn)

@@ -12,6 +12,7 @@ from qplot.datahandling.file_identity import (
     DatabaseInstance,
     logical_database_path,
 )
+from qplot.datahandling.parameter_data import parameter_data_for_export
 from qplot.datahandling.readonly import (
     DatabaseInstanceChangedError,
     load_by_guid_read_only,
@@ -2276,7 +2277,7 @@ class PlotActionsMixin:
         frames = []
         prefix_columns = len(params) > 1
         for param in params:
-            param_data = dataset.get_parameter_data(param.name).get(param.name, {})
+            param_data = parameter_data_for_export(dataset, param.name)
             columns = {}
             for name, values in _csv_scalar_columns(param_data).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name

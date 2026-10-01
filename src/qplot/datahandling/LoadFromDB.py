@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 
 import numpy.typing as npt
 from qcodes.dataset.data_set_cache import _merge_data
-from qcodes.dataset.sqlite.queries import (
-    completed,
+from qcodes.dataset.sqlite.queries import completed
+
+from qplot.datahandling.parameter_data import (
+    _check_noop,
+    flatten_record_columns,
     get_parameter_data_for_one_paramtree,
 )
-
 from qplot.datahandling.qcodes_cache import (
     cache_data,
     cache_dataset_completed,
@@ -35,6 +37,7 @@ def append_shaped_parameter_data_to_existing_arrays(
     write_status,
     existing_data,
     new_data,
+    check_cancelled=_check_noop,
 ):
     """
     Append datadict to an already existing datadict and return the merged
@@ -72,6 +75,11 @@ def append_shaped_parameter_data_to_existing_arrays(
     # private copies so a concurrent worker cannot mutate the shared cache
     # before qPlot's monotonic commit check.
     if shape is not None:
+        # Object cells count records; shaped cache offsets count samples.
+        # Flatten only the new records so QCoDeS' usual padding and offsets
+        # still apply, including the same missing-value handling.
+        if any(values.dtype.kind == "O" for values in new_data_1_tree.values()):
+            new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
         existing_data_1_tree = {
             name: values.copy()
             for name, values in existing_data_1_tree.items()
@@ -126,6 +134,8 @@ def load_param_data_from_db(
     read_status,
     existing_data,
     end: int | None = None,
+    *,
+    check_cancelled=_check_noop,
 ):
     # Data fetch
     updated_read_status: dict[str, int] = dict(read_status)
@@ -139,7 +149,7 @@ def load_param_data_from_db(
         output_param=meas_parameter,
         start=start,
         end=end,
-        callback=None,
+        check_cancelled=check_cancelled,
     )
     new_data_dict[meas_parameter] = new_data
     updated_read_status[meas_parameter] = start + n_rows_read - 1
@@ -147,7 +157,8 @@ def load_param_data_from_db(
     # Data Update
     (updated_write_status, merged_data) = (
         append_shaped_parameter_data_to_existing_arrays(
-            rundescriber, meas_parameter, write_status, existing_data, new_data_dict
+            rundescriber, meas_parameter, write_status, existing_data, new_data_dict,
+            check_cancelled=check_cancelled,
         )
     )
     
