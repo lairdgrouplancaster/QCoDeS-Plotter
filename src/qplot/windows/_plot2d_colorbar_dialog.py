@@ -161,6 +161,15 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         self._init_colorbar_colormap_table()
 
         validator = QtGui.QDoubleValidator(cast(QtCore.QObject, self))
+        # Match Python's dot-decimal parsing/formatting regardless of Qt's
+        # default locale. Grouping must never change an input's meaning.
+        numeric_locale = QtCore.QLocale.c()
+        numeric_locale.setNumberOptions(
+            numeric_locale.numberOptions()
+            | QtCore.QLocale.NumberOption.RejectGroupSeparator
+        )
+        validator.setLocale(numeric_locale)
+        validator.setNotation(QtGui.QDoubleValidator.Notation.ScientificNotation)
         self.colorbar_min_text.setValidator(validator)
         self.colorbar_max_text.setValidator(validator)
         self.colorbar_min_label.setBuddy(self.colorbar_min_text)
@@ -169,6 +178,9 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         self.colorbar_max_text.setAccessibleName("Color scale maximum")
         for line_edit in (self.colorbar_min_text, self.colorbar_max_text):
             line_edit.setMinimumWidth(80)
+            line_edit.setToolTip(
+                "Use a decimal point (e.g. 1.5 or 1.5e-3), without grouping separators."
+            )
 
         self.colorbar_button_group = qtw.QButtonGroup(cast(QtCore.QObject, self))
         self.colorbar_button_group.addButton(self.colorbar_manual_radio)
@@ -556,7 +568,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
                 (self.colorbar_max_text, vmax),
                 ):
             widget.blockSignals(True)
-            widget.setText(f"{value:.6g}")
+            widget.setText(repr(float(value)))
             widget.blockSignals(False)
 
     def _colorbar_colormap_row(self, name):
@@ -667,6 +679,14 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         Apply color scale levels entered in the dialog.
 
         """
+        if not all(
+            field.hasAcceptableInput()
+            for field in (self.colorbar_min_text, self.colorbar_max_text)
+        ):
+            self.show_status("Invalid color scale range.", 5000)
+            self._sync_colorbar_scale_controls()
+            return
+
         try:
             vmin = float(self.colorbar_min_text.text())
             vmax = float(self.colorbar_max_text.text())
