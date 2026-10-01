@@ -25,6 +25,7 @@ from ._dragdrop import (
     run_preview_payload_from_mime,
 )
 from ._help import add_help_menu
+from ._plot1d_snap import _line_snap_data
 from ._plot_axis_scaling import (
     PlotAxisScalingMixin,
     _PowerScaledAxisItem,
@@ -1280,14 +1281,13 @@ class plotWidget(
 
     def _cursor_1d_x_data(self):
         """
-        Return the X data used to derive the 1d cursor array index.
+        Return full processed X samples in view coordinates for cursor indices.
 
         """
         line = self.__dict__.get("line")
-        if line is not None and hasattr(line, "getData"):
-            data = line.getData()
-            if data is not None and data[0] is not None:
-                return data[0]
+        if line is not None:
+            data = _line_snap_data(line)
+            return data.x_view if data is not None else None
 
         return self.__dict__.get("axis_data", {}).get("x")
 
@@ -1297,6 +1297,8 @@ class plotWidget(
         Return the zero-based data index nearest to a cursor X coordinate.
 
         """
+        if not isfinite(x_value):
+            return None
         x_data = self._cursor_1d_x_data()
         if x_data is None:
             return None

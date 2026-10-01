@@ -209,15 +209,6 @@ def _scene_distance_squared(
 class Plot1DSnapMixin(_Plot1DSnapBase):
     """Snap-to-trace cursor readout for 1D plot windows."""
 
-    def _cursor_1d_x_data(self):
-        """Keep free-cursor indices consistent with full trace snap indices."""
-
-        line = self.__dict__.get("line")
-        if line is not None:
-            data = _line_snap_data(line)
-            return data.x_view if data is not None else None
-        return super()._cursor_1d_x_data()
-
     def initLabels(self):
         """
         Sets up coordinate labels and trace snapping command for 1d plots.
