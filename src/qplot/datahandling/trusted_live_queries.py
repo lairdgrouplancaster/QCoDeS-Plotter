@@ -4938,14 +4938,65 @@ class TrustedMetadataQueryAdapter:
         metadata: dict[str, Any],
         summary_names: tuple[str, ...],
     ) -> dict[str, int]:
-        raw_shape = metadata.get("setpoint_shape") or metadata.get("point_shape")
-        if not isinstance(raw_shape, (list, tuple)):
+        run_description = _json_object(metadata.get("run_description"))
+        interdependencies = run_description.get("interdependencies_")
+        if not isinstance(interdependencies, dict):
             return {}
-        return {
-            name: step
-            for name, raw_step in zip(summary_names, raw_shape, strict=False)
-            if (step := _positive_int(raw_step)) is not None
-        }
+        dependencies = interdependencies.get("dependencies")
+        shapes = run_description.get("shapes")
+        if not isinstance(dependencies, dict) or not isinstance(shapes, dict):
+            return {}
+
+        # A QCoDeS shape belongs to one dependent, and its dimensions follow
+        # that dependent's dependency order.  The public run-wide point shape
+        # is only the largest declared shape; pairing it with the union of all
+        # setpoints loses both associations and produced arbitrary counts for
+        # independent sweeps.
+        requested = set(summary_names)
+        planned: dict[str, int] = {}
+        conflicts: set[str] = set()
+        measure_parameters = tuple(metadata.get("measure_parameters") or ())
+        for dependent in measure_parameters:
+            if not isinstance(dependent, str):
+                continue
+            raw_dependencies = dependencies.get(dependent)
+            raw_shape = shapes.get(dependent)
+            if not isinstance(raw_dependencies, (list, tuple)) or not isinstance(
+                raw_shape, (list, tuple)
+            ):
+                continue
+            ordered_dependencies = tuple(
+                islice(raw_dependencies, _TRUSTED_OBSERVATION_MAX_SETPOINTS + 1)
+            )
+            ordered_shape = tuple(
+                islice(raw_shape, _TRUSTED_OBSERVATION_MAX_SETPOINTS + 1)
+            )
+            if (
+                len(ordered_dependencies) > _TRUSTED_OBSERVATION_MAX_SETPOINTS
+                or len(ordered_shape) > _TRUSTED_OBSERVATION_MAX_SETPOINTS
+                or len(ordered_dependencies) != len(ordered_shape)
+            ):
+                continue
+            for name, raw_step in zip(
+                ordered_dependencies,
+                ordered_shape,
+                strict=True,
+            ):
+                step = _positive_int(raw_step)
+                if not isinstance(name, str) or name not in requested or step is None:
+                    continue
+                prior = planned.get(name)
+                if prior is None:
+                    planned[name] = step
+                elif prior != step:
+                    conflicts.add(name)
+
+        # A shared setpoint has one meaningful planned count only when every
+        # dependent declaration agrees.  Absence represents an explicit
+        # unknown in TrustedSetpointSummary rather than choosing by order.
+        for name in conflicts:
+            planned.pop(name, None)
+        return planned
 
     @staticmethod
     def _estimated_result_storage_bytes(

@@ -2577,6 +2577,71 @@ def test_selected_detail_contains_plain_parameters_metadata_snapshot_and_summari
     assert all("PRAGMA" not in query.sql.upper() for query in executor.queries)
 
 
+def _planned_steps_metadata(
+    dependencies: dict[str, list[str]],
+    shapes: dict[str, list[int]],
+) -> dict[str, object]:
+    return {
+        "measure_parameters": list(dependencies),
+        # This deliberately models the lossy public field that caused the
+        # regression.  Planned steps must come from the per-dependent shapes.
+        "setpoint_shape": max(shapes.values(), key=lambda shape: len(shape)),
+        "run_description": json.dumps(
+            {
+                "interdependencies_": {"dependencies": dependencies},
+                "shapes": shapes,
+            }
+        ),
+    }
+
+
+def test_planned_setpoint_steps_preserve_independent_dependent_shapes():
+    metadata = _planned_steps_metadata(
+        {"z0": ["x0"], "z1": ["x1"], "z2": ["x2"]},
+        {"z0": [3], "z1": [5], "z2": [7]},
+    )
+
+    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+        metadata,
+        ("x0", "x1", "x2"),
+    ) == {"x0": 3, "x1": 5, "x2": 7}
+
+
+def test_planned_setpoint_steps_follow_each_dependency_order():
+    metadata = _planned_steps_metadata(
+        {"forward": ["x", "y"], "reverse": ["y", "x"]},
+        {"forward": [3, 5], "reverse": [5, 3]},
+    )
+
+    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+        metadata,
+        ("x", "y"),
+    ) == {"x": 3, "y": 5}
+
+
+@pytest.mark.parametrize(
+    ("shapes", "expected"),
+    (
+        ({"first": [11], "second": [11]}, {"shared": 11}),
+        ({"first": [11], "second": [13]}, {}),
+    ),
+    ids=("consistent", "conflicting"),
+)
+def test_planned_setpoint_steps_require_shared_axis_counts_to_agree(
+    shapes,
+    expected,
+):
+    metadata = _planned_steps_metadata(
+        {"first": ["shared"], "second": ["shared"]},
+        shapes,
+    )
+
+    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+        metadata,
+        ("shared",),
+    ) == expected
+
+
 def test_selected_detail_keeps_large_valid_snapshot_available_for_lazy_pages(
     tmp_path,
 ) -> None:

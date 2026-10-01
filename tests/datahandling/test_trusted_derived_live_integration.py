@@ -209,6 +209,59 @@ def _create_independent_qcodes_run(
             qcodes.config.core.db_location = original_database_path
 
 
+def _create_shaped_independent_qcodes_run(database_path: Path) -> int:
+    """Create three independently shaped 1D dependents with exact extents."""
+
+    experiment: Any = None
+    dataset: Any = None
+    original_database_path = qcodes.config.core.db_location
+    try:
+        initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+        experiment = load_or_create_experiment(
+            "trusted_planned_steps",
+            sample_name="independent_shapes",
+        )
+        measurement = Measurement(exp=experiment, name="independent_shapes")
+        axes = tuple(ManualParameter(f"x{index}") for index in range(3))
+        signals = tuple(ManualParameter(f"z{index}") for index in range(3))
+        counts = (3, 5, 7)
+        for axis, signal in zip(axes, signals, strict=True):
+            measurement.register_parameter(axis)
+            measurement.register_parameter(signal, setpoints=(axis,))
+        measurement.set_shapes(
+            {
+                signal.name: (count,)
+                for signal, count in zip(signals, counts, strict=True)
+            }
+        )
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for axis, signal, count in zip(axes, signals, counts, strict=True):
+                for index in range(count):
+                    datasaver.add_result(
+                        (axis, float(index)),
+                        (signal, float(index * 10)),
+                    )
+            datasaver.flush_data_to_database(block=True)
+        return int(dataset.run_id)
+    finally:
+        connections = tuple(
+            {
+                id(connection): connection
+                for connection in (
+                    getattr(dataset, "conn", None),
+                    getattr(experiment, "conn", None),
+                )
+                if connection is not None
+            }.values()
+        )
+        try:
+            for connection in connections:
+                connection.close()
+        finally:
+            qcodes.config.core.db_location = original_database_path
+
+
 @pytest.mark.parametrize(
     ("include_1d", "include_3d", "expected_dependents"),
     (
@@ -265,6 +318,50 @@ def test_real_qcodes_derived_dimensions_are_per_dependent(
         service.close(timeout=30.0)
     after = _stable_artifact_state(
         database_path, consecutive_observations=2, observation_interval=0.02
+    )
+    _assert_protected_artifacts_unchanged(before, after)
+
+
+def test_real_qcodes_planned_steps_are_per_dependent_in_both_metadata_views(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "independent-shaped.db"
+    run_id = _create_shaped_independent_qcodes_run(database_path)
+    accepted = database_instance(database_path)
+    before = _stable_artifact_state(
+        database_path,
+        consecutive_observations=2,
+        observation_interval=0.02,
+    )
+    service = TrustedLiveReadService(
+        database_path,
+        expected_database_instance=accepted,
+        request_timeout_seconds=30.0,
+    )
+    try:
+        bootstrap = service.submit_bootstrap().wait(30.0)
+        page = service.submit_basic_page(0, bootstrap.run_id_watermark).wait(30.0)
+        assert page.complete and tuple(run.run_id for run in page.runs) == (run_id,)
+
+        observation = service.submit_derived_source(run_id).wait(30.0)
+        detail = service.submit_selected_run(run_id).wait(30.0)
+        expected_steps = {"x0": 3, "x1": 5, "x2": 7}
+
+        assert observation.result_watermark == 15
+        assert {
+            summary.name: summary.steps
+            for summary in observation.setpoint_summaries
+        } == expected_steps
+        assert {
+            summary.name: summary.steps for summary in detail.setpoint_summaries
+        } == expected_steps
+    finally:
+        service.close(timeout=30.0)
+
+    after = _stable_artifact_state(
+        database_path,
+        consecutive_observations=2,
+        observation_interval=0.02,
     )
     _assert_protected_artifacts_unchanged(before, after)
 
