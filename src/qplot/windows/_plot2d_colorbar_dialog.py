@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
         colorbar_max_text: qtw.QLineEdit
         colorbar_min_label: qtw.QLabel
         colorbar_min_text: qtw.QLineEdit
+        colorbar_copy_auto_limits_button: qtw.QToolButton
         colorbar_scale_action: QtGui.QAction
         colorbar_scale_controls: qtw.QWidget
         colorbar_scale_dialog: qtw.QDialog
@@ -45,12 +47,26 @@ if TYPE_CHECKING:
         def _colorbar_colormap(self, name: str | None = None) -> Any: ...
         def _current_colorbar_colormap_name(self) -> str: ...
         def _current_colorbar_levels(self) -> tuple[float, float] | None: ...
+        def _data_colorbar_levels(self) -> tuple[float, float] | None: ...
         def _set_colorbar_levels(self, vmin: float, vmax: float) -> None: ...
         def scaleColorbar(self, event: Any = None) -> None: ...
         def show_status(self, message: str, timeout: int = 5000) -> None: ...
 else:
     class _ColorbarScaleDialogBase:
         pass
+
+
+class _ColorbarAutoLimitsButton(qtw.QToolButton):
+    """Refresh its prospective-limit tooltip immediately before display."""
+
+    def __init__(self, refresh_tooltip: Callable[[], None], parent: qtw.QWidget):
+        super().__init__(parent)
+        self._refresh_tooltip = refresh_tooltip
+
+    def event(self, event: QtCore.QEvent | None) -> bool:
+        if event is not None and event.type() == QtCore.QEvent.Type.ToolTip:
+            self._refresh_tooltip()
+        return super().event(event)
 
 
 class _CenteredIconDelegate(qtw.QStyledItemDelegate):
@@ -115,6 +131,22 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         self.colorbar_max_label = qtw.QLabel("Maximum")
         self.colorbar_min_text = qtw.QLineEdit()
         self.colorbar_max_text = qtw.QLineEdit()
+        self.colorbar_copy_auto_limits_button = _ColorbarAutoLimitsButton(
+            self._update_colorbar_auto_limits_tooltip,
+            controls,
+        )
+        self.colorbar_copy_auto_limits_button.setObjectName(
+            "colorbarCopyAutoLimitsButton"
+        )
+        self.colorbar_copy_auto_limits_button.setAccessibleName(
+            "Use auto color scale limits as manual limits"
+        )
+        self.colorbar_copy_auto_limits_button.setFixedSize(26, 24)
+        style = qtw.QApplication.style()
+        if style is not None:
+            self.colorbar_copy_auto_limits_button.setIcon(
+                style.standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
+            )
         self.colorbar_colormap_table = qtw.QTableWidget()
         self.colorbar_include_cet_check = qtw.QCheckBox("CET")
         self.colorbar_include_matplotlib_check = qtw.QCheckBox("Matplotlib")
@@ -150,10 +182,17 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         range_layout.setVerticalSpacing(4)
         align_vcenter = QtCore.Qt.AlignmentFlag.AlignVCenter
         range_layout.addWidget(self.colorbar_manual_radio, 0, 0, align_vcenter)
-        range_layout.addWidget(self.colorbar_min_label, 0, 1, align_vcenter)
-        range_layout.addWidget(self.colorbar_min_text, 0, 2, align_vcenter)
-        range_layout.addWidget(self.colorbar_max_label, 0, 3, align_vcenter)
-        range_layout.addWidget(self.colorbar_max_text, 0, 4, align_vcenter)
+        range_layout.setColumnMinimumWidth(1, 36)
+        range_layout.addWidget(self.colorbar_min_label, 0, 2, align_vcenter)
+        range_layout.addWidget(self.colorbar_min_text, 0, 3, align_vcenter)
+        range_layout.addWidget(self.colorbar_max_label, 0, 4, align_vcenter)
+        range_layout.addWidget(self.colorbar_max_text, 0, 5, align_vcenter)
+        range_layout.addWidget(
+            self.colorbar_copy_auto_limits_button,
+            0,
+            6,
+            align_vcenter,
+        )
         range_layout.addWidget(self.colorbar_auto_radio, 1, 0)
 
         filter_controls = self._init_colorbar_filter_controls()
@@ -207,6 +246,9 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         self.colorbar_min_text.editingFinished.connect(self._apply_colorbar_manual_fields)
         self.colorbar_max_text.editingFinished.connect(self._apply_colorbar_manual_fields)
         self.colorbar_auto_radio.clicked.connect(self.setColorbarAuto)
+        self.colorbar_copy_auto_limits_button.clicked.connect(
+            self._copy_colorbar_auto_limits
+        )
 
         self._sync_colorbar_scale_controls()
 
@@ -457,9 +499,49 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         self.colorbar_manual_radio.setChecked(manual)
         self.colorbar_auto_radio.setChecked(not manual)
+        self._update_colorbar_auto_limits_tooltip()
 
         for widget in (self.colorbar_manual_radio, self.colorbar_auto_radio):
             widget.blockSignals(False)
+
+    def _colorbar_auto_limits(self):
+        """Return validated prospective automatic color-scale limits."""
+
+        levels = self._data_colorbar_levels()
+        if levels is None:
+            return None
+        try:
+            vmin, vmax = (float(value) for value in levels)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+            return None
+        return vmin, vmax
+
+    def _update_colorbar_auto_limits_tooltip(self):
+        """Describe the range that the copy-auto button would apply."""
+
+        button = self.colorbar_copy_auto_limits_button
+        levels = self._colorbar_auto_limits()
+        button.setEnabled(levels is not None)
+        if levels is None:
+            button.setToolTip("Auto limits are unavailable for the color scale.")
+            return
+        button.setToolTip(
+            f"Set manual limits to {levels[0]:.6g} and {levels[1]:.6g}."
+        )
+
+    @QtCore.pyqtSlot()
+    def _copy_colorbar_auto_limits(self):
+        """Freeze the prospective automatic color range as a manual range."""
+
+        levels = self._colorbar_auto_limits()
+        if levels is None:
+            self._update_colorbar_auto_limits_tooltip()
+            return
+        if self.setColorbarManualRange(*levels):
+            self._sync_colorbar_level_fields(*levels)
+        self._update_colorbar_auto_limits_tooltip()
 
     def _sync_colorbar_level_fields(self, vmin, vmax):
         """

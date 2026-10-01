@@ -3576,6 +3576,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
         class Host(qtw.QMainWindow):
             _current_colorbar_levels = plot2d._current_colorbar_levels
+            _colorbar_auto_limits = plot2d._colorbar_auto_limits
+            _update_colorbar_auto_limits_tooltip = (
+                plot2d._update_colorbar_auto_limits_tooltip
+                )
+            _copy_colorbar_auto_limits = plot2d._copy_colorbar_auto_limits
             _current_colorbar_colormap_name = plot2d._current_colorbar_colormap_name
             _available_colorbar_colormaps = plot2d._available_colorbar_colormaps
             _fallback_colorbar_colormap_name = plot2d._fallback_colorbar_colormap_name
@@ -3641,6 +3646,12 @@ class RunListParentLookupTestCase(unittest.TestCase):
             setColorbarAuto = plot2d.setColorbarAuto
             scaleColorbar = plot2d.scaleColorbar
 
+            def _data_colorbar_levels(self):
+                return -4.0, 8.0
+
+            def _set_colorbar_levels(self, *_levels):
+                pass
+
             def show_status(self, *_args, **_kwargs):
                 pass
 
@@ -3684,12 +3695,27 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             range_layout = host.colorbar_manual_radio.parentWidget().layout()
             self.assertIsInstance(range_layout, qtw.QGridLayout)
-            for column in range(5):
+            self.assertEqual(range_layout.columnMinimumWidth(1), 36)
+            for column in (0, 2, 3, 4, 5, 6):
                 item = range_layout.itemAtPosition(0, column)
                 self.assertIsNotNone(item)
                 self.assertTrue(
                     item.alignment() & QtCore.Qt.AlignmentFlag.AlignVCenter
                     )
+            copy_button = host.colorbar_copy_auto_limits_button
+            self.assertEqual(
+                copy_button.accessibleName(),
+                "Use auto color scale limits as manual limits",
+                )
+            self.assertEqual(
+                copy_button.toolTip(),
+                "Set manual limits to -4 and 8.",
+                )
+            copy_button.click()
+            self.assertEqual(host._colorbar_manual_levels, (-4.0, 8.0))
+            self.assertEqual(host.colorbar_min_text.text(), "-4")
+            self.assertEqual(host.colorbar_max_text.text(), "8")
+            self.assertTrue(host.colorbar_manual_radio.isChecked())
             self.assertGreater(host._colorbar_colormap_row("Greys"), -1)
             self.assertGreater(host._colorbar_colormap_row("Purples"), -1)
             self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)
