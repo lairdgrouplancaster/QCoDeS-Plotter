@@ -149,6 +149,98 @@ def _drain_expensive_run(
     raise AssertionError("The real progressive layout verifier did not drain.")
 
 
+def test_real_qcodes_progressive_shape_enriches_cached_setpoint_steps(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "progressive-setpoint-steps.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("progressive_steps", sample_name="70x70")
+    dataset = None
+    try:
+        x = ManualParameter("x")
+        y = ManualParameter("y")
+        z = ManualParameter("z")
+        measurement = Measurement(exp=experiment, name="unplanned_grid")
+        measurement.write_period = 3_600
+        measurement.register_parameter(x)
+        measurement.register_parameter(y)
+        measurement.register_parameter(z, setpoints=(x, y))
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for x_index in range(70):
+                for y_index in range(70):
+                    datasaver.add_result(
+                        (x, float(x_index)),
+                        (y, float(y_index)),
+                        (z, float(x_index * 70 + y_index)),
+                    )
+            run_id = datasaver.run_id
+    finally:
+        if dataset is not None:
+            dataset.conn.close()
+        experiment.conn.close()
+
+    protected_before = _protected_artifact_state(database_path)
+    executor = _ReadOnlySqliteExecutor(database_path)
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, database_path)
+        runs = _load_basic_runs(adapter)
+        assert len(runs) == 1
+        assert runs[0].as_dict()["setpoint_shape"] is None
+
+        initial = adapter.expensive_run(run_id).as_dict()
+        assert initial["is_completed"] == 1
+        assert initial["result_count"] == 4_900
+        assert initial["setpoint_shape"] is None
+        assert adapter._regular_layout_progress[run_id].after_row_id == 4_096
+        initial_summaries = adapter.selected_run_detail(run_id).setpoint_summaries
+        assert {summary.name: summary.steps for summary in initial_summaries} == {
+            "x": None,
+            "y": None,
+        }
+
+        def edge_queries() -> tuple[TrustedQuery, ...]:
+            return tuple(
+                query
+                for query in executor.queries
+                if query.sql.startswith("SELECT (SELECT ")
+                and 'ORDER BY "id" ' in query.sql
+            )
+
+        cached_edge_queries = edge_queries()
+        assert cached_edge_queries
+        verified = _drain_expensive_run(adapter, run_id, maximum_pages=3)
+        assert verified["result_count"] == 4_900
+        assert verified["setpoint_shape"] == [70, 70]
+        assert verified["setpoint_shape_source"] == "observed"
+        pages = [
+            query
+            for query in executor.queries
+            if 'AS "qplot_axis_0"' in query.sql
+            and query.bindings
+            and query.bindings[-1] == 4_096
+        ]
+        assert [query.bindings[0] for query in pages] == [0, 4_096]
+
+        # The count changes without another QCoDeS commit or result-row change.
+        # Both the first verified detail and later cached reads must expose it.
+        for _read in range(3):
+            summaries = adapter.selected_run_detail(run_id).setpoint_summaries
+            assert {summary.name: summary.steps for summary in summaries} == {
+                "x": 70,
+                "y": 70,
+            }
+            assert [(summary.first, summary.last) for summary in summaries] == [
+                (summary.first, summary.last) for summary in initial_summaries
+            ] == [(0.0, 69.0), (0.0, 69.0)]
+            assert adapter.expensive_run(run_id).as_dict()["setpoint_shape"] == [70, 70]
+        assert edge_queries() == cached_edge_queries
+        assert _protected_artifact_state(database_path) == protected_before
+    finally:
+        executor.close()
+    assert _protected_artifact_state(database_path) == protected_before
+
+
 def test_real_qcodes_partial_thumbnail_keeps_missing_parameter_identity(
     tmp_path: Path,
 ) -> None:

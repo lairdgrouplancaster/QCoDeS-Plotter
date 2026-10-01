@@ -2607,6 +2607,75 @@ def test_planned_setpoint_steps_preserve_independent_dependent_shapes():
     ) == {"x0": 3, "x1": 5, "x2": 7}
 
 
+@pytest.mark.parametrize(
+    ("dependencies", "shapes_by_stage", "expected_by_stage"),
+    (
+        (
+            {"signal": ["x"], "signal_b": ["y"]},
+            (
+                {"signal": [11], "signal_b": [17]},
+                {"signal": [13], "signal_b": [19]},
+            ),
+            ({"x": 11, "y": 17}, {"x": 13, "y": 19}),
+        ),
+        (
+            {"signal": ["x", "y"], "signal_b": ["y", "x"]},
+            (
+                {"signal": [11, 17], "signal_b": [17, 11]},
+                {"signal": [13, 19], "signal_b": [19, 13]},
+                {"signal": [13, 19], "signal_b": [23, 13]},
+                {"signal": [13, 19], "signal_b": [23, 29]},
+            ),
+            (
+                {"x": 11, "y": 17},
+                {"x": 13, "y": 19},
+                {"x": 13, "y": None},
+                {"x": None, "y": None},
+            ),
+        ),
+    ),
+    ids=("independent", "shared-reversed-order"),
+)
+def test_cached_steps_follow_updated_dependent_shapes_without_edge_queries(
+    tmp_path,
+    dependencies,
+    shapes_by_stage,
+    expected_by_stage,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    _configure_regular_result(
+        executor,
+        shape=(2, 3),
+        fast_axis_index=1,
+        dependents=("signal", "signal_b"),
+    )
+    description = json.loads(executor.runs[1]["run_description"])
+    description["interdependencies_"]["dependencies"] = dependencies
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    initial_edges = None
+    for shapes, expected in zip(shapes_by_stage, expected_by_stage, strict=True):
+        description["shapes"] = shapes
+        executor.runs[1]["run_description"] = json.dumps(description)
+        adapter.selected_run_detail(1)
+        executor.clear_history()
+        assert adapter.expensive_run(1).as_dict()["result_count"] == 6
+        detail = adapter.selected_run_detail(1)
+        assert {summary.name: summary.steps for summary in detail.setpoint_summaries} == expected
+        edges = tuple(
+            (summary.first, summary.last) for summary in detail.setpoint_summaries
+        )
+        if initial_edges is None:
+            initial_edges = edges
+        else:
+            assert edges == initial_edges
+            assert not any(
+                query.sql.startswith("SELECT (SELECT ")
+                and 'ORDER BY "id" ' in query.sql
+                for query in executor.queries
+            )
+
+
 def test_planned_setpoint_steps_follow_each_dependency_order():
     metadata = _planned_steps_metadata(
         {"forward": ["x", "y"], "reverse": ["y", "x"]},

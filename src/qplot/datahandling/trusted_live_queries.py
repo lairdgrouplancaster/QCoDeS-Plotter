@@ -1487,6 +1487,7 @@ class TrustedMetadataQueryAdapter:
         self._setpoint_summaries: dict[int, tuple[TrustedSetpointSummary, ...]] = {}
         self._setpoint_summaries_truncated: dict[int, bool] = {}
         self._setpoint_summary_watermarks: dict[int, int] = {}
+        self._setpoint_summary_names: dict[int, tuple[str, ...]] = {}
         self._validated_grid_layouts: dict[int, Trusted2DLayoutProof] = {}
         self._regular_setpoint_observations: dict[
             int,
@@ -1528,6 +1529,7 @@ class TrustedMetadataQueryAdapter:
         self._setpoint_summaries.clear()
         self._setpoint_summaries_truncated.clear()
         self._setpoint_summary_watermarks.clear()
+        self._setpoint_summary_names.clear()
         self._validated_grid_layouts.clear()
         self._regular_setpoint_observations.clear()
         self._regular_layout_progress.clear()
@@ -1686,6 +1688,7 @@ class TrustedMetadataQueryAdapter:
             self._setpoint_summaries.pop(record.run_id, None)
             self._setpoint_summaries_truncated.pop(record.run_id, None)
             self._setpoint_summary_watermarks.pop(record.run_id, None)
+            self._setpoint_summary_names.pop(record.run_id, None)
             self._validated_grid_layouts.pop(record.run_id, None)
             self._regular_setpoint_observations.pop(record.run_id, None)
             self._regular_layout_progress.pop(record.run_id, None)
@@ -1957,6 +1960,27 @@ class TrustedMetadataQueryAdapter:
             self._setpoint_summaries[run_id] = public_summaries
             self._setpoint_summaries_truncated[run_id] = summaries_truncated
             self._setpoint_summary_watermarks[run_id] = result_watermark
+            # Preserve source identity separately from presentation names,
+            # which may be truncated.  Only parameters with both edges have
+            # a summary, so this tuple follows the actual summaries' order.
+            self._setpoint_summary_names[run_id] = tuple(
+                summary.name for summary in summaries
+            )
+        else:
+            # Progressive grid verification can prove counts without a new
+            # result row.  Reconcile steps independently of the edge-value
+            # watermark, retaining the bounded first/last values.  Replacing
+            # rather than filling unknowns also clears now-ambiguous counts.
+            self._setpoint_summaries[run_id] = tuple(
+                replace(summary, steps=planned_steps.get(name))
+                if summary.steps != planned_steps.get(name)
+                else summary
+                for name, summary in zip(
+                    self._setpoint_summary_names[run_id],
+                    self._setpoint_summaries[run_id],
+                    strict=True,
+                )
+            )
 
         # Cooperative broker scheduling may execute a higher-priority cheap or
         # selected operation on this same adapter between any two supervisor
