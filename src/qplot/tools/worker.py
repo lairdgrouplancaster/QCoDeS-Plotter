@@ -15,6 +15,7 @@ from qplot.datahandling.file_identity import (
     database_sidecar_identities,
 )
 from qplot.datahandling.parameter_data import (
+    concatenate_record_samples,
     integer_preserving_dtype,
     numeric_isfinite,
     numeric_isnan,
@@ -869,7 +870,7 @@ class loader(QtCore.QRunnable):
         self._check_cancelled()
         self.total_point_count_estimate = source_count
         return tuple(
-            np.concatenate([arrays[axis] for arrays in buffered])
+            concatenate_record_samples([arrays[axis] for arrays in buffered])
             if buffered else np.array([], dtype=float)
             for axis in range(3)
         )
@@ -1093,6 +1094,7 @@ class loader(QtCore.QRunnable):
         # Once saturated, retain its extrema and bin it on the second pass.
         axis_limit = max(1, self.max_heatmap_grid_side)
         unique: list[set[float] | None] = [set(), set()]
+        precision_sensitive = [False, False]
         lower = [np.inf, np.inf]
         upper = [-np.inf, -np.inf]
         with closing(self._array_heatmap_chunks(conn)) as chunks:
@@ -1113,10 +1115,24 @@ class loader(QtCore.QRunnable):
                     lower[axis] = min(lower[axis], float(np.min(values)))
                     upper[axis] = max(upper[axis], float(np.max(values)))
                     axis_unique = unique[axis]
+                    precision_sensitive[axis] |= self._coordinate_conversion_may_round(values)
                     if axis_unique is not None:
-                        axis_unique.update(np.unique(values))
+                        axis_unique.update(np.unique(values).tolist())
+                        # Check accumulated exact coordinates before the set
+                        # is bounded: a collision may span acquisition records.
+                        if precision_sensitive[axis]:
+                            self._float_heatmap_coordinates(
+                                np.array(list(axis_unique), dtype=object),
+                                self.axes_dict[("x", "y")[axis]],
+                                require_exact=len(axis_unique) > axis_limit,
+                            )
                         if len(axis_unique) > axis_limit:
                             unique[axis] = None
+                    elif precision_sensitive[axis]:
+                        self._float_heatmap_coordinates(
+                            values, self.axes_dict[("x", "y")[axis]],
+                            require_exact=True,
+                        )
 
         self.total_point_count_estimate = source_count
         self.sampled_heatmap_source = False
@@ -1134,7 +1150,7 @@ class loader(QtCore.QRunnable):
         if buffered is not None:
             self._check_cancelled()
             return tuple(
-                np.concatenate([arrays[axis] for arrays in buffered])
+                concatenate_record_samples([arrays[axis] for arrays in buffered])
                 if buffered else np.array([], dtype=float)
                 for axis in range(3)
             )
@@ -1480,6 +1496,13 @@ class loader(QtCore.QRunnable):
                 parameter_name,
                 coordinate=coordinate,
             )
+        if coordinate and result.dtype.kind == "O":
+            # Mixed record dtypes need Python's exact int/float comparisons;
+            # NumPy scalar comparisons may promote a large integer to float.
+            result = np.frompyfunc(
+                lambda value: value.item() if isinstance(value, np.generic) else value,
+                1, 1,
+            )(result)
         return result
 
 
@@ -1504,16 +1527,66 @@ class loader(QtCore.QRunnable):
         # Broadcast within a decoded record/chunk, before flattening or
         # masking, so a scalar slow setpoint accompanies every array sample.
         x_values, y_values, z_values = np.broadcast_arrays(x_values, y_values, z_values)
-        x_data = np.asarray(x_values, dtype=float).reshape(-1)
+        # Keep source coordinates exact until complete records are assembled
+        # and their float representation can be checked for merged positions.
+        x_data = np.asarray(x_values).reshape(-1)
         self._check_cancelled()
-        y_data = np.asarray(y_values, dtype=float).reshape(-1)
+        y_data = np.asarray(y_values).reshape(-1)
         self._check_cancelled()
         z_data = np.asarray(z_values).reshape(-1)
         self._check_cancelled()
-        finite = np.isfinite(x_data) & np.isfinite(y_data) & numeric_isfinite(z_data)
+        finite = numeric_isfinite(x_data) & numeric_isfinite(y_data) & numeric_isfinite(z_data)
         self._check_cancelled()
 
         return x_data[finite], y_data[finite], z_data[finite]
+
+
+    @staticmethod
+    def _coordinate_conversion_may_round(values):
+        if values.dtype.kind == "O" or values.dtype.itemsize > 8:
+            return True
+        if values.dtype.kind in "iu" and values.dtype.itemsize == 8:
+            return bool(np.any(values > 2**53) or (
+                values.dtype.kind == "i" and np.any(values < -(2**53))
+            ))
+        return False
+
+
+    def _float_heatmap_coordinates(self, values, parameter_name, *, require_exact=False):
+        """Reject coordinate collisions before grouping can merge real cells."""
+        self._check_cancelled()
+        values = np.asarray(values)
+        if values.dtype.kind == "O":
+            values = np.frompyfunc(
+                lambda value: value.item() if isinstance(value, np.generic) else value,
+                1, 1,
+            )(values)
+        converted = np.asarray(values, dtype=float)
+        if self._coordinate_conversion_may_round(values):
+            unique = np.unique(values[numeric_isfinite(values)])
+            self._check_cancelled()
+            displayed = np.asarray(unique, dtype=float)
+            if require_exact:
+                # Once streaming cardinality exceeds the bounded exact set,
+                # retain no unbounded history. Only lossless conversions can
+                # prove that later records cannot collide with discarded ones.
+                for index, (original, display) in enumerate(zip(unique, displayed, strict=True)):
+                    if index % 1024 == 0:
+                        self._check_cancelled()
+                    original = original.item() if isinstance(original, np.generic) else original
+                    if original != float(display):
+                        raise ValueError(
+                            f"Heatmap coordinate precision is insufficient: parameter "
+                            f"'{parameter_name}' cannot be represented exactly while "
+                            "streaming a bounded coordinate grid."
+                        )
+            if displayed.size > 1 and np.any(displayed[1:] == displayed[:-1]):
+                raise ValueError(
+                    f"Heatmap coordinate precision is insufficient: distinct values "
+                    f"of parameter '{parameter_name}' collapse at floating-point precision."
+                )
+        self._check_cancelled()
+        return converted
 
 
     def _heatmap_grid_from_arrays(
@@ -1525,6 +1598,9 @@ class loader(QtCore.QRunnable):
             max_cells=None,
             ):
         self._check_cancelled()
+        axes = getattr(self, "axes_dict", {})
+        x_data = self._float_heatmap_coordinates(x_data, axes.get("x", "x"))
+        y_data = self._float_heatmap_coordinates(y_data, axes.get("y", "y"))
         # This path intentionally aggregates a bounded display grid. Preserve
         # exact samples in the full-resolution path until operations finish.
         z_data = np.asarray(z_data, dtype=float)
@@ -2126,11 +2202,13 @@ class loader(QtCore.QRunnable):
                 name,
                 coordinate=True,
             )
-            param_data = np.asarray(param_data, dtype=float)
-            if acquired is not None:
+            if acquired is not None and not np.all(acquired):
                 # Unwritten coordinates must not choose axis representatives
                 # or make a rectilinear acquired prefix appear serpentine.
+                if param_data.dtype.kind in "iuO":
+                    param_data = param_data.astype(object)
                 param_data = np.where(acquired, param_data, np.nan)
+            param_data = self._float_heatmap_coordinates(param_data, name)
             dimension = self._shaped_axis_dimension(name, param_data, depvarData)
             shaped_axes_are_rectilinear &= self._shaped_axis_is_rectilinear(
                 param_data,
@@ -2301,6 +2379,8 @@ class loader(QtCore.QRunnable):
         x_data, y_data, z_data = self._arrays_from_values(
             axis_data["x"], axis_data["y"], depvarData[valid_rows],
             )
+        x_data = self._float_heatmap_coordinates(x_data, self.axes_dict["x"])
+        y_data = self._float_heatmap_coordinates(y_data, self.axes_dict["y"])
         # Source rows and planned shapes do not bound a pivot: even a short
         # diagonal scan creates unique-X * unique-Y cells. Count only paired,
         # valid samples, including when a shaped scan falls back to this path.

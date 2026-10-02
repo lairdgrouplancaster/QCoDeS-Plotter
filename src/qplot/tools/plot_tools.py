@@ -22,17 +22,22 @@ import numpy as np
 from qplot.datahandling.parameter_data import numeric_isfinite, numeric_isnan
 
 
-def _integer_differences(values, axis=0):
+def _integer_differences(values, axis=0, step=1):
     """Subtract before conversion; int64 and uint64 gaps can exceed int64."""
-    exact_values = values.astype(object)
+    exact_values = np.moveaxis(values.astype(object), axis, -1)
     try:
-        differences = np.diff(exact_values, axis=axis)
+        differences = exact_values[..., step:] - exact_values[..., :-step]
     except TypeError:
         # A limit can follow object data containing both binary floats and
         # decimal clipped cells; Fraction makes their subtraction compatible.
-        fractions = np.frompyfunc(Fraction, 1, 1)(exact_values)
-        differences = np.diff(fractions, axis=axis)
-    return differences.astype(np.float64)
+        # Missing cells and infinities cannot be converted to Fraction. Keep
+        # those as floats so they propagate through only their own stencils.
+        fractions = exact_values.copy()
+        finite = numeric_isfinite(exact_values)
+        fractions[finite] = np.frompyfunc(Fraction, 1, 1)(exact_values[finite])
+        fractions[~finite] = exact_values[~finite].astype(float)
+        differences = fractions[..., step:] - fractions[..., :-step]
+    return np.moveaxis(differences.astype(np.float64), -1, axis)
 
 
 def _integer_samples(values):
@@ -65,7 +70,10 @@ def _gradient_with_integer_samples(data, spacing, axis, integer_data):
     if np.all(spacing == spacing[0]):
         dx = spacing[0]
         if integer_data:
-            result[..., 1:-1] = (differences[..., :-1] + differences[..., 1:]) / (2. * dx)
+            # The uniform central stencil uses only its two outer samples.
+            # Summing adjacent differences would involve a missing centre and
+            # erase a valid derivative (or subtract opposite infinities).
+            result[..., 1:-1] = _integer_differences(samples, axis=-1, step=2) / (2. * dx)
         else:
             result[..., 1:-1] = (samples[..., 2:] - samples[..., :-2]) / (2. * dx)
     else:
@@ -213,7 +221,12 @@ def pass_filter(
         # float bound, even when no element changes. Compare Python integers
         # with the bound first, so adjacent int64/uint64 values stay distinct.
         exact_data = data.astype(object)
-        clipped = exact_data > exact_limit if which == "low" else exact_data < exact_limit
+        # Decimal comparisons with NaN raise InvalidOperation. Missing cells
+        # are never clipped, including holes in an integer heatmap.
+        valid = ~numeric_isnan(exact_data)
+        clipped = np.zeros(data.shape, dtype=bool)
+        clipped[valid] = (exact_data[valid] > exact_limit if which == "low"
+                          else exact_data[valid] < exact_limit)
         if not np.any(clipped):
             new_data = data.copy()
         elif (data.dtype.kind in "iu" and exact_limit.is_finite()

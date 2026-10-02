@@ -79,6 +79,23 @@ class PreferencesDialog(qtw.QDialog):
         self.setMinimumWidth(420)
 
         self._build_ui()
+        self._edited_preference_keys: set[str] = set()
+        for key, widget in zip(PREFERENCE_KEYS, self._preference_controls(), strict=True):
+            mark_edited = lambda _value, key=key: self._edited_preference_keys.add(key)
+            if isinstance(widget, (qtw.QSpinBox, qtw.QDoubleSpinBox)):
+                signal = widget.valueChanged
+                line_edit = widget.lineEdit()
+                if line_edit is not None:
+                    # Typing the same rounded display is still an explicit
+                    # edit, even when the numeric valueChanged signal is silent.
+                    line_edit.textEdited.connect(mark_edited)
+            elif isinstance(widget, qtw.QComboBox):
+                signal = widget.currentIndexChanged
+            elif isinstance(widget, qtw.QLineEdit):
+                signal = widget.textChanged
+            else:
+                signal = widget.toggled
+            signal.connect(mark_edited)
         self.load_from_config()
 
     def _build_ui(self):
@@ -399,13 +416,12 @@ class PreferencesDialog(qtw.QDialog):
             key: self.config.get(key)
             for key in PREFERENCE_KEYS
             })
+        self._loaded_control_values = self.preference_values()
+        self._edited_preference_keys.clear()
 
-    def set_preference_values(self, values):
-        """
-        Loads preference values into the dialog widgets.
-
-        """
-        widgets = (
+    def _preference_controls(self):
+        """Return the controls in the same order as their preference keys."""
+        return (
             self.themeCombo,
             self.colorbarWidthSpin,
             self.axisTickWidthSpin,
@@ -424,6 +440,13 @@ class PreferencesDialog(qtw.QDialog):
             self.delGracePeriodSpin,
             self.cloudSyncTimeoutSpin,
             )
+
+    def set_preference_values(self, values):
+        """
+        Loads preference values into the dialog widgets.
+
+        """
+        widgets = self._preference_controls()
         blocked_states = [widget.blockSignals(True) for widget in widgets]
         try:
             theme_index = self.themeCombo.findData(values["user_preference.theme"])
@@ -537,10 +560,16 @@ class PreferencesDialog(qtw.QDialog):
         Persists the dialog values and emits preferencesApplied on success.
 
         """
+        control_values = self.preference_values()
+        # Display precision and text normalization may differ from valid saved
+        # values. Only an actual edit may replace those exact saved values.
         changed_values = {
             key: value
-            for key, value in self.preference_values().items()
-            if self.config.get(key) != value
+            for key, value in control_values.items()
+            if self.config.get(key) != value and (
+                key in self._edited_preference_keys
+                or value != self._loaded_control_values[key]
+                )
             }
         if changed_values and not persist_config_values(
                 self,
@@ -551,6 +580,8 @@ class PreferencesDialog(qtw.QDialog):
                 ):
             return False
 
+        self._loaded_control_values = control_values
+        self._edited_preference_keys.clear()
         self.preferencesApplied.emit()
         return True
 
@@ -570,6 +601,9 @@ class PreferencesDialog(qtw.QDialog):
             return False
 
         self.set_preference_values(self.default_preference_values())
+        # Reset is explicit consent to defaults, even when the old value had
+        # the same rounded representation in its control.
+        self._edited_preference_keys.update(PREFERENCE_KEYS)
         return True
 
     def choose_default_load_path(self):

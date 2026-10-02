@@ -7,6 +7,7 @@ import pyqtgraph as pg
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
 from qplot.datahandling.parameter_data import numeric_isfinite
+from qplot.tools.plot_tools import _integer_differences
 
 
 def _safe_difference(values: np.ndarray) -> np.ndarray:
@@ -21,12 +22,7 @@ def _safe_difference(values: np.ndarray) -> np.ndarray:
     if values.dtype.kind == "O":
         # Limit operations retain integers alongside fractional clipped cells.
         # Subtract adjacent integer cells before their float view is made.
-        try:
-            differences = np.diff(values)
-        except TypeError:
-            fractions = np.frompyfunc(Fraction, 1, 1)(values)
-            differences = np.diff(fractions)
-        return differences.astype(np.float64)
+        return _integer_differences(values)
     if values.dtype.kind == "f" and values.dtype.itemsize < 8:
         # np.diff retains float16/float32, so even finite operands can
         # overflow before the derivative divides or FFT validates the span.
