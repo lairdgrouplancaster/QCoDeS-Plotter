@@ -45,7 +45,7 @@ jobs:
   checks:
     name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     strategy:
       fail-fast: false
@@ -215,12 +215,12 @@ jobs:
           )
           # The full suite can exceed the wrapper's seven-minute default on
           # hosted Windows runners. Keep individual tests bounded at 90s and
-          # allow 15 minutes overall, plus the wrapper's 2-minute cleanup grace
-          # within this job's 20-minute ceiling.
+          # allow 20 minutes for the growing complete suite, plus the wrapper's
+          # 2-minute cleanup grace within this job's 25-minute ceiling.
           & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
             -ArgumentList $arguments `
-            -TimeoutSeconds 900
+            -TimeoutSeconds 1200
 
       # Share the test list through a pytest argument file to stay below the
       # Windows standard-user launcher's 1024-character command-line limit.

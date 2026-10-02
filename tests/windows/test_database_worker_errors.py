@@ -61,11 +61,26 @@ def error_window(tmp_path, monkeypatch):
     diagnostics.configure_logging(log_file=tmp_path / "qplot.log", force=True)
     errors = []
     uncaught = []
+    requested_titles = {}
+    original_box_init = QtWidgets.QMessageBox.__init__
+
+    def record_box_init(box, *args, **kwargs):
+        original_box_init(box, *args, **kwargs)
+        if len(args) >= 3:
+            requested_titles[box] = args[1]
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "__init__", record_box_init)
 
     def dismiss_error(box):
         # Exercise the real show_error and QMessageBox construction; dismiss
         # only its modal event loop so this test cannot block on user input.
-        errors.append((box.windowTitle(), box.text(), box.detailedText()))
+        # Qt ignores message-box window titles on macOS. Assert the title
+        # supplied to its real constructor, together with the rendered body.
+        title = requested_titles[box]
+        if sys.platform != "darwin":
+            assert box.windowTitle() == title
+        assert box.icon() == QtWidgets.QMessageBox.Icon.Warning
+        errors.append((title, box.text(), box.detailedText()))
         return QtWidgets.QMessageBox.StandardButton.Ok
 
     monkeypatch.setattr(QtWidgets.QMessageBox, "exec", dismiss_error)
@@ -83,6 +98,25 @@ def error_window(tmp_path, monkeypatch):
         close_main_window(window)
         diagnostics._reset_logging_for_tests()
     assert not uncaught
+
+
+def _wait_published_metadata(window):
+    _wait_idle(window)
+
+    def derived_idle():
+        bridge = window._trusted_derived_bridge
+        coordinator = bridge.coordinator
+        return (
+            not bridge.background_active()
+            and (coordinator is None or (
+                not coordinator.active and coordinator.snapshot().pending_count == 0
+            ))
+        )
+
+    # Initial load completion precedes the progressive metadata that refines
+    # RunList. Settle it before taking preservation snapshots, while unlocked.
+    _process_until(derived_idle)
+    _wait_idle(window)
 
 
 def _wait_idle(window):
@@ -109,7 +143,7 @@ def test_public_load_exclusive_lock_reports_error_and_allows_retry(
     if prior_loaded:
         _create_database(previous, "previous_signal")
         assert window.load_file(str(previous))
-        _wait_idle(window)
+        _wait_published_metadata(window)
         assert not errors
     prior_instance = window._loaded_database_instance
     prior_runs = window.RunList.all_run_metadata()
@@ -200,6 +234,7 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
     else:
         assert window.load_file(str(path))
         _wait_idle(window)
+    _wait_published_metadata(window)
     assert not errors
     assert window._database_access_mode == (
         database_actions.SNAPSHOT_FALLBACK_MODE if snapshot else database_actions.TRUSTED_LIVE_MODE

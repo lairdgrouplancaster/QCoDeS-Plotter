@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from PyQt6 import QtGui
+from PyQt6 import QtGui, QtWidgets
 from qcodes.dataset import (
     Measurement,
     initialise_or_create_database_at,
@@ -19,6 +19,10 @@ def rendered_labels(axis):
     image = QtGui.QImage(1200, 800, QtGui.QImage.Format.Format_ARGB32)
     painter = QtGui.QPainter(image)
     try:
+        # Measuring wider tick labels schedules an axis layout update. Let
+        # that update expand the axis before checking the final draw specs.
+        axis.generateDrawSpecs(painter)
+        QtWidgets.QApplication.processEvents()
         specs = axis.generateDrawSpecs(painter)
         assert specs is not None
         return [text for _rect, _flags, text in specs[2]]

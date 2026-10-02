@@ -28,7 +28,12 @@ def test_full_windows_suite_has_its_own_bounded_time_budget(
     )[1].split("      - name:", 1)[0]
     budget = re.search(r"-TimeoutSeconds (\d+)", full_suite)
     assert budget is not None, "The full suite must not use the 420-second default"
-    assert 600 <= int(budget[1]) <= 900
+    assert 600 <= int(budget[1]) <= 1200
+    checks_job = workflow.split("  checks:\n", 1)[1]
+    job_minutes = re.search(r"timeout-minutes: (\d+)", checks_job)
+    assert job_minutes is not None
+    # Reserve two minutes for bounded cleanup and three for setup/diagnostics.
+    assert int(budget[1]) + 120 + 180 <= int(job_minutes[1]) * 60
     # More time for the complete suite must not weaken individual-test bounds
     # or increase disk/thread contention by adding workers.
     assert '"--timeout=90"' in full_suite
