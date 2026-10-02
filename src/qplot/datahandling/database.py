@@ -2021,6 +2021,71 @@ class DatabaseSelectedRunWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             )
 
 
+class DatabaseInfoSignals(QtCore.QObject):
+    finished = QtCore.pyqtSignal(int, str, object, object)
+
+
+class DatabaseInfoWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
+    """Read diagnostic metadata with cancellable source-bound background work."""
+
+    def __init__(
+            self,
+            generation,
+            database_path,
+            *,
+            expected_database_instance=None,
+            deadline=None,
+            trusted_service=None,
+            ):
+        super().__init__()
+        self.signals = DatabaseInfoSignals()
+        self.generation = generation
+        self._init_database_binding(
+            database_path, expected_database_instance, deadline,
+        )
+        self._cancelled = threading.Event()
+        self._init_sql_interrupt()
+        self.trusted_service = trusted_service
+
+    def cancel(self):
+        self._cancel_read()
+
+    def run(self):
+        rows = None
+        error = None
+        try:
+            if self._cancelled.is_set():
+                return
+            self._require_current_database_instance()
+            if self.trusted_service is not None:
+                trusted_info = self._wait_trusted_request(
+                    self.trusted_service.submit_database_info(deadline=self.deadline)
+                )
+                summary = _database_info_summary(
+                    self._read_database_path, trusted_info=trusted_info,
+                )
+            else:
+                summary = _database_info_summary(
+                    self._read_database_path,
+                    connection_callback=self._set_sql_connection,
+                    **self._read_control_kwargs(),
+                )
+            rows = [row for group in _database_info_groups(summary) for row in group]
+            self._require_current_database_instance()
+        except (InterruptedError, TrustedReadRequestCancelledError) as err:
+            if self._cancelled.is_set():
+                return
+            error = _bounded_worker_error(err)
+        except Exception as err:
+            rows = None
+            error = _bounded_worker_error(err)
+        with self._publication_lock:
+            if not self._cancelled.is_set():
+                self.signals.finished.emit(
+                    self.generation, self._signal_database_path, rows, error,
+                )
+
+
 def database_info_report(database_path):
     """
     Build a diagnostic text report for a QCoDeS database file.
@@ -2038,7 +2103,13 @@ def database_info_rows(database_path):
     return [row for group in groups for row in group]
 
 
-def _database_info_summary(database_path):
+def _database_info_summary(
+        database_path,
+        *,
+        trusted_info=None,
+        connection_callback=None,
+        **read_controls,
+        ):
     if not database_path:
         raise ValueError("No database is loaded.")
 
@@ -2048,8 +2119,30 @@ def _database_info_summary(database_path):
     path = os.path.abspath(database_path)
     file_size = os.path.getsize(path)
 
-    conn = sqlite_read_only_connection(path, timeout=10)
+    if trusted_info is not None:
+        return {
+            "path": path,
+            "folder": os.path.dirname(path),
+            "filename": os.path.basename(path),
+            "file_size": file_size,
+            "file_modified": os.path.getmtime(path),
+            "user_version": trusted_info.user_version,
+            "application_id": trusted_info.application_id,
+            "page_count": trusted_info.page_count,
+            "page_size": trusted_info.page_size,
+            "table_count": trusted_info.table_count,
+            "experiment_count": trusted_info.experiment_count,
+            "run_count": trusted_info.run_count,
+            "latest_run": (
+                trusted_info.latest_run.as_dict()
+                if trusted_info.latest_run is not None else None
+            ),
+        }
+
+    conn = sqlite_read_only_connection(path, timeout=10, **read_controls)
     try:
+        if connection_callback is not None:
+            connection_callback(conn)
         cursor = conn.cursor()
         user_version = _pragma_value(cursor, "user_version")
         summary = {
@@ -2069,6 +2162,8 @@ def _database_info_summary(database_path):
             }
     finally:
         conn.close()
+        if connection_callback is not None:
+            connection_callback(None)
 
     return summary
 

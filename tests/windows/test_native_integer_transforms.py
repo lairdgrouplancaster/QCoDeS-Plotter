@@ -159,6 +159,8 @@ def integer_plots(tmp_path, monkeypatch, request):
 
 def assert_integer_mapping(plot, x, y, slopes, *, phase=False):
     mapped_x = y[:-1] if phase else x[:-1]
+    if mapped_x.dtype.kind == "O":
+        mapped_x = mapped_x.astype(float)
     for line in getattr(plot, "lines", {None: plot.line}).values():
         assert_display(line, mapped_x, slopes)
         assert_display(line.curve, mapped_x, slopes)
@@ -321,9 +323,9 @@ def test_integer_phase_combinations_refresh_and_secondary_snapping(
 @pytest.mark.parametrize("control", ["derivativeCheck", "phasemapCheck"])
 def test_real_integer_heatmap_cut(integer_plots, no_callback_errors, control):
     _window, (cut, _source), x, y, slopes = integer_plots
-    # Heatmap geometry and its aggregated grid already use float coordinates
-    # and values. Preserve those cut inputs across transforms and cursor moves.
-    x, y = x.astype(float), y.astype(float)
+    # Geometry uses floating coordinates; full-resolution cell values retain
+    # integers in object cells. Preserve both across controls and cursor moves.
+    x, y = x.astype(float), y.astype(object)
     click_control(cut, control)
     assert_integer_mapping(cut, x, y, slopes, phase=control == "phasemapCheck")
     cut.picker.slider.setValue(1)

@@ -19,18 +19,25 @@ from fractions import Fraction
 
 import numpy as np
 
+from qplot.datahandling.parameter_data import numeric_isfinite, numeric_isnan
 
-def _integer_differences(values, axis=0):
+
+def _integer_differences(values, axis=0, step=1):
     """Subtract before conversion; int64 and uint64 gaps can exceed int64."""
-    exact_values = values.astype(object)
+    exact_values = np.moveaxis(values.astype(object), axis, -1)
     try:
-        differences = np.diff(exact_values, axis=axis)
+        differences = exact_values[..., step:] - exact_values[..., :-step]
     except TypeError:
         # A limit can follow object data containing both binary floats and
         # decimal clipped cells; Fraction makes their subtraction compatible.
-        fractions = np.frompyfunc(Fraction, 1, 1)(exact_values)
-        differences = np.diff(fractions, axis=axis)
-    return differences.astype(np.float64)
+        # Missing cells and infinities cannot be converted to Fraction. Keep
+        # those as floats so they propagate through only their own stencils.
+        fractions = exact_values.copy()
+        finite = numeric_isfinite(exact_values)
+        fractions[finite] = np.frompyfunc(Fraction, 1, 1)(exact_values[finite])
+        fractions[~finite] = exact_values[~finite].astype(float)
+        differences = fractions[..., step:] - fractions[..., :-step]
+    return np.moveaxis(differences.astype(np.float64), -1, axis)
 
 
 def _integer_samples(values):
@@ -45,7 +52,7 @@ def _integer_samples(values):
 
 def _numeric_object_samples(values):
     return values.dtype.kind == "O" and all(
-        isinstance(value, (int, float, Decimal, np.integer, np.floating))
+        isinstance(value, (int, float, Decimal, Fraction, np.integer, np.floating))
         and not isinstance(value, (bool, np.bool_))
         for value in values.flat
     )
@@ -63,7 +70,10 @@ def _gradient_with_integer_samples(data, spacing, axis, integer_data):
     if np.all(spacing == spacing[0]):
         dx = spacing[0]
         if integer_data:
-            result[..., 1:-1] = (differences[..., :-1] + differences[..., 1:]) / (2. * dx)
+            # The uniform central stencil uses only its two outer samples.
+            # Summing adjacent differences would involve a missing centre and
+            # erase a valid derivative (or subtract opposite infinities).
+            result[..., 1:-1] = _integer_differences(samples, axis=-1, step=2) / (2. * dx)
         else:
             result[..., 1:-1] = (samples[..., 2:] - samples[..., :-2]) / (2. * dx)
     else:
@@ -122,9 +132,33 @@ def subtract_mean(
     num_axis = 1 if axis == "x" else 0
 
     _check_cancelled(cancelled_callback)
-    mean = np.nanmean(dataGrid, axis=num_axis, keepdims=True)
-    _check_cancelled(cancelled_callback)
-    dataGrid = dataGrid - mean
+    if dataGrid.dtype.kind in "iuO":
+        # Center exact samples before conversion; NaN holes remain missing.
+        # Work one row/column at a time so this path stays cancellable.
+        samples = np.moveaxis(dataGrid, num_axis, -1)
+        centered = np.full(samples.shape, np.nan, dtype=float)
+        for position in np.ndindex(samples.shape[:-1]):
+            _check_cancelled(cancelled_callback)
+            row = samples[position]
+            valid = ~numeric_isnan(row)
+            values = row[valid]
+            if not values.size:
+                continue
+            if np.all(numeric_isfinite(values)):
+                exact = [Fraction(value.item() if isinstance(value, np.generic) else value)
+                         for value in values]
+                mean = sum(exact) / len(exact)
+                centered[position][valid] = [float(value - mean) for value in exact]
+            else:
+                numeric = values.astype(float)
+                centered[position][valid] = numeric - np.mean(numeric)
+        dataGrid = np.moveaxis(centered, -1, num_axis)
+    else:
+        # Narrow floats must be widened before accumulation and subtraction.
+        dataGrid = dataGrid.astype(np.result_type(dataGrid.dtype, np.float64), copy=False)
+        mean = np.nanmean(dataGrid, axis=num_axis, keepdims=True)
+        _check_cancelled(cancelled_callback)
+        dataGrid = dataGrid - mean
     _check_cancelled(cancelled_callback)
     
     return {"z" : dataGrid}
@@ -187,7 +221,12 @@ def pass_filter(
         # float bound, even when no element changes. Compare Python integers
         # with the bound first, so adjacent int64/uint64 values stay distinct.
         exact_data = data.astype(object)
-        clipped = exact_data > exact_limit if which == "low" else exact_data < exact_limit
+        # Decimal comparisons with NaN raise InvalidOperation. Missing cells
+        # are never clipped, including holes in an integer heatmap.
+        valid = ~numeric_isnan(exact_data)
+        clipped = np.zeros(data.shape, dtype=bool)
+        clipped[valid] = (exact_data[valid] > exact_limit if which == "low"
+                          else exact_data[valid] < exact_limit)
         if not np.any(clipped):
             new_data = data.copy()
         elif (data.dtype.kind in "iu" and exact_limit.is_finite()
@@ -281,6 +320,7 @@ def differentiate(
             data, spacing, axis_num, integer_data,
         )
     else:
+        data = data.astype(np.result_type(data.dtype, np.float64), copy=False)
         new_data = np.gradient(data, coordinates, axis=axis_num)
     _check_cancelled(cancelled_callback)
     
@@ -309,12 +349,12 @@ def fill_heatmap(
         _check_cancelled(cancelled_callback)
         position = 0
         while position < len(line):
-            if not np.isnan(line[position]):
+            if not numeric_isnan(line[position]):
                 position += 1
                 continue
 
             gap_start = position
-            while position < len(line) and np.isnan(line[position]):
+            while position < len(line) and numeric_isnan(line[position]):
                 if position % 1024 == 0:
                     _check_cancelled(cancelled_callback)
                 position += 1

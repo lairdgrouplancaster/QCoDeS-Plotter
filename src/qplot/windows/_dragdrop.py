@@ -7,7 +7,7 @@ RUN_PREVIEW_MIME = "application/x-qplot-run-preview"
 
 def make_run_preview_mime(
         guid, parameter, axes=None, database_path=None, *, axes_pending=False):
-    payload = {
+    payload: dict[str, str | list[str] | bool] = {
         "guid": str(guid or ""),
         "parameter": str(parameter or ""),
         "axes": [str(axis) for axis in (axes or [])],
@@ -45,7 +45,7 @@ def run_preview_payload_from_mime(mime_data):
     elif not isinstance(axes, (list, tuple)):
         axes = []
 
-    normalised = {
+    normalised: dict[str, str | list[str] | bool] = {
         "guid": guid,
         "parameter": parameter,
         "axes": [str(axis) for axis in axes],

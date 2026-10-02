@@ -6,6 +6,9 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
+from qplot.datahandling.parameter_data import numeric_isfinite
+from qplot.tools.plot_tools import _integer_differences
+
 
 def _safe_difference(values: np.ndarray) -> np.ndarray:
     """Subtract samples before narrowing arithmetic can overflow or wrap."""
@@ -19,12 +22,7 @@ def _safe_difference(values: np.ndarray) -> np.ndarray:
     if values.dtype.kind == "O":
         # Limit operations retain integers alongside fractional clipped cells.
         # Subtract adjacent integer cells before their float view is made.
-        try:
-            differences = np.diff(values)
-        except TypeError:
-            fractions = np.frompyfunc(Fraction, 1, 1)(values)
-            differences = np.diff(fractions)
-        return differences.astype(np.float64)
+        return _integer_differences(values)
     if values.dtype.kind == "f" and values.dtype.itemsize < 8:
         # np.diff retains float16/float32, so even finite operands can
         # overflow before the derivative divides or FFT validates the span.
@@ -75,7 +73,7 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         x = x.astype(np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
         dx = _safe_difference(x)
-    if not (np.all(np.isfinite(x)) and np.all(np.isfinite(dx))) or len(x) == 0:
+    if not (np.all(numeric_isfinite(x)) and np.all(np.isfinite(dx))) or len(x) == 0:
         raise _FFTCoordinatesError(message)
     # Retain PyQtGraph's supported one-sample DC spectrum.
     if len(x) == 1:
@@ -85,10 +83,15 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         x, dx = x[::-1], -dx[::-1]
     elif not np.all(dx > 0):
         raise _FFTCoordinatesError(message)
-    if x.dtype.kind in "iu":
+    if x.dtype.kind in "iuO":
         # Rebase before float conversion to retain nearby steps above 2**53
         # without unsigned/signed overflow.
-        x = (x.astype(object) - int(x[0])).astype(np.float64)
+        exact = x.astype(object)
+        try:
+            x = (exact - exact[0]).astype(np.float64)
+        except TypeError:
+            exact = np.frompyfunc(Fraction, 1, 1)(exact)
+            x = (exact - exact[0]).astype(np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
         spacing = float(x[-1] - x[0]) / (len(x) - 1)
     if not (np.isfinite(spacing) and spacing > 0 and np.all(np.diff(x) > 0)):
@@ -162,20 +165,32 @@ class NativePlotDataItem(pg.PlotDataItem):
                     x, y = self._fourierTransform(x, y)
                     if self.opts["logMode"][0]:
                         x, y = x[1:], y[1:]
-            elif source.y.dtype.kind == "O":
+            elif (self.opts["subtractMeanMode"] and source.y.dtype.kind == "f"
+                  and source.y.dtype.itemsize < 8):
+                x = source.x
+                y = source.y.astype(np.float64)
+                y = y - np.mean(y)
+                if self.opts["fftMode"]:
+                    x, y = self._fourierTransform(x, y)
+                    if self.opts["logMode"][0]:
+                        x, y = x[1:], y[1:]
+            elif source.y.dtype.kind == "O" or source.x.dtype.kind == "O":
                 # PyQtGraph's painter cannot call isfinite on object cells.
                 # Keep the original dataset exact for CSV/cursor access and
                 # map only the on-screen values to float.
                 x = source.x
                 y = source.y.astype(np.float64)
                 if self.opts["subtractMeanMode"]:
-                    y = _center_object_samples(source.y)
+                    y = (_center_object_samples(source.y) if source.y.dtype.kind == "O"
+                         else y - np.mean(y))
                 if self.opts["fftMode"]:
                     x, y = self._fourierTransform(x, y)
                     if self.opts["logMode"][0]:
                         x, y = x[1:], y[1:]
             else:
                 return super()._getDisplayDataset()
+            if x.dtype.kind == "O":
+                x = x.astype(np.float64)
             mapped = PlotDataset(x, y)
             if True in self.opts["logMode"]:
                 mapped.applyLogMapping(self.opts["logMode"])

@@ -1273,33 +1273,59 @@ def test_uncommitted_wal_rows_are_invisible_until_commit(
 
 def test_finite_query_batch_is_repeatable_then_next_operation_refreshes(
     live_writer: _QcodesWalWriter,
+    monkeypatch,
 ) -> None:
     with TrustedLiveReader.open(live_writer.database_path) as reader:
         commit_error: list[BaseException] = []
+        first_select_finished = threading.Event()
+        commit_finished = threading.Event()
+        stop_commit = threading.Event()
+        select_sql = "SELECT value FROM qplot_trusted_probe ORDER BY seq"
+        original_query = reader._query_spec_in_transaction
+
+        def query_with_commit_barrier(connection, query, *args):
+            result = original_query(connection, query, *args)
+            if query.sql == select_sql and not first_select_finished.is_set():
+                # The first SELECT has materialized and pinned this batch's
+                # snapshot. Complete the writer commit before the next SELECT.
+                first_select_finished.set()
+                assert commit_finished.wait(3), "Writer commit did not finish"
+                assert commit_error == []
+            return result
+
+        monkeypatch.setattr(reader, "_query_spec_in_transaction", query_with_commit_barrier)
 
         def commit_during_batch() -> None:
             try:
-                time.sleep(0.05)
-                live_writer.request("commit", value="new-commit")
+                assert first_select_finished.wait(5), "First SELECT did not finish"
+                if stop_commit.is_set():
+                    return
+                live_writer.request("commit", timeout=2, value="new-commit")
             except BaseException as error:
                 commit_error.append(error)
+            finally:
+                commit_finished.set()
 
         commit_thread = threading.Thread(target=commit_during_batch)
         commit_thread.start()
-        results = reader.query_batch(
-            (
-                TrustedQuery("SELECT value FROM qplot_trusted_probe ORDER BY seq"),
-                TrustedQuery(
-                    "WITH RECURSIVE values_(n) AS ("
-                    "SELECT 1 UNION ALL SELECT n + 1 FROM values_ "
-                    "WHERE n < 5000000) SELECT sum(n) FROM values_"
+        try:
+            results = reader.query_batch(
+                (
+                    TrustedQuery(select_sql),
+                    TrustedQuery(
+                        "WITH RECURSIVE values_(n) AS ("
+                        "SELECT 1 UNION ALL SELECT n + 1 FROM values_ "
+                        "WHERE n < 5000000) SELECT sum(n) FROM values_"
+                    ),
+                    TrustedQuery(select_sql),
                 ),
-                TrustedQuery("SELECT value FROM qplot_trusted_probe ORDER BY seq"),
-            ),
-            timeout=4.0,
-        )
-        commit_thread.join(10)
-        assert not commit_thread.is_alive()
+                timeout=4.0,
+            )
+        finally:
+            stop_commit.set()
+            first_select_finished.set()
+            commit_thread.join(10)
+            assert not commit_thread.is_alive()
         assert commit_error == []
         assert results[0].rows == (("initial",),)
         assert results[2].rows == (("initial",),)

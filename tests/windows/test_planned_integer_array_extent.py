@@ -78,7 +78,13 @@ def test_actual_planned_integer_array_acquisition_extent(
                 np.testing.assert_array_equal(worker.axis_data["x"], x)
                 np.testing.assert_array_equal(worker.axis_data["y"], y)
                 if heatmap:
-                    np.testing.assert_array_equal(worker.dataGrid, grid)
+                    # Exact integer grids use object cells for NaN padding;
+                    # compare missingness separately from acquired values.
+                    missing = np.isnan(grid)
+                    np.testing.assert_array_equal(
+                        np.isnan(np.asarray(worker.dataGrid, dtype=float)), missing,
+                    )
+                    np.testing.assert_array_equal(worker.dataGrid[~missing], grid[~missing])
 
             def check_plot(*, completed=False):
                 samples = {name: np.concatenate(parts) for name, parts in expected.items()}

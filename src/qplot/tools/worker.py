@@ -14,6 +14,12 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
     database_sidecar_identities,
 )
+from qplot.datahandling.parameter_data import (
+    concatenate_record_samples,
+    integer_preserving_dtype,
+    numeric_isfinite,
+    numeric_isnan,
+)
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
     cache_dataset_completed,
@@ -431,7 +437,7 @@ class loader(QtCore.QRunnable):
                 # A QCoDeS array record adds a storage dimension, not an
                 # independent setpoint. Select the plot by declared axes.
                 if len(self.param.depends_on_) == 1:
-                    axis_data, axis_param = self.for_1d(data, acquired & ~np.isnan(depvarData))
+                    axis_data, axis_param = self.for_1d(data, acquired & ~numeric_isnan(depvarData))
 
                 # for shaped 2d plots
                 elif len(depvarData.shape) == 2:
@@ -447,7 +453,7 @@ class loader(QtCore.QRunnable):
 
                 else:
                     #Remove nan values
-                    valid_rows = acquired & ~np.isnan(depvarData)
+                    valid_rows = acquired & ~numeric_isnan(depvarData)
 
                     # for unshaped 2d plots
                     (
@@ -581,10 +587,14 @@ class loader(QtCore.QRunnable):
         )
         names = list(dict.fromkeys((self.param.name, *setpoints)))
         columns = [np.asarray(data[name]) for name in names]
-        if not any(column.dtype.kind == "O" for column in columns):
+        if not any(
+            column.dtype.kind == "O" and any(np.ndim(value) for value in column.flat)
+            for column in columns
+        ):
             return data
 
-        # An object array represents acquisition records, not numeric samples.
+        # Nested object cells represent acquisition records. Dense numeric
+        # object cells instead preserve mixed signed/unsigned sample values.
         # Other columns may still hold one scalar or a dense array per record.
         record_count = len(columns[0])
         if any(column.ndim == 0 or len(column) != record_count for column in columns):
@@ -602,7 +612,7 @@ class loader(QtCore.QRunnable):
                         )
                     else:
                         self._real_line_values(value, name)
-                    if value.dtype.kind not in "biufc":
+                    if value.dtype.kind not in "biufcO":
                         raise ValueError("Array records must contain numeric values.")
                     if value.size not in (1, size):
                         raise ValueError("Setpoint and measurement shapes do not match.")
@@ -615,7 +625,7 @@ class loader(QtCore.QRunnable):
         dtypes: list[np.dtype | None] = [None for _ in names]
         for values, size in records():
             total += size
-            dtypes = [value.dtype if dtype is None else np.result_type(dtype, value.dtype)
+            dtypes = [value.dtype if dtype is None else integer_preserving_dtype((dtype, value.dtype))
                       for dtype, value in zip(dtypes, values, strict=True)]
         self._check_cancelled()
         if heatmap:
@@ -860,7 +870,7 @@ class loader(QtCore.QRunnable):
         self._check_cancelled()
         self.total_point_count_estimate = source_count
         return tuple(
-            np.concatenate([arrays[axis] for arrays in buffered])
+            concatenate_record_samples([arrays[axis] for arrays in buffered])
             if buffered else np.array([], dtype=float)
             for axis in range(3)
         )
@@ -1084,6 +1094,7 @@ class loader(QtCore.QRunnable):
         # Once saturated, retain its extrema and bin it on the second pass.
         axis_limit = max(1, self.max_heatmap_grid_side)
         unique: list[set[float] | None] = [set(), set()]
+        precision_sensitive = [False, False]
         lower = [np.inf, np.inf]
         upper = [-np.inf, -np.inf]
         with closing(self._array_heatmap_chunks(conn)) as chunks:
@@ -1104,10 +1115,24 @@ class loader(QtCore.QRunnable):
                     lower[axis] = min(lower[axis], float(np.min(values)))
                     upper[axis] = max(upper[axis], float(np.max(values)))
                     axis_unique = unique[axis]
+                    precision_sensitive[axis] |= self._coordinate_conversion_may_round(values)
                     if axis_unique is not None:
-                        axis_unique.update(np.unique(values))
+                        axis_unique.update(np.unique(values).tolist())
+                        # Check accumulated exact coordinates before the set
+                        # is bounded: a collision may span acquisition records.
+                        if precision_sensitive[axis]:
+                            self._float_heatmap_coordinates(
+                                np.array(list(axis_unique), dtype=object),
+                                self.axes_dict[("x", "y")[axis]],
+                                require_exact=len(axis_unique) > axis_limit,
+                            )
                         if len(axis_unique) > axis_limit:
                             unique[axis] = None
+                    elif precision_sensitive[axis]:
+                        self._float_heatmap_coordinates(
+                            values, self.axes_dict[("x", "y")[axis]],
+                            require_exact=True,
+                        )
 
         self.total_point_count_estimate = source_count
         self.sampled_heatmap_source = False
@@ -1125,7 +1150,7 @@ class loader(QtCore.QRunnable):
         if buffered is not None:
             self._check_cancelled()
             return tuple(
-                np.concatenate([arrays[axis] for arrays in buffered])
+                concatenate_record_samples([arrays[axis] for arrays in buffered])
                 if buffered else np.array([], dtype=float)
                 for axis in range(3)
             )
@@ -1464,11 +1489,20 @@ class loader(QtCore.QRunnable):
         """Return an array only when conversion to float cannot lose phase."""
 
         result = np.asarray(values)
-        if np.iscomplexobj(result):
+        if np.iscomplexobj(result) or (
+            result.dtype.kind == "O" and any(np.iscomplexobj(value) for value in result.flat)
+        ):
             self._reject_complex_heatmap(
                 parameter_name,
                 coordinate=coordinate,
             )
+        if coordinate and result.dtype.kind == "O":
+            # Mixed record dtypes need Python's exact int/float comparisons;
+            # NumPy scalar comparisons may promote a large integer to float.
+            result = np.frompyfunc(
+                lambda value: value.item() if isinstance(value, np.generic) else value,
+                1, 1,
+            )(result)
         return result
 
 
@@ -1493,16 +1527,66 @@ class loader(QtCore.QRunnable):
         # Broadcast within a decoded record/chunk, before flattening or
         # masking, so a scalar slow setpoint accompanies every array sample.
         x_values, y_values, z_values = np.broadcast_arrays(x_values, y_values, z_values)
-        x_data = np.asarray(x_values, dtype=float).reshape(-1)
+        # Keep source coordinates exact until complete records are assembled
+        # and their float representation can be checked for merged positions.
+        x_data = np.asarray(x_values).reshape(-1)
         self._check_cancelled()
-        y_data = np.asarray(y_values, dtype=float).reshape(-1)
+        y_data = np.asarray(y_values).reshape(-1)
         self._check_cancelled()
-        z_data = np.asarray(z_values, dtype=float).reshape(-1)
+        z_data = np.asarray(z_values).reshape(-1)
         self._check_cancelled()
-        finite = np.isfinite(x_data) & np.isfinite(y_data) & np.isfinite(z_data)
+        finite = numeric_isfinite(x_data) & numeric_isfinite(y_data) & numeric_isfinite(z_data)
         self._check_cancelled()
 
         return x_data[finite], y_data[finite], z_data[finite]
+
+
+    @staticmethod
+    def _coordinate_conversion_may_round(values):
+        if values.dtype.kind == "O" or values.dtype.itemsize > 8:
+            return True
+        if values.dtype.kind in "iu" and values.dtype.itemsize == 8:
+            return bool(np.any(values > 2**53) or (
+                values.dtype.kind == "i" and np.any(values < -(2**53))
+            ))
+        return False
+
+
+    def _float_heatmap_coordinates(self, values, parameter_name, *, require_exact=False):
+        """Reject coordinate collisions before grouping can merge real cells."""
+        self._check_cancelled()
+        values = np.asarray(values)
+        if values.dtype.kind == "O":
+            values = np.frompyfunc(
+                lambda value: value.item() if isinstance(value, np.generic) else value,
+                1, 1,
+            )(values)
+        converted = np.asarray(values, dtype=float)
+        if self._coordinate_conversion_may_round(values):
+            unique = np.unique(values[numeric_isfinite(values)])
+            self._check_cancelled()
+            displayed = np.asarray(unique, dtype=float)
+            if require_exact:
+                # Once streaming cardinality exceeds the bounded exact set,
+                # retain no unbounded history. Only lossless conversions can
+                # prove that later records cannot collide with discarded ones.
+                for index, (original, display) in enumerate(zip(unique, displayed, strict=True)):
+                    if index % 1024 == 0:
+                        self._check_cancelled()
+                    original = original.item() if isinstance(original, np.generic) else original
+                    if original != float(display):
+                        raise ValueError(
+                            f"Heatmap coordinate precision is insufficient: parameter "
+                            f"'{parameter_name}' cannot be represented exactly while "
+                            "streaming a bounded coordinate grid."
+                        )
+            if displayed.size > 1 and np.any(displayed[1:] == displayed[:-1]):
+                raise ValueError(
+                    f"Heatmap coordinate precision is insufficient: distinct values "
+                    f"of parameter '{parameter_name}' collapse at floating-point precision."
+                )
+        self._check_cancelled()
+        return converted
 
 
     def _heatmap_grid_from_arrays(
@@ -1514,6 +1598,12 @@ class loader(QtCore.QRunnable):
             max_cells=None,
             ):
         self._check_cancelled()
+        axes = getattr(self, "axes_dict", {})
+        x_data = self._float_heatmap_coordinates(x_data, axes.get("x", "x"))
+        y_data = self._float_heatmap_coordinates(y_data, axes.get("y", "y"))
+        # This path intentionally aggregates a bounded display grid. Preserve
+        # exact samples in the full-resolution path until operations finish.
+        z_data = np.asarray(z_data, dtype=float)
         display_limit = max(1, int(getattr(
             self, "max_heatmap_grid_cells", MAX_SQL_HEATMAP_GRID_CELLS,
             )))
@@ -2042,7 +2132,9 @@ class loader(QtCore.QRunnable):
         """Reject complex samples without converting or changing raw data."""
 
         result = np.asarray(values)
-        if np.iscomplexobj(result):
+        if np.iscomplexobj(result) or (
+            result.dtype.kind == "O" and any(np.iscomplexobj(value) for value in result.flat)
+        ):
             self._reject_complex_line(parameter_name)
         return result
 
@@ -2065,8 +2157,8 @@ class loader(QtCore.QRunnable):
             raise ValueError("1D setpoint and measurement shapes do not match")
         valid_rows = (
             np.asarray(valid_rows)
-            & ~np.isnan(x_values)
-            & ~np.isnan(y_values)
+            & ~numeric_isnan(x_values)
+            & ~numeric_isnan(y_values)
         )
         axis_data["x"] = x_values[valid_rows].reshape(-1)
         self._check_cancelled()
@@ -2089,11 +2181,14 @@ class loader(QtCore.QRunnable):
             depvarData,
             getattr(self.param, "name", "measurement"),
         )
-        depvarData = np.asarray(depvarData, dtype=float)
-        if acquired is not None:
+        if acquired is not None and not np.all(acquired):
             # Plotting-only missing values preserve the planned shape and
             # source dtypes. Never infer acquisition from zeros or completion.
-            depvarData = np.where(acquired, depvarData, np.nan)
+            depvarData = depvarData.astype(
+                object if depvarData.dtype.kind in "iuO" else depvarData.dtype,
+                copy=True,
+            )
+            depvarData[~acquired] = np.nan
         self._check_cancelled()
         
         # Find correct data for each axis
@@ -2107,11 +2202,13 @@ class loader(QtCore.QRunnable):
                 name,
                 coordinate=True,
             )
-            param_data = np.asarray(param_data, dtype=float)
-            if acquired is not None:
+            if acquired is not None and not np.all(acquired):
                 # Unwritten coordinates must not choose axis representatives
                 # or make a rectilinear acquired prefix appear serpentine.
+                if param_data.dtype.kind in "iuO":
+                    param_data = param_data.astype(object)
                 param_data = np.where(acquired, param_data, np.nan)
+            param_data = self._float_heatmap_coordinates(param_data, name)
             dimension = self._shaped_axis_dimension(name, param_data, depvarData)
             shaped_axes_are_rectilinear &= self._shaped_axis_is_rectilinear(
                 param_data,
@@ -2137,7 +2234,7 @@ class loader(QtCore.QRunnable):
                     for axis in ("x", "y")
                     )
                 ):
-            valid_rows = np.isfinite(depvarData)
+            valid_rows = numeric_isfinite(depvarData)
             for axis in ("x", "y"):
                 name = self.axes_dict[axis]
                 valid_rows &= np.isfinite(np.asarray(data[name], dtype=float))
@@ -2237,7 +2334,7 @@ class loader(QtCore.QRunnable):
         # Axis representatives may come from another row or column. Retain
         # each sample's recorded coordinate validity before using those axes
         # to publish the grid or pass it to operations.
-        valid_rows = np.isfinite(depvarData)
+        valid_rows = numeric_isfinite(depvarData)
         for axis in ["x", "y"]:
             self._check_cancelled()
             name = self.axes_dict[axis]
@@ -2254,7 +2351,11 @@ class loader(QtCore.QRunnable):
             # cache intact for later loads and different axis selections.
             data_grid = depvarData[selection]
             self._check_cancelled()
-            data_grid[~valid_rows[selection]] = np.nan
+            invalid = ~valid_rows[selection]
+            if np.any(invalid):
+                if data_grid.dtype.kind in "iu":
+                    data_grid = data_grid.astype(object)
+                data_grid[invalid] = np.nan
             self._check_cancelled()
             return data_grid if x_dimension == 1 else data_grid.transpose()
 
@@ -2278,6 +2379,8 @@ class loader(QtCore.QRunnable):
         x_data, y_data, z_data = self._arrays_from_values(
             axis_data["x"], axis_data["y"], depvarData[valid_rows],
             )
+        x_data = self._float_heatmap_coordinates(x_data, self.axes_dict["x"])
+        y_data = self._float_heatmap_coordinates(y_data, self.axes_dict["y"])
         # Source rows and planned shapes do not bound a pivot: even a short
         # diagonal scan creates unique-X * unique-Y cells. Count only paired,
         # valid samples, including when a shaped scan falls back to this path.
@@ -2316,6 +2419,7 @@ class loader(QtCore.QRunnable):
                 y_data,
                 x_data,
                 z_data,
+                check_cancelled=self._check_cancelled,
             )
         self._check_cancelled()
         
@@ -2323,7 +2427,7 @@ class loader(QtCore.QRunnable):
         axis_data["y"] = dataGrid.index.to_numpy(float)
         axis_data["x"] = dataGrid.columns.to_numpy(float)
         
-        dataGrid = dataGrid.to_numpy(float)
+        dataGrid = dataGrid.to_numpy()
         
         return axis_data, axis_param, dataGrid
         

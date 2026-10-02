@@ -705,16 +705,25 @@ def _read_export_candidate_header(
         )
         try:
             opened = os.fstat(fd)
-            opened_signature = (
-                int(opened.st_dev), int(opened.st_ino), int(opened.st_mode),
-                int(opened.st_nlink), int(opened.st_size),
-                int(opened.st_mtime_ns), int(opened.st_ctime_ns),
+            stat_fields = (
+                "st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
+                "st_mtime_ns", "st_ctime_ns",
             )
-            if opened_signature != signature[:7]:
+            opened_signature = tuple(int(getattr(opened, field)) for field in stat_fields)
+            # On Windows, lstat may report CreationTime as ctime while
+            # fstat reports ChangeTime. Compare their common fields, then
+            # retain the full timestamps in each API's before/after checks.
+            common_fields = 6 if os.name == "nt" else 7
+            if opened_signature[:common_fields] != signature[:common_fields]:
                 raise UnsafeExportDestinationError(
                     "The selected export file changed while it was being inspected."
                 )
             header = os.read(fd, len(_SQLITE_HEADER))
+            after_read = os.fstat(fd)
+            if tuple(int(getattr(after_read, field)) for field in stat_fields) != opened_signature:
+                raise UnsafeExportDestinationError(
+                    "The selected export file changed while it was being inspected."
+                )
         finally:
             os.close(fd)
     except OSError as err:

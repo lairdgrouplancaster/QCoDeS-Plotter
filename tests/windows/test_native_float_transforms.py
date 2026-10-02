@@ -21,6 +21,31 @@ _FLOAT16_X = np.array([-60000, 0, 60000], dtype=np.float16)
 _FLOAT32_X = np.array([-3e38, 0, 3e38], dtype=np.float32)
 
 
+@pytest.mark.parametrize("fft_plots", [
+    {"x": np.arange(3), "y": np.full(3, 60000, dtype=np.float16)},
+    {"x": np.arange(3), "y": np.full(3, 3e38, dtype=np.float32)},
+], indirect=True, ids=["float16", "float32"])
+def test_native_mean_widens_before_accumulation(fft_plots, no_callback_errors):
+    window, (plot, source), x, y = fft_plots
+    key, secondary = merge(window, plot, source, x_axis="Top", y_axis="Right")
+    secondary.setDynamicRangeLimit(None)
+    click_control(plot, "subtractMeanCheck")
+    for refresh in (False, True):
+        if refresh:
+            plot.refreshWindow(force=True)
+            wait_for(lambda: not plot.worker.running)
+            plot.monitor.stop()
+        for line in (plot.line, plot.lines[key]):
+            np.testing.assert_array_equal(line.getData()[1], np.zeros(3))
+        _assert_original(plot.line, x, y)
+    click_control(plot, "fftCheck")
+    np.testing.assert_array_equal(plot.line.getData()[1], np.zeros(2))
+    click_control(plot, "fftCheck")
+    click_control(plot, "subtractMeanCheck")
+    _assert_original(plot.line, x, y)
+    np.testing.assert_array_equal(plot.line.getData()[1], y)
+
+
 def _wide_derivative(x, y):
     return np.array([
         (float(y[index + 1]) - float(y[index]))

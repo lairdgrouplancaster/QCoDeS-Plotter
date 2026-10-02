@@ -259,11 +259,11 @@ def _selected_run_setpoint_summaries_from_cursor(
         or high_watermark > MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
     ):
         return {}
-    columns = _result_table_columns(cursor, quoted_table)
+    columns = _result_table_column_types(cursor, quoted_table)
     summaries = {}
     for name in setpoint_names:
         _raise_if_read_aborted(cancelled_callback, deadline)
-        if name not in columns:
+        if name not in columns or columns[name] == "array":
             continue
         summary = _selected_run_setpoint_summary(cursor, quoted_table, name)
         if summary:
@@ -1824,7 +1824,7 @@ def _setpoint_shape_from_result_table(cursor, table_name, sweep_parameters):
         return None
 
     quoted_table_name = _sqlite_identifier(table_name)
-    columns = _result_table_columns(cursor, quoted_table_name)
+    columns = _result_table_column_types(cursor, quoted_table_name)
     if not columns or any(parameter not in columns for parameter in sweep_parameters):
         return None
 
@@ -1842,8 +1842,11 @@ def _read_setpoint_count(cursor, table_name, sweep_parameters):
         return None
 
     quoted_table_name = _sqlite_identifier(table_name)
-    columns = _result_table_columns(cursor, quoted_table_name)
+    columns = _result_table_column_types(cursor, quoted_table_name)
     if not columns or any(parameter not in columns for parameter in sweep_parameters):
+        return None
+
+    if any(columns[parameter] == "array" for parameter in sweep_parameters):
         return None
 
     return _distinct_setpoint_count(
@@ -1866,8 +1869,19 @@ def _run_setpoint_observation(
         return empty
 
     quoted_table_name = _sqlite_identifier(table_name)
-    columns = _result_table_columns(cursor, quoted_table_name)
+    columns = _result_table_column_types(cursor, quoted_table_name)
     if not columns:
+        return empty
+
+    # An array cell holds an acquisition record with an unknown number of
+    # samples. DISTINCT counts serialized records, not logical data points.
+    # This also applies when an array dependent has scalar setpoints, or when
+    # scalar and array dependent trees share a run. Keep planned shapes in the
+    # caller, but do not invent a global observed shape/count from these rows.
+    if any(
+        columns.get(parameter) == "array"
+        for parameter in (*measure_parameters, *sweep_parameters)
+    ):
         return empty
 
     dependencies = _parameter_dependencies(run_description)
@@ -1934,6 +1948,9 @@ def _setpoint_observation(
     if not required_columns or any(
         column not in columns for column in required_columns
     ):
+        return empty
+
+    if any(columns[column] == "array" for column in required_columns):
         return empty
 
     observed_count = _distinct_setpoint_count(
@@ -2009,14 +2026,15 @@ def _setpoint_not_null_conditions(sweep_parameters, dependent_parameter=None):
     )
 
 
-def _result_table_columns(cursor, quoted_table_name):
+def _result_table_column_types(cursor, quoted_table_name):
+    """Read current QCoDeS storage types without fetching array payloads."""
     try:
         cursor.execute(f"PRAGMA table_info({quoted_table_name})")
-        return {row[1] for row in cursor.fetchall()}
+        return {row[1]: str(row[2]).lower() for row in cursor.fetchall()}
     except Exception as error:
         if _sql_was_interrupted(error):
             raise
-        return set()
+        return {}
 
 
 def _result_count(cursor, table_name):

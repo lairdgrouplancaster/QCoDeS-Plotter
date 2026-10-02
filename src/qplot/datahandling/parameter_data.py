@@ -39,7 +39,19 @@ def concatenate_record_samples(parts):
     return np.concatenate(parts, dtype=dtype) if parts else np.array([], dtype=dtype)
 
 
-def _record_column(values, dtype, check_cancelled, *, preserve_integers=False):
+def numeric_isfinite(values):
+    """Inspect numeric object cells without changing the stored sample array."""
+    values = np.asarray(values)
+    return np.isfinite(values.astype(float) if values.dtype.kind == "O" else values)
+
+
+def numeric_isnan(values):
+    """Identify missing samples in dense arrays or exact numeric object cells."""
+    values = np.asarray(values)
+    return np.isnan(values.astype(float) if values.dtype.kind == "O" else values)
+
+
+def _record_column(values, dtype, check_cancelled, *, preserve_integers=True):
     """Keep equal shapes dense and unequal shapes in separate object cells."""
     shapes = set()
     dtypes = set()
@@ -67,14 +79,14 @@ def _record_column(values, dtype, check_cancelled, *, preserve_integers=False):
 def get_parameter_data_for_one_paramtree(
     conn, table_name, rundescriber, output_param, start=None, end=None,
     *, check_cancelled: Callable[[], None] = _check_noop,
-    preserve_integers=False,
+    preserve_integers=True,
 ):
     """Decode one tree on an existing read-only connection.
 
     start/end and the returned count refer to non-NULL storage records, not
     flattened samples. No connections, transactions or cache writes are added.
     Errors from reading, expansion or dtype conversion propagate unchanged.
-    CSV requests lossless stacking; plotting retains its numeric cache dtypes.
+    Plotting and CSV both retain the precision of stored array samples.
     """
     check_cancelled()
     records, specs, count = _get_data_for_one_param_tree(
@@ -132,6 +144,6 @@ def flatten_record_columns(data, check_cancelled=_check_noop):
         for record in column:
             check_cancelled()
             parts.append(np.asarray(record).ravel())
-        flattened[name] = np.concatenate(parts) if parts else np.array([])
+        flattened[name] = concatenate_record_samples(parts)
     check_cancelled()
     return flattened

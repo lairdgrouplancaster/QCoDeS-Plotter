@@ -217,6 +217,20 @@ class TrustedRunRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class TrustedDatabaseInfo:
+    """Current database facts from one bounded read-only transaction."""
+
+    user_version: int
+    application_id: int
+    page_count: int
+    page_size: int
+    table_count: int
+    experiment_count: int
+    run_count: int
+    latest_run: TrustedRunRecord | None
+
+
+@dataclass(frozen=True, slots=True)
 class TrustedSourceRevision:
     """Opaque, query-layer-owned fingerprint for one run's source data."""
 
@@ -1583,6 +1597,39 @@ class TrustedMetadataQueryAdapter:
             watermark,
             baseline,
             self._executor.incarnation,
+        )
+
+    def database_info(self) -> TrustedDatabaseInfo:
+        """Read counts, header facts and bounded latest-run text together."""
+
+        self._ensure_current_schema()
+        results = self._executor.query_batch((
+            TrustedQuery("PRAGMA main.user_version"),
+            TrustedQuery("PRAGMA main.application_id"),
+            TrustedQuery("PRAGMA main.page_count"),
+            TrustedQuery("PRAGMA main.page_size"),
+            TrustedQuery(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ),
+            TrustedQuery("SELECT COUNT(*) FROM experiments"),
+            TrustedQuery("SELECT COUNT(*) FROM runs"),
+            TrustedQuery(
+                "SELECT run_id, substr(name, 1, 512) AS name, run_timestamp, "
+                "completed_timestamp, is_completed, substr(guid, 1, 512) AS guid "
+                "FROM runs ORDER BY run_id DESC LIMIT 1"
+            ),
+        ))
+        counts = tuple(int(result.rows[0][0]) for result in results[:-1])
+        latest = results[-1]
+        latest_run = None
+        if latest.rows:
+            fields = tuple(zip(latest.columns, latest.rows[0], strict=True))
+            latest_run = TrustedRunRecord(int(latest.rows[0][0]), fields)
+        return TrustedDatabaseInfo(
+            user_version=counts[0], application_id=counts[1],
+            page_count=counts[2], page_size=counts[3], table_count=counts[4],
+            experiment_count=counts[5], run_count=counts[6], latest_run=latest_run,
         )
 
     def refresh_new_runs(

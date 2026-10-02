@@ -525,6 +525,12 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             if self._run_guids[index] == self._selected_guid:
                 self._selected_detail_publication = None
                 self._invalidate_selected_detail_viewer()
+            guid = self._run_guids[index]
+            discard_plot = getattr(
+                self._window.infoBox.preview, "discard_plot_previews", None
+            )
+            if callable(discard_plot) and discard_plot(guid):
+                self._window.RunList.set_run_previews(guid, [])
             coordinator.source_changed(index)
 
     def helper_restarted(self) -> None:

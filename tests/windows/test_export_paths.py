@@ -3,6 +3,7 @@ import stat
 import unicodedata
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -25,6 +26,49 @@ from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plot_export import PlotExportMixin
 
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
+
+
+@pytest.fixture
+def windows_stat_timestamps(monkeypatch):
+    """Model Windows' distinct path CreationTime and descriptor ChangeTime."""
+    if os.name != "nt":
+        pytest.skip("Windows stat timestamp semantics")
+    real_fstat = os.fstat
+
+    def descriptor_stat(fd):
+        observed = real_fstat(fd)
+        fields = {name: getattr(observed, name) for name in dir(observed)
+                  if name.startswith("st_")}
+        fields["st_ctime_ns"] += 1_000_000_000
+        return SimpleNamespace(**fields)
+
+    monkeypatch.setattr(os, "fstat", descriptor_stat)
+
+
+@pytest.mark.parametrize("field", [
+    "st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
+    "st_mtime_ns", "st_ctime_ns",
+])
+def test_destination_inspection_rejects_descriptor_change(tmp_path, monkeypatch, field):
+    target = tmp_path / "ordinary.csv"
+    target.write_bytes(b"unchanged export bytes")
+    real_fstat = os.fstat
+    observations = 0
+
+    def changing_stat(fd):
+        nonlocal observations
+        observed = real_fstat(fd)
+        observations += 1
+        fields = {name: getattr(observed, name) for name in dir(observed)
+                  if name.startswith("st_")}
+        if observations == 2:
+            fields[field] += 1
+        return SimpleNamespace(**fields)
+
+    monkeypatch.setattr(os, "fstat", changing_stat)
+    with pytest.raises(UnsafeExportDestinationError, match="changed"):
+        prepare_export_destination(None, str(target), replacement_confirmed=True)
+    assert target.read_bytes() == b"unchanged export bytes"
 
 
 @pytest.mark.parametrize("suffix", ["", ".db", ".csv", ".pdf", ".png", ".unusual"])

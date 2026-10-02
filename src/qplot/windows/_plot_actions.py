@@ -663,6 +663,70 @@ class PlotActionsMixin:
         del win
 
 
+    def _publish_displayed_plot_preview(self, plot, worker):
+        """Show one displayed measurement while run previews are queued."""
+
+        preview = getattr(getattr(self, "infoBox", None), "preview", None)
+        if preview is None or getattr(preview, "_shutting_down", False):
+            return
+        key = getattr(plot, "_dataset_key", None)
+        if not isinstance(key, DatasetKey) or key.guid not in preview.run_metadata:
+            return
+        if getattr(worker, "dataset_completed", None) is not True:
+            # For an active run, reuse only the same row prefix currently
+            # advertised by the run list. Its next metadata update will
+            # discard the provisional image and request fresh derived work.
+            try:
+                displayed_count = int(worker.dataset_length_at_start)
+                listed_count = int(
+                    preview.run_metadata[key.guid]["result_count"]
+                )
+            except (AttributeError, KeyError, TypeError, ValueError):
+                return
+            if displayed_count != listed_count:
+                return
+        if not dataset_key_matches_current_source(key):
+            return
+        if getattr(preview, "_trusted_derived_mode", False):
+            bridge = getattr(self, "_trusted_derived_bridge", None)
+            instance = getattr(bridge, "_database_instance", None)
+            if not getattr(bridge, "_accepting_publications", False):
+                return
+        else:
+            instance = getattr(preview, "database_instance", None)
+        if (
+            instance is None
+            or instance.logical_path != key.database_path
+            or instance.resolved_path != key.resolved_database_path
+            or instance.identity != key.database_identity
+        ):
+            return
+        preview_generation = preview.generation
+
+        from ._widgets.preview import render_displayed_plot_preview
+
+        plot_preview = render_displayed_plot_preview(
+            worker,
+            getattr(plot, "param", None),
+            preview.preview_size,
+        )
+        if (
+            plot_preview is None
+            or preview.generation != preview_generation
+            or not dataset_key_matches_current_source(key)
+        ):
+            return
+        if getattr(preview, "_trusted_derived_mode", False):
+            bridge = getattr(self, "_trusted_derived_bridge", None)
+            if (
+                not getattr(bridge, "_accepting_publications", False)
+                or getattr(bridge, "_database_instance", None) != instance
+            ):
+                return
+        elif preview.database_instance != instance:
+            return
+        preview.publish_plot_preview(key.guid, plot_preview)
+
     @QtCore.pyqtSlot(object, object, tuple)
     def openWin(
             self,
@@ -755,6 +819,7 @@ class PlotActionsMixin:
         self.add_ds_at(dataset_key, ds=construction_ds)
 
         self.windows.append(win)
+        win._plot_preview_sink = self._publish_displayed_plot_preview
 
         win.closed.connect(self.onClose)
         database_replaced = getattr(win, "database_replaced", None)

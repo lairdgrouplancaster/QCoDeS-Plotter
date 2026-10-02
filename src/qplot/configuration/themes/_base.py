@@ -227,6 +227,12 @@ _STYLESHEET_TEMPLATE = Template(
            stylesheet edit-field geometry otherwise overlaps the up button. */
         padding-right: 32px;
     }
+    QSpinBox#heatmapAppearanceOpacity {
+        padding: 0 16px 0 4px;
+    }
+    QSpinBox#heatmapAppearanceOpacity QLineEdit {
+        padding: 0;
+    }
     QComboBox:editable {
         background-color: $field_bg;
         color: $text;
