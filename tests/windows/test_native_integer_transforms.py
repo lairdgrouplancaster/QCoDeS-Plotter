@@ -1,6 +1,7 @@
 """Integer-safe native controls through actual QCoDeS storage and Qt slots."""
 
 import csv
+from decimal import Decimal
 
 import numpy as np
 import pytest
@@ -16,6 +17,7 @@ from qplot.windows._plot1d_snap import _line_snap_data
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_merged_trace_metadata import merge
+from tests.windows.test_native_averaging import assert_average, click_average
 from tests.windows.test_native_transform_labels import (
     SUPPORTED_CONTROLS,
     assert_display,
@@ -37,6 +39,18 @@ _CASES = {
     ),
     "adjacent_uint_y": (
         np.arange(4), np.array([2**63 + n for n in (3, 2, 1, 0)], dtype=np.uint64),
+        [-1, -1, -1],
+    ),
+    "adjacent_uint_max_y": (
+        np.arange(4), np.array([_UINT_MAX - n for n in (0, 1, 2, 3)], dtype=np.uint64),
+        [-1, -1, -1],
+    ),
+    "adjacent_signed_min_y": (
+        np.arange(4), np.array([_INT_MIN + n for n in (3, 2, 1, 0)], dtype=np.int64),
+        [-1, -1, -1],
+    ),
+    "adjacent_signed_max_y": (
+        np.arange(4), np.array([_INT_MAX - n for n in (0, 1, 2, 3)], dtype=np.int64),
         [-1, -1, -1],
     ),
     "adjacent_descending_uint_x": (
@@ -158,6 +172,89 @@ def assert_integer_mapping(plot, x, y, slopes, *, phase=False):
         np.testing.assert_array_equal(samples.y_raw, slopes)
         np.testing.assert_array_equal(samples.x_view, mapped_x.astype(float))
         np.testing.assert_array_equal(samples.y_view, slopes)
+
+
+def decimal_center(y):
+    samples = [Decimal(int(value)) for value in y]
+    mean = sum(samples) / Decimal(len(samples))
+    return np.array([float(value - mean) for value in samples])
+
+
+@pytest.mark.parametrize(
+    "integer_plots",
+    [(name, False) for name in (
+        "adjacent_uint_y", "adjacent_uint_max_y",
+        "adjacent_signed_min_y", "adjacent_signed_max_y",
+        "full_uint_range", "signed_y_overflow",
+    )], indirect=True,
+)
+def test_large_integer_mean_native_controls_and_fft(
+    integer_plots, no_callback_errors, tmp_path,
+):
+    window, (plot, source), x, y, _slopes = integer_plots
+    expected = decimal_center(y)
+    click_control(plot, "subtractMeanCheck")
+    key, secondary = merge(window, plot, source, x_axis="Top", y_axis="Right")
+    secondary.setDynamicRangeLimit(None)
+
+    def assert_centered():
+        for line in (plot.line, plot.lines[key]):
+            np.testing.assert_array_equal(line.getData()[1], expected)
+            np.testing.assert_array_equal(line.curve.getData()[1], expected)
+            np.testing.assert_array_equal(line.getOriginalDataset()[1], y)
+            np.testing.assert_array_equal(_line_snap_data(line).y_raw, expected)
+
+    assert_centered()
+    target = tmp_path / "raw-after-centering.csv"
+    assert plot._write_line_csv_stage(str(target), CSVExporter(plot.plot))
+    with target.open(newline="") as stream:
+        rows = list(csv.reader(stream))[1:]
+    for offset in (0, 2):
+        assert [int(row[offset + 1]) for row in rows] == y.tolist()
+
+    if np.array_equal(x, np.arange(4)):
+        frequencies = np.fft.rfftfreq(len(y))
+        magnitudes = np.abs(np.fft.rfft(expected) / len(y))
+        click_control(plot, "fftCheck")
+        for line in (plot.line, plot.lines[key]):
+            np.testing.assert_array_equal(line.getData()[0], frequencies)
+            np.testing.assert_allclose(line.getData()[1], magnitudes, rtol=0, atol=1e-14)
+            np.testing.assert_allclose(line.curve.getData()[1], magnitudes, rtol=0, atol=1e-14)
+            np.testing.assert_array_equal(line.getOriginalDataset()[1], y)
+        click_control(plot, "logXCheck")
+        for line in (plot.line, plot.lines[key]):
+            np.testing.assert_array_equal(line.getData()[0], np.log10(frequencies[1:]))
+            np.testing.assert_allclose(line.getData()[1], magnitudes[1:], rtol=0, atol=1e-14)
+        click_control(plot, "logXCheck")
+        click_control(plot, "fftCheck")
+        assert_centered()
+    plot.refreshWindow(force=True)
+    wait_for(lambda: not plot.worker.running)
+    plot.monitor.stop()
+    assert_centered()
+    click_control(plot, "subtractMeanCheck")
+    for line in (plot.line, plot.lines[key]):
+        np.testing.assert_array_equal(line.getData()[1], y)
+    click_control(plot, "subtractMeanCheck")
+    assert_centered()
+
+
+@pytest.mark.parametrize("integer_plots", [("adjacent_uint_y", False)], indirect=True)
+def test_large_integer_mean_average_uses_centered_display(integer_plots, no_callback_errors):
+    window, (plot, source), x, y, _slopes = integer_plots
+    merge(window, plot, source, x_axis="Bottom", y_axis="Left")
+    expected = decimal_center(y)
+    click_control(plot, "subtractMeanCheck")
+    click_average(plot)
+    assert_average(plot, x, expected, 2)
+    click_control(plot, "fftCheck")
+    assert_average(plot, np.fft.rfftfreq(len(x)),
+                   np.abs(np.fft.rfft(expected) / len(x)), 2)
+    plot.plot.recomputeAverages()
+    assert_average(plot, np.fft.rfftfreq(len(x)),
+                   np.abs(np.fft.rfft(expected) / len(x)), 2)
+    for line in plot.lines.values():
+        np.testing.assert_array_equal(line.getOriginalDataset()[1], y)
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,7 @@
 """Differentiate real QCoDeS sweeps through qPlot's registered operations."""
 
 import warnings
+from fractions import Fraction
 from unittest.mock import patch
 
 import numpy as np
@@ -18,10 +19,86 @@ from qplot.tools.operation_registry import (
     OperationExecutionError,
     operation_specs_for,
 )
+from qplot.tools.plot_tools import differentiate
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
 from tests.test_worker_array_heatmaps import heatmap_dataset, make_worker, run_worker
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+
+
+def exact_gradient(coordinates, values):
+    """Evaluate the first-order edges and quadratic interior in rationals."""
+    def rational(value):
+        return Fraction(int(value)) if isinstance(value, (int, np.integer)) else Fraction.from_float(float(value))
+
+    x = [rational(value) for value in coordinates]
+    y = [rational(value) for value in values]
+    slopes = []
+    for index in range(len(x)):
+        if index == 0:
+            slope = (y[1] - y[0]) / (x[1] - x[0])
+        elif index == len(x) - 1:
+            slope = (y[-1] - y[-2]) / (x[-1] - x[-2])
+        else:
+            before, after = x[index] - x[index - 1], x[index + 1] - x[index]
+            slope = (
+                -Fraction(after, before * (before + after)) * y[index - 1]
+                + Fraction(after - before, before * after) * y[index]
+                + Fraction(before, after * (before + after)) * y[index + 1]
+            )
+        slopes.append(float(slope))
+    return np.asarray(slopes)
+
+
+@pytest.fixture
+def integer_array_plot(tmp_path, monkeypatch, request):
+    coordinates, values = request.param[:2]
+    show = request.param[2] if len(request.param) == 3 else False
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = tmp_path / "integer-differentiation.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("integer differentiation", sample_name="test")
+    measurement = Measurement(exp=experiment)
+    measurement.register_custom_parameter("x", paramtype="array")
+    measurement.register_custom_parameter("signal", paramtype="array", setpoints=("x",))
+    with measurement.run(write_in_background=False) as saver:
+        saver.add_result(("x", coordinates), ("signal", values))
+        guid = saver.dataset.guid
+    stored = saver.dataset.get_parameter_data("signal")["signal"]
+    for name, original in (("x", coordinates), ("signal", values)):
+        assert stored[name].dtype == original.dtype
+        np.testing.assert_array_equal(stored[name].ravel(), original)
+    saver.dataset.conn.close()
+    experiment.conn.close()
+    protected = {
+        suffix: (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None
+        for suffix in ("", "-wal", "-journal")
+        for path in [database_path.with_name(database_path.name + suffix)]
+    }
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(lambda: not window._database_load_active)
+        window.openPlot(guid=guid, show=show)
+        plot = window.windows[-1]
+        wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
+        plot.monitor.stop()
+        plot.line.setDynamicRangeLimit(None)
+        monkeypatch.setattr(plot, "show_error", lambda *_args: None)
+        for name, original in (("x", coordinates), ("y", values)):
+            np.testing.assert_array_equal(plot.axis_data[name], original)
+        yield plot
+    finally:
+        close_main_window(window)
+        for suffix, original in protected.items():
+            path = database_path.with_name(database_path.name + suffix)
+            current = (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None
+            assert current == original
 
 
 @pytest.fixture
@@ -107,6 +184,184 @@ def apply_operations(plot):
     plot.monitor.stop()
     assert not [warning for warning in emitted if issubclass(warning.category, RuntimeWarning)]
     return worker, finished, errors
+
+
+@pytest.mark.parametrize("integer_array_plot", [
+    (np.arange(4), np.array([2**63 + n for n in (3, 2, 1, 0)], dtype=np.uint64)),
+    (np.array([2**63 + n for n in range(4)], dtype=np.uint64), np.array([0, 2, 4, 6])),
+    (np.array([2**53 + n for n in (7, 4, 2, 0)]), np.array([14, 8, 4, 0])),
+    (np.arange(4), np.array([2**53 + n for n in (3, 2, 1, 0)])),
+    (np.arange(4), np.array([2**63 - 2, 2**63 - 1, 2**63, 2**63 + 1], dtype=np.uint64)),
+    (np.array([2**63 + n for n in (0, 2, 5, 9)], dtype=np.uint64),
+     np.array([2**63 + n for n in (0, 3, 7, 12)], dtype=np.uint64)),
+    (np.array([0., .5, 2., 5.]),
+     np.array([2**63 + n for n in (0, 2, 5, 9)], dtype=np.uint64)),
+    (np.array([2**63 + n for n in (0, 1, 3, 6)], dtype=np.uint64),
+     np.array([0., 1.5, 4., 9.])),
+    (np.arange(4), np.array([-(2**63), -(2**63) + 1, 2**63 - 2, 2**63 - 1])),
+    (np.array([-(2**63), -1, 2**63 - 2, 2**63 - 1]), np.array([0, 1, 2, 3])),
+    (np.array([0, 2**63, 2**64 - 2, 2**64 - 1], dtype=np.uint64),
+     np.array([0, 1, 2, 3])),
+    (np.array([2**63, 2**63 + 1], dtype=np.uint64),
+     np.array([2**63 + 3, 2**63 + 2], dtype=np.uint64)),
+], indirect=True, ids=[
+    "adjacent-unsigned-measurements", "adjacent-unsigned-coordinates",
+    "descending-signed-coordinates", "adjacent-signed-measurements",
+    "unsigned-signed-boundary", "nonuniform-unsigned", "float-coordinates-unsigned-measurement",
+    "unsigned-coordinates-float-measurement",
+    "signed-measurement-boundaries", "signed-coordinate-boundaries",
+    "full-unsigned-coordinate-range", "two-adjacent-unsigned-samples",
+])
+def test_integer_arrays_through_operations_apply(integer_array_plot):
+    plot = integer_array_plot
+    original = {name: values.copy() for name, values in plot.axis_data.items()}
+    source = tuple(values.copy() for values in plot.line.getOriginalDataset())
+    cache = {
+        name: values.copy()
+        for name, values in cache_parameter_data(plot.ds.cache, "signal").items()
+    }
+    operation_option(plot, "dy/dx").input.setChecked(True)
+    worker, finished, errors = apply_operations(plot)
+    assert finished == [True]
+    assert errors == []
+    np.testing.assert_allclose(
+        plot.axis_data["y"], exact_gradient(original["x"], original["y"]),
+        rtol=1e-14, atol=0,
+    )
+    np.testing.assert_array_equal(plot.axis_data["x"], original["x"])
+    np.testing.assert_array_equal(worker.axis_data["y"], plot.axis_data["y"])
+    for name, expected in cache.items():
+        np.testing.assert_array_equal(cache_parameter_data(plot.ds.cache, "signal")[name], expected)
+
+    operation_option(plot, "dy/dx").input.setChecked(False)
+    assert apply_operations(plot)[1:] == ([True], [])
+    for name, expected in original.items():
+        np.testing.assert_array_equal(plot.axis_data[name], expected)
+    for actual, expected in zip(plot.line.getOriginalDataset(), source, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_stored_integer_heatmap_through_operations_apply(tmp_path, monkeypatch, axis):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    database_path = tmp_path / "integer-heatmap.db"
+    initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("integer heatmap", sample_name="test")
+    x = np.array([0, 1, 3, 6], dtype=np.int64)
+    y = np.array([0, 2, 5], dtype=np.int64)
+    grid = y[:, None] ** 2 + x[None, :] ** 2
+    measurement = Measurement(exp=experiment)
+    measurement.register_custom_parameter("slow")
+    measurement.register_custom_parameter("fast", paramtype="array")
+    measurement.register_custom_parameter(
+        "signal", paramtype="array", setpoints=("slow", "fast"),
+    )
+    measurement.set_shapes({"signal": grid.shape})
+    with measurement.run(write_in_background=False) as saver:
+        for slow, row in zip(y, grid, strict=True):
+            saver.add_result(("slow", int(slow)), ("fast", x), ("signal", row))
+        guid = saver.dataset.guid
+    stored = saver.dataset.get_parameter_data("signal")["signal"]
+    np.testing.assert_array_equal(stored["fast"], np.tile(x, (len(y), 1)))
+    np.testing.assert_array_equal(stored["signal"], grid)
+    saver.dataset.conn.close()
+    experiment.conn.close()
+    protected = {
+        suffix: (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None
+        for suffix in ("", "-wal", "-journal")
+        for path in [database_path.with_name(database_path.name + suffix)]
+    }
+    window = main_window.MainWindow()
+    try:
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.close_database(status=False)
+        assert window.load_file(str(database_path))
+        wait_for(lambda: not window._database_load_active)
+        window.openPlot(guid=guid, show=False)
+        plot = window.windows[-1]
+        wait_for(lambda: hasattr(plot, "dataGrid") and not plot.worker.running)
+        plot.monitor.stop()
+        original_grid = plot.dataGrid.copy()
+        original_axes = {name: values.copy() for name, values in plot.axis_data.items()}
+        np.testing.assert_array_equal(original_grid, grid)
+        operation_option(plot, f"dz/d{axis}").input.setChecked(True)
+        worker, finished, errors = apply_operations(plot)
+        assert finished == [True]
+        assert errors == []
+        expected = np.stack([
+            exact_gradient(original_axes[axis], line)
+            for line in (original_grid if axis == "x" else original_grid.T)
+        ])
+        if axis == "y":
+            expected = expected.T
+        np.testing.assert_allclose(plot.dataGrid, expected, rtol=1e-14, atol=0)
+        np.testing.assert_array_equal(worker.dataGrid, plot.dataGrid)
+        for name, values in original_axes.items():
+            np.testing.assert_array_equal(plot.axis_data[name], values)
+    finally:
+        close_main_window(window)
+        for suffix, original in protected.items():
+            path = database_path.with_name(database_path.name + suffix)
+            current = (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None
+            assert current == original
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_large_integer_heatmap_stencil_preserves_source(axis):
+    x = np.array([2**63 + n for n in (0, 1, 3, 6)], dtype=np.uint64)
+    y = np.array([2**53 + n for n in (5, 2, 0)], dtype=np.int64)
+    grid = np.array([
+        [2**63 + 100 + 7 * row + 3 * column**2 for column in range(len(x))]
+        for row in range(len(y))
+    ], dtype=np.uint64)
+    source = {"x": x.copy(), "y": y.copy(), "z": grid.copy()}
+    result = differentiate(axis, source)["z"]
+    expected = np.stack([
+        exact_gradient(source[axis], line)
+        for line in (grid if axis == "x" else grid.T)
+    ])
+    if axis == "y":
+        expected = expected.T
+    np.testing.assert_allclose(result, expected, rtol=1e-14, atol=0)
+    for name, original in (("x", x), ("y", y), ("z", grid)):
+        np.testing.assert_array_equal(source[name], original)
+
+
+def test_mixed_signed_unsigned_integer_cells_keep_exact_gaps():
+    coordinates = np.array([2**63 - 1, 2**63, 2**63 + 2, 2**63 + 5], dtype=object)
+    values = np.array([2**63 + 7, 2**63 + 5, -(2**63) + 1, -(2**63) + 4], dtype=object)
+    data = {"x": coordinates, "y": values, "z": None}
+    result = differentiate("x", data)["y"]
+    np.testing.assert_allclose(
+        result, exact_gradient(coordinates, values), rtol=1e-14, atol=0,
+    )
+    np.testing.assert_array_equal(data["x"], coordinates)
+    np.testing.assert_array_equal(data["y"], values)
+
+
+def test_large_integer_repeat_is_rejected_without_changing_source():
+    coordinates = np.array([2**63, 2**63 + 1, 2**63 + 1], dtype=np.uint64)
+    values = np.array([2**63 + 3, 2**63 + 2, 2**63 + 1], dtype=np.uint64)
+    with pytest.raises(ValueError, match="must not repeat"):
+        differentiate("x", {"x": coordinates, "y": values, "z": None})
+    np.testing.assert_array_equal(coordinates, [2**63, 2**63 + 1, 2**63 + 1])
+    np.testing.assert_array_equal(values, [2**63 + 3, 2**63 + 2, 2**63 + 1])
+
+
+def test_large_integer_differentiation_cancellation_keeps_source():
+    coordinates = np.array([2**63 + n for n in range(4)], dtype=np.uint64)
+    values = np.array([2**63 + n for n in (3, 2, 1, 0)], dtype=np.uint64)
+    checks = iter((False, False, True))
+    with pytest.raises(InterruptedError, match="cancelled"):
+        differentiate(
+            "x", {"x": coordinates, "y": values, "z": None},
+            cancelled_callback=lambda: next(checks),
+        )
+    np.testing.assert_array_equal(coordinates, [2**63 + n for n in range(4)])
+    np.testing.assert_array_equal(values, [2**63 + n for n in (3, 2, 1, 0)])
 
 
 @pytest.mark.parametrize("sweep_plot", [

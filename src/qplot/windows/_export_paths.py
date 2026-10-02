@@ -23,6 +23,13 @@ from qplot.datahandling.file_identity import (
 )
 
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
+_SQLITE_HEADER = b"SQLite format 3\x00"
+_SQLITE_ARTIFACT_HEADERS = (
+    _SQLITE_HEADER,
+    b"\x37\x7f\x06\x82",  # WAL, little-endian checksums
+    b"\x37\x7f\x06\x83",  # WAL, big-endian checksums
+    b"\xd9\xd5\x05\xf9\x20\xa1\x63\xd7",  # rollback journal
+)
 
 
 class UnsafeExportDestinationError(RuntimeError):
@@ -86,11 +93,13 @@ class ExportDestinationTransaction:
         protected_files = self.protected_database_files.merged(
             collect_protected_database_files(self.owner)
         )
+        _ensure_target_is_not_protected(
+            self.filename, protected_files, parent_fd=parent_fd,
+        )
         current_signature = _target_signature(
             self.filename,
             parent_fd=parent_fd,
         )
-        _ensure_target_is_not_protected(self.filename, protected_files)
         if current_signature != self.target_signature:
             raise UnsafeExportDestinationError(
                 "The selected file changed while printing or exporting; "
@@ -596,6 +605,10 @@ def _capture_export_destination(
     target_signature = _target_signature(filename)
     protected_files = collect_protected_database_files(owner)
     _ensure_target_is_not_protected(filename, protected_files)
+    if _target_signature(filename) != target_signature:
+        raise UnsafeExportDestinationError(
+            "The selected export file changed while it was being inspected."
+        )
     destination = ExportDestinationTransaction(
         filename=filename,
         parent_path=parent_path,
@@ -613,6 +626,8 @@ def _capture_export_destination(
 def _ensure_target_is_not_protected(
     filename: str,
     protected_files: ProtectedDatabaseFiles,
+    *,
+    parent_fd: int | None = None,
 ) -> None:
     logical_path = logical_database_path(filename)
     resolved_path = canonical_database_path(filename)
@@ -642,6 +657,75 @@ def _ensure_target_is_not_protected(
         raise UnsafeExportDestinationError(
             "The selected export path refers to an input database file."
         )
+
+    # A destination need never have been loaded in qPlot. Conservatively
+    # protect every recognizable SQLite file, without opening SQLite or
+    # trying to distinguish QCoDeS schemas (which could live only in a WAL).
+    header = _read_export_candidate_header(filename, parent_fd=parent_fd)
+    if header.startswith(_SQLITE_ARTIFACT_HEADERS):
+        raise UnsafeExportDestinationError(
+            "The selected export path refers to a SQLite database or journal; "
+            "export replacement cannot overwrite database files."
+        )
+    for suffix in SQLITE_SIDECAR_SUFFIXES:
+        if filename.casefold().endswith(suffix):
+            database_path = filename[:-len(suffix)]
+            if _read_export_candidate_header(
+                database_path, parent_fd=parent_fd,
+            ).startswith(_SQLITE_HEADER):
+                raise UnsafeExportDestinationError(
+                    "The selected export path is reserved for a SQLite "
+                    "database sidecar."
+                )
+
+
+def _read_export_candidate_header(
+    filename: str,
+    *,
+    parent_fd: int | None,
+) -> bytes:
+    """Read at most 16 bytes from a stable regular file, physically read-only.
+
+    No SQLite connection, locks, schema traversal, recovery, or sidecar
+    creation is involved. Unreadable or changing candidates fail closed.
+    NONBLOCK and the regular-file checks avoid waiting on a substituted FIFO.
+    The same bounded inspection also handles a sidecar's associated main file.
+    """
+    signature = _target_signature(filename, parent_fd=parent_fd)
+    if signature is None:
+        return b""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(
+            filename if parent_fd is None else os.path.basename(filename),
+            flags,
+            **({} if parent_fd is None else {"dir_fd": parent_fd}),
+        )
+        try:
+            opened = os.fstat(fd)
+            opened_signature = (
+                int(opened.st_dev), int(opened.st_ino), int(opened.st_mode),
+                int(opened.st_nlink), int(opened.st_size),
+                int(opened.st_mtime_ns), int(opened.st_ctime_ns),
+            )
+            if opened_signature != signature[:7]:
+                raise UnsafeExportDestinationError(
+                    "The selected export file changed while it was being inspected."
+                )
+            header = os.read(fd, len(_SQLITE_HEADER))
+        finally:
+            os.close(fd)
+    except OSError as err:
+        raise UnsafeExportDestinationError(
+            "The selected export file could not be inspected safely."
+        ) from err
+    if _target_signature(filename, parent_fd=parent_fd) != signature:
+        raise UnsafeExportDestinationError(
+            "The selected export file changed while it was being inspected."
+        )
+    return header
 
 
 def _filesystem_alias_key(filename: str) -> str:

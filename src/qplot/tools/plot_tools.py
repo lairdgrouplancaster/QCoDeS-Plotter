@@ -14,7 +14,78 @@ To pass other arguments, please use lambda functions, i.e.:
 .worker.loader.do_operations() expects a dictionary to be returned which is 
 used to find which properties to update the keyed value.
 """
+from decimal import Decimal
+from fractions import Fraction
+
 import numpy as np
+
+
+def _integer_differences(values, axis=0):
+    """Subtract before conversion; int64 and uint64 gaps can exceed int64."""
+    exact_values = values.astype(object)
+    try:
+        differences = np.diff(exact_values, axis=axis)
+    except TypeError:
+        # A limit can follow object data containing both binary floats and
+        # decimal clipped cells; Fraction makes their subtraction compatible.
+        fractions = np.frompyfunc(Fraction, 1, 1)(exact_values)
+        differences = np.diff(fractions, axis=axis)
+    return differences.astype(np.float64)
+
+
+def _integer_samples(values):
+    if values.dtype.kind in "iu":
+        return True
+    # Joined QCoDeS records can use object cells to retain mixed int64/uint64.
+    return values.dtype.kind == "O" and all(
+        isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_))
+        for value in values.flat
+    )
+
+
+def _numeric_object_samples(values):
+    return values.dtype.kind == "O" and all(
+        isinstance(value, (int, float, Decimal, np.integer, np.floating))
+        and not isinstance(value, (bool, np.bool_))
+        for value in values.flat
+    )
+
+
+def _gradient_with_integer_samples(data, spacing, axis, integer_data):
+    """Use gradient's first-order edges and three-point interior stencil."""
+    samples = np.moveaxis(np.asarray(data), axis, -1)
+    result = np.empty(samples.shape, dtype=np.float64)
+    if integer_data:
+        differences = _integer_differences(samples, axis=-1)
+    else:
+        samples = samples.astype(np.float64, copy=False)
+
+    if np.all(spacing == spacing[0]):
+        dx = spacing[0]
+        if integer_data:
+            result[..., 1:-1] = (differences[..., :-1] + differences[..., 1:]) / (2. * dx)
+        else:
+            result[..., 1:-1] = (samples[..., 2:] - samples[..., :-2]) / (2. * dx)
+    else:
+        dx1, dx2 = spacing[:-1], spacing[1:]
+        a = -dx2 / (dx1 * (dx1 + dx2))
+        c = dx1 / (dx2 * (dx1 + dx2))
+        if integer_data:
+            result[..., 1:-1] = -a * differences[..., :-1] + c * differences[..., 1:]
+        else:
+            b = (dx2 - dx1) / (dx1 * dx2)
+            result[..., 1:-1] = (
+                a * samples[..., :-2] + b * samples[..., 1:-1]
+                + c * samples[..., 2:]
+            )
+
+    if integer_data:
+        result[..., 0] = differences[..., 0] / spacing[0]
+        result[..., -1] = differences[..., -1] / spacing[-1]
+    else:
+        result[..., 0] = (samples[..., 1] - samples[..., 0]) / spacing[0]
+        result[..., -1] = (samples[..., -1] - samples[..., -2]) / spacing[-1]
+    return np.moveaxis(result, -1, axis)
 
 
 def _check_cancelled(cancelled_callback):
@@ -61,7 +132,7 @@ def subtract_mean(
 
 def pass_filter(
         which : str,
-        limit : float,
+        limit : float | Decimal,
         data_dict : dict,
         cancelled_callback=None,
         ):
@@ -80,6 +151,8 @@ def pass_filter(
     data_dict : dict{str, np.ndarry}
         The data array to operate on.
         This uses the dependant parameter data. (data_dict["y"] or data_dict["z"])
+        Integer samples that remain inside the bound retain their exact value.
+        Partial fractional clipping may return mixed integer/decimal object cells.
         
     Returns
     -------
@@ -92,19 +165,47 @@ def pass_filter(
     """
     # Get y for 1d or z for 2d
     axis = "z" if data_dict["z"] is not None else "y"
-    data = data_dict[axis]
+    data = np.asarray(data_dict[axis])
     
-    # Set the bounds
+    # The controls retain the user's decimal text; direct float callers keep
+    # their float value. Compare integers with a decimal bound exactly.
+    exact_limit = limit if isinstance(limit, Decimal) else Decimal(str(limit))
+    float_limit = float(limit)
+
+    # Set the bounds for arrays that already contain floating-point samples.
     limit_arr: tuple[float | None, float | None]
     if which == "low":
-        limit_arr = (None, limit)
+        limit_arr = (None, float_limit)
     elif which == "high":
-        limit_arr = (limit, None)
+        limit_arr = (float_limit, None)
     else:
         raise KeyError(f'Invalid value for which: {which}. Must be: "high" or "low"')
     
     _check_cancelled(cancelled_callback)
-    new_data = np.clip(data, *limit_arr)
+    if data.dtype.kind in "iuO" and not exact_limit.is_nan():
+        # NumPy promotes an integer array to float before clipping against a
+        # float bound, even when no element changes. Compare Python integers
+        # with the bound first, so adjacent int64/uint64 values stay distinct.
+        exact_data = data.astype(object)
+        clipped = exact_data > exact_limit if which == "low" else exact_data < exact_limit
+        if not np.any(clipped):
+            new_data = data.copy()
+        elif (data.dtype.kind in "iu" and exact_limit.is_finite()
+              and exact_limit == exact_limit.to_integral_value()
+              and int(np.iinfo(data.dtype).min) <= exact_limit
+              <= int(np.iinfo(data.dtype).max)):
+            new_data = data.copy()
+            new_data[clipped] = int(exact_limit)
+        elif np.all(clipped):
+            new_data = np.full(data.shape, exact_limit, dtype=object)
+        else:
+            # A fractional bound and unchanged large integers need different
+            # scalar types. Object cells retain both exactly for later ops and
+            # the original-data CSV exporter.
+            new_data = exact_data
+            new_data[clipped] = exact_limit
+    else:
+        new_data = np.clip(data, *limit_arr)
     _check_cancelled(cancelled_callback)
     
     return {axis : new_data}
@@ -150,13 +251,19 @@ def differentiate(
         key = "y"
         axis_num = 0
        
-    data = data_dict[key]
-    coordinates = np.asarray(data_dict[dx], dtype=float)
+    data = np.asarray(data_dict[key])
+    coordinates = np.asarray(data_dict[dx])
     if coordinates.ndim != 1 or coordinates.size < 2:
         raise ValueError("Differentiation requires at least two axis coordinates.")
-    if not np.all(np.isfinite(coordinates)):
+    integer_coordinates = _integer_samples(coordinates)
+    if integer_coordinates:
+        spacing = _integer_differences(coordinates)
+    else:
+        coordinates = coordinates.astype(float)
+        spacing = np.diff(coordinates)
+    if ((not integer_coordinates and not np.all(np.isfinite(coordinates)))
+            or not np.all(np.isfinite(spacing))):
         raise ValueError("Differentiation axis coordinates must be finite.")
-    spacing = np.diff(coordinates)
     if np.any(spacing == 0):
         raise ValueError("Differentiation axis coordinates must not repeat.")
     # Reversals can make gradient's three-point stencils singular. Keep the
@@ -168,7 +275,13 @@ def differentiate(
         )
 
     _check_cancelled(cancelled_callback)
-    new_data = np.gradient(data, coordinates, axis=axis_num)
+    integer_data = _integer_samples(data) or _numeric_object_samples(data)
+    if integer_coordinates or integer_data:
+        new_data = _gradient_with_integer_samples(
+            data, spacing, axis_num, integer_data,
+        )
+    else:
+        new_data = np.gradient(data, coordinates, axis=axis_num)
     _check_cancelled(cancelled_callback)
     
     return {key : new_data}

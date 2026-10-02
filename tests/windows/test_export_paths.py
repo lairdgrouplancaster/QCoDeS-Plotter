@@ -27,6 +27,107 @@ from qplot.windows._plot_export import PlotExportMixin
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 
 
+@pytest.mark.parametrize("suffix", ["", ".db", ".csv", ".pdf", ".png", ".unusual"])
+def test_unloaded_sqlite_content_is_protected_without_owner(tmp_path, suffix):
+    target = tmp_path / f"measurement{suffix}"
+    _write_database_artifacts(target)
+    before = _database_artifact_state(target)
+    with pytest.raises(UnsafeExportDestinationError, match="SQLite"):
+        prepare_export_destination(None, str(target), replacement_confirmed=True)
+    assert _database_artifact_state(target) == before
+
+
+@pytest.mark.parametrize("suffix", SQLITE_SIDECAR_SUFFIXES)
+@pytest.mark.parametrize("present", [False, True])
+def test_unloaded_database_reserves_sidecar_names(tmp_path, suffix, present):
+    database = tmp_path / "measurement.anything"
+    _write_database_artifacts(database, sidecars=(suffix,) if present else ())
+    before = _database_artifact_state(database)
+    with pytest.raises(UnsafeExportDestinationError, match="SQLite"):
+        prepare_export_destination(None, f"{database}{suffix}", replacement_confirmed=True)
+    assert _database_artifact_state(database) == before
+
+
+@pytest.mark.parametrize("header", [
+    b"\x37\x7f\x06\x82", b"\x37\x7f\x06\x83",
+    b"\xd9\xd5\x05\xf9\x20\xa1\x63\xd7",
+])
+def test_detached_sqlite_journal_signatures_are_protected(tmp_path, header):
+    target = tmp_path / "journal-with-an-export-extension.csv"
+    target.write_bytes(header + b"\0" * 32)
+    before = _path_artifact_state(target)
+    with pytest.raises(UnsafeExportDestinationError, match="SQLite"):
+        prepare_export_destination(None, str(target), replacement_confirmed=True)
+    assert _path_artifact_state(target) == before
+
+
+def test_destination_inspection_is_bounded_and_physically_read_only(tmp_path, monkeypatch):
+    target = tmp_path / "ordinary.csv"
+    target.write_bytes(b"ordinary export\n" * 100_000)
+    real_open, real_read = os.open, os.read
+    reads = []
+
+    def read_only_open(filename, flags, *args, **kwargs):
+        assert not flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC)
+        return real_open(filename, flags, *args, **kwargs)
+
+    def bounded_read(fd, size):
+        assert size == 16
+        reads.append(size)
+        return real_read(fd, size)
+
+    monkeypatch.setattr(os, "open", read_only_open)
+    monkeypatch.setattr(os, "read", bounded_read)
+    destination = prepare_export_destination(None, str(target), replacement_confirmed=True)
+    destination.validate()
+    assert reads == [16, 16]
+
+
+@pytest.mark.parametrize("failure", ["unreadable", "changed"])
+def test_destination_inspection_fails_closed(tmp_path, monkeypatch, failure):
+    target = tmp_path / "ordinary.csv"
+    target.write_bytes(b"old export")
+    real_read = os.read
+
+    def failed_read(fd, size):
+        if failure == "unreadable":
+            raise PermissionError("cannot inspect")
+        data = real_read(fd, size)
+        target.write_bytes(b"changed ordinary export")
+        return data
+
+    monkeypatch.setattr(os, "read", failed_read)
+    with pytest.raises(UnsafeExportDestinationError, match="inspect"):
+        prepare_export_destination(None, str(target), replacement_confirmed=True)
+
+
+@pytest.mark.parametrize("when", ["before_staging", "before_publication"])
+def test_unloaded_database_sidecar_becomes_protected_after_approval(
+    tmp_path, monkeypatch, when,
+):
+    database = tmp_path / "new-measurement.db"
+    target = Path(f"{database}-journal")
+    target.write_bytes(b"ordinary export")
+    destination = prepare_export_destination(None, str(target), replacement_confirmed=True)
+    original = _path_artifact_state(target)
+    publication = patch.object(os, "replace", side_effect=AssertionError("unsafe publication"))
+
+    def create_database():
+        _write_database_artifacts(database)
+
+    if when == "before_staging":
+        create_database()
+    writer = lambda filename: Path(filename).write_bytes(b"new export")
+    with publication as publish, pytest.raises(UnsafeExportDestinationError, match="SQLite"):
+        write_export_atomically(
+            destination, writer,
+            before_publish=create_database if when == "before_publication" else None,
+        )
+    publish.assert_not_called()
+    assert _path_artifact_state(target) == original
+    assert set(tmp_path.iterdir()) == {database, target}
+
+
 def _path_artifact_state(path: Path):
     """Capture an entry without losing final-link or platform identity details."""
     try:

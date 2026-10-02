@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 from typing import Any, Literal, Protocol, TypeAlias, cast, overload
 
 from PyQt6 import (
@@ -161,7 +162,7 @@ class operations_options_base(qtw.QWidget):
         input_type : type | list | tuple
             The required input type:
                 bool - Makes checkbox
-                str, int, float, - Makes Line edit (int/float only allow numbers)
+                str, int, float, Decimal - Makes a line edit with numeric validation
                 None - No input box made
             or a list/tuple of the options - Makes a dropbox with options
 
@@ -389,7 +390,7 @@ class rowItem(qtw.QListWidgetItem):
             self.reset = lambda: checkbox.setChecked(False)
             self.output = lambda: bool(checkbox.isChecked())
         
-        elif input_type in [int, float, str]: # Textbox input
+        elif input_type in [int, float, Decimal, str]: # Textbox input
             line_edit = qtw.QLineEdit()
             self.input = line_edit
             self.reset = lambda: line_edit.setText("")
@@ -399,7 +400,7 @@ class rowItem(qtw.QListWidgetItem):
             # Restrict user input to reduce errors
             if input_type is int:
                 line_edit.setValidator(QtGui.QIntValidator())
-            elif input_type is float:
+            elif input_type in (float, Decimal):
                 validator = QtGui.QDoubleValidator()
                 validator.setNotation(QtGui.QDoubleValidator.Notation.ScientificNotation)
                 validator.setLocale(QtCore.QLocale("C"))  # Avoids locale issues like commas
@@ -419,7 +420,7 @@ class rowItem(qtw.QListWidgetItem):
             
         else:
             raise TypeError(
-                f"Invalid input type: {input_type}, must be int, float"
+                f"Invalid input type: {input_type}, must be int, float, Decimal"
                 ", str, bool, None, or an array of values.")
             
         row_layout.addStretch() # push to edges
