@@ -105,6 +105,45 @@ def _close_index_best_effort(connection: object) -> None:
         pass
 
 
+def _open_owned_cache_lock(path: Path) -> int:
+    """Open only a new lock or the exact empty/one-zero-byte qPlot lock."""
+
+    flags = getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOINHERIT", 0)
+    try:
+        status = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        try:
+            return os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | flags, 0o600)
+        except FileExistsError:
+            # Another cache process may have created the lock first.
+            status = path.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or status.st_nlink != 1
+        or status.st_size not in (0, 1)
+    ):
+        raise _CacheOwnershipError("The cache lock is not owned by qPlot.")
+    with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (
+            (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino)
+            or stream.read(2) not in (b"", b"\0")
+        ):
+            raise _CacheOwnershipError("The cache lock is not owned by qPlot.")
+    current = path.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or current.st_nlink != 1
+        or (current.st_dev, current.st_ino) != (status.st_dev, status.st_ino)
+        or current.st_size not in (0, 1)
+    ):
+        raise _CacheOwnershipError("The cache lock changed during validation.")
+    # Existing locks are never created, truncated or replaced. The cache
+    # namespace is trusted; no hostile path substitution is assumed here.
+    return os.open(path, os.O_RDWR | flags)
+
+
 @contextmanager
 def _cross_process_cache_lock(
     path: Path,
@@ -113,15 +152,14 @@ def _cross_process_cache_lock(
 ):
     """Acquire one bounded unprivileged root lock on POSIX or Windows."""
 
-    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    if os.name == "posix":
-        os.chmod(path, 0o600)
+    descriptor = _open_owned_cache_lock(path)
     acquired = False
     deadline = time.monotonic() + 1.0
     try:
         if os.name == "posix":
             import fcntl
 
+            os.chmod(descriptor, 0o600)
             while True:
                 cancel_check()
                 try:
@@ -788,7 +826,7 @@ class TrustedDerivedDiskCache:
             raise
         except _CacheEpochChanged:
             return False
-        except sqlite3.Error:
+        except (sqlite3.Error, _CacheOwnershipError):
             disable_after_cleanup = True
             return False
         except (
@@ -1080,6 +1118,17 @@ class TrustedDerivedDiskCache:
 
     def _open_index(self) -> sqlite3.Connection:
         index_path = self.root / _INDEX_NAME
+        # Ownership of the main inventory cannot establish ownership of its
+        # SQLite sidecars. Even an unrelated database may occupy these names.
+        # Decline crash recovery and continue without disk caching instead.
+        for suffix in ("-journal", "-wal", "-shm"):
+            try:
+                Path(f"{index_path}{suffix}").stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            raise _CacheOwnershipError(
+                "The cache inventory has an unowned SQLite sidecar."
+            )
         proof = self._establish_index_ownership(index_path)
         self._recheck_index_proof(index_path, proof)
         connection = sqlite3.connect(index_path, timeout=0.0, isolation_level=None)

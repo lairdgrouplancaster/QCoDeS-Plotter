@@ -71,13 +71,41 @@ def data2matrix(indep1 : ArrayLike,
         check_cancelled()
         return pd.DataFrame(grid, index=rows, columns=columns)
 
+    # Widen narrow floats before pandas accumulates repeated measured cells.
+    # The source array remains untouched for raw export and later operations.
+    if values.dtype.kind == "f":
+        values = values.astype(np.result_type(values.dtype, np.float64), copy=False)
+
     # convert to 3 column dataframe
     df = pd.DataFrame({
         'indep1': indep1,
         'indep2': indep2,
-        'depvar': depvar
+        'depvar': values
     })
     # convert dataframe to grid
+    if values.dtype.kind == "f" and np.any(
+            np.abs(values) > np.finfo(values.dtype).max / max(1, values.size)
+            ):
+        # The ordinary vectorized mean is fast, but an intermediate group sum
+        # can overflow even when the final mean is finite. Retain failed groups
+        # before pivot_table would drop their rows and columns, then repair only
+        # those groups using a scaled mean of their original finite samples.
+        check_cancelled()
+        grouped = df.groupby(['indep1', 'indep2'])['depvar']
+        means = grouped.mean()
+        check_cancelled()
+        for group_position in np.flatnonzero(~np.isfinite(means.to_numpy())):
+            check_cancelled()
+            samples = grouped.get_group(means.index[group_position]).to_numpy()
+            if np.any(np.isinf(samples)):
+                continue
+            samples = samples[np.isfinite(samples)]
+            if not samples.size:
+                continue
+            scale = np.max(np.abs(samples))
+            means.iloc[group_position] = np.mean(samples / scale) * scale
+        check_cancelled()
+        return means.unstack().dropna(how='all', axis=0).dropna(how='all', axis=1)
     matrix = df.pivot_table(index='indep1', columns='indep2', values='depvar', fill_value=np.nan)
     return matrix
 

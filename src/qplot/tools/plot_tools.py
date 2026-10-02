@@ -61,11 +61,13 @@ def _numeric_object_samples(values):
 def _gradient_with_integer_samples(data, spacing, axis, integer_data):
     """Use gradient's first-order edges and three-point interior stencil."""
     samples = np.moveaxis(np.asarray(data), axis, -1)
-    result = np.empty(samples.shape, dtype=np.float64)
+    dtype = np.float64 if integer_data else np.result_type(samples.dtype, np.float64)
+    result = np.empty(samples.shape, dtype=dtype)
     if integer_data:
         differences = _integer_differences(samples, axis=-1)
     else:
-        samples = samples.astype(np.float64, copy=False)
+        samples = samples.astype(dtype, copy=False)
+        differences = np.diff(samples, axis=-1)
 
     if np.all(spacing == spacing[0]):
         dx = spacing[0]
@@ -80,14 +82,10 @@ def _gradient_with_integer_samples(data, spacing, axis, integer_data):
         dx1, dx2 = spacing[:-1], spacing[1:]
         a = -dx2 / (dx1 * (dx1 + dx2))
         c = dx1 / (dx2 * (dx1 + dx2))
-        if integer_data:
-            result[..., 1:-1] = -a * differences[..., :-1] + c * differences[..., 1:]
-        else:
-            b = (dx2 - dx1) / (dx1 * dx2)
-            result[..., 1:-1] = (
-                a * samples[..., :-2] + b * samples[..., 1:-1]
-                + c * samples[..., 2:]
-            )
+        # The coefficients sum to zero. Evaluate adjacent differences before
+        # weighting so a large stored floating-point offset cannot erase a
+        # small, representable derivative through cancellation.
+        result[..., 1:-1] = -a * differences[..., :-1] + c * differences[..., 1:]
 
     if integer_data:
         result[..., 0] = differences[..., 0] / spacing[0]
@@ -101,6 +99,52 @@ def _gradient_with_integer_samples(data, spacing, axis, integer_data):
 def _check_cancelled(cancelled_callback):
     if cancelled_callback is not None and cancelled_callback():
         raise InterruptedError("Plot operation cancelled.")
+
+
+def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callback=None):
+    """Remove a float mean without rounding a large offset into the result.
+
+    Subtract a recorded anchor before accumulation. Rows whose range exceeds
+    float64 use a scaled mean instead, retaining the usual NaN/Inf semantics.
+    Process groups of complete rows, checking cancellation between groups.
+    Temporary arrays contain at most 65536 cells or one complete row.
+    """
+    values = np.asarray(values)
+    dtype = np.result_type(values.dtype, np.float64)
+    samples = np.moveaxis(values.astype(dtype, copy=False), axis, -1)
+    if samples.shape[-1] == 0:
+        return values.astype(dtype, copy=True)
+    rows = samples.reshape(-1, samples.shape[-1])
+    centered = np.empty(rows.shape, dtype=dtype)
+    mean_func = np.nanmean if ignore_nan else np.mean
+    chunk_size = max(1, 65536 // samples.shape[-1])
+    for start in range(0, len(rows), chunk_size):
+        _check_cancelled(cancelled_callback)
+        chunk = rows[start:start + chunk_size]
+        finite = np.isfinite(chunk)
+        indices = np.argmax(finite, axis=1)
+        anchors = chunk[np.arange(len(chunk)), indices, None]
+        with np.errstate(over="ignore", invalid="ignore"):
+            shifted = chunk - anchors
+            offset_mean = mean_func(shifted, axis=1, keepdims=True)
+            result = shifted - offset_mean
+            overflow = (np.any(np.isinf(shifted) & finite, axis=1)
+                        | ~np.isfinite(offset_mean[:, 0]))
+            infinite_source = np.any(np.isinf(chunk), axis=1)
+            expected_finite_mean = (np.any(finite, axis=1) if ignore_nan
+                                    else np.all(finite, axis=1))
+            fallback = overflow & expected_finite_mean & ~infinite_source
+            if np.any(fallback):
+                large = chunk[fallback]
+                scale = np.nanmax(np.abs(large), axis=1, keepdims=True)
+                mean = mean_func(large / scale, axis=1, keepdims=True) * scale
+                result[fallback] = large - mean
+            if np.any(infinite_source):
+                special = chunk[infinite_source]
+                result[infinite_source] = special - mean_func(special, axis=1, keepdims=True)
+        centered[start:start + len(chunk)] = result
+    _check_cancelled(cancelled_callback)
+    return np.moveaxis(centered.reshape(samples.shape), -1, axis)
 
 
 def subtract_mean(
@@ -153,6 +197,11 @@ def subtract_mean(
                 numeric = values.astype(float)
                 centered[position][valid] = numeric - np.mean(numeric)
         dataGrid = np.moveaxis(centered, -1, num_axis)
+    elif dataGrid.dtype.kind == "f":
+        dataGrid = _center_float_samples(
+            dataGrid, num_axis, ignore_nan=True,
+            cancelled_callback=cancelled_callback,
+        )
     else:
         # Narrow floats must be widened before accumulation and subtraction.
         dataGrid = dataGrid.astype(np.result_type(dataGrid.dtype, np.float64), copy=False)
@@ -315,13 +364,9 @@ def differentiate(
 
     _check_cancelled(cancelled_callback)
     integer_data = _integer_samples(data) or _numeric_object_samples(data)
-    if integer_coordinates or integer_data:
-        new_data = _gradient_with_integer_samples(
-            data, spacing, axis_num, integer_data,
-        )
-    else:
-        data = data.astype(np.result_type(data.dtype, np.float64), copy=False)
-        new_data = np.gradient(data, coordinates, axis=axis_num)
+    new_data = _gradient_with_integer_samples(
+        data, spacing, axis_num, integer_data,
+    )
     _check_cancelled(cancelled_callback)
     
     return {key : new_data}

@@ -10,6 +10,7 @@ from shutil import copyfileobj
 
 import jsonschema
 
+from qplot._auxiliary_paths import ensure_safe_auxiliary_path
 from qplot.diagnostics import log_exception
 
 from .themes import dark, light, pyqt
@@ -286,6 +287,7 @@ class config:
             path of file
 
         """
+        ensure_safe_auxiliary_path(path)
         directory = os.path.dirname(os.path.abspath(path))
         makedirs(directory, exist_ok=True)
         file_mode = None
@@ -308,6 +310,7 @@ class config:
                 os.fsync(fp.fileno())
             if file_mode is not None:
                 os.chmod(temporary_path, file_mode)
+            ensure_safe_auxiliary_path(path)
             os.replace(temporary_path, path)
             self._sync_config_directory(directory)
         except Exception:
@@ -486,6 +489,7 @@ class config:
         Copies an invalid config file aside before resetting to defaults.
 
         """
+        ensure_safe_auxiliary_path(self.default_file)
         directory = path.dirname(self.default_file)
         makedirs(directory, exist_ok=True)
         source_stat = os.stat(self.default_file)

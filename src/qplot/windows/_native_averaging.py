@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
@@ -77,6 +78,10 @@ class NativePlotItem(pg.PlotItem):
         x, y = curve.getData()
         if x is None or y is None or len(y) == 0:
             return
+        # The average is display data. Widen before arithmetic without
+        # modifying the measured arrays retained by the source curves.
+        if y.dtype.kind in "fc":
+            y = y.astype(np.result_type(y.dtype, np.float64), copy=False)
         removed: list[str] = []
         retained: list[str] = []
         for index in range(self.ctrl.avgParamList.count()):
@@ -107,6 +112,23 @@ class NativePlotItem(pg.PlotItem):
         # Preserve native compatibility: combine equal-shaped Y by index and
         # keep the first X; a changed Y shape replaces the displayed samples.
         if average.yData is not None and y.shape == average.yData.shape:
-            y = average.yData * (count - 1) / float(count) + y / float(count)
+            # A difference update retains small variations and constant
+            # values near float's upper bound. Opposite extremes can overflow
+            # that difference; bounded weights handle those cells and preserve
+            # the ordinary arithmetic behavior of NaN and infinite samples.
+            y = y.astype(np.result_type(y.dtype, np.float64), copy=False)
+            previous = average.yData.astype(
+                np.result_type(average.yData.dtype, np.float64), copy=False,
+            )
+            with np.errstate(over="ignore", invalid="ignore"):
+                difference = y - previous
+                updated = previous + difference / float(count)
+                fallback = ~np.isfinite(difference)
+                if np.any(fallback):
+                    updated[fallback] = (
+                        previous[fallback] * ((count - 1) / float(count))
+                        + y[fallback] / float(count)
+                    )
+            y = updated
             x = average.xData
         average.setData(x, y, stepMode=curve.opts["stepMode"])

@@ -7,7 +7,7 @@ import pyqtgraph as pg
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
 from qplot.datahandling.parameter_data import numeric_isfinite
-from qplot.tools.plot_tools import _integer_differences
+from qplot.tools.plot_tools import _center_float_samples, _integer_differences
 
 
 def _safe_difference(values: np.ndarray) -> np.ndarray:
@@ -165,11 +165,9 @@ class NativePlotDataItem(pg.PlotDataItem):
                     x, y = self._fourierTransform(x, y)
                     if self.opts["logMode"][0]:
                         x, y = x[1:], y[1:]
-            elif (self.opts["subtractMeanMode"] and source.y.dtype.kind == "f"
-                  and source.y.dtype.itemsize < 8):
+            elif self.opts["subtractMeanMode"] and source.y.dtype.kind == "f":
                 x = source.x
-                y = source.y.astype(np.float64)
-                y = y - np.mean(y)
+                y = _center_float_samples(source.y)
                 if self.opts["fftMode"]:
                     x, y = self._fourierTransform(x, y)
                     if self.opts["logMode"][0]:
@@ -182,7 +180,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                 y = source.y.astype(np.float64)
                 if self.opts["subtractMeanMode"]:
                     y = (_center_object_samples(source.y) if source.y.dtype.kind == "O"
-                         else y - np.mean(y))
+                         else _center_float_samples(y))
                 if self.opts["fftMode"]:
                     x, y = self._fourierTransform(x, y)
                     if self.opts["logMode"][0]:

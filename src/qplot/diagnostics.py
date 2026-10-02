@@ -3,6 +3,8 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from qplot._auxiliary_paths import ensure_safe_auxiliary_path
+
 LOGGER_NAME = "qplot"
 LOG_FILE_NAME = "qplot.log"
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
@@ -11,6 +13,35 @@ DEFAULT_BACKUP_COUNT = 3
 
 _ORIGINAL_EXCEPTHOOK = None
 _EXCEPTHOOK_INSTALLED = False
+
+
+class _DatabaseSafeRotatingFileHandler(RotatingFileHandler):
+    """Prevent logging and log rotation from touching measurement files."""
+
+    def _open(self):
+        ensure_safe_auxiliary_path(self.baseFilename)
+        return super()._open()
+
+    def emit(self, record):
+        try:
+            ensure_safe_auxiliary_path(self.baseFilename)
+        except OSError:
+            if self.stream is not None:
+                self.stream.close()
+                self.stream = None
+            return
+        super().emit(record)
+
+    def doRollover(self):
+        try:
+            ensure_safe_auxiliary_path(self.baseFilename)
+            for index in range(1, self.backupCount + 1):
+                ensure_safe_auxiliary_path(self.rotation_filename(
+                    f"{self.baseFilename}.{index}",
+                ))
+        except OSError:
+            return
+        super().doRollover()
 
 
 def default_log_file():
@@ -64,7 +95,7 @@ def configure_logging(
     handler: logging.Handler
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        handler = RotatingFileHandler(
+        handler = _DatabaseSafeRotatingFileHandler(
             target,
             maxBytes=max_bytes,
             backupCount=backup_count,

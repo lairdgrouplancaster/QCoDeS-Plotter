@@ -434,9 +434,7 @@ def test_foreign_qcodes_inventory_and_existing_sidecars_are_never_modified(
     assert not cache.enabled
     assert _database_family_snapshot(source) == source_before
     assert _database_family_snapshot(inventory) == inventory_before
-    assert len(inventory_connections) == 1
-    assert "mode=ro&immutable=1" in inventory_connections[0][0]
-    assert inventory_connections[0][1]
+    assert inventory_connections == []
     assert not tuple(inventory.parent.glob("*.qdc"))
 
 
