@@ -67,7 +67,19 @@ def _gradient_with_integer_samples(data, spacing, axis, integer_data):
         differences = _integer_differences(samples, axis=-1)
     else:
         samples = samples.astype(dtype, copy=False)
-        differences = np.diff(samples, axis=-1)
+        with np.errstate(over="ignore", invalid="ignore"):
+            differences = np.diff(samples, axis=-1)
+    slopes = differences / spacing
+    if not integer_data:
+        # A finite sample jump can exceed float's range before division by a
+        # large, finite spacing restores a representable secant slope.
+        repair = (~np.isfinite(differences) & np.isfinite(samples[..., 1:])
+                  & np.isfinite(samples[..., :-1]))
+        if np.any(repair):
+            distances = np.broadcast_to(spacing, differences.shape)
+            slopes[repair] = (
+                samples[..., 1:][repair] / 2. - samples[..., :-1][repair] / 2.
+            ) / (distances[repair] / 2.)
 
     if np.all(spacing == spacing[0]):
         dx = spacing[0]
@@ -75,24 +87,44 @@ def _gradient_with_integer_samples(data, spacing, axis, integer_data):
             # The uniform central stencil uses only its two outer samples.
             # Summing adjacent differences would involve a missing centre and
             # erase a valid derivative (or subtract opposite infinities).
-            result[..., 1:-1] = _integer_differences(samples, axis=-1, step=2) / (2. * dx)
+            outer_difference = _integer_differences(samples, axis=-1, step=2)
+            if abs(dx) > np.finfo(float).max / 2:
+                result[..., 1:-1] = (outer_difference / 2.) / dx
+            else:
+                result[..., 1:-1] = outer_difference / (2. * dx)
         else:
-            result[..., 1:-1] = (samples[..., 2:] - samples[..., :-2]) / (2. * dx)
+            with np.errstate(over="ignore", invalid="ignore"):
+                outer_difference = samples[..., 2:] - samples[..., :-2]
+                denominator = 2. * dx
+                central = outer_difference / denominator
+            # Both the two-step difference and twice the spacing can exceed
+            # float's range even when their quotient is small. Halve the
+            # operands first only for those stencils; ordinary small values
+            # retain the direct subtraction's precision and missingness.
+            repair = (np.isfinite(samples[..., 2:])
+                      & np.isfinite(samples[..., :-2])
+                      & (~np.isfinite(outer_difference) | ~np.isfinite(denominator)))
+            if np.any(repair):
+                central[repair] = (
+                    samples[..., 2:][repair] / 2. - samples[..., :-2][repair] / 2.
+                ) / dx
+            result[..., 1:-1] = central
     else:
         dx1, dx2 = spacing[:-1], spacing[1:]
-        a = -dx2 / (dx1 * (dx1 + dx2))
-        c = dx1 / (dx2 * (dx1 + dx2))
-        # The coefficients sum to zero. Evaluate adjacent differences before
-        # weighting so a large stored floating-point offset cannot erase a
-        # small, representable derivative through cancellation.
-        result[..., 1:-1] = -a * differences[..., :-1] + c * differences[..., 1:]
+        # Blend the adjacent secant slopes. Normalized spacings avoid
+        # under/overflow in the products used by the equivalent three-point
+        # coefficients, and subtraction still precedes weighting so stored
+        # offsets cannot erase representable differences.
+        scale = np.maximum(np.abs(dx1), np.abs(dx2))
+        before, after = dx1 / scale, dx2 / scale
+        total = before + after
+        result[..., 1:-1] = (
+            (after / total) * slopes[..., :-1]
+            + (before / total) * slopes[..., 1:]
+        )
 
-    if integer_data:
-        result[..., 0] = differences[..., 0] / spacing[0]
-        result[..., -1] = differences[..., -1] / spacing[-1]
-    else:
-        result[..., 0] = (samples[..., 1] - samples[..., 0]) / spacing[0]
-        result[..., -1] = (samples[..., -1] - samples[..., -2]) / spacing[-1]
+    result[..., 0] = slopes[..., 0]
+    result[..., -1] = slopes[..., -1]
     return np.moveaxis(result, -1, axis)
 
 

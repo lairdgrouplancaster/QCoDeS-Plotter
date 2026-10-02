@@ -1915,7 +1915,7 @@ class TrustedMetadataQueryAdapter:
                 run_id,
                 loaded.unavailable_fields,
             )
-        table_name = self._result_table_name(metadata)
+        table_name = self._result_table_name(run_id, metadata)
         result_columns = self._ensure_result_columns(table_name)
         measure_parameters = tuple(metadata.get("measure_parameters") or ())
         sweep_parameters = tuple(metadata.get("sweep_parameters") or ())
@@ -2210,7 +2210,7 @@ class TrustedMetadataQueryAdapter:
         self.cheap_run(run_id)
         self.expensive_run(run_id)
         cached = dict(self._require_cached_run(run_id))
-        table_name = self._result_table_name(cached)
+        table_name = self._result_table_name(run_id, cached)
         result_columns = self._ensure_result_columns(table_name)
         source_columns = tuple(name for name in result_columns if name != "id")
         retained_columns = source_columns[:TRUSTED_DERIVED_MAX_SOURCE_COLUMNS]
@@ -2357,7 +2357,7 @@ class TrustedMetadataQueryAdapter:
             f'CASE WHEN octet_length("guid") <= {_TRUSTED_BASIC_TEXT_MAX_BYTES} '
             'THEN "guid" ELSE NULL END AS "guid", '
             f'CASE WHEN octet_length("result_table_name") '
-            f'<= {_TRUSTED_BASIC_TEXT_MAX_BYTES} THEN "result_table_name" '
+            f'<= {_TRUSTED_RESULT_SCHEMA_SQL_MAX_BYTES} THEN "result_table_name" '
             'ELSE NULL END AS "result_table_name", '
             f'CASE WHEN octet_length("parameters") '
             f'<= {TRUSTED_DERIVED_RUN_TEXT_MAX_BYTES} THEN "parameters" '
@@ -2460,10 +2460,13 @@ class TrustedMetadataQueryAdapter:
         # sampling. Merge the captured prefix onto that latest entry; never
         # restore the method-entry snapshot and erase completion/dimension
         # facts or unavailable-field provenance.
+        latest_table_name = self._result_table_name(
+            run_id, self._require_cached_run(run_id)
+        )
         latest_metadata = self._require_cached_run(run_id)
         if (
             latest_metadata.get("guid") != guid
-            or latest_metadata.get("result_table_name") != table_name
+            or latest_table_name != table_name
         ):
             raise TrustedMetadataQueryError(
                 "The accepted run identity changed during derived extraction."
@@ -3211,10 +3214,26 @@ class TrustedMetadataQueryAdapter:
             )
         return dict(metadata)
 
-    @staticmethod
-    def _result_table_name(metadata: dict[str, Any]) -> str:
+    def _result_table_name(self, run_id: int, metadata: dict[str, Any]) -> str:
         table_name = metadata.get("result_table_name")
-        if not isinstance(table_name, str) or not table_name:
+        # The retained run cache is a presentation model: paging can omit a
+        # long name and later observations shorten it with an ellipsis. Never
+        # use that display spelling as a SQL identifier. Read the exact source
+        # value through the existing payload-preflighted selected-column plan,
+        # without replacing the display value. A genuine ellipsis spelling is
+        # re-read too, so no display marker is interpreted as source identity.
+        if table_name is None or (
+            isinstance(table_name, str) and table_name.endswith("...")
+        ):
+            loaded = self._single_run_columns(run_id, ("result_table_name",))
+            table_name = (
+                loaded.fields.get("result_table_name") if loaded is not None else None
+            )
+        if (
+            not isinstance(table_name, str)
+            or not table_name
+            or len(table_name.encode("utf-8")) > _TRUSTED_RESULT_SCHEMA_SQL_MAX_BYTES
+        ):
             raise TrustedMetadataQueryError(
                 "A run does not identify a bounded QCoDeS result table."
             )

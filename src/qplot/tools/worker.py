@@ -2,6 +2,7 @@ import math
 import threading
 from contextlib import ExitStack, closing
 from copy import copy
+from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -37,6 +38,7 @@ from qplot.diagnostics import log_exception
 from qplot.tools.operation_registry import OperationCall, OperationExecutionError
 
 from . import data2matrix
+from .finite_means import FiniteBinMeans
 from .heatmap_geometry import canonicalize_heatmap_data
 
 if TYPE_CHECKING:
@@ -1168,25 +1170,35 @@ class loader(QtCore.QRunnable):
             )[0]
             for axis, values in enumerate(unique)
         ]
-        grid_sum = np.zeros((axes[1].size, axes[0].size), dtype=float)
-        grid_count = np.zeros(grid_sum.shape, dtype=np.int64)
-        with closing(self._array_heatmap_chunks(conn)) as chunks:
-            for _size, arrays in chunks:
-                self._check_cancelled()
-                x_data, y_data, z_data = self._array_heatmap_visible_values(arrays)
-                indices = [
-                    np.searchsorted(axes[axis], values) if exact[axis]
-                    else self._scaled_axis_indices(
-                        values, bins[axis], (lower[axis], upper[axis]),
-                    )[1]
-                    for axis, values in enumerate((x_data, y_data))
-                ]
-                np.add.at(grid_sum, (indices[1], indices[0]), z_data)
-                np.add.at(grid_count, (indices[1], indices[0]), 1)
+        means = FiniteBinMeans((axes[1].size, axes[0].size), self._check_cancelled)
+
+        def accumulate(*, replay=False):
+            # Both passes use the same private snapshot, frozen bin geometry,
+            # and visible-value filtering. Close each iterator (including its
+            # read-only BLOBs) before starting the optional exact replay.
+            with closing(self._array_heatmap_chunks(conn)) as chunks:
+                for _size, arrays in chunks:
+                    self._check_cancelled()
+                    x_data, y_data, z_data = self._array_heatmap_visible_values(arrays)
+                    indices = [
+                        np.searchsorted(axes[axis], values) if exact[axis]
+                        else self._scaled_axis_indices(
+                            values, bins[axis], (lower[axis], upper[axis]),
+                        )[1]
+                        for axis, values in enumerate((x_data, y_data))
+                    ]
+                    if replay:
+                        means.replay((indices[1], indices[0]), z_data)
+                    else:
+                        means.add((indices[1], indices[0]), z_data)
+
+        accumulate()
+        if means.begin_exact_replay():
+            accumulate(replay=True)
 
         self._check_cancelled()
-        y_indices, x_indices = np.nonzero(grid_count)
-        z_data = grid_sum[y_indices, x_indices] / grid_count[y_indices, x_indices]
+        y_indices, x_indices = np.nonzero(means.counts)
+        z_data = means.means()[y_indices, x_indices]
         self._spatial_heatmap_axes: tuple[np.ndarray, np.ndarray] = (axes[0], axes[1])
         self._spatial_heatmap_indices: tuple[np.ndarray, np.ndarray] = (x_indices, y_indices)
         self._spatial_heatmap_source_unique_counts: tuple[int, int] = (counts[0], counts[1])
@@ -1302,28 +1314,53 @@ class loader(QtCore.QRunnable):
             self.aggregated_heatmap_source = False
             return self._arrays_from_values([], [], [])
 
+        grouped_source_sql = (
+            f"SELECT {x_group_sql} AS x_group, {y_group_sql} AS y_group, "
+            f"{z_column} AS z_value FROM {table} WHERE {where_sql}"
+        )
         cursor = conn.execute(
             (
-                "SELECT x_group, y_group, AVG(z_value), COUNT(*) FROM ("
-                f"SELECT {x_group_sql} AS x_group, {y_group_sql} AS y_group, "
-                f"{z_column} AS z_value FROM {table} WHERE {where_sql}"
+                "SELECT x_group, y_group, AVG(z_value), COUNT(*), "
+                "MIN(z_value), MAX(z_value) FROM ("
+                + grouped_source_sql +
                 ") GROUP BY x_group, y_group ORDER BY y_group, x_group"
                 ),
             (*query_parameters, *parameters),
             )
         x_groups = []
         y_groups = []
-        z_values = []
+        z_values: list[float | None] = []
+        failed_means = {}
         aggregated_source_rows = 0
-        for row_number, (x_group, y_group, z_value, bin_rows) in enumerate(cursor):
+        for row_number, (x_group, y_group, z_value, bin_rows, z_min, z_max) in enumerate(cursor):
             if row_number % 1024 == 0:
                 self._check_cancelled()
-            if z_value is None:
-                continue
+            largest = max(abs(float(z_min)), abs(float(z_max)))
+            safe_sample = (np.finfo(float).max / 2) / int(bin_rows)
+            if z_value is None or not math.isfinite(z_value) or largest > safe_sample:
+                failed_means[(x_group, y_group)] = (len(z_values), int(bin_rows))
             x_groups.append(x_group)
             y_groups.append(y_group)
             z_values.append(z_value)
             aggregated_source_rows += int(bin_rows)
+
+        if failed_means:
+            # SQLite AVG can lose a cancellation residual before a risky sum
+            # overflows. Replay all risky groups from the original values in
+            # one bounded pass, even when AVG happened to return finite data.
+            totals = dict.fromkeys(failed_means, Fraction())
+            cursor = conn.execute(grouped_source_sql, (*query_parameters, *parameters))
+            for row_number, (x_group, y_group, value) in enumerate(cursor):
+                if row_number % 1024 == 0:
+                    self._check_cancelled()
+                key = (x_group, y_group)
+                if key in totals:
+                    totals[key] += Fraction(value)
+            for index, (key, total) in enumerate(totals.items()):
+                if index % 1024 == 0:
+                    self._check_cancelled()
+                position, count = failed_means[key]
+                z_values[position] = float(total / count)
 
         x_group_data = np.asarray(x_groups, dtype=float)
         y_group_data = np.asarray(y_groups, dtype=float)
@@ -1939,24 +1976,21 @@ class loader(QtCore.QRunnable):
             )
         self._check_cancelled()
 
-        grid_sum = np.zeros((y_centres.size, x_centres.size), dtype=float)
-        grid_count = np.zeros((y_centres.size, x_centres.size), dtype=np.int32)
+        means = FiniteBinMeans((y_centres.size, x_centres.size), self._check_cancelled)
         for start in range(0, z_data.size, CANCELLATION_CHUNK_SIZE):
             self._check_cancelled()
             stop = start + CANCELLATION_CHUNK_SIZE
             indices = (y_index[start:stop], x_index[start:stop])
-            np.add.at(grid_sum, indices, z_data[start:stop])
-            np.add.at(grid_count, indices, 1)
+            means.add(indices, z_data[start:stop])
+
+        if means.begin_exact_replay():
+            for start in range(0, z_data.size, CANCELLATION_CHUNK_SIZE):
+                self._check_cancelled()
+                stop = start + CANCELLATION_CHUNK_SIZE
+                means.replay((y_index[start:stop], x_index[start:stop]), z_data[start:stop])
 
         self._check_cancelled()
-        data_grid = np.full(grid_sum.shape, np.nan, dtype=float)
-        np.divide(
-            grid_sum,
-            grid_count,
-            out=data_grid,
-            where=grid_count > 0,
-            casting="unsafe",
-            )
+        data_grid = means.means()
 
         return x_centres, y_centres, data_grid
 

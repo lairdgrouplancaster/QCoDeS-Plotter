@@ -1762,6 +1762,11 @@ class plotWidget(
         Unused but required by slot.
 
         """
+        # Qt leaves child windows visible when their parent is merely closed.
+        # Reject editors before releasing the dataset so they cannot act on a
+        # closed plot. Keep their widgets alive for retained overlay sources.
+        for dialog in self.findChildren(qtw.QDialog):
+            dialog.reject()
         dispose_export_dialog = getattr(
             self,
             "_dispose_plot_export_dialog",
