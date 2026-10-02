@@ -1333,10 +1333,14 @@ class PreviewImageLabel(qtw.QLabel):
 
 
 class DraggablePreviewImageLabel(PreviewImageLabel):
-    def __init__(self, guid, parameter, axes=None, *args):
+    dragFinished = QtCore.pyqtSignal()
+
+    def __init__(self, guid, parameter, axes=None, *args, axes_pending=False):
         super().__init__(parameter, *args)
         self.guid = guid or ""
         self.axes = list(axes or [])
+        self.axes_pending = axes_pending
+        self.drag_active = False
         self._drag_start_pos = None
         if self.guid:
             self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
@@ -1369,14 +1373,25 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
 
     def _start_drag(self):
         drag = QtGui.QDrag(self)
-        drag.setMimeData(make_run_preview_mime(self.guid, self.parameter, self.axes))
+        drag.setMimeData(make_run_preview_mime(
+            self.guid, self.parameter, self.axes, axes_pending=self.axes_pending,
+        ))
 
         pixmap = self.pixmap()
         if pixmap is not None and not pixmap.isNull():
             drag.setPixmap(pixmap)
             drag.setHotSpot(QtCore.QPoint(pixmap.width() // 2, pixmap.height() // 2))
+        else:
+            drag.setPixmap(self.grab())
+            drag.setHotSpot(self.rect().center())
 
-        drag.exec(QtCore.Qt.DropAction.CopyAction)
+        self.drag_active = True
+        try:
+            drag.exec(QtCore.Qt.DropAction.CopyAction)
+        finally:
+            self.drag_active = False
+            self._drag_start_pos = None
+            self.dragFinished.emit()
 
 
 class PreviewWorker(QtCore.QRunnable):
