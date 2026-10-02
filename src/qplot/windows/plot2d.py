@@ -492,7 +492,7 @@ class plot2d(
             if getattr(plot_worker, "_qplot_source_rejected", False):
                 clear_display()
                 return
-            self._commit_refresh_publication(plot_worker)
+            self._commit_refresh_publication(plot_worker, preview_ready=True)
         finally:
             if isinstance(
                     getattr(plot_worker, "_qplot_publication_snapshot", None),

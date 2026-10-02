@@ -149,6 +149,7 @@ class PreviewTab(qtw.QWidget):
         self.run_metadata = {}
         self.cache = OrderedDict()
         self.thumbnail_cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
@@ -232,6 +233,7 @@ class PreviewTab(qtw.QWidget):
             return
 
         self.preview_size = preview_size
+        self._plot_previews = {}
         self._update_minimum_height()
         if self._trusted_derived_mode:
             self.cache = OrderedDict()
@@ -284,6 +286,7 @@ class PreviewTab(qtw.QWidget):
         self.run_metadata = self._normalise_runs(runs)
         self.cache = OrderedDict()
         self.thumbnail_cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
@@ -312,6 +315,7 @@ class PreviewTab(qtw.QWidget):
         self.run_metadata = self._normalise_runs(runs)
         self.cache = OrderedDict()
         self.thumbnail_cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
@@ -330,7 +334,11 @@ class PreviewTab(qtw.QWidget):
 
         if not self._trusted_derived_mode:
             return
-        self.run_metadata.update(self._normalise_runs(runs))
+        for guid, metadata in self._normalise_runs(runs).items():
+            old = self.run_metadata.get(guid)
+            if old is not None and self._metadata_signature(old) != self._metadata_signature(metadata):
+                self._plot_previews.pop(guid, None)
+            self.run_metadata[guid] = metadata
 
 
     def refresh_trusted_derived_runs(self, runs):
@@ -344,6 +352,13 @@ class PreviewTab(qtw.QWidget):
         for guid in tuple(self.cache):
             if guid not in valid_guids:
                 self._drop_cached(guid)
+        for guid in tuple(self._plot_previews):
+            if (
+                guid not in valid_guids
+                or self._metadata_signature(self.run_metadata.get(guid, {}))
+                != self._metadata_signature(normalised[guid])
+            ):
+                self._plot_previews.pop(guid, None)
         self.errors = {
             guid: error
             for guid, error in self.errors.items()
@@ -372,6 +387,7 @@ class PreviewTab(qtw.QWidget):
         if not self._trusted_derived_mode:
             return
         self.cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         if self.current_guid:
@@ -392,12 +408,45 @@ class PreviewTab(qtw.QWidget):
         else:
             self.errors.pop(guid, None)
             self._store_cached(guid, list(previews or []))
+            self._plot_previews.pop(guid, None)
         if guid != self.current_guid:
             return
         if error:
             self._show_message("Preview unavailable", str(error))
         else:
             self._show_previews(previews)
+
+    def publish_plot_preview(self, guid, preview):
+        """Display one plotted measurement before the run job finishes."""
+
+        guid = str(guid or "")
+        parameter = str(preview.get("parameter") or "")
+        if (
+            self._shutting_down or not guid or not parameter
+            or guid not in self.run_metadata or guid in self.cache
+        ):
+            return
+        partial = self._plot_previews.setdefault(guid, {})
+        partial[parameter] = preview
+        previews = list(partial.values())
+        generation = self.generation
+        self.previewsReady.emit(guid, previews)
+        if (
+            generation == self.generation
+            and self._plot_previews.get(guid) is partial
+            and guid == self.current_guid
+        ):
+            self._show_previews(previews)
+
+    def discard_plot_previews(self, guid):
+        """Forget a plot image after its trusted source changes."""
+
+        guid = str(guid or "")
+        if self._plot_previews.pop(guid, None) is None:
+            return False
+        if guid == self.current_guid and guid not in self.cache:
+            self._show_message("Generating preview...")
+        return True
 
 
     def add_runs(self, runs, queue_previews=True):
@@ -416,6 +465,7 @@ class PreviewTab(qtw.QWidget):
 
             if changed:
                 self._drop_cached(guid)
+                self._plot_previews.pop(guid, None)
                 self.thumbnail_cache.pop(guid, None)
                 self.errors.pop(guid, None)
                 self.thumbnail_errors.pop(guid, None)
@@ -449,6 +499,8 @@ class PreviewTab(qtw.QWidget):
                 self._show_message("No preview available")
             elif guid in self.cache:
                 self._show_previews(self._cached_previews(guid))
+            elif guid in self._plot_previews:
+                self._show_previews(list(self._plot_previews[guid].values()))
             elif guid in self.errors:
                 self._show_message("Preview unavailable", self.errors[guid])
             else:
@@ -460,6 +512,12 @@ class PreviewTab(qtw.QWidget):
 
         if guid in self.cache:
             self._show_previews(self._cached_previews(guid))
+            return
+
+        if guid in self._plot_previews:
+            self._show_previews(list(self._plot_previews[guid].values()))
+            self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
+            self._start_next()
             return
 
         if guid in self.errors:
@@ -1023,6 +1081,7 @@ class PreviewTab(qtw.QWidget):
                     self._enqueue(guid, priority=PREVIEW_REMAINING_PRIORITY)
             else:
                 self._store_cached(guid, previews)
+                self._plot_previews.pop(guid, None)
 
         # Cache/error mutation can yield to test hooks and future Qt-facing
         # helpers.  Revalidate at the actual publication boundary so a sidecar
@@ -1054,7 +1113,10 @@ class PreviewTab(qtw.QWidget):
 
         if guid == self.current_guid and not is_thumbnail:
             if error:
-                self._show_message("Preview failed", str(error))
+                if guid in self._plot_previews:
+                    self._show_previews(list(self._plot_previews[guid].values()))
+                else:
+                    self._show_message("Preview failed", str(error))
             else:
                 self._show_previews(previews)
 
@@ -1088,6 +1150,7 @@ class PreviewTab(qtw.QWidget):
         self.run_metadata = {}
         self.cache = OrderedDict()
         self.thumbnail_cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
@@ -1783,6 +1846,54 @@ def _preview_title(parameter, axes):
     else:
         axis_text = f"{', '.join(axes[:-1])}, and {axes[-1]}"
     return f"{parameter} vs {axis_text}"
+
+
+def render_displayed_plot_preview(worker, parameter, size):
+    """Render one unmodified plot from its already loaded arrays."""
+
+    axes = list(getattr(parameter, "depends_on_", ()) or ())
+    if len(axes) not in (1, 2):
+        return None
+    axis_data = getattr(worker, "axis_data", None)
+    if not isinstance(axis_data, dict):
+        return None
+    size = int(size)
+    if len(axes) == 1:
+        x = np.asarray(axis_data.get("x", []), dtype=float).ravel()
+        y = np.asarray(axis_data.get("y", []), dtype=float).ravel()
+        count = min(x.size, y.size)
+        if count == 0:
+            return None
+        x, y = x[:count], y[:count]
+        valid = np.isfinite(x) & np.isfinite(y)
+        x, y = x[valid], y[valid]
+        if not x.size:
+            return None
+        # Keep GUI-thread painting bounded even for a very long line.
+        limit = max(2, 4 * size)
+        if x.size > limit:
+            indices = np.linspace(0, x.size - 1, limit, dtype=np.intp)
+            x, y = x[indices], y[indices]
+        image = render_sparkline_preview(x, y, size=size)
+    else:
+        grid = np.asarray(getattr(worker, "dataGrid", []), dtype=float)
+        if grid.ndim != 2 or not grid.size or not np.isfinite(grid).any():
+            return None
+        # The plot worker may have a high resolution grid; bound the reuse
+        # work before the preview's spatial reduction runs on the GUI thread.
+        max_axis = max(1, 4 * size)
+        row_step = max(1, (grid.shape[0] + max_axis - 1) // max_axis)
+        column_step = max(1, (grid.shape[1] + max_axis - 1) // max_axis)
+        image = render_heatmap_grid_preview(
+            grid[::row_step, ::column_step], size=size,
+        )
+    name = str(parameter.name)
+    return {
+        "parameter": name,
+        "axes": axes,
+        "title": _preview_title(name, axes),
+        "image": image,
+    }
 
 
 def _preview_2d_row_limit(grid_shape):

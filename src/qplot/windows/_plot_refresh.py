@@ -274,11 +274,27 @@ class PlotRefreshMixin(_PlotRefreshBase):
         return False
 
 
-    @staticmethod
-    def _commit_refresh_publication(worker: Any) -> None:
+    def _commit_refresh_publication(
+            self, worker: Any, *, preview_ready: bool = False
+            ) -> None:
         """Release rollback state after the concrete display committed."""
 
         worker._qplot_publication_snapshot = None
+        publish_preview = self.__dict__.get("_plot_preview_sink")
+        if (
+            preview_ready
+            and callable(publish_preview)
+            and not getattr(worker, "operations", None)
+            and getattr(worker, "heatmap_axis_ranges", None) is None
+            and not getattr(worker, "is_cancelled", lambda: False)()
+            and self._source_database_matches_key()
+        ):
+            try:
+                publish_preview(self, worker)
+            except Exception as error:
+                # A supplementary image must never turn a successful plot
+                # publication into a plot load failure.
+                log_exception("Plot preview reuse failed", error, __name__)
 
     def _refresh_monitor_required(self, dataset: Any | None = None) -> bool:
         """Keep polling until this plot has committed its terminal display."""
