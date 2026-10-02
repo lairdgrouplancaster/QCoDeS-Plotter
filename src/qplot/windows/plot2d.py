@@ -1482,7 +1482,8 @@ class plot2d(
             return
 
         geometry = self._required_heatmap_geometry()
-        data_grid = np.asarray(self.dataGrid)
+        # Render a float view; operations, raw cuts and CSV use the exact grid.
+        data_grid = np.asarray(self.dataGrid, dtype=float)
         if geometry.is_uniform:
             self.image.setImage(
                 data_grid,

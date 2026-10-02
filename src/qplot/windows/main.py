@@ -467,6 +467,10 @@ class MainWindow(
         self._database_load_active = False
         self._database_load_state = None
         self._database_load_worker = None
+        self._database_info_generation = 0
+        self._database_info_worker = None
+        self._database_info_instance = None
+        self._database_info_active = False
         self._loaded_database_identity = None
         self._loaded_database_instance = None  # type: ignore[assignment]
         self._database_detail_generation = 0
@@ -906,6 +910,7 @@ class MainWindow(
         selected_run_worker = getattr(self, "_database_selected_run_worker", None)
         if selected_run_worker is not None:
             selected_run_worker.cancel()
+        DatabaseActionsMixin._cancel_database_info(self)
         generation_worker = getattr(self, "_test_database_generation_worker", None)
         if generation_worker is not None:
             generation_worker.cancel()

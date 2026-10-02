@@ -15,6 +15,9 @@ from qplot.windows import _database_actions, _export_paths
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_export_paths import _database_artifact_state
+from tests.windows.test_export_paths import (
+    windows_stat_timestamps as windows_stat_timestamps,
+)
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
 from tests.windows.test_run_csv_export_race import _create_run
 from tests.windows.test_svg_export_integration import select_exporter
@@ -111,9 +114,13 @@ def destination_for(tmp_path, route, suffix):
 
 @pytest.mark.parametrize("route,suffix", ROUTES)
 @pytest.mark.parametrize("journal_mode", ["DELETE", "WAL"])
+@pytest.mark.parametrize("distinct_stat_timestamps", [False, True], ids=["normal-stat", "windows-stat"])
 def test_exports_reject_unloaded_qcodes_database(
     source_plot, tmp_path, monkeypatch, route, suffix, journal_mode,
+    distinct_stat_timestamps, request,
 ):
+    if distinct_stat_timestamps:
+        request.getfixturevalue("windows_stat_timestamps")
     errors = source_plot[-1]
     target = destination_for(tmp_path, route, suffix)
     _create_run(target, 2)
@@ -144,9 +151,12 @@ def test_exports_reject_unloaded_qcodes_database(
 
 
 @pytest.mark.parametrize("route,suffix", ROUTES)
+@pytest.mark.parametrize("distinct_stat_timestamps", [False, True], ids=["normal-stat", "windows-stat"])
 def test_real_exports_create_and_replace_ordinary_files(
-    source_plot, tmp_path, monkeypatch, route, suffix,
+    source_plot, tmp_path, monkeypatch, route, suffix, distinct_stat_timestamps, request,
 ):
+    if distinct_stat_timestamps:
+        request.getfixturevalue("windows_stat_timestamps")
     errors = source_plot[-1]
     target = destination_for(tmp_path, route, suffix)
     question = choose_destination(monkeypatch, target)

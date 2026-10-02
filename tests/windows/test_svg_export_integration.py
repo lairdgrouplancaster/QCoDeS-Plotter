@@ -1,6 +1,7 @@
 """Real QCoDeS windows and export actions on the installed Qt/PyQtGraph stack."""
 
 import os
+import re
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -13,6 +14,10 @@ from qcodes.dataset.sqlite.database import connect
 
 from qplot.testdata import enable_generation_provenance_for_writer
 from qplot.windows import main as main_window
+from qplot.windows._preferences import (
+    COPY_PLOT_IMAGE_RESOLUTION_KEY,
+    COPY_PLOT_IMAGE_RESOLUTION_SVG,
+)
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_plot_integration import (
     build_synthetic_database,
@@ -23,6 +28,53 @@ from tests.windows.test_plot_integration import (
 )
 
 SVG = "{http://www.w3.org/2000/svg}"
+
+
+def test_copy_plot_image_action_preserves_zoom_clipping(real_plot):
+    plot, _database, errors, dimensions = real_plot
+    plot.config.update(COPY_PLOT_IMAGE_RESOLUTION_KEY, COPY_PLOT_IMAGE_RESOLUTION_SVG)
+    plot.vb.setRange(xRange=(-.5, .5), yRange=(-.5, .5), padding=0)
+    qtw.QApplication.processEvents()
+    plot.copyPlotImageAction.trigger()
+    mime = qtw.QApplication.clipboard().mimeData()
+    data = bytes(mime.data("image/svg+xml"))
+    root = ET.fromstring(data)
+    assert root.attrib["version"] == "1.1"
+    assert [float(v) for v in root.attrib["viewBox"].split()] == [
+        0, 0, plot.widget.width(), plot.widget.height(),
+    ]
+    assert mime.text() == data.decode("utf-8")
+    clips = {node.attrib["id"]: node for node in root.findall(".//" + SVG + "clipPath")}
+    assert len(clips) >= 2
+    # Inspect the actual SVG geometry. QSvgRenderer itself ignores SVG 1.1
+    # clip paths, so its raster output cannot verify this behavior.
+    painted = root.find(SVG + "g")
+    clipped_groups = [node for node in painted.iter()
+                      if node.attrib.get("clip-path", "").startswith("url(#")]
+    assert clipped_groups
+    for group in clipped_groups:
+        clip_id = group.attrib["clip-path"][5:-1]
+        assert clip_id in clips
+        assert list(clips[clip_id])
+    primitive = "image" if dimensions == 2 else "polyline"
+    source = plot._plot_svg_source_rect(plot.widget)
+    bounds = plot.vb.sceneBoundingRect().translated(-source.left(), -source.top())
+    plot_clips = []
+    for group in clipped_groups:
+        if not group.findall(".//" + SVG + primitive):
+            continue
+        clip = clips[group.attrib["clip-path"][5:-1]]
+        path = clip.find(SVG + "path")
+        if path is None:
+            continue
+        points = np.array([float(v) for v in re.findall(
+            r"[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?", path.attrib["d"],
+        )]).reshape(-1, 2)
+        rectangle = [*points.min(axis=0), *points.max(axis=0)]
+        if np.allclose(rectangle, [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()], atol=1):
+            plot_clips.append(clip)
+    assert plot_clips, "The zoomed trace/image must be clipped to the plot's visible bounds"
+    assert not errors
 
 
 @pytest.fixture(params=[1, 2], ids=["line", "heatmap"])

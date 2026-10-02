@@ -276,9 +276,10 @@ def test_shaped_merge_promotes_every_column_without_narrowing_existing_values():
     )
     assert write_status == {"signal": 2}
     assert updated == {"signal": 4}
+    expected_dtypes = {"signal": np.dtype(object), "fast": np.dtype(complex), "slow": np.dtype(complex)}
     for name, values in merged["signal"].items():
         assert values.shape == (2, 3)
-        assert values.dtype == np.result_type(saved[name].dtype, incoming["signal"][name].dtype)
+        assert values.dtype == expected_dtypes[name]
         np.testing.assert_array_equal(values.ravel()[:2], saved[name].ravel()[:2])
         np.testing.assert_array_equal(values.ravel()[2:4], incoming["signal"][name])
         np.testing.assert_array_equal(values.ravel()[4:], saved[name].ravel()[4:])

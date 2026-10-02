@@ -486,7 +486,7 @@ class HeatmapLayer:
             return
 
         if geometry.is_uniform:
-            self.image.setImage(self.data_grid, autoLevels=False)
+            self.image.setImage(np.asarray(self.data_grid, dtype=float), autoLevels=False)
             self.image.setRect(QtCore.QRectF(*geometry.rect))
             self.heatmap_mesh.hide()
             self.image.show()
@@ -1551,7 +1551,7 @@ class Plot2DLayerMixin:
         maximum = -np.inf
         found_finite = False
         for data in self._heatmap_colorbar_data_arrays():
-            values = np.asarray(data)
+            values = np.asarray(data, dtype=float)
             finite_values = values[np.isfinite(values)]
             if finite_values.size == 0:
                 continue

@@ -14,6 +14,11 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
     database_sidecar_identities,
 )
+from qplot.datahandling.parameter_data import (
+    integer_preserving_dtype,
+    numeric_isfinite,
+    numeric_isnan,
+)
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
     cache_dataset_completed,
@@ -431,7 +436,7 @@ class loader(QtCore.QRunnable):
                 # A QCoDeS array record adds a storage dimension, not an
                 # independent setpoint. Select the plot by declared axes.
                 if len(self.param.depends_on_) == 1:
-                    axis_data, axis_param = self.for_1d(data, acquired & ~np.isnan(depvarData))
+                    axis_data, axis_param = self.for_1d(data, acquired & ~numeric_isnan(depvarData))
 
                 # for shaped 2d plots
                 elif len(depvarData.shape) == 2:
@@ -447,7 +452,7 @@ class loader(QtCore.QRunnable):
 
                 else:
                     #Remove nan values
-                    valid_rows = acquired & ~np.isnan(depvarData)
+                    valid_rows = acquired & ~numeric_isnan(depvarData)
 
                     # for unshaped 2d plots
                     (
@@ -581,10 +586,14 @@ class loader(QtCore.QRunnable):
         )
         names = list(dict.fromkeys((self.param.name, *setpoints)))
         columns = [np.asarray(data[name]) for name in names]
-        if not any(column.dtype.kind == "O" for column in columns):
+        if not any(
+            column.dtype.kind == "O" and any(np.ndim(value) for value in column.flat)
+            for column in columns
+        ):
             return data
 
-        # An object array represents acquisition records, not numeric samples.
+        # Nested object cells represent acquisition records. Dense numeric
+        # object cells instead preserve mixed signed/unsigned sample values.
         # Other columns may still hold one scalar or a dense array per record.
         record_count = len(columns[0])
         if any(column.ndim == 0 or len(column) != record_count for column in columns):
@@ -602,7 +611,7 @@ class loader(QtCore.QRunnable):
                         )
                     else:
                         self._real_line_values(value, name)
-                    if value.dtype.kind not in "biufc":
+                    if value.dtype.kind not in "biufcO":
                         raise ValueError("Array records must contain numeric values.")
                     if value.size not in (1, size):
                         raise ValueError("Setpoint and measurement shapes do not match.")
@@ -615,7 +624,7 @@ class loader(QtCore.QRunnable):
         dtypes: list[np.dtype | None] = [None for _ in names]
         for values, size in records():
             total += size
-            dtypes = [value.dtype if dtype is None else np.result_type(dtype, value.dtype)
+            dtypes = [value.dtype if dtype is None else integer_preserving_dtype((dtype, value.dtype))
                       for dtype, value in zip(dtypes, values, strict=True)]
         self._check_cancelled()
         if heatmap:
@@ -1464,7 +1473,9 @@ class loader(QtCore.QRunnable):
         """Return an array only when conversion to float cannot lose phase."""
 
         result = np.asarray(values)
-        if np.iscomplexobj(result):
+        if np.iscomplexobj(result) or (
+            result.dtype.kind == "O" and any(np.iscomplexobj(value) for value in result.flat)
+        ):
             self._reject_complex_heatmap(
                 parameter_name,
                 coordinate=coordinate,
@@ -1497,9 +1508,9 @@ class loader(QtCore.QRunnable):
         self._check_cancelled()
         y_data = np.asarray(y_values, dtype=float).reshape(-1)
         self._check_cancelled()
-        z_data = np.asarray(z_values, dtype=float).reshape(-1)
+        z_data = np.asarray(z_values).reshape(-1)
         self._check_cancelled()
-        finite = np.isfinite(x_data) & np.isfinite(y_data) & np.isfinite(z_data)
+        finite = np.isfinite(x_data) & np.isfinite(y_data) & numeric_isfinite(z_data)
         self._check_cancelled()
 
         return x_data[finite], y_data[finite], z_data[finite]
@@ -1514,6 +1525,9 @@ class loader(QtCore.QRunnable):
             max_cells=None,
             ):
         self._check_cancelled()
+        # This path intentionally aggregates a bounded display grid. Preserve
+        # exact samples in the full-resolution path until operations finish.
+        z_data = np.asarray(z_data, dtype=float)
         display_limit = max(1, int(getattr(
             self, "max_heatmap_grid_cells", MAX_SQL_HEATMAP_GRID_CELLS,
             )))
@@ -2042,7 +2056,9 @@ class loader(QtCore.QRunnable):
         """Reject complex samples without converting or changing raw data."""
 
         result = np.asarray(values)
-        if np.iscomplexobj(result):
+        if np.iscomplexobj(result) or (
+            result.dtype.kind == "O" and any(np.iscomplexobj(value) for value in result.flat)
+        ):
             self._reject_complex_line(parameter_name)
         return result
 
@@ -2065,8 +2081,8 @@ class loader(QtCore.QRunnable):
             raise ValueError("1D setpoint and measurement shapes do not match")
         valid_rows = (
             np.asarray(valid_rows)
-            & ~np.isnan(x_values)
-            & ~np.isnan(y_values)
+            & ~numeric_isnan(x_values)
+            & ~numeric_isnan(y_values)
         )
         axis_data["x"] = x_values[valid_rows].reshape(-1)
         self._check_cancelled()
@@ -2089,11 +2105,14 @@ class loader(QtCore.QRunnable):
             depvarData,
             getattr(self.param, "name", "measurement"),
         )
-        depvarData = np.asarray(depvarData, dtype=float)
-        if acquired is not None:
+        if acquired is not None and not np.all(acquired):
             # Plotting-only missing values preserve the planned shape and
             # source dtypes. Never infer acquisition from zeros or completion.
-            depvarData = np.where(acquired, depvarData, np.nan)
+            depvarData = depvarData.astype(
+                object if depvarData.dtype.kind in "iuO" else depvarData.dtype,
+                copy=True,
+            )
+            depvarData[~acquired] = np.nan
         self._check_cancelled()
         
         # Find correct data for each axis
@@ -2137,7 +2156,7 @@ class loader(QtCore.QRunnable):
                     for axis in ("x", "y")
                     )
                 ):
-            valid_rows = np.isfinite(depvarData)
+            valid_rows = numeric_isfinite(depvarData)
             for axis in ("x", "y"):
                 name = self.axes_dict[axis]
                 valid_rows &= np.isfinite(np.asarray(data[name], dtype=float))
@@ -2237,7 +2256,7 @@ class loader(QtCore.QRunnable):
         # Axis representatives may come from another row or column. Retain
         # each sample's recorded coordinate validity before using those axes
         # to publish the grid or pass it to operations.
-        valid_rows = np.isfinite(depvarData)
+        valid_rows = numeric_isfinite(depvarData)
         for axis in ["x", "y"]:
             self._check_cancelled()
             name = self.axes_dict[axis]
@@ -2254,7 +2273,11 @@ class loader(QtCore.QRunnable):
             # cache intact for later loads and different axis selections.
             data_grid = depvarData[selection]
             self._check_cancelled()
-            data_grid[~valid_rows[selection]] = np.nan
+            invalid = ~valid_rows[selection]
+            if np.any(invalid):
+                if data_grid.dtype.kind in "iu":
+                    data_grid = data_grid.astype(object)
+                data_grid[invalid] = np.nan
             self._check_cancelled()
             return data_grid if x_dimension == 1 else data_grid.transpose()
 
@@ -2316,6 +2339,7 @@ class loader(QtCore.QRunnable):
                 y_data,
                 x_data,
                 z_data,
+                check_cancelled=self._check_cancelled,
             )
         self._check_cancelled()
         
@@ -2323,7 +2347,7 @@ class loader(QtCore.QRunnable):
         axis_data["y"] = dataGrid.index.to_numpy(float)
         axis_data["x"] = dataGrid.columns.to_numpy(float)
         
-        dataGrid = dataGrid.to_numpy(float)
+        dataGrid = dataGrid.to_numpy()
         
         return axis_data, axis_param, dataGrid
         

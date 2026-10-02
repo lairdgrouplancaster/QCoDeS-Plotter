@@ -19,6 +19,8 @@ from fractions import Fraction
 
 import numpy as np
 
+from qplot.datahandling.parameter_data import numeric_isfinite, numeric_isnan
+
 
 def _integer_differences(values, axis=0):
     """Subtract before conversion; int64 and uint64 gaps can exceed int64."""
@@ -45,7 +47,7 @@ def _integer_samples(values):
 
 def _numeric_object_samples(values):
     return values.dtype.kind == "O" and all(
-        isinstance(value, (int, float, Decimal, np.integer, np.floating))
+        isinstance(value, (int, float, Decimal, Fraction, np.integer, np.floating))
         and not isinstance(value, (bool, np.bool_))
         for value in values.flat
     )
@@ -122,9 +124,33 @@ def subtract_mean(
     num_axis = 1 if axis == "x" else 0
 
     _check_cancelled(cancelled_callback)
-    mean = np.nanmean(dataGrid, axis=num_axis, keepdims=True)
-    _check_cancelled(cancelled_callback)
-    dataGrid = dataGrid - mean
+    if dataGrid.dtype.kind in "iuO":
+        # Center exact samples before conversion; NaN holes remain missing.
+        # Work one row/column at a time so this path stays cancellable.
+        samples = np.moveaxis(dataGrid, num_axis, -1)
+        centered = np.full(samples.shape, np.nan, dtype=float)
+        for position in np.ndindex(samples.shape[:-1]):
+            _check_cancelled(cancelled_callback)
+            row = samples[position]
+            valid = ~numeric_isnan(row)
+            values = row[valid]
+            if not values.size:
+                continue
+            if np.all(numeric_isfinite(values)):
+                exact = [Fraction(value.item() if isinstance(value, np.generic) else value)
+                         for value in values]
+                mean = sum(exact) / len(exact)
+                centered[position][valid] = [float(value - mean) for value in exact]
+            else:
+                numeric = values.astype(float)
+                centered[position][valid] = numeric - np.mean(numeric)
+        dataGrid = np.moveaxis(centered, -1, num_axis)
+    else:
+        # Narrow floats must be widened before accumulation and subtraction.
+        dataGrid = dataGrid.astype(np.result_type(dataGrid.dtype, np.float64), copy=False)
+        mean = np.nanmean(dataGrid, axis=num_axis, keepdims=True)
+        _check_cancelled(cancelled_callback)
+        dataGrid = dataGrid - mean
     _check_cancelled(cancelled_callback)
     
     return {"z" : dataGrid}
@@ -281,6 +307,7 @@ def differentiate(
             data, spacing, axis_num, integer_data,
         )
     else:
+        data = data.astype(np.result_type(data.dtype, np.float64), copy=False)
         new_data = np.gradient(data, coordinates, axis=axis_num)
     _check_cancelled(cancelled_callback)
     
@@ -309,12 +336,12 @@ def fill_heatmap(
         _check_cancelled(cancelled_callback)
         position = 0
         while position < len(line):
-            if not np.isnan(line[position]):
+            if not numeric_isnan(line[position]):
                 position += 1
                 continue
 
             gap_start = position
-            while position < len(line) and np.isnan(line[position]):
+            while position < len(line) and numeric_isnan(line[position]):
                 if position % 1024 == 0:
                     _check_cancelled(cancelled_callback)
                 position += 1

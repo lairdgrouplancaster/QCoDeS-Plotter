@@ -85,6 +85,14 @@ def run_worker(worker):
     assert finished == [True]
 
 
+def assert_grid_samples(actual, expected):
+    """Compare missingness separately because object NaNs do not compare equal."""
+    expected = np.asarray(expected)
+    missing = np.isnan(expected)
+    np.testing.assert_array_equal(np.isnan(np.asarray(actual, dtype=float)), missing)
+    np.testing.assert_array_equal(actual[~missing], expected[~missing])
+
+
 @contextmanager
 def multidimensional_heatmap_dataset(tmp_path, *, widths=(2, 3), shaped=False, missing=False):
     path = tmp_path / "multidimensional_heatmap.db"
@@ -438,7 +446,7 @@ def test_variable_length_array_heatmap(tmp_path, limit, swapped, missing):
         def assert_result(result):
             np.testing.assert_array_equal(result.axis_data["x"], [0, 1] if swapped else [0, 1, 2, 3])
             np.testing.assert_array_equal(result.axis_data["y"], [0, 1, 2, 3] if swapped else [0, 1])
-            np.testing.assert_array_equal(result.dataGrid, expected.T if swapped else expected)
+            assert_grid_samples(result.dataGrid, expected.T if swapped else expected)
 
         assert_result(worker)
         if limit is None:
@@ -541,7 +549,7 @@ def test_record_normalisation_is_private_linear_and_cancellable(tmp_path, monkey
         assert errors == []
         assert finished == [phase is None]
         if phase is None:
-            np.testing.assert_array_equal(worker.dataGrid, [[0, 1, 2, np.nan], [10, 11, 12, 13]])
+            assert_grid_samples(worker.dataGrid, [[0, 1, 2, np.nan], [10, 11, 12, 13]])
         else:
             assert not hasattr(worker, "dataGrid")
             assert not hasattr(worker, "axis_data")

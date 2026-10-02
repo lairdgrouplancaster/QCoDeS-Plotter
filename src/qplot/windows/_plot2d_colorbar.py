@@ -140,7 +140,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         lower = None
         upper = None
         for data in arrays:
-            values = np.asarray(data)
+            values = np.asarray(data, dtype=float)
             finite_values = values[np.isfinite(values)]
             if finite_values.size == 0:
                 continue

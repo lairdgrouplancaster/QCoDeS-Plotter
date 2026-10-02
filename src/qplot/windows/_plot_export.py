@@ -1186,7 +1186,9 @@ class PlotExportMixin(_PlotExportBase):
         if not buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly):
             return b""
 
-        generator = QtSvg.QSvgGenerator()
+        # SVG Tiny omits ViewBox clipping; SVG 1.1 preserves zoomed traces
+        # and heatmaps within their axes, as in the file export renderer.
+        generator = QtSvg.QSvgGenerator(QtSvg.QSvgGenerator.SvgVersion.Svg11)
         generator.setOutputDevice(buffer)
         generator.setSize(size)
         generator.setViewBox(QtCore.QRect(0, 0, size.width(), size.height()))

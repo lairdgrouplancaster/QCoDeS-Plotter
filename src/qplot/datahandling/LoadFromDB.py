@@ -8,7 +8,6 @@ for the original functions of similar names as well as typing.
 from math import prod
 from typing import TYPE_CHECKING
 
-import numpy as np
 import numpy.typing as npt
 from qcodes.dataset.data_set_cache import _merge_data
 from qcodes.dataset.sqlite.queries import completed
@@ -17,6 +16,7 @@ from qplot.datahandling.parameter_data import (
     _check_noop,
     flatten_record_columns,
     get_parameter_data_for_one_paramtree,
+    integer_preserving_dtype,
 )
 from qplot.datahandling.qcodes_cache import (
     cache_data,
@@ -90,13 +90,13 @@ def append_shaped_parameter_data_to_existing_arrays(
             dtype = values.dtype
             if (
                 values.size and incoming is not None and incoming.size
-                and values.dtype.kind in "biufc" and incoming.dtype.kind in "biufc"
+                and values.dtype.kind in "biufcO" and incoming.dtype.kind in "biufcO"
             ):
                 # QCoDeS' shaped insertion assigns into the cached dtype.
                 # Promote every numeric column before insertion, including
                 # coordinates and complex values that plot validation rejects.
                 # Empty cache placeholders must not dictate the first dtype.
-                dtype = np.result_type(values.dtype, incoming.dtype)
+                dtype = integer_preserving_dtype((values.dtype, incoming.dtype))
             # Shaped insertion writes through ravel(), so retain the old
             # copy() behavior of making C-contiguous working arrays.
             private_data[name] = values.astype(dtype, order="C", copy=True)
@@ -117,6 +117,22 @@ def append_shaped_parameter_data_to_existing_arrays(
             }
             shape = None
             overflow_count = acquired_after
+
+    if shape is None:
+        # QCoDeS appends dense record columns with NumPy's usual promotion.
+        # Promote both sides first when signed/unsigned (or integer/float)
+        # records need object cells to retain every acquired integer.
+        existing_data_1_tree = dict(existing_data_1_tree)
+        new_data_1_tree = dict(new_data_1_tree)
+        for name, incoming in new_data_1_tree.items():
+            check_cancelled()
+            previous = existing_data_1_tree.get(name)
+            if previous is None or not previous.size or not incoming.size:
+                continue
+            dtype = integer_preserving_dtype((previous.dtype, incoming.dtype))
+            if dtype.kind == "O":
+                existing_data_1_tree[name] = previous.astype(dtype, copy=False)
+                new_data_1_tree[name] = incoming.astype(dtype, copy=False)
 
     (merged_data[meas_parameter], updated_write_status[meas_parameter]) = (
         _merge_data(

@@ -1,3 +1,7 @@
+from decimal import Decimal, localcontext
+from fractions import Fraction
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -7,6 +11,8 @@ from qcodes import dataset
 def data2matrix(indep1 : ArrayLike,
                 indep2 : ArrayLike,
                 depvar : ArrayLike,
+                *,
+                check_cancelled=lambda: None,
                 ):
     """
     Converts 3 numpy.ndarry into a datagrid via pandas.DataFrame.
@@ -28,6 +34,43 @@ def data2matrix(indep1 : ArrayLike,
         The data frame containing all 3 inputted arrays as a dataframe.
 
     """
+    values = np.asarray(depvar)
+    if values.dtype.kind in "iuO":
+        # A floating pivot mean rounds even a cell containing a single large
+        # integer. Retain those cells, including holes; repeated coordinates
+        # still mean-average their acquired samples, using exact arithmetic.
+        rows, row_indices = np.unique(indep1, return_inverse=True)
+        columns, column_indices = np.unique(indep2, return_inverse=True)
+        grid = np.full((len(rows), len(columns)), np.nan, dtype=object)
+        cells: dict[tuple[int, int], list[Any]] = {}
+        for index, (row, column, value) in enumerate(
+            zip(row_indices, column_indices, values, strict=True)
+        ):
+            if index % 1024 == 0:
+                check_cancelled()
+            if isinstance(value, np.generic):
+                value = value.item()
+            if not np.isfinite(float(value)):
+                continue
+            cells.setdefault((row, column), []).append(value)
+        for index, (position, samples) in enumerate(cells.items()):
+            if index % 1024 == 0:
+                check_cancelled()
+            if len(samples) == 1:
+                grid[position] = samples[0]
+            else:
+                mean = sum((Fraction(value) for value in samples), Fraction()) / len(samples)
+                if mean.denominator == 1:
+                    grid[position] = int(mean)
+                else:
+                    # Decimal keeps the offset and fractional detail while
+                    # remaining a numeric CSV cell (Fraction writes "a/b").
+                    with localcontext() as context:
+                        context.prec = max(34, len(str(abs(mean.numerator))) + 17)
+                        grid[position] = Decimal(mean.numerator) / Decimal(mean.denominator)
+        check_cancelled()
+        return pd.DataFrame(grid, index=rows, columns=columns)
+
     # convert to 3 column dataframe
     df = pd.DataFrame({
         'indep1': indep1,
