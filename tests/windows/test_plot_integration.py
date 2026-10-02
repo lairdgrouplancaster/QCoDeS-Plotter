@@ -571,7 +571,25 @@ def wait_for_trusted_derived_work(window):
             and not coordinator.active and coordinator.snapshot().pending_count == 0
         )
 
-    wait_for(ready)
+    try:
+        # These tests compare one finite restored view. Automatic refresh can
+        # invalidate its derived work faster than a slow runner drains it.
+        # Leave the timer active with its original interval, but suppress new
+        # refresh requests while the current batch finishes. Restore signals
+        # even on timeout; production refresh and reader deadlines are unchanged.
+        with QtCore.QSignalBlocker(window.monitor):
+            wait_for(ready)
+    except AssertionError as error:
+        bridge = window._trusted_derived_bridge
+        coordinator = bridge.coordinator
+        snapshot = None if coordinator is None else coordinator.snapshot()
+        raise AssertionError(
+            "Trusted derived work did not finish: "
+            f"snapshot={snapshot!r}, "
+            f"active={None if coordinator is None else coordinator.active!r}, "
+            f"accepting={bridge.accepting_publications!r}, "
+            f"errors={bridge._last_errors!r}"
+        ) from error
 
 
 def test_trusted_derived_wait_follows_a_queued_coordinator_replacement():
@@ -582,12 +600,51 @@ def test_trusted_derived_wait_follows_a_queued_coordinator_replacement():
         active=False, snapshot=lambda: SimpleNamespace(pending_count=0),
     )
     bridge = SimpleNamespace(coordinator=retired)
-    window = SimpleNamespace(_trusted_derived_bridge=bridge)
+    window = SimpleNamespace(_trusted_derived_bridge=bridge, monitor=QtCore.QTimer())
     # Reload publishes its new bridge on a queued Qt turn. A retired scheduler
     # can retain cancelled pending work forever and must not fence readiness.
     QtCore.QTimer.singleShot(0, lambda: setattr(bridge, "coordinator", current))
     wait_for_trusted_derived_work(window)
     assert bridge.coordinator is current
+
+
+@pytest.mark.parametrize("monitor_active", [True, False])
+def test_trusted_derived_wait_drains_one_batch_with_periodic_refresh(monitor_active):
+    pending = SimpleNamespace(count=1)
+    coordinator = SimpleNamespace(
+        active=False,
+        snapshot=lambda: SimpleNamespace(pending_count=pending.count),
+    )
+    monitor = QtCore.QTimer()
+    monitor.setInterval(1)
+    work = QtCore.QTimer()
+    work.setSingleShot(True)
+    work.setInterval(50)
+
+    def refresh():
+        pending.count = 1
+        work.start()
+
+    monitor.timeout.connect(refresh)
+    work.timeout.connect(lambda: setattr(pending, "count", 0))
+    window = SimpleNamespace(
+        _trusted_derived_bridge=SimpleNamespace(
+            coordinator=coordinator, accepting_publications=True, _last_errors={},
+        ),
+        monitor=monitor,
+    )
+    work.start()
+    if monitor_active:
+        monitor.start()
+    try:
+        wait_for_trusted_derived_work(window)
+        assert pending.count == 0
+        assert monitor.isActive() == monitor_active
+        assert monitor.interval() == 1
+        assert not monitor.signalsBlocked()
+    finally:
+        monitor.stop()
+        work.stop()
 
 
 def select_nondefault_run_and_finish_previews(window):
