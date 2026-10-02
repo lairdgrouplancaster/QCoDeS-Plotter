@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -561,11 +562,32 @@ def generation_database_view(window):
 def wait_for_trusted_derived_work(window):
     """Finish all rows' metadata and previews before comparing a restored view."""
 
-    coordinator = window._trusted_derived_bridge.coordinator
-    assert coordinator is not None
-    wait_for(
-        lambda: not coordinator.active and coordinator.snapshot().pending_count == 0
+    def ready():
+        # Reload queues bridge publication after the load worker completes.
+        # Follow the current coordinator instead of fencing a retired one.
+        coordinator = window._trusted_derived_bridge.coordinator
+        return (
+            coordinator is not None
+            and not coordinator.active and coordinator.snapshot().pending_count == 0
+        )
+
+    wait_for(ready)
+
+
+def test_trusted_derived_wait_follows_a_queued_coordinator_replacement():
+    retired = SimpleNamespace(
+        active=False, snapshot=lambda: SimpleNamespace(pending_count=1),
     )
+    current = SimpleNamespace(
+        active=False, snapshot=lambda: SimpleNamespace(pending_count=0),
+    )
+    bridge = SimpleNamespace(coordinator=retired)
+    window = SimpleNamespace(_trusted_derived_bridge=bridge)
+    # Reload publishes its new bridge on a queued Qt turn. A retired scheduler
+    # can retain cancelled pending work forever and must not fence readiness.
+    QtCore.QTimer.singleShot(0, lambda: setattr(bridge, "coordinator", current))
+    wait_for_trusted_derived_work(window)
+    assert bridge.coordinator is current
 
 
 def select_nondefault_run_and_finish_previews(window):
