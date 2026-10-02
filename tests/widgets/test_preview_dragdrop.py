@@ -14,6 +14,57 @@ from qplot.windows._plotWin import plotWidget
 
 
 class RunPreviewDragDropTestCase(unittest.TestCase):
+    def test_pending_preview_drop_dispatches_without_rendered_axes(self):
+        requests = []
+        target = type("Target", (), {
+            "operation_kind": "plot1d",
+            "param": type("Param", (), {"depends_on_": ("gate",)})(),
+            "accepts_preview_trace_drop": plotWidget.accepts_preview_trace_drop,
+            "previewTraceDropRequested": type("Signal", (), {
+                "emit": lambda _self, *args: requests.append(args),
+            })(),
+        })()
+        event = type("DropEvent", (), {
+            "type": lambda _self: QtCore.QEvent.Type.Drop,
+            "mimeData": lambda _self: make_run_preview_mime(
+                "source-guid", "signal", axes_pending=True,
+            ),
+            "setDropAction": lambda self, action: setattr(self, "action", action),
+            "accept": lambda self: setattr(self, "accepted", True),
+        })()
+
+        self.assertTrue(plotWidget._handle_preview_drag_drop(target, event))
+        self.assertTrue(event.accepted)
+        self.assertEqual(event.action, QtCore.Qt.DropAction.CopyAction)
+        self.assertEqual(requests, [(target, "source-guid", "signal")])
+
+    def test_pending_drop_checks_loaded_parameter_before_creating_source_plot(self):
+        messages = []
+        source_key = DatasetKey("database.db", "source-guid")
+        incompatible = type("Param", (), {
+            "depends_on": "bias", "depends_on_": ("bias",),
+        })()
+        target = type("Target", (), {
+            "operation_kind": "plot1d",
+            "option_boxes": [],
+            "param": type("Param", (), {"depends_on_": ("gate",)})(),
+        })()
+
+        def unexpected_source_plot(*_args):
+            self.fail("An incompatible drop must not create a source plot")
+
+        harness = type("Harness", (), {
+            "_parameter_from_key": lambda _self, key, parameter: incompatible,
+            "_plot_window_for_param": unexpected_source_plot,
+            "show_status": lambda _self, *args: messages.append(args),
+        })()
+        self.assertFalse(main_window.MainWindow.add_trace_to_plot(
+            harness, target, source_key, "signal",
+        ))
+        self.assertEqual(messages, [(
+            "Cannot add signal; the plot axes do not match.", 5000,
+        )])
+
     def test_preview_drop_target_keeps_pyqtgraph_view_out_of_drag_delivery(self):
         class DropState:
             def __init__(self):
@@ -497,3 +548,18 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         self.assertEqual(added_sources, [source])
         self.assertTrue(source.closed)
         self.assertEqual(harness.errors, [])
+
+        # A pending image cannot bypass the shared-colour-scale unit check.
+        # Show both units so a normal-looking drop has an actionable reason.
+        source_display_param.unit = "uS"
+        target_display_param.unit = "a.u."
+        source.closed = False
+        added_sources.clear()
+        messages = []
+        harness.show_status = lambda *args: messages.append(args)
+        self.assertFalse(harness.add_trace_to_plot(
+            target, source_key, source_param.name, param=source_param,
+        ))
+        self.assertEqual(added_sources, [])
+        self.assertTrue(source.closed)
+        self.assertIn("source: uS; target: a.u.", messages[-1][0])

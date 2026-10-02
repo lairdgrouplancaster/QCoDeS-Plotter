@@ -43,6 +43,7 @@ class RunPreviewCell(qtw.QWidget):
         self._placeholder_dimensions = []
         self._placeholder_parameters = []
         self._previews = []
+        self._pending_display = None
 
         self.content_layout = qtw.QHBoxLayout()
         self.content_layout.setContentsMargins(2, 0, 2, 0)
@@ -57,6 +58,8 @@ class RunPreviewCell(qtw.QWidget):
 
 
     def show_placeholders(self, count=None, generating=None):
+        if self._defer_display_during_drag(("placeholders", count, generating)):
+            return
         selected_parameter = self._clear_layout()
         self._has_rendered_previews = False
         self._previews = []
@@ -72,6 +75,9 @@ class RunPreviewCell(qtw.QWidget):
 
 
     def show_previews(self, previews):
+        previews = list(previews or [])
+        if self._defer_display_during_drag(("previews", previews)):
+            return
         self._generating = False
         selected_parameter = self._clear_layout()
         self._previews = list(previews or [])
@@ -146,6 +152,7 @@ class RunPreviewCell(qtw.QWidget):
             )
         label.plotRequested.connect(self._emit_plot_requested)
         label.exportRequested.connect(self._emit_export_requested)
+        label.dragFinished.connect(self._apply_pending_display)
         self.content_layout.addWidget(label)
 
 
@@ -182,7 +189,8 @@ class RunPreviewCell(qtw.QWidget):
     def _placeholder_label(self, index=0, generating=False):
         parameters = self._placeholder_parameters
         parameter = parameters[index] if index < len(parameters) else ""
-        label = PreviewImageLabel(parameter)
+        label = DraggablePreviewImageLabel(self.guid, parameter, axes_pending=True)
+        label.dragFinished.connect(self._apply_pending_display)
         label.plotRequested.connect(self._emit_plot_requested)
         label.exportRequested.connect(self._emit_export_requested)
         dimensions = self._placeholder_dimensions
@@ -207,6 +215,26 @@ class RunPreviewCell(qtw.QWidget):
                 )
             label.setToolTip("Generating preview")
         return label
+
+
+    def _defer_display_during_drag(self, display):
+        # QDrag runs a nested event loop. Preview publication in that loop
+        # must not replace/delete its source until the user has dropped it.
+        if any(label.drag_active for label in self.findChildren(DraggablePreviewImageLabel)):
+            self._pending_display = display
+            return True
+        return False
+
+
+    def _apply_pending_display(self):
+        display = self._pending_display
+        self._pending_display = None
+        if display is None:
+            return
+        if display[0] == "previews":
+            self.show_previews(display[1])
+        else:
+            self.show_placeholders(count=display[1], generating=display[2])
 
 
     def _generating_placeholder_colors(self, index):

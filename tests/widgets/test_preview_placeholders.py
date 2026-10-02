@@ -1,8 +1,14 @@
-from PyQt6 import QtCore, QtGui, QtTest
+from unittest.mock import patch
+
+from PyQt6 import QtCore, QtGui, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.database import _bounded_run_publication
-from qplot.windows._dragdrop import make_run_preview_mime, run_preview_payload_from_mime
+from qplot.windows._dragdrop import (
+    make_run_preview_mime,
+    preview_drop_is_compatible,
+    run_preview_payload_from_mime,
+)
 from qplot.windows._widgets.preview import (
     DraggablePreviewImageLabel,
     PreviewImageLabel,
@@ -64,6 +70,73 @@ def test_placeholder_selection_and_actions_work_before_thumbnail_arrives():
         assert [label._selected for label in cell.findChildren(PreviewImageLabel)] == [False, True]
     finally:
         cell.close()
+        cell.deleteLater()
+
+
+def test_pending_thumbnail_starts_drag_with_parameter_identity_and_visible_pixmap():
+    cell = RunPreviewCell("run-guid", 2)
+    cell.update_placeholder_metadata({
+        "measure_parameters": ["first", "signal"], "preview_dimensions": [1, 2],
+    })
+    cell.set_generating(True)
+    cell.show()
+    try:
+        label = _preview_widgets(cell)[1]
+        start = label.rect().center()
+        end = start + QtCore.QPoint(qtw.QApplication.startDragDistance() + 1, 0)
+        with patch("qplot.windows._widgets.preview.QtGui.QDrag") as drag_class:
+            QtTest.QTest.mousePress(label, QtCore.Qt.MouseButton.LeftButton, pos=start)
+            move = QtGui.QMouseEvent(
+                QtCore.QEvent.Type.MouseMove,
+                QtCore.QPointF(end),
+                QtCore.QPointF(label.mapToGlobal(end)),
+                QtCore.Qt.MouseButton.NoButton,
+                QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.KeyboardModifier.NoModifier,
+            )
+            qtw.QApplication.sendEvent(label, move)
+            drag = drag_class.return_value
+            payload = run_preview_payload_from_mime(drag.setMimeData.call_args.args[0])
+            assert payload == {
+                "guid": "run-guid", "parameter": "signal",
+                "axes": [], "axes_pending": True,
+            }
+            assert not drag.setPixmap.call_args.args[0].isNull()
+            drag.exec.assert_called_once_with(QtCore.Qt.DropAction.CopyAction)
+            assert label._selected
+            assert preview_drop_is_compatible(("x",), payload)
+            assert preview_drop_is_compatible(("x", "y"), payload)
+            assert not preview_drop_is_compatible((), payload)
+
+        cell.show_previews([_white_preview("signal", axes=("x", "y"))])
+        rendered = _preview_widgets(cell)[1]
+        assert not rendered.axes_pending
+        assert rendered._selected
+        assert rendered.axes == ["x", "y"]
+    finally:
+        cell.close()
+        cell.deleteLater()
+
+
+def test_thumbnail_render_does_not_destroy_source_during_drag():
+    cell = RunPreviewCell("run-guid", 1)
+    cell.update_placeholder_metadata({"measure_parameters": ["signal"]})
+    label = _preview_widgets(cell)[0]
+
+    def render_during_drag(_action):
+        cell.show_previews([_white_preview("signal")])
+        qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        assert not sip.isdeleted(label), "Rendering destroyed the active Qt drag source"
+        assert _preview_widgets(cell) == [label]
+
+    try:
+        with patch("qplot.windows._widgets.preview.QtGui.QDrag") as drag_class:
+            drag_class.return_value.exec.side_effect = render_during_drag
+            label._start_drag()
+        rendered = _preview_widgets(cell)[0]
+        assert rendered.objectName() == "measurementPreviewImage"
+        assert rendered is not label
+    finally:
         cell.deleteLater()
 
 

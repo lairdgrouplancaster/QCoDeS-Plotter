@@ -35,7 +35,7 @@ from ._dataset_handle import (
     dataset_key_matches_current_source,
 )
 from ._export_paths import choose_export_path, write_export_atomically
-from ._plot2d_layers import _heatmap_layer_compatibility
+from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_refresh import plot_refresh_required
 from ._subplots.subplot1d import (
     _subplot_axis_order,
@@ -1879,6 +1879,11 @@ class PlotActionsMixin:
             from_win,
         )
         if compatibility_error is not None:
+            if compatibility_error == "the displayed value units do not match":
+                compatibility_error += (
+                    f" (source: {_window_display_unit(from_win) or 'unitless'};"
+                    f" target: {_window_display_unit(target_win) or 'unitless'})"
+                )
             self.show_status(
                 f"Cannot add {parameter_name}; {compatibility_error}.",
                 5000,
