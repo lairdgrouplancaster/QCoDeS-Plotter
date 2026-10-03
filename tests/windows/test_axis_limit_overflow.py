@@ -6,6 +6,7 @@ from copy import deepcopy
 import numpy as np
 import pytest
 from PyQt6 import QtCore, QtTest
+from PyQt6 import QtWidgets as qtw
 
 from tests.windows.test_merged_trace_metadata import merge
 from tests.windows.test_native_fft_coordinates import fft_plots as _fft_plots_fixture
@@ -35,6 +36,19 @@ def _axis_controls(fft_plots, axis):
     if axis in ("x2", "y2"):
         merge(window, plot, source, x_axis="Top", y_axis="Right")
     plot.open_axis_scale_dialog(axis)
+    # Showing the dialog and merged axis labels posts Qt layout work. Complete
+    # that setup before snapshots: orthogonal overlay coordinates follow the
+    # main view's physical pixels even when no axis edit is accepted.
+    qtw.QApplication.instance().processEvents()
+    plot.plot.layout.activate()
+    assert plot.plot.layout.isActivated()
+    plot.updateViews(None)
+    for name in ("right_vb", "top_vb", "top_right_vb"):
+        linked_viewbox = plot.__dict__.get(name)
+        if linked_viewbox is not None:
+            assert linked_viewbox.geometry() == plot.vb.sceneBoundingRect()
+            linked_viewbox.linkedXChanged()
+            linked_viewbox.linkedYChanged()
     return plot, plot._axis_scale_controls[axis], plot._axis_scale_viewbox(axis)
 
 
@@ -43,6 +57,41 @@ def _accept_limits(controls, lower, upper):
     controls.minText.setText(repr(lower))
     controls.maxText.setText(repr(upper))
     QtTest.QTest.keyClick(controls.minText, QtCore.Qt.Key.Key_Return)
+
+
+@pytest.mark.parametrize("fft_plots", [{"x": np.array([1.0, 2.0, 3.0])}], indirect=True)
+@pytest.mark.parametrize("axis", ["x2", "y2"])
+def test_axis_snapshots_follow_completed_overlay_geometry(
+    fft_plots, qapplication, axis, monkeypatch,
+):
+    _window, (plot, _source), _x, _y = fft_plots
+    open_dialog = plot.open_axis_scale_dialog
+    applications = []
+    monkeypatch.setattr(plot, "_apply_axis_scale_manual_limits",
+                        lambda *args: applications.append(args))
+
+    def open_with_pending_geometry(requested_axis):
+        open_dialog(requested_axis)
+        viewbox = plot._axis_scale_viewbox(requested_axis)
+        geometry = plot.vb.sceneBoundingRect()
+        # Reproduce an overlay awaiting the next main-view resize sync.
+        viewbox.setGeometry(geometry.adjusted(0, 0, 0, 1) if axis == "x2"
+                            else geometry.adjusted(0, 0, 1, 0))
+        QtCore.QTimer.singleShot(0, lambda: plot.updateViews(None))
+
+    monkeypatch.setattr(plot, "open_axis_scale_dialog", open_with_pending_geometry)
+    _plot, _controls, viewbox = _axis_controls(fft_plots, axis)
+    assert plot.plot.layout.isActivated()
+    for name in ("right_vb", "top_vb", "top_right_vb"):
+        assert plot.__dict__[name].geometry() == plot.vb.sceneBoundingRect()
+    before = deepcopy(viewbox.getState())
+    before_view = deepcopy(viewbox.viewRange())
+    qapplication.processEvents()
+    plot.updateViews(None)
+    np.testing.assert_array_equal(viewbox.viewRange(), before_view)
+    assert viewbox.getState()["targetRange"] == before["targetRange"]
+    assert viewbox.getState()["autoRange"] == before["autoRange"]
+    assert applications == []
 
 
 @pytest.mark.parametrize("fft_plots", [{"x": np.array([1.0, 2.0, 3.0])}], indirect=True)

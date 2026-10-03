@@ -43,7 +43,7 @@ jobs:
         run: python -m mypy
 
   checks:
-    name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }})
+    name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
 
@@ -54,6 +54,11 @@ jobs:
           - os: windows-2025
             python-version: "3.11"
             suite: full
+            partition: "1/2"
+          - os: windows-2025
+            python-version: "3.11"
+            suite: full
+            partition: "2/2"
           - os: windows-2025
             python-version: "3.12"
             suite: compatibility
@@ -63,6 +68,11 @@ jobs:
           - os: windows-2025
             python-version: "3.14"
             suite: full
+            partition: "1/2"
+          - os: windows-2025
+            python-version: "3.14"
+            suite: full
+            partition: "2/2"
           - os: macos-latest
             python-version: "3.11"
             suite: full
@@ -211,12 +221,13 @@ jobs:
             "-m", "pytest", "--no-cov",
             "-n", "2", "--dist=loadfile",
             "--no-loadscope-reorder",
+            "--qplot-ci-partition=${{ matrix.partition }}",
             "--timeout=90", "--timeout-method=thread", "--durations=20", "-v"
           )
-          # The full suite can exceed the wrapper's seven-minute default on
-          # hosted Windows runners. Keep individual tests bounded at 90s and
-          # allow 20 minutes for the growing complete suite, plus the wrapper's
-          # 2-minute cleanup grace within this job's 25-minute ceiling.
+          # Two disjoint whole-file partitions retain the complete suite while
+          # fitting its growing workload into the existing bounded budget.
+          # Each partition keeps two workers, 90-second individual tests and
+          # 20 minutes total, plus two-minute cleanup within the 25-minute job.
           & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
             -ArgumentList $arguments `

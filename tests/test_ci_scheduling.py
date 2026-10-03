@@ -11,10 +11,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("prioritize_slow_files", [False, True])
-def test_loadfile_preserves_tests_and_starts_the_expected_files(
-    tmp_path: Path, prioritize_slow_files: bool
-) -> None:
+def _create_suite(tmp_path: Path) -> dict[str, list[str]]:
     # Deliberately give the expensive files fewer tests: ordinary loadfile
     # scheduling puts the larger files first regardless of collection order.
     file_sizes = {
@@ -51,6 +48,13 @@ def pytest_runtest_call(item):
 """,
         encoding="utf-8",
     )
+    return expected_by_file
+
+
+def _run_suite(
+    tmp_path: Path, prioritize_slow_files: bool, partition: str | None = None,
+    filenames: list[str] | None = None,
+) -> list[list[str]]:
     environment = os.environ.copy()
     environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
@@ -72,6 +76,10 @@ def pytest_runtest_call(item):
     ]
     if prioritize_slow_files:
         command.append("--no-loadscope-reorder")
+    if partition is not None:
+        command.append(f"--qplot-ci-partition={partition}")
+    if filenames is not None:
+        command.extend(filenames)
     result = subprocess.run(
         command,
         cwd=tmp_path,
@@ -86,6 +94,15 @@ def pytest_runtest_call(item):
         for path in sorted(tmp_path.glob("gw*.jsonl"))
     ]
     assert len(traces) == 2
+    return traces
+
+
+@pytest.mark.parametrize("prioritize_slow_files", [False, True])
+def test_loadfile_preserves_tests_and_starts_the_expected_files(
+    tmp_path: Path, prioritize_slow_files: bool
+) -> None:
+    expected_by_file = _create_suite(tmp_path)
+    traces = _run_suite(tmp_path, prioritize_slow_files)
     expected_first = (
         {
             "tests/windows/test_trusted_derived_wal_grid_ui.py",
@@ -107,3 +124,63 @@ def pytest_runtest_call(item):
         observed_by_file.update(worker_files)
     # Every original test runs exactly once, retaining its within-file order.
     assert observed_by_file == expected_by_file
+
+
+@pytest.mark.parametrize("prioritize_slow_files", [False, True])
+def test_partitions_run_every_test_once_without_splitting_files(
+    tmp_path: Path, prioritize_slow_files: bool,
+) -> None:
+    observed = {}
+    counts = []
+    for partition in ("1/2", "2/2"):
+        directory = tmp_path / partition.replace("/", "-")
+        expected = _create_suite(directory)
+        traces = _run_suite(directory, prioritize_slow_files, partition)
+        files = {}
+        for trace in traces:
+            worker_files = {}
+            for nodeid in trace:
+                worker_files.setdefault(nodeid.split("::", 1)[0], []).append(nodeid)
+            assert files.keys().isdisjoint(worker_files)
+            files.update(worker_files)
+        assert observed.keys().isdisjoint(files)
+        for filename, tests in files.items():
+            assert tests == expected[filename]
+        observed.update(files)
+        counts.append(sum(map(len, files.values())))
+    assert observed == expected
+    assert sorted(counts) == [9, 10]
+
+
+@pytest.mark.parametrize("partition", ["1/2", "2/2"])
+def test_partition_membership_is_independent_of_collection_order(
+    tmp_path: Path, partition: str,
+) -> None:
+    results = []
+    for reverse in (False, True):
+        directory = tmp_path / str(reverse)
+        expected = _create_suite(directory)
+        filenames = list(expected)
+        if reverse:
+            filenames.reverse()
+        traces = _run_suite(directory, True, partition, filenames)
+        results.append(sorted(nodeid for trace in traces for nodeid in trace))
+    assert results[0] == results[1]
+
+
+@pytest.mark.parametrize("partition", ["0/2", "3/2", "1/3", "x/y", "1"])
+def test_invalid_partition_cannot_silently_omit_tests(tmp_path: Path, partition: str) -> None:
+    _create_suite(tmp_path)
+    environment = os.environ.copy()
+    environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    environment.pop("PYTEST_ADDOPTS", None)
+    environment.pop("PYTEST_PLUGINS", None)
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "tests._ci_scheduling",
+         f"--qplot-ci-partition={partition}", "--collect-only"],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "invalid choice" in result.stderr
+    assert not list(tmp_path.glob("gw*.jsonl"))

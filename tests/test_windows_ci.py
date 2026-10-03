@@ -41,6 +41,38 @@ def test_full_windows_suite_has_its_own_bounded_time_budget(
     assert '"-n", "2", "--dist=loadfile"' in full_suite
 
 
+def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
+    github_directory: Path,
+) -> None:
+    workflow = (github_directory / "workflows/ci.yml").read_text(encoding="utf-8")
+    checks = workflow.split("  checks:\n", 1)[1].split("    env:\n", 1)[0]
+    entries = re.findall(
+        r'- os: ([^\n]+)\n\s+python-version: "([^"]+)"\n\s+suite: (\w+)'
+        r'(?:\n\s+partition: "([^"]+)")?', checks,
+    )
+    windows_full = [(version, partition) for os_name, version, suite, partition in entries
+                    if os_name == "windows-2025" and suite == "full"]
+    assert sorted(windows_full) == [("3.11", "1/2"), ("3.11", "2/2"),
+                                    ("3.14", "1/2"), ("3.14", "2/2")]
+    assert all(not partition for os_name, _version, suite, partition in entries
+               if os_name != "windows-2025" or suite != "full")
+    full_suite = workflow.split(
+        "      - name: Run full test suite as a standard Windows user\n", 1,
+    )[1].split("      - name:", 1)[0]
+    assert '"--qplot-ci-partition=${{ matrix.partition }}"' in full_suite
+    assert "-TimeoutSeconds 1200" in full_suite
+    assert "timeout-minutes: 25" in checks
+    assert "invoke-bounded-unprivileged-windows.ps1" in full_suite
+    # Every matrix entry remains required, and Linux coverage still runs all
+    # tests with its ordinary instrumentation and no partition option.
+    required = workflow.split("  required-checks:\n", 1)[1]
+    assert 'needs.checks.result }}" != "success"' in required
+    coverage = workflow.split("  coverage:\n", 1)[1].split("  package:\n", 1)[0]
+    assert "python -m pytest -n 2 --dist=loadfile --no-loadscope-reorder" in coverage
+    assert "--no-cov" not in coverage
+    assert "--qplot-ci-partition" not in coverage
+
+
 @pytest.mark.parametrize("suite", ["full", "compatibility"])
 @pytest.mark.parametrize("python_version", ["3.12.10", "3.13.15"])
 def test_windows_source_suite_fits_standard_user_command_line(

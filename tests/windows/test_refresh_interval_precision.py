@@ -20,6 +20,7 @@ from qplot.windows._refresh_interval import (
     set_refresh_interval,
 )
 from qplot.windows.main import MainWindow
+from qplot.windows.plot1d import plot1d
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_plot_integration import wait_for
 
@@ -62,14 +63,16 @@ def live_view(tmp_path, monkeypatch, rate, *, heatmap=False):
             window.startupDatabaseTimer.stop()
             window.monitor.stop()
             monkeypatch.setattr(window, "show_error", lambda *args: errors.append(args))
-            assert window.load_file(str(path))
-            wait_for(lambda: not window._database_load_active)
+            with QtCore.QSignalBlocker(window.monitor):
+                assert window.load_file(str(path))
+                wait_for(lambda: not window._database_load_active)
 
             def open_plot(name, *, show=True):
-                window.openPlot(guid=saver.dataset.guid, params=[parameters[name]], show=show)
-                plot = window.windows[-1]
-                monkeypatch.setattr(plot, "show_error", lambda *args: errors.append(args))
-                wait_for(lambda: not plot.worker.running)
+                with QtCore.QSignalBlocker(window.monitor):
+                    window.openPlot(guid=saver.dataset.guid, params=[parameters[name]], show=show)
+                    plot = window.windows[-1]
+                    monkeypatch.setattr(plot, "show_error", lambda *args: errors.append(args))
+                    wait_for_plot_load(window, plot)
                 assert plot._last_error_text is None
                 return plot
 
@@ -84,6 +87,15 @@ def live_view(tmp_path, monkeypatch, rate, *, heatmap=False):
         if window is not None:
             close_main_window(window)
         experiment.conn.close()
+
+
+def wait_for_plot_load(window, plot):
+    # Drain one finite load. A live timer can start a replacement worker in the
+    # same event batch as publication, hiding the idle state from the poll.
+    # Leave both timers active at their exact configured intervals and restore
+    # emissions before testing the refresh controls.
+    with QtCore.QSignalBlocker(window.monitor), QtCore.QSignalBlocker(plot.monitor):
+        wait_for(lambda: not plot.worker.running)
 
 
 def assert_interval(owner, rate):
@@ -119,6 +131,42 @@ def test_live_main_and_new_plot_keep_configured_rate_after_unrelated_apply(
         finally:
             dialog.close()
             dialog.deleteLater()
+
+
+def test_initial_load_fence_keeps_live_timers_and_restores_timeout_delivery(
+    tmp_path, monkeypatch,
+):
+    publications = []
+    original_refresh = plot1d.refreshPlot
+
+    def publish_then_due_timeout(plot, *args, **kwargs):
+        result = original_refresh(plot, *args, **kwargs)
+        publications.append((plot.monitor.isActive(), plot.monitor.interval(),
+                             plot.monitor.signalsBlocked()))
+        # Deliver a due timeout in the publication's event batch instead of
+        # depending on the runner's speed to reproduce the polling race.
+        plot.monitor.timeout.emit()
+        return result
+
+    monkeypatch.setattr(plot1d, "refreshPlot", publish_then_due_timeout)
+    with live_view(tmp_path, monkeypatch, .0001) as (window, open_plot):
+        plot = open_plot("signal_a")
+        assert publications == [(True, 1, True)]
+        for owner in (window, plot):
+            assert_interval(owner, .0001)
+            assert not owner.monitor.signalsBlocked()
+        np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], [1., 2., 3., 4.])
+        timeouts = []
+        plot.monitor.timeout.connect(lambda: timeouts.append(True))
+        first_worker = plot.worker
+        plot.monitor.timeout.emit()
+        assert timeouts == [True]
+        assert plot.worker is not first_worker
+        wait_for_plot_load(window, plot)
+        assert publications == [(True, 1, True), (True, 1, True)]
+        assert not plot.monitor.signalsBlocked()
+        assert_interval(plot, .0001)
+        np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], [1., 2., 3., 4.])
 
 
 def type_zero(spin):
