@@ -791,6 +791,8 @@ def _snapshot_selected_summary_values(
     cancelled_callback=None,
     deadline=None,
 ):
+    from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+
     result_count = _snapshot_positive_int(metadata.get("result_count"))
     summaries = {}
     if (
@@ -808,10 +810,22 @@ def _snapshot_selected_summary_values(
                 deadline=deadline,
             )
         )
-    shape = metadata.get("setpoint_shape") or metadata.get("point_shape") or ()
-    for name, steps in zip(setpoint_names, shape, strict=False):
+    planned_steps = TrustedMetadataQueryAdapter._planned_setpoint_steps(
+        metadata, setpoint_names,
+    )
+    # The largest run-wide shape cannot describe independent dependent trees.
+    # Retain the controller's shape only when no dependency declaration exists
+    # and a single dependent makes its association unambiguous.
+    if (
+        not _parameter_dependencies(_json_dict(metadata.get("run_description")))
+        and len(metadata.get("measure_parameters") or ()) == 1
+    ):
+        shape = metadata.get("setpoint_shape") or metadata.get("point_shape") or ()
+        if len(shape) == len(setpoint_names):
+            planned_steps = dict(zip(setpoint_names, shape, strict=True))
+    for name, steps in planned_steps.items():
         summaries.setdefault(name, {}).setdefault("steps", steps)
-    return summaries
+    return {name: summaries[name] for name in setpoint_names if name in summaries}
 
 
 def _snapshot_positive_int(value):

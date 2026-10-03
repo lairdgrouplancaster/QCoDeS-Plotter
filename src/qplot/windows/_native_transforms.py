@@ -170,9 +170,28 @@ class NativePlotDataItem(pg.PlotDataItem):
             self._qplot_fft_error = str(error)
             return np.array([], dtype=float), np.array([], dtype=float)
         if len(x) == 1:
-            return np.array([0.]), np.abs(y)
+            # abs(minimum signed integer) wraps in the recorded dtype.
+            # The FFT spectrum uses floating magnitudes, including its DC bin.
+            return np.array([0.]), np.abs(y.astype(np.float64))
         if reverse:
             y = y[::-1]
+        dc_offset = None
+        if y.dtype.kind in "iu":
+            dc_offset = Fraction(sum(map(int, y)), len(y))
+            y = _center_integer_samples(y)
+        elif y.dtype.kind == "O":
+            numeric = y.astype(np.float64)
+            if (np.all(np.isfinite(numeric))
+                    and np.max(np.abs(numeric)) <= np.finfo(float).max / 2.):
+                # FFT converts integer/object arrays to float. Remove their
+                # exact offset first so adjacent recorded integers survive;
+                # restore only DC after any nonuniform interpolation.
+                exact = [Fraction(value.item() if isinstance(value, np.generic) else value)
+                         for value in y]
+                dc_offset = sum(exact, Fraction()) / len(exact)
+                y = np.array([float(value - dc_offset) for value in exact])
+            else:
+                y = numeric
         amplitude_scale = 1.
         if np.all(np.isfinite(y)):
             largest = float(np.max(np.abs(y)))
@@ -182,7 +201,8 @@ class NativePlotDataItem(pg.PlotDataItem):
                 amplitude_scale = largest
                 y = y / amplitude_scale
         # Match PyQtGraph's uniformity tolerance and normalized real FFT.
-        if np.any(np.abs(dx - dx[0]) > abs(dx[0]) / 1000):
+        resampled = np.any(np.abs(dx - dx[0]) > abs(dx[0]) / 1000)
+        if resampled:
             uniform_x = np.linspace(x[0], x[-1], len(x))
             y = np.interp(uniform_x, x, y)
         magnitudes = np.abs(np.fft.rfft(y) / len(y))
@@ -190,6 +210,13 @@ class NativePlotDataItem(pg.PlotDataItem):
             # Every normalized coefficient is bounded by the largest sample.
             # Clamp roundoff at that bound before restoring extreme units.
             magnitudes = np.minimum(magnitudes, 1.) * amplitude_scale
+        if dc_offset is not None:
+            # Resampling may change the centered mean. Restore its signed
+            # value before taking the magnitude, retaining the exact offset.
+            if resampled:
+                resampled_mean = sum((Fraction(float(value)) for value in y), Fraction()) / len(y)
+                dc_offset += resampled_mean * Fraction(amplitude_scale)
+            magnitudes[0] = abs(float(dc_offset))
         frequencies = np.arange(len(magnitudes), dtype=float) * frequency_step
         return frequencies, magnitudes
 
@@ -227,7 +254,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                 # Keep the original dataset exact for CSV/cursor access and
                 # map only the on-screen values to float.
                 x = source.x
-                y = source.y.astype(np.float64)
+                y = source.y if self.opts["fftMode"] else source.y.astype(np.float64)
                 if self.opts["subtractMeanMode"]:
                     y = (_center_object_samples(source.y) if source.y.dtype.kind == "O"
                          else _center_float_samples(y))
