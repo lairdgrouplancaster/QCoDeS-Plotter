@@ -433,7 +433,22 @@ class plot2d(
                 > self.__dict__.get("_colorbar_operation_apply_generation", 0)
                 and self._colorbar_manual_levels is None
                 )
-            self._render_heatmap()
+            color_levels = self._colorbar_manual_levels
+            if color_levels is None:
+                if not hasattr(self, "bar") or autoLevels or operation_auto_levels:
+                    color_levels = self._data_colorbar_levels()
+                else:
+                    color_levels = self.bar.levels()
+            if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
+                self._reject_heatmap_color_range()
+                self._emit_heatmap_trace_updated()
+                return
+            self._heatmap_color_range_rejected = False
+            self._heatmap_publication_color_levels = color_levels
+            try:
+                self._render_heatmap()
+            finally:
+                self.__dict__.pop("_heatmap_publication_color_levels", None)
             if not self._refresh_publication_source_is_current(
                     plot_worker,
                     clear_display=clear_display,
@@ -462,6 +477,8 @@ class plot2d(
                     self.scaleColorbar()
                 else:
                     self._set_colorbar_levels(*self._colorbar_manual_levels)
+
+            self.bar.show()
 
             # The dependent-variable label may have changed when an operation
             # such as differentiation was added or removed.
@@ -949,7 +966,11 @@ class plot2d(
         if self._heatmap_downsample_info is None:
             return
 
-        self._new_heatmap_downsample_dialog().exec()
+        dialog = self._new_heatmap_downsample_dialog()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
 
     def _new_heatmap_downsample_dialog(self) -> qtw.QDialog:
@@ -1477,18 +1498,24 @@ class plot2d(
     def _render_heatmap(self) -> None:
         """Render uniform grids as images and rectilinear grids as meshes."""
 
-        if not self.__dict__.get("_primary_heatmap_visible", True):
+        if (
+                self.__dict__.get("_heatmap_color_range_rejected", False)
+                or not self.__dict__.get("_primary_heatmap_visible", True)
+                ):
             self._hide_heatmap_renderers()
             return
 
         geometry = self._required_heatmap_geometry()
         # Render a float view; operations, raw cuts and CSV use the exact grid.
         data_grid = np.asarray(self.dataGrid, dtype=float)
+        color_levels = self.__dict__.get("_heatmap_publication_color_levels")
+        if color_levels is None:
+            color_levels = self._current_colorbar_levels()
         if geometry.is_uniform:
-            self.image.setImage(
-                data_grid,
-                autoLevels=False,
-                )
+            image_options: dict[str, Any] = {"autoLevels": False}
+            if color_levels is not None:
+                image_options["levels"] = color_levels
+            self.image.setImage(data_grid, **image_options)
             self.image.setRect(QtCore.QRectF(*geometry.rect))
             self.heatmap_mesh.hide()
             self.image.show()
@@ -1501,6 +1528,8 @@ class plot2d(
             geometry.y.edges,
             indexing="xy",
             )
+        if color_levels is not None:
+            self.heatmap_mesh.setLevels(color_levels, update=False)
         self.heatmap_mesh.setData(
             x_vertices,
             y_vertices,

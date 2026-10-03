@@ -1477,7 +1477,10 @@ class MainWindow(
         dialog.preferencesApplied.connect(
             lambda: self.show_status("Preferences saved.", 3000)
             )
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
 
     def apply_current_settings(self):

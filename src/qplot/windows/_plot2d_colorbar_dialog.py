@@ -51,6 +51,7 @@ if TYPE_CHECKING:
         def _set_colorbar_levels(self, vmin: float, vmax: float) -> None: ...
         def scaleColorbar(self, event: Any = None) -> None: ...
         def show_status(self, message: str, timeout: int = 5000) -> None: ...
+        def refreshWindow(self, force: bool = False) -> None: ...
 else:
     class _ColorbarScaleDialogBase:
         pass
@@ -746,6 +747,11 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self._sync_colorbar_scale_controls()
             return False
 
+        if not np.isfinite(float(vmax) - float(vmin)):
+            self.show_status("The color scale range is too wide to display safely.", 5000)
+            self._sync_colorbar_scale_controls()
+            return False
+
         self._colorbar_manual_levels = (float(vmin), float(vmax))
 
         if "relevel_refresh" in self.__dict__:
@@ -754,6 +760,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         self._set_colorbar_levels(*self._colorbar_manual_levels)
         if "colorbar_manual_radio" in self.__dict__:
             self.colorbar_manual_radio.setChecked(True)
+        if self.__dict__.get("_heatmap_color_range_rejected", False):
+            self.refreshWindow(force=True)
         return True
 
     @QtCore.pyqtSlot()

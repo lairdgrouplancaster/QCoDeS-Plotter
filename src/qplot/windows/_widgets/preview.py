@@ -1931,7 +1931,16 @@ def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
         if high == low:
             scaled = np.full(values.shape, 0.5)
         else:
-            scaled = (values - low) / (high - low)
+            span = high - low
+            if np.isfinite(span):
+                scaled = (values - low) / span
+            else:
+                # Finite opposite-sign endpoints can have an infinite span.
+                # Scale before subtraction only in that case, retaining the
+                # direct arithmetic for tiny or closely spaced ranges.
+                magnitude = max(abs(low), abs(high))
+                scaled_low, scaled_high = low / magnitude, high / magnitude
+                scaled = (values / magnitude - scaled_low) / (scaled_high - scaled_low)
         if invert:
             scaled = 1 - scaled
         return plot_margin + scaled * plot_size
@@ -2628,12 +2637,20 @@ def _normalise_grid_shape(grid_shape):
 
 
 def _viridis_rgb(values):
-    low = np.nanmin(values)
-    high = np.nanmax(values)
+    low = float(np.nanmin(values))
+    high = float(np.nanmax(values))
     if high == low:
         scaled = np.full(values.shape, 0.5, dtype=np.float64)
     else:
-        scaled = (values - low) / (high - low)
+        span = high - low
+        if np.isfinite(span):
+            scaled = (values - low) / span
+        else:
+            # Preserve finite measured cells when opposite-sign endpoints
+            # have a span too large for direct subtraction.
+            magnitude = max(abs(low), abs(high))
+            scaled_low, scaled_high = low / magnitude, high / magnitude
+            scaled = (values / magnitude - scaled_low) / (scaled_high - scaled_low)
 
     nan_values = ~np.isfinite(scaled)
     scaled = np.nan_to_num(scaled, nan=0.0)

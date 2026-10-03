@@ -1126,14 +1126,12 @@ class loader(QtCore.QRunnable):
                             self._float_heatmap_coordinates(
                                 np.array(list(axis_unique), dtype=object),
                                 self.axes_dict[("x", "y")[axis]],
-                                require_exact=len(axis_unique) > axis_limit,
                             )
                         if len(axis_unique) > axis_limit:
                             unique[axis] = None
                     elif precision_sensitive[axis]:
                         self._float_heatmap_coordinates(
                             values, self.axes_dict[("x", "y")[axis]],
-                            require_exact=True,
                         )
 
         self.total_point_count_estimate = source_count
@@ -1589,8 +1587,8 @@ class loader(QtCore.QRunnable):
         return False
 
 
-    def _float_heatmap_coordinates(self, values, parameter_name, *, require_exact=False):
-        """Reject coordinate collisions before grouping can merge real cells."""
+    def _float_heatmap_coordinates(self, values, parameter_name):
+        """Reject loss of recorded coordinates before grouping or operations."""
         self._check_cancelled()
         values = np.asarray(values)
         if values.dtype.kind == "O":
@@ -1603,25 +1601,24 @@ class loader(QtCore.QRunnable):
             unique = np.unique(values[numeric_isfinite(values)])
             self._check_cancelled()
             displayed = np.asarray(unique, dtype=float)
-            if require_exact:
-                # Once streaming cardinality exceeds the bounded exact set,
-                # retain no unbounded history. Only lossless conversions can
-                # prove that later records cannot collide with discarded ones.
-                for index, (original, display) in enumerate(zip(unique, displayed, strict=True)):
-                    if index % 1024 == 0:
-                        self._check_cancelled()
-                    original = original.item() if isinstance(original, np.generic) else original
-                    if original != float(display):
-                        raise ValueError(
-                            f"Heatmap coordinate precision is insufficient: parameter "
-                            f"'{parameter_name}' cannot be represented exactly while "
-                            "streaming a bounded coordinate grid."
-                        )
             if displayed.size > 1 and np.any(displayed[1:] == displayed[:-1]):
                 raise ValueError(
                     f"Heatmap coordinate precision is insufficient: distinct values "
                     f"of parameter '{parameter_name}' collapse at floating-point precision."
                 )
+            # Distinct cells can remain distinct while every centre rounds.
+            # That would silently change operations, cursor values and CSV.
+            # Require lossless conversion even before streaming sets saturate.
+            for index, (original, display) in enumerate(zip(unique, displayed, strict=True)):
+                if index % 1024 == 0:
+                    self._check_cancelled()
+                original = original.item() if isinstance(original, np.generic) else original
+                if original != float(display):
+                    raise ValueError(
+                        f"Heatmap coordinate precision is insufficient: parameter "
+                        f"'{parameter_name}' cannot be represented exactly as "
+                        "heatmap coordinates."
+                    )
         self._check_cancelled()
         return converted
 
@@ -1925,24 +1922,18 @@ class loader(QtCore.QRunnable):
         x_index = np.searchsorted(unique_x, x_data)
         self._check_cancelled()
         y_index = np.searchsorted(unique_y, y_data)
-        grid_sum = np.zeros((unique_y.size, unique_x.size), dtype=float)
-        grid_count = np.zeros((unique_y.size, unique_x.size), dtype=np.int32)
+        means = FiniteBinMeans((unique_y.size, unique_x.size), self._check_cancelled)
         for start in range(0, z_data.size, CANCELLATION_CHUNK_SIZE):
             self._check_cancelled()
             stop = start + CANCELLATION_CHUNK_SIZE
             indices = (y_index[start:stop], x_index[start:stop])
-            np.add.at(grid_sum, indices, z_data[start:stop])
-            np.add.at(grid_count, indices, 1)
-
-        self._check_cancelled()
-        data_grid = np.full(grid_sum.shape, np.nan, dtype=float)
-        np.divide(
-            grid_sum,
-            grid_count,
-            out=data_grid,
-            where=grid_count > 0,
-            casting="unsafe",
-            )
+            means.add(indices, z_data[start:stop])
+        if means.begin_exact_replay():
+            for start in range(0, z_data.size, CANCELLATION_CHUNK_SIZE):
+                self._check_cancelled()
+                stop = start + CANCELLATION_CHUNK_SIZE
+                means.replay((y_index[start:stop], x_index[start:stop]), z_data[start:stop])
+        data_grid = means.means()
 
         return unique_x, unique_y, data_grid
 

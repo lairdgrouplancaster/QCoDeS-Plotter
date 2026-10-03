@@ -1264,7 +1264,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
     def test_run_context_menu_keeps_plot_actions_without_add_actions(self):
         old_isfile = getattr(treeWidgets, "isfile", None)
-        old_exec = qtw.QMenu.exec
+        original_exec_descriptor = qtw.QMenu.__dict__["exec"]
         treeWidgets.isfile = lambda _: False
         captured = []
         main = None
@@ -1283,7 +1283,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
             captured.extend(action.text() for action in menu.actions())
 
         try:
-            qtw.QMenu.exec = capture_menu
             main = qtw.QMainWindow()
             main.ds = Dataset()
             main.windows = []
@@ -1303,7 +1302,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             run_list.setCurrentItem(run_list._item_for_guid("guid-1"))
             item = run_list._item_for_guid("guid-2")
 
-            run_list.prepareMenu(run_list.visualItemRect(item).center())
+            with patch.object(qtw.QMenu, "exec", capture_menu):
+                run_list.prepareMenu(run_list.visualItemRect(item).center())
+            self.assertIs(qtw.QMenu.__dict__["exec"], original_exec_descriptor)
 
             self.assertEqual(run_list.currentItem().guid, "guid-2")
             self.assertEqual(captured[0], "&Plot all")
@@ -1314,10 +1315,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertFalse(any(action.startswith("Add ") for action in captured))
             self.assertFalse(any(action.startswith("  - Add ") for action in captured))
         finally:
-            qtw.QMenu.exec = old_exec
             treeWidgets.isfile = old_isfile
             if main is not None:
+                main.hide()
                 main.deleteLater()
+                qtw.QApplication.sendPostedEvents(main, QtCore.QEvent.Type.DeferredDelete)
 
     def test_plot_options_menu_includes_preferences_and_excludes_confirmation_duplicates(self):
         class Host(qtw.QMainWindow):

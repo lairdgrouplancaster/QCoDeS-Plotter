@@ -58,12 +58,36 @@ def _center_object_samples(values: np.ndarray) -> np.ndarray:
     )
 
 
+def _safe_secant(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Recover finite quotients when either finite difference overflows."""
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        numerator, denominator = _safe_difference(y), _safe_difference(x)
+        result = numerator / denominator
+    repair = ((~np.isfinite(numerator) | ~np.isfinite(denominator))
+              & numeric_isfinite(x[:-1]) & numeric_isfinite(x[1:])
+              & numeric_isfinite(y[:-1]) & numeric_isfinite(y[1:]))
+    for index in np.flatnonzero(repair):
+        # This is a rare fallback. Exact fractions avoid both difference
+        # overflow and underflow while dividing by a huge coordinate span.
+        cells = [value.item() if isinstance(value, np.generic) else value
+                 for value in (x[index], x[index + 1], y[index], y[index + 1])]
+        left_x, right_x, left_y, right_y = map(Fraction, cells)
+        distance = right_x - left_x
+        if distance:
+            quotient = (right_y - left_y) / distance
+            try:
+                result[index] = float(quotient)
+            except OverflowError:
+                result[index] = np.inf if quotient > 0 else -np.inf
+    return result
+
+
 class _FFTCoordinatesError(ValueError):
     """Coordinates cannot define a native coordinate-domain FFT."""
 
 
 def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
-    """Share control validation and FFT preparation, preserving source order."""
+    """Return increasing interpolation coordinates and the frequency step."""
     message = "FFT requires finite, strictly monotonic coordinates with a nonzero span."
     if x.dtype.kind == "b":
         x = x.astype(np.uint8)
@@ -73,7 +97,7 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         x = x.astype(np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
         dx = _safe_difference(x)
-    if not (np.all(numeric_isfinite(x)) and np.all(np.isfinite(dx))) or len(x) == 0:
+    if not np.all(numeric_isfinite(x)) or len(x) == 0:
         raise _FFTCoordinatesError(message)
     # Retain PyQtGraph's supported one-sample DC spectrum.
     if len(x) == 1:
@@ -93,10 +117,22 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
             exact = np.frompyfunc(Fraction, 1, 1)(exact)
             x = (exact - exact[0]).astype(np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
+        span = float(x[-1] - x[0])
+    coordinate_scale = 1.
+    if not np.isfinite(span):
+        # A finite sweep may cross zero over more than float64's range.
+        # Interpolate on scaled coordinates and restore units in frequency.
+        coordinate_scale = float(np.max(np.abs(x)))
+        x = x / coordinate_scale
+        dx = np.diff(x)
+    with np.errstate(over="ignore", invalid="ignore"):
         spacing = float(x[-1] - x[0]) / (len(x) - 1)
     if not (np.isfinite(spacing) and spacing > 0 and np.all(np.diff(x) > 0)):
         raise _FFTCoordinatesError(message)
-    return x, dx, spacing, reverse
+    period = spacing * len(x)
+    frequency_step = ((1. / period) if np.isfinite(period)
+                      else (1. / spacing) / len(x)) / coordinate_scale
+    return x, dx, frequency_step, reverse
 
 
 def native_fft_coordinate_error(x: np.ndarray | None) -> str | None:
@@ -129,7 +165,7 @@ class NativePlotDataItem(pg.PlotDataItem):
         """
         self._qplot_fft_error = None
         try:
-            x, dx, spacing, reverse = _prepare_fft_coordinates(x)
+            x, dx, frequency_step, reverse = _prepare_fft_coordinates(x)
         except _FFTCoordinatesError as error:
             self._qplot_fft_error = str(error)
             return np.array([], dtype=float), np.array([], dtype=float)
@@ -137,11 +173,25 @@ class NativePlotDataItem(pg.PlotDataItem):
             return np.array([0.]), np.abs(y)
         if reverse:
             y = y[::-1]
+        amplitude_scale = 1.
+        if np.all(np.isfinite(y)):
+            largest = float(np.max(np.abs(y)))
+            if largest > np.finfo(float).max / len(y):
+                # Scale before interpolation too: interpolating opposite
+                # extremes otherwise overflows its intermediate difference.
+                amplitude_scale = largest
+                y = y / amplitude_scale
         # Match PyQtGraph's uniformity tolerance and normalized real FFT.
         if np.any(np.abs(dx - dx[0]) > abs(dx[0]) / 1000):
             uniform_x = np.linspace(x[0], x[-1], len(x))
             y = np.interp(uniform_x, x, y)
-        return np.fft.rfftfreq(len(y), spacing), np.abs(np.fft.rfft(y) / len(y))
+        magnitudes = np.abs(np.fft.rfft(y) / len(y))
+        if amplitude_scale != 1.:
+            # Every normalized coefficient is bounded by the largest sample.
+            # Clamp roundoff at that bound before restoring extreme units.
+            magnitudes = np.minimum(magnitudes, 1.) * amplitude_scale
+        frequencies = np.arange(len(magnitudes), dtype=float) * frequency_step
+        return frequencies, magnitudes
 
     def _getDisplayDataset(self) -> PlotDataset | None:
         # Isolate the private PyQtGraph mapping hook here. Seed only the mapped
@@ -157,7 +207,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                 x = source.y[:-1] if self.opts["phasemapMode"] else source.x[:-1]
                 if self.opts["phasemapMode"] and x.dtype.kind == "O":
                     x = x.astype(np.float64)
-                y = _safe_difference(source.y) / _safe_difference(source.x)
+                y = _safe_secant(source.x, source.y)
             elif self.opts["subtractMeanMode"] and source.y.dtype.kind in "iu":
                 x = source.x
                 y = _center_integer_samples(source.y)

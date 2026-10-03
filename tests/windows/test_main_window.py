@@ -2001,7 +2001,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         self.assertEqual(closed, [target])
 
     def test_confirmation_dialog_can_disable_future_warning_after_confirm(self):
-        old_exec = qtw.QMessageBox.exec
+        self.assertNotIn("exec", qtw.QMessageBox.__dict__)
         updates = []
         labels = []
 
@@ -2018,23 +2018,23 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             return qtw.QMessageBox.StandardButton.Yes
 
         try:
-            qtw.QMessageBox.exec = fake_exec
-            reply = ask_confirmation_with_dont_ask_again(
-                window,
-                "Close All Plot Windows",
-                "Close 2 plot windows?",
-                CONFIRM_CLOSE_ALL_KEY,
-            )
+            with patch.object(qtw.QMessageBox, "exec", fake_exec):
+                reply = ask_confirmation_with_dont_ask_again(
+                    window,
+                    "Close All Plot Windows",
+                    "Close 2 plot windows?",
+                    CONFIRM_CLOSE_ALL_KEY,
+                )
         finally:
-            qtw.QMessageBox.exec = old_exec
             window.deleteLater()
 
+        self.assertNotIn("exec", qtw.QMessageBox.__dict__)
         self.assertEqual(reply, qtw.QMessageBox.StandardButton.Yes)
         self.assertEqual(labels, [DO_NOT_ASK_AGAIN_LABEL])
         self.assertEqual(updates, [(CONFIRM_CLOSE_ALL_KEY, False)])
 
     def test_confirmation_dialog_cancel_does_not_disable_future_warning(self):
-        old_exec = qtw.QMessageBox.exec
+        self.assertNotIn("exec", qtw.QMessageBox.__dict__)
         updates = []
 
         class FakeConfig:
@@ -2049,17 +2049,17 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             return qtw.QMessageBox.StandardButton.No
 
         try:
-            qtw.QMessageBox.exec = fake_exec
-            reply = ask_confirmation_with_dont_ask_again(
-                window,
-                "Confirm Exit",
-                "Are you sure you want to exit?",
-                CONFIRM_QUIT_KEY,
-            )
+            with patch.object(qtw.QMessageBox, "exec", fake_exec):
+                reply = ask_confirmation_with_dont_ask_again(
+                    window,
+                    "Confirm Exit",
+                    "Are you sure you want to exit?",
+                    CONFIRM_QUIT_KEY,
+                )
         finally:
-            qtw.QMessageBox.exec = old_exec
             window.deleteLater()
 
+        self.assertNotIn("exec", qtw.QMessageBox.__dict__)
         self.assertEqual(reply, qtw.QMessageBox.StandardButton.No)
         self.assertEqual(updates, [])
 

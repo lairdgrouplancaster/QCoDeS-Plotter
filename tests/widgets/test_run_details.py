@@ -2792,7 +2792,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertTrue(image.property(PREVIEW_SELECTED_PROPERTY))
 
     def test_preview_keyboard_menu_keys_open_plot_and_export_actions(self):
-        old_exec = qtw.QMenu.exec
+        original_exec_descriptor = qtw.QMenu.__dict__["exec"]
         captured_action_texts = []
         preview = PreviewTab(preview_size=100)
         image = None
@@ -2803,7 +2803,6 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             )
 
         try:
-            qtw.QMenu.exec = capture_menu
             preview._show_previews(
                 [
                     {
@@ -2819,21 +2818,22 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             )
             image = preview.findChild(qtw.QLabel, "previewImage")
 
-            QtTest.QTest.keyClick(
-                image,
-                QtCore.Qt.Key.Key_Menu,
-            )
-            QtTest.QTest.keyClick(
-                image,
-                QtCore.Qt.Key.Key_F10,
-                QtCore.Qt.KeyboardModifier.ShiftModifier,
-            )
+            with patch.object(qtw.QMenu, "exec", capture_menu):
+                QtTest.QTest.keyClick(
+                    image,
+                    QtCore.Qt.Key.Key_Menu,
+                )
+                QtTest.QTest.keyClick(
+                    image,
+                    QtCore.Qt.Key.Key_F10,
+                    QtCore.Qt.KeyboardModifier.ShiftModifier,
+                )
+            self.assertIs(qtw.QMenu.__dict__["exec"], original_exec_descriptor)
         finally:
             if image is not None:
                 # On macOS QtTest leaves the synthetic modifier globally
                 # pressed, changing selection behaviour in later table tests.
                 QtTest.QTest.keyRelease(image, QtCore.Qt.Key.Key_Shift)
-            qtw.QMenu.exec = old_exec
 
         self.assertEqual(
             captured_action_texts,
@@ -2844,7 +2844,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         )
 
     def test_right_clicking_preview_can_request_export(self):
-        old_exec = qtw.QMenu.exec
+        original_exec_descriptor = qtw.QMenu.__dict__["exec"]
         captured_actions = []
         preview = PreviewTab(preview_size=100)
         requested = []
@@ -2854,7 +2854,6 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             captured_actions.extend(menu.actions())
 
         try:
-            qtw.QMenu.exec = capture_menu
             preview._show_previews(
                 [
                     {
@@ -2875,7 +2874,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 QtCore.QPoint(10, 10),
                 QtCore.QPoint(10, 10),
             )
-            qtw.QApplication.sendEvent(image, event)
+            with patch.object(qtw.QMenu, "exec", capture_menu):
+                qtw.QApplication.sendEvent(image, event)
+            self.assertIs(qtw.QMenu.__dict__["exec"], original_exec_descriptor)
 
             export_action = next(
                 action
@@ -2886,7 +2887,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
             self.assertEqual(requested, ["signal"])
         finally:
-            qtw.QMenu.exec = old_exec
+            self.assertIs(qtw.QMenu.__dict__["exec"], original_exec_descriptor)
 
     def test_clicking_preview_marks_it_selected(self):
         preview = PreviewTab(preview_size=80)

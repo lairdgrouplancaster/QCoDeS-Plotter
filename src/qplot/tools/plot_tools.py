@@ -14,6 +14,7 @@ To pass other arguments, please use lambda functions, i.e.:
 .worker.loader.do_operations() expects a dictionary to be returned which is 
 used to find which properties to update the keyed value.
 """
+import math
 from decimal import Decimal
 from fractions import Fraction
 
@@ -171,6 +172,53 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
                 scale = np.nanmax(np.abs(large), axis=1, keepdims=True)
                 mean = mean_func(large / scale, axis=1, keepdims=True) * scale
                 result[fallback] = large - mean
+            # Anchoring around a large positive/negative sample can round
+            # away small source cells across zero before the mean is formed.
+            # Sum those original values accurately; nearby same-sign offsets
+            # keep the anchor path so fractional offset means remain intact.
+            mixed_sign = (np.any(chunk < 0, axis=1) & np.any(chunk > 0, axis=1)
+                          & expected_finite_mean & ~infinite_source)
+            for row_index in np.flatnonzero(mixed_sign):
+                _check_cancelled(cancelled_callback)
+                original = chunk[row_index][finite[row_index]]
+
+                def values_for_sum(values):
+                    for index, value in enumerate(values):
+                        if index % 1024 == 0:
+                            _check_cancelled(cancelled_callback)
+                        yield float(value)
+
+                nonzero = np.abs(original[original != 0])
+                # With more than a mantissa's range between samples, rounding
+                # the mean itself can change the small residual by one ULP.
+                # Subtract exact means in just these sensitive rows.
+                exact_required = np.max(nonzero) / (2. ** 53) > np.min(nonzero)
+                if not exact_required:
+                    try:
+                        mean = math.fsum(values_for_sum(original)) / len(original)
+                    except OverflowError:
+                        # The exact total can overflow despite a finite mean.
+                        exact_required = True
+                if exact_required:
+                    total = Fraction()
+                    exact_values = []
+                    for value in values_for_sum(original):
+                        exact_value = Fraction(value)
+                        exact_values.append(exact_value)
+                        total += exact_value
+                    exact_mean = total / len(original)
+                    residuals = np.empty(len(original))
+                    for index, value in enumerate(exact_values):
+                        if index % 1024 == 0:
+                            _check_cancelled(cancelled_callback)
+                        difference = value - exact_mean
+                        try:
+                            residuals[index] = float(difference)
+                        except OverflowError:
+                            residuals[index] = np.inf if difference > 0 else -np.inf
+                    result[row_index, finite[row_index]] = residuals
+                else:
+                    result[row_index] = chunk[row_index] - mean
             if np.any(infinite_source):
                 special = chunk[infinite_source]
                 result[infinite_source] = special - mean_func(special, axis=1, keepdims=True)

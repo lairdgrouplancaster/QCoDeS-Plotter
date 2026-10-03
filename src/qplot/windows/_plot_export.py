@@ -57,6 +57,22 @@ _SAFE_PYQTGRAPH_FILE_EXPORTERS = (ImageExporter, CSVExporter, SVGExporter)
 _SAFE_PYQTGRAPH_COPY_EXPORTERS = (ImageExporter, SVGExporter)
 
 
+def _csv_shared_coordinates_match(reference: Any, candidate: Any) -> bool:
+    """Check an exact coordinate prefix without NumPy mixed-type coercion."""
+    reference = np.asarray(reference)
+    candidate = np.asarray(candidate)
+    if reference.ndim != 1 or candidate.ndim != 1 or candidate.size > reference.size:
+        return False
+    for left, right in zip(reference, candidate, strict=False):
+        if isinstance(left, np.generic):
+            left = left.item()
+        if isinstance(right, np.generic):
+            right = right.item()
+        if left != right and not (left != left and right != right):
+            return False
+    return True
+
+
 class _PrintPdfExportCancelled(RuntimeError):
     """Raised when a user declines qPlot's exact PDF replacement prompt."""
 
@@ -752,11 +768,27 @@ class PlotExportMixin(_PlotExportBase):
         collector.params.restoreState(exporter.params.saveState())
         if separator is not None:
             collector.params["separator"] = separator
+        coordinates = []
         for item in exporter.item.items:
             if isinstance(item, ErrorBarItem):
                 collector._exportErrorBarItem(item)
             elif hasattr(item, "implements") and item.implements("plotData"):
+                dataset = (
+                    item.getOriginalDataset() if hasattr(item, "getOriginalDataset")
+                    else item.getData()
+                )
+                if dataset[0] is not None:
+                    coordinates.append(dataset[0])
                 collector._exportPlotDataItem(item)
+
+        if collector.params["columnMode"] == "(x,y,y,y) for all plots" and collector.data:
+            reference = collector.data[0][0]
+            if any(not _csv_shared_coordinates_match(reference, values) for values in coordinates):
+                raise ValueError(
+                    "The traces have different X coordinates and cannot share one "
+                    "CSV coordinate column. Select '(x,y) per plot' to retain "
+                    "each trace's recorded coordinates."
+                )
 
         columns = [column for dataset in collector.data for column in dataset]
         delimiter = "\t" if collector.params["separator"] == "tab" else ","
