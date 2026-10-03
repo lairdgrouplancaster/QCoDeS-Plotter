@@ -205,10 +205,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if not self.__dict__.get("_trace_axis_viewboxes_connected", False):
             self.vb.main_moved.connect(self.updateViews)
             self.vb.sigResized.connect(self.updateViews)
-            self.plot.autoBtn.clicked.connect(self._trace_axis_auto_button_clicked)
-            self.vb.autoRange_triggered.connect(
-                self._trace_axis_auto_range_requested
-            )
             self._trace_axis_viewboxes_connected = True
 
         install_range_handlers = getattr(
@@ -261,26 +257,20 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def _trace_axis_auto_button_clicked(self) -> None:
         """Mirror the plot auto button to every trace-axis viewbox."""
 
-        enabled = self.plot.autoBtn.mode == "auto"
-        if not enabled:
-            self.__dict__.get("_axis_scale_custom_auto_axes", set()).clear()
-        for name in ("right_vb", "top_vb", "top_right_vb"):
-            viewbox = self.__dict__.get(name)
-            if viewbox is not None:
-                viewbox.enableAutoRange(enable=enabled)
+        self._axis_scale_full_view_button_clicked()
 
     @QtCore.pyqtSlot()
     def _trace_axis_auto_range_requested(self) -> None:
         """Auto-range overlay viewboxes, then merge per-axis trace bounds."""
 
-        for name in ("right_vb", "top_vb", "top_right_vb"):
-            viewbox = self.__dict__.get(name)
-            if viewbox is not None:
-                viewbox.autoRange()
         force_autoscale = getattr(self, "force_all_axes_autoscale", None)
         if callable(force_autoscale):
             force_autoscale()
         else:
+            for name in ("right_vb", "top_vb", "top_right_vb"):
+                viewbox = self.__dict__.get(name)
+                if viewbox is not None:
+                    viewbox.autoRange()
             self._refresh_trace_axis_auto_ranges()
 
     def _refresh_trace_axis_auto_ranges(self) -> None:

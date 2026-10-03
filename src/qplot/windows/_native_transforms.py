@@ -8,6 +8,7 @@ from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
 from qplot.datahandling.parameter_data import numeric_isfinite
 from qplot.tools.plot_tools import _center_float_samples, _integer_differences
+from qplot.tools.sample_statistics import finite_mean
 
 
 def _safe_difference(values: np.ndarray) -> np.ndarray:
@@ -132,6 +133,11 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
     period = spacing * len(x)
     frequency_step = ((1. / period) if np.isfinite(period)
                       else (1. / spacing) / len(x)) / coordinate_scale
+    # Finite acquired coordinates can imply an unrepresentable reciprocal
+    # axis. Reject before multiplying the bins (including 0 * infinity).
+    if (not np.isfinite(frequency_step) or frequency_step <= 0
+            or not np.isfinite(frequency_step * (len(x) // 2))):
+        raise _FFTCoordinatesError("FFT requires finite, representable frequencies.")
     return x, dx, frequency_step, reverse
 
 
@@ -175,6 +181,10 @@ class NativePlotDataItem(pg.PlotDataItem):
             return np.array([0.]), np.abs(y.astype(np.float64))
         if reverse:
             y = y[::-1]
+        if y.dtype.kind == "f" and y.dtype.itemsize < 8:
+            # NumPy's FFT retains float32 precision. Widen before its internal
+            # unnormalized sum can overflow, not just before normalization.
+            y = y.astype(np.float64)
         dc_offset = None
         if y.dtype.kind in "iu":
             dc_offset = Fraction(sum(map(int, y)), len(y))
@@ -192,6 +202,14 @@ class NativePlotDataItem(pg.PlotDataItem):
                 y = np.array([float(value - dc_offset) for value in exact])
             else:
                 y = numeric
+        # Keep the ordinary interpolation semantics: nonuniform sweeps have
+        # the mean of the resampled signal, not the acquired sample mean.
+        resampled = np.any(np.abs(dx - dx[0]) > abs(dx[0]) / 1000)
+        float_dc = None
+        if dc_offset is None and np.all(np.isfinite(y)) and not resampled:
+            # FFT accumulation can erase a measured cancellation residual.
+            # Compute DC before amplitude scaling can round that residual.
+            float_dc = finite_mean(y)
         amplitude_scale = 1.
         if np.all(np.isfinite(y)):
             largest = float(np.max(np.abs(y)))
@@ -201,10 +219,11 @@ class NativePlotDataItem(pg.PlotDataItem):
                 amplitude_scale = largest
                 y = y / amplitude_scale
         # Match PyQtGraph's uniformity tolerance and normalized real FFT.
-        resampled = np.any(np.abs(dx - dx[0]) > abs(dx[0]) / 1000)
         if resampled:
             uniform_x = np.linspace(x[0], x[-1], len(x))
             y = np.interp(uniform_x, x, y)
+            if dc_offset is None and np.all(np.isfinite(y)):
+                float_dc = finite_mean(y) * amplitude_scale
         magnitudes = np.abs(np.fft.rfft(y) / len(y))
         if amplitude_scale != 1.:
             # Every normalized coefficient is bounded by the largest sample.
@@ -217,6 +236,8 @@ class NativePlotDataItem(pg.PlotDataItem):
                 resampled_mean = sum((Fraction(float(value)) for value in y), Fraction()) / len(y)
                 dc_offset += resampled_mean * Fraction(amplitude_scale)
             magnitudes[0] = abs(float(dc_offset))
+        elif float_dc is not None:
+            magnitudes[0] = abs(float_dc)
         frequencies = np.arange(len(magnitudes), dtype=float) * frequency_step
         return frequencies, magnitudes
 

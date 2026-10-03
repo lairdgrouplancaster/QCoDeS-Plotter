@@ -275,6 +275,28 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             y_axis="y",
         )
         self._install_axis_scale_double_click_handlers()
+        if getattr(self, "operation_kind", None) in ("plot1d", "sweeper"):
+            # Full-view requests must reach qPlot before native bounds derived
+            # from drawing-clipped coordinates mutate the current view.
+            self.plot.autoBtn.clicked.disconnect(self.plot.autoBtnClicked)
+            self.plot.autoBtn.clicked.connect(self._axis_scale_full_view_button_clicked)
+            self.vb.set_auto_range_handler(lambda: self.force_all_axes_autoscale())
+
+    def _axis_scale_full_view_button_clicked(self) -> None:
+        """Apply full-view Auto with the same range guard as axis controls."""
+        if self.plot.autoBtn.mode == "auto":
+            self.force_all_axes_autoscale()
+            self.plot.autoBtn.hide()
+            self.plot.sigRangeChangedManually.emit(self.vb.mouseEnabled()[:])
+            return
+        self.__dict__.get("_axis_scale_custom_auto_axes", set()).clear()
+        self.plot.disableAutoRange()
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.disableAutoRange()
+        for axis in self.__dict__.get("_axis_scale_controls", {}):
+            self._sync_axis_scale_controls(axis)
 
     def _install_axis_scale_viewbox_range_handlers(
             self,
@@ -912,7 +934,12 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                     orthoRange=orthogonal_ranges,
                     items=items,
                 )[axis_number]
-            if bounds is not None and all(isfinite(value) for value in bounds):
+            if bounds is not None:
+                if not all(isfinite(value) for value in bounds):
+                    # Native pixel padding can overflow finite sample bounds.
+                    # Keep unsupported geometry distinct from absent data so
+                    # the common preflight disables retries and reports it.
+                    return float(bounds[0]), float(bounds[1])
                 ranges.append(bounds)
         if not ranges:
             return None
@@ -936,8 +963,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             lower -= extra
             upper += extra
 
-        if not all(isfinite(value) for value in (lower, upper)) or lower >= upper:
-            return None
+        # Existing bounds can produce unsupported geometry after padding or
+        # centering. Preserve that result for the common range preflight;
+        # None means no bounds, and would bypass rejection and mode recovery.
         return lower, upper
 
     def _update_axis_scale_auto_limits_tooltip(self, axis: _AxisName) -> None:
@@ -1079,7 +1107,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         """Return whether auto-ranging must respect per-item axis assignment."""
 
         return (
-            (
+            getattr(self, "operation_kind", None) == "sweeper"
+            or (
                 isinstance(self.__dict__.get("_trace_styles"), dict)
                 and isinstance(self.__dict__.get("lines"), dict)
             )
@@ -1159,9 +1188,14 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def _axis_scale_trace_data_changed(self, _line: Any = None) -> None:
         """Reapply active trace-filtered auto ranges after a data update."""
 
-        for axis in tuple(
-            self.__dict__.get("_axis_scale_custom_auto_axes", set())
-        ):
+        axes = set(self.__dict__.get("_axis_scale_custom_auto_axes", set()))
+        for axis, _label, _side in _AXIS_SPECS:
+            if (self._axis_scale_axis_is_used(axis)
+                    and self._axis_scale_uses_filtered_auto(axis)
+                    and self._axis_scale_viewbox(axis).autoRangeEnabled()[
+                        self._axis_scale_axis_number(axis)] is not False):
+                axes.add(axis)
+        for axis in tuple(axes):
             if self._axis_scale_axis_is_used(axis):
                 self._apply_axis_scale_filtered_auto(axis)
 

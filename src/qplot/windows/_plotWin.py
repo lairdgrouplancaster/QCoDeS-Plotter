@@ -957,9 +957,13 @@ class plotWidget(
             if action.text() == "View All":
                 self.register_shortcut(action, command_spec("plot.autoscale"))
                 action.setText(command_spec("plot.autoscale").text)
-                action.triggered.connect(
-                    lambda _checked=False: self.force_all_axes_autoscale()
-                )
+                # Line owners install a validated full-view handler before
+                # native autoRange mutates the range. Their context callback
+                # already applies this guard once; heatmaps retain this hook.
+                if getattr(self, "operation_kind", None) not in ("plot1d", "sweeper"):
+                    action.triggered.connect(
+                        lambda _checked=False: self.force_all_axes_autoscale()
+                    )
                 break
         
         x_action = actions[1]

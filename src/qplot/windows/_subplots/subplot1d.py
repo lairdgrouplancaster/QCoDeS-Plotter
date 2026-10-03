@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6.QtGui import QColor
@@ -342,6 +344,7 @@ class custom_viewbox(pg.ViewBox):
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
         self._marquee_owner = None
+        self._auto_range_handler: Callable[[], None] | None = None
         self._shift_pan_axis_constraint = True
         self._shift_pan_axis = None
         self._main_moved_axis = None
@@ -350,6 +353,10 @@ class custom_viewbox(pg.ViewBox):
 
     def set_marquee_owner(self, owner):
         self._marquee_owner = owner
+
+    def set_auto_range_handler(self, handler: Callable[[], None] | None) -> None:
+        """Let a line-plot owner validate full-view requests before mutation."""
+        self._auto_range_handler = handler
 
 
     def set_shift_pan_axis_constraint(self, enabled):
@@ -512,6 +519,13 @@ class custom_viewbox(pg.ViewBox):
             self.main_moved.emit(ev)
        
     def autoRange(self, padding=None, items=None, item=None):
+        if (
+                self._auto_range_handler is not None
+                and padding is None and items is None and item is None
+                ):
+            self._auto_range_handler()
+            self.autoRange_triggered.emit()
+            return
         super().autoRange(padding=padding, items=items, item=item)
         
         self.autoRange_triggered.emit()

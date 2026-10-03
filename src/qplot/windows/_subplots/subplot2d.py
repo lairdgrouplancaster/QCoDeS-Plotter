@@ -194,6 +194,7 @@ class sweeper(plotWidget):
         """
         self.line = NativePlotDataItem(connect="all")
         self.plot.addItem(self.line)
+        self._install_axis_scale_trace_handler(self.line)
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
