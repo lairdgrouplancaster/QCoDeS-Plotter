@@ -20,6 +20,7 @@ from qplot.tools import loader
 from qplot.tools.operation_registry import OperationValidationError
 
 from ._dataset_handle import DatasetKey, dataset_key_matches_current_source
+from ._refresh_interval import refresh_interval_value
 
 if TYPE_CHECKING:
     class _PlotRefreshBase(qtw.QMainWindow):
@@ -352,7 +353,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
         is_active = getattr(monitor, "isActive", None)
         if callable(is_active) and is_active():
             return
-        self.monitorIntervalChanged(spin_box.value())
+        self.monitorIntervalChanged(refresh_interval_value(spin_box))
 
     def _mark_display_synchronized(self, worker: Any) -> bool:
         """Publish terminal plot state after the concrete display commit."""
@@ -583,7 +584,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     dataset is not None
                     and self._refresh_monitor_required(dataset)
                     ):
-                self.monitorIntervalChanged(self.spinBox.value())
+                self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
 
             # restard monitor if any subplots are live
             elif dataset is not None:
@@ -601,7 +602,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                             )
                         subplot.running = bool(running)
                         if running:
-                            self.monitorIntervalChanged(self.spinBox.value())
+                            self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
                             break
 
 

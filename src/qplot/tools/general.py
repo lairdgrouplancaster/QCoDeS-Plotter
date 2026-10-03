@@ -7,6 +7,8 @@ import pandas as pd
 from numpy.typing import ArrayLike
 from qcodes import dataset
 
+from qplot.tools.sample_statistics import finite_mean
+
 
 def data2matrix(indep1 : ArrayLike,
                 indep2 : ArrayLike,
@@ -83,9 +85,9 @@ def data2matrix(indep1 : ArrayLike,
         'depvar': values
     })
     # convert dataframe to grid
-    if values.dtype.kind == "f" and np.any(
-            np.abs(values) > np.finfo(values.dtype).max / max(1, values.size)
-            ):
+    if values.dtype.kind == "f" and (
+            np.any(np.abs(values) > np.finfo(values.dtype).max / max(1, values.size))
+            or (np.any(values < 0) and np.any(values > 0))):
         # The ordinary vectorized mean is fast, but an intermediate group sum
         # can overflow even when the final mean is finite. Retain failed groups
         # before pivot_table would drop their rows and columns, then repair only
@@ -94,7 +96,8 @@ def data2matrix(indep1 : ArrayLike,
         grouped = df.groupby(['indep1', 'indep2'])['depvar']
         means = grouped.mean()
         check_cancelled()
-        for group_position in np.flatnonzero(~np.isfinite(means.to_numpy())):
+        mixed = (grouped.min().to_numpy() < 0) & (grouped.max().to_numpy() > 0)
+        for group_position in np.flatnonzero(~np.isfinite(means.to_numpy()) | mixed):
             check_cancelled()
             samples = grouped.get_group(means.index[group_position]).to_numpy()
             if np.any(np.isinf(samples)):
@@ -102,8 +105,7 @@ def data2matrix(indep1 : ArrayLike,
             samples = samples[np.isfinite(samples)]
             if not samples.size:
                 continue
-            scale = np.max(np.abs(samples))
-            means.iloc[group_position] = np.mean(samples / scale) * scale
+            means.iloc[group_position] = finite_mean(samples, check_cancelled=check_cancelled)
         check_cancelled()
         return means.unstack().dropna(how='all', axis=0).dropna(how='all', axis=1)
     matrix = df.pivot_table(index='indep1', columns='indep2', values='depvar', fill_value=np.nan)

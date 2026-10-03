@@ -4,6 +4,7 @@ from PyQt6.QtGui import QColor
 
 from .._native_transforms import NativePlotDataItem
 from .._plot_refresh import plot_refresh_required
+from .._refresh_interval import refresh_interval_value, set_refresh_interval
 
 
 def _subplot_axis_order(
@@ -180,10 +181,15 @@ class subplot1d(NativePlotDataItem):
             parent_spinbox = getattr(self.parent, "spinBox", None)
             source_spinbox = getattr(source, "spinBox", None)
             if parent_spinbox is not None and source_spinbox is not None:
-                source_spinbox.setValue(parent_spinbox.value())
+                def sync_interval(interval):
+                    interval = refresh_interval_value(parent_spinbox)
+                    set_refresh_interval(source_spinbox, interval)
+                    source.monitorIntervalChanged(interval)
+
+                sync_interval(refresh_interval_value(parent_spinbox))
                 interval_signal = getattr(parent_spinbox, "valueChanged", None)
                 if interval_signal is not None:
-                    interval_slot = source_spinbox.setValue
+                    interval_slot = sync_interval
                     interval_signal.connect(interval_slot)
                     self._source_interval_signal = interval_signal
                     self._source_interval_slot = interval_slot
@@ -193,7 +199,7 @@ class subplot1d(NativePlotDataItem):
                 and plot_refresh_required(source)
                 and not source.monitor.isActive()
                 ):
-            source.monitorIntervalChanged(source.spinBox.value())
+            source.monitorIntervalChanged(refresh_interval_value(source.spinBox))
 
 
     def _release_source_consumer(self):

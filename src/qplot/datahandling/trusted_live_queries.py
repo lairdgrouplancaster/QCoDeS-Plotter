@@ -1920,6 +1920,10 @@ class TrustedMetadataQueryAdapter:
         measure_parameters = tuple(metadata.get("measure_parameters") or ())
         sweep_parameters = tuple(metadata.get("sweep_parameters") or ())
         run_description = _json_object(metadata.get("run_description"))
+        array_parameters = self._array_parameters(run_description)
+        has_array_records = bool(
+            array_parameters.intersection((*measure_parameters, *sweep_parameters))
+        )
         dependency_sets = self._dependency_sets(
             run_description,
             measure_parameters,
@@ -1935,6 +1939,7 @@ class TrustedMetadataQueryAdapter:
         use_independent_layouts = (
             len({names for names, _dependent in dependency_sets}) > 1
             or len(independent_signature) > 1
+            or (has_array_records and bool(independent_signature))
         )
         if use_independent_layouts:
             independent_page = self._advance_independent_layouts(
@@ -1948,6 +1953,10 @@ class TrustedMetadataQueryAdapter:
         else:
             self._independent_layouts.pop(run_id, None)
         regular_observation = self._regular_setpoint_observations.get(run_id)
+        if has_array_records:
+            # Array cells can contain many samples. Even a scalar peer's
+            # proven layout cannot establish a run-wide logical sample count.
+            regular_observation = None
         expected_dependencies = (
             dependency_sets[0][0]
             if dependency_sets
@@ -1985,10 +1994,12 @@ class TrustedMetadataQueryAdapter:
             # A shared grid is only an optional compatibility proof. Reuse the
             # independent scan page, and never restart a failed shared verifier
             # with a second full-prefix read in this request.
-            can_advance_regular = not use_independent_layouts or (
-                independent_page is not None
-                and len(expected_dependencies) == 2
-                and len(expected_dependents) <= _TRUSTED_REGULAR_LAYOUT_MAX_DEPENDENTS
+            can_advance_regular = not has_array_records and (
+                not use_independent_layouts or (
+                    independent_page is not None
+                    and len(expected_dependencies) == 2
+                    and len(expected_dependents) <= _TRUSTED_REGULAR_LAYOUT_MAX_DEPENDENTS
+                )
             )
             if can_advance_regular and (
                 progress is None or progress.result_watermark != result_watermark
@@ -2096,11 +2107,20 @@ class TrustedMetadataQueryAdapter:
             summaries = list(
                 self._bounded_setpoint_summaries(
                     table_name,
-                    summary_names,
+                    tuple(name for name in summary_names if name not in array_parameters),
                     result_watermark,
                     planned_steps,
                 )
             )
+            # Serialized NumPy records are not scalar first/last coordinates.
+            # Retain a declared step count without exposing their blob bytes.
+            summaries.extend(
+                TrustedSetpointSummary(name, None, None, planned_steps[name])
+                for name in summary_names
+                if name in array_parameters and name in planned_steps
+            )
+            by_name = {summary.name: summary for summary in summaries}
+            summaries = [by_name[name] for name in summary_names if name in by_name]
             public_summaries, summaries_truncated = bounded_setpoint_presentation(
                 tuple(summaries)
             )
@@ -3310,6 +3330,21 @@ class TrustedMetadataQueryAdapter:
         return "KeyboardInterrupt" in str(metadata.get("measurement_exception") or "")
 
     @staticmethod
+    def _array_parameters(run_description: dict[str, Any]) -> set[str]:
+        interdependencies = run_description.get("interdependencies_")
+        parameters = (
+            interdependencies.get("parameters")
+            if isinstance(interdependencies, dict) else None
+        )
+        if not isinstance(parameters, dict):
+            return set()
+        return {
+            name for name, specification in parameters.items()
+            if isinstance(specification, dict)
+            and specification.get("paramtype", specification.get("type")) == "array"
+        }
+
+    @staticmethod
     def _dependency_sets(
         run_description: dict[str, Any],
         measure_parameters: tuple[str, ...],
@@ -3366,12 +3401,16 @@ class TrustedMetadataQueryAdapter:
         run_description: dict[str, Any],
     ) -> tuple[tuple[tuple[str, str], str, tuple[int, int] | None], ...]:
         shapes = run_description.get("shapes")
+        array_parameters = TrustedMetadataQueryAdapter._array_parameters(run_description)
+        # Keep array dependents in dependency_sets for row-ownership checks,
+        # but only scalar trees can prove one sample per physical grid row.
         signatures = []
         for dependencies, dependent in dependency_sets[:TRUSTED_DERIVED_MAX_DEPENDENTS]:
             if (
                 dependent is None
                 or len(dependencies) != 2
                 or len(set(dependencies)) != 2
+                or array_parameters.intersection((dependent, *dependencies))
             ):
                 continue
             raw_shape = shapes.get(dependent) if isinstance(shapes, dict) else None
@@ -5616,7 +5655,8 @@ class TrustedMetadataQueryAdapter:
         for name in result_columns:
             specification = parameters.get(name)
             raw_parameter_type = (
-                specification.get("type") if isinstance(specification, dict) else None
+                specification.get("paramtype", specification.get("type"))
+                if isinstance(specification, dict) else None
             )
             parameter_type = (
                 raw_parameter_type.lower()
@@ -5790,7 +5830,7 @@ class TrustedMetadataQueryAdapter:
                 fallback=layout_unit,
             )
             paramtype, type_truncated = _bounded_parameter_view_text(
-                specification.get("type"),
+                specification.get("paramtype", specification.get("type")),
                 fallback="numeric",
             )
             truncated = bool(

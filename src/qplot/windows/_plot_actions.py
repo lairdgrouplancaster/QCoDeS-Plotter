@@ -37,6 +37,7 @@ from ._dataset_handle import (
 from ._export_paths import choose_export_path, write_export_atomically
 from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_refresh import plot_refresh_required
+from ._refresh_interval import refresh_interval_value
 from ._subplots.subplot1d import (
     _subplot_axis_order,
     _subplot_shared_parameter,
@@ -1475,7 +1476,7 @@ class PlotActionsMixin:
                         plot1d,
                         ds,
                         param,
-                        refrate=self.spinBox.value(),
+                        refrate=refresh_interval_value(self.spinBox),
                         show=show,
                         dataset_key=dataset_key,
                     )
@@ -1498,7 +1499,7 @@ class PlotActionsMixin:
                         plot2d,
                         ds,
                         param,
-                        refrate=self.spinBox.value(),
+                        refrate=refresh_interval_value(self.spinBox),
                         show=show,
                         dataset_key=dataset_key,
                     )

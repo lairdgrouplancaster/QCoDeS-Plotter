@@ -6,6 +6,8 @@ from PyQt6 import (
     QtCore,
 )
 
+from qplot.datahandling.parameter_data import numeric_isfinite
+
 from ._native_transforms import NativePlotDataItem
 from ._plot1d_snap import Plot1DSnapMixin, _line_snap_data
 from ._plot1d_traces import Plot1DTraceMixin
@@ -169,7 +171,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
 
         x_data = np.asarray(x_data, dtype=float)
         y_data = np.asarray(y_data, dtype=float)
-        raw_y_data = np.asarray(raw_y_data, dtype=float)
+        raw_y_data = np.asarray(raw_y_data)
         count = min(x_data.size, y_data.size, raw_y_data.size)
         if count == 0:
             return None
@@ -181,7 +183,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         mask = (
             np.isfinite(x_data)
             & np.isfinite(y_data)
-            & np.isfinite(raw_y_data)
+            & numeric_isfinite(raw_y_data)
             & (x_data >= rect.left())
             & (x_data <= rect.right())
             & (y_data >= rect.top())

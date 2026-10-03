@@ -1,11 +1,14 @@
 """Average displayed source curves without processing generated curves again."""
 
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
+
+from qplot.tools.sample_statistics import finite_mean
 
 
 class _AveragePlotDataItem(pg.PlotDataItem):
@@ -112,6 +115,9 @@ class NativePlotItem(pg.PlotItem):
         # Preserve native compatibility: combine equal-shaped Y by index and
         # keep the first X; a changed Y shape replaces the displayed samples.
         if average.yData is not None and y.shape == average.yData.shape:
+            average._qplot_mean_sources.append((1, y))
+            average._qplot_minimum = np.minimum(average._qplot_minimum, y)
+            average._qplot_maximum = np.maximum(average._qplot_maximum, y)
             # A difference update retains small variations and constant
             # values near float's upper bound. Opposite extremes can overflow
             # that difference; bounded weights handle those cells and preserve
@@ -131,4 +137,29 @@ class NativePlotItem(pg.PlotItem):
                     )
             y = updated
             x = average.xData
+            # A rounded running mean loses small measurements when later
+            # traces cancel a large offset. Revisit only mixed-sign cells,
+            # using references to display samples already owned by sources.
+            repair = ((average._qplot_minimum < 0) & (average._qplot_maximum > 0)
+                      & np.isfinite(average._qplot_minimum)
+                      & np.isfinite(average._qplot_maximum))
+            sources = average._qplot_mean_sources
+            for cell_index in np.flatnonzero(repair):
+                exact_cells = any(values.dtype.kind in "iuO" for _weight, values in sources)
+                cells = np.array([values[cell_index] for _weight, values in sources],
+                                 dtype=object if exact_cells else None)
+                if all(weight == 1 for weight, _values in sources):
+                    y[cell_index] = finite_mean(cells)
+                else:
+                    # Native shape replacement treats the replacement as
+                    # the preceding count of curves, retaining that weight.
+                    total = sum((weight * Fraction(value.item() if isinstance(value, np.generic)
+                                                   else value)
+                                 for (weight, _values), value in zip(sources, cells, strict=True)),
+                                Fraction())
+                    y[cell_index] = float(total / count)
+        else:
+            average._qplot_mean_sources = [(count, y)]
+            average._qplot_minimum = y.copy()
+            average._qplot_maximum = y.copy()
         average.setData(x, y, stepMode=curve.opts["stepMode"])

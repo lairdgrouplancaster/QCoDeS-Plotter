@@ -44,6 +44,12 @@ from ._preferences import (
     PreferencesDialog,
     create_preferences_action,
 )
+from ._refresh_interval import (
+    connect_refresh_interval_edits,
+    refresh_interval_value,
+    remember_refresh_interval,
+    set_refresh_interval,
+)
 from ._subplots import custom_viewbox
 from ._widgets import (
     QDock_context,
@@ -558,7 +564,7 @@ class plotWidget(
         # Keep the timer alive through this plot's own terminal display commit,
         # even if another parameter publishes shared dataset completion first.
         if self._refresh_monitor_required(self.ds):
-            self.monitorIntervalChanged(self.spinBox.value())
+            self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
 
 
     def _install_preview_drop_target(self):
@@ -855,11 +861,13 @@ class plotWidget(
         self.toolbarRef.addWidget(self.spinBox)
         
         if refrate is not None and refrate > 0:
-            self.spinBox.setValue(refrate)
+            set_refresh_interval(self.spinBox, refrate)
         else:
-            self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
+            set_refresh_interval(
+                self.spinBox, self.config.get("user_preference.default_refresh_rate"),
+            )
             
-        self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
+        connect_refresh_interval_edits(self.spinBox, self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshWindow)
             
         
@@ -1794,7 +1802,7 @@ class plotWidget(
                 and self._refresh_monitor_required(self.ds)
                 and not self.monitor.isActive()
                 ):
-            self.monitorIntervalChanged(self.spinBox.value())
+            self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
 
 
     @QtCore.pyqtSlot(object)
@@ -1899,6 +1907,7 @@ class plotWidget(
             Time in seconds to change refresh timer to.
 
         """
+        remember_refresh_interval(self.spinBox, interval)
         self.monitor.stop()
         if interval > 0:
             self.monitor.start(max(1, round(interval * 1000)))

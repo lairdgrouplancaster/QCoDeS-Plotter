@@ -18,6 +18,7 @@ from qplot.windows._plot1d_traces import (
 )
 from qplot.windows._plot_axis_scaling import PlotAxisScalingMixin
 from qplot.windows._plotWin import plotWidget
+from qplot.windows._refresh_interval import set_refresh_interval
 from qplot.windows._subplots import custom_viewbox
 from qplot.windows._subplots.subplot1d import _subplot_axis_order, subplot1d
 from qplot.windows._widgets import QDock_context, picker_1d
@@ -2622,23 +2623,27 @@ class SnapToTraceTestCase(unittest.TestCase):
                 for slot in list(self.slots):
                     slot(*args)
 
-        class SpinBox:
+        class SpinBox(qtw.QDoubleSpinBox):
             def __init__(self, value):
-                self._value = value
-                self.valueChanged = Signal()
-
-            def value(self):
-                return self._value
-
-            def setValue(self, value):
-                self._value = value
+                super().__init__()
+                self.setDecimals(1)
+                set_refresh_interval(self, value)
 
         class Monitor:
             def __init__(self):
                 self.stop_count = 0
+                self.active = False
 
             def stop(self):
                 self.stop_count += 1
+                self.active = False
+
+            def start(self, interval):
+                self.active = True
+                self.interval = interval
+
+            def isActive(self):
+                return self.active
 
         class Plot:
             def addItem(self, _item):
@@ -2662,6 +2667,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 },
                 "spinBox": SpinBox(1.0),
                 "monitor": Monitor(),
+                "monitorIntervalChanged": plotWidget.monitorIntervalChanged,
             },
         )()
         first_parent = type(
@@ -2688,19 +2694,20 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.assertEqual(source._merged_trace_users, 2)
         self.assertEqual(source.spinBox.value(), 0.4)
-        first_parent.spinBox.valueChanged.emit(0.3)
+        first_parent.spinBox.setValue(0.3)
         self.assertEqual(source.spinBox.value(), 0.3)
+        stops_before_disconnect = source.monitor.stop_count
 
         first.disconnect_source_updates()
         first.disconnect_source_updates()
         self.assertEqual(source._merged_trace_users, 1)
-        self.assertEqual(source.monitor.stop_count, 0)
-        first_parent.spinBox.valueChanged.emit(0.1)
+        self.assertEqual(source.monitor.stop_count, stops_before_disconnect)
+        first_parent.spinBox.setValue(0.1)
         self.assertEqual(source.spinBox.value(), 0.3)
 
         second.disconnect_source_updates()
         self.assertEqual(source._merged_trace_users, 0)
-        self.assertEqual(source.monitor.stop_count, 1)
+        self.assertEqual(source.monitor.stop_count, stops_before_disconnect + 1)
 
     def test_register_main_line_replaces_initial_empty_trace(self):
         line = object()

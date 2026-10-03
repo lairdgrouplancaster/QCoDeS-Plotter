@@ -13,6 +13,7 @@ from ._plot_appearance import (
 )
 from ._plot_refresh import plot_refresh_required
 from ._plot_transform_labels import native_axis_quantities
+from ._refresh_interval import refresh_interval_value
 from ._subplots import subplot1d
 from ._widgets import picker_1d
 
@@ -810,7 +811,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
                 and plot_refresh_required(from_win)
                 and not from_win.monitor.isActive()
                 ):
-                from_win.monitorIntervalChanged(from_win.spinBox.value())
+                from_win.monitorIntervalChanged(refresh_interval_value(from_win.spinBox))
     
     
     @QtCore.pyqtSlot(str)

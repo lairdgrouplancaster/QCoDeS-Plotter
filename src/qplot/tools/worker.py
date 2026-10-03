@@ -1335,7 +1335,8 @@ class loader(QtCore.QRunnable):
                 self._check_cancelled()
             largest = max(abs(float(z_min)), abs(float(z_max)))
             safe_sample = (np.finfo(float).max / 2) / int(bin_rows)
-            if z_value is None or not math.isfinite(z_value) or largest > safe_sample:
+            if (z_value is None or not math.isfinite(z_value) or largest > safe_sample
+                    or z_min < 0 < z_max):
                 failed_means[(x_group, y_group)] = (len(z_values), int(bin_rows))
             x_groups.append(x_group)
             y_groups.append(y_group)

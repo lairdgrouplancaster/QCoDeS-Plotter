@@ -6,6 +6,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.parameter_data import numeric_isfinite
 from qplot.tools.heatmap_geometry import (
     AxisGeometry,
     HeatmapGeometry,
@@ -1797,7 +1798,7 @@ class plot2d(
         if selected is None:
             return None
 
-        values = selected[np.isfinite(selected)]
+        values = selected[numeric_isfinite(selected)]
         if values.size == 0:
             return None
 
@@ -1814,7 +1815,7 @@ class plot2d(
         if selected is None:
             return None
 
-        values = selected[np.isfinite(selected)]
+        values = selected[numeric_isfinite(selected)]
         if values.size == 0:
             return None
 
@@ -1839,7 +1840,7 @@ class plot2d(
             return None
 
         row_slice, col_slice = slices
-        selected = np.asarray(self.dataGrid[row_slice, col_slice], dtype=float)
+        selected = np.asarray(self.dataGrid[row_slice, col_slice])
         if selected.size == 0:
             return None
 

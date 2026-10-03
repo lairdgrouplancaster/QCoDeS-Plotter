@@ -27,6 +27,7 @@ from ._colorbar import (
 )
 from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
 from ._plot_refresh import plot_refresh_required
+from ._refresh_interval import refresh_interval_value, set_refresh_interval
 
 DEFAULT_OVERLAY_OPACITY = 0.65
 _PRIMARY_HEATMAP_KEY = "__qplot_primary_heatmap__"
@@ -427,10 +428,15 @@ class HeatmapLayer:
             parent_spinbox = getattr(self.parent, "spinBox", None)
             source_spinbox = getattr(source, "spinBox", None)
             if parent_spinbox is not None and source_spinbox is not None:
-                source_spinbox.setValue(parent_spinbox.value())
+                def sync_interval(interval):
+                    interval = refresh_interval_value(parent_spinbox)
+                    set_refresh_interval(source_spinbox, interval)
+                    source.monitorIntervalChanged(interval)
+
+                sync_interval(refresh_interval_value(parent_spinbox))
                 interval_signal = getattr(parent_spinbox, "valueChanged", None)
                 if interval_signal is not None:
-                    interval_slot = source_spinbox.setValue
+                    interval_slot = sync_interval
                     interval_signal.connect(interval_slot)
                     self._source_interval_signal = interval_signal
                     self._source_interval_slot = interval_slot
@@ -442,7 +448,7 @@ class HeatmapLayer:
             and monitor is not None
             and not monitor.isActive()
         ):
-            source.monitorIntervalChanged(source.spinBox.value())
+            source.monitorIntervalChanged(refresh_interval_value(source.spinBox))
 
     def _release_source_consumer(self) -> None:
         if not self._source_consumer_registered:
@@ -947,7 +953,7 @@ class Plot2DLayerMixin:
                 and monitor is not None
                 and not monitor.isActive()
             ):
-                source.monitorIntervalChanged(source.spinBox.value())
+                source.monitorIntervalChanged(refresh_interval_value(source.spinBox))
 
     def _sync_secondary_heatmap_view_ranges(
         self,

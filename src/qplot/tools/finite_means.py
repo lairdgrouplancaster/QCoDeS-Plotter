@@ -15,6 +15,8 @@ class FiniteBinMeans:
         self.check_cancelled = check_cancelled
         self._largest = 0.
         self._samples = 0
+        self._positive = np.zeros(shape, dtype=bool)
+        self._negative = np.zeros(shape, dtype=bool)
 
     def add(self, indices, values):
         self.check_cancelled()
@@ -22,6 +24,9 @@ class FiniteBinMeans:
         if not values.size:
             return
         targets = np.ravel_multi_index(indices, self.sums.shape)
+        np.logical_or.at(self._positive.ravel(), targets, values > 0)
+        np.logical_or.at(self._negative.ravel(), targets, values < 0)
+        mixed = self._positive & self._negative
         self._largest = max(self._largest, float(np.max(np.abs(values))))
         self._samples += values.size
         # Leave headroom for rounded additions at the finite sum boundary.
@@ -29,7 +34,7 @@ class FiniteBinMeans:
         # It changes only whether we retain sums for recovery, never scaling
         # the values in other bins (which could erase small measurements).
         safe_sample = (np.finfo(float).max / 2) / self._samples
-        risk = bool(self.exact) or self._largest > safe_sample
+        risk = bool(self.exact) or self._largest > safe_sample or np.any(mixed)
         previous = self.sums.copy() if risk else None
         with np.errstate(over="ignore", invalid="ignore"):
             np.add.at(self.sums.ravel(), targets, values)
@@ -40,7 +45,7 @@ class FiniteBinMeans:
             # would already have rounded away small cancellation residuals.
             largest = np.abs(previous)
             np.maximum.at(largest.ravel(), targets, np.abs(values))
-            for index, target in enumerate(np.flatnonzero(largest.ravel() > safe_sample)):
+            for index, target in enumerate(np.flatnonzero((largest > safe_sample) | mixed)):
                 if index % 1024 == 0:
                     self.check_cancelled()
                 self.exact.setdefault(int(target), Fraction(float(previous.ravel()[target])))

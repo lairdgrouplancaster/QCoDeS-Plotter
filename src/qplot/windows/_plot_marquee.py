@@ -5,6 +5,8 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.tools.sample_statistics import finite_mean, finite_standard_deviation
+
 from ._widgets import CopyableTableWidget
 
 _MarqueeHandle = Literal["nw", "n", "ne", "e", "se", "s", "sw", "w"]
@@ -445,8 +447,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
                 ))
 
         lines.extend((
-            f"Average: {self.formatNum(float(values.mean()))}",
-            f"Standard deviation: {self.formatNum(float(values.std()))}",
+            f"Average: {self.formatNum(finite_mean(values))}",
+            f"Standard deviation: {self.formatNum(finite_standard_deviation(values))}",
             f"Max: {self.formatNum(float(values.max()))}",
             f"Min: {self.formatNum(float(values.min()))}",
             ))
