@@ -4393,7 +4393,9 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
         assert writer_completed.wait(30)
         assert writer_thread.is_alive()
         assert writer_errors == []
-        artifacts_after_writer_completion = database_artifact_state(database_path)
+        artifacts_after_writer_completion = trusted_database_artifact_state(
+            database_path
+        )
         assert artifacts_after_writer_completion[""] is not None
         assert artifacts_after_writer_completion["-wal"] is not None
         assert artifacts_after_writer_completion["-shm"] is not None
