@@ -65,7 +65,7 @@ def color_plot(tmp_path, monkeypatch, request, no_callback_errors):
         wait_for(lambda: not window._database_load_active)
         window.openPlot(guid=guid, show=True)
         plot = window.windows[-1]
-        wait_for(lambda: not plot.worker.running and hasattr(plot, "axis_data"))
+        wait_for(lambda: not plot.worker.running and plot._qplot_display_synchronized)
         plot.monitor.stop()
         yield plot, grid
     finally:
@@ -110,7 +110,7 @@ def test_completed_color_rejection_is_stable_after_due_refresh(color_plot, qappl
     np.testing.assert_array_equal(plot.dataGrid, grid)
     plot.refreshWindow(force=True)
     assert plot.worker is not finished_worker
-    wait_for(lambda: not plot.worker.running)
+    wait_for(lambda: not plot.worker.running and plot._qplot_display_synchronized)
     assert plot._qplot_display_synchronized
     assert_color_error(plot)
     np.testing.assert_array_equal(plot.dataGrid, grid)
@@ -195,7 +195,11 @@ def test_live_color_rejection_keeps_polling_and_manual_span_recovers_on_completi
         # loads that terminal state while preserving the explicit valid span.
         protected = database_state(path)
         plot.refreshWindow(force=True)
-        wait_for(lambda: not plot.worker.running and not plot.ds.running)
+        wait_for(
+            lambda: not plot.worker.running
+            and not plot.ds.running
+            and plot._qplot_display_synchronized
+        )
         assert plot._qplot_display_synchronized
         assert not plot._refresh_monitor_required()
         plot.monitor.timeout.emit()
