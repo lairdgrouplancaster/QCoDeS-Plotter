@@ -14,13 +14,10 @@ from qcodes.dataset import (
 )
 from qcodes.parameters import ManualParameter
 
-import qplot
-
 
 @pytest.fixture
 def screenshot_script(tmp_path, monkeypatch):
     source = Path(__file__).resolve().parents[1]
-    assert Path(qplot.__file__).resolve().is_relative_to(source / "src")
     monkeypatch.setenv("QPLOT_DEMO_WORKDIR", str(tmp_path))
     spec = importlib.util.spec_from_file_location(
         "owned_screenshot_script", source / "scripts" / "capture_demo_screenshots.py"

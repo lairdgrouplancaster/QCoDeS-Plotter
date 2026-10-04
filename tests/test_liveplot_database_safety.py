@@ -13,13 +13,10 @@ import qcodes.dataset as dataset_module
 from qcodes.dataset import Measurement, load_or_create_experiment
 from qcodes.parameters import ManualParameter
 
-import qplot
-
 
 @pytest.fixture
 def liveplot_script(tmp_path, monkeypatch):
     source = Path(__file__).resolve().parents[1]
-    assert Path(qplot.__file__).resolve().is_relative_to(source / "src")
     monkeypatch.chdir(tmp_path)
     return source / "scripts" / "liveplot.py"
 

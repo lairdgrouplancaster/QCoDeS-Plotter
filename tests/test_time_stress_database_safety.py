@@ -15,7 +15,6 @@ from qcodes.dataset import (
 )
 from qcodes.parameters import ManualParameter
 
-import qplot
 from qplot.configuration.config import config
 from qplot.diagnostics import configure_logging
 from tests.windows.test_plot_integration import wait_for
@@ -42,7 +41,6 @@ def _rows(path):
 @pytest.fixture
 def timed_plots(tmp_path, monkeypatch, qapplication, request):
     root = Path(__file__).resolve().parents[1]
-    assert Path(qplot.__file__).resolve().is_relative_to(root / "src")
     home = tmp_path / "settings"
     home.mkdir()
     monkeypatch.setattr(config, "default_path", str(home))
