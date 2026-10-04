@@ -122,15 +122,20 @@ def _gradient_with_integer_samples(
         before, after = dx1 / scale, dx2 / scale
         total = before + after
         with np.errstate(over="ignore", invalid="ignore"):
-            central = (
-                (after / total) * slopes[..., :-1]
-                + (before / total) * slopes[..., 1:]
-            )
+            left_term = (after / total) * slopes[..., :-1]
+            right_term = (before / total) * slopes[..., 1:]
+            central = left_term + right_term
         if samples.dtype.kind != "c":
             # Individual secants can overflow while their weighted stencil
             # remains finite. Recover only fully finite source stencils;
             # acquired NaN/Inf samples must retain their usual propagation.
-            repair = (~np.isfinite(central)
+            # Finite opposing terms can also cancel after their individual
+            # differences or weights have rounded. Recover small residuals
+            # from the recorded stencil, not its already rounded secants.
+            cancellation = ((np.signbit(left_term) != np.signbit(right_term))
+                            & (np.abs(central) <= np.sqrt(np.finfo(float).eps)
+                               * np.maximum(np.abs(left_term), np.abs(right_term))))
+            repair = ((~np.isfinite(central) | cancellation)
                       & numeric_isfinite(samples[..., :-2])
                       & numeric_isfinite(samples[..., 1:-1])
                       & numeric_isfinite(samples[..., 2:]))

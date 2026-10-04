@@ -213,6 +213,20 @@ class NativePlotDataItem(pg.PlotDataItem):
             # FFT accumulation can erase a measured cancellation residual.
             # Compute DC before amplitude scaling can round that residual.
             float_dc = finite_mean(y)
+        float_anchor = None
+        if dc_offset is None and y.dtype.kind == "f" and np.all(np.isfinite(y)):
+            # A large floating DC offset can leak into small AC bins during
+            # FFT accumulation. Nearby same-sign values satisfy Sterbenz's
+            # lemma: subtracting this recorded anchor retains every source
+            # difference exactly, including subnormals. Wider signals keep
+            # their existing scaling path so anchoring cannot erase samples.
+            anchor = float(y[0])
+            absolute = np.abs(y)
+            if (anchor != 0. and np.all(np.signbit(y) == np.signbit(anchor))
+                    and np.min(absolute) >= abs(anchor) / 2.
+                    and np.max(absolute) / 2. <= abs(anchor)):
+                float_anchor = Fraction(anchor)
+                y = y - anchor
         amplitude_scale = 1.
         if np.all(np.isfinite(y)):
             largest = float(np.max(np.abs(y)))
@@ -226,7 +240,13 @@ class NativePlotDataItem(pg.PlotDataItem):
             uniform_x = np.linspace(x[0], x[-1], len(x))
             y = np.interp(uniform_x, x, y)
             if dc_offset is None and np.all(np.isfinite(y)):
-                float_dc = finite_mean(y) * amplitude_scale
+                if float_anchor is None:
+                    float_dc = finite_mean(y) * amplitude_scale
+                else:
+                    # Resampling changes the centered mean. Restore its sign
+                    # and the exact anchor before rounding the resulting DC.
+                    centered_mean = sum((Fraction(float(value)) for value in y), Fraction()) / len(y)
+                    float_dc = float(float_anchor + centered_mean * Fraction(amplitude_scale))
         magnitudes = np.abs(np.fft.rfft(y) / len(y))
         if amplitude_scale != 1.:
             # Every normalized coefficient is bounded by the largest sample.

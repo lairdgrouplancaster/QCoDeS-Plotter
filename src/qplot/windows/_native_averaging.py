@@ -138,14 +138,22 @@ class NativePlotItem(pg.PlotItem):
             y = updated
             x = average.xData
             # A rounded running mean loses small measurements when later
-            # traces cancel a large offset. Revisit only mixed-sign cells,
-            # using references to display samples already owned by sources.
-            repair = ((average._qplot_minimum < 0) & (average._qplot_maximum > 0)
+            # traces cancel a large offset. Revisit sensitive cells using
+            # references to display samples already owned by sources.
+            sources = average._qplot_mean_sources
+            exact_cells = any(values.dtype.kind in "iuO" for _weight, values in sources)
+            mixed_sign = (average._qplot_minimum < 0) & (average._qplot_maximum > 0)
+            # Large same-sign integers can round before their mean is formed,
+            # even when its correctly rounded float result is distinct. Limit
+            # exact replay to those cells and the cancellation cases above.
+            large_integers = exact_cells & (
+                (average._qplot_minimum <= -(2**53))
+                | (average._qplot_maximum >= 2**53)
+            )
+            repair = ((mixed_sign | large_integers)
                       & np.isfinite(average._qplot_minimum)
                       & np.isfinite(average._qplot_maximum))
-            sources = average._qplot_mean_sources
             for cell_index in np.flatnonzero(repair):
-                exact_cells = any(values.dtype.kind in "iuO" for _weight, values in sources)
                 cells = np.array([values[cell_index] for _weight, values in sources],
                                  dtype=object if exact_cells else None)
                 if all(weight == 1 for weight, _values in sources):
