@@ -97,6 +97,58 @@ class _FFTCoordinatesError(ValueError):
     """Coordinates cannot define a native coordinate-domain FFT."""
 
 
+def _interpolate_fft_samples(targets, coordinates, samples):
+    """Repair only interpolation segments whose finite difference overflows."""
+    with np.errstate(over="ignore", invalid="ignore"):
+        result = np.interp(targets, coordinates, samples)
+        differences = np.diff(samples)
+    segments = np.searchsorted(coordinates, targets, side="right") - 1
+    segments = np.clip(segments, 0, len(coordinates) - 2)
+    repair = (~np.isfinite(differences[segments])
+              & np.isfinite(samples[segments]) & np.isfinite(samples[segments + 1]))
+    for index in np.flatnonzero(repair):
+        segment = segments[index]
+        left, right, target = map(Fraction, (
+            float(coordinates[segment]), float(coordinates[segment + 1]), float(targets[index]),
+        ))
+        before, after = map(Fraction, (float(samples[segment]), float(samples[segment + 1])))
+        result[index] = float(before + (after - before) * (target - left) / (right - left))
+    return result
+
+
+def _normalized_real_fft(samples):
+    """Bound FFT sums with binary scaling without erasing small source cells."""
+    count = len(samples)
+    if not np.all(np.isfinite(samples)):
+        return np.fft.rfft(samples) / count
+    largest = float(np.max(np.abs(samples)))
+    if largest <= np.finfo(float).max / count:
+        return np.fft.rfft(samples) / count
+    # Each butterfly is bounded by the sum of absolute source amplitudes.
+    # A length-sized binary divisor bounds that sum and retains normal small
+    # samples exactly; dividing by the largest sample can erase whole signals.
+    shift = (count - 1).bit_length()
+    scaled = np.ldexp(samples, -shift)
+    # Binary scaling may still round subnormal source cells. Transform just
+    # that tiny tail separately, with exact binary normalization in its range.
+    tail = (samples != 0) & (np.abs(scaled) < np.finfo(float).tiny)
+    if np.any(tail):
+        scaled[tail] = 0.
+    spectrum = np.fft.rfft(scaled) / count
+    # Roundoff at the largest representable source must not turn bounded
+    # components into infinity while their binary units are restored.
+    bound = np.ldexp(largest, -shift)
+    spectrum = (np.ldexp(np.clip(spectrum.real, -bound, bound), shift)
+                + 1j * np.ldexp(np.clip(spectrum.imag, -bound, bound), shift))
+    if np.any(tail):
+        small = np.where(tail, samples, 0.)
+        tail_shift = -int(np.frexp(np.max(np.abs(small)))[1])
+        tail_spectrum = np.fft.rfft(np.ldexp(small, tail_shift)) / count
+        spectrum += (np.ldexp(tail_spectrum.real, -tail_shift)
+                     + 1j * np.ldexp(tail_spectrum.imag, -tail_shift))
+    return spectrum
+
+
 def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
     """Return increasing interpolation coordinates and the frequency step."""
     message = "FFT requires finite, strictly monotonic coordinates with a nonzero span."
@@ -254,37 +306,29 @@ class NativePlotDataItem(pg.PlotDataItem):
                     and np.max(absolute) / 2. <= abs(anchor)):
                 float_anchor = Fraction(anchor)
                 y = y - anchor
-        amplitude_scale = 1.
-        if np.all(np.isfinite(y)):
-            largest = float(np.max(np.abs(y)))
-            if largest > np.finfo(float).max / len(y):
-                # Scale before interpolation too: interpolating opposite
-                # extremes otherwise overflows its intermediate difference.
-                amplitude_scale = largest
-                y = y / amplitude_scale
         # Match PyQtGraph's uniformity tolerance and normalized real FFT.
         if resampled:
             uniform_x = np.linspace(x[0], x[-1], len(x))
-            y = np.interp(uniform_x, x, y)
+            y = _interpolate_fft_samples(uniform_x, x, y)
             if dc_offset is None and np.all(np.isfinite(y)):
                 if float_anchor is None:
-                    float_dc = finite_mean(y) * amplitude_scale
+                    float_dc = finite_mean(y)
                 else:
                     # Resampling changes the centered mean. Restore its sign
                     # and the exact anchor before rounding the resulting DC.
                     centered_mean = sum((Fraction(float(value)) for value in y), Fraction()) / len(y)
-                    float_dc = float(float_anchor + centered_mean * Fraction(amplitude_scale))
-        magnitudes = np.abs(np.fft.rfft(y) / len(y))
-        if amplitude_scale != 1.:
-            # Every normalized coefficient is bounded by the largest sample.
-            # Clamp roundoff at that bound before restoring extreme units.
-            magnitudes = np.minimum(magnitudes, 1.) * amplitude_scale
+                    float_dc = float(float_anchor + centered_mean)
+        magnitudes = np.abs(_normalized_real_fft(y))
+        if np.all(np.isfinite(y)):
+            # The normalized magnitude cannot exceed the largest source cell.
+            # Retain that bound when hypot's final rounding reaches overflow.
+            magnitudes = np.minimum(magnitudes, np.max(np.abs(y)))
         if dc_offset is not None:
             # Resampling may change the centered mean. Restore its signed
             # value before taking the magnitude, retaining the exact offset.
             if resampled:
                 resampled_mean = sum((Fraction(float(value)) for value in y), Fraction()) / len(y)
-                dc_offset += resampled_mean * Fraction(amplitude_scale)
+                dc_offset += resampled_mean
             magnitudes[0] = abs(float(dc_offset))
         elif float_dc is not None:
             magnitudes[0] = abs(float_dc)

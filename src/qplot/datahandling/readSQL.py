@@ -1727,9 +1727,13 @@ def _bounded_expected_results_from_shapes(run_description, measure_parameters):
     if not isinstance(shapes, dict) or not measure_parameters:
         return None, False
 
-    sizes = []
+    sizes = {}
     truncated = False
-    for parameter in measure_parameters:
+    for index, parameter in enumerate(
+        islice(measure_parameters, TRUSTED_PRESENTATION_MAX_PARAMETERS + 1)
+    ):
+        if index >= TRUSTED_PRESENTATION_MAX_PARAMETERS:
+            return None, True
         shape = shapes.get(parameter)
         if not isinstance(shape, list) or not shape:
             return None, truncated
@@ -1742,9 +1746,63 @@ def _bounded_expected_results_from_shapes(run_description, measure_parameters):
         size = _shape_size(dimensions)
         if size is None:
             return None, truncated
-        sizes.append(size)
+        sizes[parameter] = size
 
-    return (sum(sizes) if sizes else None), truncated
+    interdependencies = run_description.get("interdependencies_")
+    inferences = (
+        interdependencies.get("inferences", {})
+        if isinstance(interdependencies, dict) else {}
+    )
+    if not isinstance(inferences, dict):
+        return None, truncated
+    if len(inferences) > TRUSTED_PRESENTATION_MAX_PARAMETERS:
+        return None, True
+    if not inferences:
+        return (sum(sizes.values()) if sizes else None), truncated
+
+    # Current QCoDeS writes each top-level parameter tree separately. An
+    # inferred channel is stored with its basis, rather than adding another
+    # row. Multiple basis roots still contribute one tree each. Only infer a
+    # planned row count when the complete bounded graph lies among measured
+    # channels and its linked shape sizes agree; setpoint inference and other
+    # ambiguous declarations retain an unknown count.
+    inferred = set()
+    followers: dict[str, set[str]] = {name: set() for name in sizes}
+    remaining_bases = {name: 0 for name in sizes}
+    for index, (name, bases) in enumerate(
+        islice(inferences.items(), TRUSTED_PRESENTATION_MAX_PARAMETERS + 1)
+    ):
+        if index >= TRUSTED_PRESENTATION_MAX_PARAMETERS:
+            return None, True
+        if name not in sizes or not isinstance(bases, (list, tuple)) or not bases:
+            return None, truncated
+        inferred.add(name)
+        for basis_index, basis in enumerate(
+            islice(bases, TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES + 1)
+        ):
+            if basis_index >= TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES:
+                return None, True
+            if not isinstance(basis, str) or basis not in sizes:
+                return None, truncated
+            if sizes[name] != sizes[basis]:
+                return None, truncated
+            if name not in followers[basis]:
+                followers[basis].add(name)
+                remaining_bases[name] += 1
+
+    ready = [name for name, count in remaining_bases.items() if count == 0]
+    visited = 0
+    while ready:
+        name = ready.pop()
+        visited += 1
+        for follower in followers[name]:
+            remaining_bases[follower] -= 1
+            if remaining_bases[follower] == 0:
+                ready.append(follower)
+    if visited != len(sizes):
+        return None, truncated
+    roots = sizes.keys() - inferred
+    return (sum(sizes[name] for name in roots) if roots else None), truncated
 
 
 def _shape_size(shape):
