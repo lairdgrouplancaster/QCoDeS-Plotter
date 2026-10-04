@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore, QtTest
+from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from tests.windows.test_merged_trace_metadata import merge
@@ -57,6 +57,77 @@ def _accept_limits(controls, lower, upper):
     controls.minText.setText(repr(lower))
     controls.maxText.setText(repr(upper))
     QtTest.QTest.keyClick(controls.minText, QtCore.Qt.Key.Key_Return)
+
+
+def _paint_native_axes(plot):
+    picture = QtGui.QPicture()
+    painter = QtGui.QPainter(picture)
+    try:
+        plot.widget.scene().render(painter)
+    finally:
+        painter.end()
+
+
+def _complete_native_axis_layout(plot):
+    # Tick text is measured during native paint, which can invalidate layout
+    # after an accepted range changes. Finish that work before a new snapshot.
+    _paint_native_axes(plot)
+    plot.plot.layout.activate()
+    QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.Type.LayoutRequest)
+    assert plot.plot.layout.isActivated()
+    plot.updateViews(None)
+    for name in ("right_vb", "top_vb", "top_right_vb"):
+        viewbox = plot.__dict__.get(name)
+        if viewbox is not None:
+            assert viewbox.geometry() == plot.vb.sceneBoundingRect()
+            viewbox.linkedXChanged()
+            viewbox.linkedYChanged()
+    # Link notifications invalidate cached axis pictures. Paint the final
+    # coordinates too, so subsequent GUI work cannot discover new tick sizes.
+    _paint_native_axes(plot)
+    QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.Type.LayoutRequest)
+    assert plot.plot.layout.isActivated()
+
+
+@pytest.mark.parametrize("fft_plots", [
+    {"x": np.array([1.0, 2.0]), "y": np.array([1e308, 1.1e308])},
+], indirect=True)
+@pytest.mark.parametrize("label_points", [10, 13])
+def test_manual_snapshot_completes_native_tick_layout(
+    fft_plots, qapplication, monkeypatch, label_points,
+):
+    plot, controls, viewbox = _axis_controls(fft_plots, "y2")
+    _accept_limits(controls, 0.1, 0.9)
+    qapplication.processEvents()
+    axis = plot.plot.getAxis("right")
+    axis.setStyle(tickFont=QtGui.QFont("Sans Serif", 13))
+    axis.setLabel(axis.labelText, axis.labelUnits,
+                  **{"font-size": f"{label_points}pt"})
+    assert axis.picture is None
+    _complete_native_axis_layout(plot)
+    assert axis.picture is not None
+    assert axis.fixedWidth is None
+    assert axis.width() == axis.minimumWidth()
+    assert plot.plot.layout.isActivated()
+    before = deepcopy(viewbox.getState())
+    before_view = deepcopy(viewbox.viewRange())
+    # Render once more without completing layout or links after the snapshot.
+    # This must have no deferred metric change left to apply.
+    _paint_native_axes(plot)
+    qapplication.processEvents()
+    assert plot.plot.layout.isActivated()
+    np.testing.assert_array_equal(viewbox.viewRange(), before_view)
+    assert viewbox.getState()["targetRange"] == before["targetRange"]
+    assert viewbox.getState()["autoRange"] == before["autoRange"]
+    statuses = []
+    monkeypatch.setattr(plot, "show_status", lambda message, *_args: statuses.append(message))
+    QtTest.QTest.mouseClick(controls.autoRadio, QtCore.Qt.MouseButton.LeftButton,
+                          pos=QtCore.QPoint(8, controls.autoRadio.height() // 2))
+    qapplication.processEvents()
+    assert controls.manualRadio.isChecked()
+    assert viewbox.getState()["targetRange"] == before["targetRange"]
+    assert viewbox.getState()["autoRange"] == before["autoRange"]
+    assert "supported plot range" in statuses[-1]
 
 
 @pytest.mark.parametrize("fft_plots", [{"x": np.array([1.0, 2.0, 3.0])}], indirect=True)
@@ -264,6 +335,7 @@ def test_initial_unsupported_auto_preserves_samples_and_recovers_on_log_refresh(
     # Reject an Auto request from a manual, supported range as well.
     _accept_limits(controls, 0.1, 0.9)
     qapplication.processEvents()
+    _complete_native_axis_layout(plot)
     assert controls.manualRadio.isChecked()
     manual = deepcopy(viewbox.getState())
     QtTest.QTest.mouseClick(controls.autoRadio, QtCore.Qt.MouseButton.LeftButton,

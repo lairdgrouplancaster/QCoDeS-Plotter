@@ -443,6 +443,16 @@ class plot2d(
             if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
                 self._reject_heatmap_color_range()
                 self._emit_heatmap_trace_updated()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+                # A color rejection is a concrete display of the loaded data.
+                # A completed source must not keep replacing that error with
+                # automatic reloads; live sources and explicit refreshes remain
+                # retryable through the usual guarded publication state.
+                self._mark_display_synchronized(plot_worker)
                 return
             self._heatmap_color_range_rejected = False
             self._heatmap_publication_color_levels = color_levels
