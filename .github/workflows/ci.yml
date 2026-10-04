@@ -90,6 +90,11 @@ jobs:
           - os: macos-latest
             python-version: "3.14"
             suite: full
+            partition: "1/2"
+          - os: macos-latest
+            python-version: "3.14"
+            suite: full
+            partition: "2/2"
 
     env:
       QT_QPA_PLATFORM: offscreen
@@ -203,15 +208,6 @@ jobs:
       # thread-pool contention at two workers across all source suites.
       # Full suites use the collection order from tests._ci_scheduling so
       # slow integration files start before the short unit-test files.
-      - name: Run full test suite
-        if: matrix.suite == 'full' && runner.os != 'Windows' && !matrix.partition
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: >-
-          python -m pytest --no-cov -n 2 --dist=loadfile
-          --no-loadscope-reorder
-          --timeout=90 --timeout-method=thread --durations=20
-
       - name: Run partitioned full test suite
         if: matrix.suite == 'full' && runner.os != 'Windows' && matrix.partition
         env:
@@ -220,7 +216,7 @@ jobs:
           python -m pytest --no-cov -n 2 --dist=loadfile
           --no-loadscope-reorder
           --qplot-ci-partition=${{ matrix.partition }}
-          --timeout=90 --timeout-method=thread --durations=20
+          --timeout=90 --timeout-method=thread --durations=20 -v
 
       # The trusted VFS intentionally rejects the hosted runner's elevated
       # token, so run the Windows suites through a disposable local account
