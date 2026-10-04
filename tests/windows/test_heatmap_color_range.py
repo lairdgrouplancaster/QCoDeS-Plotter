@@ -9,7 +9,9 @@ from qcodes.dataset import (
     initialise_or_create_database_at,
     load_or_create_experiment,
 )
+from qcodes.dataset.sqlite.database import connect
 
+from qplot.testdata import enable_generation_provenance_for_writer
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
@@ -21,7 +23,12 @@ from tests.windows.test_native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
 from tests.windows.test_plot_csv_precision import _export_from_dialog, _open_csv_dialog
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.windows.test_plot_integration import (
+    configure_temp_qplot,
+    prepare_generated_database_for_live_writes,
+    trusted_database_artifact_state,
+    wait_for,
+)
 
 no_callback_errors = _no_callback_errors_fixture
 
@@ -122,8 +129,13 @@ def test_live_color_rejection_keeps_polling_and_manual_span_recovers_on_completi
     configure_temp_qplot(monkeypatch, tmp_path)
     path = tmp_path / "live-color-range.db"
     assert not path.exists()
-    initialise_or_create_database_at(str(path), journal_mode="DELETE")
-    experiment = load_or_create_experiment("live color range", "owned")
+    prepare_generated_database_for_live_writes(path)
+    initialise_or_create_database_at(str(path), journal_mode="WAL")
+    writer_connection = connect(path)
+    enable_generation_provenance_for_writer(writer_connection)
+    experiment = load_or_create_experiment(
+        "live color range", "owned", conn=writer_connection,
+    )
     measurement = Measurement(exp=experiment)
     for name in ("x", "slow"):
         measurement.register_custom_parameter(name, paramtype="array")
@@ -136,7 +148,7 @@ def test_live_color_rejection_keeps_polling_and_manual_span_recovers_on_completi
                              ("slow", np.repeat(np.arange(2)[:, None], 4, axis=1)),
                              ("signal", grid))
             saver.flush_data_to_database()
-            protected = database_state(path)
+            protected = trusted_database_artifact_state(path)
             window = MainWindow()
             window.startupDatabaseTimer.stop()
             window.monitor.stop()
@@ -190,10 +202,10 @@ def test_live_color_rejection_keeps_polling_and_manual_span_recovers_on_completi
             assert not plot.plot_state_overlay.frame.isVisible()
             assert tuple(plot.image.getLevels()) == (-1e307, 1e307)
             np.testing.assert_array_equal(plot.dataGrid, grid)
-            assert database_state(path) == protected
+            assert trusted_database_artifact_state(path) == protected
         # Only the owning writer changes completion metadata. The viewer then
         # loads that terminal state while preserving the explicit valid span.
-        protected = database_state(path)
+        protected = trusted_database_artifact_state(path)
         plot.refreshWindow(force=True)
         wait_for(
             lambda: not plot.worker.running
@@ -208,15 +220,16 @@ def test_live_color_rejection_keeps_polling_and_manual_span_recovers_on_completi
         assert tuple(plot.image.getLevels()) == (-1e307, 1e307)
         assert not plot.plot_state_overlay.frame.isVisible()
         np.testing.assert_array_equal(plot.dataGrid, grid)
-        assert database_state(path) == protected
+        assert trusted_database_artifact_state(path) == protected
     finally:
-        protected = database_state(path)
+        protected = trusted_database_artifact_state(path)
         if window is not None:
             close_main_window(window)
-        assert database_state(path) == protected
+        assert trusted_database_artifact_state(path) == protected
         if "saver" in locals():
             saver.dataset.conn.close()
         experiment.conn.close()
+        writer_connection.close()
 
 
 @pytest.mark.parametrize("color_plot", [np.array([0., 1e307, 0.])], indirect=True)
