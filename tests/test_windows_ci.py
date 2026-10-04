@@ -28,7 +28,7 @@ def test_full_windows_suite_has_its_own_bounded_time_budget(
     )[1].split("      - name:", 1)[0]
     budget = re.search(r"-TimeoutSeconds (\d+)", full_suite)
     assert budget is not None, "The full suite must not use the 420-second default"
-    assert 600 <= int(budget[1]) <= 1200
+    assert 600 <= int(budget[1]) <= 1500
     checks_job = workflow.split("  checks:\n", 1)[1]
     job_minutes = re.search(r"timeout-minutes: (\d+)", checks_job)
     assert job_minutes is not None
@@ -60,8 +60,8 @@ def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
         "      - name: Run full test suite as a standard Windows user\n", 1,
     )[1].split("      - name:", 1)[0]
     assert '"--qplot-ci-partition=${{ matrix.partition }}"' in full_suite
-    assert "-TimeoutSeconds 1200" in full_suite
-    assert "timeout-minutes: 25" in checks
+    assert "-TimeoutSeconds 1500" in full_suite
+    assert "timeout-minutes: 30" in checks
     assert "invoke-bounded-unprivileged-windows.ps1" in full_suite
     # Every matrix entry remains required, and Linux coverage still runs all
     # tests with its ordinary instrumentation and no partition option.

@@ -21,15 +21,16 @@ def _invalid_settings(kind):
     return b'{"unexpected":' + b"[" * 600 + b"0" + b"]" * 600 + b"}"
 
 
-def _decoder_overflow_json():
-    """Choose a nesting depth rejected by this interpreter's JSON decoder."""
-    for depth in (1500, 3000, 6000, 12000, 24000):
-        document = b"[" * depth + b"0" + b"]" * depth
-        try:
-            json.loads(document)
-        except RecursionError:
-            return document
-    raise AssertionError("JSON decoder accepted every tested nesting depth")
+def _simulate_decoder_recursion(monkeypatch, target):
+    """Exercise recovery regardless of the interpreter's JSON depth limit."""
+    original_load = config.load_config
+
+    def load(self, path):
+        if Path(path) == target:
+            raise RecursionError("JSON decoder nesting limit")
+        return original_load(self, path)
+
+    monkeypatch.setattr(config, "load_config", load)
 
 
 @pytest.mark.parametrize("kind", ["integer_limit", "decoder_nesting", "schema_nesting"])
@@ -41,6 +42,8 @@ def test_decoder_limits_recover_defaults_and_start_window(tmp_path, monkeypatch,
     settings.write_bytes(original)
     monkeypatch.setattr(config, "default_path", str(home))
     monkeypatch.setattr(config, "default_file", str(settings))
+    if kind == "decoder_nesting":
+        _simulate_decoder_recursion(monkeypatch, settings)
     log_file = home / "qplot.log"
     configure_logging(log_file, force=True)
 
@@ -67,13 +70,13 @@ def test_decoder_limits_recover_defaults_and_start_window(tmp_path, monkeypatch,
 ])
 def test_packaged_schema_decoder_limits_are_not_hidden(tmp_path, monkeypatch, kind, exception):
     schema = tmp_path / "schema.json"
-    schema.write_bytes(
-        _decoder_overflow_json() if kind == "decoder_nesting" else _invalid_settings(kind)
-    )
+    schema.write_bytes(_invalid_settings(kind))
     settings = tmp_path / "config.json"
     settings.write_bytes(b"original user settings remain untouched")
     monkeypatch.setattr(config, "default__schema_file", str(schema))
     monkeypatch.setattr(config, "default_file", str(settings))
+    if kind == "decoder_nesting":
+        _simulate_decoder_recursion(monkeypatch, schema)
     with pytest.raises(exception):
         config()
     assert settings.read_bytes() == b"original user settings remain untouched"

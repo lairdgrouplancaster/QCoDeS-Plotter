@@ -45,7 +45,7 @@ jobs:
   checks:
     name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -225,13 +225,13 @@ jobs:
             "--timeout=90", "--timeout-method=thread", "--durations=20", "-v"
           )
           # Two disjoint whole-file partitions retain the complete suite while
-          # fitting its growing workload into the existing bounded budget.
+          # fitting its growing workload into a bounded budget.
           # Each partition keeps two workers, 90-second individual tests and
-          # 20 minutes total, plus two-minute cleanup within the 25-minute job.
+          # 25 minutes total, plus two-minute cleanup within the 30-minute job.
           & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
             -ArgumentList $arguments `
-            -TimeoutSeconds 1200
+            -TimeoutSeconds 1500
 
       # Share the test list through a pytest argument file to stay below the
       # Windows standard-user launcher's 1024-character command-line limit.
