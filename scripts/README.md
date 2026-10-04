@@ -18,19 +18,24 @@ repair helper before re-raising the original exception.
 
 ## `liveplot.py`
 
-Generates synthetic QCoDeS data using mock instruments. It creates or updates:
+Generates synthetic QCoDeS data using mock instruments. It creates a new database:
 
 ```text
 tests/data/qplot-demo.db
 ```
 
-The database is ignored by Git. Run this only when you intentionally want fresh
-synthetic data for manual live-plot testing.
+The database is ignored by Git. The script refuses an existing database or any
+WAL, SHM or rollback-journal sidecar. Use a fresh working directory for another
+synthetic database for manual live-plot testing.
+From the fresh working directory, invoke `liveplot.py` using its absolute path
+inside the repository.
 
 ## `time_stress.py`
 
-Runs qPlot with timing instrumentation for 2D refresh checks. It appends timing
-rows to CSV files in the configured qPlot directory, usually `~/.qplot`.
+Runs qPlot with timing instrumentation for 2D refresh checks. Each plot creates
+its own new CSV in the configured qPlot directory, usually `~/.qplot`, and prints
+the path. Later rows use the same file, retained after the plot closes. Existing
+files are preserved.
 
 Use this only for local performance investigation. The generated CSV files are
 not part of the project source.

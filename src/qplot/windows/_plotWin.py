@@ -1841,6 +1841,20 @@ class plotWidget(
         )
         if coordinate_viewbox is None:
             coordinate_viewbox = self.plot.vb
+        line = self.__dict__.get("line")
+        line_axes = ("x", "y")
+        line_viewbox_getter = getattr(line, "getViewBox", None)
+        if not callable(viewbox_getter) and callable(line_viewbox_getter):
+            try:
+                line_viewbox = line_viewbox_getter()
+            except RuntimeError:
+                line_viewbox = None
+            if line_viewbox is not None:
+                coordinate_viewbox = line_viewbox
+                line_axes = (
+                    self._axis_scale_axis_for_line(line, "x"),
+                    self._axis_scale_axis_for_line(line, "y"),
+                )
         mousePoint = coordinate_viewbox.mapSceneToView(pos)
         try:
             semantic_axes_getter = getattr(
@@ -1853,7 +1867,7 @@ class plotWidget(
         semantic_x, semantic_y = (
             semantic_axes_getter()
             if callable(semantic_axes_getter)
-            else ("x", "y")
+            else line_axes
         )
         physical_x = cast(float, self.view_to_data(semantic_x, mousePoint.x()))
         physical_y = cast(float, self.view_to_data(semantic_y, mousePoint.y()))

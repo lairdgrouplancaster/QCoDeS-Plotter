@@ -6,6 +6,7 @@ import os
 import sqlite3
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,6 @@ DEFAULT_ASSET_DIR = REPO_ROOT / "docs" / "assets"
 ASSET_DIR = Path(os.environ.get("QPLOT_DEMO_ASSET_DIR", str(DEFAULT_ASSET_DIR)))
 DEFAULT_WORK_DIR = Path(tempfile.gettempdir()) / "qplot-demo"
 WORK_DIR = Path(os.environ.get("QPLOT_DEMO_WORKDIR", str(DEFAULT_WORK_DIR)))
-DB_PATH = WORK_DIR / "qplot-demo.db"
 
 
 def configure_environment():
@@ -32,7 +32,15 @@ def configure_environment():
     (WORK_DIR / "matplotlib").mkdir(parents=True, exist_ok=True)
 
 
+@contextmanager
 def build_demo_database():
+    """Keep the demo database in a fresh directory until its viewers close."""
+    with tempfile.TemporaryDirectory(prefix="qplot-demo-", dir=WORK_DIR) as directory:
+        database_path = Path(directory) / "qplot-demo.db"
+        yield database_path, *_populate_demo_database(database_path)
+
+
+def _populate_demo_database(database_path):
     from qcodes.dataset import (
         Measurement,
         initialise_or_create_database_at,
@@ -40,10 +48,7 @@ def build_demo_database():
     )
     from qcodes.parameters import ManualParameter
 
-    for path in (DB_PATH, DB_PATH.with_suffix(".db-shm"), DB_PATH.with_suffix(".db-wal")):
-        path.unlink(missing_ok=True)
-
-    initialise_or_create_database_at(str(DB_PATH))
+    initialise_or_create_database_at(str(database_path))
     experiment = load_or_create_experiment("qplot_demo", sample_name="synthetic")
 
     try:
@@ -71,17 +76,16 @@ def build_demo_database():
         with heatmap_meas.run() as datasaver:
             for gate_value in np.linspace(-2.0, 2.0, 45):
                 for bias_value in np.linspace(-1.0, 1.0, 35):
-                    peak = np.exp(
-                        -(
-                            ((gate_value - 0.3) ** 2) * 1.4
-                            + ((bias_value + 0.1) ** 2) * 4.0
+                    peak = (
+                        np.exp(
+                            -(
+                                ((gate_value - 0.3) ** 2) * 1.4
+                                + ((bias_value + 0.1) ** 2) * 4.0
+                            )
                         )
-                    ) * 70.0
-                    ripple = (
-                        12.0
-                        * np.cos(5.0 * gate_value)
-                        * np.sin(4.0 * bias_value)
+                        * 70.0
                     )
+                    ripple = 12.0 * np.cos(5.0 * gate_value) * np.sin(4.0 * bias_value)
                     datasaver.add_result(
                         (gate, float(gate_value)),
                         (bias, float(bias_value)),
@@ -179,7 +183,7 @@ def verify_snapshot_cleanup(records):
             raise RuntimeError(f"Snapshot directory remained: {snapshot_directory}")
 
 
-def capture_screenshots(line_guid, heatmap_guid):
+def capture_screenshots(database_path, line_guid, heatmap_guid):
     from PyQt6 import QtCore, QtWidgets, sip
 
     from qplot.diagnostics import configure_logging, install_excepthook
@@ -200,7 +204,7 @@ def capture_screenshots(line_guid, heatmap_guid):
         main_window.config.config["user_preference"]["confirm_close_all"] = False
         main_window.close_database(status=False)
         main_window.resize(1120, 760)
-        main_window.load_file(str(DB_PATH))
+        main_window.load_file(str(database_path))
         wait_for(
             app,
             lambda: (
@@ -219,8 +223,10 @@ def capture_screenshots(line_guid, heatmap_guid):
         line_window.resize(920, 620)
         wait_for(
             app,
-            lambda: hasattr(line_window, "axis_data")
-            and not getattr(line_window.worker, "running", False),
+            lambda: (
+                hasattr(line_window, "axis_data")
+                and not getattr(line_window.worker, "running", False)
+            ),
         )
         line_path = save_widget(app, line_window, "qplot-line-plot.png")
 
@@ -230,8 +236,10 @@ def capture_screenshots(line_guid, heatmap_guid):
         heatmap_window.resize(980, 660)
         wait_for(
             app,
-            lambda: hasattr(heatmap_window, "dataGrid")
-            and not getattr(heatmap_window.worker, "running", False),
+            lambda: (
+                hasattr(heatmap_window, "dataGrid")
+                and not getattr(heatmap_window.worker, "running", False)
+            ),
         )
         heatmap_window.open_colorbar_scale_dialog()
         dialog = heatmap_window.colorbar_scale_dialog
@@ -269,8 +277,8 @@ def capture_screenshots(line_guid, heatmap_guid):
 
 def main():
     configure_environment()
-    run_ids = build_demo_database()
-    paths = capture_screenshots(*run_ids)
+    with build_demo_database() as database:
+        paths = capture_screenshots(*database)
     for path in paths:
         try:
             display_path = path.relative_to(REPO_ROOT)

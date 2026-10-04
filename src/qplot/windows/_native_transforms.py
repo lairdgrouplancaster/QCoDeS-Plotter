@@ -13,6 +13,9 @@ from qplot.tools.sample_statistics import finite_mean
 
 def _safe_difference(values: np.ndarray) -> np.ndarray:
     """Subtract samples before narrowing arithmetic can overflow or wrap."""
+    if values.dtype.kind == "b":
+        # NumPy's Boolean diff reports changes, losing their direction.
+        return np.diff(values.astype(np.int8)).astype(np.float64)
     if values.dtype.kind in "iu":
         # Narrow integers fit in int64 even after subtraction. For 64-bit
         # integers, Python integers cover the full signed/unsigned difference

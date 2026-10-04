@@ -59,7 +59,8 @@ def _numeric_object_samples(values):
     )
 
 
-def _gradient_with_integer_samples(data, spacing, axis, integer_data):
+def _gradient_with_integer_samples(
+        data, coordinates, spacing, axis, integer_data, *, cancelled_callback=None):
     """Use gradient's first-order edges and three-point interior stencil."""
     samples = np.moveaxis(np.asarray(data), axis, -1)
     dtype = np.float64 if integer_data else np.result_type(samples.dtype, np.float64)
@@ -70,7 +71,8 @@ def _gradient_with_integer_samples(data, spacing, axis, integer_data):
         samples = samples.astype(dtype, copy=False)
         with np.errstate(over="ignore", invalid="ignore"):
             differences = np.diff(samples, axis=-1)
-    slopes = differences / spacing
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        slopes = differences / spacing
     if not integer_data:
         # A finite sample jump can exceed float's range before division by a
         # large, finite spacing restores a representable secant slope.
@@ -119,10 +121,44 @@ def _gradient_with_integer_samples(data, spacing, axis, integer_data):
         scale = np.maximum(np.abs(dx1), np.abs(dx2))
         before, after = dx1 / scale, dx2 / scale
         total = before + after
-        result[..., 1:-1] = (
-            (after / total) * slopes[..., :-1]
-            + (before / total) * slopes[..., 1:]
-        )
+        with np.errstate(over="ignore", invalid="ignore"):
+            central = (
+                (after / total) * slopes[..., :-1]
+                + (before / total) * slopes[..., 1:]
+            )
+        if samples.dtype.kind != "c":
+            # Individual secants can overflow while their weighted stencil
+            # remains finite. Recover only fully finite source stencils;
+            # acquired NaN/Inf samples must retain their usual propagation.
+            repair = (~np.isfinite(central)
+                      & numeric_isfinite(samples[..., :-2])
+                      & numeric_isfinite(samples[..., 1:-1])
+                      & numeric_isfinite(samples[..., 2:]))
+            for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                centre = position[-1] + 1
+                row = position[:-1]
+
+                def exact(value):
+                    return Fraction(value.item() if isinstance(value, np.generic) else value)
+
+                # Subtract the original coordinates exactly. Rounded spacing
+                # loses the small residual when opposing large slopes cancel.
+                left, middle, right = map(exact, coordinates[centre - 1:centre + 2])
+                before_step, after_step = middle - left, right - middle
+                before_value, middle_value, after_value = map(
+                    exact, samples[row][centre - 1:centre + 2],
+                )
+                derivative = (
+                    after_step * (middle_value - before_value) / before_step
+                    + before_step * (after_value - middle_value) / after_step
+                ) / (before_step + after_step)
+                try:
+                    central[position] = float(derivative)
+                except OverflowError:
+                    central[position] = np.inf if derivative > 0 else -np.inf
+        result[..., 1:-1] = central
 
     result[..., 0] = slopes[..., 0]
     result[..., -1] = slopes[..., -1]
@@ -445,7 +481,8 @@ def differentiate(
     _check_cancelled(cancelled_callback)
     integer_data = _integer_samples(data) or _numeric_object_samples(data)
     new_data = _gradient_with_integer_samples(
-        data, spacing, axis_num, integer_data,
+        data, coordinates, spacing, axis_num, integer_data,
+        cancelled_callback=cancelled_callback,
     )
     _check_cancelled(cancelled_callback)
     

@@ -1,6 +1,6 @@
 """Generate a synthetic QCoDeS database for local live-plot testing.
 
-This script creates or updates `tests/data/qplot-demo.db` using
+This script creates a new `tests/data/qplot-demo.db` using
 QCoDeS mock instruments, then writes a large 2D measurement into it. The
 database file is ignored by Git. Run this only when you intentionally want fresh
 synthetic data for manual testing.
@@ -26,10 +26,19 @@ from qcodes.instrument_drivers.mock_instruments import (
     DummyInstrumentWithMeasurement,
 )
 
-qc.Instrument.close_all()
 database_folder = os.path.join(os.getcwd(), "tests", "data")
 os.makedirs(database_folder, exist_ok=True)
-initialise_or_create_database_at(os.path.join(database_folder, "qplot-demo.db"))
+database_path = os.path.join(database_folder, "qplot-demo.db")
+for suffix in ("", "-wal", "-shm", "-journal"):
+    artifact = database_path + suffix
+    if os.path.lexists(artifact):
+        raise FileExistsError(
+            f"Refusing to modify an existing database artifact: {artifact}"
+        )
+with open(database_path, "xb"):
+    pass
+qc.Instrument.close_all()
+initialise_or_create_database_at(database_path)
 
 
 # A dummy signal generator with two parameters ch1 and ch2

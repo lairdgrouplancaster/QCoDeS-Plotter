@@ -121,6 +121,10 @@ directory by default, starts qPlot offscreen, and overwrites the PNG files in
 or `QPLOT_DEMO_ASSET_DIR` to write screenshots somewhere other than
 `docs/assets`.
 
+Each run uses a fresh private database directory inside the working folder and
+removes it after the plots close. Existing databases and their sidecars in the
+working folder are preserved.
+
 ## Generate Synthetic Data
 
 Run:
@@ -129,14 +133,17 @@ Run:
 python scripts/liveplot.py
 ```
 
-The script creates or updates:
+The script creates a new database at:
 
 ```text
 tests/data/qplot-demo.db
 ```
 
-That database is ignored by Git. Regenerate it when you need fresh example runs
-for screenshots or manual testing.
+That database is ignored by Git. The script refuses to run if the database or
+any of its WAL, SHM or rollback-journal files already exists. Use a fresh working
+directory when generating another database for screenshots or manual testing.
+From that directory, run the script using its absolute repository path instead
+of the relative command above.
 
 ## Manual Demo Flow
 
@@ -157,5 +164,7 @@ For local performance and live-refresh checks, use:
 python scripts/time_stress.py
 ```
 
-The script writes timing CSV files into the configured qPlot directory, usually
-`~/.qplot`. Those files are local diagnostics, not source assets.
+The script creates a new timing CSV for each plot in the configured qPlot
+directory, usually `~/.qplot`, and prints its path. Later timing rows use that
+plot's file; the diagnostics remain after the plot closes. Existing files are
+preserved. Those files are local diagnostics, not source assets.
