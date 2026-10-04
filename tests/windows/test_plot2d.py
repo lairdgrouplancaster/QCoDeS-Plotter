@@ -561,7 +561,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         window._has_plottable_heatmap_data = lambda: True
         window._update_heatmap_geometry = lambda: None
         window.relevel_refresh = Toggle()
-        window.bar = object()
+        window.bar = SimpleNamespace(levels=lambda: (1.0, 4.0), show=lambda: None)
         window._sync_colorbar_axis_scaling = lambda: None
         window._restore_heatmap_interactions = lambda: None
         window._colorbar_manual_levels = None
@@ -1707,6 +1707,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_uniform_grid_uses_image_renderer_at_geometry_bounds(self):
         window = plot2d.__new__(plot2d)
+        window._current_colorbar_levels = lambda: (1.0, 4.0)
         window.__dict__["image"] = pg.ImageItem(axisOrder="row-major")
         window.__dict__["heatmap_mesh"] = pg.PColorMeshItem()
         self.configure_geometry(
@@ -1727,6 +1728,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_nonuniform_grid_uses_mesh_with_exact_cell_edges(self):
         window = plot2d.__new__(plot2d)
+        window._current_colorbar_levels = lambda: (1.0, 6.0)
         window.__dict__["image"] = pg.ImageItem(axisOrder="row-major")
         window.__dict__["heatmap_mesh"] = pg.PColorMeshItem()
         self.configure_geometry(
@@ -2608,11 +2610,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertTrue(np.isfinite(window.bar.levels()).all())
         self.assertLessEqual(window.bar.levels()[1], maximum)
 
-        window._set_colorbar_levels(-maximum, maximum)
         before = tuple(window.bar.levels())
-        window.bar._regionChanging()
+        rejected = []
+        window._reject_heatmap_color_range = lambda: rejected.append(True)
 
-        self.assertFalse(window.bar.region.isEnabled())
+        self.assertFalse(window._set_colorbar_levels(-maximum, maximum))
+        self.assertEqual(rejected, [True])
         self.assertEqual(tuple(window.bar.levels()), before)
 
     def test_outside_colorbar_drag_widens_levels_about_midpoint(self):
@@ -2919,6 +2922,29 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.assertNotIn("sampled before plotting", text)
         finally:
             host.deleteLater()
+
+    def test_exact_grid_still_discloses_interpolation(self):
+        host = plot2d.__new__(plot2d)
+        host._heatmap_downsample_info = {
+            "source_sampled": True,
+            "source_aggregated": False,
+            "loaded_point_count": 2,
+            "source_sample_limit": 2,
+            "source_sample_stride": None,
+            "grid_columns": 2,
+            "grid_rows": 2,
+            "grid_cell_count": 4,
+            "grid_binned": False,
+            "empty_bins_filled": True,
+        }
+
+        text = host._heatmap_downsample_dialog_text()
+
+        self.assertIn("displayed on an exact 2 x 2 grid", text)
+        self.assertIn(
+            "Empty sampled display bins were filled by interpolation.",
+            text,
+        )
 
     def test_grid_reduced_heatmap_shows_warning_without_worker_info(self):
         class Worker:

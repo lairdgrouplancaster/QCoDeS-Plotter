@@ -63,6 +63,11 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     if TYPE_CHECKING:
         plot: Any
 
+        def _heatmap_colorbar_items(self) -> list[Any]: ...
+        def _reset_heatmap_hover(self) -> None: ...
+        def _set_sweep_lines_visible(self, visible: bool) -> None: ...
+        def show_plot_state(self, title: object, detail: object | None = None, kind: str = "info") -> None: ...
+
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):
         """
@@ -140,7 +145,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         lower = None
         upper = None
         for data in arrays:
-            values = np.asarray(data)
+            values = np.asarray(data, dtype=float)
             finite_values = values[np.isfinite(values)]
             if finite_values.size == 0:
                 continue
@@ -184,6 +189,10 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         Apply levels to the colorbar and mirror them in the menu fields.
 
         """
+        if not np.isfinite(float(vmax) - float(vmin)):
+            self._reject_heatmap_color_range()
+            return False
+
         bar = self.__dict__.get("bar")
         if bar is not None:
             bar.rounding = self._colorbar_rounding_for_levels(vmin, vmax)
@@ -201,6 +210,24 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             self._sync_colorbar_axis_scaling()
 
         self._sync_colorbar_level_fields(vmin, vmax)
+        return True
+
+    def _reject_heatmap_color_range(self):
+        """Hide an unusable color display while retaining measured samples."""
+        self._heatmap_color_range_rejected = True
+        for item in self._heatmap_colorbar_items():
+            item.hide()
+        bar = self.__dict__.get("bar")
+        if bar is not None:
+            bar.hide()
+        self._reset_heatmap_hover()
+        self._set_sweep_lines_visible(False)
+        message = (
+            "The heatmap color range is too wide to display safely. "
+            "Recorded samples remain available for CSV export and operations."
+        )
+        self.show_status(message, 10_000)
+        self.show_plot_state("Unsupported heatmap color range", message, kind="error")
 
     def _set_colorbar_tick_formatter(self):
         """

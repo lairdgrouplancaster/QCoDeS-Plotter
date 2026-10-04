@@ -7,6 +7,7 @@ available for each plot surface and what kind of user input they need.
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 
 from qplot.tools.plot_tools import (
     differentiate,
@@ -59,14 +60,14 @@ COMMON_OPERATION_SPECS = (
         lambda limit, data, cancelled_callback=None: pass_filter(
             "low", limit, data, cancelled_callback=cancelled_callback
             ),
-        float,
+        Decimal,
         ),
     OperationSpec(
         "Limit Minimum",
         lambda limit, data, cancelled_callback=None: pass_filter(
             "high", limit, data, cancelled_callback=cancelled_callback
             ),
-        float,
+        Decimal,
         ),
     )
 

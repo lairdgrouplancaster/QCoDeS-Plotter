@@ -12,6 +12,8 @@ from ._plot_appearance import (
     configure_appearance_table,
 )
 from ._plot_refresh import plot_refresh_required
+from ._plot_transform_labels import native_axis_quantities
+from ._refresh_interval import refresh_interval_value
 from ._subplots import subplot1d
 from ._widgets import picker_1d
 
@@ -60,6 +62,8 @@ if TYPE_CHECKING:
         def initMenu(self) -> None: ...
 
         def update_theme(self, config: Any) -> None: ...
+
+        def _marquee_axis_assignment_changed(self) -> None: ...
 
         def closeEvent(self, event: object) -> None: ...
 
@@ -201,10 +205,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if not self.__dict__.get("_trace_axis_viewboxes_connected", False):
             self.vb.main_moved.connect(self.updateViews)
             self.vb.sigResized.connect(self.updateViews)
-            self.plot.autoBtn.clicked.connect(self._trace_axis_auto_button_clicked)
-            self.vb.autoRange_triggered.connect(
-                self._trace_axis_auto_range_requested
-            )
             self._trace_axis_viewboxes_connected = True
 
         install_range_handlers = getattr(
@@ -243,40 +243,34 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if current is target:
             return
 
-        if current is self.vb:
-            self.plot.removeItem(line)
-        elif current is not None:
+        # PlotItem registration belongs to the measurement, not its axis pair.
+        # CSVExporter walks items; native processing controls walk items/curves.
+        # Move only the graphics owner so all of those registries stay intact,
+        # and returning to the primary axes does not reset processing options.
+        if current is not None:
             current.removeItem(line)
-
-        if target is self.vb:
-            self.plot.addItem(line)
-        else:
-            target.addItem(line)
+        target.addItem(line)
+        if line is self.__dict__.get("line"):
+            self._marquee_axis_assignment_changed()
 
     @QtCore.pyqtSlot()
     def _trace_axis_auto_button_clicked(self) -> None:
         """Mirror the plot auto button to every trace-axis viewbox."""
 
-        enabled = self.plot.autoBtn.mode == "auto"
-        if not enabled:
-            self.__dict__.get("_axis_scale_custom_auto_axes", set()).clear()
-        for name in ("right_vb", "top_vb", "top_right_vb"):
-            viewbox = self.__dict__.get(name)
-            if viewbox is not None:
-                viewbox.enableAutoRange(enable=enabled)
+        self._axis_scale_full_view_button_clicked()
 
     @QtCore.pyqtSlot()
     def _trace_axis_auto_range_requested(self) -> None:
         """Auto-range overlay viewboxes, then merge per-axis trace bounds."""
 
-        for name in ("right_vb", "top_vb", "top_right_vb"):
-            viewbox = self.__dict__.get(name)
-            if viewbox is not None:
-                viewbox.autoRange()
         force_autoscale = getattr(self, "force_all_axes_autoscale", None)
         if callable(force_autoscale):
             force_autoscale()
         else:
+            for name in ("right_vb", "top_vb", "top_right_vb"):
+                viewbox = self.__dict__.get(name)
+                if viewbox is not None:
+                    viewbox.autoRange()
             self._refresh_trace_axis_auto_ranges()
 
     def _refresh_trace_axis_auto_ranges(self) -> None:
@@ -311,11 +305,26 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self._refresh_trace_axis_auto_ranges()
 
     def _trace_axis_parameter(self, trace: Any, display_axis: str) -> Any:
-        """Return the parameter plotted on one display axis for ``trace``."""
+        """Describe this trace's actual native mapping of published samples."""
+        return native_axis_quantities(
+            self._trace_input_axis_parameter(trace, "x"),
+            self._trace_input_axis_parameter(trace, "y"),
+            getattr(trace, "opts", {}),
+        )[display_axis]
+
+    def _trace_input_axis_parameter(self, trace: Any, display_axis: str) -> Any:
+        """Return metadata for samples before native display transforms."""
 
         host_axis_param = self.__dict__.get("axis_param", {})
         if trace is self.__dict__.get("line"):
             return host_axis_param.get(display_axis) or getattr(self, "param", None)
+
+        # A merged trace owns metadata mapped at its last sample publication.
+        # Reading the source's current selection can describe pending data.
+        trace_axis_param = getattr(trace, "axis_param", {})
+        param = trace_axis_param.get(display_axis)
+        if param is not None:
+            return param
 
         source = getattr(trace, "from_win", None)
         if source is None:
@@ -435,6 +444,19 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         """Update primary labels, then restore any selected top trace axis."""
 
         super()._set_param_axis_labels()
+        self._sync_trace_axis_labels()
+
+    def _sync_trace_axis_labels(self) -> None:
+        """Resolve labels from the first trace on each currently assigned axis."""
+
+        plot = self.__dict__.get("plot")
+        if plot is not None and {"x", "y"}.issubset(self.__dict__.get("axis_param", {})):
+            styles = self._ensure_trace_styles()
+            for key, line in self.__dict__.get("lines", {}).items():
+                if line is not None and styles.get(key, self._initial_trace_style()).x_axis == "Bottom":
+                    parameter = self._trace_axis_parameter(line, "x")
+                    plot.getAxis("bottom").setLabel(text=parameter.label, units=parameter.unit)
+                    break
         self._sync_left_axis_visibility()
         self._sync_right_axis_visibility()
         self._sync_top_axis_visibility()
@@ -779,7 +801,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
                 and plot_refresh_required(from_win)
                 and not from_win.monitor.isActive()
                 ):
-                from_win.monitorIntervalChanged(from_win.spinBox.value())
+                from_win.monitorIntervalChanged(refresh_interval_value(from_win.spinBox))
     
     
     @QtCore.pyqtSlot(str)
@@ -852,6 +874,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # has been constructed successfully.
         self.add_option_box()
         self.lines[trace_key] = subplot
+        sync_transforms = getattr(self, "_sync_native_trace_transforms", None)
+        if callable(sync_transforms):
+            sync_transforms(subplot)
         
         # Connect box options to line
         selected_box = None
@@ -966,6 +991,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             self.plot.removeItem(line)
         elif viewbox is not None:
             viewbox.removeItem(line)
+            self.plot.removeItem(line)
         else:
             # Compatibility fallback for lightweight test and plugin traces.
             owner = self.plot if side.lower() == "left" else self.right_vb
@@ -1251,9 +1277,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             if callable(sync_log_mode):
                 sync_log_mode(label, line)
 
-        self._sync_left_axis_visibility()
-        self._sync_right_axis_visibility()
-        self._sync_top_axis_visibility()
+        self._sync_trace_axis_labels()
 
         z = style.order
         set_z = getattr(line, "setZValue", None)

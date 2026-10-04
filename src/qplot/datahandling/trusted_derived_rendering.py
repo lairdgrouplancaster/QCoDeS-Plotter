@@ -1,4 +1,4 @@
-"""Deterministic, bounded, Qt-independent Stage 5B derived rendering."""
+"""Deterministic, bounded, Qt-independent Stage 5C derived rendering."""
 
 from __future__ import annotations
 
@@ -6,16 +6,20 @@ import binascii
 import math
 import struct
 import zlib
+from bisect import bisect_left
 from collections.abc import Callable
 from typing import Any, TypeAlias, cast
 
-from qplot.datahandling.trusted_live_queries import TrustedDerivedSourceObservation
+from qplot.datahandling.trusted_live_queries import (
+    Trusted2DGridLayout,
+    TrustedDerivedSourceObservation,
+)
 from qplot.datahandling.trusted_work_scheduler import (
     RenderingOptions,
     TrustedWorkKind,
 )
 
-TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v1"
+TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v5"
 TRUSTED_DERIVED_MAX_IMAGES = 8
 TRUSTED_DERIVED_MAX_IMAGE_WIDTH = 2_048
 TRUSTED_DERIVED_MAX_IMAGE_HEIGHT = 2_048
@@ -32,6 +36,25 @@ DerivedValue: TypeAlias = DerivedScalar | tuple["DerivedValue", ...]
 DerivedPayload: TypeAlias = dict[str, DerivedValue]
 CancelCheck: TypeAlias = Callable[[], None]
 _DEFAULT_RENDERING_OPTIONS = RenderingOptions()
+_VIRIDIS_RGB = bytes.fromhex(
+    "44015444025544035745055845065a45085b46095c460b5e460c5f460e61470f62471163471265471466471567471669"
+    "47186a48196b481a6c481c6e481d6f481e70482071482172482273482374472575472676472777472878472a79472b7a"
+    "472c7b462d7c462f7c46307d46317e45327f45347f453580453681443781443982433a83433b83433c84423d84423e85"
+    "4240854141864142864043874044873f45873f47883e48883e49893d4a893d4b893d4c893c4d8a3c4e8a3b508a3b518a"
+    "3a528b3a538b39548b39558b38568b38578c37588c37598c365a8c365b8c355c8c355d8c345e8d345f8d33608d33618d"
+    "32628d32638d31648d31658d31668d30678d30688d2f698d2f6a8d2e6b8e2e6c8e2e6d8e2d6e8e2d6f8e2c708e2c718e"
+    "2c728e2b738e2b748e2a758e2a768e2a778e29788e29798e287a8e287a8e287b8e277c8e277d8e277e8e267f8e26808e"
+    "26818e25828e25838d24848d24858d24868d23878d23888d23898d22898d228a8d228b8d218c8d218d8c218e8c208f8c"
+    "20908c20918c1f928c1f938b1f948b1f958b1f968b1e978a1e988a1e998a1e998a1e9a891e9b891e9c891e9d881e9e88"
+    "1e9f881ea0871fa1871fa2861fa38620a48520a58521a68521a78422a78423a88323a98224aa8225ab8126ac8127ad80"
+    "28ae7f29af7f2ab07e2bb17d2cb17d2eb27c2fb37b30b47a32b57a33b67935b77836b87738b97639b9763bba753dbb74"
+    "3ebc7340bd7242be7144be7045bf6f47c06e49c16d4bc26c4dc26b4fc36951c46853c56755c66657c66559c7645bc862"
+    "5ec96160c96062ca5f64cb5d67cc5c69cc5b6bcd596dce5870ce5672cf5574d05477d05279d1517cd24f7ed24e81d34c"
+    "83d34b86d44988d5478bd5468dd64490d64392d74195d73f97d83e9ad83c9dd93a9fd938a2da37a5da35a7db33aadb32"
+    "addc30afdc2eb2dd2cb5dd2bb7dd29bade27bdde26bfdf24c2df22c5df21c7e01fcae01ecde01dcfe11cd2e11bd4e11a"
+    "d7e219dae218dce218dfe318e1e318e4e318e7e419e9e419ece41aeee51bf1e51cf3e51ef6e61ff8e621fae622fde724"
+)
+_MISSING_CELL_RGBA = (230, 230, 230, 255)
 
 
 class TrustedDerivedRenderingError(RuntimeError):
@@ -195,28 +218,28 @@ def render_trusted_derived_payload(
     parameter_by_name = {
         parameter.name: parameter for parameter in observation.parameters
     }
-    dependents = tuple(
-        name for name in observation.dependent_parameters if name in column_indexes
-    )
-    if not dependents:
-        dependents = tuple(observation.sample_columns[-1:])
+    dependents = observation.dependent_parameters
     dependents = dependents[:TRUSTED_DERIVED_MAX_IMAGES]
     images: list[DerivedValue] = []
+    unavailable_descriptions: list[str] = []
     encoded_total = 0
     for dependent_index, dependent in enumerate(dependents):
         cancel_check()
         parameter = parameter_by_name.get(dependent)
-        dependencies = (
-            tuple(name for name in parameter.depends_on if name in column_indexes)
-            if parameter is not None
-            else ()
-        )
-        if not dependencies:
-            candidates = tuple(
-                name for name in observation.sample_columns[1:] if name != dependent
-            )
-            dependencies = candidates[:1]
+        dependencies = parameter.depends_on if parameter is not None else ()
         try:
+            if len(dependencies) > 2:
+                raise _UnsupportedNumericData(
+                    "Results with more than two sweep dimensions are unsupported."
+                )
+            if (
+                not dependencies
+                or dependent not in column_indexes
+                or any(name not in column_indexes for name in dependencies)
+            ):
+                raise _UnsupportedNumericData(
+                    "The dependent or one of its sweep parameters is unavailable."
+                )
             if len(dependencies) == 1:
                 rgba, points = _render_1d(
                     observation,
@@ -228,25 +251,30 @@ def render_trusted_derived_payload(
                 )
                 dimensionality = 1
             elif len(dependencies) == 2:
+                layout = next(
+                    (
+                        candidate
+                        for candidate in observation.validated_2d_layouts
+                        if candidate.dependent == dependent
+                        and candidate.dependencies == dependencies
+                    ),
+                    None,
+                )
+                if layout is None:
+                    raise _UnsupportedNumericData(
+                        "A validated rectangular 2D layout is not yet available."
+                    )
                 rgba, points = _render_2d(
                     observation,
-                    dependencies[0],
-                    dependencies[1],
-                    dependent,
+                    layout,
                     width,
                     height,
                     cancel_check,
                 )
                 dimensionality = 2
-            else:
-                continue
         except _UnsupportedNumericData as error:
-            return _base_payload(
-                observation,
-                kind,
-                status="unsupported",
-                description=str(error),
-            )
+            unavailable_descriptions.append(str(error))
+            continue
         cancel_check()
         if points == 0:
             continue
@@ -272,13 +300,22 @@ def render_trusted_derived_payload(
             observation,
             kind,
             status="unsupported",
-            description="No bounded numeric 1D or 2D dependent data was available.",
+            description=(
+                unavailable_descriptions[0]
+                if unavailable_descriptions
+                else "No bounded numeric 1D or 2D dependent data was available."
+            ),
         )
     payload = _base_payload(
         observation,
         kind,
         status="ok",
-        description="Bounded trusted result-prefix rendering.",
+        description=(
+            "Bounded trusted result-domain rendering; some dependents remain "
+            f"unavailable: {unavailable_descriptions[0]}"
+            if unavailable_descriptions
+            else "Bounded trusted result-domain rendering."
+        ),
     )
     payload["images"] = tuple(images)
     return payload
@@ -336,20 +373,53 @@ def _render_1d(
         if prior is not None:
             _line(rgba, width, height, prior[0], prior[1], px, py, (24, 92, 170, 255))
         prior = (px, py)
+    if len(points) == 1 and prior is not None:
+        _pixel(
+            rgba,
+            width,
+            min(width - 1, max(0, prior[0])),
+            min(height - 1, max(0, prior[1])),
+            (24, 92, 170, 255),
+        )
     return rgba, len(points)
 
 
 def _render_2d(
     observation: TrustedDerivedSourceObservation,
-    x_name: str,
-    y_name: str,
-    z_name: str,
+    layout: Trusted2DGridLayout,
     width: int,
     height: int,
     cancel_check: CancelCheck,
 ) -> tuple[bytearray, int]:
     indexes = {name: index for index, name in enumerate(observation.sample_columns)}
-    points: list[tuple[float, float, float]] = []
+    fast_name = layout.dependencies[layout.fast_axis_index]
+    slow_name = layout.dependencies[1 - layout.fast_axis_index]
+    z_name = layout.dependent
+    if any(name not in indexes for name in (slow_name, fast_name, z_name)):
+        raise _UnsupportedNumericData(
+            "The validated 2D layout is absent from the bounded numeric sample."
+        )
+    slow_count = layout.shape[1 - layout.fast_axis_index]
+    fast_count = layout.shape[layout.fast_axis_index]
+    sampled_slow = layout.sample_slow_indexes
+    sampled_fast = layout.sample_fast_indexes
+    slow_bins = {value: index for index, value in enumerate(sampled_slow)}
+    fast_bins = {value: index for index, value in enumerate(sampled_fast)}
+    if layout.fast_axis_index == 0:
+        sampled_vertical = sampled_fast
+        sampled_horizontal = sampled_slow
+        vertical_count = fast_count
+        horizontal_count = slow_count
+    else:
+        sampled_vertical = sampled_slow
+        sampled_horizontal = sampled_fast
+        vertical_count = slow_count
+        horizontal_count = fast_count
+    grid_width = len(sampled_horizontal)
+    grid_size = len(sampled_vertical) * grid_width
+    grid_sum = [0.0] * grid_size
+    grid_count = [0] * grid_size
+    points = 0
     for index, row in enumerate(observation.sample_rows):
         if index % 128 == 0:
             cancel_check()
@@ -357,47 +427,191 @@ def _render_2d(
             raise _UnsupportedNumericData(
                 "The bounded numeric sample has inconsistent vector lengths."
             )
-        x = _finite_number(row[indexes[x_name]])
-        y = _finite_number(row[indexes[y_name]])
-        z = _finite_number(row[indexes[z_name]])
-        if x is not None and y is not None and z is not None:
-            points.append((x, y, z))
-    rgba = bytearray(b"\xff" * (width * height * 4))
-    if not points:
-        return rgba, 0
-    x_min, x_max = min(point[0] for point in points), max(point[0] for point in points)
-    y_min, y_max = min(point[1] for point in points), max(point[1] for point in points)
-    z_min, z_max = min(point[2] for point in points), max(point[2] for point in points)
-    x_span, y_span, z_span = x_max - x_min, y_max - y_min, z_max - z_min
-    if not all(math.isfinite(span) for span in (x_span, y_span, z_span)):
-        raise _UnsupportedNumericData(
-            "The bounded numeric sample exceeds the supported finite range."
+        row_id = row[0]
+        if type(row_id) is not int:
+            raise _UnsupportedNumericData(
+                "The bounded grid sample has an invalid result id."
+            )
+        grid_index = _layout_grid_index(
+            layout,
+            row_id,
+            slow_count=slow_count,
+            fast_count=fast_count,
         )
-    x_span, y_span, z_span = x_span or 1.0, y_span or 1.0, z_span or 1.0
-    radius = max(1, min(width, height) // 100)
-    for index, (x, y, z) in enumerate(points):
-        if index % 128 == 0:
-            cancel_check()
-        raw_px = (x - x_min) * (width - 1) / x_span
-        raw_py = (y - y_min) * (height - 1) / y_span
-        raw_fraction = (z - z_min) / z_span
-        if not all(math.isfinite(value) for value in (raw_px, raw_py, raw_fraction)):
+        if grid_index is None:
+            continue
+        slow = _finite_number(row[indexes[slow_name]])
+        fast = _finite_number(row[indexes[fast_name]])
+        z = _finite_number(row[indexes[z_name]])
+        if slow is None or fast is None:
+            raise _UnsupportedNumericData(
+                "The validated grid sample has a non-numeric dependency."
+            )
+        if z is None:
+            continue
+        slow_index, fast_index = grid_index
+        slow_bin = slow_bins.get(slow_index)
+        if slow_bin is None:
+            slow_bin = _scaled_grid_index(
+                slow_index,
+                slow_count,
+                len(sampled_slow),
+            )
+        fast_bin = fast_bins.get(fast_index)
+        if fast_bin is None:
+            fast_bin = _scaled_grid_index(
+                fast_index,
+                fast_count,
+                len(sampled_fast),
+            )
+        scientific_slow_bin = (
+            len(sampled_slow) - 1 - slow_bin if layout.slow_reversed else slow_bin
+        )
+        row_fast_reversed = layout.fast_reversed ^ (
+            layout.serpentine and bool(slow_index % 2)
+        )
+        scientific_fast_bin = (
+            len(sampled_fast) - 1 - fast_bin if row_fast_reversed else fast_bin
+        )
+        if layout.fast_axis_index == 0:
+            vertical_bin = scientific_fast_bin
+            horizontal_bin = scientific_slow_bin
+        else:
+            vertical_bin = scientific_slow_bin
+            horizontal_bin = scientific_fast_bin
+        display_row = len(sampled_vertical) - 1 - vertical_bin
+        target = display_row * grid_width + horizontal_bin
+        combined = grid_sum[target] + z
+        if not math.isfinite(combined):
             raise _UnsupportedNumericData(
                 "The bounded numeric sample exceeds the supported finite range."
             )
-        px = round(raw_px)
-        py = height - 1 - round(raw_py)
-        fraction = max(0.0, min(1.0, raw_fraction))
-        color = (
-            round(255 * fraction),
-            round(96 * (1.0 - abs(2.0 * fraction - 1.0))),
-            round(255 * (1.0 - fraction)),
-            255,
+        grid_sum[target] = combined
+        grid_count[target] += 1
+        points += 1
+    rgba = bytearray(width * height * 4)
+    if points == 0:
+        for offset in range(0, len(rgba), 4):
+            rgba[offset : offset + 4] = bytes(_MISSING_CELL_RGBA)
+        return rgba, 0
+    grid = tuple(
+        grid_sum[index] / count if count else None
+        for index, count in enumerate(grid_count)
+    )
+    finite = tuple(value for value in grid if value is not None)
+    z_min, z_max = min(finite), max(finite)
+    z_span = z_max - z_min
+    if not math.isfinite(z_span):
+        raise _UnsupportedNumericData(
+            "The bounded numeric sample exceeds the supported finite range."
         )
-        for yy in range(max(0, py - radius), min(height, py + radius + 1)):
-            for xx in range(max(0, px - radius), min(width, px + radius + 1)):
-                _pixel(rgba, width, xx, yy, color)
-    return rgba, len(points)
+    source_rows = _nearest_sample_bins(
+        height,
+        vertical_count,
+        sampled_vertical,
+    )
+    source_columns = _nearest_sample_bins(
+        width,
+        horizontal_count,
+        sampled_horizontal,
+    )
+    for py in range(height):
+        if py % 32 == 0:
+            cancel_check()
+        source_row = source_rows[py]
+        for px, source_column in enumerate(source_columns):
+            value = grid[source_row * grid_width + source_column]
+            color = (
+                _MISSING_CELL_RGBA
+                if value is None
+                else _viridis_rgba(value, z_min, z_max)
+            )
+            _pixel(rgba, width, px, py, color)
+    return rgba, points
+
+
+def _layout_grid_index(
+    layout: Trusted2DGridLayout,
+    row_id: int,
+    *,
+    slow_count: int,
+    fast_count: int,
+) -> tuple[int, int] | None:
+    relative = row_id - layout.first_row_id
+    if relative < 0:
+        return None
+    slow_index, remainder = divmod(relative, layout.slow_id_stride)
+    if remainder % layout.fast_id_stride:
+        return None
+    fast_index = remainder // layout.fast_id_stride
+    if slow_index >= slow_count or fast_index >= fast_count:
+        return None
+    return slow_index, fast_index
+
+
+def _scaled_grid_index(index: int, source_count: int, target_count: int) -> int:
+    if source_count <= 1 or target_count <= 1:
+        return 0
+    return min(target_count - 1, index * (target_count - 1) // (source_count - 1))
+
+
+def _nearest_sample_bins(
+    pixel_count: int,
+    source_count: int,
+    sampled_indexes: tuple[int, ...],
+) -> tuple[int, ...]:
+    """Map display pixels to their nearest sampled source-domain coordinate.
+
+    Representative samples are almost uniform, but they also contain adjacent
+    edge anchors used to prove acquisition direction.  Treating every sample
+    rank as equally wide would make a single edge cell occupy the same image
+    width as a sample representing thousands of source cells.  Integer-scaled
+    nearest-neighbour lookup preserves the true source-index spacing without
+    losing either endpoint or using imprecise large-axis floats.
+    """
+
+    if pixel_count <= 0 or source_count <= 0 or not sampled_indexes:
+        raise ValueError("Source-domain sampling requires positive dimensions.")
+    targets: tuple[int, ...]
+    if pixel_count == 1:
+        denominator = 2
+        targets = (source_count - 1,)
+    else:
+        denominator = pixel_count - 1
+        targets = tuple(pixel * (source_count - 1) for pixel in range(pixel_count))
+    scaled_samples = tuple(index * denominator for index in sampled_indexes)
+    output: list[int] = []
+    for target in targets:
+        upper = bisect_left(scaled_samples, target)
+        if upper == 0:
+            output.append(0)
+        elif upper == len(scaled_samples):
+            output.append(len(scaled_samples) - 1)
+        else:
+            lower = upper - 1
+            output.append(
+                lower
+                if target - scaled_samples[lower] <= scaled_samples[upper] - target
+                else upper
+            )
+    return tuple(output)
+
+
+def _viridis_rgba(
+    value: float,
+    low: float,
+    high: float,
+) -> tuple[int, int, int, int]:
+    fraction = 0.5 if high == low else (value - low) / (high - low)
+    fraction = max(0.0, min(1.0, fraction))
+    color_index = min(255, int(fraction * 256.0))
+    offset = color_index * 3
+    return (
+        _VIRIDIS_RGB[offset],
+        _VIRIDIS_RGB[offset + 1],
+        _VIRIDIS_RGB[offset + 2],
+        255,
+    )
 
 
 def _pixel(

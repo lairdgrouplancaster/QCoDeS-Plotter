@@ -20,6 +20,7 @@ from qplot.tools import loader
 from qplot.tools.operation_registry import OperationValidationError
 
 from ._dataset_handle import DatasetKey, dataset_key_matches_current_source
+from ._refresh_interval import refresh_interval_value
 
 if TYPE_CHECKING:
     class _PlotRefreshBase(qtw.QMainWindow):
@@ -274,11 +275,27 @@ class PlotRefreshMixin(_PlotRefreshBase):
         return False
 
 
-    @staticmethod
-    def _commit_refresh_publication(worker: Any) -> None:
+    def _commit_refresh_publication(
+            self, worker: Any, *, preview_ready: bool = False
+            ) -> None:
         """Release rollback state after the concrete display committed."""
 
         worker._qplot_publication_snapshot = None
+        publish_preview = self.__dict__.get("_plot_preview_sink")
+        if (
+            preview_ready
+            and callable(publish_preview)
+            and not getattr(worker, "operations", None)
+            and getattr(worker, "heatmap_axis_ranges", None) is None
+            and not getattr(worker, "is_cancelled", lambda: False)()
+            and self._source_database_matches_key()
+        ):
+            try:
+                publish_preview(self, worker)
+            except Exception as error:
+                # A supplementary image must never turn a successful plot
+                # publication into a plot load failure.
+                log_exception("Plot preview reuse failed", error, __name__)
 
     def _refresh_monitor_required(self, dataset: Any | None = None) -> bool:
         """Keep polling until this plot has committed its terminal display."""
@@ -336,7 +353,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
         is_active = getattr(monitor, "isActive", None)
         if callable(is_active) and is_active():
             return
-        self.monitorIntervalChanged(spin_box.value())
+        self.monitorIntervalChanged(refresh_interval_value(spin_box))
 
     def _mark_display_synchronized(self, worker: Any) -> bool:
         """Publish terminal plot state after the concrete display commit."""
@@ -413,6 +430,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
             "max_full_heatmap_points": self.config.get(
                 "runtime_settings.max_full_heatmap_points"
                 ),
+            "max_heatmap_grid_cells": self.config.get(
+                "runtime_settings.max_heatmap_grid_cells"
+                ),
+            "max_heatmap_grid_side": self.config.get(
+                "runtime_settings.max_heatmap_grid_side"
+                ),
             "heatmap_axis_ranges": heatmap_axis_ranges,
             "heatmap_full_axis_ranges": heatmap_full_axis_ranges,
         }
@@ -430,6 +453,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
             self.param_dict,
             self.axis_options,
             **loader_kwargs,
+            )
+        worker._qplot_operation_apply_generation = int(
+            getattr(self.oper_widget, "_apply_generation", 0)
             )
         dataset_key = getattr(self, "_dataset_key", None)
         if dataset_key is not None:
@@ -558,7 +584,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     dataset is not None
                     and self._refresh_monitor_required(dataset)
                     ):
-                self.monitorIntervalChanged(self.spinBox.value())
+                self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
 
             # restard monitor if any subplots are live
             elif dataset is not None:
@@ -576,7 +602,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                             )
                         subplot.running = bool(running)
                         if running:
-                            self.monitorIntervalChanged(self.spinBox.value())
+                            self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
                             break
 
 

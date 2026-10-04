@@ -5,15 +5,19 @@ and single parameter loading. See:
     qcodes.dataset.sqlite.queries
 for the original functions of similar names as well as typing.
 """
+from math import prod
 from typing import TYPE_CHECKING
 
 import numpy.typing as npt
 from qcodes.dataset.data_set_cache import _merge_data
-from qcodes.dataset.sqlite.queries import (
-    completed,
-    get_parameter_data_for_one_paramtree,
-)
+from qcodes.dataset.sqlite.queries import completed
 
+from qplot.datahandling.parameter_data import (
+    _check_noop,
+    flatten_record_columns,
+    get_parameter_data_for_one_paramtree,
+    integer_preserving_dtype,
+)
 from qplot.datahandling.qcodes_cache import (
     cache_data,
     cache_dataset_completed,
@@ -35,6 +39,7 @@ def append_shaped_parameter_data_to_existing_arrays(
     write_status,
     existing_data,
     new_data,
+    check_cancelled=_check_noop,
 ):
     """
     Append datadict to an already existing datadict and return the merged
@@ -68,14 +73,66 @@ def append_shaped_parameter_data_to_existing_arrays(
     else:
         shape = None
 
+    overflow_count = None
     # QCoDeS inserts shaped refreshes into existing arrays in place. Work on
     # private copies so a concurrent worker cannot mutate the shared cache
     # before qPlot's monotonic commit check.
     if shape is not None:
-        existing_data_1_tree = {
-            name: values.copy()
-            for name, values in existing_data_1_tree.items()
+        # Object cells count records; shaped cache offsets count samples.
+        # Flatten only the new records so QCoDeS' usual padding and offsets
+        # still apply, including the same missing-value handling.
+        if any(values.dtype.kind == "O" for values in new_data_1_tree.values()):
+            new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
+        private_data = {}
+        for name, values in existing_data_1_tree.items():
+            check_cancelled()
+            incoming = new_data_1_tree.get(name)
+            dtype = values.dtype
+            if (
+                values.size and incoming is not None and incoming.size
+                and values.dtype.kind in "biufcO" and incoming.dtype.kind in "biufcO"
+            ):
+                # QCoDeS' shaped insertion assigns into the cached dtype.
+                # Promote every numeric column before insertion, including
+                # coordinates and complex values that plot validation rejects.
+                # Empty cache placeholders must not dictate the first dtype.
+                dtype = integer_preserving_dtype((values.dtype, incoming.dtype))
+            # Shaped insertion writes through ravel(), so retain the old
+            # copy() behavior of making C-contiguous working arrays.
+            private_data[name] = values.astype(dtype, order="C", copy=True)
+        existing_data_1_tree = private_data
+        check_cancelled()
+        acquired_before = write_status.get(meas_parameter) or 0
+        incoming = new_data_1_tree.get(meas_parameter)
+        acquired_after = acquired_before + (incoming.size if incoming is not None else 0)
+        if acquired_after > prod(shape):
+            # Retain the flattened fallback for scans exceeding their plan,
+            # but append to acquired samples, never to unused cache padding.
+            existing_data_1_tree = {
+                name: values.ravel()[:acquired_before]
+                for name, values in existing_data_1_tree.items()
             }
+            new_data_1_tree = {
+                name: values.reshape(-1) for name, values in new_data_1_tree.items()
+            }
+            shape = None
+            overflow_count = acquired_after
+
+    if shape is None:
+        # QCoDeS appends dense record columns with NumPy's usual promotion.
+        # Promote both sides first when signed/unsigned (or integer/float)
+        # records need object cells to retain every acquired integer.
+        existing_data_1_tree = dict(existing_data_1_tree)
+        new_data_1_tree = dict(new_data_1_tree)
+        for name, incoming in new_data_1_tree.items():
+            check_cancelled()
+            previous = existing_data_1_tree.get(name)
+            if previous is None or not previous.size or not incoming.size:
+                continue
+            dtype = integer_preserving_dtype((previous.dtype, incoming.dtype))
+            if dtype.kind == "O":
+                existing_data_1_tree[name] = previous.astype(dtype, copy=False)
+                new_data_1_tree[name] = incoming.astype(dtype, copy=False)
 
     (merged_data[meas_parameter], updated_write_status[meas_parameter]) = (
         _merge_data(
@@ -86,6 +143,11 @@ def append_shaped_parameter_data_to_existing_arrays(
             meas_parameter=meas_parameter,
         )
     )
+    if overflow_count is not None:
+        # Unshaped QCoDeS appends reset this status; planned trees still need
+        # their acquired sample extent for subsequent reads and processing.
+        updated_write_status[meas_parameter] = overflow_count
+    check_cancelled()
     return updated_write_status, merged_data
 
 
@@ -126,6 +188,8 @@ def load_param_data_from_db(
     read_status,
     existing_data,
     end: int | None = None,
+    *,
+    check_cancelled=_check_noop,
 ):
     # Data fetch
     updated_read_status: dict[str, int] = dict(read_status)
@@ -139,7 +203,7 @@ def load_param_data_from_db(
         output_param=meas_parameter,
         start=start,
         end=end,
-        callback=None,
+        check_cancelled=check_cancelled,
     )
     new_data_dict[meas_parameter] = new_data
     updated_read_status[meas_parameter] = start + n_rows_read - 1
@@ -147,7 +211,8 @@ def load_param_data_from_db(
     # Data Update
     (updated_write_status, merged_data) = (
         append_shaped_parameter_data_to_existing_arrays(
-            rundescriber, meas_parameter, write_status, existing_data, new_data_dict
+            rundescriber, meas_parameter, write_status, existing_data, new_data_dict,
+            check_cancelled=check_cancelled,
         )
     )
     

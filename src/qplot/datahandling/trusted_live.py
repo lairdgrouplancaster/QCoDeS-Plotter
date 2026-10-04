@@ -1528,7 +1528,10 @@ class TrustedLiveReader:
         if operation == apsw.SQLITE_PRAGMA:
             pragma_name = (parameter_one or "").casefold()
             if (
-                pragma_name == "data_version"
+                pragma_name in {
+                    "data_version", "user_version", "application_id",
+                    "page_count", "page_size",
+                }
                 and parameter_two is None
                 and database_name in {None, "main"}
             ):
@@ -1826,7 +1829,7 @@ class TrustedLiveReader:
         ):
             raise TrustedLiveSqlRejectedError(
                 "The trusted reader accepts exactly one ordinary read-only "
-                "SELECT or PRAGMA data_version statement."
+                "SELECT or supported read-only metadata PRAGMA statement."
             )
         columns = result_budget.start_result(details.description)
         cursor: apsw.Cursor | None = None

@@ -25,6 +25,9 @@ from ._dragdrop import (
     run_preview_payload_from_mime,
 )
 from ._help import add_help_menu
+from ._native_averaging import NativePlotItem, is_native_source_curve
+from ._native_transforms import native_fft_coordinate_error
+from ._plot1d_snap import _line_snap_data
 from ._plot_axis_scaling import (
     PlotAxisScalingMixin,
     _PowerScaledAxisItem,
@@ -34,11 +37,18 @@ from ._plot_feedback import PlotWindowFeedbackMixin
 from ._plot_marquee import PlotMarqueeMixin
 from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
+from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     AXIS_MAJOR_TICK_COUNT_KEY,
     MOUSE_MODE_KEY,
     PreferencesDialog,
     create_preferences_action,
+)
+from ._refresh_interval import (
+    connect_refresh_interval_edits,
+    refresh_interval_value,
+    remember_refresh_interval,
+    set_refresh_interval,
 )
 from ._subplots import custom_viewbox
 from ._widgets import (
@@ -311,8 +321,13 @@ def _clean_tick_strings(axis, values, scale, spacing):
             spacing,
             )
 
-    tolerance = max(abs(spacing) * 1e-10, 1e-15)
-    clean_values = [0.0 if abs(value) < tolerance else value for value in values]
+    # Work in tick coordinates: an absolute floor erases small measurements
+    # before SI scaling. Allow floating-point round-off, but never a meaningful
+    # fraction of a tick interval, even if distant ticks have coarse precision.
+    interval = abs(spacing)
+    precision = max((ulp(value) for value in values), default=ulp(interval))
+    tolerance = min(interval * 1e-6, max(interval * 1e-10, precision * 4))
+    clean_values = [0.0 if abs(value) <= tolerance else value for value in values]
     if axis.logMode:
         return axis._qplot_original_tick_strings(
             clean_values,
@@ -498,7 +513,7 @@ class plotWidget(
         self.vb = custom_viewbox() # Mainly for linking secondary axis
         self.vb.setDefaultPadding(0)
         self.apply_mouse_mode_preference()
-        self.plot = self.widget.addPlot(
+        self.plot = NativePlotItem(
             viewBox=self.vb,
             axisItems={
                 "bottom": _PowerScaledAxisItem("bottom"),
@@ -507,6 +522,7 @@ class plotWidget(
                 "right": _PowerScaledAxisItem("right"),
                 },
             )
+        self.widget.addItem(self.plot)
         self.apply_axis_major_tick_count_preference()
         self.vb.setParent(self.plot)
         self.vb.set_marquee_owner(self)
@@ -518,6 +534,7 @@ class plotWidget(
         self.initOperations()
         self.initRefresh(refrate)
         self.initFrame() # See plot1d, plot2d
+        self._init_native_transform_labels()
         
         if self.visible: #dont run non essential GUI functions if not displaying
             self.initLabels()
@@ -547,7 +564,7 @@ class plotWidget(
         # Keep the timer alive through this plot's own terminal display commit,
         # even if another parameter publishes shared dataset completion first.
         if self._refresh_monitor_required(self.ds):
-            self.monitorIntervalChanged(self.spinBox.value())
+            self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
 
 
     def _install_preview_drop_target(self):
@@ -574,8 +591,138 @@ class plotWidget(
 
 
     def _set_param_axis_labels(self):
-        self._set_param_axis_label("bottom", self.axis_param["x"])
-        self._set_param_axis_label("left", self.axis_param["y"])
+        parameters = self.axis_param
+        line = self.__dict__.get("line")
+        if line is not None:
+            parameters = native_axis_quantities(
+                parameters["x"], parameters["y"], line.opts,
+            )
+        self._set_param_axis_label("bottom", parameters["x"])
+        self._set_param_axis_label("left", parameters["y"])
+
+    def _init_native_transform_labels(self):
+        """Coordinate line transforms before any native curve update runs."""
+        native_slots = {
+            "fftCheck": self.plot.updateSpectrumMode,
+            "derivativeCheck": self.plot.updateDerivativeMode,
+            "phasemapCheck": self.plot.updatePhasemapMode,
+            "subtractMeanCheck": self.plot.updateSubtractMeanMode,
+        }
+        self._qplot_native_transform_update = False
+        for name, slot in native_slots.items():
+            control = getattr(self.plot.ctrl, name)
+            if self.__dict__.get("line") is None:
+                control.toggled.connect(self._native_transform_labels_changed)
+                continue
+            # PlotItem connected these first. A later label/validation slot is
+            # too late: its native setters synchronously rebuild curve data.
+            control.toggled.disconnect(slot)
+            control.toggled.connect(
+                lambda value, name=name: self._native_transform_controls_changed(name, value)
+            )
+        self._install_native_transform_trace_handler(self.__dict__.get("line"))
+
+    def _native_transform_controls_changed(self, name, _value):
+        if self._qplot_native_transform_update:
+            return
+        self._qplot_native_transform_update = True
+        error = None
+        try:
+            ctrl = self.plot.ctrl
+            # Validate every curve before any synchronous native setter runs.
+            # A rejected FFT must also retain an outgoing derivative mode.
+            wants_fft = (ctrl.fftCheck.isChecked() and not ctrl.phasemapCheck.isChecked()
+                         and (not ctrl.derivativeCheck.isChecked() or name == "fftCheck"))
+            if wants_fft:
+                error = self._native_fft_validation_error()
+                if error:
+                    ctrl.fftCheck.setChecked(False)
+            if (not ctrl.phasemapCheck.isChecked()
+                    and ctrl.fftCheck.isChecked() and ctrl.derivativeCheck.isChecked()):
+                # Outside phase map, the newly enabled transform wins. Leaving
+                # phase map retains derivative, whose input samples it used.
+                incompatible = ctrl.derivativeCheck if name == "fftCheck" else ctrl.fftCheck
+                incompatible.setChecked(False)
+            for line in tuple(self.plot.items):
+                if is_native_source_curve(line):
+                    self._sync_native_trace_transforms(line)
+            self.plot.enableAutoRange()
+            self.plot.recomputeAverages()
+        finally:
+            self._qplot_native_transform_update = False
+        self._native_transform_labels_changed()
+        if error:
+            self._qplot_native_fft_error_text = error
+            self.show_status(error, 0)
+        elif self.__dict__.get("_qplot_native_fft_error_text"):
+            self._qplot_native_fft_error_text = None
+            self.show_status("", 0)
+
+    def _native_fft_validation_error(self):
+        for line in tuple(self.plot.items):
+            if is_native_source_curve(line):
+                error = native_fft_coordinate_error(line.getOriginalDataset()[0])
+                if error:
+                    return error
+        return None
+
+    def _native_transform_labels_changed(self, _value=None):
+        if self._qplot_native_transform_update:
+            return
+        ctrl = self.plot.ctrl
+        if (ctrl.fftCheck.isChecked() and not ctrl.phasemapCheck.isChecked()
+                and self._native_fft_validation_error()):
+            # setData has a safe empty FFT fallback. Its publication signal
+            # now restores all curves, controls and labels to non-FFT mode.
+            self._native_transform_controls_changed("fftCheck", True)
+            return
+        if {"x", "y"}.issubset(self.__dict__.get("axis_param", {})):
+            self._set_param_axis_labels()
+        if (self.__dict__.get("_qplot_native_fft_error_text")
+                and self._native_fft_validation_error()):
+            # A worker's load-status message may follow the initial rollback
+            # during an axis change. Keep its FFT explanation after publication.
+            self.show_status(self._qplot_native_fft_error_text, 0)
+
+    def _install_native_transform_trace_handler(self, line):
+        if line is None or getattr(line, "_qplot_transform_label_handler", False):
+            return
+        line.sigPlotChanged.connect(self._native_transform_labels_changed)
+        line._qplot_transform_label_handler = True
+
+    def _sync_native_trace_transforms(self, line):
+        """Apply validated controls through valid intermediate curve states.
+
+        Native setters update immediately. Clear outgoing FFT/derivative modes
+        first, enable phase map before combining them, and disable phase map
+        last. This also covers new traces and traces on secondary viewboxes.
+        """
+        if not is_native_source_curve(line):
+            return
+        ctrl = self.plot.ctrl
+        if (not self._qplot_native_transform_update and ctrl.fftCheck.isChecked()
+                and not ctrl.phasemapCheck.isChecked() and self._native_fft_validation_error()):
+            # New traces inherit PlotItem's controls during addItem. Include
+            # them in a window-wide rollback before syncing individual modes.
+            self._native_transform_controls_changed("fftCheck", True)
+            return
+        fft = ctrl.fftCheck.isChecked()
+        derivative = ctrl.derivativeCheck.isChecked()
+        phase = ctrl.phasemapCheck.isChecked()
+        if not fft:
+            line.setFftMode(False)
+        if not derivative:
+            line.setDerivativeMode(False)
+        if phase:
+            line.setPhasemapMode(True)
+        line.setSubtractMeanMode(ctrl.subtractMeanCheck.isChecked())
+        line.setFftMode(fft)
+        line.setDerivativeMode(derivative)
+        if not phase:
+            line.setPhasemapMode(False)
+        self._install_native_transform_trace_handler(line)
+        if not self._qplot_native_transform_update:
+            self.plot.recomputeAverages()
 
     def dragEnterEvent(self, event):
         if self._handle_preview_drag_drop(event):
@@ -706,7 +853,7 @@ class plotWidget(
             self.toolbarRef.hide()
         
         self.spinBox = qtw.QDoubleSpinBox()
-        self.spinBox.setRange(0.0, 86_400.0)
+        self.spinBox.setRange(0.0, 10_000.0)
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
 
@@ -714,11 +861,13 @@ class plotWidget(
         self.toolbarRef.addWidget(self.spinBox)
         
         if refrate is not None and refrate > 0:
-            self.spinBox.setValue(refrate)
+            set_refresh_interval(self.spinBox, refrate)
         else:
-            self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
+            set_refresh_interval(
+                self.spinBox, self.config.get("user_preference.default_refresh_rate"),
+            )
             
-        self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
+        connect_refresh_interval_edits(self.spinBox, self.monitorIntervalChanged)
         self.monitor.timeout.connect(self.refreshWindow)
             
         
@@ -808,9 +957,13 @@ class plotWidget(
             if action.text() == "View All":
                 self.register_shortcut(action, command_spec("plot.autoscale"))
                 action.setText(command_spec("plot.autoscale").text)
-                action.triggered.connect(
-                    lambda _checked=False: self.force_all_axes_autoscale()
-                )
+                # Line owners install a validated full-view handler before
+                # native autoRange mutates the range. Their context callback
+                # already applies this guard once; heatmaps retain this hook.
+                if getattr(self, "operation_kind", None) not in ("plot1d", "sweeper"):
+                    action.triggered.connect(
+                        lambda _checked=False: self.force_all_axes_autoscale()
+                    )
                 break
         
         x_action = actions[1]
@@ -1275,14 +1428,13 @@ class plotWidget(
 
     def _cursor_1d_x_data(self):
         """
-        Return the X data used to derive the 1d cursor array index.
+        Return full processed X samples in view coordinates for cursor indices.
 
         """
         line = self.__dict__.get("line")
-        if line is not None and hasattr(line, "getData"):
-            data = line.getData()
-            if data is not None and data[0] is not None:
-                return data[0]
+        if line is not None:
+            data = _line_snap_data(line)
+            return data.x_view if data is not None else None
 
         return self.__dict__.get("axis_data", {}).get("x")
 
@@ -1292,6 +1444,8 @@ class plotWidget(
         Return the zero-based data index nearest to a cursor X coordinate.
 
         """
+        if not isfinite(x_value):
+            return None
         x_data = self._cursor_1d_x_data()
         if x_data is None:
             return None
@@ -1479,7 +1633,7 @@ class plotWidget(
                 )
 
 
-    def show_preferences_dialog(self):
+    def show_preferences_dialog(self, initial_tab: str | None = None):
         """
         Opens the shared preferences dialog from a plot window.
 
@@ -1492,6 +1646,18 @@ class plotWidget(
             self.config = config
 
         dialog = PreferencesDialog(config, self)
+        if initial_tab is not None:
+            tab_widget = dialog.findChild(qtw.QTabWidget)
+            if tab_widget is not None:
+                for index in range(tab_widget.count()):
+                    if tab_widget.tabText(index) == initial_tab:
+                        tab_widget.setCurrentIndex(index)
+                        break
+        if initial_tab == "Runtime":
+            QtCore.QTimer.singleShot(
+                0,
+                dialog.maxFullHeatmapPointsSpin.setFocus,
+                )
         if hasattr(owner, "apply_current_settings"):
             dialog.preferencesApplied.connect(owner.apply_current_settings)
         else:
@@ -1499,7 +1665,10 @@ class plotWidget(
         dialog.preferencesApplied.connect(
             lambda: self.show_status("Preferences saved.", 3000)
             )
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
 
     @staticmethod
@@ -1608,6 +1777,11 @@ class plotWidget(
         Unused but required by slot.
 
         """
+        # Qt leaves child windows visible when their parent is merely closed.
+        # Reject editors before releasing the dataset so they cannot act on a
+        # closed plot. Keep their widgets alive for retained overlay sources.
+        for dialog in self.findChildren(qtw.QDialog):
+            dialog.reject()
         dispose_export_dialog = getattr(
             self,
             "_dispose_plot_export_dialog",
@@ -1632,7 +1806,7 @@ class plotWidget(
                 and self._refresh_monitor_required(self.ds)
                 and not self.monitor.isActive()
                 ):
-            self.monitorIntervalChanged(self.spinBox.value())
+            self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
 
 
     @QtCore.pyqtSlot(object)
@@ -1737,6 +1911,7 @@ class plotWidget(
             Time in seconds to change refresh timer to.
 
         """
+        remember_refresh_interval(self.spinBox, interval)
         self.monitor.stop()
         if interval > 0:
             self.monitor.start(max(1, round(interval * 1000)))

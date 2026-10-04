@@ -8,6 +8,7 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
+from qplot.windows._native_transforms import NativePlotDataItem
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._widgets import (
     expandingComboBox,
@@ -191,7 +192,9 @@ class sweeper(plotWidget):
         Note, is copy of plot1d.initFrame
 
         """
-        self.line = self.plot.plot(connect="all")
+        self.line = NativePlotDataItem(connect="all")
+        self.plot.addItem(self.line)
+        self._install_axis_scale_trace_handler(self.line)
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()

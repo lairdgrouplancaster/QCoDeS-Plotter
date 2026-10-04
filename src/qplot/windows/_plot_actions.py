@@ -12,6 +12,10 @@ from qplot.datahandling.file_identity import (
     DatabaseInstance,
     logical_database_path,
 )
+from qplot.datahandling.parameter_data import (
+    concatenate_record_samples,
+    parameter_data_for_export,
+)
 from qplot.datahandling.readonly import (
     DatabaseInstanceChangedError,
     load_by_guid_read_only,
@@ -31,8 +35,9 @@ from ._dataset_handle import (
     dataset_key_matches_current_source,
 )
 from ._export_paths import choose_export_path, write_export_atomically
-from ._plot2d_layers import _heatmap_layer_compatibility
+from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_refresh import plot_refresh_required
+from ._refresh_interval import refresh_interval_value
 from ._subplots.subplot1d import (
     _subplot_axis_order,
     _subplot_shared_parameter,
@@ -62,6 +67,73 @@ def _combo_index_for_data(combo, value):
         if item_data(index) == value:
             return index
     return -1
+
+
+def _exportable_measurement_params(dataset):
+    """Return dependent values, then standalone values, in run order."""
+    parameters = dataset.get_parameters()
+    setpoint_names = {
+        name
+        for param in parameters
+        for name in param.depends_on_
+    }
+    dependent = [param for param in parameters if param.depends_on_]
+    standalone = [
+        param for param in parameters
+        if not param.depends_on_ and param.name not in setpoint_names
+    ]
+    return dependent + standalone
+
+
+def _csv_scalar_samples(values):
+    """Flatten a record, including arrays held in NumPy object cells."""
+    array = np.asarray(values)
+    if not array.dtype.hasobject:
+        return array.ravel()
+    samples = []
+    for value in array.ravel():
+        if isinstance(value, (np.ndarray, list, tuple)):
+            samples.extend(_csv_scalar_samples(value))
+        else:
+            samples.append(value)
+    # These cells can mix signed/unsigned integers (or integers and floats).
+    # Inferring a dtype again would undo extraction's precision protection.
+    return np.asarray(samples, dtype=object)
+
+
+def _csv_scalar_columns(param_data):
+    """Align samples within each QCoDeS record before joining records."""
+    arrays = {name: np.asarray(values) for name, values in param_data.items()}
+    if not arrays:
+        return {}
+    # Regular, already aligned columns need no record-by-record expansion.
+    if (
+            len({values.shape for values in arrays.values()}) == 1
+            and all(not values.dtype.hasobject for values in arrays.values())
+            ):
+        return {name: values.ravel() for name, values in arrays.items()}
+
+    chunks = {name: [] for name in arrays}
+    for record in zip(*arrays.values(), strict=True):
+        samples = {
+            name: _csv_scalar_samples(values)
+            for name, values in zip(arrays, record, strict=True)
+        }
+        sample_count = max(values.size for values in samples.values())
+        for name, values in samples.items():
+            if values.size == sample_count:
+                chunks[name].append(values)
+            elif values.size == 1:
+                chunks[name].append(np.repeat(values, sample_count))
+            else:
+                raise ValueError(
+                    f"Cannot align CSV record column {name}: "
+                    f"{values.size} samples instead of {sample_count}."
+                )
+    return {
+        name: concatenate_record_samples(parts) if parts else np.array([], dtype=arrays[name].dtype)
+        for name, parts in chunks.items()
+    }
 
 
 class PlotActionsMixin:
@@ -592,6 +664,70 @@ class PlotActionsMixin:
         del win
 
 
+    def _publish_displayed_plot_preview(self, plot, worker):
+        """Show one displayed measurement while run previews are queued."""
+
+        preview = getattr(getattr(self, "infoBox", None), "preview", None)
+        if preview is None or getattr(preview, "_shutting_down", False):
+            return
+        key = getattr(plot, "_dataset_key", None)
+        if not isinstance(key, DatasetKey) or key.guid not in preview.run_metadata:
+            return
+        if getattr(worker, "dataset_completed", None) is not True:
+            # For an active run, reuse only the same row prefix currently
+            # advertised by the run list. Its next metadata update will
+            # discard the provisional image and request fresh derived work.
+            try:
+                displayed_count = int(worker.dataset_length_at_start)
+                listed_count = int(
+                    preview.run_metadata[key.guid]["result_count"]
+                )
+            except (AttributeError, KeyError, TypeError, ValueError):
+                return
+            if displayed_count != listed_count:
+                return
+        if not dataset_key_matches_current_source(key):
+            return
+        if getattr(preview, "_trusted_derived_mode", False):
+            bridge = getattr(self, "_trusted_derived_bridge", None)
+            instance = getattr(bridge, "_database_instance", None)
+            if not getattr(bridge, "_accepting_publications", False):
+                return
+        else:
+            instance = getattr(preview, "database_instance", None)
+        if (
+            instance is None
+            or instance.logical_path != key.database_path
+            or instance.resolved_path != key.resolved_database_path
+            or instance.identity != key.database_identity
+        ):
+            return
+        preview_generation = preview.generation
+
+        from ._widgets.preview import render_displayed_plot_preview
+
+        plot_preview = render_displayed_plot_preview(
+            worker,
+            getattr(plot, "param", None),
+            preview.preview_size,
+        )
+        if (
+            plot_preview is None
+            or preview.generation != preview_generation
+            or not dataset_key_matches_current_source(key)
+        ):
+            return
+        if getattr(preview, "_trusted_derived_mode", False):
+            bridge = getattr(self, "_trusted_derived_bridge", None)
+            if (
+                not getattr(bridge, "_accepting_publications", False)
+                or getattr(bridge, "_database_instance", None) != instance
+            ):
+                return
+        elif preview.database_instance != instance:
+            return
+        preview.publish_plot_preview(key.guid, plot_preview)
+
     @QtCore.pyqtSlot(object, object, tuple)
     def openWin(
             self,
@@ -684,6 +820,7 @@ class PlotActionsMixin:
         self.add_ds_at(dataset_key, ds=construction_ds)
 
         self.windows.append(win)
+        win._plot_preview_sink = self._publish_displayed_plot_preview
 
         win.closed.connect(self.onClose)
         database_replaced = getattr(win, "database_replaced", None)
@@ -1339,7 +1476,7 @@ class PlotActionsMixin:
                         plot1d,
                         ds,
                         param,
-                        refrate=self.spinBox.value(),
+                        refrate=refresh_interval_value(self.spinBox),
                         show=show,
                         dataset_key=dataset_key,
                     )
@@ -1362,7 +1499,7 @@ class PlotActionsMixin:
                         plot2d,
                         ds,
                         param,
-                        refrate=self.spinBox.value(),
+                        refrate=refresh_interval_value(self.spinBox),
                         show=show,
                         dataset_key=dataset_key,
                     )
@@ -1808,6 +1945,11 @@ class PlotActionsMixin:
             from_win,
         )
         if compatibility_error is not None:
+            if compatibility_error == "the displayed value units do not match":
+                compatibility_error += (
+                    f" (source: {_window_display_unit(from_win) or 'unitless'};"
+                    f" target: {_window_display_unit(target_win) or 'unitless'})"
+                )
             self.show_status(
                 f"Cannot add {parameter_name}; {compatibility_error}.",
                 5000,
@@ -2003,8 +2145,7 @@ class PlotActionsMixin:
             try:
                 parameter_names = tuple(
                     param.name
-                    for param in selected_dataset.get_parameters()
-                    if param.depends_on != ""
+                    for param in _exportable_measurement_params(selected_dataset)
                 )
             except Exception as error:
                 log_exception("Run parameter enumeration failed", error, __name__)
@@ -2032,6 +2173,41 @@ class PlotActionsMixin:
                 str(name)
                 for name in metadata.get("measure_parameters") or ()
             )
+            if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+                # The trusted run list is populated progressively. Its initial
+                # measurement names may omit standalones until derived metadata
+                # arrives. An explicit export can enumerate a short-lived
+                # action view now, before the modal destination dialog.
+                dataset = None
+                try:
+                    dataset_key = self._bind_one_shot_dataset_key(dataset_key)
+                    dataset = self._load_run_csv_dataset(dataset_key)
+                    parameter_names = tuple(
+                        param.name
+                        for param in _exportable_measurement_params(dataset)
+                    )
+                    self._require_run_csv_source_current(dataset_key)
+                except DatabaseInstanceChangedError:
+                    self._handle_run_csv_source_replaced(dataset_key)
+                    return None
+                except Exception as error:
+                    log_exception("Run parameter enumeration failed", error, __name__)
+                    self.show_error(
+                        "Run Load Failed",
+                        "Could not read the selected run's measurements.",
+                        str(error),
+                    )
+                    return None
+                finally:
+                    if dataset is not None:
+                        try:
+                            close_dataset_connection(dataset)
+                        except Exception as error:
+                            log_exception(
+                                "CSV parameter dataset cleanup failed",
+                                error,
+                                __name__,
+                            )
 
         requested_names = self._selected_measurement_names(
             parameter_names,
@@ -2057,13 +2233,15 @@ class PlotActionsMixin:
 
     def _measurement_params_by_names(self, dataset, parameter_names):
         """Resolve captured measurement names against a freshly loaded run."""
-        parameters = {param.name: param for param in dataset.get_parameters()}
+        parameters = {
+            param.name: param for param in _exportable_measurement_params(dataset)
+        }
         resolved = []
         for name in parameter_names:
             param = parameters.get(name)
-            if param is None or param.depends_on == "":
+            if param is None:
                 raise ValueError(
-                    f"Measurement parameter {name!r} is not present in the "
+                    f"Measurement parameter {name!r} is not exportable in the "
                     "freshly loaded run."
                 )
             resolved.append(param)
@@ -2175,11 +2353,19 @@ class PlotActionsMixin:
         frames = []
         prefix_columns = len(params) > 1
         for param in params:
-            param_data = dataset.get_parameter_data(param.name).get(param.name, {})
+            param_data = parameter_data_for_export(dataset, param.name)
             columns = {}
-            for name, values in param_data.items():
+            for name, values in _csv_scalar_columns(param_data).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name
-                columns[column_name] = pd.Series(np.asarray(values).ravel())
+                # Object samples may need both uint64 and negative int64, or
+                # exact integers alongside floats. Disable pandas' inference.
+                dtype: str | type[object] | None = object if values.dtype.hasobject else None
+                if values.dtype.kind in "iu":
+                    # Alignment adds blanks to shorter columns. Nullable
+                    # integers retain exact values instead of becoming floats.
+                    prefix = "U" if values.dtype.kind == "u" else ""
+                    dtype = f"{prefix}Int{values.dtype.itemsize * 8}"
+                columns[column_name] = pd.Series(values, dtype=dtype)
             frames.append(pd.DataFrame(columns))
 
         return pd.concat(frames, axis=1) if frames else pd.DataFrame()

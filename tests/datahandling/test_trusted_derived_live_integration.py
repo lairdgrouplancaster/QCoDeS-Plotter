@@ -5,11 +5,23 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
+import apsw
 import pytest
+import qcodes
+from qcodes.dataset import (
+    Measurement,
+    initialise_or_create_database_at,
+    load_or_create_experiment,
+)
+from qcodes.parameters import ManualParameter
 
 from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
+from qplot.datahandling.trusted_derived_rendering import (
+    render_trusted_derived_payload,
+)
 from qplot.datahandling.trusted_live_queries import trusted_source_revision
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.datahandling.trusted_work_coordinator import (
@@ -17,6 +29,10 @@ from qplot.datahandling.trusted_work_coordinator import (
     TrustedWorkCoordinator,
 )
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
+from tests.datahandling.test_trusted_derived_rendering import (
+    _decode_png_rgba,
+    _rgba_at,
+)
 from tests.datahandling.test_trusted_live import (
     _assert_protected_artifacts_unchanged,
     _QcodesWalWriter,
@@ -53,6 +69,408 @@ def _drain(coordinator: TrustedWorkCoordinator, timeout: float = 30.0) -> None:
 def _source_fields(publication: object) -> dict[str, object]:
     result = publication.result  # type: ignore[attr-defined]
     return dict(result["source"])
+
+
+def _create_completed_rectangular_qcodes_run(
+    database_path: Path,
+) -> tuple[int, str, int]:
+    """Create an unplanned 17 x 23 shared-row grid with one NULL output."""
+
+    experiment: Any = None
+    dataset: Any = None
+    original_database_path = qcodes.config.core.db_location
+    try:
+        initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+        experiment = load_or_create_experiment(
+            "stage5c_observed_grid",
+            sample_name="missing_cell",
+        )
+        slow = ManualParameter("stage5c_slow")
+        fast = ManualParameter("stage5c_fast")
+        signal = ManualParameter("stage5c_signal")
+        signal_b = ManualParameter("stage5c_signal_b")
+        measurement = Measurement(exp=experiment, name="stage5c_observed_grid")
+        measurement.register_parameter(slow)
+        measurement.register_parameter(fast)
+        measurement.register_parameter(signal, setpoints=(slow, fast))
+        measurement.register_parameter(signal_b, setpoints=(slow, fast))
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for slow_index in range(17):
+                for fast_index in range(23):
+                    datasaver.add_result(
+                        (slow, float(slow_index)),
+                        (fast, float(fast_index)),
+                        (signal, float(slow_index * 10 + fast_index)),
+                        (signal_b, float(1_000 + slow_index * 10 + fast_index)),
+                    )
+            datasaver.flush_data_to_database(block=True)
+        run_id = int(dataset.run_id)
+        table_name = str(dataset.table_name)
+    finally:
+        connections = tuple(
+            {
+                id(connection): connection
+                for connection in (
+                    getattr(dataset, "conn", None),
+                    getattr(experiment, "conn", None),
+                )
+                if connection is not None
+            }.values()
+        )
+        try:
+            for connection in connections:
+                connection.close()
+        finally:
+            qcodes.config.core.db_location = original_database_path
+
+    # Synthetic fixture generation is the sole write phase.  Retaining the
+    # coordinate row while clearing z models a genuine unmeasured grid cell.
+    quoted_table = '"' + table_name.replace('"', '""') + '"'
+    connection = apsw.Connection(str(database_path))
+    try:
+        with connection:
+            missing_row = next(
+                connection.execute(
+                    f'SELECT "id" FROM {quoted_table} '
+                    'WHERE "stage5c_slow" = ? AND "stage5c_fast" = ? '
+                    'AND "stage5c_signal" IS NOT NULL ORDER BY "id" LIMIT 1',
+                    (7.0, 11.0),
+                ),
+                None,
+            )
+            assert missing_row is not None and type(missing_row[0]) is int
+            missing_row_id = int(missing_row[0])
+            connection.execute(
+                f'UPDATE {quoted_table} SET "stage5c_signal" = NULL WHERE "id" = ?',
+                (missing_row_id,),
+            )
+    finally:
+        connection.close()
+    return run_id, table_name, missing_row_id
+
+
+def _create_independent_qcodes_run(
+    database_path: Path, *, include_1d: bool, include_3d: bool
+) -> int:
+    """Create independent public-QCoDeS dependents with distinct setpoints."""
+
+    experiment: Any = None
+    dataset: Any = None
+    original_database_path = qcodes.config.core.db_location
+    try:
+        initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+        experiment = load_or_create_experiment(
+            "trusted_independent_dimensions", sample_name="independent"
+        )
+        measurement = Measurement(exp=experiment, name="independent_dimensions")
+        axes = tuple(ManualParameter(f"x{index}") for index in range(3))
+        signals = tuple(ManualParameter(f"z{index}") for index in range(3))
+        if include_1d:
+            for axis, signal in zip(axes, signals, strict=True):
+                measurement.register_parameter(axis)
+                measurement.register_parameter(signal, setpoints=(axis,))
+        if include_3d:
+            for axis in axes:
+                if not include_1d:
+                    measurement.register_parameter(axis)
+            signal_3d = ManualParameter("z3d")
+            measurement.register_parameter(signal_3d, setpoints=axes)
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for index in range(8):
+                if include_1d:
+                    for axis, signal in zip(axes, signals, strict=True):
+                        datasaver.add_result(
+                            (axis, float(index)), (signal, float(index * 10))
+                        )
+                if include_3d:
+                    datasaver.add_result(
+                        *((axis, float(index)) for axis in axes),
+                        (signal_3d, float(index * 100)),
+                    )
+            datasaver.flush_data_to_database(block=True)
+        return int(dataset.run_id)
+    finally:
+        connections = tuple(
+            {
+                id(connection): connection
+                for connection in (
+                    getattr(dataset, "conn", None),
+                    getattr(experiment, "conn", None),
+                )
+                if connection is not None
+            }.values()
+        )
+        try:
+            for connection in connections:
+                connection.close()
+        finally:
+            qcodes.config.core.db_location = original_database_path
+
+
+def _create_shaped_independent_qcodes_run(database_path: Path) -> int:
+    """Create three independently shaped 1D dependents with exact extents."""
+
+    experiment: Any = None
+    dataset: Any = None
+    original_database_path = qcodes.config.core.db_location
+    try:
+        initialise_or_create_database_at(str(database_path), journal_mode="WAL")
+        experiment = load_or_create_experiment(
+            "trusted_planned_steps",
+            sample_name="independent_shapes",
+        )
+        measurement = Measurement(exp=experiment, name="independent_shapes")
+        axes = tuple(ManualParameter(f"x{index}") for index in range(3))
+        signals = tuple(ManualParameter(f"z{index}") for index in range(3))
+        counts = (3, 5, 7)
+        for axis, signal in zip(axes, signals, strict=True):
+            measurement.register_parameter(axis)
+            measurement.register_parameter(signal, setpoints=(axis,))
+        measurement.set_shapes(
+            {
+                signal.name: (count,)
+                for signal, count in zip(signals, counts, strict=True)
+            }
+        )
+        with measurement.run(write_in_background=False) as datasaver:
+            dataset = datasaver.dataset
+            for axis, signal, count in zip(axes, signals, counts, strict=True):
+                for index in range(count):
+                    datasaver.add_result(
+                        (axis, float(index)),
+                        (signal, float(index * 10)),
+                    )
+            datasaver.flush_data_to_database(block=True)
+        return int(dataset.run_id)
+    finally:
+        connections = tuple(
+            {
+                id(connection): connection
+                for connection in (
+                    getattr(dataset, "conn", None),
+                    getattr(experiment, "conn", None),
+                )
+                if connection is not None
+            }.values()
+        )
+        try:
+            for connection in connections:
+                connection.close()
+        finally:
+            qcodes.config.core.db_location = original_database_path
+
+
+@pytest.mark.parametrize(
+    ("include_1d", "include_3d", "expected_dependents"),
+    (
+        (True, False, {"z0", "z1", "z2"}),
+        (True, True, {"z0", "z1", "z2"}),
+        (False, True, set()),
+    ),
+)
+def test_real_qcodes_derived_dimensions_are_per_dependent(
+    tmp_path: Path,
+    include_1d: bool,
+    include_3d: bool,
+    expected_dependents: set[str],
+) -> None:
+    database_path = tmp_path / "independent.db"
+    run_id = _create_independent_qcodes_run(
+        database_path, include_1d=include_1d, include_3d=include_3d
+    )
+    accepted = database_instance(database_path)
+    before = _stable_artifact_state(
+        database_path, consecutive_observations=2, observation_interval=0.02
+    )
+    service = TrustedLiveReadService(
+        database_path,
+        expected_database_instance=accepted,
+        request_timeout_seconds=30.0,
+    )
+    try:
+        bootstrap = service.submit_bootstrap().wait(30.0)
+        page = service.submit_basic_page(0, bootstrap.run_id_watermark).wait(30.0)
+        assert tuple(run.run_id for run in page.runs) == (run_id,)
+        observation = service.submit_derived_source(run_id).wait(30.0)
+        assert observation.database_instance == accepted
+        assert observation.unsupported_reason is None
+        assert set(observation.dependent_parameters) == (
+            expected_dependents | ({"z3d"} if include_3d else set())
+        )
+        for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW):
+            payload = render_trusted_derived_payload(observation, kind)
+            assert dict(payload["source"])["run_guid"] == observation.run_guid
+            assert dict(payload["source"])["result_watermark"] == (
+                observation.result_watermark
+            )
+            images = {
+                dict(image)["dependent"]: dict(image) for image in payload["images"]
+            }
+            assert set(images) == expected_dependents
+            assert all(image["dimensions"] == 1 for image in images.values())
+            assert payload["status"] == ("ok" if include_1d else "unsupported")
+            if include_3d:
+                assert "more than two sweep dimensions" in str(payload["description"])
+                assert "z3d" not in images
+    finally:
+        service.close(timeout=30.0)
+    after = _stable_artifact_state(
+        database_path, consecutive_observations=2, observation_interval=0.02
+    )
+    _assert_protected_artifacts_unchanged(before, after)
+
+
+def test_real_qcodes_planned_steps_are_per_dependent_in_both_metadata_views(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "independent-shaped.db"
+    run_id = _create_shaped_independent_qcodes_run(database_path)
+    accepted = database_instance(database_path)
+    before = _stable_artifact_state(
+        database_path,
+        consecutive_observations=2,
+        observation_interval=0.02,
+    )
+    service = TrustedLiveReadService(
+        database_path,
+        expected_database_instance=accepted,
+        request_timeout_seconds=30.0,
+    )
+    try:
+        bootstrap = service.submit_bootstrap().wait(30.0)
+        page = service.submit_basic_page(0, bootstrap.run_id_watermark).wait(30.0)
+        assert page.complete and tuple(run.run_id for run in page.runs) == (run_id,)
+
+        observation = service.submit_derived_source(run_id).wait(30.0)
+        detail = service.submit_selected_run(run_id).wait(30.0)
+        expected_steps = {"x0": 3, "x1": 5, "x2": 7}
+
+        assert observation.result_watermark == 15
+        assert {
+            summary.name: summary.steps
+            for summary in observation.setpoint_summaries
+        } == expected_steps
+        assert {
+            summary.name: summary.steps for summary in detail.setpoint_summaries
+        } == expected_steps
+    finally:
+        service.close(timeout=30.0)
+
+    after = _stable_artifact_state(
+        database_path,
+        consecutive_observations=2,
+        observation_interval=0.02,
+    )
+    _assert_protected_artifacts_unchanged(before, after)
+
+
+def test_real_qcodes_observed_grid_infers_and_renders_missing_cell_without_writes(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stage5c-observed-grid.db"
+    run_id, table_name, missing_row_id = _create_completed_rectangular_qcodes_run(
+        database_path
+    )
+    accepted = database_instance(database_path)
+    before = _stable_artifact_state(
+        database_path,
+        consecutive_observations=2,
+        observation_interval=0.02,
+    )
+    service = TrustedLiveReadService(
+        database_path,
+        expected_database_instance=accepted,
+        request_timeout_seconds=30.0,
+    )
+    try:
+        bootstrap = service.submit_bootstrap().wait(30.0)
+        page = service.submit_basic_page(0, bootstrap.run_id_watermark).wait(30.0)
+        assert page.complete
+
+        fields = service.submit_expensive_run(run_id).wait(30.0).as_dict()
+        assert fields["result_count"] == 17 * 23 * 2
+        assert fields["setpoint_shape"] == [17, 23]
+        assert fields["setpoint_count"] == 17 * 23
+        assert fields["point_shape"] == [17, 23, 2]
+        assert fields["setpoint_shape_source"] == "observed"
+
+        observation = service.submit_derived_source(run_id).wait(30.0)
+        assert observation.result_table_name == table_name
+        assert observation.planned_shape == (17, 23)
+        assert len(observation.validated_2d_layouts) == 2
+        assert tuple(
+            layout.dependent for layout in observation.validated_2d_layouts
+        ) == ("stage5c_signal", "stage5c_signal_b")
+        for layout in observation.validated_2d_layouts:
+            assert layout.dependencies == ("stage5c_slow", "stage5c_fast")
+            assert layout.shape == (17, 23)
+            assert layout.fast_axis_index == 1
+            assert layout.first_row_id in (1, 2)
+            assert layout.fast_id_stride == 2
+            assert layout.slow_id_stride == 46
+            assert layout.complete
+        missing = next(
+            row for row in observation.sample_rows if row[0] == missing_row_id
+        )
+        signal_index = observation.sample_columns.index("stage5c_signal")
+        signal_b_index = observation.sample_columns.index("stage5c_signal_b")
+        assert missing[signal_index] is None
+        assert missing[signal_b_index] is None
+
+        payload = render_trusted_derived_payload(
+            observation,
+            TrustedWorkKind.PREVIEW,
+        )
+        assert payload["status"] == "ok"
+        images = {dict(image)["dependent"]: dict(image) for image in payload["images"]}
+        assert set(images) == {"stage5c_signal", "stage5c_signal_b"}
+        assert images["stage5c_signal"]["sampled_points"] == (17 * 23) - 1
+        assert images["stage5c_signal_b"]["sampled_points"] == 17 * 23
+
+        signal_layout = next(
+            layout
+            for layout in observation.validated_2d_layouts
+            if layout.dependent == "stage5c_signal"
+        )
+        slow_index, row_remainder = divmod(
+            missing_row_id - signal_layout.first_row_id,
+            signal_layout.slow_id_stride,
+        )
+        fast_index = row_remainder // signal_layout.fast_id_stride
+        assert (slow_index, fast_index) == (7, 11)
+        first_width, first_height, first_rgba = _decode_png_rgba(
+            images["stage5c_signal"]["bytes"]
+        )
+        second_width, second_height, second_rgba = _decode_png_rgba(
+            images["stage5c_signal_b"]["bytes"]
+        )
+        assert (first_width, first_height) == (second_width, second_height)
+        missing_x = (2 * fast_index + 1) * first_width // (2 * 23)
+        display_slow_index = 17 - 1 - slow_index
+        missing_y = (2 * display_slow_index + 1) * first_height // (2 * 17)
+        assert _rgba_at(first_rgba, first_width, missing_x, missing_y) == (
+            230,
+            230,
+            230,
+            255,
+        )
+        assert _rgba_at(second_rgba, second_width, missing_x, missing_y) != (
+            230,
+            230,
+            230,
+            255,
+        )
+    finally:
+        service.close(timeout=30.0)
+
+    after = _stable_artifact_state(
+        database_path,
+        consecutive_observations=2,
+        observation_interval=0.02,
+    )
+    _assert_protected_artifacts_unchanged(before, after)
 
 
 def test_real_stage5b_backend_publishes_live_prefixes_without_source_writes(

@@ -14,22 +14,31 @@ from qplot.windows._plot2d_layers import (
     _heatmap_layer_compatibility,
 )
 from qplot.windows._plot_axis_scaling import PlotAxisScalingMixin
+from qplot.windows._plotWin import plotWidget
+from qplot.windows._refresh_interval import set_refresh_interval
 
 
 class _Monitor:
     def __init__(self):
         self.stop_count = 0
+        self.active = False
 
     def stop(self):
         self.stop_count += 1
+        self.active = False
+
+    def start(self, interval):
+        self.active = True
+        self.interval = interval
 
     def isActive(self):
-        return False
+        return self.active
 
 
 class _SourceWindow(QtCore.QObject):
     trace_updated = QtCore.pyqtSignal()
     end_wait = QtCore.pyqtSignal()
+    monitorIntervalChanged = plotWidget.monitorIntervalChanged
 
     def __init__(
             self,
@@ -67,7 +76,7 @@ class _SourceWindow(QtCore.QObject):
         self._merged_trace_users = 0
         self.monitor = _Monitor()
         self.spinBox = qtw.QDoubleSpinBox()
-        self.spinBox.setValue(0.5)
+        set_refresh_interval(self.spinBox, 0.5)
 
 
 class _LayerHost(Plot2DLayerMixin, PlotAxisScalingMixin):
@@ -103,7 +112,7 @@ class _LayerHost(Plot2DLayerMixin, PlotAxisScalingMixin):
         self.plot.addItem(self.image)
         self.plot.addItem(self.heatmap_mesh)
         self.spinBox = qtw.QDoubleSpinBox()
-        self.spinBox.setValue(0.25)
+        set_refresh_interval(self.spinBox, 0.25)
 
     @property
     def axis_options(self):
@@ -290,12 +299,13 @@ def test_source_consumer_is_released_exactly_once(tmp_path):
 
     try:
         assert source._merged_trace_users == 1
+        stops_before_disconnect = source.monitor.stop_count
 
         layer.disconnect_source_updates()
         layer.disconnect_source_updates()
 
         assert source._merged_trace_users == 0
-        assert source.monitor.stop_count == 1
+        assert source.monitor.stop_count == stops_before_disconnect + 1
         assert cancellations == [True]
     finally:
         host.close()

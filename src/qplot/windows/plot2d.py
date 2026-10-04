@@ -6,6 +6,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.parameter_data import numeric_isfinite
 from qplot.tools.heatmap_geometry import (
     AxisGeometry,
     HeatmapGeometry,
@@ -77,7 +78,7 @@ class plot2d(
             self._reload_visible_heatmap_data
             )
         self._connect_heatmap_range_controls()
-        self._install_axes_dock_view_range_preserver()
+        self._install_plot_control_view_range_preserver()
 
         for side in ("left", "right", "top", "bottom"):
             _install_flush_axis_draw_specs(self.plot.getAxis(side))
@@ -97,7 +98,7 @@ class plot2d(
         self.hover_pixel_outline.setBrush(QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush))
         self.hover_pixel_outline.setZValue(10)
         self.hover_pixel_outline.hide()
-        self.plot.addItem(self.hover_pixel_outline)
+        self._add_plot_overlay(self.hover_pixel_outline)
         self._init_heatmap_layers()
         
         # Wait for loader to finish to enure needed data is collected.
@@ -115,46 +116,122 @@ class plot2d(
             )
 
 
-    def _install_axes_dock_view_range_preserver(self) -> None:
-        """Keep a heatmap's viewport stable while its side dock is relaid out."""
+    def _plot_layout_controls(self) -> tuple[Any, ...]:
+        """Return controls whose visibility changes resize the plot canvas."""
 
-        axes_dock = self.__dict__.get("axes_dock")
-        if axes_dock is not None:
-            axes_dock.installEventFilter(self)
+        return tuple(
+            control
+            for name in (
+                "axes_dock",
+                "oper_dock",
+                "toolbarRef",
+                "toolbarCo_ord",
+                )
+            if (control := self.__dict__.get(name)) is not None
+            )
 
 
-    def _preserve_heatmap_view_range_after_axes_dock_layout(self) -> None:
-        """Restore the viewport after the Data axes dock changes visibility."""
+    def _install_plot_control_view_range_preserver(self) -> None:
+        """Watch every dock and toolbar that can resize the heatmap canvas."""
+
+        installed = self.__dict__.setdefault(
+            "_plot_control_view_range_filters",
+            set(),
+            )
+        for control in self._plot_layout_controls():
+            control_id = id(control)
+            if control_id in installed:
+                continue
+            control.installEventFilter(self)
+            installed.add(control_id)
+
+
+    def _preserve_heatmap_view_range_after_control_layout(self) -> None:
+        """Restore a loaded heatmap's viewport after controls are relaid out."""
+
+        worker = self.__dict__.get("worker")
+        if worker is None or getattr(worker, "running", False):
+            # Never restore a pre-refresh range over a newly published heatmap.
+            return
+        try:
+            if not self._has_plottable_heatmap_data():
+                return
+        except (AttributeError, TypeError, ValueError):
+            return
 
         try:
             viewbox = self._primary_heatmap_viewbox()
-            view_range = viewbox.viewRange()
-            saved_range = (
-                tuple(float(value) for value in view_range[0]),
-                tuple(float(value) for value in view_range[1]),
+            publication_generation = self.__dict__.get(
+                "_qplot_publication_generation",
+                0,
                 )
+            pending = self.__dict__.get("_plot_control_layout_restore")
+            if (
+                    isinstance(pending, dict)
+                    and pending.get("viewbox") is viewbox
+                    and pending.get("worker") is worker
+                    and pending.get("publication_generation")
+                    == publication_generation
+                    ):
+                saved_range = pending["view_range"]
+            else:
+                view_range = viewbox.viewRange()
+                saved_range = (
+                    tuple(float(value) for value in view_range[0]),
+                    tuple(float(value) for value in view_range[1]),
+                    )
         except (AttributeError, IndexError, TypeError, ValueError):
             return
 
-        token = self.__dict__.get("_axes_dock_view_range_token", 0) + 1
-        self.__dict__["_axes_dock_view_range_token"] = token
+        token = self.__dict__.get("_plot_control_layout_token", 0) + 1
+        self.__dict__["_plot_control_layout_token"] = token
+        self.__dict__["_plot_control_layout_restore"] = {
+            "publication_generation": publication_generation,
+            "view_range": saved_range,
+            "viewbox": viewbox,
+            "worker": worker,
+            }
 
-        def restore() -> None:
-            if self.__dict__.get("_axes_dock_view_range_token") != token:
+        def restore(final_pass: bool = False) -> None:
+            if self.__dict__.get("_plot_control_layout_token") != token:
+                return
+            if (
+                    self.__dict__.get("worker") is not worker
+                    or getattr(worker, "running", False)
+                    or self.__dict__.get("_qplot_publication_generation", 0)
+                    != publication_generation
+                    ):
+                self.__dict__.pop("_plot_control_layout_restore", None)
                 return
             try:
+                if getattr(viewbox, "_autoRangeNeedsUpdate", False):
+                    # Consume the auto-range queued by ViewBox.resizeEvent so
+                    # it cannot run later and overwrite the saved viewport.
+                    viewbox.updateAutoRange()
                 current_range = viewbox.viewRange()
             except (AttributeError, TypeError):
+                self.__dict__.pop("_plot_control_layout_restore", None)
                 return
-            if np.allclose(current_range, saved_range, rtol=1e-12, atol=1e-12):
-                return
-            viewbox.setRange(
-                xRange=saved_range[0],
-                yRange=saved_range[1],
-                padding=0,
-                disableAutoRange=False,
-                )
-            self._sync_secondary_heatmap_view_ranges()
+            if not np.allclose(
+                    current_range,
+                    saved_range,
+                    rtol=1e-12,
+                    atol=1e-12,
+                    ):
+                viewbox.setRange(
+                    xRange=saved_range[0],
+                    yRange=saved_range[1],
+                    padding=0,
+                    disableAutoRange=False,
+                    )
+                self._sync_secondary_heatmap_view_ranges()
+
+            if final_pass:
+                self.__dict__.pop("_plot_control_layout_restore", None)
+            else:
+                # A dock and its canvas resize can arrive in adjacent event-loop
+                # turns. Recheck once after both layout passes have settled.
+                QtCore.QTimer.singleShot(0, lambda: restore(True))
 
         QtCore.QTimer.singleShot(0, restore)
 
@@ -240,6 +317,7 @@ class plot2d(
         
     def initLabels(self) -> None:
         super().initLabels()
+        self._install_plot_control_view_range_preserver()
         self.__dict__["z_index"] = None
         
         self.pos_labels["y"].setText(self.pos_labels["y"].text() + ";")
@@ -348,7 +426,40 @@ class plot2d(
                 return
 
             autoLevels = self.relevel_refresh.isChecked()
-            self._render_heatmap()
+            operation_apply_generation = int(
+                getattr(plot_worker, "_qplot_operation_apply_generation", 0)
+                )
+            operation_auto_levels = bool(
+                operation_apply_generation
+                > self.__dict__.get("_colorbar_operation_apply_generation", 0)
+                and self._colorbar_manual_levels is None
+                )
+            color_levels = self._colorbar_manual_levels
+            if color_levels is None:
+                if not hasattr(self, "bar") or autoLevels or operation_auto_levels:
+                    color_levels = self._data_colorbar_levels()
+                else:
+                    color_levels = self.bar.levels()
+            if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
+                self._reject_heatmap_color_range()
+                self._emit_heatmap_trace_updated()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+                # A color rejection is a concrete display of the loaded data.
+                # A completed source must not keep replacing that error with
+                # automatic reloads; live sources and explicit refreshes remain
+                # retryable through the usual guarded publication state.
+                self._mark_display_synchronized(plot_worker)
+                return
+            self._heatmap_color_range_rejected = False
+            self._heatmap_publication_color_levels = color_levels
+            try:
+                self._render_heatmap()
+            finally:
+                self.__dict__.pop("_heatmap_publication_color_levels", None)
             if not self._refresh_publication_source_is_current(
                     plot_worker,
                     clear_display=clear_display,
@@ -378,10 +489,12 @@ class plot2d(
                 else:
                     self._set_colorbar_levels(*self._colorbar_manual_levels)
 
+            self.bar.show()
+
             # The dependent-variable label may have changed when an operation
             # such as differentiation was added or removed.
             self._sync_colorbar_axis_scaling()
-            if autoLevels:
+            if autoLevels or operation_auto_levels:
                 self.__dict__["_colorbar_manual_levels"] = None
                 self.scaleColorbar()
             elif self._colorbar_manual_levels is not None:
@@ -399,11 +512,15 @@ class plot2d(
                     clear_display=clear_display,
                     ):
                 return
+            self.__dict__["_colorbar_operation_apply_generation"] = max(
+                operation_apply_generation,
+                self.__dict__.get("_colorbar_operation_apply_generation", 0),
+                )
             self._mark_display_synchronized(plot_worker)
             if getattr(plot_worker, "_qplot_source_rejected", False):
                 clear_display()
                 return
-            self._commit_refresh_publication(plot_worker)
+            self._commit_refresh_publication(plot_worker, preview_ready=True)
         finally:
             if isinstance(
                     getattr(plot_worker, "_qplot_publication_snapshot", None),
@@ -511,13 +628,13 @@ class plot2d(
 
     def eventFilter(self, source, event):
         if (
-                source is self.__dict__.get("axes_dock")
+                any(source is control for control in self._plot_layout_controls())
                 and event.type() in {
                     QtCore.QEvent.Type.Show,
                     QtCore.QEvent.Type.Hide,
                     }
                 ):
-            self._preserve_heatmap_view_range_after_axes_dock_layout()
+            self._preserve_heatmap_view_range_after_control_layout()
 
         if (
                 event.type() == QtCore.QEvent.Type.Resize
@@ -555,6 +672,7 @@ class plot2d(
                 info.get("source_sampled")
                 or info.get("source_aggregated")
                 or info.get("grid_binned")
+                or info.get("empty_bins_filled")
                 ):
             return dict(info)
 
@@ -859,19 +977,104 @@ class plot2d(
         if self._heatmap_downsample_info is None:
             return
 
-        self._new_heatmap_downsample_dialog().exec()
+        dialog = self._new_heatmap_downsample_dialog()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
 
-    def _new_heatmap_downsample_dialog(self) -> qtw.QMessageBox:
-        dialog = qtw.QMessageBox(
-            qtw.QMessageBox.Icon.Warning,
-            "Downsampled Heatmap",
-            self._heatmap_downsample_dialog_text(),
-            qtw.QMessageBox.StandardButton.Ok,
-            self,
+    def _new_heatmap_downsample_dialog(self) -> qtw.QDialog:
+        """Create a titled warning dialog for a downsampled heatmap."""
+        dialog = qtw.QDialog(self)
+        dialog.setWindowTitle("Warning: Heatmap downsampled")
+        dialog.setModal(True)
+
+        layout = qtw.QVBoxLayout(dialog)
+        content = qtw.QHBoxLayout()
+        icon_label = qtw.QLabel(dialog)
+        style = dialog.style()
+        assert style is not None
+        icon = style.standardIcon(
+            qtw.QStyle.StandardPixmap.SP_MessageBoxWarning
             )
-        dialog.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        icon_label.setPixmap(icon.pixmap(64, 64))
+        icon_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        content.addWidget(icon_label)
+
+        message_label = qtw.QLabel(self._heatmap_downsample_dialog_message(), dialog)
+        message_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        message_label.setWordWrap(True)
+        message_label.setMinimumWidth(520)
+        content.addWidget(message_label, 1)
+        layout.addLayout(content)
+
+        button_box = qtw.QDialogButtonBox(
+            qtw.QDialogButtonBox.StandardButton.Ok,
+            dialog,
+            )
+        preferences_button = qtw.QPushButton("Open Preferences…", dialog)
+        button_box.addButton(
+            preferences_button, qtw.QDialogButtonBox.ButtonRole.ActionRole
+            )
+        preferences_button.setObjectName("openHeatmapLimitPreferencesButton")
+        preferences_button.clicked.connect(
+            lambda: self._open_heatmap_limit_preferences(dialog)
+            )
+        button_box.accepted.connect(dialog.accept)
+        layout.addWidget(button_box)
         return dialog
+
+
+    def _open_heatmap_limit_preferences(self, dialog: qtw.QDialog) -> None:
+        """Close the alert, then open the preference that controls this limit."""
+        dialog.accept()
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: self.show_preferences_dialog(initial_tab="Runtime"),
+            )
+
+
+    def _heatmap_downsample_dialog_message(self) -> str:
+        """Return the plain-text details shown below the dialog title."""
+        info = self._heatmap_downsample_info or {}
+        lines = ["This heatmap is displayed from downsampled data.", ""]
+
+        if info.get("grid_binned"):
+            source_grid_columns = self._format_heatmap_count(
+                info.get("source_grid_columns")
+                )
+            source_grid_rows = self._format_heatmap_count(
+                info.get("source_grid_rows")
+                )
+            source_grid_cells = self._format_heatmap_count(
+                info.get("source_grid_cell_count")
+                )
+            full_limit = self._format_heatmap_count(
+                info.get("full_resolution_point_limit")
+                )
+            grid_columns = self._format_heatmap_count(info.get("grid_columns"))
+            grid_rows = self._format_heatmap_count(info.get("grid_rows"))
+            grid_cells = self._format_heatmap_count(info.get("grid_cell_count"))
+            lines.extend([
+                f"The source heatmap grid is {source_grid_columns} x "
+                f"{source_grid_rows} = {source_grid_cells} cells.",
+                "The full-resolution heatmap limit is "
+                f"{full_limit} points.",
+                f"The plotted grid is {grid_columns} x {grid_rows} = "
+                f"{grid_cells} cells.",
+                "Values falling into the same plotted grid cell were averaged.",
+                "",
+                ])
+
+        lines.extend([
+            "The full-resolution heatmap limit can be changed using the "
+            "Preferences dialog.",
+            "",
+            "The full-resolution limit controls when qPlot switches to an "
+            "averaged display grid.",
+            ])
+        return "\n".join(lines)
 
 
     def _heatmap_downsample_dialog_text(self) -> str:
@@ -989,20 +1192,21 @@ class plot2d(
                 "The source x/y positions would form up to "
                 f"{unique_x} x {unique_y} cells."
                 )
-            if info.get("empty_bins_filled"):
-                if info.get("source_sampled"):
-                    lines.append(
-                        "Empty sampled display bins were filled by interpolation."
-                        )
-                else:
-                    lines.append(
-                        "Empty display bins were filled by interpolation."
-                        )
         else:
             lines.append(
-                "The sampled source rows were displayed on an exact "
+                "Loaded values were displayed on an exact "
                 f"{grid_columns} x {grid_rows} grid."
                 )
+
+        if info.get("empty_bins_filled"):
+            if info.get("source_sampled"):
+                lines.append(
+                    "Empty sampled display bins were filled by interpolation."
+                    )
+            else:
+                lines.append(
+                    "Empty display bins were filled by interpolation."
+                    )
 
         return "\n".join(lines)
 
@@ -1305,17 +1509,24 @@ class plot2d(
     def _render_heatmap(self) -> None:
         """Render uniform grids as images and rectilinear grids as meshes."""
 
-        if not self.__dict__.get("_primary_heatmap_visible", True):
+        if (
+                self.__dict__.get("_heatmap_color_range_rejected", False)
+                or not self.__dict__.get("_primary_heatmap_visible", True)
+                ):
             self._hide_heatmap_renderers()
             return
 
         geometry = self._required_heatmap_geometry()
-        data_grid = np.asarray(self.dataGrid)
+        # Render a float view; operations, raw cuts and CSV use the exact grid.
+        data_grid = np.asarray(self.dataGrid, dtype=float)
+        color_levels = self.__dict__.get("_heatmap_publication_color_levels")
+        if color_levels is None:
+            color_levels = self._current_colorbar_levels()
         if geometry.is_uniform:
-            self.image.setImage(
-                data_grid,
-                autoLevels=False,
-                )
+            image_options: dict[str, Any] = {"autoLevels": False}
+            if color_levels is not None:
+                image_options["levels"] = color_levels
+            self.image.setImage(data_grid, **image_options)
             self.image.setRect(QtCore.QRectF(*geometry.rect))
             self.heatmap_mesh.hide()
             self.image.show()
@@ -1328,6 +1539,8 @@ class plot2d(
             geometry.y.edges,
             indexing="xy",
             )
+        if color_levels is not None:
+            self.heatmap_mesh.setLevels(color_levels, update=False)
         self.heatmap_mesh.setData(
             x_vertices,
             y_vertices,
@@ -1595,7 +1808,7 @@ class plot2d(
         if selected is None:
             return None
 
-        values = selected[np.isfinite(selected)]
+        values = selected[numeric_isfinite(selected)]
         if values.size == 0:
             return None
 
@@ -1612,7 +1825,7 @@ class plot2d(
         if selected is None:
             return None
 
-        values = selected[np.isfinite(selected)]
+        values = selected[numeric_isfinite(selected)]
         if values.size == 0:
             return None
 
@@ -1637,7 +1850,7 @@ class plot2d(
             return None
 
         row_slice, col_slice = slices
-        selected = np.asarray(self.dataGrid[row_slice, col_slice], dtype=float)
+        selected = np.asarray(self.dataGrid[row_slice, col_slice])
         if selected.size == 0:
             return None
 

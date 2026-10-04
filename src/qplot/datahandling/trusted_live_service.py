@@ -36,6 +36,7 @@ from qplot.datahandling.trusted_live import (
 )
 from qplot.datahandling.trusted_live_queries import (
     TrustedBootstrapResult,
+    TrustedDatabaseInfo,
     TrustedDerivedSourceObservation,
     TrustedMetadataQueryAdapter,
     TrustedRefreshResult,
@@ -64,6 +65,7 @@ SNAPSHOT_FALLBACK_MODE = "snapshot_fallback"
 
 class TrustedReadOperation(StrEnum):
     BOOTSTRAP = "bootstrap"
+    DATABASE_INFO = "database-info"
     BASIC_PAGE = "basic-page"
     REFRESH = "refresh"
     CHEAP_RUN = "cheap-run"
@@ -544,6 +546,23 @@ class TrustedLiveReadService:
                 TrustedReadOperation.REFRESH,
                 (accepted_run_id,),
                 TrustedReadPriority.REFRESH,
+                deadline,
+            ),
+        )
+
+    def submit_database_info(
+        self,
+        *,
+        deadline: float | None = None,
+    ) -> TrustedReadRequest[TrustedDatabaseInfo]:
+        """Read current diagnostic metadata without a snapshot or GUI wait."""
+
+        return cast(
+            TrustedReadRequest[TrustedDatabaseInfo],
+            self._submit(
+                TrustedReadOperation.DATABASE_INFO,
+                (),
+                TrustedReadPriority.SELECTED_CHEAP,
                 deadline,
             ),
         )
@@ -1201,6 +1220,8 @@ class TrustedLiveReadService:
             )
         if operation.kind is TrustedReadOperation.REFRESH:
             return adapter.refresh_new_runs(cast(int | None, operation.payload[0]))
+        if operation.kind is TrustedReadOperation.DATABASE_INFO:
+            return adapter.database_info()
         run_id = cast(int, operation.payload[0])
         if operation.kind is TrustedReadOperation.CHEAP_RUN:
             return adapter.cheap_run(run_id)

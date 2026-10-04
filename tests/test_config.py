@@ -19,6 +19,7 @@ from qplot.configuration.config import config
 from qplot.configuration.scripts import scripts, sysHandle
 from qplot.configuration.themes import dark
 from qplot.windows import main as main_window
+from qplot.windows._database_actions import DatabaseActionsMixin
 from qplot.windows._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
@@ -50,6 +51,13 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(config().get("user_preference.theme"), "dark")
         self.assertIs(config().theme, dark)
+
+    def test_refresh_interval_accepts_maximum_and_rejects_larger_values(self):
+        cfg = config()
+        cfg.update("user_preference.default_refresh_rate", 10_000.0)
+        with self.assertRaises(ValidationError):
+            cfg.update("user_preference.default_refresh_rate", 10_000.1)
+        self.assertEqual(config().get("user_preference.default_refresh_rate"), 10_000.0)
 
     def test_run_table_column_widths_write_and_reload(self):
         cfg = config()
@@ -163,6 +171,97 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(persisted["user_preference"]["colorbar_width"], 15)
         self.assertEqual(persisted["user_preference"]["axis_major_tick_count"], 3)
         self.assertNotIn("axis_tick_density", persisted["user_preference"])
+
+    def test_existing_config_is_migrated_with_heatmap_grid_limits(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["user_preference"].update({
+            "theme": "dark",
+            "default_refresh_rate": 4.0,
+            })
+        stored_config["file"]["default_load_path"] = "/custom/qcodes/path"
+        del stored_config["runtime_settings"]["max_heatmap_grid_cells"]
+        del stored_config["runtime_settings"]["max_heatmap_grid_side"]
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+
+        migrated = config()
+
+        self.assertEqual(migrated.get("user_preference.theme"), "dark")
+        self.assertEqual(migrated.get("user_preference.default_refresh_rate"), 4.0)
+        self.assertEqual(migrated.get("file.default_load_path"), "/custom/qcodes/path")
+        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
+        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 800)
+        self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+
+        persisted = json.loads(Path(config.default_file).read_text(encoding="utf-8"))
+        self.assertEqual(persisted["file"]["default_load_path"], "/custom/qcodes/path")
+        self.assertEqual(
+            persisted["runtime_settings"]["max_heatmap_grid_cells"],
+            250_000,
+            )
+        self.assertEqual(
+            persisted["runtime_settings"]["max_heatmap_grid_side"],
+            800,
+            )
+
+    def test_heatmap_grid_migration_preserves_existing_values(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["runtime_settings"].update({
+            "max_heatmap_grid_cells": 1234,
+            "max_heatmap_grid_side": 56,
+            })
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+
+        migrated = config()
+
+        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 1234)
+        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 56)
+        self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+
+    def test_heatmap_grid_migration_save_failure_keeps_valid_config_in_memory(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        del stored_config["runtime_settings"]["max_heatmap_grid_cells"]
+        del stored_config["runtime_settings"]["max_heatmap_grid_side"]
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+        original_contents = Path(config.default_file).read_text(encoding="utf-8")
+
+        with (
+            patch.object(
+                config,
+                "save_config",
+                side_effect=PermissionError("simulated migration failure"),
+                ) as save_config,
+            patch("qplot.configuration.config.log_exception") as logged,
+            ):
+            migrated = config()
+
+            self.assertEqual(migrated.get("user_preference.theme"), "light")
+            self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
+            self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 800)
+            self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+            self.assertIsNotNone(migrated.startup_warning)
+            self.assertEqual(save_config.call_count, 1)
+            logged.assert_called_once_with(
+                f"Could not persist migrated configuration at {config.default_file}",
+                ANY,
+                "qplot.configuration.config",
+                )
+
+        self.assertEqual(
+            Path(config.default_file).read_text(encoding="utf-8"),
+            original_contents,
+            )
 
     def test_migration_save_failure_keeps_valid_config_in_memory(self):
         cfg = config()
@@ -759,6 +858,92 @@ class TemporaryConfigTestCase(unittest.TestCase):
             )
         self.assertEqual(config().get("user_preference.theme"), "light")
 
+    def test_invalid_utf8_is_backed_up_byte_for_byte_and_reset(self):
+        settings = Path(config.default_file)
+        settings.parent.mkdir(parents=True)
+        settings.write_bytes(b"\x81")
+
+        recovered = config()
+
+        recovered.validate(recovered.config)
+        self.assertEqual(recovered.get("user_preference.theme"), "light")
+        self.assertIsNotNone(recovered.startup_warning)
+        self.assertEqual(Path(recovered.invalid_config_backup_file).read_bytes(), b"\x81")
+        self.assertEqual(config().get("user_preference.theme"), "light")
+
+    def test_user_settings_read_failure_preserves_original(self):
+        settings = Path(config.default_file)
+        settings.parent.mkdir(parents=True)
+        original_contents = b'{"user_preference": "unreadable"}'
+        settings.write_bytes(original_contents)
+        real_open = open
+
+        for failure in (
+            PermissionError("simulated user settings read failure"),
+            FileNotFoundError("simulated missing read target"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                def fail_user_read(filename, *args, read_error=failure, **kwargs):
+                    if os.fspath(filename) == config.default_file:
+                        raise read_error
+                    return real_open(filename, *args, **kwargs)
+
+                with (
+                    patch("builtins.open", side_effect=fail_user_read),
+                    patch.object(config, "save_config") as save_config,
+                    ):
+                    recovered = config()
+
+                recovered.validate(recovered.config)
+                self.assertEqual(recovered.get("user_preference.theme"), "light")
+                self.assertIsNotNone(recovered.startup_warning)
+                self.assertFalse(hasattr(recovered, "invalid_config_backup_file"))
+                save_config.assert_not_called()
+                self.assertEqual(settings.read_bytes(), original_contents)
+
+    def test_invalid_utf8_recovery_save_failure_keeps_original_and_backup(self):
+        settings = Path(config.default_file)
+        settings.parent.mkdir(parents=True)
+        settings.write_bytes(b"\x81")
+
+        with patch.object(
+            config,
+            "save_config",
+            side_effect=PermissionError("simulated recovery save failure"),
+            ) as save_config:
+            recovered = config()
+
+        recovered.validate(recovered.config)
+        self.assertEqual(recovered.get("user_preference.theme"), "light")
+        self.assertIsNotNone(recovered.startup_warning)
+        self.assertEqual(settings.read_bytes(), b"\x81")
+        self.assertEqual(Path(recovered.invalid_config_backup_file).read_bytes(), b"\x81")
+        save_config.assert_called_once_with(config.default_file)
+
+    def test_valid_utf8_unicode_settings_load_without_recovery(self):
+        initial = config()
+        stored = deepcopy(initial.config)
+        stored["file"]["default_load_path"] = "C:/測定/échantillons/π"
+        settings = Path(config.default_file)
+        settings.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+
+        reloaded = config()
+
+        self.assertEqual(reloaded.get("file.default_load_path"), "C:/測定/échantillons/π")
+        self.assertIsNone(reloaded.startup_warning)
+        self.assertFalse(hasattr(reloaded, "invalid_config_backup_file"))
+        self.assertEqual(settings.read_bytes(), json.dumps(stored, ensure_ascii=False).encode("utf-8"))
+
+    def test_packaged_schema_decode_failure_is_not_user_settings_recovery(self):
+        schema = Path(self.temp_dir.name) / "broken_schema.json"
+        schema.write_bytes(b"\x81")
+
+        with patch.object(config, "default__schema_file", str(schema)):
+            with self.assertRaises(UnicodeDecodeError):
+                config()
+
+        self.assertFalse(Path(config.default_file).exists())
+
     def test_schema_invalid_json_is_backed_up_and_replaced_with_defaults(self):
         config()
         original_contents = b"[]\n"
@@ -928,6 +1113,36 @@ class TemporaryConfigTestCase(unittest.TestCase):
         finally:
             close_main_window(window)
 
+    def test_reset_settings_disables_auto_plot_in_running_window(self):
+        window = main_window.MainWindow()
+
+        try:
+            window.autoPlotBox.setChecked(True)
+            self.assertTrue(config().get(AUTO_PLOT_KEY))
+            toggles = []
+            window.autoPlotBox.toggled.connect(toggles.append)
+
+            with patch.object(
+                qtw.QMessageBox,
+                "question",
+                return_value=qtw.QMessageBox.StandardButton.Yes,
+            ):
+                self.assertTrue(window.restore_default_settings())
+
+            self.assertFalse(config().get(AUTO_PLOT_KEY))
+            self.assertFalse(window.autoPlotBox.isChecked())
+            self.assertEqual(toggles, [])
+
+            new_runs = {11: {"guid": "new-run"}}
+            with (
+                patch.object(DatabaseActionsMixin, "_apply_basic_new_runs"),
+                patch.object(window, "openPlot") as open_plot,
+            ):
+                window._apply_database_refresh_result(new_runs, {})
+            open_plot.assert_not_called()
+        finally:
+            close_main_window(window)
+
     def test_main_window_loads_most_recent_database_on_startup_when_available(self):
         cfg = config()
         calls = []
@@ -1068,6 +1283,25 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(
             config().get("runtime_settings.max_full_heatmap_points"),
             3_000_000,
+            )
+
+    def test_heatmap_display_grid_limits_are_persistent(self):
+        cfg = config()
+
+        self.assertEqual(cfg.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
+        self.assertEqual(cfg.get("runtime_settings.max_heatmap_grid_side"), 800)
+
+        cfg.update("runtime_settings.max_heatmap_grid_cells", 500_000)
+        cfg.update("runtime_settings.max_heatmap_grid_side", 1_200)
+
+        reloaded = config()
+        self.assertEqual(
+            reloaded.get("runtime_settings.max_heatmap_grid_cells"),
+            500_000,
+            )
+        self.assertEqual(
+            reloaded.get("runtime_settings.max_heatmap_grid_side"),
+            1_200,
             )
 
     def test_default_refresh_rate_allows_zero_to_disable_auto_refresh(self):

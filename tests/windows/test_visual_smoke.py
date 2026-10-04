@@ -56,7 +56,7 @@ def test_demo_screenshot_workflow_generates_nonblank_images(tmp_path):
     env["QPLOT_DEMO_WORKDIR"] = str(work_dir)
     env["QPLOT_DEMO_VERIFY_CLEANUP"] = "1"
     env["QT_QPA_PLATFORM"] = "offscreen"
-    env["MPLCONFIGDIR"] = str(work_dir / "matplotlib")
+    env.setdefault("MPLCONFIGDIR", str(work_dir / "matplotlib"))
     env["PYTHONPATH"] = str(repo_root / "src")
     env["TEMP"] = str(temp_dir)
     env["TMP"] = str(temp_dir)

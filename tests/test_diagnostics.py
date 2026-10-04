@@ -4,6 +4,11 @@ import unittest
 from pathlib import Path
 
 from qplot import diagnostics
+from qplot.datahandling.database import _bounded_worker_error
+from qplot.datahandling.readonly import (
+    DatabaseInstanceChangedError,
+    UnverifiableDatabaseWalError,
+)
 
 
 class DiagnosticsTestCase(unittest.TestCase):
@@ -54,6 +59,37 @@ class DiagnosticsTestCase(unittest.TestCase):
         self.assertIn("Database Load Failed: Could not load database.", text)
         self.assertIn("Details: omitted from persistent log", text)
         self.assertNotIn("locked database", text)
+
+    def test_log_exception_accepts_bounded_worker_payloads_without_tracebacks(self):
+        log_file = self.temp_path / "qplot.log"
+        diagnostics.configure_logging(log_file=log_file, force=True)
+
+        for error_type in (
+            RuntimeError, DatabaseInstanceChangedError, UnverifiableDatabaseWalError,
+        ):
+            with self.subTest(error_type=error_type):
+                try:
+                    raise error_type("database is locked") from ValueError("private context")
+                except error_type as error:
+                    payload = _bounded_worker_error(error)
+                if error_type is RuntimeError:
+                    self.assertIsInstance(payload, str)
+                else:
+                    self.assertIsInstance(payload, error_type)
+                    self.assertIsNone(payload.__traceback__)
+                    self.assertIsNone(payload.__cause__)
+                    self.assertIsNone(payload.__context__)
+                # Text must not pick up an unrelated active exception either.
+                try:
+                    raise ValueError("unrelated active exception")
+                except ValueError:
+                    diagnostics.log_exception("Worker failed", payload)
+
+        text = log_file.read_text(encoding="utf-8")
+        self.assertEqual(text.count("Worker failed: database is locked"), 3)
+        self.assertNotIn("Traceback", text)
+        self.assertNotIn("private context", text)
+        self.assertNotIn("unrelated active exception", text)
 
     def test_bounded_shutdown_diagnostics_are_persisted_exactly(self):
         log_file = self.temp_path / "qplot.log"

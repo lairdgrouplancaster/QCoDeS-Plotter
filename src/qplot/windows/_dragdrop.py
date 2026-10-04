@@ -5,14 +5,17 @@ from PyQt6 import QtCore
 RUN_PREVIEW_MIME = "application/x-qplot-run-preview"
 
 
-def make_run_preview_mime(guid, parameter, axes=None, database_path=None):
-    payload = {
+def make_run_preview_mime(
+        guid, parameter, axes=None, database_path=None, *, axes_pending=False):
+    payload: dict[str, str | list[str] | bool] = {
         "guid": str(guid or ""),
         "parameter": str(parameter or ""),
         "axes": [str(axis) for axis in (axes or [])],
         }
     if database_path:
         payload["database_path"] = str(database_path)
+    if axes_pending:
+        payload["axes_pending"] = True
     mime_data = QtCore.QMimeData()
     mime_data.setData(
         RUN_PREVIEW_MIME,
@@ -42,7 +45,7 @@ def run_preview_payload_from_mime(mime_data):
     elif not isinstance(axes, (list, tuple)):
         axes = []
 
-    normalised = {
+    normalised: dict[str, str | list[str] | bool] = {
         "guid": guid,
         "parameter": parameter,
         "axes": [str(axis) for axis in axes],
@@ -50,12 +53,19 @@ def run_preview_payload_from_mime(mime_data):
     database_path = str(payload.get("database_path") or "")
     if database_path:
         normalised["database_path"] = database_path
+    if payload.get("axes_pending") is True:
+        normalised["axes_pending"] = True
     return normalised
 
 
 def preview_drop_is_compatible(target_axes, payload):
     axes = tuple(str(axis) for axis in (payload.get("axes") or []))
     target_axes = tuple(str(axis) for axis in target_axes)
+    if not axes and payload.get("axes_pending") is True:
+        # Pending thumbnails have a run/parameter identity but no rendered
+        # axes yet. The add action loads and checks the actual parameter
+        # before adding any trace or heatmap.
+        return len(target_axes) in (1, 2)
     if len(axes) == len(target_axes) == 2:
         return len(set(axes)) == 2 and set(axes) == set(target_axes)
     return bool(axes) and axes == target_axes

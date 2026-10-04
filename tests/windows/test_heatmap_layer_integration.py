@@ -149,12 +149,13 @@ def _build_two_heatmap_database(database_path):
     return run_id, guid, expected_primary, expected_secondary
 
 
-def _drop_heatmap(target, guid, parameter):
+def _drop_heatmap(target, guid, parameter, *, axes_pending=False):
     event = _PreviewDropEvent(
         make_run_preview_mime(
             guid,
             parameter.name,
-            parameter.depends_on_,
+            None if axes_pending else parameter.depends_on_,
+            axes_pending=axes_pending,
         )
     )
     assert target._handle_preview_drag_drop(event)
@@ -229,7 +230,7 @@ def test_preview_drop_adds_and_removes_real_secondary_heatmap(
         primary_owner_count = dataset_handle.users
         secondary_key = TraceKey(dataset_key, secondary_parameter.name)
 
-        _drop_heatmap(target, guid, secondary_parameter)
+        _drop_heatmap(target, guid, secondary_parameter, axes_pending=True)
         _wait_for(
             lambda: (
                 secondary_key in target.heatmaps

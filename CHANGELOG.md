@@ -7,6 +7,8 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.6.0b1 - 2026-09-28
+
 ### Added
 
 - Add a complete trusted live-reader boundary that uses SQLite's
@@ -29,7 +31,10 @@ installation commands and release validation, see `docs/distribution.md`.
   are detected through the same helper, and cancellation, database switching,
   and shutdown stay off the GUI thread.
 - Make database loading, run-list refresh, progressive run metadata, and the
-  selected run's plain detail view use trusted live access first. The legacy
+  selected run's bounded Raw key-value, Metadata, and Snapshot views use
+  trusted live access first. Selected detail is ephemeral and fenced by the
+  exact selection, helper, source, and database generations; it is neither a
+  QCoDeS `DataSet` nor a retained derived-cache entry. The legacy
   access probe and snapshot fallback are used only when the native backend is
   genuinely unavailable or the source or filesystem is explicitly unsupported;
   trusted-session failures are never converted into fallback or silently
@@ -41,17 +46,22 @@ installation commands and release validation, see `docs/distribution.md`.
   still create private snapshots. DataSets remain exclusive to explicit plot
   and CSV actions.
 - Add the Stage 5B trusted derived-work backend. A Qt-independent single-claim
-  coordinator executes the Stage 5A selected/visible/remaining schedule,
+  coordinator executes the Stage 5A `(run tier, work kind, stable index)`
+  schedule: metadata (and ephemeral detail), thumbnail, and preview for the
+  selected run; then metadata for all visible runs, their thumbnails, and their
+  previews; then the same three lanes for remaining runs. It
   captures immutable result prefixes through the persistent trusted helper,
   renders bounded deterministic metadata and PNG payloads, and uses a verified,
   atomic, size-bounded application cache. Active appends are coalesced so a
   captured prefix can publish before its newer revision is scheduled.
 - Connect Stage 5B to the trusted Qt presentation path through one owner-thread
   Stage 5C bridge. The cheap run list remains first, then derived metadata,
-  dimensions, run-table thumbnails, and selected-run previews populate in
-  selected/visible/remaining order. Queued wakeups and viewport changes are
-  coalesced, PNG decoding and widget mutation stay on the GUI thread, and stale
-  database, run, format, helper, and lifecycle generations are discarded.
+  selected detail, dimensions, run-table thumbnails, and selected-run previews
+  populate in tier-first order: selected metadata/thumbnail/preview, visible
+  metadata/thumbnail/preview lanes, then the equivalent remaining lanes. Queued
+  wakeups and viewport changes are coalesced, PNG decoding and widget mutation
+  stay on the GUI thread, and stale database, run, format, helper, and lifecycle
+  generations are discarded.
 - Make the Stage 5B coordinator the sole trusted producer for derived detail,
   thumbnails, and previews. Legacy snapshot-backed producers remain available
   only for their documented non-trusted compatibility paths; explicit plot and
@@ -62,18 +72,59 @@ installation commands and release validation, see `docs/distribution.md`.
   preview tab is the sole retained full-preview cache (512 entries and 128 MiB),
   run-list thumbnails exist only in enabled inline cells, and selecting an
   evicted preview replays that exact work kind through the Stage 5B cache.
+  Run-list thumbnails use a square render format matching their square
+  placeholders.
   Reselecting the active database refreshes the existing bridge instead of
   disabling trusted previews or creating another coordinator or timer pair.
 - Build the native boundary in explicit C11 mode with MSVC and exercise installed
   reader wheels separately on ARM64 macOS, Intel macOS, Linux, and unprivileged
   Windows CI hosts before cross-platform acceptance.
+- Add configurable heatmap display grid limits to keep large Cartesian grids
+  within a bounded allocation budget.
+- Print the visible plot area through the system print dialog, including
+  page-formatted PDFs when it exposes a concrete PDF destination. PDF file
+  output is staged and atomically published; Save Plot as PDF remains the
+  plot-sized output path.
+- Make every run-table column optional and persistent from the header menu,
+  including Experiment, Sample, Name, Completed, and GUID, with horizontal
+  scrolling for wider layouts.
+
+### Changed
+
+- Replace legacy settings upgrades with one strict configuration format for
+  the new major version. Older or incomplete settings files are backed up and
+  reset to current defaults, and the recent-database list is now the single
+  source for restoring the last opened database.
 
 ### Fixed
 
-- Decode and normalise selected-run snapshots on the broker thread before Qt
-  publication. The published flat view caps UTF-8 input, nesting, container
-  items, nodes, and rendered text; malformed or truncated snapshots show bounded
-  diagnostics without placing raw multi-megabyte JSON in cells or tooltips.
+- Distinguish selected-detail cell compaction from genuine metadata omission.
+  Long `run_description`, traceback, custom-key, and custom-value cells now have
+  exact byte counts and local markers without making an otherwise complete Raw
+  or Metadata view look truncated. A bounded current-selection viewer exposes
+  the complete value on demand with explicit Copy, traceback cells preserve the
+  terminal exception, Raw categories are discoverable without recursively
+  expanding Snapshot, and all backing is invalidated at selection, source,
+  database, helper, generation, replacement, and shutdown boundaries.
+- Repair valid selected-run snapshots disappearing after the old 1,024-node
+  presentation boundary. A bounded iterative scanner now validates the complete
+  source without constructing complete Python or Qt object trees, while the UI
+  materialises only direct-child pages. Each page contains at most 127 data rows
+  plus `Load more…` (128 children total) and 32 KiB of displayed text; expanding
+  a container or activating `Load more…` requests the next bounded page. Long
+  Snapshot scalars retain a compact preview with a local **View Full** action.
+  The top-level QCoDeS `station` container now opens by default while fetching
+  only its first bounded page; deeper containers remain lazy.
+  A complete snapshot is reported as `available — loaded on demand`, rather than
+  source-truncated.
+- Retain only the current selection's at-most-4-MiB Snapshot source outside Qt,
+  never in the derived disk cache or for every run. One lazy worker keeps at
+  most two page/value requests outstanding. Requests and results carry the
+  exact database, helper/source, coordinator/selection, run/GUID,
+  snapshot-session, parent/cursor, and deadline identities; stale work is
+  rejected across selection, replacement, helper restart, timeout, and
+  shutdown. Widget changes and full-value dialog creation remain on the GUI
+  thread.
 - Replace dynamic selected/visible run priorities instead of accumulating stale
   scores, restore omitted rows to stable table order, and linearise trusted
   request installation with concurrent promotion.
@@ -126,11 +177,47 @@ installation commands and release validation, see `docs/distribution.md`.
 - Replace 32 GiB filesystem test extensions with logical payload/stat proxies
   and small physical fixtures, retaining a bounded 64 MiB native no-copy
   integration case on every platform.
-- Keep Stage 4 expensive metadata from holding a reader transaction across a
-  large result-table or `dbstat` scan. Current QCoDeS result counts use the
-  append-only integer-primary-key watermark; only twice-stable small sources
-  may use bounded aggregate batches, while large/changing sources use planned
-  shapes, fixed ID-window summaries, and explicitly estimated storage.
+- Remove the obsolete database-size and 100,000-row gates from Stage 5C shape
+  discovery. Current QCoDeS regular 1D/2D layouts are proved from their
+  append-only primary-key structure with bounded direct probes and, when those
+  are inconclusive, resumable 4,096-row metadata-only keyset pages. Progressive
+  verification retains constant-size state and consumes only one page per owner
+  turn. Repair the Stage 5C priority regression by re-evaluating the exact
+  `(run tier, work kind, stable index)` order at every page boundary. A run's
+  progressive metadata is its own dependency. Strictly higher-tier work and
+  ready selected images always win; within the same tier, ordinary work receives
+  at most three claims (one sibling metadata/thumbnail/preview sequence) before
+  one paced continuation page is aged in. Pages rotate between eligible runs,
+  and a newly selected run pre-empts at the next boundary. In the absence of
+  ready selected images, at least one remaining-run metadata claim is admitted
+  within eight foreground claims. A dedicated 10 ms coalesced continuation
+  wakeup prevents zero-delay polling while preserving full drain. Exact retry
+  deadlines are retained independently per run and work kind behind one
+  earliest-deadline timer. Compatible appends resume at an accepted physical
+  cursor, while append reconciliation and database switches install current
+  selection and viewport priority before their first new claim.
+  Inconclusive pages do not render, publish, or write cache entries. Once
+  conclusive, the metadata, thumbnail, and preview claims are each scheduled
+  only once for the captured prefix, preventing per-page render, publication,
+  and cache-write amplification.
+- Distinguish the physical result-row watermark from scientific logical points.
+  Dense/shared, interleaved, and dependent-blocked current-QCoDeS layouts report
+  acquired logical `read_setpoint_count` only after structural verification. A
+  valid declared shape may supply a planned `setpoint_count`, but it remains a
+  provisional expected extent; an observed exact shape and observed
+  `setpoint_count` are published only after the captured prefix is proved.
+  Irregular or insufficient evidence, including an incomplete blocked layout
+  without a complete rectangular candidate, stays unknown rather than being
+  guessed.
+- Render structurally proved 2D grids from representative, mirror-symmetric
+  samples covering both complete axis extents, including fast-first, descending,
+  reversed, serpentine, incomplete, and multi-dependent layouts. Dependency 0
+  is vertical and dependency 1 horizontal, missing or unmeasured cells stay
+  neutral without affecting another dependent, and thumbnail and preview
+  mappings agree. Viridis colours are deterministic, and a finite singleton 1D
+  sample remains visible. These scientific corrections advance the
+  Qt/Matplotlib-independent renderer and derived disk-cache formats to version
+  3.
 - Keep Stage 4 metadata plans intrinsically inside the helper's wire and public
   result budgets: defer large run descriptions from 1,000-row basic pages,
   preflight and guard per-run scalars, cap selected layouts and grouped edge
@@ -157,28 +244,12 @@ installation commands and release validation, see `docs/distribution.md`.
 - Reject exponent-overflow and other untagged non-finite JSON numbers at the
   generic IPC boundary, with regressions for duplicate keys and aggregate
   collection limits while preserving tagged SQLite-real round trips.
-
-## 1.6.0-b1 - 2026-08-18
-
-### Added
-
-- Print the visible plot area through the system print dialog, including
-  page-formatted PDFs when it exposes a concrete PDF destination. PDF file
-  output is staged and atomically published; Save Plot as PDF remains the
-  plot-sized output path.
-- Make every run-table column optional and persistent from the header menu,
-  including Experiment, Sample, Name, Completed, and GUID, with horizontal
-  scrolling for wider layouts.
-
-### Changed
-
-- Replace legacy settings upgrades with one strict configuration format for
-  the new major version. Older or incomplete settings files are backed up and
-  reset to current defaults, and the recent-database list is now the single
-  source for restoring the last opened database.
-
-### Fixed
-
+- Preserve matching setpoint and value arrays when plotting one-dimensional
+  QCoDeS array measurements.
+- Export standalone QCoDeS measurements to CSV without requiring dependent
+  parameters, and retain correct ownership of action snapshots.
+- Handle non-finite values in QCoDeS snapshots without losing selected-run
+  details.
 - Bind generated-database WAL provenance to the exact checkpointed branch with
   a bounded parent-linked nonce chain. Provenance-aware QCoDeS writers cover
   later result tables, background writes, repeated checkpoints, and fresh qPlot

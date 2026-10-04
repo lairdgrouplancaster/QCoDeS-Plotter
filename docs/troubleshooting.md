@@ -218,16 +218,40 @@ database folders as always available in Finder. The timeout can be changed with
 ## Trusted Run Details or Previews Stay on Loading
 
 Trusted metadata, dimensions, thumbnails, and selected-run previews populate
-progressively after the cheap run list appears. Work is prioritised for the
-selected row, then rows visible in the actual table viewport, then the rest of
-the database. Large databases can therefore retain loading placeholders for
-off-screen runs while foreground work is already usable; if left idle, all
-eligible runs are eventually populated. Scrolling to or selecting a run
-promotes its pending work without starting a second worker.
+progressively after the cheap run list appears. The base priority key is
+`(run tier, work kind, stable index)`: the selected run gets metadata (and
+ephemeral detail), thumbnail, then preview; visible rows get all metadata, then
+all thumbnails, then all previews; remaining rows follow the same three lanes.
+Scrolling to or selecting a run promotes its pending tier without starting a
+second worker, and if left idle the schedule fully drains.
+
+A large current-QCoDeS regular run may need resumable full-prefix verification
+before qPlot can distinguish physical result rows from logical scientific
+points. It reads at most one 4,096-row metadata-only page per owner turn and
+yields and re-evaluates priority at every page boundary. Progressive metadata is
+a dependency only for that run. Strictly higher-tier work and ready selected
+images always win; within the same tier, ordinary work receives at most three
+claims (one sibling metadata/thumbnail/preview sequence) before one paced
+continuation page is aged in. Pages rotate between eligible runs, and a newly
+selected run pre-empts at the next boundary. When no selected image is ready,
+qPlot admits at least one
+remaining-run metadata claim within eight foreground claims. Continuations use
+one coalesced wakeup paced at 10 ms, avoiding zero-delay polling while still
+fully draining. An inconclusive page does not render, publish, or write the
+derived cache, so a long verification cannot repeatedly regenerate metadata,
+thumbnails, or previews; a conclusive pass admits one normal final result per
+output kind. Appended data resumes from accepted constant-memory verification
+state when its candidate pattern and fast extent remain compatible. A
+still-partial change that cannot yet be re-proved fails closed until sufficient
+evidence arrives. A planned shape is only the provisional expected extent;
+irregular or unproved observed shapes remain unavailable rather than being
+guessed.
 
 Decoded full previews use a bounded in-memory cache. Revisiting an evicted run
 may briefly show loading while qPlot requests only that preview again, normally
-from the derived disk cache; it does not repeat metadata or thumbnail work.
+from the derived disk cache. The exact preview replay does not clear completed
+metadata or thumbnail state, although changing selection may independently
+request the new run's ephemeral detail.
 Run-list thumbnails are not decoded for databases above the inline-preview
 threshold. Reselecting the already active database preserves the trusted
 preview binding and existing cached previews.
@@ -240,10 +264,35 @@ cache lives in qPlot's application-cache directory and must never be moved into
 or above the database directory.
 
 Trusted live sessions do not use the legacy snapshot-backed detail, thumbnail,
-or preview workers. Explicit plot and CSV actions still open their own deferred
-action-owned dataset, and snapshot fallback retains its documented narrower
-behavior. If the accepted database or helper incarnation changes, obsolete
-derived results are discarded and current work is regenerated.
+or preview workers. The selected Raw key-value, Metadata, and Snapshot tabs come
+from one bounded ephemeral trusted detail read and are discarded or rejected
+when the selection changes. A trusted detail failure never triggers an
+automatic fallback copy. Explicit plot and CSV actions still open their own
+deferred action-owned dataset, and snapshot fallback retains its documented
+narrower behavior. If the accepted database or helper incarnation changes,
+obsolete derived results are discarded and current work is regenerated. The
+current renderer and derived-cache formats are version 3, so older-format cache
+entries are misses and are regenerated normally.
+
+Long metadata no longer makes the whole tab look incomplete merely because a
+cell is compact. A `[display]` row means the marked keys or values are present;
+activate one to open its complete read-only value, then choose Copy explicitly
+if needed. Traceback cells keep the final exception line visible. A
+`[truncated]` row in Metadata or Raw has the narrower meaning that source data or
+structure was actually unavailable or exceeded a structural, protocol, or
+aggregate presentation bound. If a marked row says the complete value is
+unavailable, it was already omitted at a bounded acquisition or backing limit
+and qPlot will not pretend that activation can recover it.
+
+Snapshot status `available — loaded on demand` means the complete source passed
+validation; it does not mean source data was cut off. Expand a container to load
+its first bounded page, use `Load more…` for later pages, and activate a locally
+shortened scalar to view its exact value. qPlot intentionally creates no more
+than 128 children and 32 KiB of displayed text per page. Snapshot `malformed`,
+`truncated`, or `unavailable` instead identifies a genuine malformed source,
+4 MiB/source-detail limit, excessive depth or scalar, or changed-during-read
+failure. A changed-during-read message can be retried after the writer settles;
+increasing an eager node limit will not affect these failures.
 
 ## Plot Windows Look Empty
 
