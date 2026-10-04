@@ -23,22 +23,50 @@ import numpy as np
 from qplot.datahandling.parameter_data import numeric_isfinite, numeric_isnan
 
 
-def _integer_differences(values, axis=0, step=1):
+def _integer_differences(values, axis=0, step=1, *, cancelled_callback=None):
     """Subtract before conversion; int64 and uint64 gaps can exceed int64."""
     exact_values = np.moveaxis(values.astype(object), axis, -1)
-    try:
-        differences = exact_values[..., step:] - exact_values[..., :-step]
-    except TypeError:
-        # A limit can follow object data containing both binary floats and
-        # decimal clipped cells; Fraction makes their subtraction compatible.
+    if values.dtype.kind == "O" and not _integer_samples(values):
+        # Python also rounds integers before subtracting binary floats.
+        # Exact mixed cells preserve steps above 2**53 and allow subtraction
+        # between decimal clipping bounds and original binary floats.
         # Missing cells and infinities cannot be converted to Fraction. Keep
         # those as floats so they propagate through only their own stencils.
-        fractions = exact_values.copy()
         finite = numeric_isfinite(exact_values)
-        fractions[finite] = np.frompyfunc(Fraction, 1, 1)(exact_values[finite])
-        fractions[~finite] = exact_values[~finite].astype(float)
-        differences = fractions[..., step:] - fractions[..., :-step]
-    return np.moveaxis(differences.astype(np.float64), -1, axis)
+        left_values, right_values = exact_values[..., :-step], exact_values[..., step:]
+
+        def mixed_differences():
+            pairs = zip(left_values.flat, right_values.flat,
+                        finite[..., :-step].flat, finite[..., step:].flat, strict=True)
+            for index, (left, right, left_finite, right_finite) in enumerate(pairs):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                if left_finite and right_finite:
+                    difference = _sample_fraction(right) - _sample_fraction(left)
+                else:
+                    difference = float(right) - float(left)
+                yield _fraction_as_float(difference)
+
+        numeric = np.fromiter(mixed_differences(), dtype=np.float64,
+                              count=left_values.size).reshape(left_values.shape)
+        return np.moveaxis(numeric, -1, axis)
+    with np.errstate(over="ignore", invalid="ignore"):
+        differences = exact_values[..., step:] - exact_values[..., :-step]
+    try:
+        numeric = differences.astype(np.float64)
+    except OverflowError:
+        # Fraction differences from decimal clipping may exceed float64.
+        # Keep signed overflow so finite-input secant/stencil repair can
+        # divide the exact difference before rounding the resulting quotient.
+        def rounded_cells():
+            for index, value in enumerate(differences.flat):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                yield _fraction_as_float(value)
+
+        numeric = np.fromiter(rounded_cells(), dtype=np.float64,
+                              count=differences.size).reshape(differences.shape)
+    return np.moveaxis(numeric, -1, axis)
 
 
 def _integer_samples(values):
@@ -63,17 +91,35 @@ def _gradient_with_integer_samples(
         data, coordinates, spacing, axis, integer_data, *, cancelled_callback=None):
     """Use gradient's first-order edges and three-point interior stencil."""
     samples = np.moveaxis(np.asarray(data), axis, -1)
+    mixed_objects = samples.dtype.kind == "O" and not _integer_samples(samples)
     dtype = np.float64 if integer_data else np.result_type(samples.dtype, np.float64)
     result = np.empty(samples.shape, dtype=dtype)
     if integer_data:
-        differences = _integer_differences(samples, axis=-1)
+        differences = _integer_differences(samples, axis=-1,
+                                           cancelled_callback=cancelled_callback)
     else:
         samples = samples.astype(dtype, copy=False)
         with np.errstate(over="ignore", invalid="ignore"):
             differences = np.diff(samples, axis=-1)
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         slopes = differences / spacing
-    if not integer_data:
+    if integer_data:
+        # Mixed QCoDeS integer/float records use object cells. Their finite
+        # floating differences can overflow too; divide the exact recorded
+        # difference before rounding, including the first-order edge slopes.
+        repair = ((~np.isfinite(differences) | mixed_objects)
+                  & numeric_isfinite(samples[..., 1:])
+                  & numeric_isfinite(samples[..., :-1]))
+        for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
+            if index % 1024 == 0:
+                _check_cancelled(cancelled_callback)
+            left = position[-1]
+            row = position[:-1]
+            distance = _sample_fraction(coordinates[left + 1]) - _sample_fraction(coordinates[left])
+            difference = (_sample_fraction(samples[row][left + 1])
+                          - _sample_fraction(samples[row][left]))
+            slopes[position] = _fraction_as_float(difference / distance)
+    else:
         # A finite sample jump can exceed float's range before division by a
         # large, finite spacing restores a representable secant slope.
         repair = (~np.isfinite(differences) & np.isfinite(samples[..., 1:])
@@ -90,11 +136,27 @@ def _gradient_with_integer_samples(
             # The uniform central stencil uses only its two outer samples.
             # Summing adjacent differences would involve a missing centre and
             # erase a valid derivative (or subtract opposite infinities).
-            outer_difference = _integer_differences(samples, axis=-1, step=2)
+            outer_difference = _integer_differences(
+                samples, axis=-1, step=2, cancelled_callback=cancelled_callback,
+            )
             if abs(dx) > np.finfo(float).max / 2:
-                result[..., 1:-1] = (outer_difference / 2.) / dx
+                central = (outer_difference / 2.) / dx
             else:
-                result[..., 1:-1] = outer_difference / (2. * dx)
+                central = outer_difference / (2. * dx)
+            repair = ((~np.isfinite(outer_difference) | mixed_objects)
+                      & numeric_isfinite(samples[..., 2:])
+                      & numeric_isfinite(samples[..., :-2]))
+            for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                left = position[-1]
+                row = position[:-1]
+                distance = (_sample_fraction(coordinates[left + 2])
+                            - _sample_fraction(coordinates[left]))
+                difference = (_sample_fraction(samples[row][left + 2])
+                              - _sample_fraction(samples[row][left]))
+                central[position] = _fraction_as_float(difference / distance)
+            result[..., 1:-1] = central
         else:
             with np.errstate(over="ignore", invalid="ignore"):
                 outer_difference = samples[..., 2:] - samples[..., :-2]
@@ -135,7 +197,12 @@ def _gradient_with_integer_samples(
             cancellation = ((np.signbit(left_term) != np.signbit(right_term))
                             & (np.abs(central) <= np.sqrt(np.finfo(float).eps)
                                * np.maximum(np.abs(left_term), np.abs(right_term))))
-            repair = ((~np.isfinite(central) | cancellation)
+            # A normalized spacing can underflow before multiplication by a
+            # large secant restores a representable derivative. Replay those
+            # stencils even when the rounded weighted terms have the same sign.
+            underflow = ((np.abs(before) < np.finfo(float).tiny)
+                         | (np.abs(after) < np.finfo(float).tiny))
+            repair = ((~np.isfinite(central) | cancellation | underflow | mixed_objects)
                       & numeric_isfinite(samples[..., :-2])
                       & numeric_isfinite(samples[..., 1:-1])
                       & numeric_isfinite(samples[..., 2:]))
@@ -145,15 +212,12 @@ def _gradient_with_integer_samples(
                 centre = position[-1] + 1
                 row = position[:-1]
 
-                def exact(value):
-                    return Fraction(value.item() if isinstance(value, np.generic) else value)
-
                 # Subtract the original coordinates exactly. Rounded spacing
                 # loses the small residual when opposing large slopes cancel.
-                left, middle, right = map(exact, coordinates[centre - 1:centre + 2])
+                left, middle, right = map(_sample_fraction, coordinates[centre - 1:centre + 2])
                 before_step, after_step = middle - left, right - middle
                 before_value, middle_value, after_value = map(
-                    exact, samples[row][centre - 1:centre + 2],
+                    _sample_fraction, samples[row][centre - 1:centre + 2],
                 )
                 derivative = (
                     after_step * (middle_value - before_value) / before_step
@@ -181,6 +245,11 @@ def _fraction_as_float(value):
         return float(value)
     except OverflowError:
         return np.inf if value > 0 else -np.inf
+
+
+def _sample_fraction(value):
+    """Use the exact recorded scalar, including NumPy integer/float cells."""
+    return Fraction(value.item() if isinstance(value, np.generic) else value)
 
 
 def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callback=None):
@@ -477,9 +546,9 @@ def differentiate(
     coordinates = np.asarray(data_dict[dx])
     if coordinates.ndim != 1 or coordinates.size < 2:
         raise ValueError("Differentiation requires at least two axis coordinates.")
-    integer_coordinates = _integer_samples(coordinates)
+    integer_coordinates = _integer_samples(coordinates) or _numeric_object_samples(coordinates)
     if integer_coordinates:
-        spacing = _integer_differences(coordinates)
+        spacing = _integer_differences(coordinates, cancelled_callback=cancelled_callback)
     else:
         coordinates = coordinates.astype(float)
         spacing = np.diff(coordinates)

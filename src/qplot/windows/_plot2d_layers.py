@@ -729,6 +729,10 @@ class Plot2DLayerMixin:
                 dropdown.blockSignals(blocked)
         self._axis_selection = dict(target)
         if previous == {"x": target["y"], "y": target["x"]}:
+            # Blocked dropdown signals bypass the ordinary axis-change handler.
+            # Its pending rotation keeps existing cut markers on their fixed
+            # parameter when the refreshed heatmap exchanges X and Y.
+            self.__dict__["rotate"] = True
             self._transpose_heatmap_axis_assignments()
         self.refreshWindow(force=True)
         dialog = self.__dict__.get("_heatmap_appearance_dialog")

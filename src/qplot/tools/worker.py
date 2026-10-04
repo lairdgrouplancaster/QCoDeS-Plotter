@@ -2209,9 +2209,16 @@ class loader(QtCore.QRunnable):
         )
         if acquired is not None and not np.all(acquired):
             # Plotting-only missing values preserve the planned shape and
-            # source dtypes. Never infer acquisition from zeros or completion.
+            # source dtypes. Boolean values fit exactly in float cells, while
+            # integers need object cells to preserve their precision with NaN.
+            # Never infer acquisition from zeros or completion.
+            missing_dtype = depvarData.dtype
+            if missing_dtype.kind in "iuO":
+                missing_dtype = object
+            elif missing_dtype.kind == "b":
+                missing_dtype = float
             depvarData = depvarData.astype(
-                object if depvarData.dtype.kind in "iuO" else depvarData.dtype,
+                missing_dtype,
                 copy=True,
             )
             depvarData[~acquired] = np.nan
@@ -2381,6 +2388,8 @@ class loader(QtCore.QRunnable):
             if np.any(invalid):
                 if data_grid.dtype.kind in "iu":
                     data_grid = data_grid.astype(object)
+                elif data_grid.dtype.kind == "b":
+                    data_grid = data_grid.astype(float)
                 data_grid[invalid] = np.nan
             self._check_cancelled()
             return data_grid if x_dimension == 1 else data_grid.transpose()

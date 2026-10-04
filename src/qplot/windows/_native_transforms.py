@@ -11,6 +11,7 @@ from qplot.tools.plot_tools import (
     _center_float_samples,
     _fraction_as_float,
     _integer_differences,
+    _integer_samples,
 )
 from qplot.tools.sample_statistics import finite_mean
 
@@ -71,7 +72,9 @@ def _safe_secant(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         numerator, denominator = _safe_difference(y), _safe_difference(x)
         result = numerator / denominator
-    repair = ((~np.isfinite(numerator) | ~np.isfinite(denominator))
+    mixed_objects = ((x.dtype.kind == "O" and not _integer_samples(x))
+                     or (y.dtype.kind == "O" and not _integer_samples(y)))
+    repair = ((~np.isfinite(numerator) | ~np.isfinite(denominator) | mixed_objects)
               & numeric_isfinite(x[:-1]) & numeric_isfinite(x[1:])
               & numeric_isfinite(y[:-1]) & numeric_isfinite(y[1:]))
     for index in np.flatnonzero(repair):
@@ -115,18 +118,38 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         x, dx = x[::-1], -dx[::-1]
     elif not np.all(dx > 0):
         raise _FFTCoordinatesError(message)
+    coordinate_scale = 1.
     if x.dtype.kind in "iuO":
         # Rebase before float conversion to retain nearby steps above 2**53
         # without unsigned/signed overflow.
         exact = x.astype(object)
-        try:
-            x = (exact - exact[0]).astype(np.float64)
-        except TypeError:
+        if x.dtype.kind == "O" and not _integer_samples(x):
             exact = np.frompyfunc(Fraction, 1, 1)(exact)
-            x = (exact - exact[0]).astype(np.float64)
+        with np.errstate(over="ignore", invalid="ignore"):
+            try:
+                rebased = (exact - exact[0]).astype(np.float64)
+            except (TypeError, OverflowError):
+                exact = np.frompyfunc(Fraction, 1, 1)(exact)
+                rebased = np.fromiter(
+                    (_fraction_as_float(value - exact[0]) for value in exact),
+                    dtype=np.float64, count=len(exact),
+                )
+        if np.all(np.isfinite(rebased)):
+            x = rebased
+        else:
+            # Mixed float/integer coordinate records also use object cells.
+            # Their finite span can exceed float64 before rebasing finishes.
+            # Scale exact differences before converting them to float.
+            coordinate_scale = float(np.max(np.abs(x.astype(np.float64))))
+            anchor = Fraction(exact[0])
+            scale = Fraction(coordinate_scale)
+            x = np.fromiter(
+                (float((Fraction(value) - anchor) / scale) for value in exact),
+                dtype=np.float64, count=len(exact),
+            )
+            dx = np.diff(x)
     with np.errstate(over="ignore", invalid="ignore"):
         span = float(x[-1] - x[0])
-    coordinate_scale = 1.
     if not np.isfinite(span):
         # A finite sweep may cross zero over more than float64's range.
         # Interpolate on scaled coordinates and restore units in frequency.
