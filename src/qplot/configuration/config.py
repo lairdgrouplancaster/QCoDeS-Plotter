@@ -101,7 +101,10 @@ class config:
                     f"{self.default_file}",
                     error,
                     )
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        except (ValueError, UnicodeDecodeError, RecursionError) as error:
+            # JSONDecodeError subclasses ValueError. The decoder also raises
+            # ValueError for integer conversion limits and RecursionError for
+            # excessive nesting; these concern only the user settings read.
             self._recover_invalid_config(error)
         except OSError as error:
             self._recover_unreadable_config(error)
@@ -378,9 +381,14 @@ class config:
     def _recover_invalid_config(self, original_error):
         """Use defaults after an invalid config without risking the original."""
 
+        diagnostic = original_error
+        if isinstance(original_error, jsonschema.ValidationError):
+            # ValidationError.__str__ pretty-prints the rejected instance.
+            # Deep, invalid settings must not prevent recovery while logging.
+            diagnostic = f"ValidationError: {original_error.message}"
         log_exception(
             f"Invalid configuration at {self.default_file}",
-            original_error,
+            diagnostic,
             __name__,
             )
         self.config = self.build_default_config()

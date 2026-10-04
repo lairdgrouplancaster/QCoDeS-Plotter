@@ -1636,9 +1636,9 @@ class loader(QtCore.QRunnable):
         axes = getattr(self, "axes_dict", {})
         x_data = self._float_heatmap_coordinates(x_data, axes.get("x", "x"))
         y_data = self._float_heatmap_coordinates(y_data, axes.get("y", "y"))
-        # This path intentionally aggregates a bounded display grid. Preserve
-        # exact samples in the full-resolution path until operations finish.
-        z_data = np.asarray(z_data, dtype=float)
+        # Keep recorded values through accumulation and any exact replay.
+        # The bounded display means become floats only after division.
+        z_data = np.asarray(z_data)
         display_limit = max(1, int(getattr(
             self, "max_heatmap_grid_cells", MAX_SQL_HEATMAP_GRID_CELLS,
             )))

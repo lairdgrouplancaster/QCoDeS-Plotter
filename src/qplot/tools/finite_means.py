@@ -17,16 +17,34 @@ class FiniteBinMeans:
         self._samples = 0
         self._positive = np.zeros(shape, dtype=bool)
         self._negative = np.zeros(shape, dtype=bool)
+        self._integer = np.zeros(shape, dtype=bool)
+        self._absolute_sums = np.zeros(shape, dtype=float)
 
     def add(self, indices, values):
         self.check_cancelled()
-        values = np.asarray(values, dtype=float).ravel()
+        original = np.asarray(values).ravel()
+        values = original.astype(float)
         if not values.size:
             return
         targets = np.ravel_multi_index(indices, self.sums.shape)
         np.logical_or.at(self._positive.ravel(), targets, values > 0)
         np.logical_or.at(self._negative.ravel(), targets, values < 0)
         mixed = self._positive & self._negative
+        # Original object cells may retain clipped decimal bounds or mixed
+        # integer records. Large integer cells also need exact replay even
+        # when all samples have the same sign: conversion or summation can
+        # round before their mean is formed.
+        sensitive = np.zeros(self.sums.shape, dtype=bool)
+        if original.dtype.kind == "O":
+            sensitive.ravel()[targets] = True
+        elif original.dtype.kind in "iu":
+            self._integer.ravel()[targets] = True
+        # Several individually exact integers can have an inexact total.
+        # Retain the accumulated absolute bound and integer presence across
+        # chunks, including a later floating record in the same bin.
+        with np.errstate(over="ignore", invalid="ignore"):
+            np.add.at(self._absolute_sums.ravel(), targets, np.abs(values))
+        sensitive |= self._integer & (self._absolute_sums >= 2**53)
         self._largest = max(self._largest, float(np.max(np.abs(values))))
         self._samples += values.size
         # Leave headroom for rounded additions at the finite sum boundary.
@@ -34,7 +52,8 @@ class FiniteBinMeans:
         # It changes only whether we retain sums for recovery, never scaling
         # the values in other bins (which could erase small measurements).
         safe_sample = (np.finfo(float).max / 2) / self._samples
-        risk = bool(self.exact) or self._largest > safe_sample or np.any(mixed)
+        risk = (bool(self.exact) or self._largest > safe_sample
+                or np.any(mixed) or np.any(sensitive))
         previous = self.sums.copy() if risk else None
         with np.errstate(over="ignore", invalid="ignore"):
             np.add.at(self.sums.ravel(), targets, values)
@@ -45,12 +64,13 @@ class FiniteBinMeans:
             # would already have rounded away small cancellation residuals.
             largest = np.abs(previous)
             np.maximum.at(largest.ravel(), targets, np.abs(values))
-            for index, target in enumerate(np.flatnonzero((largest > safe_sample) | mixed)):
+            for index, target in enumerate(np.flatnonzero(
+                    (largest > safe_sample) | mixed | sensitive)):
                 if index % 1024 == 0:
                     self.check_cancelled()
                 self.exact.setdefault(int(target), Fraction(float(previous.ravel()[target])))
             if self.exact:
-                self._add_exact(targets, values)
+                self._add_exact(targets, original)
                 self.sums.ravel()[list(self.exact)] = 0.
         self.check_cancelled()
 

@@ -175,6 +175,14 @@ def _check_cancelled(cancelled_callback):
         raise InterruptedError("Plot operation cancelled.")
 
 
+def _fraction_as_float(value):
+    """Round an exact derived value, retaining signed overflow as infinity."""
+    try:
+        return float(value)
+    except OverflowError:
+        return np.inf if value > 0 else -np.inf
+
+
 def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callback=None):
     """Remove a float mean without rounding a large offset into the result.
 
@@ -219,7 +227,14 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
             # keep the anchor path so fractional offset means remain intact.
             mixed_sign = (np.any(chunk < 0, axis=1) & np.any(chunk > 0, axis=1)
                           & expected_finite_mean & ~infinite_source)
-            for row_index in np.flatnonzero(mixed_sign):
+            # A rounded mean of subnormal differences can underflow before
+            # subtraction. Round each exact residual instead, including the
+            # halfway case whose correctly rounded residual is signed zero.
+            subnormal = np.any((np.abs(shifted) > 0)
+                               & (np.abs(shifted) < np.finfo(float).tiny), axis=1)
+            sensitive = ((mixed_sign | subnormal)
+                         & expected_finite_mean & ~infinite_source)
+            for row_index in np.flatnonzero(sensitive):
                 _check_cancelled(cancelled_callback)
                 original = chunk[row_index][finite[row_index]]
 
@@ -233,7 +248,8 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
                 # With more than a mantissa's range between samples, rounding
                 # the mean itself can change the small residual by one ULP.
                 # Subtract exact means in just these sensitive rows.
-                exact_required = np.max(nonzero) / (2. ** 53) > np.min(nonzero)
+                exact_required = (subnormal[row_index]
+                                  or np.max(nonzero) / (2. ** 53) > np.min(nonzero))
                 if not exact_required:
                     try:
                         mean = math.fsum(values_for_sum(original)) / len(original)
@@ -253,10 +269,7 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
                         if index % 1024 == 0:
                             _check_cancelled(cancelled_callback)
                         difference = value - exact_mean
-                        try:
-                            residuals[index] = float(difference)
-                        except OverflowError:
-                            residuals[index] = np.inf if difference > 0 else -np.inf
+                        residuals[index] = _fraction_as_float(difference)
                     result[row_index, finite[row_index]] = residuals
                 else:
                     result[row_index] = chunk[row_index] - mean
@@ -313,7 +326,7 @@ def subtract_mean(
                 exact = [Fraction(value.item() if isinstance(value, np.generic) else value)
                          for value in values]
                 mean = sum(exact) / len(exact)
-                centered[position][valid] = [float(value - mean) for value in exact]
+                centered[position][valid] = [_fraction_as_float(value - mean) for value in exact]
             else:
                 numeric = values.astype(float)
                 centered[position][valid] = numeric - np.mean(numeric)

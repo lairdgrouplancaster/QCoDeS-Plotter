@@ -7,7 +7,11 @@ import pyqtgraph as pg
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
 from qplot.datahandling.parameter_data import numeric_isfinite
-from qplot.tools.plot_tools import _center_float_samples, _integer_differences
+from qplot.tools.plot_tools import (
+    _center_float_samples,
+    _fraction_as_float,
+    _integer_differences,
+)
 from qplot.tools.sample_statistics import finite_mean
 
 
@@ -57,7 +61,7 @@ def _center_object_samples(values: np.ndarray) -> np.ndarray:
     exact = [Fraction(value) for value in values]
     mean = sum(exact) / len(exact)
     return np.fromiter(
-        (float(value - mean) for value in exact),
+        (_fraction_as_float(value - mean) for value in exact),
         dtype=np.float64, count=len(exact),
     )
 
