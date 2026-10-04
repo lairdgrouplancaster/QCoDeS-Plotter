@@ -76,6 +76,11 @@ jobs:
           - os: macos-latest
             python-version: "3.11"
             suite: full
+            partition: "1/2"
+          - os: macos-latest
+            python-version: "3.11"
+            suite: full
+            partition: "2/2"
           - os: macos-latest
             python-version: "3.12"
             suite: compatibility
@@ -199,12 +204,22 @@ jobs:
       # Full suites use the collection order from tests._ci_scheduling so
       # slow integration files start before the short unit-test files.
       - name: Run full test suite
-        if: matrix.suite == 'full' && runner.os != 'Windows'
+        if: matrix.suite == 'full' && runner.os != 'Windows' && !matrix.partition
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
         run: >-
           python -m pytest --no-cov -n 2 --dist=loadfile
           --no-loadscope-reorder
+          --timeout=90 --timeout-method=thread --durations=20
+
+      - name: Run partitioned full test suite
+        if: matrix.suite == 'full' && runner.os != 'Windows' && matrix.partition
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: >-
+          python -m pytest --no-cov -n 2 --dist=loadfile
+          --no-loadscope-reorder
+          --qplot-ci-partition=${{ matrix.partition }}
           --timeout=90 --timeout-method=thread --durations=20
 
       # The trusted VFS intentionally rejects the hosted runner's elevated

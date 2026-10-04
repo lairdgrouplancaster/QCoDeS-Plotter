@@ -54,12 +54,22 @@ def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
                     if os_name == "windows-2025" and suite == "full"]
     assert sorted(windows_full) == [("3.11", "1/2"), ("3.11", "2/2"),
                                     ("3.14", "1/2"), ("3.14", "2/2")]
+    mac_full = [(version, partition) for os_name, version, suite, partition in entries
+                if os_name == "macos-latest" and suite == "full"]
+    assert sorted(mac_full) == [("3.11", "1/2"), ("3.11", "2/2"),
+                                ("3.14", "")]
     assert all(not partition for os_name, _version, suite, partition in entries
-               if os_name != "windows-2025" or suite != "full")
+               if suite != "full")
     full_suite = workflow.split(
         "      - name: Run full test suite as a standard Windows user\n", 1,
     )[1].split("      - name:", 1)[0]
     assert '"--qplot-ci-partition=${{ matrix.partition }}"' in full_suite
+    mac_partitioned = workflow.split(
+        "      - name: Run partitioned full test suite\n", 1,
+    )[1].split("      - name:", 1)[0]
+    assert "--qplot-ci-partition=${{ matrix.partition }}" in mac_partitioned
+    assert "--timeout=90 --timeout-method=thread" in mac_partitioned
+    assert "-n 2 --dist=loadfile" in mac_partitioned
     assert "-TimeoutSeconds 1500" in full_suite
     assert "timeout-minutes: 30" in checks
     assert "invoke-bounded-unprivileged-windows.ps1" in full_suite
