@@ -1742,8 +1742,16 @@ def test_open_reader_rejects_symlink_selection(
         TrustedLiveReader.open(logical)
 
 
-def test_native_open_rejects_parent_redirection_after_preflight(tmp_path: Path) -> None:
+@pytest.mark.parametrize("canonicalize", [False, True])
+def test_native_open_rejects_parent_redirection_after_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    canonicalize: bool,
+) -> None:
+    import apsw
     from qcodes.dataset import initialise_or_create_database_at
+
+    from qplot.datahandling import trusted_live
 
     selected_directory = tmp_path / "selected"
     moved_directory = tmp_path / "moved"
@@ -1752,7 +1760,7 @@ def test_native_open_rejects_parent_redirection_after_preflight(tmp_path: Path) 
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     before = _artifact_state(database_path)
 
-    def redirect_parent(_token: Any, _temporary_directory: Path) -> None:
+    def redirect_parent() -> None:
         selected_directory.rename(moved_directory)
         if os.name == "nt":
             subprocess.run(
@@ -1767,16 +1775,40 @@ def test_native_open_rejects_parent_redirection_after_preflight(tmp_path: Path) 
         else:
             selected_directory.symlink_to(moved_directory, target_is_directory=True)
 
+    class RedirectingVFS(apsw.VFS):
+        def xFullPathname(self, name: str) -> str:
+            full_path = super().xFullPathname(name)
+            # POSIX SQLite resolves symlinks here. Exercise that behavior on
+            # Windows too, and redirect only after resolution, before xOpen.
+            if canonicalize:
+                full_path = str(Path(full_path).resolve())
+            assert Path(full_path) == database_path
+            redirect_parent()
+            return full_path
+
+    native_vfs_name = trusted_live.TRUSTED_READER_VFS_NAME
+    wrapper: apsw.VFS | None = None
+
+    def install_wrapper(_token: Any, _temporary_directory: Path) -> None:
+        nonlocal wrapper
+        # The callback runs after the native VFS has been registered. Inherit
+        # its I/O unchanged; intercept only SQLite's pathname resolution.
+        wrapper_name = "qplot-test-parent-redirection"
+        wrapper = RedirectingVFS(wrapper_name, native_vfs_name)
+        monkeypatch.setattr(trusted_live, "TRUSTED_READER_VFS_NAME", wrapper_name)
+
     try:
-        # The file identity is unchanged. The native boundary must still reject
-        # the redirected parent, even after Python's path preflight has passed.
         with pytest.raises(TrustedLiveUnsupportedSourceError):
-            TrustedLiveReader.open(
+            with TrustedLiveReader.open(
                 database_path,
-                _test_pre_open_callback=redirect_parent,
-            )
+                _test_pre_open_callback=install_wrapper,
+            ):
+                pass
         assert _artifact_state(moved_directory / "source.db") == before
     finally:
+        monkeypatch.setattr(trusted_live, "TRUSTED_READER_VFS_NAME", native_vfs_name)
+        if wrapper is not None:
+            wrapper.unregister()
         if moved_directory.exists():
             if selected_directory.exists():
                 if os.name == "nt":
