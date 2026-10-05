@@ -48,11 +48,13 @@ def loaded_plot(tmp_path, monkeypatch, request):
         assert window.load_file(str(database_path))
         wait_for(lambda: not window._database_load_active)
         window.openPlot(guid=guid, show=True)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
         plot.monitor.stop()
         if merged_guid is not None:
             window.openPlot(guid=merged_guid, show=False)
+            wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
             source = window.windows[-1]
             wait_for(lambda: hasattr(source, "axis_data") and not source.worker.running)
             source.monitor.stop()
@@ -620,6 +622,7 @@ def test_heatmap_overlays_stay_outside_registry_when_axes_change(
                 "SELECT guid FROM runs WHERE run_id = ?", (heatmap_run,),
             ).fetchone()[0]
         window.openPlot(guid=guid, show=True)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "dataGrid") and not plot.worker.running)
         plot.monitor.stop()

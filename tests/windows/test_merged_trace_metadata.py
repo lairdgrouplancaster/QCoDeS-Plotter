@@ -59,7 +59,9 @@ def merged_plots(tmp_path, monkeypatch, request):
         wait_for(lambda: not window._database_load_active)
         plots = []
         for guid in guids:
+            prior_plot_count = len(window.windows)
             window.openPlot(guid=guid, show=True)
+            wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
             plot = window.windows[-1]
             wait_for(lambda plot=plot: hasattr(plot, "axis_data") and not plot.worker.running)
             plot.monitor.stop()

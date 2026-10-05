@@ -18,7 +18,7 @@ import math
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
 from typing import Any, Generic, TypeVar, cast
@@ -54,8 +54,13 @@ from qplot.datahandling.trusted_live_supervisor import (
 _LOG = logging.getLogger(__name__)
 _ResultT = TypeVar("_ResultT")
 _NO_RESULT = object()
+_OPERATION_YIELDED = object()
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 _MAX_REQUEST_TIMEOUT_SECONDS = 300.0
+# Large plots can share the broker for many bounded scans. This wall-clock
+# horizon includes time spent yielding to other plots; it is not a SQLite
+# transaction timeout (those remain capped at five seconds).
+_PLOT_CAPTURE_TIMEOUT_SECONDS = 3600.0
 _DEFAULT_QUEUE_CAPACITY = 512
 _MAX_FOREGROUND_DISPATCH_BURST = 8
 
@@ -72,6 +77,8 @@ class TrustedReadOperation(StrEnum):
     EXPENSIVE_RUN = "expensive-run"
     SELECTED_RUN = "selected-run"
     DERIVED_SOURCE = "derived-source"
+    PLOT_DATASET = "plot-dataset"
+    PLOT_PREFIX = "plot-prefix"
 
 
 class TrustedReadPriority(IntEnum):
@@ -167,6 +174,7 @@ class _OperationState:
     supervisor_job: TrustedLiveJob[Any] | None = None
     cancel_underlying: bool = False
     force_next_transaction: bool = False
+    plot_steps: Generator[None, None, Any] | None = None
 
 
 class TrustedReadRequest(Generic[_ResultT]):
@@ -251,6 +259,12 @@ class _BrokerQueryExecutor:
     def incarnation(self) -> int:
         return self._service._required_supervisor().incarnation
 
+    def check_cancelled(self):
+        with self._service._condition:
+            if self._service._closing or self._operation.cancel_underlying:
+                raise TrustedReadRequestCancelledError("Plot capture cancelled.")
+        self._service._operation_remaining(self._operation)
+
     def query(
         self,
         sql: str,
@@ -265,6 +279,8 @@ class _BrokerQueryExecutor:
             self._operation,
             self,
         )
+        if self._operation.kind in (TrustedReadOperation.PLOT_DATASET, TrustedReadOperation.PLOT_PREFIX):
+            remaining = min(remaining, 5.0)
         job = supervisor.submit_query(sql, bindings, timeout=remaining)
         return self._service._wait_supervisor_job(
             self._operation,
@@ -285,6 +301,8 @@ class _BrokerQueryExecutor:
             self._operation,
             self,
         )
+        if self._operation.kind in (TrustedReadOperation.PLOT_DATASET, TrustedReadOperation.PLOT_PREFIX):
+            remaining = min(remaining, 5.0)
         job = supervisor.submit_query_batch(queries, timeout=remaining)
         return self._service._wait_supervisor_job(
             self._operation,
@@ -387,6 +405,9 @@ class TrustedLiveReadService:
         self._closing_supervisor: TrustedLiveReaderSupervisor | None = None
         self._retained_supervisors: list[TrustedLiveReaderSupervisor] = []
         self._adapter: TrustedMetadataQueryAdapter | None = None
+        # Accessed only by the dispatcher; never owned by a GUI dataset.
+        self._plot_prefix_cache: dict[tuple, Any] = {}
+        self._retired_plot_steps: list[Generator[None, None, Any]] = []
         self._source_revision_namespace = TrustedSourceRevisionNamespace.create()
         self._accepted_database_instance: DatabaseInstance | None = None
 
@@ -661,6 +682,19 @@ class TrustedLiveReadService:
             ),
         )
 
+    def submit_plot_dataset(self, guid, *, deadline=None):
+        if not isinstance(guid, str) or not 0 < len(guid) <= 256:
+            raise ValueError("Invalid plot GUID.")
+        return self._submit(TrustedReadOperation.PLOT_DATASET, (guid,),
+                            TrustedReadPriority.SELECTED_CHEAP, deadline)
+
+    def submit_plot_prefix(self, dataset, *, deadline=None, heatmap_plan=None):
+        if dataset.service is not self:
+            raise ValueError("The plot belongs to another trusted session.")
+        payload = (dataset,) if heatmap_plan is None else (dataset, heatmap_plan)
+        return self._submit(TrustedReadOperation.PLOT_PREFIX, payload,
+                            TrustedReadPriority.SELECTED_EXPENSIVE, deadline)
+
     @staticmethod
     def _validated_run_id(run_id: object) -> int:
         if type(run_id) is not int or run_id <= 0:
@@ -678,7 +712,10 @@ class TrustedLiveReadService:
         now = time.monotonic()
         default_deadline = deadline is None
         if deadline is None:
-            request_deadline = now + self._request_timeout
+            request_deadline = now + (
+                _PLOT_CAPTURE_TIMEOUT_SECONDS
+                if kind is TrustedReadOperation.PLOT_PREFIX else self._request_timeout
+            )
         else:
             if isinstance(deadline, bool):
                 raise ValueError("deadline must be a finite monotonic timestamp.")
@@ -944,6 +981,7 @@ class TrustedLiveReadService:
     def _dispatcher_loop(self) -> None:
         try:
             while True:
+                self._close_retired_plot_steps()
                 with self._condition:
                     operation = self._next_operation_locked()
                     if operation is None:
@@ -984,6 +1022,8 @@ class TrustedLiveReadService:
                 self._fail_all_locked(dispatcher_error)
                 self._condition.notify_all()
         finally:
+            self._close_retired_plot_steps()
+            self._plot_prefix_cache.clear()
             self._close_supervisor_from_dispatcher()
             with self._condition:
                 self._closed = True
@@ -1146,26 +1186,23 @@ class TrustedLiveReadService:
         self,
         current_priority: int,
     ) -> _OperationState | None:
-        while True:
-            operation = self._pop_priority_operation_locked()
-            if operation is None:
-                return None
-            if operation.priority >= current_priority:
-                heapq.heappush(
-                    self._heap,
-                    (
-                        operation.priority,
-                        operation.sequence,
-                        operation.revision,
-                        operation.operation_id,
-                    ),
-                )
-                return None
+        # Captures already time-slice at the outer dispatcher. Nesting their
+        # slow pages between every transaction of a finite metadata job can
+        # consume that job's deadline and retire the shared helper. Cheap
+        # interactive metadata still preempts here; captures run between jobs.
+        candidates = sorted(
+            (operation for operation in self._operations.values()
+             if operation.status == "queued" and operation.priority < current_priority
+             and operation.kind is not TrustedReadOperation.PLOT_PREFIX),
+            key=lambda operation: (operation.priority, operation.sequence),
+        )
+        for operation in candidates:
             if self._prepare_queued_operation_locked(
                 operation,
                 time.monotonic(),
             ):
                 return operation
+        return None
 
     def _prepare_queued_operation_locked(
         self,
@@ -1211,6 +1248,27 @@ class TrustedLiveReadService:
                 # targets the currently executing broker attempt.
                 adapter.bind_executor(_BrokerQueryExecutor(self, operation))
         del supervisor
+        if operation.kind in (TrustedReadOperation.PLOT_DATASET, TrustedReadOperation.PLOT_PREFIX):
+            from .trusted_plot import plot_dataset, plot_prefix
+            executor = _BrokerQueryExecutor(self, operation)
+            if operation.kind is TrustedReadOperation.PLOT_DATASET:
+                return plot_dataset(executor, self, operation.payload[0])
+            if operation.plot_steps is None:
+                operation.plot_steps = plot_prefix(executor, *operation.payload)
+            # Amortise tiny pages into a short time slice. Otherwise a small
+            # run pays for another large run's much slower page after *each*
+            # of its own millisecond-scale pages. All yields end a source
+            # transaction; higher-priority jobs still preempt before queries.
+            slice_end = time.monotonic() + 0.05
+            while True:
+                executor.check_cancelled()
+                try:
+                    next(operation.plot_steps)
+                except StopIteration as complete:
+                    operation.plot_steps = None
+                    return complete.value
+                if time.monotonic() >= slice_end:
+                    return _OPERATION_YIELDED
         if operation.kind is TrustedReadOperation.BOOTSTRAP:
             return adapter.bootstrap()
         if operation.kind is TrustedReadOperation.BASIC_PAGE:
@@ -1384,6 +1442,19 @@ class TrustedLiveReadService:
         operation.supervisor_job = None
         if self._active_operation is operation:
             self._active_operation = None
+        if result is _OPERATION_YIELDED and error is None:
+            if self._closing or operation.cancel_underlying:
+                error = TrustedReadRequestCancelledError("The plot capture was cancelled.")
+            else:
+                # Move to the tail of this priority, without recursive calls.
+                # Other plots get a turn at every page/BLOB boundary.
+                operation.status = "queued"
+                operation.sequence = self._next_sequence
+                self._next_sequence += 1
+                self._compact_heap_locked()
+                self._condition.notify_all()
+                return
+        self._retire_plot_steps_locked(operation)
         operation.status = "finished"
         if self._coalesced.get(operation.coalesce_key) == operation.operation_id:
             self._coalesced.pop(operation.coalesce_key, None)
@@ -1684,11 +1755,34 @@ class TrustedLiveReadService:
         self._request_slots_in_use -= 1
 
     def _discard_operation_locked(self, operation: _OperationState) -> None:
+        self._retire_plot_steps_locked(operation)
         operation.status = "discarded"
         self._operations.pop(operation.operation_id, None)
         if self._coalesced.get(operation.coalesce_key) == operation.operation_id:
             self._coalesced.pop(operation.coalesce_key, None)
         self._compact_heap_locked()
+
+    def _retire_plot_steps_locked(self, operation: _OperationState) -> None:
+        if operation.plot_steps is not None:
+            self._retired_plot_steps.append(operation.plot_steps)
+            operation.plot_steps = None
+
+    def _close_retired_plot_steps(self) -> None:
+        # Cancellation/expiry may originate on the GUI or control thread.
+        # Private SQLite handles must be closed on their creating dispatcher.
+        with self._condition:
+            retired, self._retired_plot_steps = self._retired_plot_steps, []
+        for steps in retired:
+            try:
+                steps.close()
+            except BaseException as error:
+                # A private-spool cleanup error must not strand the helper or
+                # prevent other suspended captures from releasing resources.
+                with self._condition:
+                    if self._close_error is None:
+                        self._close_error = error
+                _LOG.exception("Trusted plot spool cleanup failed")
+                self.close_async()
 
     def _fail_queued_locked(
         self,
@@ -1722,6 +1816,7 @@ class TrustedLiveReadService:
             self._complete_request_locked(state, error=error)
 
         for operation in self._operations.values():
+            self._retire_plot_steps_locked(operation)
             operation.cancel_underlying = True
             operation.supervisor_job = None
             operation.subscribers.clear()

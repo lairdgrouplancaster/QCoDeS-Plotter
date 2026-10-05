@@ -94,7 +94,9 @@ def test_complex_measurement_actual_plot_error_export_and_recovery(tmp_path, mon
         assert window.selected_run_id == run_id
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
+            prior_plot_count = len(window.windows)
             window.openPlot(guid=guid, params=[params["signal"]], show=False)
+            wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
             plot = window.windows[-1]
             wait_for(lambda: not plot.worker.running)
             plot.monitor.stop()
@@ -119,7 +121,9 @@ def test_complex_measurement_actual_plot_error_export_and_recovery(tmp_path, mon
         np.testing.assert_array_equal([complex(row["x"]) for row in rows], x)
         np.testing.assert_array_equal([complex(row["signal"]) for row in rows], signal)
 
+        prior_plot_count = len(window.windows)
         window.openPlot(guid=guid, params=[params["real_signal"]], show=False)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         real_plot = window.windows[-1]
         wait_for(lambda: not real_plot.worker.running)
         real_plot.monitor.stop()

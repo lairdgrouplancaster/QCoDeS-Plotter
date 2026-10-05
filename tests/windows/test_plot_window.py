@@ -530,6 +530,9 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
                 self.emitter = Emitter()
                 self.checked_large_heatmap = False
 
+            def start(self, pool):
+                pool.start(self)
+
             def _should_use_sql_heatmap(self):
                 self.checked_large_heatmap = True
                 return True

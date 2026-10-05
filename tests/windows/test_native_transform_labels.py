@@ -387,6 +387,7 @@ def unit_plot(tmp_path, monkeypatch, request):
         assert window.load_file(str(path))
         wait_for(lambda: not window._database_load_active)
         window.openPlot(guid=guid, show=True)
+        wait_for(lambda: bool(window.windows))
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
         plot.monitor.stop()

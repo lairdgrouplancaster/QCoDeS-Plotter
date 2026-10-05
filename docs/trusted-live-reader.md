@@ -22,9 +22,122 @@ produces primitive metadata and deterministic PNG payloads, and performs
 verified disk-cache I/O on its sole worker. Stage 5C connects those payloads to
 Qt through one GUI-owned bridge, progressively displaying derived metadata,
 thumbnails, and previews without reviving the legacy competing producers.
-Explicit plot and CSV actions still acquire action-owned private snapshots, and
-a narrowly eligible snapshot fallback session may retain the existing snapshot
-preview behavior.
+Explicit plots now acquire their metadata and result prefixes through the same
+broker/helper. CSV actions still acquire action-owned private snapshots, and a
+narrowly eligible snapshot fallback session retains its existing behavior.
+
+## Explicit plotting
+
+Plot-all, Run, indexed measurement, preview, and overlay actions request a
+connection-free `TrustedPlotDataset` asynchronously. A bounded Qt polling timer
+only consumes completed metadata requests; metadata queries, description
+decoding, prefix capture, and processing run outside the GUI thread. Selection
+changes invalidate pending selection-based actions. No trusted plot action,
+completion check, or refresh calls the whole-database snapshot-copy path.
+An accepted trusted-session failure remains an error, including a later native
+backend failure; the initial-open fallback eligibility rules are unchanged.
+
+The broker captures GUID/table/description identity, completion, and indexed
+`MAX(id)` in one transaction. Small numeric plots and array plots stage only
+that run's result table through the watermark in a private temporary SQLite
+file, with at most 8,192 physical rows
+and 65,536 value/length cells per page. Pages and BLOB chunks use separate
+transactions capped at five seconds; the complete capture has a one-hour
+deadline and exact broker cancellation. Appends beyond the watermark appear on
+the next refresh. Current QCoDeS's append-only result-row contract makes the
+captured prefix stable between those transactions. Source identity is checked
+by the pinned reader at every transaction boundary and by the existing plot
+publication fences.
+The overall wall-clock horizon includes time yielded to other plots; it does
+not extend any reader transaction. Explicit caller deadlines retain their
+existing shorter limits.
+
+Large numeric heatmaps instead reduce the captured prefix directly through
+bounded SQL queries. A paged preflight counts only until the full-resolution
+limit is crossed; it is skipped when the indexed watermark already proves the
+run small enough. Summary and aggregation queries cover at most 65,536 row IDs
+per transaction and yield between intervals. Each aggregate reply holds at
+most 32,769 groups; dense intervals are split before accepting their data.
+The pinned reader has a bounded 16 MiB SQLite page cache so summary queries over
+the same interval can reuse pages. No source transaction survives a yield.
+
+These heatmaps use the existing spatial bin geometry and configured display
+limits. Page sums and counts produce weighted means over every valid sample,
+never means of page means or sampled preview images. Mixed-sign, large-integer,
+and near-overflow bins replay original values with exact rational sums.
+Distinct-axis sets hold at most 131,072 values each; saturated cardinalities
+are reported as unknown, as for bounded array heatmaps. A saturated axis uses
+the observed full bounds and a bounded cardinality estimate to place bins.
+Full-resolution transforms above their configured limit are still rejected.
+The numeric aggregate's allocation guard rejects grids above two million
+cells before allocating its sums, counts, extrema, or precision-replay state.
+
+Captures are resumable broker operations. Numeric pages and 256 KiB BLOB chunks
+yield with no source transaction open. The broker groups inexpensive steps into
+a 50 ms time slice before returning the operation to the end of its priority
+queue; a slower bounded query ends its slice as soon as it returns. This keeps
+small runs from paying for another large query between every tiny page, while
+allowing other plots to progress without waiting for a whole large run. Higher-priority
+metadata and existing background fairness still apply. Suspended captures hold
+only private spool resources, never source transactions; cancellation, expiry,
+and shutdown close those resources on the dispatcher thread. The existing
+bounded request queue also bounds the number of suspended captures.
+Capture slices run between broker jobs, rather than nesting between every
+query of a metadata job and consuming its deadline. Cheap interactive metadata
+can still preempt at those query boundaries. A background inference job cannot
+therefore lose its entire budget to repeated plot-capture slices.
+
+Plot windows submit capture requests without occupying a processing-pool
+thread. A GUI timer checks completion and starts decoding only when the broker
+result is ready. Duplicate default-deadline requests for the same dataset share
+one capture with independent cancellation; explicit deadlines retain their
+existing coalescing rules. A small plot can therefore display and refresh while
+another capture is in progress, even with one plot-processing thread.
+
+`qplot_read_blob(table, column, rowid, offset, length)` is a direct-only scalar
+function registered on the pinned reader connection. It reads at most 256 KiB
+through SQLite's incremental BLOB API with `writeable=False`, from `main` only,
+and closes the handle before returning bytes. It shares the normal operation's
+deadline, cancellation, native source proofs, result budgets, and rollback.
+Uncertain BLOB close retires the reader/helper. This avoids materialising an
+entire large NPY value merely to evaluate SQL `substr()`, which would exceed the
+reader's SQLite length limit. It adds no source-writing capability or VFS
+exception. The exact permitted SHM operations are unchanged.
+
+Existing QCoDeS decoding, precision-preserving array handling, acquisition
+masks, transforms, overlays, and array-heatmap aggregation operate on the
+private prefix. Full-resolution decoding has a conservative 1 GiB input/object
+and planned-shape budget; larger heatmaps retain their existing bounded display
+path. This is a logical allocation budget, not a process RSS ceiling. Interactive
+plots never use cached preview PNGs as data. Completion is published only after
+the final acquired data successfully reaches the plot.
+
+The broker retains at most eight completed results totalling 512 MiB of private
+prefix storage or numeric heatmap arrays for reuse by sibling plots and detail
+reloads, revalidating the source
+and watermark before reuse. This temporary cache is separate from the derived
+image cache. Database switching retains an old broker while its plots still
+need it; closing their dataset handles retires that broker off the GUI thread.
+Source replacement and application shutdown still invalidate/close it.
+
+Capture cost and temporary disk space scale with the selected run, not the
+database. Large numeric heatmaps avoid staging raw rows but still scan the
+selected prefix to include all valid observations. Very large individual runs
+can still be expensive or reach the finite capture deadline; live refresh
+currently recaptures that run's prefix or numerical reduction. The disk
+cache cap limits retained completed prefixes, not the active capture file.
+CSV export is unchanged.
+
+`scripts/benchmark_plot_launch.py DATABASE RUN_ID` measures the actual
+`MainWindow.openPlot` path through populated Qt painting, rejects whole-database
+copy attempts, and reports protected main/WAL/journal size and timestamp checks.
+Use `--action double-click` or `--action run` to exercise the actual run-table
+signal or Run button. In particular, Qt converts the table signal's `None` to
+an empty string; both forms must pass through asynchronous metadata loading.
+Use `--preceding-run 33 --max-threads 1` to measure opening the selected run while
+run 33 is still being captured. The report includes the preceding capture's
+progress and pending state; that capture is cancelled after the measured plots
+display, so this does not measure run 33's total plotting time.
 
 ## Source-file boundary
 

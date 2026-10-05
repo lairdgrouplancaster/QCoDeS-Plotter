@@ -37,7 +37,9 @@ def source_plot(tmp_path, monkeypatch):
         main.config.config["user_preference"]["confirm_close_all"] = False
         assert main.load_file(str(database))
         wait_for(lambda: not main._database_load_active)
+        prior_plot_count = len(main.windows)
         main.openPlot(guid=guid, show=True)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(main.windows) > prior_plot_count)
         plot = main.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
         plot.monitor.stop()

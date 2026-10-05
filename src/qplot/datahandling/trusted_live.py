@@ -1,8 +1,7 @@
 """Physically read-only access to a trusted live QCoDeS database.
 
-This module is the finite Stage 2 backend boundary.  It is intentionally not
-used by application workers yet: the existing private-snapshot reader remains
-qPlot's default until the isolated helper-process and scheduling stages.
+This finite backend is owned by the isolated helper process. Application
+metadata, derived work, and explicit plots access it through the read broker.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ import stat
 import tempfile
 import threading
 import time
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -242,6 +242,7 @@ class _TrustedOperationControl:
     policy_denied: bool = False
     operation_result_length_limit: int | None = None
     result_length_limit: int | None = None
+    blob_cleanup_error: BaseException | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1161,6 +1162,21 @@ class TrustedLiveReader:
             self._connection.pragma("query_only", True)
             self._connection.pragma("temp_store", "MEMORY")
             self._connection.pragma("mmap_size", 0)
+            # A bounded page cache lets repeated summary/axis queries over a
+            # small plot interval reuse pages without repeated source I/O.
+            self._connection.pragma("cache_size", -16_384)
+            reader_reference = weakref.ref(self)
+
+            def read_blob(*arguments):
+                reader = reader_reference()
+                if reader is None:
+                    raise TrustedLiveReaderClosedError("The BLOB reader is closed.")
+                return reader._read_blob_chunk(*arguments)
+
+            self._connection.create_scalar_function(
+                "qplot_read_blob", read_blob, 5,
+                flags=apsw.SQLITE_DIRECTONLY,
+            )
             self._connection.authorizer = self._authorize
             if not self._connection.readonly("main"):
                 raise TrustedLiveReaderUnavailableError(
@@ -1489,6 +1505,47 @@ class TrustedLiveReader:
         except BaseException as error:
             errors.append(error)
         return errors
+
+    def _read_blob_chunk(self, *arguments: Any) -> bytes:
+        """Read a bounded slice without materialising SQLite's entire value.
+
+        The SQL entry point shares query_batch's transaction, source proof,
+        cancellation, result limits, and cleanup. It opens only main-database
+        incremental BLOB handles with writeable=False, and exposes no handle.
+        """
+        self._check_thread()
+        if len(arguments) != 5:
+            raise TrustedLiveSqlRejectedError("BLOB reads require five arguments.")
+        table, column, row_id, offset, length = arguments
+        control = self._active_operation
+        connection = self._connection
+        if control is None or connection is None:
+            raise TrustedLiveSqlRejectedError("BLOB reads require an active finite query.")
+        self._raise_if_operation_aborted(control)
+        if (not isinstance(table, str) or not isinstance(column, str)
+                or not 0 < len(table) <= 1024 or not 0 < len(column) <= 1024
+                or "\x00" in table or "\x00" in column
+                or type(row_id) is not int or type(offset) is not int
+                or type(length) is not int or offset < 0
+                or not 0 <= length <= 256 * 1024):
+            raise TrustedLiveSqlRejectedError("Invalid bounded BLOB read arguments.")
+        if length > connection.limit(apsw.SQLITE_LIMIT_LENGTH):
+            raise TrustedLiveResultLimitError("BLOB chunk exceeds the statement value limit.")
+        blob = connection.blob_open("main", table, column, row_id, False)
+        try:
+            self._raise_if_operation_aborted(control)
+            blob.seek(offset)
+            value = blob.read(length)
+            self._raise_if_operation_aborted(control)
+            return value
+        finally:
+            try:
+                blob.close()
+            except BaseException as error:
+                control.blob_cleanup_error = TrustedLiveCleanupError(
+                    "Could not prove incremental BLOB handle cleanup."
+                )
+                raise control.blob_cleanup_error from error
 
     def _record_policy_denial(self) -> int:
         """Mark the active operation and return SQLite's deny result."""
@@ -2187,6 +2244,8 @@ class TrustedLiveReader:
                 self._active_operation = None
 
         cleanup_errors = list(prior_cleanup_errors)
+        if control.blob_cleanup_error is not None:
+            cleanup_errors.append(control.blob_cleanup_error)
         if handlers_installed:
             cleanup_errors.extend(self._remove_operation_handlers(connection, control))
         if transaction_started:

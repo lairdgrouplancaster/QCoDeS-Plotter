@@ -68,6 +68,7 @@ def dialog_plot(tmp_path, monkeypatch, request, qapplication):
             window.openPlot(guid=guids[0])
         else:
             window.open_preview_plot("signal_a")
+        wait_for(lambda: bool(window.windows))
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
         plot.monitor.stop()
@@ -166,6 +167,7 @@ def test_database_or_application_close_closes_plot_editors(dialog_plot, close_ac
 def test_closing_retained_source_closes_editors_and_preserves_refresh(dialog_plot, monkeypatch):
     window, host, app, guids = dialog_plot
     window.openPlot(guid=guids[1])
+    wait_for(lambda: len(window.windows) == 2)
     source = window.windows[-1]
     wait_for(lambda: hasattr(source, "axis_data") and not source.worker.running)
     source.monitor.stop()

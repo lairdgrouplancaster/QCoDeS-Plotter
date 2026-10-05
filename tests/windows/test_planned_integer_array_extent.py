@@ -17,7 +17,11 @@ from qplot.tools.worker import loader
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.windows.test_plot_integration import (
+    configure_temp_qplot,
+    force_snapshot_fallback,
+    wait_for,
+)
 
 
 def run_worker(worker, *, cancelled=False):
@@ -49,6 +53,9 @@ def test_actual_planned_integer_array_acquisition_extent(
     tmp_path, monkeypatch, kind, initial_zero, finish_early,
 ):
     configure_temp_qplot(monkeypatch, tmp_path)
+    # This fixture acquires through rollback journals; exercise the eligible
+    # snapshot backend from initial open. Trusted live acquisition uses WAL.
+    force_snapshot_fallback(monkeypatch)
     path = tmp_path / "integer-array.db"
     initialise_or_create_database_at(str(path), journal_mode="DELETE")
     experiment = load_or_create_experiment("integer_array_extent", sample_name="test")
@@ -187,7 +194,9 @@ def test_actual_planned_integer_array_acquisition_extent(
                     assert window.load_file(str(path))
                     wait_for(lambda window=window: not window._database_load_active and not window._database_detail_active)
                     window.monitor.stop()
+                    prior_plot_count = len(window.windows)
                     window.openPlot(guid=dataset.guid, params=[params["signal"]], show=False)
+                    wait_for(lambda window=window, prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
                     assert errors == []
                     plot = window.windows[-1]
                 else:

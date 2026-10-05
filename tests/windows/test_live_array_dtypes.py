@@ -25,6 +25,7 @@ from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_plot_integration import (
     configure_temp_qplot,
+    force_snapshot_fallback,
     prepare_generated_database_for_live_writes,
     wait_for,
 )
@@ -39,9 +40,13 @@ def test_live_planned_array_dtype_change(
     configure_temp_qplot(monkeypatch, tmp_path)
     path = tmp_path / "live-array.db"
     if journal_mode == "WAL":
-        # Array plots use the snapshot reader. Give this synthetic writer
-        # provenance so its live WAL can be read through the supported path.
+        # The comparison reader below still uses snapshots and needs synthetic
+        # provenance. The interactive plot exercises the trusted WAL reader.
         prepare_generated_database_for_live_writes(path)
+    else:
+        # Active rollback journals are not trusted live sources. Select the
+        # eligible fallback at initial open, never after an accepted failure.
+        force_snapshot_fallback(monkeypatch)
     initialise_or_create_database_at(str(path), journal_mode=journal_mode)
     writer = connect(str(path))
     if journal_mode == "WAL":
@@ -79,8 +84,13 @@ def test_live_planned_array_dtype_change(
             window.close_database(status=False)
             assert window.load_file(str(path))
             wait_for(lambda: not window._database_load_active and not window._database_detail_active)
+            assert window._database_access_mode == (
+                "trusted_live" if journal_mode == "WAL" else "snapshot_fallback"
+            )
             window.monitor.stop()
+            prior_plot_count = len(window.windows)
             window.openPlot(guid=dataset.guid, params=[params["signal"]], show=False)
+            wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
             assert not errors, errors
             plot = window.windows[-1]
             wait_for(lambda: not plot.worker.running)

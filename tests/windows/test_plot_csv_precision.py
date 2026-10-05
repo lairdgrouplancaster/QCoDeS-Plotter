@@ -93,7 +93,9 @@ def precision_plot(tmp_path, monkeypatch, request):
         wait_for(lambda: not window._database_load_active)
         plots = []
         for guid, _expected in measurements:
+            prior_count = len(window.windows)
             window.openPlot(guid=guid, show=False)
+            wait_for(lambda prior_count=prior_count: len(window.windows) > prior_count)
             plot = window.windows[-1]
             wait_for(lambda plot=plot: hasattr(plot, "axis_data") and not plot.worker.running)
             plot.monitor.stop()

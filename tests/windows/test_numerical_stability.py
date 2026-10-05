@@ -82,7 +82,9 @@ def measured_plots(tmp_path, monkeypatch, request):
         wait_for(lambda: not window._database_load_active)
         plots = []
         for guid in guids:
+            prior_plot_count = len(window.windows)
             window.openPlot(guid=guid, show=True)
+            wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
             host = window.windows[-1]
             wait_for(
                 lambda host=host: hasattr(host, "axis_data") and not host.worker.running

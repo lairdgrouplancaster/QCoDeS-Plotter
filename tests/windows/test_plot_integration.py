@@ -271,6 +271,7 @@ def test_mixed_run_csv_is_identical_before_and_after_opening_plot(
         window.exportRunCsv()
 
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: not getattr(plot.worker, "running", False))
         held_dataset = window.dataset_holder[plot._dataset_key].dataset
@@ -857,6 +858,7 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
             window._current_dataset_key(line_dataset.guid),
         )
         window.openPlot(params=[line_param], show=True)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         line_window = window.windows[-1]
         wait_for(
             lambda: (
@@ -881,6 +883,7 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
             window._current_dataset_key(heatmap_dataset.guid),
         )
         window.openPlot(params=[heatmap_param], show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         heatmap_window = window.windows[-1]
         wait_for(
             lambda: (
@@ -939,6 +942,7 @@ def test_real_plot_export_format_controls_suffix_and_delimiter(
             dataset, window._current_dataset_key(dataset.guid),
         )
         window.openPlot(params=[parameter], show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot_window = window.windows[-1]
         wait_for(lambda: (
             hasattr(plot_window, "axis_data")
@@ -1094,6 +1098,7 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
             window._current_dataset_key(line_dataset.guid),
         )
         window.openPlot(params=[line_param], show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         line_window = window.windows[-1]
         wait_for(
             lambda: (
@@ -1136,6 +1141,7 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
             window._current_dataset_key(uniform_dataset.guid),
         )
         window.openPlot(params=[uniform_param], show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         uniform_window = window.windows[-1]
         wait_for(
             lambda: (
@@ -1170,6 +1176,7 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
             window._current_dataset_key(nonuniform_dataset.guid),
         )
         window.openPlot(params=[nonuniform_param], show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         nonuniform_window = window.windows[-1]
         wait_for(
             lambda: (
@@ -1330,6 +1337,7 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
             window._current_dataset_key(heatmap_dataset.guid),
         )
         window.openPlot(params=[heatmap_param], show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         heatmap_window = window.windows[-1]
         wait_for(
             lambda: (
@@ -1419,6 +1427,7 @@ def test_missing_array_cells_survive_plot_export_and_cuts(
             window._current_dataset_key(dataset.guid),
         )
         window.openPlot(params=[parameter], show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         heatmap_window = window.windows[-1]
         wait_for(
             lambda: (
@@ -1494,6 +1503,7 @@ def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypat
             window._current_dataset_key(heatmap_dataset.guid),
         )
         window.openPlot(params=[heatmap_param], show=True)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         heatmap_window = window.windows[-1]
 
         # Reproduce the layout race by exposing the initially hidden controls
@@ -1633,6 +1643,7 @@ def test_main_window_close_releases_private_wal_snapshot_before_qt_cleanup(
         # Ordinary selection is database-free.  Retaining an explicit plot is
         # what owns the private fallback snapshot that shutdown must release.
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: not getattr(plot.worker, "running", False))
         dataset = window.dataset_holder[plot._dataset_key].dataset
@@ -1836,6 +1847,7 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         # Trusted selection is DB-free. The explicit plot action materialises
         # a DataSet bound to the accepted database instance.
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         old_plot = window.windows[-1]
         wait_for(lambda: not getattr(old_plot.worker, "running", False))
         old_key = old_plot._dataset_key
@@ -1931,8 +1943,8 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         assert old_plot not in window.windows
         assert old_handle.closed
         assert old_key not in window.dataset_holder
-        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-            old_dataset.conn.cursor()
+        assert getattr(old_dataset, "conn", None) is None
+        assert old_dataset.service.closed
 
         new_key = window._current_dataset_key(guid)
         assert new_key != old_key
@@ -1942,6 +1954,7 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         assert window.ds is None
         assert window._selected_run_guid == guid
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         new_plot = window.windows[-1]
         wait_for(lambda: not getattr(new_plot.worker, "running", False))
         new_handle = window.dataset_holder[new_plot._dataset_key]
@@ -2017,6 +2030,7 @@ def test_symlinked_database_replacement_retires_the_accepted_instance(
         assert window._selected_run_guid == guid
 
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         old_plot = window.windows[-1]
         wait_for(lambda: not getattr(old_plot.worker, "running", False))
         old_key = old_plot._dataset_key
@@ -2071,6 +2085,7 @@ def test_symlinked_database_replacement_retires_the_accepted_instance(
         assert new_key.resolved_database_path == canonical_database_path(view_path)
         assert new_key != old_key
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         new_plot = window.windows[-1]
         wait_for(lambda: not getattr(new_plot.worker, "running", False))
         assert new_plot.axis_data["x"].size == 4
@@ -2126,6 +2141,7 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
         old_guid = window._selected_run_guid
         assert old_guid
         window.openPlot(guid=old_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         old_plot = window.windows[-1]
         wait_for(lambda: not getattr(old_plot.worker, "running", False))
         old_parameter = old_plot.param
@@ -2177,6 +2193,7 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
                 params=[old_parameter],
                 show=False,
             )
+            wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
             assert direct_dataset_reads == []
 
         wait_for(
@@ -2198,6 +2215,7 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
         replacement_guid = metadata["guid"]
         assert window._selected_run_guid == replacement_guid
         window.openPlot(guid=replacement_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         new_plot = window.windows[-1]
         wait_for(lambda: not getattr(new_plot.worker, "running", False))
         assert new_plot.axis_data["x"].size == 4
@@ -2242,6 +2260,7 @@ def test_existing_live_plot_refresh_quarantines_replaced_wal_before_worker_read(
         old_guid = window._selected_run_guid
         assert old_guid
         window.openPlot(guid=old_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         old_plot = window.windows[-1]
         wait_for(lambda: not getattr(old_plot.worker, "running", False))
         old_worker = old_plot.worker
@@ -2348,6 +2367,7 @@ def test_replaced_background_plot_does_not_switch_current_database(
         assert window.ds is None
         assert window._selected_run_guid == guid_a
         window.openPlot(guid=guid_a, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         source_plot = window.windows[-1]
         wait_for(lambda: not getattr(source_plot.worker, "running", False))
         source_parameter = source_plot.param
@@ -2367,6 +2387,7 @@ def test_replaced_background_plot_does_not_switch_current_database(
         assert source_plot in window.windows
 
         window.openPlot(guid=guid_b, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         target_plot = window.windows[-1]
         wait_for(lambda: not getattr(target_plot.worker, "running", False))
 
@@ -2475,6 +2496,7 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             assert window._selected_run_guid == guid
 
             window.openPlot(guid=guid, show=False)
+            wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
             plot = window.windows[-1]
             wait_for(lambda: not getattr(plot.worker, "running", False))
             dataset_key = plot._dataset_key
@@ -2585,13 +2607,14 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
             assert window.infoBox.preview._workers == {}
 
             window.openPlot(guid=guid, show=False)
+            wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
             plot = window.windows[-1]
             wait_for(lambda: not getattr(plot.worker, "running", False))
             dataset_key = plot._dataset_key
             held_handle = window.dataset_holder[dataset_key]
             held_dataset = held_handle.dataset
             assert (
-                len(held_dataset.get_parameter_data("signal")["signal"]["signal"]) == 1
+                len(cache_parameter_data(held_dataset.cache, "signal")["signal"]) == 1
             )
 
             datasaver.add_result((gate, 2.0), (signal, 12.0))
@@ -2654,13 +2677,13 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
             )
 
             # Trusted selection remains DB-free and the explicit plot retains
-            # its original frozen snapshot; exporting must neither refresh nor
+            # its last displayed data; exporting must neither refresh nor
             # evict that handle.
             assert window.ds is None
             assert window.dataset_holder[dataset_key] is held_handle
             assert not held_handle.closed
             assert (
-                len(held_dataset.get_parameter_data("signal")["signal"]["signal"]) == 1
+                len(cache_parameter_data(held_dataset.cache, "signal")["signal"]) == 1
             )
             assert_database_artifacts_unchanged_except_trusted_shm(
                 database_path,
@@ -2715,6 +2738,7 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
         assert window.ds is None
         assert window._selected_run_guid == guid
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: not getattr(plot.worker, "running", False))
         dataset_key = plot._dataset_key
@@ -2787,8 +2811,8 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
         assert replacement_loads
         assert replacement_loads[0][1] == {"force": True, "replacement": True}
         assert held_handle.closed
-        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-            held_dataset.conn.cursor()
+        assert getattr(held_dataset, "conn", None) is None
+        assert held_dataset.service.closed
         assert window.ds is None
         assert window._selected_run_guid == guid
         wait_for(
@@ -2850,6 +2874,7 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
         assert window.ds is None
         assert window._selected_run_guid == guid
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: not getattr(plot.worker, "running", False))
         dataset_key = plot._dataset_key
@@ -2998,6 +3023,7 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
         assert window.ds is None
         assert window._selected_run_guid == guid
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: not getattr(plot.worker, "running", False))
         dataset_key = plot._dataset_key
@@ -3083,7 +3109,7 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
         # the plot-owned snapshot from the original database instance.
         assert window.dataset_holder[dataset_key] is held_handle
         assert not held_handle.closed
-        assert len(held_dataset.get_parameter_data("signal")["signal"]["signal"]) == 1
+        assert len(cache_parameter_data(held_dataset.cache, "signal")["signal"]) == 1
         assert database_artifact_state(database_path) == replacement_state
         assert set(source_directory.iterdir()) == replacement_entries
     finally:
@@ -3148,6 +3174,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         assert window.ds is None
         assert window._selected_run_guid == guid
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         old_plot = window.windows[-1]
         wait_for(
             lambda: (
@@ -3186,6 +3213,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         window.openRun()
         window.open_selected_run_all()
         window.openPlot(guid)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         window.open_param_by_index(0)
         window.open_preview_plot("signal")
         window.open_run_preview_plot(guid, "signal")
@@ -3287,6 +3315,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
                 assert errors == []
 
         window.openPlot(guid=selected_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         materialized_plot = window.windows[-1]
         wait_for(lambda: not getattr(materialized_plot.worker, "running", False))
         materialized_handle = window.dataset_holder[materialized_plot._dataset_key]
@@ -3397,6 +3426,7 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
         unrelated_guid = window._selected_run_guid
         assert unrelated_guid
         window.openPlot(guid=unrelated_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         unrelated_plot = window.windows[-1]
         wait_for(lambda: not getattr(unrelated_plot.worker, "running", False))
         unrelated_handle = window.dataset_holder[unrelated_plot._dataset_key]
@@ -3689,6 +3719,7 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         assert window.ds is None
         assert window._selected_run_guid == guid
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         old_plot = window.windows[-1]
         wait_for(lambda: not getattr(old_plot.worker, "running", False))
         old_handle = window.dataset_holder[old_plot._dataset_key]
@@ -3735,6 +3766,7 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         replacement_guid = window._selected_run_guid
         assert replacement_guid
         window.openPlot(guid=replacement_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         replacement_plot = window.windows[-1]
         wait_for(lambda: not getattr(replacement_plot.worker, "running", False))
         replacement_handle = window.dataset_holder[replacement_plot._dataset_key]
@@ -3806,6 +3838,7 @@ def test_loaded_path_test_database_generation_uses_replacement_reload(
         initial_guid = window._selected_run_guid
         assert initial_guid
         window.openPlot(guid=initial_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         old_plot = window.windows[-1]
         wait_for(lambda: not getattr(old_plot.worker, "running", False))
         old_handle = window.dataset_holder[old_plot._dataset_key]
@@ -3851,6 +3884,7 @@ def test_loaded_path_test_database_generation_uses_replacement_reload(
         replacement_guid = window._selected_run_guid
         assert replacement_guid
         window.openPlot(guid=replacement_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         replacement_plot = window.windows[-1]
         wait_for(lambda: not getattr(replacement_plot.worker, "running", False))
         replacement_handle = window.dataset_holder[replacement_plot._dataset_key]
@@ -3957,6 +3991,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         # Opening the selected GUID is the explicit boundary that creates the
         # exact-instance plot DataSet; selection itself remains DB-free.
         window.openPlot(guid=selected_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot_a, hidden_plot_b = window.windows[-2:]
         wait_for(
             lambda: all(
@@ -4011,6 +4046,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         # Keep two plots open during the transition while the original B is a
         # closed-and-retained hidden source for the merged secondary trace.
         window.openPlot(params=[parameters["signal_b"]], show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot_b = window.windows[-1]
         wait_for(lambda: not getattr(plot_b.worker, "running", False))
         plot_b.spinBox.setValue(60.0)
@@ -4067,7 +4103,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         assert viewer_dataset.number_of_results == 2
         assert window.dataset_holder[plot_a._dataset_key] is plot_dataset_handle
         assert not plot_dataset_handle.closed
-        plot_dataset_handle.dataset.conn.cursor().close()
+        assert not plot_dataset_handle.dataset.service.closed
         assert_database_artifacts_unchanged_except_trusted_shm(
             database_path,
             writer_complete_artifacts,
@@ -4366,6 +4402,7 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
         selected_guid = window._selected_run_guid
         assert selected_guid
         window.openPlot(guid=selected_guid, show=False)
+        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         heatmap = window.windows[-1]
         wait_for(lambda: not getattr(heatmap.worker, "running", False))
         viewer_dataset = window.dataset_holder[heatmap._dataset_key].dataset

@@ -34,12 +34,17 @@ from qplot.datahandling.readonly import (
     qcodes_read_only_connection,
     sqlite_read_only_connection,
 )
+from qplot.datahandling.trusted_live import TrustedLiveSourceChangedError
 from qplot.diagnostics import log_exception
 from qplot.tools.operation_registry import OperationCall, OperationExecutionError
 
 from . import data2matrix
 from .finite_means import FiniteBinMeans
-from .heatmap_geometry import canonicalize_heatmap_data
+from .heatmap_geometry import (
+    bounded_grid_shape,
+    canonicalize_heatmap_data,
+    spatial_axis_bins,
+)
 
 if TYPE_CHECKING:
     import qcodes
@@ -50,6 +55,7 @@ MAX_SQL_HEATMAP_GRID_SIDE = 800
 MAX_SQL_HEATMAP_GRID_CELLS = 250_000
 SQL_HEATMAP_SAMPLES_PER_CELL = 4
 CANCELLATION_CHUNK_SIZE = 65_536
+MAX_TRUSTED_FULL_PLOT_DECODE_BYTES = 1024 * 1024 * 1024
 
 
 class PlotWorkCancelled(InterruptedError):
@@ -219,6 +225,9 @@ class loader(QtCore.QRunnable):
         self._ensure_cancel_state()
         with self._publication_lock:
             self._cancelled.set()
+        request = getattr(self, "_trusted_request", None)
+        if request is not None:
+            request.cancel()
         with self._sql_connection_lock:
             connection = self._sql_connection
         if connection is not None:
@@ -336,7 +345,146 @@ class loader(QtCore.QRunnable):
         self._emit_finished(False)
 
 
+    def start(self, pool):
+        """Wait for broker data without occupying a plot-processing thread.
+
+        Called on the GUI thread. Submission and done checks are nonblocking;
+        all capture, decoding and transform work remains off the GUI thread.
+        """
+        from qplot.datahandling.trusted_plot import TrustedPlotDataset
+        dataset = getattr(self.cache, "_dataset", None)
+        if not isinstance(dataset, TrustedPlotDataset) or not self.read_data:
+            pool.start(self)
+            return
+        try:
+            self._trusted_request = dataset.service.submit_plot_prefix(
+                dataset, deadline=self.deadline, heatmap_plan=self._trusted_heatmap_plan(),
+            )
+        except Exception as error:
+            self._trusted_submission_error = error
+            pool.start(self)
+            return
+        timer = QtCore.QTimer(self.emitter)
+        self._trusted_wait_timer = timer
+
+        def ready():
+            if not self.is_cancelled() and not self._trusted_request.done:
+                return
+            timer.stop()
+            timer.deleteLater()
+            self._trusted_wait_timer = None
+            if self.is_cancelled():
+                self._trusted_request.cancel()
+                self._trusted_request = None
+                self._finish_cancelled()
+            else:
+                pool.start(self)
+
+        timer.timeout.connect(ready)
+        timer.start(10)
+
+    def _prepare_trusted_prefix(self):
+        from qplot.datahandling.trusted_plot import TrustedPlotDataset
+        dataset = getattr(self.cache, "_dataset", None)
+        if not isinstance(dataset, TrustedPlotDataset) or not self.read_data:
+            return
+        if (error := getattr(self, "_trusted_submission_error", None)) is not None:
+            raise error
+        request = getattr(self, "_trusted_request", None)
+        if request is None:
+            # Direct worker users may run synchronously outside the GUI.
+            request = dataset.service.submit_plot_prefix(
+                dataset, deadline=self.deadline, heatmap_plan=self._trusted_heatmap_plan())
+            self._trusted_request = request
+        try:
+            if self.is_cancelled():
+                request.cancel()
+            self._trusted_prefix = request.wait()
+            self.dataset_length_at_start = self._trusted_prefix.row_count
+            self._check_cancelled()
+        finally:
+            self._trusted_request = None
+
+    def _trusted_heatmap_plan(self):
+        from qplot.datahandling.trusted_heatmap import NumericHeatmapPlan
+        if len(self.param.depends_on_) != 2:
+            return None
+        names = (self.axes_dict['x'], self.axes_dict['y'], self.param.name)
+        if any(self.param_dict[name].type != 'numeric' for name in names):
+            return None
+        ranges = {}
+        # SQL range filtering accepts either axis independently.
+        for axis, values in (self.heatmap_axis_ranges or {}).items():
+            try:
+                low, high = sorted(float(value) for value in values)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(low) and np.isfinite(high) and low != high:
+                ranges[axis] = (low, high)
+        return NumericHeatmapPlan(
+            *names, self.max_full_heatmap_points, self.max_heatmap_grid_cells,
+            self.max_heatmap_grid_side,
+            tuple(tuple(ranges[axis]) if axis in ranges else None for axis in ('x', 'y')),
+            bool(self.operations),
+        )
+
+    def _load_trusted_numeric_heatmap(self, result):
+        self._check_cancelled()
+        self.dataset_completed = result.completed
+        self.total_point_count_estimate = result.selected_count
+        self.axis_data = dict(zip(('x', 'y'), result.axes, strict=True))
+        self.axis_param = {axis: self.param_dict[self.axes_dict[axis]] for axis in ('x', 'y')}
+        self.heatmap_source_grid_shape = self._heatmap_source_grid_shape_from_metadata()
+        self._spatial_heatmap_axes = result.axes
+        indices = np.nonzero(np.isfinite(result.grid))
+        self._spatial_heatmap_indices = (indices[1], indices[0])
+        self._spatial_heatmap_source_unique_counts = result.unique_counts
+        self._array_heatmap_cardinality_exact = result.cardinality_exact
+        self._heatmap_aggregated_source_rows = result.matching_count
+        self.aggregated_heatmap_source = True
+        self.sampled_heatmap_source = False
+        self._heatmap_source_info = {
+            'row_count': result.selected_count, 'estimated_range_rows': result.matching_count,
+            'sampled': False, 'aggregated': True, 'sample_limit': None, 'sample_stride': None,
+            'strategy': 'spatial mean',
+            'axis_ranges': self._normalised_heatmap_axis_ranges(self.heatmap_axis_ranges),
+        }
+        source_shape = self.heatmap_source_grid_shape or result.unique_counts[::-1]
+        _, _, self.dataGrid = self._spatial_aggregation_grid(result.grid[indices], *source_shape)
+        full_ranges = self._normalised_heatmap_axis_ranges(self.heatmap_full_axis_ranges)
+        if full_ranges is not None:
+            self.heatmap_source_axis_ranges = full_ranges
+        elif self.heatmap_axis_ranges is None and result.matching_count:
+            self.heatmap_source_axis_ranges = dict(zip(('x', 'y'), result.bounds, strict=True))
+        self.loaded_from_sql_heatmap = True
+        self.loaded_point_count = len(indices[0])
+        self.heatmap_downsample_info = self._heatmap_downsample_info()
+        self.read_data = False
+
+    def _plot_connection(self, *, decode_arrays=False):
+        prefix = getattr(self, "_trusted_prefix", None)
+        if prefix is not None:
+            self._require_expected_source_current()
+            return prefix.connect(decode_arrays=decode_arrays, cancelled=self.is_cancelled)
+        from qplot.datahandling.trusted_plot import TrustedPlotDataset
+        if isinstance(getattr(self.cache, "_dataset", None), TrustedPlotDataset):
+            raise RuntimeError("The trusted plot prefix is unavailable; reopen the plot.")
+        factory = qcodes_read_only_connection if decode_arrays else sqlite_read_only_connection
+        return factory(cache_database_path(self.cache), **self._read_only_open_kwargs())
+
     def run(self):
+        try:
+            self._run()
+        finally:
+            request = getattr(self, "_trusted_request", None)
+            if request is not None:
+                # Validation or source fencing may fail before consuming the
+                # asynchronously submitted capture.
+                request.cancel()
+                self._trusted_request = None
+            self._trusted_prefix = None
+
+    def _run(self):
         try:
             self._check_cancelled()
             self._require_expected_source_current()
@@ -350,8 +498,13 @@ class loader(QtCore.QRunnable):
                 for name in (self.param.name, *self.param.depends_on_):
                     if getattr(self.param_dict[name], "type", None) == "complex":
                         self._reject_complex_line(name)
+            self._prepare_trusted_prefix()
             cache = self.cache
             cache_live = cache_is_live(cache)
+            from qplot.datahandling.trusted_heatmap import NumericHeatmap
+            trusted_heatmap = isinstance(getattr(self, '_trusted_prefix', None), NumericHeatmap)
+            if trusted_heatmap:
+                self._load_trusted_numeric_heatmap(self._trusted_prefix)
 
             # Completion checks and cache preparation can query SQLite, so do
             # them here rather than on the GUI thread. In-memory live caches
@@ -361,10 +514,7 @@ class loader(QtCore.QRunnable):
                     self.dataset_completed = cache_dataset_completed(cache)
                     self.read_data = False
                 else:
-                    completion_conn = qcodes_read_only_connection(
-                        cache_database_path(cache),
-                        **self._read_only_open_kwargs(),
-                        )
+                    completion_conn = self._plot_connection(decode_arrays=True)
                     self._set_sql_connection(completion_conn)
                     try:
                         self._check_cancelled()
@@ -390,15 +540,19 @@ class loader(QtCore.QRunnable):
             if use_sql_heatmap:
                 self._load_large_heatmap_from_sql()
 
-            else:
+            elif not trusted_heatmap:
                 if self.read_data:
+                    prefix = getattr(self, "_trusted_prefix", None)
+                    if prefix is not None:
+                        shape = self._parameter_shape()
+                        planned_bytes = (math.prod(shape) * len(self.param_dict) * 128
+                                         if shape else 0)
+                        if max(prefix.decode_bytes, planned_bytes) > MAX_TRUSTED_FULL_PLOT_DECODE_BYTES:
+                            raise ValueError("Full-resolution plot data exceeds the 1 GiB decoding budget.")
                     write_status, read_status, existing_data = (
                         snapshot_cache_parameter_state(cache, self.param.name)
                         )
-                    conn = qcodes_read_only_connection(
-                        cache_database_path(cache),
-                        **self._read_only_open_kwargs(),
-                    )
+                    conn = self._plot_connection(decode_arrays=True)
                     self._set_sql_connection(conn)
                     try:
                         self._check_cancelled()
@@ -477,7 +631,7 @@ class loader(QtCore.QRunnable):
         except PlotWorkCancelled:
             self._finish_cancelled()
             return
-        except DatabaseInstanceChangedError as err:
+        except (DatabaseInstanceChangedError, TrustedLiveSourceChangedError) as err:
             self.database_replaced = True
             if self.is_cancelled():
                 self._finish_cancelled()
@@ -730,10 +884,7 @@ class loader(QtCore.QRunnable):
                 self.total_point_count_estimate = planned_count
                 return planned_count
 
-        conn = sqlite_read_only_connection(
-            cache_database_path(self.cache),
-            **self._read_only_open_kwargs(),
-        )
+        conn = self._plot_connection()
         self._set_sql_connection(conn)
         try:
             self._check_cancelled()
@@ -796,10 +947,7 @@ class loader(QtCore.QRunnable):
         # every declared complex column before the bounded SQL path can
         # compute a misleading grid.
         self._validate_heatmap_parameter_types()
-        conn = sqlite_read_only_connection(
-            cache_database_path(self.cache),
-            **self._read_only_open_kwargs(),
-        )
+        conn = self._plot_connection()
         self._set_sql_connection(conn)
         full_arrays = None
         try:
@@ -1411,17 +1559,7 @@ class loader(QtCore.QRunnable):
 
     @staticmethod
     def _spatial_axis_bins(lower, upper, source_count, bin_count):
-        if not np.isfinite(lower) or not np.isfinite(upper):
-            return np.array([], dtype=float), 0.0, 1.0
-        if source_count <= 1 or bin_count <= 1 or lower == upper:
-            return np.array([lower], dtype=float), lower, 1.0
-
-        source_step = (upper - lower) / (source_count - 1)
-        lower_edge = lower - source_step / 2
-        upper_edge = upper + source_step / 2
-        bin_width = (upper_edge - lower_edge) / bin_count
-        centres = lower_edge + (np.arange(bin_count, dtype=float) + 0.5) * bin_width
-        return centres, lower_edge, 1.0 / bin_width
+        return spatial_axis_bins(lower, upper, source_count, bin_count)
 
 
     def _selected_parameter_row_count(self, conn):
@@ -2088,31 +2226,12 @@ class loader(QtCore.QRunnable):
             if max_cells is None
             else int(max_cells)
             )
-        max_cells = max(1, max_cells)
         max_side = getattr(
             self,
             "max_heatmap_grid_side",
             MAX_SQL_HEATMAP_GRID_SIDE,
             )
-        x_bins = max(1, min(int(x_count), max_side))
-        y_bins = max(1, min(int(y_count), max_side))
-
-        if x_bins * y_bins <= max_cells:
-            return x_bins, y_bins
-
-        scale = math.sqrt(max_cells / (x_bins * y_bins))
-        x_bins = max(1, int(x_bins * scale))
-        y_bins = max(1, int(y_bins * scale))
-
-        while x_bins * y_bins > max_cells:
-            if x_bins >= y_bins and x_bins > 1:
-                x_bins -= 1
-            elif y_bins > 1:
-                y_bins -= 1
-            else:
-                break
-
-        return x_bins, y_bins
+        return bounded_grid_shape(x_count, y_count, max_cells=max_cells, max_side=max_side)
 
 
     def _scaled_axis_indices(self, values, bin_count, bounds=None):

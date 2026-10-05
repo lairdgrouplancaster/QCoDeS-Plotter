@@ -513,7 +513,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if callable(worker_will_start):
             worker_will_start(self, worker)
         try:
-            self.threadPool.start(worker)
+            worker.start(self.threadPool)
         except Exception:
             worker.running = False
             raise
@@ -811,6 +811,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
             if dataset_length is None:
                 dataset_length = self.ds.number_of_results
             self.last_ds_len = dataset_length
+            from qplot.datahandling.trusted_plot import TrustedPlotDataset
+            if isinstance(self.ds, TrustedPlotDataset):
+                self.ds.number_of_results = max(self.ds.number_of_results, dataset_length)
             self.hide_plot_state()
             if (
                     getattr(worker, "loaded_from_sql_heatmap", False)

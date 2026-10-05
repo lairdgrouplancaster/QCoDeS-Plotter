@@ -93,7 +93,9 @@ def fft_plots(tmp_path, monkeypatch, request):
         wait_for(lambda: not window._database_load_active)
         plots = []
         for guid in guids:
+            prior_count = len(window.windows)
             window.openPlot(guid=guid, show=True)
+            wait_for(lambda prior_count=prior_count: len(window.windows) > prior_count)
             plot = window.windows[-1]
             wait_for(lambda plot=plot: hasattr(plot, "axis_data") and not plot.worker.running)
             plot.monitor.stop()
