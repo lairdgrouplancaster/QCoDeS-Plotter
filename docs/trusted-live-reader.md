@@ -55,9 +55,15 @@ existing shorter limits.
 Large numeric heatmaps instead reduce the captured prefix directly through
 bounded SQL queries. A paged preflight counts only until the full-resolution
 limit is crossed; it is skipped when the indexed watermark already proves the
-run small enough. Summary and aggregation queries cover at most 65,536 row IDs
-per transaction and yield between intervals. Each aggregate reply holds at
-most 32,769 groups; dense intervals are split before accepting their data.
+run small enough. Summary queries cover at most 65,536 row IDs while both axes
+still need exact distinct-coordinate sets. Once either set exceeds its existing
+131,072-value cardinality limit, summaries cover at most 262,144 row IDs, with
+at most one remaining distinct-coordinate reply capped at 131,073 values.
+The counts and bounds still cover every row in the interval, even after both
+axes saturate. Numeric aggregation queries cover at most 262,144 row IDs.
+Both yield between intervals and retain the five-second transaction deadline.
+Each aggregate reply holds at most 32,769 groups; dense intervals are split
+before accepting their data.
 The pinned reader has a bounded 16 MiB SQLite page cache so summary queries over
 the same interval can reuse pages. No source transaction survives a yield.
 
@@ -138,6 +144,16 @@ Use `--preceding-run 33 --max-threads 1` to measure opening the selected run whi
 run 33 is still being captured. The report includes the preceding capture's
 progress and pending state; that capture is cancelled after the measured plots
 display, so this does not measure run 33's total plotting time.
+The benchmark reports broker-query counts, total time and maximum time for the
+summary and aggregation phases. `--aggregate-rows 65536` supplies the smaller
+reference batch size; `--aggregate-rows 262144` selects the current size. Run the
+comparisons sequentially under similar machine load. Add
+`--preceding-stage aggregate` to wait until the preceding run starts aggregation
+before opening the small run, rather than testing only its initial capture steps.
+Use `--large-summary-rows 65536` for the original summary batching or
+`--large-summary-rows 262144` for adaptive batching. The
+`--preceding-stage large-summary` option checks small-plot responsiveness during
+an enlarged summary transaction.
 
 ## Source-file boundary
 

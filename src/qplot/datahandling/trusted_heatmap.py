@@ -19,7 +19,14 @@ from .trusted_live import (
 )
 
 SUMMARY_ROWS = 65_536
-AGGREGATE_ROWS = 65_536
+# Once an axis has exceeded the exact-cardinality budget, at most one bounded
+# DISTINCT result remains. Larger intervals then amortise helper overhead
+# without doubling the maximum coordinate payload of the original summaries.
+LARGE_SUMMARY_ROWS = 262_144
+# Aggregation returns bounded sufficient statistics, unlike the summary's
+# distinct coordinates and precision replay's raw values. Larger intervals
+# amortise helper/transaction overhead while retaining the reply split limit.
+AGGREGATE_ROWS = 262_144
 MAX_GROUPS = 32_768
 MAX_AXIS_VALUES = 131_072
 MAX_NUMERIC_HEATMAP_CELLS = 2_000_000
@@ -76,9 +83,12 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
     lower: list[int | float | None] = [None, None]
     upper: list[int | float | None] = [None, None]
     row_count = selected = matching = 0
-    for start in range(0, watermark, SUMMARY_ROWS):
+    start = 0
+    while start < watermark:
         executor.check_cancelled()
-        stop = min(start + SUMMARY_ROWS, watermark)
+        active_axes = [axis for axis in range(2) if unique[axis] is not None]
+        summary_rows = LARGE_SUMMARY_ROWS if len(active_axes) < 2 else SUMMARY_ROWS
+        stop = min(start + summary_rows, watermark)
         interval = 'id>? AND id<=?'
         where = f'{interval} AND {valid}'
         bindings = (start, stop, *range_bindings)
@@ -87,7 +97,6 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
             TrustedQuery(f'SELECT COUNT(*), MIN({x}), MAX({x}), MIN({y}), MAX({y}) '
                          f'FROM {table} WHERE {where}', bindings),
         ]
-        active_axes = [axis for axis in range(2) if unique[axis] is not None]
         for axis in active_axes:
             name = (x, y)[axis]
             queries.append(TrustedQuery(
@@ -111,6 +120,7 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
             values.update(row[0] for row in result.rows)
             if len(values) > MAX_AXIS_VALUES:
                 unique[axis] = None
+        start = stop
         yield
 
     counts = tuple(len(values) if values is not None else MAX_AXIS_VALUES + 1 for values in unique)

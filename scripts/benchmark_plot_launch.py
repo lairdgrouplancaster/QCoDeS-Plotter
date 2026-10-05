@@ -20,12 +20,21 @@ def main():
     parser.add_argument("--preceding-run", type=int)
     parser.add_argument("--max-threads", type=int)
     parser.add_argument("--action", choices=("guid", "double-click", "run"), default="guid")
+    parser.add_argument("--aggregate-rows", type=int, choices=(65_536, 262_144),
+                        help="Override numeric aggregation batches for comparison")
+    parser.add_argument("--large-summary-rows", type=int, choices=(65_536, 262_144),
+                        help="Override summary batches after an axis saturates")
+    parser.add_argument("--preceding-stage", choices=("any", "aggregate", "large-summary"), default="any")
     args = parser.parse_args()
 
     from PyQt6 import QtCore, QtWidgets
 
     from qplot.configuration.config import config
-    from qplot.datahandling import readonly, trusted_plot
+    from qplot.datahandling import readonly, trusted_heatmap, trusted_plot
+    from qplot.datahandling.trusted_live_service import (
+        TrustedReadOperation,
+        _BrokerQueryExecutor,
+    )
     from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
     from qplot.windows.main import MainWindow
 
@@ -40,8 +49,44 @@ def main():
         raise AssertionError("Benchmark attempted whole-database snapshot copying")
 
     readonly._copy_file_cooperatively = no_copy
+    if args.aggregate_rows is not None:
+        trusted_heatmap.AGGREGATE_ROWS = args.aggregate_rows
+    if args.large_summary_rows is not None:
+        trusted_heatmap.LARGE_SUMMARY_ROWS = args.large_summary_rows
     timings = []
     capture_steps = {}
+    phase_times = {}
+    aggregate_started = set()
+    large_summary_started = set()
+
+    def instrument(method, batch=False):
+        def timed(executor, query, *values, **options):
+            operation = executor._operation
+            if operation.kind is not TrustedReadOperation.PLOT_PREFIX:
+                return method(executor, query, *values, **options)
+            run_id = operation.payload[0].run_id
+            sql = query[0].sql if batch else query
+            phase = ("aggregate" if "GROUP BY gx, gy" in sql else
+                     "summary" if sql.startswith("SELECT COUNT(*), COUNT(") else "other")
+            if phase == "aggregate":
+                aggregate_started.add(run_id)
+            if (phase == "summary" and batch
+                    and query[0].bindings[1] - query[0].bindings[0] > trusted_heatmap.SUMMARY_ROWS):
+                large_summary_started.add(run_id)
+            started = time.perf_counter()
+            try:
+                return method(executor, query, *values, **options)
+            finally:
+                elapsed = time.perf_counter() - started
+                record = phase_times.setdefault((run_id, phase),
+                                                {"calls": 0, "seconds": 0., "max_seconds": 0.})
+                record["calls"] += 1
+                record["seconds"] += elapsed
+                record["max_seconds"] = max(record["max_seconds"], elapsed)
+        return timed
+
+    _BrokerQueryExecutor.query = instrument(_BrokerQueryExecutor.query)
+    _BrokerQueryExecutor.query_batch = instrument(_BrokerQueryExecutor.query_batch, batch=True)
     original_prefix = trusted_plot.plot_prefix
 
     def timed_prefix(*values):
@@ -133,10 +178,17 @@ def main():
                 painted = {}
                 timings.clear()
                 capture_steps.clear()
+                phase_times.clear()
+                aggregate_started.clear()
+                large_summary_started.clear()
                 if args.preceding_run is not None:
                     preceding_guid = window._run_metadata_for_id(args.preceding_run)["guid"]
                     launch(preceding_guid)
-                    wait_for(lambda: capture_steps.get(args.preceding_run, 0) > 0)
+                    wait_for(lambda: (args.preceding_run in large_summary_started
+                                      if args.preceding_stage == "large-summary" else
+                                      args.preceding_run in aggregate_started
+                                      if args.preceding_stage == "aggregate" else
+                                      capture_steps.get(args.preceding_run, 0) > 0))
                 preceding_steps_start = capture_steps.get(args.preceding_run, 0)
                 started = time.perf_counter()
                 launch(guid)
@@ -158,6 +210,8 @@ def main():
                     "paint_ms": [(value - started) * 1000 for value in painted.values()],
                     "grids": [list(plot.dataGrid.shape) for plot in plots],
                     "capture": list(timings),
+                    "broker_queries": [{"run_id": run, "phase": phase, **record}
+                                       for (run, phase), record in list(phase_times.items())],
                     "preceding_run_pending": any(plot.worker.running for plot in window.windows
                                                  if plot.ds.run_id == args.preceding_run),
                     "preceding_capture_steps": [preceding_steps_start,
@@ -177,6 +231,8 @@ def main():
     print(json.dumps({"database_bytes": args.database.stat().st_size,
                       "database_open_ms": open_ms, "run_id": args.run_id,
                       "preceding_run": args.preceding_run,
+                      "aggregate_rows": trusted_heatmap.AGGREGATE_ROWS,
+                      "large_summary_rows": trusted_heatmap.LARGE_SUMMARY_ROWS,
                       "results": results, "protected_file_stats_unchanged": before == after}, indent=2))
     if before != after:
         raise RuntimeError("Source main/WAL/journal metadata changed during validation")
