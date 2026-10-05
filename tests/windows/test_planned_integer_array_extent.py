@@ -30,6 +30,16 @@ def run_worker(worker, *, cancelled=False):
     assert worker._sql_connection is None
 
 
+def wait_for_plot_refresh(plot):
+    # A finished worker may still have a forced refresh queued. Wait for that
+    # request to publish too before checking the cache or stopping its monitor.
+    wait_for(lambda: (
+        not plot.worker.running
+        and not plot.__dict__.get("_refresh_pending", False)
+        and not plot.__dict__.get("_refresh_pending_scheduled", False)
+    ))
+
+
 @pytest.mark.parametrize("kind", [
     "line", "heatmap", "flat_heatmap", "heatmap_duplicate", "overrun_line", "overrun_heatmap",
 ])
@@ -182,7 +192,7 @@ def test_actual_planned_integer_array_acquisition_extent(
                     plot = window.windows[-1]
                 else:
                     plot.refreshWindow(force=True)
-                wait_for(lambda plot=plot: not plot.worker.running)
+                wait_for_plot_refresh(plot)
                 plot.monitor.stop()
                 check_plot()
                 assert database_state(path) == protected
@@ -190,12 +200,12 @@ def test_actual_planned_integer_array_acquisition_extent(
         # Finishing early never makes unused planned storage into samples.
         protected = database_state(path)
         plot.refreshWindow(force=True)
-        wait_for(lambda: not plot.worker.running)
+        wait_for_plot_refresh(plot)
         plot.monitor.stop()
         check_plot(completed=True)
         assert cache_parameter_is_synchronized(plot.ds.cache, "signal")
         plot.refreshWindow(force=True)
-        wait_for(lambda: not plot.worker.running)
+        wait_for_plot_refresh(plot)
         plot.monitor.stop()
         assert plot.worker.read_data is False
         check_plot(completed=True)
