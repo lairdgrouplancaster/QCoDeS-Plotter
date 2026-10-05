@@ -1,12 +1,20 @@
+from decimal import Decimal, localcontext
+from fractions import Fraction
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 from qcodes import dataset
 
+from qplot.tools.sample_statistics import finite_mean
+
 
 def data2matrix(indep1 : ArrayLike,
                 indep2 : ArrayLike,
                 depvar : ArrayLike,
+                *,
+                check_cancelled=lambda: None,
                 ):
     """
     Converts 3 numpy.ndarry into a datagrid via pandas.DataFrame.
@@ -28,13 +36,78 @@ def data2matrix(indep1 : ArrayLike,
         The data frame containing all 3 inputted arrays as a dataframe.
 
     """
+    values = np.asarray(depvar)
+    if values.dtype.kind in "iuO":
+        # A floating pivot mean rounds even a cell containing a single large
+        # integer. Retain those cells, including holes; repeated coordinates
+        # still mean-average their acquired samples, using exact arithmetic.
+        rows, row_indices = np.unique(indep1, return_inverse=True)
+        columns, column_indices = np.unique(indep2, return_inverse=True)
+        grid = np.full((len(rows), len(columns)), np.nan, dtype=object)
+        cells: dict[tuple[int, int], list[Any]] = {}
+        for index, (row, column, value) in enumerate(
+            zip(row_indices, column_indices, values, strict=True)
+        ):
+            if index % 1024 == 0:
+                check_cancelled()
+            if isinstance(value, np.generic):
+                value = value.item()
+            if not np.isfinite(float(value)):
+                continue
+            cells.setdefault((row, column), []).append(value)
+        for index, (position, samples) in enumerate(cells.items()):
+            if index % 1024 == 0:
+                check_cancelled()
+            if len(samples) == 1:
+                grid[position] = samples[0]
+            else:
+                mean = sum((Fraction(value) for value in samples), Fraction()) / len(samples)
+                if mean.denominator == 1:
+                    grid[position] = int(mean)
+                else:
+                    # Decimal keeps the offset and fractional detail while
+                    # remaining a numeric CSV cell (Fraction writes "a/b").
+                    with localcontext() as context:
+                        context.prec = max(34, len(str(abs(mean.numerator))) + 17)
+                        grid[position] = Decimal(mean.numerator) / Decimal(mean.denominator)
+        check_cancelled()
+        return pd.DataFrame(grid, index=rows, columns=columns)
+
+    # Widen narrow floats before pandas accumulates repeated measured cells.
+    # The source array remains untouched for raw export and later operations.
+    if values.dtype.kind == "f":
+        values = values.astype(np.result_type(values.dtype, np.float64), copy=False)
+
     # convert to 3 column dataframe
     df = pd.DataFrame({
         'indep1': indep1,
         'indep2': indep2,
-        'depvar': depvar
+        'depvar': values
     })
     # convert dataframe to grid
+    if values.dtype.kind == "f" and (
+            np.any(np.abs(values) > np.finfo(values.dtype).max / max(1, values.size))
+            or (np.any(values < 0) and np.any(values > 0))):
+        # The ordinary vectorized mean is fast, but an intermediate group sum
+        # can overflow even when the final mean is finite. Retain failed groups
+        # before pivot_table would drop their rows and columns, then repair only
+        # those groups using a scaled mean of their original finite samples.
+        check_cancelled()
+        grouped = df.groupby(['indep1', 'indep2'])['depvar']
+        means = grouped.mean()
+        check_cancelled()
+        mixed = (grouped.min().to_numpy() < 0) & (grouped.max().to_numpy() > 0)
+        for group_position in np.flatnonzero(~np.isfinite(means.to_numpy()) | mixed):
+            check_cancelled()
+            samples = grouped.get_group(means.index[group_position]).to_numpy()
+            if np.any(np.isinf(samples)):
+                continue
+            samples = samples[np.isfinite(samples)]
+            if not samples.size:
+                continue
+            means.iloc[group_position] = finite_mean(samples, check_cancelled=check_cancelled)
+        check_cancelled()
+        return means.unstack().dropna(how='all', axis=0).dropna(how='all', axis=1)
     matrix = df.pivot_table(index='indep1', columns='indep2', values='depvar', fill_value=np.nan)
     return matrix
 

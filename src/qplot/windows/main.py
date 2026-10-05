@@ -50,7 +50,7 @@ from ._preferences import (
     PreferencesDialog,
     create_preferences_action,
 )
-from ._run_controls import RunControlsMixin
+from ._run_controls import AUTO_PLOT_KEY, RunControlsMixin
 from ._trusted_derived_qt import TrustedDerivedQtBridge
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
@@ -467,6 +467,10 @@ class MainWindow(
         self._database_load_active = False
         self._database_load_state = None
         self._database_load_worker = None
+        self._database_info_generation = 0
+        self._database_info_worker = None
+        self._database_info_instance = None
+        self._database_info_active = False
         self._loaded_database_identity = None
         self._loaded_database_instance = None  # type: ignore[assignment]
         self._database_detail_generation = 0
@@ -906,6 +910,7 @@ class MainWindow(
         selected_run_worker = getattr(self, "_database_selected_run_worker", None)
         if selected_run_worker is not None:
             selected_run_worker.cancel()
+        DatabaseActionsMixin._cancel_database_info(self)
         generation_worker = getattr(self, "_test_database_generation_worker", None)
         if generation_worker is not None:
             generation_worker.cancel()
@@ -1472,7 +1477,10 @@ class MainWindow(
         dialog.preferencesApplied.connect(
             lambda: self.show_status("Preferences saved.", 3000)
             )
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
 
     def apply_current_settings(self):
@@ -1483,6 +1491,11 @@ class MainWindow(
         self._sync_theme_actions()
         self._sync_preview_size_actions()
         self._sync_refresh_interval()
+        set_widget_value_without_signals(
+            self.autoPlotBox,
+            self.autoPlotBox.setChecked,
+            self.config.get(AUTO_PLOT_KEY),
+            )
         self._sync_thread_pool_settings()
         run_list = getattr(self, "RunList", None)
         if run_list is not None:

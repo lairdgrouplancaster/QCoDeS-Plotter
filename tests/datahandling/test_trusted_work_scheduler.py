@@ -121,11 +121,95 @@ def test_selection_and_viewport_changes_reprioritize_without_duplicates() -> Non
     scheduler.set_visible_range(2, 4)
     assert scheduler.complete(first) is CompletionDisposition.ACCEPTED
 
-    promoted = scheduler.claim_next()
-    assert promoted is not None
-    assert promoted.priority_key == (0, 0, 5)
-    assert scheduler.complete(promoted) is CompletionDisposition.ACCEPTED
-    assert scheduler.claim_next().priority_key == (0, 1, 5)  # type: ignore[union-attr]
+    claims = [first]
+    for priority in ((0, 0, 5), (0, 1, 5), (0, 2, 5), (1, 0, 2)):
+        promoted = scheduler.claim_next()
+        assert promoted is not None
+        assert promoted.priority_key == priority
+        claims.append(promoted)
+        if priority == (1, 0, 2):
+            scheduler.set_visible_indices((4,))
+        assert scheduler.complete(promoted) is CompletionDisposition.ACCEPTED
+
+    viewport_promoted = scheduler.claim_next()
+    assert viewport_promoted is not None
+    assert viewport_promoted.priority_key == (1, 0, 4)
+    claims.append(viewport_promoted)
+    assert scheduler.complete(viewport_promoted) is CompletionDisposition.ACCEPTED
+    claims.extend(_drain(scheduler))
+
+    identities = [(work.run_index, work.key.kind) for work in claims]
+    assert len(identities) == len(_runs(6)) * len(TrustedWorkKind)
+    assert len(set(identities)) == len(identities)
+
+
+def test_atomic_priority_validates_then_adopts_selection_and_viewport() -> None:
+    scheduler = TrustedWorkScheduler(_instance(), _runs(4))
+    scheduler.set_priority(3, (1, 2))
+
+    snapshot = scheduler.snapshot()
+    assert snapshot.selected_index == 3
+    assert snapshot.visible_indices == (1, 2)
+    assert snapshot.next_priority_key == (0, 0, 3)
+
+    with pytest.raises(ValueError, match="outside the run table"):
+        scheduler.set_priority(0, (1, 8))
+    unchanged = scheduler.snapshot()
+    assert unchanged.selected_index == 3
+    assert unchanged.visible_indices == (1, 2)
+
+
+def test_metadata_dependency_bits_survive_replay_and_reset_on_new_source() -> None:
+    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    metadata = scheduler.claim_next()
+    assert metadata is not None
+    assert scheduler.complete(metadata) is CompletionDisposition.ACCEPTED
+    assert scheduler.metadata_is_conclusive(0)
+    assert not scheduler.metadata_is_progressively_parked(0)
+
+    assert scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.METADATA,
+        database_instance=_instance(),
+        generation=scheduler.generation,
+        run_guid="guid-0",
+    )
+    assert scheduler.metadata_is_conclusive(0)
+    replay = scheduler.claim_next()
+    assert replay is not None
+    assert (
+        scheduler.park_progressive_metadata(replay, _revision(90))
+        is CompletionDisposition.ACCEPTED
+    )
+    assert not scheduler.metadata_is_conclusive(0)
+    assert scheduler.metadata_is_progressively_parked(0)
+
+    assert scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.METADATA,
+        database_instance=_instance(),
+        generation=scheduler.generation,
+        run_guid="guid-0",
+    )
+    terminal = scheduler.claim_next()
+    assert terminal is not None
+    assert (
+        scheduler.unpark_progressive_metadata(terminal)
+        is CompletionDisposition.ACCEPTED
+    )
+    assert not scheduler.metadata_is_progressively_parked(0)
+    assert scheduler.complete(terminal) is CompletionDisposition.ACCEPTED
+    assert scheduler.metadata_is_conclusive(0)
+
+    scheduler.update_source_revision(0, _revision(91))
+    assert not scheduler.metadata_is_conclusive(0)
+    refined = scheduler.claim_next()
+    assert refined is not None
+    assert (
+        scheduler.refine_claim_source_revision(refined, _revision(92))
+        is CompletionDisposition.ACCEPTED
+    )
+    assert not scheduler.metadata_is_conclusive(0)
 
 
 def test_previous_selection_is_demoted_to_its_current_tier() -> None:
@@ -145,6 +229,233 @@ def test_previous_selection_is_demoted_to_its_current_tier() -> None:
         (0, TrustedWorkKind.THUMBNAIL),
         (1, TrustedWorkKind.THUMBNAIL),
     ]
+
+
+def test_remaining_progressive_page_does_not_gate_selected_images() -> None:
+    scheduler = TrustedWorkScheduler(_instance(), _runs(2))
+    background_page = scheduler.claim_next()
+    assert background_page is not None
+    assert (background_page.run_index, background_page.key.kind) == (
+        0,
+        TrustedWorkKind.METADATA,
+    )
+    assert (
+        scheduler.park_progressive_metadata(background_page, _revision(90))
+        is CompletionDisposition.ACCEPTED
+    )
+    assert scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.METADATA,
+        database_instance=_instance(),
+        generation=scheduler.generation,
+        run_guid="guid-0",
+    )
+
+    scheduler.select_run(1)
+    selected = []
+    for expected_kind in TrustedWorkKind:
+        work = scheduler.claim_next()
+        assert work is not None
+        assert (work.run_index, work.key.kind) == (1, expected_kind)
+        selected.append(work)
+        assert scheduler.complete(work) is CompletionDisposition.ACCEPTED
+
+    assert [work.priority_key for work in selected] == [
+        (0, 0, 1),
+        (0, 1, 1),
+        (0, 2, 1),
+    ]
+    continuation = scheduler.claim_next()
+    assert continuation is not None
+    assert (continuation.run_index, continuation.key.kind) == (
+        0,
+        TrustedWorkKind.METADATA,
+    )
+
+
+def test_remaining_progressive_page_does_not_split_visible_kind_order() -> None:
+    scheduler = TrustedWorkScheduler(_instance(), _runs(3))
+    background_page = scheduler.claim_next()
+    assert background_page is not None
+    assert (
+        scheduler.park_progressive_metadata(background_page, _revision(90))
+        is CompletionDisposition.ACCEPTED
+    )
+    assert scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.METADATA,
+        database_instance=_instance(),
+        generation=scheduler.generation,
+        run_guid="guid-0",
+    )
+
+    scheduler.set_visible_indices((2,))
+    for expected_kind in TrustedWorkKind:
+        work = scheduler.claim_next()
+        assert work is not None
+        assert (work.run_index, work.key.kind) == (2, expected_kind)
+        assert scheduler.complete(work) is CompletionDisposition.ACCEPTED
+
+    continuation = scheduler.claim_next()
+    assert continuation is not None
+    assert (continuation.run_index, continuation.key.kind) == (
+        0,
+        TrustedWorkKind.METADATA,
+    )
+
+
+def test_progressive_metadata_can_park_all_outputs_and_resume_only_metadata() -> None:
+    publications = []
+    scheduler = TrustedWorkScheduler(
+        _instance(),
+        _runs(1),
+        on_publish=publications.append,
+    )
+    work = scheduler.claim_next()
+    assert work is not None
+    assert work.key.kind is TrustedWorkKind.METADATA
+    replacement = _revision(99)
+
+    assert (
+        scheduler.park_progressive_metadata(work, replacement)
+        is CompletionDisposition.ACCEPTED
+    )
+    assert publications == []
+    assert scheduler.snapshot().pending_count == 0
+    assert all(
+        scheduler.state_for(0, kind) is TrustedWorkState.COMPLETED
+        for kind in TrustedWorkKind
+    )
+    assert scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.METADATA,
+        database_instance=_instance(),
+        generation=scheduler.generation,
+        run_guid="guid-0",
+    )
+    resumed = scheduler.claim_next()
+    assert resumed is not None
+    assert resumed.key.kind is TrustedWorkKind.METADATA
+    assert resumed.key.source_revision == replacement
+    assert scheduler.state_for(0, TrustedWorkKind.THUMBNAIL) is (
+        TrustedWorkState.COMPLETED
+    )
+    assert scheduler.state_for(0, TrustedWorkKind.PREVIEW) is TrustedWorkState.COMPLETED
+
+
+def test_progressive_park_rejects_image_replay_and_survives_format_updates() -> None:
+    instance = _instance()
+    scheduler = TrustedWorkScheduler(instance, _runs(1))
+    metadata = scheduler.claim_next()
+    assert metadata is not None
+    assert (
+        scheduler.park_progressive_metadata(metadata, _revision(90))
+        is CompletionDisposition.ACCEPTED
+    )
+
+    replacements = {
+        TrustedWorkKind.THUMBNAIL: WorkFormat("thumbnail-progressive-v2"),
+        TrustedWorkKind.PREVIEW: WorkFormat("preview-progressive-v2"),
+    }
+    for kind, work_format in replacements.items():
+        assert not scheduler.request_completed_work(
+            0,
+            kind,
+            database_instance=instance,
+            generation=scheduler.generation,
+            run_guid="guid-0",
+        )
+        scheduler.update_format(kind, work_format)
+        assert scheduler.state_for(0, kind) is TrustedWorkState.COMPLETED
+        assert not scheduler.request_completed_work(
+            0,
+            kind,
+            database_instance=instance,
+            generation=scheduler.generation,
+            run_guid="guid-0",
+        )
+
+    assert scheduler.snapshot().pending_count == 0
+    assert scheduler.claim_next() is None
+
+
+def test_source_revision_invalidation_clears_progressive_image_park() -> None:
+    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    metadata = scheduler.claim_next()
+    assert metadata is not None
+    assert (
+        scheduler.park_progressive_metadata(metadata, _revision(90))
+        is CompletionDisposition.ACCEPTED
+    )
+
+    replacement = _revision(91)
+    scheduler.update_source_revision(0, replacement)
+
+    assert scheduler.snapshot().pending_count == len(TrustedWorkKind)
+    assert all(
+        scheduler.state_for(0, kind) is TrustedWorkState.PENDING
+        for kind in TrustedWorkKind
+    )
+    refreshed = scheduler.claim_next()
+    assert refreshed is not None
+    assert refreshed.key.kind is TrustedWorkKind.METADATA
+    assert refreshed.key.source_revision == replacement
+
+
+def test_same_revision_progressive_completion_explicitly_unparks_images() -> None:
+    instance = _instance()
+    scheduler = TrustedWorkScheduler(instance, _runs(1))
+    first_page = scheduler.claim_next()
+    assert first_page is not None
+    progressive_revision = _revision(90)
+    assert (
+        scheduler.park_progressive_metadata(first_page, progressive_revision)
+        is CompletionDisposition.ACCEPTED
+    )
+    assert scheduler.request_completed_work(
+        0,
+        TrustedWorkKind.METADATA,
+        database_instance=instance,
+        generation=scheduler.generation,
+        run_guid="guid-0",
+    )
+    conclusive_metadata = scheduler.claim_next()
+    assert conclusive_metadata is not None
+    assert conclusive_metadata.key.source_revision == progressive_revision
+
+    assert (
+        scheduler.unpark_progressive_metadata(conclusive_metadata)
+        is CompletionDisposition.ACCEPTED
+    )
+    assert scheduler.is_current_claim(conclusive_metadata)
+    assert scheduler.state_for(0, TrustedWorkKind.METADATA) is TrustedWorkState.RUNNING
+    assert scheduler.state_for(0, TrustedWorkKind.THUMBNAIL) is TrustedWorkState.PENDING
+    assert scheduler.state_for(0, TrustedWorkKind.PREVIEW) is TrustedWorkState.PENDING
+    assert (
+        scheduler.complete(conclusive_metadata, "conclusive metadata")
+        is CompletionDisposition.ACCEPTED
+    )
+    assert _order(_drain(scheduler)) == [
+        (0, TrustedWorkKind.THUMBNAIL),
+        (0, TrustedWorkKind.PREVIEW),
+    ]
+
+
+def test_progressive_parking_rejects_stale_and_non_metadata_claims() -> None:
+    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    metadata = scheduler.claim_next()
+    assert metadata is not None
+    assert scheduler.complete(metadata) is CompletionDisposition.ACCEPTED
+    thumbnail = scheduler.claim_next()
+    assert thumbnail is not None
+
+    with pytest.raises(ValueError, match="Only metadata"):
+        scheduler.park_progressive_metadata(thumbnail, _revision(90))
+    scheduler.switch_database(_instance((7, 12)), _runs(1))
+    assert (
+        scheduler.park_progressive_metadata(metadata, _revision(91))
+        is CompletionDisposition.STALE
+    )
 
 
 def test_database_switch_cancels_work_and_aba_completion_is_stale() -> None:

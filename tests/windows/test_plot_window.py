@@ -196,6 +196,11 @@ class _PyqtgraphExportHost(qtw.QMainWindow):
     def _default_plot_pdf_filename(self):
         return self.suggested_path
 
+    def _write_line_csv_stage(self, staging_path, exporter, *, separator=None):
+        # These publication tests supply mock payload writers. The real CSV
+        # serializer is exercised through the dialog in integration tests.
+        return exporter.export(fileName=staging_path)
+
     def show_status(self, message, timeout=0):
         self.status_messages.append((message, timeout))
 
@@ -505,6 +510,8 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
                     operations,
                     force_sql_heatmap,
                     max_full_heatmap_points,
+                    max_heatmap_grid_cells,
+                    max_heatmap_grid_side,
                     heatmap_axis_ranges,
                     heatmap_full_axis_ranges,
                     ):
@@ -516,6 +523,8 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
                 self.operations = operations
                 self.force_sql_heatmap = force_sql_heatmap
                 self.max_full_heatmap_points = max_full_heatmap_points
+                self.max_heatmap_grid_cells = max_heatmap_grid_cells
+                self.max_heatmap_grid_side = max_heatmap_grid_side
                 self.heatmap_axis_ranges = heatmap_axis_ranges
                 self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
                 self.emitter = Emitter()
@@ -1255,7 +1264,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
     def test_run_context_menu_keeps_plot_actions_without_add_actions(self):
         old_isfile = getattr(treeWidgets, "isfile", None)
-        old_exec = qtw.QMenu.exec
+        original_exec_descriptor = qtw.QMenu.__dict__["exec"]
         treeWidgets.isfile = lambda _: False
         captured = []
         main = None
@@ -1274,7 +1283,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
             captured.extend(action.text() for action in menu.actions())
 
         try:
-            qtw.QMenu.exec = capture_menu
             main = qtw.QMainWindow()
             main.ds = Dataset()
             main.windows = []
@@ -1294,7 +1302,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             run_list.setCurrentItem(run_list._item_for_guid("guid-1"))
             item = run_list._item_for_guid("guid-2")
 
-            run_list.prepareMenu(run_list.visualItemRect(item).center())
+            with patch.object(qtw.QMenu, "exec", capture_menu):
+                run_list.prepareMenu(run_list.visualItemRect(item).center())
+            self.assertIs(qtw.QMenu.__dict__["exec"], original_exec_descriptor)
 
             self.assertEqual(run_list.currentItem().guid, "guid-2")
             self.assertEqual(captured[0], "&Plot all")
@@ -1305,10 +1315,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertFalse(any(action.startswith("Add ") for action in captured))
             self.assertFalse(any(action.startswith("  - Add ") for action in captured))
         finally:
-            qtw.QMenu.exec = old_exec
             treeWidgets.isfile = old_isfile
             if main is not None:
+                main.hide()
                 main.deleteLater()
+                qtw.QApplication.sendPostedEvents(main, QtCore.QEvent.Type.DeferredDelete)
 
     def test_plot_options_menu_includes_preferences_and_excludes_confirmation_duplicates(self):
         class Host(qtw.QMainWindow):
@@ -1628,6 +1639,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         original = b"existing export sentinel"
                         target.write_bytes(original)
                         exporter = exporter_type.__new__(exporter_type)
+                        if exporter_type is CSVExporter:
+                            exporter.params = {"separator": "comma"}
                         staged_paths = []
 
                         def export(
@@ -1656,6 +1669,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
                         exporter.export = export
                         with (
+                            patch.object(
+                                plot_export_module,
+                                "write_svg_stage",
+                                side_effect=lambda filename, _exporter: export(fileName=filename),
+                            ),
                             patch.object(
                                 qtw.QFileDialog,
                                 "getSaveFileName",
@@ -3063,6 +3081,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 plotWidget._install_axis_scale_viewbox_range_handlers
             )
             _axis_scale_range_changed = plotWidget._axis_scale_range_changed
+            _refresh_axis_scale_visible_auto = plotWidget._refresh_axis_scale_visible_auto
             force_all_axes_autoscale = plotWidget.force_all_axes_autoscale
             _menu_control_widget = plotWidget._menu_control_widget
             _connect_mouse_mode_menu_to_preferences = (
@@ -3094,6 +3113,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 plotWidget._update_axis_scale_auto_limits_tooltip
                 )
             _axis_scale_copy_auto_limits = plotWidget._axis_scale_copy_auto_limits
+            _apply_axis_scale_manual_limits = plotWidget._apply_axis_scale_manual_limits
             _axis_scale_mouse_toggled = plotWidget._axis_scale_mouse_toggled
             _axis_scale_manual_clicked = plotWidget._axis_scale_manual_clicked
             _axis_scale_range_text_changed = plotWidget._axis_scale_range_text_changed
@@ -3235,7 +3255,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             copy_button = x_controls.copyAutoLimitsButton
             self.assertEqual(
                 copy_button.toolTip(),
-                f"Set manual limits to {auto_limits[0]:.5g} and {auto_limits[1]:.5g}.",
+                f"Set manual limits to {auto_limits[0]:.17g} and {auto_limits[1]:.17g}.",
                 )
 
             host._axis_scale_custom_auto_axes.add("x")
@@ -3572,6 +3592,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
         class Host(qtw.QMainWindow):
             _current_colorbar_levels = plot2d._current_colorbar_levels
+            _colorbar_auto_limits = plot2d._colorbar_auto_limits
+            _update_colorbar_auto_limits_tooltip = (
+                plot2d._update_colorbar_auto_limits_tooltip
+                )
+            _copy_colorbar_auto_limits = plot2d._copy_colorbar_auto_limits
             _current_colorbar_colormap_name = plot2d._current_colorbar_colormap_name
             _available_colorbar_colormaps = plot2d._available_colorbar_colormaps
             _fallback_colorbar_colormap_name = plot2d._fallback_colorbar_colormap_name
@@ -3637,6 +3662,12 @@ class RunListParentLookupTestCase(unittest.TestCase):
             setColorbarAuto = plot2d.setColorbarAuto
             scaleColorbar = plot2d.scaleColorbar
 
+            def _data_colorbar_levels(self):
+                return -4.0, 8.0
+
+            def _set_colorbar_levels(self, *_levels):
+                pass
+
             def show_status(self, *_args, **_kwargs):
                 pass
 
@@ -3678,6 +3709,31 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 host.colorbar_max_text.accessibleName(),
                 "Color scale maximum",
                 )
+            range_layout = host.colorbar_manual_radio.parentWidget().layout()
+            self.assertIsInstance(range_layout, qtw.QGridLayout)
+            self.assertEqual(range_layout.columnMinimumWidth(1), 36)
+            for column in (0, 2, 3, 4, 5, 6):
+                item = range_layout.itemAtPosition(0, column)
+                self.assertIsNotNone(item)
+                self.assertTrue(
+                    item.alignment() & QtCore.Qt.AlignmentFlag.AlignVCenter
+                    )
+            copy_button = host.colorbar_copy_auto_limits_button
+            self.assertEqual(
+                copy_button.accessibleName(),
+                "Use auto color scale limits as manual limits",
+                )
+            self.assertEqual(
+                copy_button.toolTip(),
+                "Set manual limits to -4 and 8.",
+                )
+            copy_button.click()
+            self.assertEqual(host._colorbar_manual_levels, (-4.0, 8.0))
+            self.assertTrue(host.colorbar_min_text.hasAcceptableInput())
+            self.assertTrue(host.colorbar_max_text.hasAcceptableInput())
+            self.assertEqual(float(host.colorbar_min_text.text()), -4.0)
+            self.assertEqual(float(host.colorbar_max_text.text()), 8.0)
+            self.assertTrue(host.colorbar_manual_radio.isChecked())
             self.assertGreater(host._colorbar_colormap_row("Greys"), -1)
             self.assertGreater(host._colorbar_colormap_row("Purples"), -1)
             self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)

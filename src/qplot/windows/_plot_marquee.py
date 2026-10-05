@@ -5,6 +5,8 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.tools.sample_statistics import finite_mean, finite_standard_deviation
+
 from ._widgets import CopyableTableWidget
 
 _MarqueeHandle = Literal["nw", "n", "ne", "e", "se", "s", "sw", "w"]
@@ -63,7 +65,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         self.marquee_highlight.setZValue(18)
         self.marquee_highlight.hide()
         self.marquee_highlight.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
-        self.plot.addItem(self.marquee_highlight)
+        self._add_plot_overlay(self.marquee_highlight)
 
         self.marquee_outline = qtw.QGraphicsRectItem()
         pen = QtGui.QPen(QtGui.QColor(65, 65, 65, 220))
@@ -75,7 +77,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         self.marquee_outline.setZValue(19)
         self.marquee_outline.hide()
         self.marquee_outline.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
-        self.plot.addItem(self.marquee_outline)
+        self._add_plot_overlay(self.marquee_outline)
 
         self.marquee_handles = pg.ScatterPlotItem(
             symbol="s",
@@ -86,7 +88,15 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         self.marquee_handles.setZValue(20)
         self.marquee_handles.hide()
         self.marquee_handles.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
-        self.plot.addItem(self.marquee_handles)
+        self._add_plot_overlay(self.marquee_handles)
+
+    def _add_plot_overlay(self, item: Any, viewbox: Any = None) -> None:
+        """Attach decorations without registering plot data or affecting bounds."""
+
+        viewbox = viewbox if viewbox is not None else self._marquee_viewbox()
+        item._qplot_ui_overlay = True
+        viewbox.addItem(item, ignoreBounds=True)
+        self.__dict__.setdefault("_plot_overlay_viewboxes", {})[id(item)] = viewbox
 
     def _marquee_viewbox(self) -> Any:
         """Return the coordinate owner for marquee graphics and navigation."""
@@ -100,6 +110,27 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             if viewbox is not None:
                 return viewbox
         return self.__dict__.get("vb") or self.plot.vb
+
+    def _marquee_zoom_viewbox(self, axis: Literal["x", "y"]) -> Any:
+        """Return the range owner for one dimension of the selection."""
+
+        return self._marquee_viewbox()
+
+    def _marquee_axis_assignment_changed(self) -> None:
+        """Discard old coordinates and move decorations to their new owner."""
+
+        self.finish_marquee_drag()
+        if "marquee_outline" not in self.__dict__:
+            return
+        self.clear_marquee()
+        target = self._marquee_viewbox()
+        overlays = self.__dict__.get("_plot_overlay_viewboxes", {})
+        for item in (self.marquee_highlight, self.marquee_outline, self.marquee_handles):
+            current = overlays.get(id(item))
+            if current is not target:
+                if current is not None:
+                    current.removeItem(item)
+                self._add_plot_overlay(item, target)
 
     def is_marquee_dragging(self) -> bool:
         return self._marquee_drag_state is not None
@@ -277,13 +308,13 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             return False
 
         if "x" in axes:
-            self._marquee_viewbox().setXRange(
+            self._marquee_zoom_viewbox("x").setXRange(
                 rect.left(),
                 rect.right(),
                 padding=0,
             )
         if "y" in axes:
-            self._marquee_viewbox().setYRange(
+            self._marquee_zoom_viewbox("y").setYRange(
                 rect.top(),
                 rect.bottom(),
                 padding=0,
@@ -416,8 +447,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
                 ))
 
         lines.extend((
-            f"Average: {self.formatNum(float(values.mean()))}",
-            f"Standard deviation: {self.formatNum(float(values.std()))}",
+            f"Average: {self.formatNum(finite_mean(values))}",
+            f"Standard deviation: {self.formatNum(finite_standard_deviation(values))}",
             f"Max: {self.formatNum(float(values.max()))}",
             f"Min: {self.formatNum(float(values.min()))}",
             ))

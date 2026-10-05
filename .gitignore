@@ -2,6 +2,9 @@
 *.db-shm
 *.db-wal
 *.pyc
+*.so
+*.pyd
+.recovery/
 .DS_Store
 .venv/
 .venv-mac/

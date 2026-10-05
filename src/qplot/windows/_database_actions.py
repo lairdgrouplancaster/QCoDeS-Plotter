@@ -4,7 +4,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
+from time import monotonic, perf_counter
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
@@ -14,10 +14,13 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from qplot.datahandling.database import (
     DatabaseDetailWorker,
     DatabaseExpensiveDetailWorker,
+    DatabaseInfoWorker,
     DatabaseLoadWorker,
     DatabaseRefreshWorker,
     DatabaseSelectedRunWorker,
-    database_info_rows,
+)
+from qplot.datahandling.database import (
+    database_info_rows as database_info_rows,
 )
 from qplot.datahandling.file_identity import (
     DatabaseInstance,
@@ -133,6 +136,20 @@ def _selected_run_detail_cache_key(instance, run_id, guid):
         frozenset(instance.sidecar_identities),
         run_id,
         str(guid),
+    )
+
+
+def _selected_run_detail_is_stale(detail, metadata):
+    """Keep accepted live progress from regressing to an older observation."""
+    observed = detail.run.as_dict()
+    accepted_count = metadata.get("result_count")
+    observed_count = observed.get("result_count")
+    return (
+        accepted_count is not None
+        and (observed_count is None or observed_count < accepted_count)
+    ) or (
+        bool(metadata.get("is_completed"))
+        and not bool(observed.get("is_completed"))
     )
 
 
@@ -337,6 +354,8 @@ class DatabaseActionsMixin:
 
     _database_refresh_worker: DatabaseRefreshWorker | None
     _database_refresh_instance: DatabaseInstance | None
+    _database_info_worker: DatabaseInfoWorker | None
+    _database_info_instance: DatabaseInstance | None
     _test_database_generation_worker: TestDatabaseGenerationWorker | None
 
     def _reap_retired_trusted_read_services(self):
@@ -1107,6 +1126,7 @@ class DatabaseActionsMixin:
             cancel_detail_load()
         DatabaseActionsMixin._cancel_database_refresh(self)
         DatabaseActionsMixin._cancel_selected_run_detail(self)
+        DatabaseActionsMixin._cancel_database_info(self)
         DatabaseActionsMixin._retire_all_trusted_read_services(self)
 
         self._database_load_generation = getattr(self, "_database_load_generation", 0) + 1
@@ -1188,6 +1208,9 @@ class DatabaseActionsMixin:
         if not database_path:
             self.show_status("No database is loaded.", 5000)
             return
+        if getattr(self, "_database_load_active", False):
+            self.show_status("Wait for database loading to finish before reading information.", 5000)
+            return
         if not DatabaseActionsMixin._database_generation_read_allowed(
                 self,
                 database_path,
@@ -1200,27 +1223,79 @@ class DatabaseActionsMixin:
                 ):
             return
 
-        try:
-            rows = database_info_rows(database_path)
-        except Exception as err:
-            log_exception("Database information failed", err, __name__)
+        if getattr(self, "_database_info_active", False):
+            self.show_status("Database information is already loading.", 3000)
+            return
+
+        instance = getattr(self, "_loaded_database_instance", None)
+        trusted_service = DatabaseActionsMixin._active_trusted_service_for_instance(
+            self, instance,
+        )
+        if (
+                getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE
+                and trusted_service is None
+                ):
             self.show_error(
                 "Database Information Failed",
                 "Could not read database information.",
-                str(err),
+                "The trusted reader session is unavailable. Reload the database.",
             )
             return
 
-        # A read-only query can legitimately take long enough for an external
-        # process to atomically replace the main file.  Do not show metadata
-        # from that later instance while the UI still represents the earlier
-        # one.
-        if DatabaseActionsMixin._reload_if_database_instance_changed(
-                self,
-                database_path,
+        self._database_info_generation = getattr(self, "_database_info_generation", 0) + 1
+        worker = DatabaseInfoWorker(
+            self._database_info_generation,
+            database_path,
+            expected_database_instance=instance,
+            deadline=monotonic() + 10.0,
+            trusted_service=trusted_service,
+        )
+        self._database_info_worker = worker
+        self._database_info_instance = worker.database_instance
+        self._database_info_active = True
+        worker.signals.finished.connect(self.database_info_finished)
+        self.show_status("Reading database information...", 0)
+        self.databaseDetailThreadPool.start(worker)
+
+
+    def _cancel_database_info(self):
+        worker = getattr(self, "_database_info_worker", None)
+        if worker is not None:
+            worker.cancel()
+        self._database_info_generation = getattr(self, "_database_info_generation", 0) + 1
+        self._database_info_worker = None
+        self._database_info_instance = None
+        self._database_info_active = False
+
+
+    @QtCore.pyqtSlot(int, str, object, object)
+    def database_info_finished(self, generation, database_path, rows, error):
+        if generation != getattr(self, "_database_info_generation", 0):
+            return
+        instance = getattr(self, "_database_info_instance", None)
+        self._database_info_worker = None
+        self._database_info_instance = None
+        self._database_info_active = False
+        if (
+                not _database_paths_equal(database_path, self.fileTextbox.text())
+                or getattr(self, "_database_load_active", False)
+                or getattr(self, "_shutdown_started", False)
+                or getattr(self, "_shutdown_ready", False)
+                or DatabaseActionsMixin._reload_if_worker_database_instance_changed(
+                    self, database_path, instance,
+                )
                 ):
             return
+        if error is not None:
+            log_exception("Database information failed", error, __name__)
+            self.show_error(
+                "Database Information Failed",
+                "Could not read database information.",
+                str(error),
+            )
+            return
 
+        self.show_status("Database information loaded.", 3000)
         dialog = DatabaseInfoDialog(rows, parent=self)
         dialog.copyButton.clicked.connect(
             lambda: self.show_status("Copied database information.", 3000)
@@ -1636,12 +1711,7 @@ class DatabaseActionsMixin:
                 current_instance,
             )
             if error is not None:
-                logged_error = (
-                    error
-                    if isinstance(error, BaseException)
-                    else RuntimeError(str(error))
-                )
-                log_exception("Main-window refresh failed", logged_error, __name__)
+                log_exception("Main-window refresh failed", error, __name__)
                 if isinstance(error, UnverifiableDatabaseWalError):
                     self.show_error(
                         "Unverifiable Database WAL",
@@ -2483,6 +2553,7 @@ class DatabaseActionsMixin:
             return True
 
         DatabaseActionsMixin._cancel_database_refresh(self)
+        DatabaseActionsMixin._cancel_database_info(self)
         if replacement:
             self._prepare_replaced_database_reload(abspath)
 
@@ -2650,6 +2721,7 @@ class DatabaseActionsMixin:
         DatabaseActionsMixin._cancel_database_refresh(self)
         self._cancel_database_detail_load()
         DatabaseActionsMixin._cancel_selected_run_detail(self)
+        DatabaseActionsMixin._cancel_database_info(self)
         active_service = getattr(self, "_trusted_read_service", None)
         self._trusted_read_service = None
         DatabaseActionsMixin._retire_trusted_read_service(
@@ -3105,6 +3177,7 @@ class DatabaseActionsMixin:
         # rollback below explicitly restarts A's progressive work.
         self._cancel_database_detail_load()
         DatabaseActionsMixin._cancel_selected_run_detail(self)
+        DatabaseActionsMixin._cancel_database_info(self)
         derived_bridge = getattr(self, "_trusted_derived_bridge", None)
         if derived_bridge is not None:
             derived_bridge.suspend_publications()
@@ -4061,6 +4134,23 @@ class DatabaseActionsMixin:
 
 
     def _refresh_selected_run_details(self, runs, *, live_only=False):
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            if not live_only:
+                return
+            # Refresh affects cached runs even when another run (or no run)
+            # is selected. Include partial keys without a remaining cache entry.
+            refreshed_guids = {
+                str(metadata["guid"])
+                for metadata in runs.values()
+                if metadata.get("guid")
+            }
+            cache = getattr(self, "_selected_run_detail_cache", {})
+            partial_keys = getattr(self, "_selected_run_partial_detail_keys", set())
+            for key in set(cache) | partial_keys:
+                if key and key[-1] in refreshed_guids:
+                    cache.pop(key, None)
+                    partial_keys.discard(key)
+
         guid = getattr(self, "_selected_run_guid", None)
         selected_key = getattr(self, "_selected_dataset_key", None)
         if not guid:
@@ -4073,18 +4163,6 @@ class DatabaseActionsMixin:
         for metadata in runs.values():
             if metadata.get("guid") == guid:
                 if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
-                    if not live_only:
-                        return
-                    cache = getattr(self, "_selected_run_detail_cache", {})
-                    partial_keys = getattr(
-                        self,
-                        "_selected_run_partial_detail_keys",
-                        set(),
-                    )
-                    for key in tuple(cache):
-                        if key and key[-1] == guid:
-                            cache.pop(key, None)
-                            partial_keys.discard(key)
                     self.updateSelected(guid)
                 elif live_only:
                     update_live = getattr(
@@ -4182,7 +4260,8 @@ class DatabaseActionsMixin:
                 if access_mode == SNAPSHOT_FALLBACK_MODE:
                     setter_name = "set_snapshot_run_unavailable"
                     setter_value = metadata
-                elif detail is not None:
+                elif detail is not None and not _selected_run_detail_is_stale(
+                        detail, metadata):
                     setter_name = "set_trusted_run_detail"
                     setter_value = detail
                 else:
@@ -4417,7 +4496,13 @@ class DatabaseActionsMixin:
         # Every production MainWindow owns the Stage 5C bridge, so this branch
         # cannot compete with coordinator-owned trusted work in the app.
         cache_key = _selected_run_detail_cache_key(instance, run_id, guid)
-        cached = getattr(self, "_selected_run_detail_cache", {}).get(cache_key)
+        cache = getattr(self, "_selected_run_detail_cache", {})
+        cached = cache.get(cache_key)
+        if cached is not None and _selected_run_detail_is_stale(
+                cached, self._run_metadata_for_guid(guid)):
+            cache.pop(cache_key, None)
+            getattr(self, "_selected_run_partial_detail_keys", set()).discard(cache_key)
+            cached = None
         if cached is not None:
             if not DatabaseActionsMixin._publish_trusted_selected_run_detail(
                     self,
@@ -4674,6 +4759,11 @@ class DatabaseActionsMixin:
             )
             cache.pop(stale_key, None)
             partial_keys.discard(stale_key)
+
+        if _selected_run_detail_is_stale(detail, self._run_metadata_for_guid(guid)):
+            # Reject before either widget sees the old counts/completion state.
+            # Refresh also cancels/restarts the selected worker via its generation.
+            return False
 
         self.RunList.updateRuns({detail.run.run_id: detail_metadata})
         guarded_instance = (

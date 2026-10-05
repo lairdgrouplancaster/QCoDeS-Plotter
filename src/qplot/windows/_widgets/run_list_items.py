@@ -2,7 +2,12 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._run_formatting import one_dimensional_duplicate_point_count, run_tooltip_text
-from .preview import DraggablePreviewImageLabel, unsupported_preview_label
+from .preview import (
+    DraggablePreviewImageLabel,
+    PreviewImageLabel,
+    preview_placeholder_dimensions,
+    unsupported_preview_label,
+)
 
 MEASUREMENT_PREVIEW_SIZE = 22
 MEASUREMENT_PREVIEW_SPACING = 3
@@ -35,6 +40,10 @@ class RunPreviewCell(qtw.QWidget):
         self.icon_size = int(icon_size)
         self._generating = False
         self._has_rendered_previews = False
+        self._placeholder_dimensions = []
+        self._placeholder_parameters = []
+        self._previews = []
+        self._pending_display = None
 
         self.content_layout = qtw.QHBoxLayout()
         self.content_layout.setContentsMargins(2, 0, 2, 0)
@@ -49,8 +58,11 @@ class RunPreviewCell(qtw.QWidget):
 
 
     def show_placeholders(self, count=None, generating=None):
-        self._clear_layout()
+        if self._defer_display_during_drag(("placeholders", count, generating)):
+            return
+        selected_parameter = self._clear_layout()
         self._has_rendered_previews = False
+        self._previews = []
         if generating is not None:
             self._generating = bool(generating)
         placeholder_count = self.placeholder_count if count is None else max(0, int(count))
@@ -59,55 +71,89 @@ class RunPreviewCell(qtw.QWidget):
                 self._placeholder_label(index, generating=self._generating)
                 )
         self.content_layout.addStretch()
+        self._restore_selection(selected_parameter)
 
 
     def show_previews(self, previews):
+        previews = list(previews or [])
+        if self._defer_display_during_drag(("previews", previews)):
+            return
         self._generating = False
-        self._clear_layout()
+        selected_parameter = self._clear_layout()
+        self._previews = list(previews or [])
 
         preview_count = 0
-        for preview in previews or []:
-            if preview.get("unsupported"):
-                label = unsupported_preview_label(
-                    preview,
-                    self.icon_size,
-                    "measurementPreviewUnsupported",
-                    )
-                self.content_layout.addWidget(label)
+        parameters = self._placeholder_parameters
+        if parameters:
+            previews_by_parameter: dict[str, list[dict]] = {}
+            for preview in self._previews:
+                if not self._preview_is_displayable(preview):
+                    continue
+                parameter = preview.get("parameter", "")
+                previews_by_parameter.setdefault(parameter, []).append(preview)
+
+            slot_count = max(self.placeholder_count, len(parameters))
+            for index in range(slot_count):
+                preview = None
+                if index < len(parameters):
+                    matches = previews_by_parameter.get(parameters[index]) or []
+                    if matches:
+                        preview = matches.pop(0)
+                if preview is None:
+                    self.content_layout.addWidget(self._placeholder_label(index))
+                else:
+                    self._add_preview_label(preview)
+                    preview_count += 1
+        else:
+            for preview in self._previews:
+                if not self._preview_is_displayable(preview):
+                    continue
+                self._add_preview_label(preview)
                 preview_count += 1
-                continue
-
-            image = preview.get("image")
-            if image is None:
-                continue
-
-            label = DraggablePreviewImageLabel(
-                self.guid,
-                preview.get("parameter", ""),
-                preview.get("axes") or [],
-                )
-            label.setObjectName("measurementPreviewImage")
-            label.setFixedSize(self.icon_size, self.icon_size)
-            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            label.setToolTip(preview.get("title", ""))
-            label.set_preview_accessibility(preview.get("title"))
-            label.setPixmap(
-                QtGui.QPixmap.fromImage(image).scaled(
-                    self.icon_size,
-                    self.icon_size,
-                    QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                    QtCore.Qt.TransformationMode.SmoothTransformation,
-                    )
-                )
-            label.plotRequested.connect(self._emit_plot_requested)
-            label.exportRequested.connect(self._emit_export_requested)
-            self.content_layout.addWidget(label)
-            preview_count += 1
-
-        for index in range(max(0, self.placeholder_count - preview_count)):
-            self.content_layout.addWidget(self._placeholder_label(index))
+            for index in range(preview_count, self.placeholder_count):
+                self.content_layout.addWidget(self._placeholder_label(index))
         self.content_layout.addStretch()
         self._has_rendered_previews = preview_count > 0
+        self._restore_selection(selected_parameter)
+
+
+    @staticmethod
+    def _preview_is_displayable(preview):
+        return bool(preview.get("unsupported") or preview.get("image") is not None)
+
+
+    def _add_preview_label(self, preview):
+        if preview.get("unsupported"):
+            label = unsupported_preview_label(
+                preview,
+                self.icon_size,
+                "measurementPreviewUnsupported",
+                )
+            self.content_layout.addWidget(label)
+            return
+
+        label = DraggablePreviewImageLabel(
+            self.guid,
+            preview.get("parameter", ""),
+            preview.get("axes") or [],
+            )
+        label.setObjectName("measurementPreviewImage")
+        label.setFixedSize(self.icon_size, self.icon_size)
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        label.setToolTip(preview.get("title", ""))
+        label.set_preview_accessibility(preview.get("title"))
+        label.setPixmap(
+            QtGui.QPixmap.fromImage(preview["image"]).scaled(
+                self.icon_size,
+                self.icon_size,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        label.plotRequested.connect(self._emit_plot_requested)
+        label.exportRequested.connect(self._emit_export_requested)
+        label.dragFinished.connect(self._apply_pending_display)
+        self.content_layout.addWidget(label)
 
 
     def set_generating(self, generating):
@@ -127,8 +173,33 @@ class RunPreviewCell(qtw.QWidget):
             label.setToolTip("")
 
 
+    def update_placeholder_metadata(self, metadata):
+        dimensions = preview_placeholder_dimensions(metadata)
+        parameters = list(metadata.get("measure_parameters") or [])
+        if (dimensions != self._placeholder_dimensions
+                or parameters != self._placeholder_parameters):
+            self._placeholder_dimensions = dimensions
+            self._placeholder_parameters = parameters
+            if self._has_rendered_previews:
+                self.show_previews(self._previews)
+            else:
+                self.show_placeholders()
+
+
     def _placeholder_label(self, index=0, generating=False):
-        label = qtw.QLabel()
+        parameters = self._placeholder_parameters
+        parameter = parameters[index] if index < len(parameters) else ""
+        label = DraggablePreviewImageLabel(self.guid, parameter, axes_pending=True)
+        label.dragFinished.connect(self._apply_pending_display)
+        label.plotRequested.connect(self._emit_plot_requested)
+        label.exportRequested.connect(self._emit_export_requested)
+        dimensions = self._placeholder_dimensions
+        dimension = dimensions[index] if index < len(dimensions) else None
+        label.setText(f"{dimension}D" if dimension else "")
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        font = label.font()
+        font.setPointSize(8)
+        label.setFont(font)
         label.setObjectName("measurementPreviewPlaceholder")
         label.setFixedSize(self.icon_size, self.icon_size)
         label.setFrameShape(qtw.QFrame.Shape.Box)
@@ -144,6 +215,26 @@ class RunPreviewCell(qtw.QWidget):
                 )
             label.setToolTip("Generating preview")
         return label
+
+
+    def _defer_display_during_drag(self, display):
+        # QDrag runs a nested event loop. Preview publication in that loop
+        # must not replace/delete its source until the user has dropped it.
+        if any(label.drag_active for label in self.findChildren(DraggablePreviewImageLabel)):
+            self._pending_display = display
+            return True
+        return False
+
+
+    def _apply_pending_display(self):
+        display = self._pending_display
+        self._pending_display = None
+        if display is None:
+            return
+        if display[0] == "previews":
+            self.show_previews(display[1])
+        else:
+            self.show_placeholders(count=display[1], generating=display[2])
 
 
     def _generating_placeholder_colors(self, index):
@@ -164,6 +255,11 @@ class RunPreviewCell(qtw.QWidget):
 
 
     def _clear_layout(self):
+        selected_parameter = next(
+            (label.parameter for label in self.findChildren(PreviewImageLabel)
+             if label._selected),
+            None,
+            )
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             if item is None:
@@ -172,6 +268,15 @@ class RunPreviewCell(qtw.QWidget):
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
+        return selected_parameter
+
+
+    def _restore_selection(self, parameter):
+        if parameter:
+            for label in self.findChildren(PreviewImageLabel):
+                if label.parameter == parameter:
+                    label.set_selected(True)
+                    break
 
 
 class EqualsAlignedDelegate(qtw.QStyledItemDelegate):

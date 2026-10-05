@@ -1,4 +1,5 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from math import isclose, isfinite, log10
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -60,6 +61,76 @@ if TYPE_CHECKING:
 else:
     class _PlotAxisScalingBase:
         pass
+
+
+def _manual_axis_view_limits_are_usable(
+    viewbox: Any,
+    axis_number: int,
+    values: tuple[float, float] | list[float],
+) -> bool:
+    """Preflight PyQtGraph's range arithmetic before it changes view state."""
+    lower, upper = values
+    span = upper - lower
+    endpoint_sum = lower + upper
+    if (
+        not all(isfinite(value) for value in (lower, upper, span, endpoint_sum))
+        or span <= 0
+    ):
+        return False
+    # ViewBox expands narrow positive-offset ranges by this quantization
+    # allowance before applying its limits. Check the same arithmetic without
+    # disabling Auto or publishing an intermediate invalid target range.
+    allowance = endpoint_sum * 1.5e-15
+    if span < 2 * allowance:
+        lower -= allowance
+        upper += allowance
+    if not all(isfinite(value) for value in (lower, upper, upper - lower)):
+        return False
+    effective_limits = getattr(viewbox, "_effectiveLimits", None)
+    if callable(effective_limits):
+        minimum, maximum = effective_limits()[axis_number]
+        if minimum is not None and lower < minimum:
+            return False
+        if maximum is not None and upper > maximum:
+            return False
+    return True
+
+
+def _disable_native_axis_auto(viewbox: Any, axis_constant: int) -> None:
+    """Let qPlot replace pending native auto bounds without applying them."""
+    pending = viewbox._autoRangeNeedsUpdate
+    viewbox._autoRangeNeedsUpdate = False
+    try:
+        viewbox.enableAutoRange(axis_constant, False)
+    finally:
+        viewbox._autoRangeNeedsUpdate = pending and any(
+            mode is not False for mode in viewbox.autoRangeEnabled()
+        )
+
+
+@contextmanager
+def _axis_bounds_without_dynamic_clipping(
+    viewbox: Any, items: list[Any] | None,
+) -> Iterator[None]:
+    """Measure processed curves without clipping them to the previous Y view."""
+    changed = []
+    try:
+        for item in items if items is not None else viewbox.addedItems:
+            if not isinstance(item, pg.PlotDataItem):
+                continue
+            limit = item.opts.get("dynamicRangeLimit")
+            if limit is None:
+                continue
+            changed.append((item, limit))
+            item.opts["dynamicRangeLimit"] = None
+            item._datasetDisplay = None
+            item.updateItems()
+        yield
+    finally:
+        for item, limit in reversed(changed):
+            item.opts["dynamicRangeLimit"] = limit
+            item._datasetDisplay = None
+            item.updateItems()
 
 
 def _axis_scale_power_text(scale: float) -> str:
@@ -204,6 +275,28 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             y_axis="y",
         )
         self._install_axis_scale_double_click_handlers()
+        if getattr(self, "operation_kind", None) in ("plot1d", "sweeper"):
+            # Full-view requests must reach qPlot before native bounds derived
+            # from drawing-clipped coordinates mutate the current view.
+            self.plot.autoBtn.clicked.disconnect(self.plot.autoBtnClicked)
+            self.plot.autoBtn.clicked.connect(self._axis_scale_full_view_button_clicked)
+            self.vb.set_auto_range_handler(lambda: self.force_all_axes_autoscale())
+
+    def _axis_scale_full_view_button_clicked(self) -> None:
+        """Apply full-view Auto with the same range guard as axis controls."""
+        if self.plot.autoBtn.mode == "auto":
+            self.force_all_axes_autoscale()
+            self.plot.autoBtn.hide()
+            self.plot.sigRangeChangedManually.emit(self.vb.mouseEnabled()[:])
+            return
+        self.__dict__.get("_axis_scale_custom_auto_axes", set()).clear()
+        self.plot.disableAutoRange()
+        for name in ("right_vb", "top_vb", "top_right_vb"):
+            viewbox = self.__dict__.get(name)
+            if viewbox is not None:
+                viewbox.disableAutoRange()
+        for axis in self.__dict__.get("_axis_scale_controls", {}):
+            self._sync_axis_scale_controls(axis)
 
     def _install_axis_scale_viewbox_range_handlers(
             self,
@@ -240,12 +333,71 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             installed.add(key)
 
     def _axis_scale_range_changed(self, axis: _AxisName) -> None:
-        """Reflect wheel, drag, and linked-view changes in an open dialog."""
+        """Synchronize controls and refresh Auto axes using this visible range."""
 
         if self.__dict__.get("_axis_scale_programmatic_change_depth", 0) == 0:
             self.__dict__.get("_axis_scale_custom_auto_axes", set()).discard(axis)
         if axis in self.__dict__.get("_axis_scale_controls", {}):
             self._sync_axis_scale_controls(axis)
+        if (
+                self.__dict__.get("_axis_scale_custom_auto_axes")
+                and not self.__dict__.get("_axis_scale_visible_refresh_active", False)
+                ):
+            self.__dict__.setdefault("_axis_scale_changed_axes", set()).add(axis)
+            timer = self.__dict__.get("_axis_scale_visible_refresh_timer")
+            if timer is None:
+                timer = QtCore.QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._refresh_axis_scale_visible_auto)
+                self._axis_scale_visible_refresh_timer = timer
+            # Linked axis-pair ViewBoxes may receive the same signal after us.
+            # Read their final ranges once the current signal delivery finishes.
+            timer.start(0)
+
+    def _refresh_axis_scale_visible_auto(self) -> None:
+        """Apply one bounded refresh of dependent semantic axes after a change."""
+
+        changed_axes = self.__dict__.pop("_axis_scale_changed_axes", set())
+        limits_by_axis: dict[_AxisName, tuple[float, float]] = {}
+        for axis, _label, _side in _AXIS_SPECS:
+            if axis not in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
+                continue
+            number = self._axis_scale_axis_number(axis)
+            state = self._axis_scale_viewbox(axis).getState(copy=False)
+            if not state["autoVisibleOnly"][number]:
+                continue
+            for bounds_viewbox, _items in self._axis_scale_bound_item_groups(axis):
+                # The containing ViewBox identifies the perpendicular axis of
+                # these assigned items, independently of the tab's owner.
+                if number == 0:
+                    perpendicular: _AxisName = (
+                        "y2" if bounds_viewbox in (
+                            self.__dict__.get("right_vb"),
+                            self.__dict__.get("top_right_vb"),
+                        ) else "y"
+                    )
+                else:
+                    perpendicular = (
+                        "x2" if bounds_viewbox in (
+                            self.__dict__.get("top_vb"),
+                            self.__dict__.get("top_right_vb"),
+                        ) else "x"
+                    )
+                if perpendicular in changed_axes:
+                    limits = self._axis_scale_auto_limits(axis)
+                    if limits is not None:
+                        limits_by_axis[axis] = limits
+                    break
+
+        # Calculate every range before applying any of them. Mutually dependent
+        # axes then use the same visible region, without chasing each other's
+        # padding or auto-pan updates across successive event-loop turns.
+        self._axis_scale_visible_refresh_active = True
+        try:
+            for axis, limits in limits_by_axis.items():
+                self._apply_axis_scale_filtered_auto(axis, limits=limits)
+        finally:
+            self._axis_scale_visible_refresh_active = False
 
     def force_all_axes_autoscale(self) -> None:
         """Return every active plot axis to automatic scaling mode."""
@@ -586,8 +738,10 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         try:
             target_range = state["targetRange"][axis_number]
             data_range = self.view_to_data(axis, target_range)
-            ui.minText.setText(f"{data_range[0]:.5g}")
-            ui.maxText.setText(f"{data_range[1]:.5g}")
+            # Editable limits must round-trip doubles, even for a narrow range
+            # at a large offset. Tick-label precision is insufficient here.
+            ui.minText.setText(f"{data_range[0]:.17g}")
+            ui.maxText.setText(f"{data_range[1]:.17g}")
 
             auto_range = (
                 True
@@ -748,16 +902,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             if ui is not None
             else default_fraction
         )
-        visible_only = (
-            ui.visibleOnlyCheck.isChecked()
-            if ui is not None
-            else state["autoVisibleOnly"][axis_number]
-        )
-        auto_pan = (
-            ui.autoPanCheck.isChecked()
-            if ui is not None
-            else state["autoPan"][axis_number]
-        )
+        visible_only = state["autoVisibleOnly"][axis_number]
+        auto_pan = state["autoPan"][axis_number]
         ranges: list[list[float]] = []
         for bounds_viewbox, items in self._axis_scale_bound_item_groups(axis):
             orthogonal_ranges: list[list[float] | None] = [None, None]
@@ -765,12 +911,35 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 orthogonal_ranges[axis_number] = bounds_viewbox.viewRange()[
                     1 - axis_number
                 ]
-            bounds = bounds_viewbox.childrenBounds(
-                frac=fractions,
-                orthoRange=orthogonal_ranges,
-                items=items,
-            )[axis_number]
-            if bounds is not None and all(isfinite(value) for value in bounds):
+            with _axis_bounds_without_dynamic_clipping(bounds_viewbox, items):
+                for item in items if items is not None else bounds_viewbox.addedItems:
+                    if not isinstance(item, pg.PlotDataItem) or not item.isVisible():
+                        continue
+                    sample_bounds = item.dataBounds(
+                        axis_number, fractions[axis_number], orthogonal_ranges[axis_number],
+                    )
+                    if sample_bounds[0] is not None and sample_bounds[1] is not None:
+                        sample_lower, sample_upper = (float(value) for value in sample_bounds)
+                        if (
+                            isfinite(sample_lower) and isfinite(sample_upper)
+                            and not all(isfinite(value) for value in (
+                                sample_upper - sample_lower, sample_upper + sample_lower,
+                            ))
+                        ):
+                            # Qt rectangles cannot represent this finite pair;
+                            # preserve it for explicit rejection by the guard.
+                            return sample_lower, sample_upper
+                bounds = bounds_viewbox.childrenBounds(
+                    frac=fractions,
+                    orthoRange=orthogonal_ranges,
+                    items=items,
+                )[axis_number]
+            if bounds is not None:
+                if not all(isfinite(value) for value in bounds):
+                    # Native pixel padding can overflow finite sample bounds.
+                    # Keep unsupported geometry distinct from absent data so
+                    # the common preflight disables retries and reports it.
+                    return float(bounds[0]), float(bounds[1])
                 ranges.append(bounds)
         if not ranges:
             return None
@@ -781,17 +950,22 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         if auto_pan or lower == upper:
             if not isfinite(current_span) or current_span <= 0:
                 current_span = 1.0
-            center = (lower + upper) * 0.5
-            lower = center - current_span * 0.5
-            upper = center + current_span * 0.5
+            center = lower * 0.5 + upper * 0.5
+            # A narrow span at a large offset may collapse to one double.
+            # Retain at least the backend's quantization allowance so that
+            # unsupported constant/auto-pan geometry reaches our preflight.
+            half_span = max(current_span * 0.5, abs(center) * 1.5e-15)
+            lower = center - half_span
+            upper = center + half_span
         else:
             padding = viewbox.suggestPadding(axis_number)
             extra = (upper - lower) * padding
             lower -= extra
             upper += extra
 
-        if not all(isfinite(value) for value in (lower, upper)) or lower >= upper:
-            return None
+        # Existing bounds can produce unsupported geometry after padding or
+        # centering. Preserve that result for the common range preflight;
+        # None means no bounds, and would bypass rejection and mode recovery.
         return lower, upper
 
     def _update_axis_scale_auto_limits_tooltip(self, axis: _AxisName) -> None:
@@ -815,7 +989,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
         assert data_limits is not None
         button.setToolTip(
-            f"Set manual limits to {data_limits[0]:.5g} and {data_limits[1]:.5g}."
+            f"Set manual limits to {data_limits[0]:.17g} and {data_limits[1]:.17g}."
         )
 
     def _axis_scale_copy_auto_limits(self, axis: _AxisName) -> None:
@@ -833,11 +1007,10 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 ):
             self._update_axis_scale_auto_limits_tooltip(axis)
             return
-        ui = self._axis_scale_controls[axis]
-        ui.minText.setText(f"{data_limits[0]:.5g}")
-        ui.maxText.setText(f"{data_limits[1]:.5g}")
-        self._axis_scale_range_text_changed(axis)
-        self._update_axis_scale_auto_limits_tooltip(axis)
+        # Auto limits already use ViewBox coordinates. Do not pass them through
+        # editable text or a log -> physical -> log conversion before applying.
+        self._apply_axis_scale_manual_limits(axis, limits)
+        self._sync_axis_scale_controls(axis)
 
     def _axis_scale_mouse_toggled(self, axis: _AxisName, checked: bool) -> None:
         viewbox = self._axis_scale_viewbox(axis)
@@ -858,7 +1031,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         axis_number = self._axis_scale_axis_number(axis)
         viewbox = self._axis_scale_viewbox(axis)
         previous_view_values = list(viewbox.viewRange()[axis_number])
-        previous_values = self.view_to_data(axis, previous_view_values)
+        previous_values = np.asarray(self.view_to_data(axis, previous_view_values))
         try:
             values = [float(ui.minText.text()), float(ui.maxText.text())]
         except ValueError:
@@ -869,8 +1042,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 or not all(isfinite(value) for value in values)
                 or values[0] >= values[1]
                 ):
-            ui.minText.setText(f"{previous_values[0]:.5g}")
-            ui.maxText.setText(f"{previous_values[1]:.5g}")
+            ui.minText.setText(f"{previous_values[0]:.17g}")
+            ui.maxText.setText(f"{previous_values[1]:.17g}")
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -880,8 +1053,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
 
         if self._axis_scale_log_mode(axis) and any(value <= 0 for value in values):
-            ui.minText.setText(f"{previous_values[0]:.5g}")
-            ui.maxText.setText(f"{previous_values[1]:.5g}")
+            ui.minText.setText(f"{previous_values[0]:.17g}")
+            ui.maxText.setText(f"{previous_values[1]:.17g}")
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -890,10 +1063,38 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                     )
             return
 
-        view_values = [
-            float(value) for value in self.data_to_view(axis, values)
-        ]
+        # Return may emit editingFinished twice. After a rejected edit restores
+        # these fields, the second emission must not switch Auto to Manual.
+        # Unchanged fields also retain their exact original log coordinates.
+        if values == list(previous_values):
+            return
+        view_values = [float(value) for value in self.data_to_view(axis, values)]
+        if not _manual_axis_view_limits_are_usable(viewbox, axis_number, view_values):
+            ui.minText.setText(f"{previous_values[0]:.17g}")
+            ui.maxText.setText(f"{previous_values[1]:.17g}")
+            show_status = getattr(self, "show_status", None)
+            if callable(show_status):
+                show_status("These axis limits exceed the supported plot range.", 5000)
+            return
+        self._apply_axis_scale_manual_limits(axis, view_values)
 
+    def _apply_axis_scale_manual_limits(
+            self,
+            axis: _AxisName,
+            view_values: tuple[float, float] | list[float],
+            ) -> None:
+        """Apply validated numeric ViewBox limits without parsing UI text."""
+
+        ui = self._axis_scale_controls[axis]
+        viewbox = self._axis_scale_viewbox(axis)
+        if not _manual_axis_view_limits_are_usable(
+            viewbox, self._axis_scale_axis_number(axis), view_values,
+        ):
+            self._sync_axis_scale_controls(axis)
+            show_status = getattr(self, "show_status", None)
+            if callable(show_status):
+                show_status("These axis limits exceed the supported plot range.", 5000)
+            return
         ui.manualRadio.setChecked(True)
         self.__dict__.get("_axis_scale_custom_auto_axes", set()).discard(axis)
         if self._axis_scale_dimension(axis) == "x":
@@ -906,7 +1107,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         """Return whether auto-ranging must respect per-item axis assignment."""
 
         return (
-            (
+            getattr(self, "operation_kind", None) == "sweeper"
+            or (
                 isinstance(self.__dict__.get("_trace_styles"), dict)
                 and isinstance(self.__dict__.get("lines"), dict)
             )
@@ -919,20 +1121,47 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             )
         )
 
-    def _apply_axis_scale_filtered_auto(self, axis: _AxisName) -> None:
+    def _apply_axis_scale_filtered_auto(
+            self,
+            axis: _AxisName,
+            *,
+            limits: tuple[float, float] | None = None,
+            ) -> None:
         """Apply an item-filtered auto range while retaining Auto mode in the UI."""
 
-        limits = self._axis_scale_auto_limits(axis)
+        if limits is None:
+            limits = self._axis_scale_auto_limits(axis)
         if limits is None:
             return
         viewbox = self._axis_scale_viewbox(axis)
         axis_constant = self._axis_scale_axis_constant(axis)
+        axis_number = self._axis_scale_axis_number(axis)
+        bound_groups = self._axis_scale_bound_item_groups(axis)
+        if not _manual_axis_view_limits_are_usable(viewbox, axis_number, limits):
+            if viewbox.autoRangeEnabled()[axis_number] is not False or any(
+                bounds_viewbox.autoRangeEnabled()[axis_number] is not False
+                for bounds_viewbox, _items in bound_groups
+            ):
+                # Initial/native Auto must not retry the rejected geometry on
+                # paint. Retain qPlot's Auto mode so a later supported source
+                # update can recover automatically with the previous view intact.
+                for bounds_viewbox, _items in bound_groups:
+                    _disable_native_axis_auto(bounds_viewbox, axis_constant)
+                if all(bounds_viewbox is not viewbox for bounds_viewbox, _items in bound_groups):
+                    _disable_native_axis_auto(viewbox, axis_constant)
+                self.__dict__.setdefault("_axis_scale_custom_auto_axes", set()).add(axis)
+            if axis in self.__dict__.get("_axis_scale_controls", {}):
+                self._sync_axis_scale_controls(axis)
+            show_status = getattr(self, "show_status", None)
+            if callable(show_status):
+                show_status("Automatic axis limits exceed the supported plot range.", 5000)
+            return
         self._axis_scale_programmatic_change_depth = (
             self.__dict__.get("_axis_scale_programmatic_change_depth", 0) + 1
         )
         try:
-            for bounds_viewbox, _items in self._axis_scale_bound_item_groups(axis):
-                bounds_viewbox.enableAutoRange(axis_constant, False)
+            for bounds_viewbox, _items in bound_groups:
+                _disable_native_axis_auto(bounds_viewbox, axis_constant)
             if self._axis_scale_dimension(axis) == "x":
                 viewbox.setXRange(*limits, padding=0)
             else:
@@ -959,9 +1188,14 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def _axis_scale_trace_data_changed(self, _line: Any = None) -> None:
         """Reapply active trace-filtered auto ranges after a data update."""
 
-        for axis in tuple(
-            self.__dict__.get("_axis_scale_custom_auto_axes", set())
-        ):
+        axes = set(self.__dict__.get("_axis_scale_custom_auto_axes", set()))
+        for axis, _label, _side in _AXIS_SPECS:
+            if (self._axis_scale_axis_is_used(axis)
+                    and self._axis_scale_uses_filtered_auto(axis)
+                    and self._axis_scale_viewbox(axis).autoRangeEnabled()[
+                        self._axis_scale_axis_number(axis)] is not False):
+                axes.add(axis)
+        for axis in tuple(axes):
             if self._axis_scale_axis_is_used(axis):
                 self._apply_axis_scale_filtered_auto(axis)
 
@@ -995,24 +1229,24 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             viewbox.setYLink(str(ui.linkCombo.currentText()))
 
     def _axis_scale_auto_pan_toggled(self, axis: _AxisName, checked: bool) -> None:
-        if axis in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
-            self._apply_axis_scale_filtered_auto(axis)
-            return
+        # Store the option on its semantic axis even when qPlot, rather than
+        # native autoRange, owns the range calculation and refreshes.
         viewbox = self._axis_scale_viewbox(axis)
         if self._axis_scale_dimension(axis) == "x":
             viewbox.setAutoPan(x=checked)
         else:
             viewbox.setAutoPan(y=checked)
-
-    def _axis_scale_visible_only_toggled(self, axis: _AxisName, checked: bool) -> None:
         if axis in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
             self._apply_axis_scale_filtered_auto(axis)
-            return
+
+    def _axis_scale_visible_only_toggled(self, axis: _AxisName, checked: bool) -> None:
         viewbox = self._axis_scale_viewbox(axis)
         if self._axis_scale_dimension(axis) == "x":
             viewbox.setAutoVisible(x=checked)
         else:
             viewbox.setAutoVisible(y=checked)
+        if axis in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
+            self._apply_axis_scale_filtered_auto(axis)
 
     def _axis_scale_invert_toggled(self, axis: _AxisName, checked: bool) -> None:
         viewbox = self._axis_scale_viewbox(axis)

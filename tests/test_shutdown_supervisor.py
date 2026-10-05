@@ -3732,6 +3732,7 @@ def test_public_run_real_interrupt_preserves_writer_and_cleans_trusted_tree(
     launcher_pid_path = tmp_path / "interrupted-public-launcher.pid"
     gui_pid_path = tmp_path / "interrupted-public-gui.pid"
     helper_pid_path = tmp_path / "interrupted-public-helper.pid"
+    helper_ready_path = tmp_path / "interrupted-public-helper.ready"
     sentinel_pid_path = tmp_path / "interrupted-public-sentinel.pid"
     gui_source = textwrap.dedent(
         """
@@ -3765,6 +3766,9 @@ def test_public_run_real_interrupt_preserves_writer_and_cleans_trusted_tree(
         reader.submit_query("SELECT 1", timeout=20.0)
         reader._wait_for_test_notification(b"operation_started", 10.0)
         reader._wait_for_test_notification(b"operation_hang", 10.0)
+        Path(os.environ["_QPLOT_TEST_HELPER_READY_PATH"]).write_text(
+            "operation_hang", encoding="utf-8"
+        )
         if os.name == "nt":
             sleep = ctypes.PyDLL("kernel32", use_last_error=True).Sleep
             sleep.argtypes = (ctypes.c_ulong,)
@@ -3906,15 +3910,50 @@ def test_public_run_real_interrupt_preserves_writer_and_cleans_trusted_tree(
 
             supervisor._spawn_public_api_launcher = capture_spawn
             interrupt_delivered_at = []
+            cancellation_stages = {}
+            original_send = supervisor._send_public_api_cancellation_record
+            original_wait = supervisor._wait_for_public_api_launcher_exit
+            original_cleanup = supervisor._public_api_caller_cleanup_boundary
+
+            def observe_stage(name):
+                if interrupt_delivered_at:
+                    cancellation_stages.setdefault(name, time.monotonic())
+
+            def observed_send(sender):
+                observe_stage("cancellation_send_started")
+                try:
+                    return original_send(sender)
+                finally:
+                    observe_stage("cancellation_send_finished")
+
+            def observed_wait(launcher):
+                observe_stage("launcher_exit_wait_started")
+                try:
+                    return original_wait(launcher)
+                finally:
+                    observe_stage("launcher_exit_wait_finished")
+
+            def observed_cleanup(name):
+                observe_stage(name)
+                return original_cleanup(name)
+
+            supervisor._send_public_api_cancellation_record = observed_send
+            supervisor._wait_for_public_api_launcher_exit = observed_wait
+            supervisor._public_api_caller_cleanup_boundary = observed_cleanup
 
             def interrupt_when_trusted_helper_is_stuck():
-                helper_path = Path(os.environ["_QPLOT_TEST_HELPER_PID_PATH"])
+                ready_path = Path(os.environ["_QPLOT_TEST_HELPER_READY_PATH"])
                 deadline = time.monotonic() + 6.0
-                while not helper_path.exists():
+                while True:
+                    try:
+                        ready = ready_path.read_text(encoding="utf-8")
+                    except FileNotFoundError:
+                        ready = ""
+                    if ready == "operation_hang":
+                        break
                     if time.monotonic() >= deadline:
-                        raise TimeoutError("trusted helper did not become ready")
+                        raise TimeoutError("trusted helper did not confirm its operation hang")
                     time.sleep(0.005)
-                time.sleep(0.05)
                 interrupt_delivered_at.append(time.monotonic())
                 if os.name == "nt":
                     _thread.interrupt_main()
@@ -4006,6 +4045,11 @@ def test_public_run_real_interrupt_preserves_writer_and_cleans_trusted_tree(
                             "interrupt_to_catch": (
                                 caught_at - interrupt_delivered_at[0]
                             ),
+                            "operation_hang_observed": True,
+                            "cancellation_stages": {
+                                name: observed_at - interrupt_delivered_at[0]
+                                for name, observed_at in cancellation_stages.items()
+                            },
                             "immediate_running": immediate_running,
                             "protected_unchanged": protected_unchanged,
                             "writer_alive_at_catch": writer_alive_at_catch,
@@ -4040,6 +4084,7 @@ def test_public_run_real_interrupt_preserves_writer_and_cleans_trusted_tree(
                 "_QPLOT_TEST_LAUNCHER_PID_PATH": os.fspath(launcher_pid_path),
                 "_QPLOT_TEST_GUI_PID_PATH": os.fspath(gui_pid_path),
                 "_QPLOT_TEST_HELPER_PID_PATH": os.fspath(helper_pid_path),
+                "_QPLOT_TEST_HELPER_READY_PATH": os.fspath(helper_ready_path),
                 "_QPLOT_TEST_SENTINEL_PID_PATH": os.fspath(sentinel_pid_path),
             },
             timeout=12.0,
@@ -4048,12 +4093,14 @@ def test_public_run_real_interrupt_preserves_writer_and_cleans_trusted_tree(
         assert result.returncode == 0, result.stderr
         record = _read_json(record_path)
         assert record["exception_type"] == "KeyboardInterrupt"
+        assert helper_ready_path.read_text(encoding="utf-8") == "operation_hang"
         assert record["immediate_running"] == {
             "launcher": False,
             "gui": False,
             "helper": False,
         }
-        assert float(record["interrupt_to_catch"]) < 1.0
+        assert record["operation_hang_observed"] is True
+        assert float(record["interrupt_to_catch"]) < 1.0, record
         assert record["protected_unchanged"] is True
         assert record["writer_alive_at_catch"] is True
         assert record["writer_committed_after_catch"] is True
@@ -4415,11 +4462,15 @@ def test_public_run_returns_70_on_authenticated_malformed_result(
     malformed_launcher_source = textwrap.dedent(
         """
         import os
+        import socket
         from qplot import _shutdown_supervisor as supervisor
 
         bootstrap = supervisor._api_launcher_bootstrap_from_environment()
         channel = supervisor._connect_public_api_result_channel(bootstrap)
         channel.sendall(b"!" * supervisor._API_RESULT_HEADER.size)
+        # Match production publication: commit the queued header and FIN before
+        # ExitProcess can reset Winsock and discard the malformed test frame.
+        channel.shutdown(socket.SHUT_WR)
         os._exit(24)
         """
     )

@@ -317,8 +317,13 @@ def test_extracted_sdist(artifact: Path, temporary: Path) -> None:
     # Exercise the installed sdist, including compiled extensions.  The
     # repository's normal ``pythonpath = ["src"]`` setting would otherwise
     # shadow that installation with the unbuilt extracted source tree.
+    # Match CI's two-worker, per-file scheduling; coverage has its own CI job.
     run(
-        [str(python), "-m", "pytest", "-o", "pythonpath="],
+        [
+            str(python), "-m", "pytest", "--no-cov",
+            "-n", "2", "--dist=loadfile", "--no-loadscope-reorder",
+            "-o", "pythonpath=",
+        ],
         cwd=source,
         env=test_env,
     )
@@ -1489,7 +1494,21 @@ def exercise_installed_public_api_caller_eof(
     )
     try:
         deadline = time.monotonic() + 10.0
-        while not record_path.exists() or not launcher_record_path.exists():
+        while True:
+            # Creating a readiness file does not publish its contents atomically.
+            # Wait for both complete records before killing the public caller.
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                launcher_pid = int(launcher_record_path.read_text(encoding="utf-8"))
+                if not isinstance(record, dict) or not all(
+                    type(record.get(name)) is int and record[name] > 0
+                    for name in ("gui_pid", "helper_pid")
+                ) or launcher_pid <= 0:
+                    raise ValueError("incomplete installed caller readiness")
+            except (FileNotFoundError, ValueError):
+                pass
+            else:
+                break
             if caller.poll() is not None:
                 stdout, stderr = caller.communicate()
                 raise AssertionError(
@@ -1499,8 +1518,6 @@ def exercise_installed_public_api_caller_eof(
             if time.monotonic() >= deadline:
                 raise TimeoutError("installed caller-EOF tree did not become ready")
             time.sleep(0.01)
-        record = json.loads(record_path.read_text(encoding="utf-8"))
-        launcher_pid = int(launcher_record_path.read_text(encoding="utf-8"))
         caller.kill()
         caller.wait(timeout=5.0)
         wait_for_process_exit(launcher_pid)
@@ -1865,23 +1882,52 @@ def assert_installed_package():
 
 
 def assert_repaired_bounded_views():
-    oversized = "installed-wheel-presentation-value-" * 16_384
-    nested = oversized
-    for _depth in range(32):
-        nested = {"child": nested}
-    presentation = build_selected_run_presentation(
-        run_fields={"run_id": 7, "run_description": oversized},
-        metadata_fields={"oversized": oversized, "nested": nested},
+    description_prefix = '{"interdependencies_":{"payload":"'
+    description_suffix = '"}}'
+    run_description = (
+        description_prefix
+        + "r"
+        * (
+            1_258
+            - len(description_prefix.encode("utf-8"))
+            - len(description_suffix.encode("utf-8"))
+        )
+        + description_suffix
+    )
+    exception_prefix = "Traceback (most recent call last):\\n"
+    exception_suffix = "\\nKeyboardInterrupt"
+    measurement_exception = (
+        exception_prefix
+        + "x"
+        * (
+            1_255
+            - len(exception_prefix.encode("utf-8"))
+            - len(exception_suffix.encode("utf-8"))
+        )
+        + exception_suffix
+    )
+    assert len(run_description.encode("utf-8")) == 1_258
+    assert len(measurement_exception.encode("utf-8")) == 1_255
+
+    scalar_presentation = build_selected_run_presentation(
+        run_fields={"run_id": 7, "run_description": run_description},
+        metadata_fields={
+            "measurement_exception": measurement_exception,
+            "operator": "Ada",
+        },
         parameters=(),
         snapshot_summary={"Status": "available"},
         setpoint_summaries=(),
         unavailable_fields=(),
     )
-    assert isinstance(presentation, TrustedSelectedRunPresentation)
-    assert presentation.metadata.status == "truncated"
-    assert presentation.raw.status == "truncated"
-    assert oversized not in dict(presentation.metadata_fields).values()
-    for view in (presentation.metadata, presentation.raw):
+    assert isinstance(scalar_presentation, TrustedSelectedRunPresentation)
+    assert scalar_presentation.metadata.status == "available"
+    assert scalar_presentation.raw.status == "available"
+    assert scalar_presentation.metadata.shortened_value_count == 1
+    assert scalar_presentation.raw.shortened_value_count == 2
+    for view in (scalar_presentation.metadata, scalar_presentation.raw):
+        assert not any(node.key == "[truncated]" for node in view.nodes)
+        assert any(node.key == "[display]" for node in view.nodes)
         assert len(view.nodes) <= TRUSTED_PRESENTATION_MAX_RENDERED_NODES
         assert view.rendered_text_bytes <= TRUSTED_PRESENTATION_MAX_RENDERED_TEXT_BYTES
         assert view.tooltip_text_bytes <= TRUSTED_PRESENTATION_MAX_TOOLTIP_TEXT_BYTES
@@ -1891,8 +1937,65 @@ def assert_repaired_bounded_views():
             <= TRUSTED_PRESENTATION_MAX_VALUE_BYTES
             and len(node.tooltip.encode("utf-8"))
             <= TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
-            and oversized not in node.value
-            and oversized not in node.tooltip
+            and run_description not in node.value
+            and measurement_exception not in node.value
+            and run_description not in node.tooltip
+            and measurement_exception not in node.tooltip
+            for node in view.nodes
+        )
+
+    full_values = {
+        value.identifier: value for value in scalar_presentation.full_values
+    }
+    assert len(full_values) == 2
+    description_node = next(
+        node
+        for node in scalar_presentation.raw.nodes
+        if node.path == "/Raw/Run/run_description"
+    )
+    measurement_exception_node = next(
+        node
+        for node in scalar_presentation.metadata.nodes
+        if node.path == "/Metadata/measurement_exception"
+    )
+    assert description_node.value_shortened
+    assert measurement_exception_node.value_shortened
+    assert description_node.source_value_bytes == 1_258
+    assert measurement_exception_node.source_value_bytes == 1_255
+    assert "[view full]" in description_node.value
+    assert "KeyboardInterrupt" in measurement_exception_node.value
+    assert "activate" in description_node.tooltip.casefold()
+    assert "activate" in measurement_exception_node.tooltip.casefold()
+    assert full_values[description_node.full_value_id].text == run_description
+    assert (
+        full_values[measurement_exception_node.full_value_id].text
+        == measurement_exception
+    )
+
+    nested = "bounded terminal value"
+    for _depth in range(32):
+        nested = {"child": nested}
+    structural_presentation = build_selected_run_presentation(
+        run_fields={"run_id": 8},
+        metadata_fields={"nested": nested},
+        parameters=(),
+        snapshot_summary={"Status": "available"},
+        setpoint_summaries=(),
+        unavailable_fields=(),
+    )
+    assert structural_presentation.metadata.status == "truncated"
+    assert structural_presentation.raw.status == "truncated"
+    for view in (structural_presentation.metadata, structural_presentation.raw):
+        assert any(node.key == "[truncated]" for node in view.nodes)
+        assert len(view.nodes) <= TRUSTED_PRESENTATION_MAX_RENDERED_NODES
+        assert view.rendered_text_bytes <= TRUSTED_PRESENTATION_MAX_RENDERED_TEXT_BYTES
+        assert view.tooltip_text_bytes <= TRUSTED_PRESENTATION_MAX_TOOLTIP_TEXT_BYTES
+        assert all(
+            len(node.key.encode("utf-8")) <= TRUSTED_PRESENTATION_MAX_KEY_BYTES
+            and len(node.value.encode("utf-8"))
+            <= TRUSTED_PRESENTATION_MAX_VALUE_BYTES
+            and len(node.tooltip.encode("utf-8"))
+            <= TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES
             for node in view.nodes
         )
 
@@ -1950,8 +2053,15 @@ def assert_stage4_run_detail(service, run_id):
         for node in selected.snapshot.nodes
     ) == (
         ("station", "", None),
-        ("run_id", str(run_id), 0),
     )
+    station = selected.snapshot.nodes[0]
+    assert station.container_handle is not None
+    assert selected.snapshot.source is not None
+    station_page = selected.snapshot.source.page(station.container_handle, None)
+    assert station_page.continuation is None
+    assert tuple(
+        (node.key, node.value, node.parent_index) for node in station_page.nodes
+    ) == (("run_id", str(run_id), None),)
     assert dict(selected.metadata)["operator"] == f"operator-{run_id}"
     assert tuple(parameter.name for parameter in selected.parameters) == (
         "setpoint",
@@ -2168,6 +2278,788 @@ def exercise_stage5c_qt_bridge(service, record):
     )
 
 
+def exercise_stage5c_mixed_size_wal_priority(temporary):
+    import qcodes
+    from PyQt6 import QtCore, QtGui, QtWidgets
+    from qcodes import Station
+    from qcodes.dataset import (
+        Measurement,
+        initialise_or_create_database_at,
+        load_or_create_experiment,
+    )
+    from qcodes.dataset.sqlite.database import connect
+    from qcodes.parameters import ManualParameter
+    from qplot.datahandling import trusted_work_coordinator as coordinator_module
+    from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
+    from qplot.windows import _database_actions as database_actions
+    from qplot.windows import _trusted_derived_qt as bridge_module
+    from qplot.windows import main as main_window
+    from qplot.windows._widgets import details_tables
+    from qplot.windows._widgets import treeWidgets as tree_widgets
+
+    slow_count = 48
+    fast_count = 257
+    visible_count = 5_000
+    remaining_count = 11_000
+    database_directory = Path(temporary).resolve() / "mixed-size-wal"
+    database_directory.mkdir()
+    database_path = database_directory / "live.db"
+    cache_root = Path(temporary).resolve() / "mixed-size-derived-cache"
+    qplot_home = Path(temporary).resolve() / "mixed-size-qplot-home"
+    qplot_home.mkdir()
+
+    prior_qcodes_database = qcodes.config.core.db_location
+    prior_default_path = main_window.config.default_path
+    prior_default_file = main_window.config.default_file
+    cache_type = coordinator_module.TrustedDerivedDiskCache
+    coordinator_type = bridge_module.TrustedWorkCoordinator
+    original_metadata = bridge_module.TrustedDerivedQtBridge._publish_metadata
+    original_thumbnail = tree_widgets.RunList.set_run_previews
+    original_show_error = main_window.MainWindow.show_error
+    writer = None
+    open_contexts = []
+    window = None
+    application = None
+    normal_close_completed = False
+    cleanup_errors = []
+
+    class GatedCoordinator(coordinator_type):
+        # Release production scheduling after selection and viewport settle.
+
+        def __init__(self, *args, **kwargs):
+            self._smoke_work_released = False
+            super().__init__(*args, **kwargs)
+
+        def _pump(self, *args, **kwargs):
+            if self._smoke_work_released:
+                super()._pump(*args, **kwargs)
+
+        def release_smoke_work(self):
+            self._smoke_work_released = True
+            super()._pump()
+
+    metadata_order = []
+    thumbnail_previews = {}
+    errors = []
+
+    def record_metadata(bridge, publication, run_id, guid, payload):
+        result = original_metadata(bridge, publication, run_id, guid, payload)
+        exact_guid = str(guid or "")
+        if (
+            exact_guid in bridge._metadata_by_guid
+            and exact_guid not in metadata_order
+        ):
+            metadata_order.append(exact_guid)
+        return result
+
+    def record_thumbnail(widget, guid, previews):
+        result = original_thumbnail(widget, guid, previews)
+        thumbnail_previews[str(guid or "")] = tuple(previews or ())
+        return result
+
+    def record_error(_window, title, message, details=None):
+        errors.append((title, message, details))
+
+    def process_until(predicate, timeout=90.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            application.processEvents()
+            if predicate():
+                return
+            time.sleep(0.005)
+        raise AssertionError(
+            "installed mixed-size Stage 5C WAL condition did not settle: "
+            f"errors={errors!r}, metadata_order={metadata_order!r}"
+        )
+
+    def checkpoint_until_idle(mode, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while True:
+            checkpoint = writer.execute(
+                f"PRAGMA wal_checkpoint({mode})"
+            ).fetchone()
+            assert checkpoint is not None
+            if checkpoint[0] == 0:
+                if mode == "TRUNCATE":
+                    assert checkpoint == (0, 0, 0)
+                return checkpoint
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"writer {mode} checkpoint remained busy: {checkpoint!r}"
+                )
+            application.processEvents()
+            time.sleep(0.005)
+
+    def valid_images(previews):
+        return bool(previews) and all(
+            isinstance(preview.get("image"), QtGui.QImage)
+            and not preview["image"].isNull()
+            and not preview.get("unsupported")
+            for preview in previews
+        )
+
+    def bridge_complete(bridge, guid):
+        return bool(
+            guid in bridge._metadata_by_guid
+            and window.RunList.run_preview_is_ready(guid)
+            and guid in window.infoBox.preview.cache
+        )
+
+    def tree_items(tree):
+        iterator = QtWidgets.QTreeWidgetItemIterator(tree)
+        while iterator.value() is not None:
+            yield iterator.value()
+            iterator += 1
+
+    def tree_item_for_path(tree, path):
+        return next(
+            item
+            for item in tree_items(tree)
+            if str(item.data(0, details_tables.FULL_VALUE_PATH_ROLE) or "") == path
+        )
+
+    def assert_selected_exact_values(prior_dialog=None):
+        publication = bridge._selected_detail_publication
+        assert publication is not None
+        assert publication.run_guid == selected_guid
+        detail = publication.detail
+        assert detail.unavailable_fields == ()
+        assert not detail.presentation.parameters_truncated
+        assert detail.presentation.metadata.status == "available"
+        assert detail.presentation.raw.status == "available"
+        assert detail.presentation.metadata.shortened_value_count == 1
+        assert detail.presentation.raw.shortened_value_count >= 2
+        assert not any(
+            item.text(0) == "[truncated]"
+            for tree in (window.infoBox.metadata, window.infoBox.raw)
+            for item in tree_items(tree)
+        )
+
+        metadata_summary = tree_item_for_path(
+            window.infoBox.metadata,
+            "/Metadata/[display]",
+        )
+        assert "1 value shortened for display" in metadata_summary.text(1)
+        raw_summary = tree_item_for_path(window.infoBox.raw, "/Raw/[display]")
+        assert (
+            f"{detail.presentation.raw.shortened_value_count} values shortened "
+            "for display"
+            in raw_summary.text(1)
+        )
+
+        operator_item = tree_item_for_path(
+            window.infoBox.metadata,
+            "/Metadata/stage5c_operator",
+        )
+        assert operator_item.text(1) == selected_operator
+        description_item = tree_item_for_path(
+            window.infoBox.raw,
+            "/Raw/Run/run_description",
+        )
+        exception_item = tree_item_for_path(
+            window.infoBox.metadata,
+            "/Metadata/measurement_exception",
+        )
+        assert "[view full]" in description_item.text(1)
+        assert "KeyboardInterrupt" in exception_item.text(1)
+        assert f"{len(expected_run_description.encode('utf-8'))} UTF-8 bytes" in (
+            description_item.toolTip(1)
+        )
+        assert "1255 UTF-8 bytes" in exception_item.toolTip(1)
+
+        description_identifier = str(
+            description_item.data(1, details_tables.FULL_VALUE_ID_ROLE) or ""
+        )
+        exception_identifier = str(
+            exception_item.data(1, details_tables.FULL_VALUE_ID_ROLE) or ""
+        )
+        assert description_identifier
+        assert exception_identifier
+        assert (
+            window.infoBox._trusted_full_values[description_identifier].text
+            == expected_run_description
+        )
+        assert (
+            window.infoBox._trusted_full_values[exception_identifier].text
+            == selected_measurement_exception
+        )
+
+        window.infoBox.raw.itemActivated.emit(description_item, 1)
+        application.processEvents()
+        dialog = window.infoBox._full_value_dialog
+        assert dialog is not None
+        if prior_dialog is not None and dialog is not prior_dialog:
+            # A selected-detail/generation boundary deliberately discards the
+            # prior backing and dialog.  Re-publication may therefore create a
+            # replacement, but the retired dialog must hold no exact value.
+            assert prior_dialog._exact_text is None
+            try:
+                assert not prior_dialog.isVisible()
+            except RuntimeError:
+                # DeferredDelete may already have destroyed the Qt object.
+                pass
+        assert dialog.text_edit.isReadOnly()
+        assert dialog.text_edit.toPlainText() == expected_run_description
+        assert expected_run_description in dialog.text_edit.toPlainText()
+
+        window.infoBox.metadata.itemDoubleClicked.emit(exception_item, 1)
+        application.processEvents()
+        assert window.infoBox._full_value_dialog is dialog
+        assert dialog.text_edit.toPlainText() == selected_measurement_exception
+        assert dialog.text_edit.toPlainText().endswith("KeyboardInterrupt")
+        return dialog
+
+    def assert_lazy_snapshot_access():
+        publication = bridge._selected_detail_publication
+        assert publication is not None
+        assert publication.run_guid == selected_guid
+        snapshot_view = publication.detail.snapshot
+        assert snapshot_view.status == "available"
+        assert "loaded on demand" in snapshot_view.message
+        assert snapshot_view.source is None
+
+        snapshot_tree = window.infoBox.snapshot
+        initial_items = tuple(tree_items(snapshot_tree))
+        assert 0 < len(initial_items) <= 128
+        assert not any(
+            item.text(0) in {"[truncated]", "Snapshot unavailable"}
+            for item in initial_items
+        )
+        station_item = tree_item_for_path(snapshot_tree, "/Snapshot/station")
+        assert station_item.isExpanded()
+        process_until(lambda: station_item.childCount() > 0)
+        parameters_path = "/Snapshot/station/parameters"
+        parameters_item = tree_item_for_path(snapshot_tree, parameters_path)
+        assert parameters_item.childCount() == 0
+        parameters_item.setExpanded(True)
+        process_until(lambda: parameters_item.childCount() > 0)
+        assert parameters_item.childCount() <= 128
+
+        # Everything through the initial page was reader-only.  Subsequent
+        # continuation pages deliberately alternate with real QCoDeS writer
+        # commits/checkpoints; each reader interval receives a fresh protected
+        # family baseline after the writer has finished its permitted changes.
+        assert_source_policy(
+            protected_before_reader,
+            protected_artifact_state(database_path),
+            database_path,
+        )
+        next_writer_index = remaining_count
+        continuation_pages = 0
+        passive_checkpoints = 0
+        truncate_checkpoints = 0
+        reader_baseline = protected_artifact_state(database_path)
+
+        while True:
+            parameters_item = tree_item_for_path(snapshot_tree, parameters_path)
+            load_more = next(
+                (
+                    parameters_item.child(index)
+                    for index in range(parameters_item.childCount())
+                    if parameters_item.child(index).text(0) == "Load more…"
+                ),
+                None,
+            )
+            if load_more is None:
+                break
+            slow_index, fast_index = divmod(next_writer_index, fast_count)
+            remaining_run["datasaver"].add_result(
+                (remaining_run["slow"], float(slow_index)),
+                (remaining_run["fast"], float(fast_index)),
+                (
+                    remaining_run["signal"],
+                    float(slow_index * 1_000 + fast_index),
+                ),
+                (
+                    remaining_run["signal_b"],
+                    float(1_000_000 + slow_index * 1_000 + fast_index),
+                ),
+            )
+            remaining_run["datasaver"].flush_data_to_database(block=True)
+            writer.commit()
+            if continuation_pages % 2 == 0:
+                checkpoint_until_idle("PASSIVE")
+                passive_checkpoints += 1
+            else:
+                checkpoint_until_idle("TRUNCATE")
+                truncate_checkpoints += 1
+            reader_baseline = protected_artifact_state(database_path)
+            prior_count = parameters_item.childCount()
+            snapshot_tree.itemActivated.emit(load_more, 0)
+            process_until(
+                lambda expected_count=prior_count: (
+                    tree_item_for_path(
+                        snapshot_tree,
+                        parameters_path,
+                    ).childCount()
+                    > expected_count
+                )
+            )
+            parameters_item = tree_item_for_path(snapshot_tree, parameters_path)
+            assert 0 < parameters_item.childCount() - prior_count <= 127
+            assert_source_policy(
+                reader_baseline,
+                protected_artifact_state(database_path),
+                database_path,
+            )
+            next_writer_index += 1
+            continuation_pages += 1
+
+        parameters_item = tree_item_for_path(snapshot_tree, parameters_path)
+        loaded_names = [
+            parameters_item.child(index).text(0)
+            for index in range(parameters_item.childCount())
+        ]
+        assert loaded_names == selected_snapshot_parameter_names
+        assert len(loaded_names) == len(set(loaded_names))
+        final_item = tree_item_for_path(
+            snapshot_tree,
+            "/Snapshot/station/parameters/lazy_final_parameter",
+        )
+        final_item.setExpanded(True)
+        process_until(lambda: final_item.childCount() > 0)
+        final_name = tree_item_for_path(
+            snapshot_tree,
+            "/Snapshot/station/parameters/lazy_final_parameter/name",
+        )
+        assert final_name.text(1) == "lazy_final_parameter"
+        assert continuation_pages >= 2
+        assert passive_checkpoints > 0
+        assert truncate_checkpoints > 0
+        assert_source_policy(
+            reader_baseline,
+            protected_artifact_state(database_path),
+            database_path,
+        )
+        assert not any(
+            item.text(0) == "[truncated]" for item in tree_items(snapshot_tree)
+        )
+
+    def start_partial_run(name, acquired_count):
+        experiment = load_or_create_experiment(
+            f"{name}_experiment",
+            sample_name=f"{name}_sample",
+            conn=writer,
+        )
+        slow = ManualParameter(f"{name}_slow")
+        fast = ManualParameter(f"{name}_fast")
+        signal = ManualParameter(f"{name}_signal")
+        signal_b = ManualParameter(f"{name}_signal_b")
+        station = Station(slow, fast, signal, signal_b)
+        measurement = Measurement(
+            exp=experiment,
+            name=f"{name}_run",
+            station=station,
+        )
+        measurement.write_period = 3_600
+        measurement.register_parameter(slow)
+        measurement.register_parameter(fast)
+        measurement.register_parameter(signal, setpoints=(slow, fast))
+        measurement.register_parameter(signal_b, setpoints=(slow, fast))
+        measurement.set_shapes(
+            {
+                signal.name: (slow_count, fast_count),
+                signal_b.name: (slow_count, fast_count),
+            }
+        )
+        context = measurement.run(write_in_background=False)
+        datasaver = context.__enter__()
+        open_contexts.append(context)
+        for logical_index in range(acquired_count):
+            slow_index, fast_index = divmod(logical_index, fast_count)
+            datasaver.add_result(
+                (slow, float(slow_index)),
+                (fast, float(fast_index)),
+                (signal, float(slow_index * 1_000 + fast_index)),
+                (
+                    signal_b,
+                    float(1_000_000 + slow_index * 1_000 + fast_index),
+                ),
+            )
+        datasaver.flush_data_to_database(block=True)
+        datasaver.dataset.add_metadata("stage5c_operator", "Ada")
+        return {
+            "slow": slow,
+            "fast": fast,
+            "signal": signal,
+            "signal_b": signal_b,
+            "datasaver": datasaver,
+            "dataset": datasaver.dataset,
+        }
+
+    try:
+        initialise_or_create_database_at(database_path, journal_mode="WAL")
+        writer = connect(database_path)
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+
+        seed_experiment = load_or_create_experiment(
+            "mixed_seed_experiment",
+            sample_name="mixed_seed_sample",
+            conn=writer,
+        )
+        seed_setpoint = ManualParameter(
+            "mixed_seed_setpoint",
+            label="S" * 250,
+        )
+        seed_signal = ManualParameter(
+            "mixed_seed_signal",
+            label="D" * 250,
+        )
+        selected_snapshot_parameters = [
+            ManualParameter(f"p{index:03d}") for index in range(576)
+        ]
+        selected_snapshot_parameters.extend(
+            [seed_setpoint, seed_signal, ManualParameter("lazy_final_parameter")]
+        )
+        selected_snapshot_parameter_names = [
+            parameter.name for parameter in selected_snapshot_parameters
+        ]
+        selected_station = Station(*selected_snapshot_parameters)
+        exception_prefix = "Traceback (most recent call last):\\n"
+        exception_suffix = "\\nKeyboardInterrupt"
+        selected_measurement_exception = (
+            exception_prefix
+            + "x"
+            * (
+                1_255
+                - len(exception_prefix.encode("utf-8"))
+                - len(exception_suffix.encode("utf-8"))
+            )
+            + exception_suffix
+        )
+        assert len(selected_measurement_exception.encode("utf-8")) == 1_255
+        selected_operator = "Ada"
+        seed_measurement = Measurement(
+            exp=seed_experiment,
+            name="mixed_seed_run",
+            station=selected_station,
+        )
+        seed_measurement.register_parameter(seed_setpoint)
+        seed_measurement.register_parameter(
+            seed_signal,
+            setpoints=(seed_setpoint,),
+        )
+        with seed_measurement.run(write_in_background=False) as seed_saver:
+            for index in range(3):
+                seed_saver.add_result(
+                    (seed_setpoint, float(index)),
+                    (seed_signal, float(index * 2)),
+                )
+            seed_saver.flush_data_to_database(block=True)
+            selected_dataset = seed_saver.dataset
+            selected_dataset.add_metadata(
+                "measurement_exception",
+                selected_measurement_exception,
+            )
+            selected_dataset.add_metadata("stage5c_operator", selected_operator)
+
+        selected_source_values = writer.execute(
+            'SELECT "run_description", "measurement_exception", '
+            '"stage5c_operator", "snapshot" FROM "runs" WHERE "run_id" = ?',
+            (selected_dataset.run_id,),
+        ).fetchone()
+        assert selected_source_values is not None
+        expected_run_description, stored_exception, stored_operator, stored_snapshot = (
+            selected_source_values
+        )
+        assert isinstance(expected_run_description, str)
+        assert len(expected_run_description.encode("utf-8")) > 1_024
+        assert stored_exception == selected_measurement_exception
+        assert stored_operator == selected_operator
+        assert isinstance(stored_snapshot, str)
+        assert 138 * 1024 <= len(stored_snapshot.encode("utf-8")) <= 150 * 1024
+        assert '"lazy_final_parameter"' in stored_snapshot
+        assert (
+            stored_snapshot.count('"full_name"')
+            + stored_snapshot.count('"raw_value"')
+            >= 2 * len(selected_snapshot_parameter_names)
+            > 1_024
+        )
+
+        visible_run = start_partial_run("mixed_visible", visible_count)
+        remaining_run = start_partial_run("mixed_remaining", remaining_count)
+        selected_guid = str(selected_dataset.guid)
+        visible_guid = str(visible_run["dataset"].guid)
+        remaining_guid = str(remaining_run["dataset"].guid)
+        protected_before_reader = protected_artifact_state(database_path)
+
+        main_window.config.default_path = str(qplot_home)
+        main_window.config.default_file = str(
+            qplot_home / main_window.config.config_file_name
+        )
+        coordinator_module.TrustedDerivedDiskCache = (
+            lambda **_kwargs: TrustedDerivedDiskCache(cache_root)
+        )
+        bridge_module.TrustedWorkCoordinator = GatedCoordinator
+        bridge_module.TrustedDerivedQtBridge._publish_metadata = record_metadata
+        tree_widgets.RunList.set_run_previews = record_thumbnail
+        main_window.MainWindow.show_error = record_error
+
+        application = QtWidgets.QApplication.instance()
+        if application is None:
+            application = QtWidgets.QApplication(
+                ["qplot-stage5c-mixed-size-wheel-smoke"]
+            )
+        application.setQuitOnLastWindowClosed(False)
+        window = main_window.MainWindow()
+        window.startupDatabaseTimer.stop()
+        window.monitor.stop()
+        window.config.config["user_preference"]["confirm_close"] = False
+        window.config.config["user_preference"]["confirm_close_all"] = False
+        window.resize(900, 500)
+        window.show()
+
+        window.close_database(status=False)
+        assert window.load_database_path(str(database_path))
+        process_until(lambda: not window._database_load_active, timeout=30.0)
+        window.monitor.stop()
+        assert window._database_access_mode == database_actions.TRUSTED_LIVE_MODE, (
+            window._database_fallback_reason,
+            errors,
+        )
+        assert window.RunList.topLevelItemCount() == 3
+        assert metadata_order == []
+
+        selected_item = window.RunList._item_for_guid(selected_guid)
+        visible_item = window.RunList._item_for_guid(visible_guid)
+        remaining_item = window.RunList._item_for_guid(remaining_guid)
+        assert selected_item is not None
+        assert visible_item is not None
+        assert remaining_item is not None
+        id_column = window.RunList.cols.index("ID")
+        window.RunList.sortItems(id_column, QtCore.Qt.SortOrder.AscendingOrder)
+        visible_row = window.RunList.indexOfTopLevelItem(visible_item)
+        row_height = max(24, window.RunList.sizeHintForRow(visible_row))
+        header = window.RunList.header()
+        assert header is not None
+        window.RunList.setFixedHeight(header.height() + max(12, row_height // 2))
+        window.RunList.clearSelection()
+        window.RunList.setCurrentItem(selected_item)
+        selected_item.setSelected(True)
+        process_until(lambda: window._selected_run_guid == selected_guid)
+        window.RunList.scrollToItem(
+            visible_item,
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+        )
+        application.processEvents()
+
+        bridge = window._trusted_derived_bridge
+        bridge._apply_priority()
+        visible_indices = bridge._visible_stable_indices()
+        assert bridge._index_by_guid[visible_guid] in visible_indices
+        assert bridge._index_by_guid[remaining_guid] not in visible_indices
+        coordinator = bridge.coordinator
+        assert isinstance(coordinator, GatedCoordinator)
+        assert not coordinator.active
+        coordinator.release_smoke_work()
+
+        process_until(
+            lambda: (
+                selected_guid in bridge._metadata_by_guid
+                and bridge._detail_display_guid == selected_guid
+                and bridge._selected_detail_publication is not None
+                and window.RunList.run_preview_is_ready(selected_guid)
+                and valid_images(thumbnail_previews.get(selected_guid))
+                and valid_images(window.infoBox.preview.cache.get(selected_guid))
+            ),
+            timeout=90.0,
+        )
+        assert visible_guid not in bridge._metadata_by_guid, metadata_order
+        assert remaining_guid not in bridge._metadata_by_guid, metadata_order
+        assert metadata_order[0] == selected_guid
+        assert window.infoBox.preview.current_guid == selected_guid
+        selected_value_dialog = assert_selected_exact_values()
+
+        process_until(
+            lambda: bridge_complete(bridge, visible_guid),
+            timeout=120.0,
+        )
+        process_until(
+            lambda: bridge_complete(bridge, remaining_guid),
+            timeout=120.0,
+        )
+        assert metadata_order.index(visible_guid) < metadata_order.index(
+            remaining_guid
+        )
+        process_until(
+            lambda: (
+                not coordinator.active
+                and coordinator.snapshot().pending_count == 0
+            ),
+            timeout=120.0,
+        )
+        assert window.infoBox.preview.current_guid == selected_guid
+        assert_selected_exact_values(selected_value_dialog)
+        assert_lazy_snapshot_access()
+
+        prior_visible_preview = window.infoBox.preview.cache[visible_guid]
+        for logical_index in range(visible_count, visible_count + fast_count):
+            slow_index, fast_index = divmod(logical_index, fast_count)
+            visible_run["datasaver"].add_result(
+                (visible_run["slow"], float(slow_index)),
+                (visible_run["fast"], float(fast_index)),
+                (
+                    visible_run["signal"],
+                    float(slow_index * 1_000 + fast_index),
+                ),
+                (
+                    visible_run["signal_b"],
+                    float(1_000_000 + slow_index * 1_000 + fast_index),
+                ),
+            )
+        visible_run["datasaver"].flush_data_to_database(block=True)
+        window.refreshMain()
+        process_until(
+            lambda: (
+                visible_item.run_metadata.get("read_setpoint_count")
+                == visible_count + fast_count
+            ),
+            timeout=120.0,
+        )
+        process_until(
+            lambda: (
+                bridge_complete(bridge, visible_guid)
+                and window.infoBox.preview.cache.get(visible_guid)
+                is not prior_visible_preview
+            ),
+            timeout=120.0,
+        )
+        process_until(
+            lambda: (
+                not coordinator.active
+                and coordinator.snapshot().pending_count == 0
+            ),
+            timeout=120.0,
+        )
+        assert window.infoBox.preview.current_guid == selected_guid
+        assert_selected_exact_values(selected_value_dialog)
+
+        checkpoint_until_idle("PASSIVE")
+        checkpoint_until_idle("TRUNCATE")
+        next_index = visible_count + fast_count
+        slow_index, fast_index = divmod(next_index, fast_count)
+        visible_run["datasaver"].add_result(
+            (visible_run["slow"], float(slow_index)),
+            (visible_run["fast"], float(fast_index)),
+            (
+                visible_run["signal"],
+                float(slow_index * 1_000 + fast_index),
+            ),
+            (
+                visible_run["signal_b"],
+                float(1_000_000 + slow_index * 1_000 + fast_index),
+            ),
+        )
+        visible_run["datasaver"].flush_data_to_database(block=True)
+        writer.commit()
+        assert Path(f"{database_path}-wal").stat().st_size > 0
+        assert not tuple(database_directory.glob("*.qdc"))
+        assert tuple(cache_root.glob("*.qdc"))
+        assert errors == []
+
+        active_service = window._trusted_read_service
+        assert active_service is not None
+        live_liveness = None
+
+        def live_helper_is_observable():
+            nonlocal live_liveness
+            live_liveness = active_service.liveness()
+            return (
+                live_liveness.helper_alive
+                and live_liveness.helper_pid is not None
+            )
+
+        # A zero-wait supervisor liveness probe conservatively reports an
+        # owned helper as alive with an unknown PID while its lock is held.
+        # Wait for one coherent observable snapshot instead of treating that
+        # transient lock-contention sentinel as a dead or missing helper.
+        process_until(live_helper_is_observable)
+        assert live_liveness is not None
+        assert live_liveness.helper_alive
+        assert live_liveness.helper_pid is not None
+        window.close()
+        process_until(
+            lambda: (
+                window._shutdown_ready
+                and not window._shutdown_started
+                and not window._trusted_derived_bridge.background_active()
+                and not window._retired_trusted_read_services
+            ),
+            timeout=45.0,
+        )
+        normal_close_completed = True
+        assert not window._shutdown_deadline_exhausted
+        assert window._shutdown_diagnostics == ()
+        assert window._trusted_read_service is None
+        assert not window._pending_trusted_read_services
+        assert not window._retired_trusted_read_services
+        assert active_service.closed
+        closed_liveness = active_service.liveness()
+        assert closed_liveness.closed
+        assert not closed_liveness.dispatcher_alive
+        assert not closed_liveness.control_alive
+        assert not closed_liveness.helper_alive
+        assert not closed_liveness.receiver_alive
+        assert not closed_liveness.open_supervisor_endpoints
+        assert not closed_liveness.unreaped_incarnations
+        assert not closed_liveness.resource_cleanup_pending
+        assert not closed_liveness.outstanding_requests
+        assert not any(
+            thread.name.startswith("qplot-trusted-derived")
+            for thread in threading.enumerate()
+        )
+    finally:
+        if window is not None:
+            if not normal_close_completed:
+                try:
+                    window._trusted_derived_bridge.shutdown()
+                    window.close_database(status=False)
+                    process_until(
+                        lambda: (
+                            not window._trusted_derived_bridge.background_active()
+                            and not window._retired_trusted_read_services
+                        ),
+                        timeout=45.0,
+                    )
+                except BaseException as error:
+                    cleanup_errors.append(error)
+                window.infoBox.preview.shutdown()
+                window.hide()
+            window.deleteLater()
+            if application is not None:
+                application.sendPostedEvents(
+                    None,
+                    QtCore.QEvent.Type.DeferredDelete,
+                )
+                application.processEvents()
+
+        main_window.MainWindow.show_error = original_show_error
+        tree_widgets.RunList.set_run_previews = original_thumbnail
+        bridge_module.TrustedDerivedQtBridge._publish_metadata = original_metadata
+        bridge_module.TrustedWorkCoordinator = coordinator_type
+        coordinator_module.TrustedDerivedDiskCache = cache_type
+        main_window.config.default_path = prior_default_path
+        main_window.config.default_file = prior_default_file
+
+        for context in reversed(open_contexts):
+            try:
+                context.__exit__(None, None, None)
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if writer is not None:
+            try:
+                writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except BaseException as error:
+                cleanup_errors.append(error)
+            try:
+                writer.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        qcodes.config.core.db_location = prior_qcodes_database
+        if cleanup_errors and sys.exc_info()[0] is None:
+            raise cleanup_errors[0]
+
+
 def exercise_spawned_supervisor():
     with tempfile.TemporaryDirectory(prefix="qplot-wheel-smoke-") as temporary:
         # macOS may spell the temporary root through the /var -> /private/var
@@ -2280,8 +3172,9 @@ def exercise_spawned_supervisor():
                     assert tuple(record.run_id for record in initial_page.runs) == (1,)
                     initial_fields = initial_page.runs[0].as_dict()
                     assert initial_fields["guid"].endswith("000000000001")
-                    assert initial_fields["measure_parameters"] == []
-                    assert initial_fields["sweep_parameters"] == []
+                    assert initial_fields["measure_parameters"] == ["signal"]
+                    assert initial_fields["sweep_parameters"] == ["setpoint"]
+                    assert initial_fields["preview_dimensions"] == [1]
                     application_home = Path(temporary) / "application-home"
                     application_cache = application_home / "cache"
                     application_home.mkdir()
@@ -2546,6 +3439,7 @@ def exercise_spawned_supervisor():
                 assert fault_supervisor.incarnation != faulted_incarnation
 
             assert not fault_supervisor.helper_alive
+            exercise_stage5c_mixed_size_wal_priority(temporary)
             after = protected_artifact_state(database_path)
             assert_source_policy(after_writer_checkpoint, after, database_path)
             assert shm_path.is_file()
@@ -2587,9 +3481,11 @@ def main():
         "transactional SIGINT-guard "
         "restoration, repeated-interrupt retention, and caller-disappearance cleanup, "
         "stuck-reader orphan cleanup, acquisition-caller/writer/sentinel survival, "
-        "installed Stage 4 live refresh/database switch, persistent helpers across "
-        "a writer TRUNCATE checkpoint, result-limit recovery, fail-closed limit "
-        "cleanup, and writer checkpoint passed"
+        "installed Stage 4 live refresh/database switch, installed Stage 5C "
+        "mixed-size WAL tier priority, exact long-metadata viewing, and normal "
+        "Qt/helper shutdown, persistent "
+        "helpers across a writer TRUNCATE checkpoint, result-limit recovery, "
+        "fail-closed limit cleanup, and writer checkpoint passed"
     )
 
 

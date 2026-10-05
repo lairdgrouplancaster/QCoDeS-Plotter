@@ -149,6 +149,7 @@ class PreviewTab(qtw.QWidget):
         self.run_metadata = {}
         self.cache = OrderedDict()
         self.thumbnail_cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
@@ -232,6 +233,7 @@ class PreviewTab(qtw.QWidget):
             return
 
         self.preview_size = preview_size
+        self._plot_previews = {}
         self._update_minimum_height()
         if self._trusted_derived_mode:
             self.cache = OrderedDict()
@@ -284,6 +286,7 @@ class PreviewTab(qtw.QWidget):
         self.run_metadata = self._normalise_runs(runs)
         self.cache = OrderedDict()
         self.thumbnail_cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
@@ -312,6 +315,7 @@ class PreviewTab(qtw.QWidget):
         self.run_metadata = self._normalise_runs(runs)
         self.cache = OrderedDict()
         self.thumbnail_cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
@@ -330,7 +334,11 @@ class PreviewTab(qtw.QWidget):
 
         if not self._trusted_derived_mode:
             return
-        self.run_metadata.update(self._normalise_runs(runs))
+        for guid, metadata in self._normalise_runs(runs).items():
+            old = self.run_metadata.get(guid)
+            if old is not None and self._metadata_signature(old) != self._metadata_signature(metadata):
+                self._plot_previews.pop(guid, None)
+            self.run_metadata[guid] = metadata
 
 
     def refresh_trusted_derived_runs(self, runs):
@@ -344,6 +352,13 @@ class PreviewTab(qtw.QWidget):
         for guid in tuple(self.cache):
             if guid not in valid_guids:
                 self._drop_cached(guid)
+        for guid in tuple(self._plot_previews):
+            if (
+                guid not in valid_guids
+                or self._metadata_signature(self.run_metadata.get(guid, {}))
+                != self._metadata_signature(normalised[guid])
+            ):
+                self._plot_previews.pop(guid, None)
         self.errors = {
             guid: error
             for guid, error in self.errors.items()
@@ -372,6 +387,7 @@ class PreviewTab(qtw.QWidget):
         if not self._trusted_derived_mode:
             return
         self.cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         if self.current_guid:
@@ -392,12 +408,45 @@ class PreviewTab(qtw.QWidget):
         else:
             self.errors.pop(guid, None)
             self._store_cached(guid, list(previews or []))
+            self._plot_previews.pop(guid, None)
         if guid != self.current_guid:
             return
         if error:
             self._show_message("Preview unavailable", str(error))
         else:
             self._show_previews(previews)
+
+    def publish_plot_preview(self, guid, preview):
+        """Display one plotted measurement before the run job finishes."""
+
+        guid = str(guid or "")
+        parameter = str(preview.get("parameter") or "")
+        if (
+            self._shutting_down or not guid or not parameter
+            or guid not in self.run_metadata or guid in self.cache
+        ):
+            return
+        partial = self._plot_previews.setdefault(guid, {})
+        partial[parameter] = preview
+        previews = list(partial.values())
+        generation = self.generation
+        self.previewsReady.emit(guid, previews)
+        if (
+            generation == self.generation
+            and self._plot_previews.get(guid) is partial
+            and guid == self.current_guid
+        ):
+            self._show_previews(previews)
+
+    def discard_plot_previews(self, guid):
+        """Forget a plot image after its trusted source changes."""
+
+        guid = str(guid or "")
+        if self._plot_previews.pop(guid, None) is None:
+            return False
+        if guid == self.current_guid and guid not in self.cache:
+            self._show_message("Generating preview...")
+        return True
 
 
     def add_runs(self, runs, queue_previews=True):
@@ -416,6 +465,7 @@ class PreviewTab(qtw.QWidget):
 
             if changed:
                 self._drop_cached(guid)
+                self._plot_previews.pop(guid, None)
                 self.thumbnail_cache.pop(guid, None)
                 self.errors.pop(guid, None)
                 self.thumbnail_errors.pop(guid, None)
@@ -449,6 +499,8 @@ class PreviewTab(qtw.QWidget):
                 self._show_message("No preview available")
             elif guid in self.cache:
                 self._show_previews(self._cached_previews(guid))
+            elif guid in self._plot_previews:
+                self._show_previews(list(self._plot_previews[guid].values()))
             elif guid in self.errors:
                 self._show_message("Preview unavailable", self.errors[guid])
             else:
@@ -460,6 +512,12 @@ class PreviewTab(qtw.QWidget):
 
         if guid in self.cache:
             self._show_previews(self._cached_previews(guid))
+            return
+
+        if guid in self._plot_previews:
+            self._show_previews(list(self._plot_previews[guid].values()))
+            self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
+            self._start_next()
             return
 
         if guid in self.errors:
@@ -1023,6 +1081,7 @@ class PreviewTab(qtw.QWidget):
                     self._enqueue(guid, priority=PREVIEW_REMAINING_PRIORITY)
             else:
                 self._store_cached(guid, previews)
+                self._plot_previews.pop(guid, None)
 
         # Cache/error mutation can yield to test hooks and future Qt-facing
         # helpers.  Revalidate at the actual publication boundary so a sidecar
@@ -1054,7 +1113,10 @@ class PreviewTab(qtw.QWidget):
 
         if guid == self.current_guid and not is_thumbnail:
             if error:
-                self._show_message("Preview failed", str(error))
+                if guid in self._plot_previews:
+                    self._show_previews(list(self._plot_previews[guid].values()))
+                else:
+                    self._show_message("Preview failed", str(error))
             else:
                 self._show_previews(previews)
 
@@ -1088,6 +1150,7 @@ class PreviewTab(qtw.QWidget):
         self.run_metadata = {}
         self.cache = OrderedDict()
         self.thumbnail_cache = OrderedDict()
+        self._plot_previews = {}
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
@@ -1114,6 +1177,19 @@ class PreviewTab(qtw.QWidget):
 
     def _show_message(self, message, tooltip=None):
         self._clear_layout()
+        if message in ("Generating preview...", "Retrying preview..."):
+            metadata = self.run_metadata.get(self.current_guid, {})
+            for dimension in preview_placeholder_dimensions(metadata) or [None]:
+                placeholder = qtw.QLabel(f"{dimension}D" if dimension else "")
+                placeholder.setObjectName("previewPlaceholder")
+                placeholder.setFixedSize(self.preview_size, self.preview_size)
+                placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                placeholder.setFrameShape(qtw.QFrame.Shape.Box)
+                placeholder.setToolTip(message)
+                placeholder.setAccessibleName(
+                    f"{dimension}D preview pending" if dimension else "Preview pending"
+                )
+                self.content_layout.addWidget(placeholder)
         label = qtw.QLabel(message)
         label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         label.setMinimumHeight(120)
@@ -1245,10 +1321,19 @@ class PreviewImageLabel(qtw.QLabel):
             return
 
         painter = QtGui.QPainter(self)
-        pen = QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.Highlight))
-        pen.setWidth(2)
-        painter.setPen(pen)
-        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
+        color = self.palette().color(QtGui.QPalette.ColorRole.Highlight)
+        rect = self.rect()
+        border_width = 2
+        painter.fillRect(rect.left(), rect.top(), rect.width(), border_width, color)
+        painter.fillRect(
+            rect.left(), rect.bottom() - border_width + 1,
+            rect.width(), border_width, color,
+            )
+        painter.fillRect(rect.left(), rect.top(), border_width, rect.height(), color)
+        painter.fillRect(
+            rect.right() - border_width + 1, rect.top(),
+            border_width, rect.height(), color,
+            )
 
 
     def mouseDoubleClickEvent(self, event):
@@ -1311,10 +1396,14 @@ class PreviewImageLabel(qtw.QLabel):
 
 
 class DraggablePreviewImageLabel(PreviewImageLabel):
-    def __init__(self, guid, parameter, axes=None, *args):
+    dragFinished = QtCore.pyqtSignal()
+
+    def __init__(self, guid, parameter, axes=None, *args, axes_pending=False):
         super().__init__(parameter, *args)
         self.guid = guid or ""
         self.axes = list(axes or [])
+        self.axes_pending = axes_pending
+        self.drag_active = False
         self._drag_start_pos = None
         if self.guid:
             self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
@@ -1347,14 +1436,25 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
 
     def _start_drag(self):
         drag = QtGui.QDrag(self)
-        drag.setMimeData(make_run_preview_mime(self.guid, self.parameter, self.axes))
+        drag.setMimeData(make_run_preview_mime(
+            self.guid, self.parameter, self.axes, axes_pending=self.axes_pending,
+        ))
 
         pixmap = self.pixmap()
         if pixmap is not None and not pixmap.isNull():
             drag.setPixmap(pixmap)
             drag.setHotSpot(QtCore.QPoint(pixmap.width() // 2, pixmap.height() // 2))
+        else:
+            drag.setPixmap(self.grab())
+            drag.setHotSpot(self.rect().center())
 
-        drag.exec(QtCore.Qt.DropAction.CopyAction)
+        self.drag_active = True
+        try:
+            drag.exec(QtCore.Qt.DropAction.CopyAction)
+        finally:
+            self.drag_active = False
+            self._drag_start_pos = None
+            self.dragFinished.emit()
 
 
 class PreviewWorker(QtCore.QRunnable):
@@ -1748,6 +1848,54 @@ def _preview_title(parameter, axes):
     return f"{parameter} vs {axis_text}"
 
 
+def render_displayed_plot_preview(worker, parameter, size):
+    """Render one unmodified plot from its already loaded arrays."""
+
+    axes = list(getattr(parameter, "depends_on_", ()) or ())
+    if len(axes) not in (1, 2):
+        return None
+    axis_data = getattr(worker, "axis_data", None)
+    if not isinstance(axis_data, dict):
+        return None
+    size = int(size)
+    if len(axes) == 1:
+        x = np.asarray(axis_data.get("x", []), dtype=float).ravel()
+        y = np.asarray(axis_data.get("y", []), dtype=float).ravel()
+        count = min(x.size, y.size)
+        if count == 0:
+            return None
+        x, y = x[:count], y[:count]
+        valid = np.isfinite(x) & np.isfinite(y)
+        x, y = x[valid], y[valid]
+        if not x.size:
+            return None
+        # Keep GUI-thread painting bounded even for a very long line.
+        limit = max(2, 4 * size)
+        if x.size > limit:
+            indices = np.linspace(0, x.size - 1, limit, dtype=np.intp)
+            x, y = x[indices], y[indices]
+        image = render_sparkline_preview(x, y, size=size)
+    else:
+        grid = np.asarray(getattr(worker, "dataGrid", []), dtype=float)
+        if grid.ndim != 2 or not grid.size or not np.isfinite(grid).any():
+            return None
+        # The plot worker may have a high resolution grid; bound the reuse
+        # work before the preview's spatial reduction runs on the GUI thread.
+        max_axis = max(1, 4 * size)
+        row_step = max(1, (grid.shape[0] + max_axis - 1) // max_axis)
+        column_step = max(1, (grid.shape[1] + max_axis - 1) // max_axis)
+        image = render_heatmap_grid_preview(
+            grid[::row_step, ::column_step], size=size,
+        )
+    name = str(parameter.name)
+    return {
+        "parameter": name,
+        "axes": axes,
+        "title": _preview_title(name, axes),
+        "image": image,
+    }
+
+
 def _preview_2d_row_limit(grid_shape):
     shape = _normalise_grid_shape(grid_shape)
     if shape is None:
@@ -1783,7 +1931,16 @@ def render_sparkline_preview(x, y, size=PREVIEW_SIZE):
         if high == low:
             scaled = np.full(values.shape, 0.5)
         else:
-            scaled = (values - low) / (high - low)
+            span = high - low
+            if np.isfinite(span):
+                scaled = (values - low) / span
+            else:
+                # Finite opposite-sign endpoints can have an infinite span.
+                # Scale before subtraction only in that case, retaining the
+                # direct arithmetic for tiny or closely spaced ranges.
+                magnitude = max(abs(low), abs(high))
+                scaled_low, scaled_high = low / magnitude, high / magnitude
+                scaled = (values / magnitude - scaled_low) / (scaled_high - scaled_low)
         if invert:
             scaled = 1 - scaled
         return plot_margin + scaled * plot_size
@@ -2480,12 +2637,20 @@ def _normalise_grid_shape(grid_shape):
 
 
 def _viridis_rgb(values):
-    low = np.nanmin(values)
-    high = np.nanmax(values)
+    low = float(np.nanmin(values))
+    high = float(np.nanmax(values))
     if high == low:
         scaled = np.full(values.shape, 0.5, dtype=np.float64)
     else:
-        scaled = (values - low) / (high - low)
+        span = high - low
+        if np.isfinite(span):
+            scaled = (values - low) / span
+        else:
+            # Preserve finite measured cells when opposite-sign endpoints
+            # have a span too large for direct subtraction.
+            magnitude = max(abs(low), abs(high))
+            scaled_low, scaled_high = low / magnitude, high / magnitude
+            scaled = (values / magnitude - scaled_low) / (scaled_high - scaled_low)
 
     nan_values = ~np.isfinite(scaled)
     scaled = np.nan_to_num(scaled, nan=0.0)
@@ -2710,6 +2875,33 @@ def _rows_to_float_arrays(rows, column_count):
                 values.append(np.nan)
         columns.append(np.asarray(values, dtype=float))
     return columns
+
+
+def preview_placeholder_dimensions(metadata):
+    """Use known per-measurement dependencies, never guess from global axes."""
+    dimensions = metadata.get("preview_dimensions")
+    if isinstance(dimensions, (list, tuple)):
+        return [value if type(value) is int and value > 0 else None for value in dimensions]
+    if dimensions is None:
+        dimensions = {}
+        raw_description = metadata.get("run_description")
+        description = (
+            raw_description if isinstance(raw_description, dict)
+            else _json_dict(raw_description)
+        )
+        interdependencies = description.get("interdependencies_", {})
+        dependencies = (
+            interdependencies.get("dependencies", {})
+            if isinstance(interdependencies, dict) else {}
+        )
+        if not dependencies:
+            dependencies = _legacy_dependencies(description)
+        if isinstance(dependencies, dict):
+            dimensions = {
+                name: len(axes) for name, axes in dependencies.items()
+                if isinstance(axes, (list, tuple))
+            }
+    return [dimensions.get(name) for name in metadata.get("measure_parameters") or []]
 
 
 def _dependencies_from_metadata(metadata):

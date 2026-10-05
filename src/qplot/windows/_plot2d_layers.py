@@ -27,6 +27,7 @@ from ._colorbar import (
 )
 from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
 from ._plot_refresh import plot_refresh_required
+from ._refresh_interval import refresh_interval_value, set_refresh_interval
 
 DEFAULT_OVERLAY_OPACITY = 0.65
 _PRIMARY_HEATMAP_KEY = "__qplot_primary_heatmap__"
@@ -427,10 +428,15 @@ class HeatmapLayer:
             parent_spinbox = getattr(self.parent, "spinBox", None)
             source_spinbox = getattr(source, "spinBox", None)
             if parent_spinbox is not None and source_spinbox is not None:
-                source_spinbox.setValue(parent_spinbox.value())
+                def sync_interval(interval):
+                    interval = refresh_interval_value(parent_spinbox)
+                    set_refresh_interval(source_spinbox, interval)
+                    source.monitorIntervalChanged(interval)
+
+                sync_interval(refresh_interval_value(parent_spinbox))
                 interval_signal = getattr(parent_spinbox, "valueChanged", None)
                 if interval_signal is not None:
-                    interval_slot = source_spinbox.setValue
+                    interval_slot = sync_interval
                     interval_signal.connect(interval_slot)
                     self._source_interval_signal = interval_signal
                     self._source_interval_slot = interval_slot
@@ -442,7 +448,7 @@ class HeatmapLayer:
             and monitor is not None
             and not monitor.isActive()
         ):
-            source.monitorIntervalChanged(source.spinBox.value())
+            source.monitorIntervalChanged(refresh_interval_value(source.spinBox))
 
     def _release_source_consumer(self) -> None:
         if not self._source_consumer_registered:
@@ -486,7 +492,7 @@ class HeatmapLayer:
             return
 
         if geometry.is_uniform:
-            self.image.setImage(self.data_grid, autoLevels=False)
+            self.image.setImage(np.asarray(self.data_grid, dtype=float), autoLevels=False)
             self.image.setRect(QtCore.QRectF(*geometry.rect))
             self.heatmap_mesh.hide()
             self.image.show()
@@ -723,6 +729,10 @@ class Plot2DLayerMixin:
                 dropdown.blockSignals(blocked)
         self._axis_selection = dict(target)
         if previous == {"x": target["y"], "y": target["x"]}:
+            # Blocked dropdown signals bypass the ordinary axis-change handler.
+            # Its pending rotation keeps existing cut markers on their fixed
+            # parameter when the refreshed heatmap exchanges X and Y.
+            self.__dict__["rotate"] = True
             self._transpose_heatmap_axis_assignments()
         self.refreshWindow(force=True)
         dialog = self.__dict__.get("_heatmap_appearance_dialog")
@@ -947,7 +957,7 @@ class Plot2DLayerMixin:
                 and monitor is not None
                 and not monitor.isActive()
             ):
-                source.monitorIntervalChanged(source.spinBox.value())
+                source.monitorIntervalChanged(refresh_interval_value(source.spinBox))
 
     def _sync_secondary_heatmap_view_ranges(
         self,
@@ -1361,6 +1371,14 @@ class Plot2DLayerMixin:
 
         if target is None:
             return
+        if getattr(item, "_qplot_ui_overlay", False):
+            overlays = self.__dict__.get("_plot_overlay_viewboxes", {})
+            current = overlays.get(id(item))
+            if current is not target:
+                if current is not None:
+                    current.removeItem(item)
+                self._add_plot_overlay(item, target)
+            return
         tracked = self.__dict__.setdefault("_heatmap_renderer_viewboxes", {})
         get_viewbox = getattr(item, "getViewBox", None)
         current = get_viewbox() if callable(get_viewbox) else None
@@ -1543,7 +1561,7 @@ class Plot2DLayerMixin:
         maximum = -np.inf
         found_finite = False
         for data in self._heatmap_colorbar_data_arrays():
-            values = np.asarray(data)
+            values = np.asarray(data, dtype=float)
             finite_values = values[np.isfinite(values)]
             if finite_values.size == 0:
                 continue
@@ -1597,6 +1615,45 @@ class _HeatmapTableWidget(ReorderAppearanceTable):
         super().__init__(dialog, mime_type=self._REORDER_MIME_TYPE)
 
 
+class _OpacitySpinBox(qtw.QSpinBox):
+    """Reserve only enough editor space for the maximum percentage."""
+
+    def sizeHint(self):
+        size = super().sizeHint()
+        option = qtw.QStyleOptionSpinBox()
+        self.initStyleOption(option)
+        option.rect = QtCore.QRect(QtCore.QPoint(), size)
+        edit_rect = self.style().subControlRect(
+            qtw.QStyle.ComplexControl.CC_SpinBox,
+            option, qtw.QStyle.SubControl.SC_SpinBoxEditField, self,
+        )
+        editor = self.lineEdit()
+        frame = qtw.QStyleOptionFrame()
+        frame.initFrom(editor)
+        frame.state |= qtw.QStyle.StateFlag.State_Sunken
+        if editor.hasFrame():
+            frame.lineWidth = editor.style().pixelMetric(
+                qtw.QStyle.PixelMetric.PM_DefaultFrameWidth, frame, editor
+            )
+        frame.rect = QtCore.QRect(QtCore.QPoint(), edit_rect.size())
+        contents = editor.style().subElementRect(
+            qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
+        )
+        text_width = editor.fontMetrics().horizontalAdvance(
+            self.textFromValue(self.maximum()) + self.suffix()
+        )
+        margins = editor.textMargins()
+        # QLineEdit adds two pixels on each side of its text.
+        size.setWidth(
+            size.width() - contents.width() + text_width
+            + margins.left() + margins.right() + 4
+        )
+        return size
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+
 class _HeatmapAppearanceDialog(qtw.QDialog):
     """Edit heatmap layers using the same interaction model as traces."""
 
@@ -1626,11 +1683,6 @@ class _HeatmapAppearanceDialog(qtw.QDialog):
             }
             QTableWidget#heatmapAppearanceTable QHeaderView::section {
                 font-weight: normal;
-            }
-            QPushButton#heatmapColorScaleButton {
-                color: palette(link);
-                text-decoration: underline;
-                padding: 2px;
             }
             """
         )
@@ -1692,39 +1744,38 @@ class _HeatmapAppearanceDialog(qtw.QDialog):
         color_scale_layout = qtw.QGridLayout(color_scale_group)
         color_scale_layout.setContentsMargins(8, 10, 8, 8)
         color_scale_layout.setHorizontalSpacing(8)
-        color_scale_layout.addWidget(qtw.QLabel("Colors"), 0, 0)
         self.color_scale_name = qtw.QLabel()
         self.color_scale_name.setObjectName("heatmapColorScaleName")
-        color_scale_layout.addWidget(self.color_scale_name, 0, 1, 1, 2)
+        color_scale_layout.addWidget(self.color_scale_name, 0, 0)
         self.color_scale_preview = qtw.QLabel()
         self.color_scale_preview.setObjectName("heatmapColorScalePreview")
         self.color_scale_preview.setMinimumWidth(170)
-        color_scale_layout.addWidget(self.color_scale_preview, 1, 0, 1, 3)
+        self.color_scale_preview.setFixedHeight(18)
+        self.color_scale_preview.setScaledContents(True)
+        color_scale_layout.addWidget(self.color_scale_preview, 1, 0)
         self.color_scale_button = qtw.QPushButton("Color scale…")
         self.color_scale_button.setObjectName("heatmapColorScaleButton")
-        self.color_scale_button.setFlat(True)
-        self.color_scale_button.setCursor(
-            QtCore.Qt.CursorShape.PointingHandCursor
-        )
         self.color_scale_button.setToolTip("Open the Color scale dialog.")
         color_scale_layout.addWidget(
             self.color_scale_button,
             2,
             0,
             1,
-            3,
+            1,
             QtCore.Qt.AlignmentFlag.AlignLeft,
         )
         panel_layout.addWidget(color_scale_group)
 
         self.visible = qtw.QCheckBox("Visible")
         self.visible.setChecked(True)
-        self.opacity = qtw.QSpinBox()
+        self.opacity = _OpacitySpinBox()
         self.opacity.setObjectName("heatmapAppearanceOpacity")
         self.opacity.setRange(0, 100)
         self.opacity.setValue(100)
         self.opacity.setSuffix("%")
-        self.opacity.setFixedWidth(68)
+        self.opacity.setSizePolicy(
+            qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed
+        )
         self.opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.opacity_slider.setObjectName("heatmapAppearanceOpacitySlider")
         self.opacity_slider.setRange(0, 100)

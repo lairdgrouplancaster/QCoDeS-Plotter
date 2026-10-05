@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -6,7 +6,10 @@ from PyQt6 import (
     QtCore,
 )
 
-from ._plot1d_snap import Plot1DSnapMixin
+from qplot.datahandling.parameter_data import numeric_isfinite
+
+from ._native_transforms import NativePlotDataItem
+from ._plot1d_snap import Plot1DSnapMixin, _line_snap_data
 from ._plot1d_traces import Plot1DTraceMixin
 from ._plotWin import plotWidget
 
@@ -53,12 +56,29 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
 
         """
         
-        self.line = self.plot.plot(connect="all")
+        self.line = NativePlotDataItem(connect="all")
+        self.plot.addItem(self.line)
         self._register_main_line()
         
         # Wait for loader to finish to enure needed data is collected.
         self.load_data()
         self.show_status("Line plot ready; loading data...", 5000)
+
+
+    def _marquee_viewbox(self) -> Any:
+        """Use the main trace's coordinate system for selection and hit tests."""
+
+        line = self.__dict__.get("line")
+        get_viewbox = getattr(line, "getViewBox", None)
+        viewbox = get_viewbox() if callable(get_viewbox) else None
+        return viewbox if viewbox is not None else super()._marquee_viewbox()
+
+
+    def _marquee_zoom_viewbox(self, axis: Literal["x", "y"]) -> Any:
+        # Axis-pair ViewBoxes contain linked dimensions. Change the actual
+        # range owner so a later link update cannot undo the selection zoom.
+        line = self.__dict__.get("line")
+        return self._axis_scale_viewbox(self._axis_scale_axis_for_line(line, axis))
 
 
     def _snap_marquee_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:
@@ -85,15 +105,15 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
 
     def _marquee_x_boundaries(self) -> npt.NDArray[np.float64] | None:
         """
-        Return X coordinates halfway between visible 1d sample points.
+        Return X coordinates halfway between full trace sample points.
 
         """
         x_data = None
         line = self.__dict__.get("line")
-        if line is not None and hasattr(line, "getData"):
-            data = line.getData()
+        if line is not None:
+            data = _line_snap_data(line)
             if data is not None:
-                x_data = data[0]
+                x_data = data.x_view
 
         if x_data is None:
             x_data = self.__dict__.get("axis_data", {}).get("x")
@@ -135,15 +155,11 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
             return None
 
         line = self.__dict__.get("line")
-        if line is not None and hasattr(line, "getData"):
-            view_data = line.getData()
-            if view_data is not None:
-                x_data, y_data = view_data
-            else:
-                x_data, y_data = None, None
-            get_original = getattr(line, "getOriginalDataset", None)
-            raw_data = get_original() if callable(get_original) else view_data
-            raw_y_data = raw_data[1] if raw_data is not None else None
+        if line is not None:
+            data = _line_snap_data(line)
+            if data is None:
+                return None
+            x_data, y_data, raw_y_data = data.x_view, data.y_view, data.y_raw
         else:
             axis_data = self.__dict__.get("axis_data", {})
             x_data = axis_data.get("x")
@@ -155,7 +171,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
 
         x_data = np.asarray(x_data, dtype=float)
         y_data = np.asarray(y_data, dtype=float)
-        raw_y_data = np.asarray(raw_y_data, dtype=float)
+        raw_y_data = np.asarray(raw_y_data)
         count = min(x_data.size, y_data.size, raw_y_data.size)
         if count == 0:
             return None
@@ -167,7 +183,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         mask = (
             np.isfinite(x_data)
             & np.isfinite(y_data)
-            & np.isfinite(raw_y_data)
+            & numeric_isfinite(raw_y_data)
             & (x_data >= rect.left())
             & (x_data <= rect.right())
             & (y_data >= rect.top())
@@ -267,7 +283,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
             if getattr(plot_worker, "_qplot_source_rejected", False):
                 clear_display()
                 return
-            self._commit_refresh_publication(plot_worker)
+            self._commit_refresh_publication(plot_worker, preview_ready=True)
         finally:
             if isinstance(
                     getattr(plot_worker, "_qplot_publication_snapshot", None),

@@ -178,12 +178,26 @@ against the known tables (and result tables where needed); they do not issue
 `PRAGMA table_info`, return cursors or QCoDeS objects, or read result-table rows
 when counts, shapes, storage, or bounded setpoint summaries are sufficient.
 For current QCoDeS append-only result tables, expensive reads capture the
-integer-primary-key `id` watermark. Full-prefix aggregates are restricted to a
-small, twice-stable main/WAL/journal size and split into batches of at most four
-statements. Large or changing sources use planned shapes, fixed ID-window edge
-summaries grouped eight parameters at a time, and explicitly estimated storage;
-they do not run whole-table
-`COUNT`/`DISTINCT`/`GROUP BY` or `dbstat` scans.
+integer-primary-key `id` watermark. That watermark counts physical result rows;
+it is not automatically the number of scientific points because current QCoDeS
+may store multiple dependent rows for one logical coordinate. Bounded direct
+primary-key probes classify and validate dense/shared, interleaved, or
+dependent-blocked regular layouts. If those probes are inconclusive, the
+adapter can verify a captured prefix through resumable 4,096-row keyset pages,
+retaining only constant-size counters, endpoints, direction/fingerprint state,
+and the prior coordinate. There is no database-size or 100,000-row gate and no
+whole-prefix `COUNT`/`DISTINCT`/`GROUP BY` or `dbstat` aggregate.
+
+Only a structurally verified layout produces acquired logical
+`read_setpoint_count`. A valid shape from the run description can produce a
+planned `setpoint_count`, but it is a provisional expected extent whose product
+can differ from the acquired logical count of an unfinished run. A full
+rectangular captured prefix becomes an observed exact shape and observed
+`setpoint_count` only after verification. Irregular or inconclusive acquired
+values remain unknown; in particular, an incomplete dependent-blocked layout
+without a complete rectangular candidate is not inferred from its plan. Fixed
+ID-edge summaries still provide bounded first/last setpoint values, grouped
+eight parameters at a time, and result storage remains explicitly estimated.
 
 `src/qplot/datahandling/database.py` contains database-file access helpers,
 cloud-storage hydration, background main-window load workers, and database
@@ -211,28 +225,58 @@ foreground burst advances the oldest background item even under recurring
 refresh, while job-free adapter transaction boundaries allow newly selected
 work to overtake a multi-transaction background operation without replaying it.
 Trusted ordinary selection renders cached basic values and loading placeholders
-immediately, then consumes an immutable plain detail view after
-database-instance, selection-generation, and GUID checks. It does not construct
-a fake or eager QCoDeS `DataSet`; the trusted session obtains that view through
-the broker.
+immediately. The Stage 5 coordinator requests one immutable bounded detail view
+with selected metadata and applies it only after database-instance, helper,
+coordinator, source, selection-generation, run-ID, and GUID checks. The view is
+ephemeral: it is not a fake or eager QCoDeS `DataSet`, private snapshot, or
+derived-cache item.
 Snapshot-fallback sessions instead stop at cached run-list basics and an
 unavailable detail state: ordinary selection starts no selected-detail worker
-and prepares no additional selected-detail snapshot. This is a property of the
+and prepares no additional selected-detail snapshot. A trusted detail failure
+also does not trigger an automatic fallback copy. This is a property of the
 selection action, not the whole fallback session: fallback metadata and retained
 preview paths can still create private snapshots. Only explicit plot and CSV
 actions materialise a DataSet.
 
 Stage 5A's `trusted_work_scheduler.py` owns the exact derived priority key
 `(run tier, work kind, stable run index)` without materialising one task per
-run. Stage 5B's `trusted_work_coordinator.py` adds one controlled worker and a
-one-result owner-thread marshalling boundary. It permits only one claim in
-flight, performs cache and rendering work off the owner thread, rejects stale
-exact claim identities before any callback or mutation, supports append-only
-reconciliation and database/format/helper boundaries, and coalesces changes to
-an active run until all work for its captured prefix can publish. One absolute
-deadline covers cache lookup, broker work, rendering, validation, cache write,
-and eviction. Recoverable broker pressure is retried with capped backoff;
-cancelled and stale outcomes are silent.
+run. The selected run receives metadata, thumbnail, and preview; visible runs
+then drain metadata for all stable indices, thumbnails for all, and previews for
+all; remaining runs follow the same three lanes. Stage 5B's
+`trusted_work_coordinator.py` adds one controlled
+worker and a one-result owner-thread marshalling boundary. It permits only one
+claim in flight, performs cache and rendering work off the owner thread,
+rejects stale exact claim identities before any callback or mutation, supports
+append-only reconciliation and database/format/helper boundaries, and coalesces
+changes to an active run until all work for its captured prefix can publish.
+One absolute deadline covers cache lookup, broker work, rendering, validation,
+cache write, and eviction. Recoverable broker pressure is retried with capped
+backoff. Exact retry deadlines live in fixed three-slots-per-run arrays, so a
+delayed claim neither hides an independent ready claim nor loses its own
+deadline; one coalesced timer wakes the earliest retry. Cancelled and stale
+outcomes are silent. Append reconciliation and reused-coordinator database
+switches install the current selected and visible priority before the first new
+claim is allowed to start.
+
+A progressive full-prefix verifier consumes at most one 4,096-row page per
+owner turn and re-evaluates the exact base priority at every boundary.
+Progressive metadata is a per-run dependency. Strictly higher-tier work and a
+ready selected thumbnail or preview always win. Within the same tier, ordinary
+work receives at most three claims (one sibling metadata/thumbnail/preview
+sequence) before one paced continuation page is aged in. Eligible pages rotate,
+and newly selected work pre-empts at the next boundary. Without a ready selected
+image, bounded aging admits a remaining-run metadata claim within eight
+foreground claims. A
+dedicated 10 ms coalesced wakeup paces continuation progress without zero-delay
+polling, and the schedule fully drains. An inconclusive page is parked as
+metadata-only work: it produces no derived render, publication, or cache write,
+and blocks only that run's image kinds. Once verification is conclusive, the
+normal metadata claim renders, publishes, and attempts its cache write once;
+the thumbnail and preview claims can then each do the same once. Thus the final
+output is published exactly once rather than once per verification page.
+Accepted state for a compatible append resumes at the previous physical cursor
+instead of retaining or rereading the prefix; incompatible evidence fails
+closed.
 
 Stage 5C's `windows/_trusted_derived_qt.py` is the single Qt ownership
 boundary. `MainWindow` owns one `TrustedDerivedQtBridge`, which in turn owns at
@@ -253,33 +297,107 @@ as widget state. Run-list thumbnails are owned only by the fixed set of inline
 preview cells, and databases above the inline-preview threshold skip thumbnail
 decoding in Qt. Selecting an evicted preview uses the scheduler's exact
 database/generation/run/kind replay operation, normally rehydrating from the
-Stage 5B disk cache without repeating metadata or thumbnail work.
+Stage 5B disk cache without clearing completed metadata or thumbnail state.
+Changing selection can independently request ephemeral detail with selected
+metadata.
+
+The current selection's richer Raw key-value, Metadata, and Snapshot tabs use
+one bounded ephemeral selected-detail read attached to selected metadata work.
+It is fenced by database, helper, coordinator, source, selection generation,
+run ID, and GUID, and is neither written to the derived cache nor retained for
+another selection. Changing selection cancels or makes the old result stale.
+Metadata and Raw presentation normalisation distinguishes structural omission
+from local cell compaction. Their node, depth, container, aggregate-text,
+upstream, and protocol omissions produce the global `[truncated]` marker. A
+scalar that is present but too long for a cell instead receives a bounded path,
+an explicit local marker, its exact UTF-8 byte count, and a non-error `[display]`
+summary. Exception-like fields use a bounded head-and-tail cell representation.
+
+Snapshot has a separate lazy model. The broker fetches at most the existing
+4 MiB source limit through the pinned trusted reader, then a bounded iterative
+scanner validates every token without constructing the complete Python object
+tree. The Stage 5C bridge extracts the accepted source from the publication,
+strips it from retained/Qt-facing detail, and keeps at most that one current
+selection's source outside Qt. It is never written to the derived disk cache or
+retained per run. Later page and value requests scan that in-memory source; they
+do not open SQLite or weaken the invariant that main, WAL, and rollback-journal
+handles are physically read-only and only SQLite's exact SHM coordination may
+modify source-side state.
+
+The initial Snapshot view and each expanded container contain only one page of
+direct children. A continuing page has at most 127 data rows plus one
+`Load more…` row, so the Qt parent has at most 128 newly materialised children;
+a final page stays within the same 128-child ceiling. Every page independently caps displayed
+text, including the control row, at 32 KiB. Containers receive children only
+when expanded; the top-level QCoDeS `station` container is expanded by default
+and requests only its first page. A shortened Snapshot scalar has its own exact
+**View Full** request. A validated complete source is `available — loaded on demand`;
+pagination is not truncation. `malformed`, `truncated`, or `unavailable` remains
+reserved for genuine malformed input, source/detail size omission, excessive
+depth or scalar size, changed-during-read, or comparable
+acquisition/validation failure.
+
+One dedicated single-worker executor services lazy Snapshot pages and values,
+with at most two submitted or queued requests in total. Every request and result
+is tied to the exact `DatabaseInstance`, bridge binding, helper incarnation,
+source revision, coordinator and selection generations, run ID and GUID,
+Snapshot-session token, parent handle and continuation cursor, and deadline.
+Those identities are checked before submission and again before owner-thread
+publication. Selection changes, database switching or same-path replacement,
+helper restart, source revision, timeout, and shutdown cancel or make results
+stale. Only the GUI thread mutates widgets or creates images and dialogs.
+
+One identity-deduplicating, 4 MiB registry retains exact strings referenced by
+the Metadata and Raw views for the current accepted detail only. Qt tree items
+hold bounded identifiers and paths, never the exact strings. One reusable
+read-only dialog materialises a selected string on demand; clipboard mutation
+occurs only through its Copy action. Selection, database, source revision,
+coordinator generation, helper incarnation, same-path replacement, and shutdown
+boundaries clear the registry, remove item identifiers, and discard any open
+dialog before stale publication can be displayed. Raw expansion is restored by
+bounded paths for the same run; Snapshot expansion follows its independently
+bounded page protocol.
+This path does not construct a QCoDeS `DataSet`, open a private snapshot, or
+turn a trusted-session error into an automatic fallback copy.
 
 `trusted_live_queries.py` and `trusted_live_service.py` expose the corresponding
 fixed derived-source operation through the existing persistent broker and
 helper. One repeatable-read batch captures the run GUID/table identity, current
-schema, indexed `MAX(id)` watermark, guarded run-description facts, and at most
-15 primary-key windows of 256 rows plus the 256-row captured tail. Samples have
-at most 33 columns (the `id` plus 32 source columns), 4,096 retained rows, and
-135,168 cells. Every window uses `id` keysets and the captured prefix; there is
-no OFFSET, complete result-table scan, or large-result COUNT/DISTINCT/GROUP BY
-plan.
+schema, indexed physical `MAX(id)` watermark, and guarded run-description
+facts. A structurally proved 2D layout uses at most 4,095 representative
+primary-key rows spread across both complete logical axis extents, preserving
+exact endpoints, small axes, mirror symmetry, orientation evidence, and each
+dependent's physical row pattern. Sources without such a grid proof use the
+bounded generic fallback of 15 primary-key windows of 256 rows plus the newest
+256-row edge. The complete observation still has at most 33 columns (the `id`
+plus 32 source columns), 4,096 retained rows, and 135,168 cells. There is no
+OFFSET, complete result-table materialisation, or large-result
+COUNT/DISTINCT/GROUP BY plan.
 
-`trusted_derived_rendering.py` converts that immutable primitive observation to
-versioned metadata or deterministic PNG bytes without Qt, Matplotlib, QCoDeS
-DataSets, pickle, cursors, or database handles. It caps dependents/images at 8,
-each dimension at 2,048 pixels, decoded image bytes at 16 MiB, encoded image
-bytes at 8 MiB, and the retained payload at 16 MiB. Payload schema, graph,
-text, binary, and image fields are validated before retention. Unsupported,
-empty, malformed, non-finite/extreme numeric, or higher-dimensional sources
-become bounded descriptions.
+`trusted_derived_rendering.py` renderer version 3 converts that immutable
+primitive observation to versioned metadata or deterministic PNG bytes without
+Qt, Matplotlib, QCoDeS DataSets, pickle, cursors, or database handles. For 2D
+data it renders declared dependency 0 vertically and dependency 1 horizontally,
+independent of which axis changed fastest physically; reversed and serpentine
+acquisition is restored to scientific orientation. Nearest representative
+source-domain bins cover both full extents, missing and not-yet-measured cells
+remain neutral, and finite cells use the embedded Viridis table. Dependents are
+rendered independently, so a missing cell in one does not blank another;
+thumbnail and preview sizes share the same scientific mapping. A singleton
+finite 1D point is explicitly visible. The renderer caps dependents/images at
+8, each dimension at 2,048 pixels, decoded image bytes at 16 MiB, encoded image
+bytes at 8 MiB, and the retained payload at 16 MiB. Payload schema, graph, text,
+binary, and image fields are validated before retention. Unsupported, empty,
+malformed, non-finite/extreme numeric, or higher-dimensional sources become
+bounded descriptions.
 
-`trusted_derived_cache.py` stores only canonical, type-tagged keyed entries
-under the absolute platform application-cache root returned by
-`trusted_derived_cache_root()`. SHA-256 filenames and an internal version,
-complete key, length, and payload checksum are verified before decoding. The
-cache uses same-directory exclusive temporary files and atomic replacement;
-faults are misses or uncached results. Defaults cap an entry at 16 MiB, the
+`trusted_derived_cache.py` cache format version 3 stores only canonical,
+type-tagged keyed entries under the absolute platform application-cache root
+returned by `trusted_derived_cache_root()`. SHA-256 filenames and an internal
+version, complete key, length, and payload checksum are verified before
+decoding. The cache uses same-directory exclusive temporary files and atomic
+replacement; faults are misses or uncached results. Defaults cap an entry at
+16 MiB, the
 cache at 256 MiB and 2,048 entries. An initial inventory above the 4,096-file
 recovery window is not accepted as healthy: qPlot-owned remnants are purged
 under the job deadline before insertion. Later insertions use an in-memory
@@ -531,12 +649,17 @@ launcher's whole-tree containment or process hard deadline.
 Trusted live load, automatic default selection, scrolling, and metadata
 completion do not start snapshot-backed detail, preview, or thumbnail workers.
 The Stage 5C bridge makes the Stage 5B coordinator the sole trusted producer of
-derived metadata, run-table thumbnails, and selected-run preview cards. Cache
-hits and freshly rendered payloads use the same transactional publication path;
-unsupported runs receive bounded nonfatal unavailable cards. Explicit plot and
-CSV actions remain action-owned snapshot consumers addressed by the selected
-GUID and exact `DatabaseInstance`, and snapshot fallback sessions may keep
-their existing preview behavior.
+derived metadata, run-table thumbnails, and selected-run preview cards, and the
+selected run's richer tabs arrive through a bounded ephemeral detail read.
+Cache hits and freshly rendered payloads use the same transactional publication
+path; unsupported runs receive bounded nonfatal unavailable cards. The derived
+lanes use `(run tier, work kind, stable index)`: selected metadata (with
+detail), thumbnail, and preview; then visible metadata/thumbnail/preview lanes;
+then the equivalent remaining lanes. Explicit plot and CSV
+actions remain action-owned snapshot consumers addressed by the selected GUID
+and exact `DatabaseInstance`, and snapshot fallback sessions may keep their
+existing preview behavior. Trusted selection never creates an automatic
+fallback copy.
 
 Database switching disarms publications before the old coordinator is made
 obsolete, and old queued Qt events are harmless under the bridge's identity and

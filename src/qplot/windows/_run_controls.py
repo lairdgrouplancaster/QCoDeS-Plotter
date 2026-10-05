@@ -20,6 +20,12 @@ from ._config_persistence import (
     set_widget_value_without_signals,
 )
 from ._help import show_quick_start
+from ._refresh_interval import (
+    connect_refresh_interval_edits,
+    refresh_interval_value,
+    remember_refresh_interval,
+    set_refresh_interval,
+)
 from ._widgets import (
     RunList,
     moreInfo,
@@ -27,6 +33,47 @@ from ._widgets import (
 from ._widgets._run_formatting import run_is_complete
 
 AUTO_PLOT_KEY = "user_preference.auto_plot"
+
+
+class _RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
+    """Fit the longest interval without the native spin box's surplus width."""
+
+    def sizeHint(self):
+        size = super().sizeHint()
+        option = qtw.QStyleOptionSpinBox()
+        self.initStyleOption(option)
+        option.rect = QtCore.QRect(QtCore.QPoint(), size)
+        edit_rect = self.style().subControlRect(
+            qtw.QStyle.ComplexControl.CC_SpinBox,
+            option, qtw.QStyle.SubControl.SC_SpinBoxEditField, self,
+        )
+        editor = self.lineEdit()
+        frame = qtw.QStyleOptionFrame()
+        frame.initFrom(editor)
+        frame.state |= qtw.QStyle.StateFlag.State_Sunken
+        if editor.hasFrame():
+            frame.lineWidth = editor.style().pixelMetric(
+                qtw.QStyle.PixelMetric.PM_DefaultFrameWidth, frame, editor
+            )
+        frame.rect = QtCore.QRect(QtCore.QPoint(), edit_rect.size())
+        contents = editor.style().subElementRect(
+            qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
+        )
+        text_width = max(
+            editor.fontMetrics().horizontalAdvance(
+                self.prefix() + self.textFromValue(value) + self.suffix()
+            )
+            for value in (self.minimum(), self.maximum())
+        )
+        margins = editor.textMargins()
+        size.setWidth(
+            size.width() - contents.width() + text_width
+            + margins.left() + margins.right() + 4
+        )
+        return size
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
 
 def _run_timestamp_sort_key(metadata):
@@ -52,21 +99,26 @@ class RunControlsMixin:
         Refresh checks for any new runs added to the dataset.
 
         """
-        self.spinBox = qtw.QDoubleSpinBox()
-        self.spinBox.setRange(0.0, 86_400.0)
+        self.spinBox = _RefreshIntervalSpinBox()
+        self.spinBox.setObjectName("refreshIntervalSpin")
+        self.spinBox.setRange(0.0, 10_000.0)
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
         self.spinBox.setSuffix(" s")
-        self.spinBox.setFixedWidth(84)
+        self.spinBox.setSizePolicy(
+            qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed
+        )
         self.spinBox.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.spinBox.setToolTip("Refresh interval in seconds")
-        self.spinBox.setValue(self.config.get("user_preference.default_refresh_rate"))
+        set_refresh_interval(
+            self.spinBox, self.config.get("user_preference.default_refresh_rate"),
+        )
 
         self._automatic_refresh_epoch = 0
         self._automatic_refresh_load_generation = None
         self._automatic_refresh_instance = None
         self._automatic_refresh_shutdown = False
-        self.spinBox.valueChanged.connect(self.monitorIntervalChanged)
+        connect_refresh_interval_edits(self.spinBox, self.monitorIntervalChanged)
         # Keep exactly one connection.  The timeout is deliberately routed
         # through a lifecycle guard instead of directly to refreshMain:
         # stopping a QTimer does not make a timeout already queued on the GUI
@@ -391,7 +443,7 @@ class RunControlsMixin:
             return 0.0
 
         try:
-            return float(spin_box.value())
+            return refresh_interval_value(spin_box)
         except (TypeError, ValueError):
             return 0.0
 
@@ -404,6 +456,7 @@ class RunControlsMixin:
         if not self._save_refresh_interval(interval):
             self._sync_empty_state()
             return
+        remember_refresh_interval(self.spinBox, interval)
         self._apply_refresh_interval(interval)
         self._sync_empty_state()
 
@@ -615,11 +668,7 @@ class RunControlsMixin:
         def rollback():
             spin_box = getattr(self, "spinBox", None)
             if spin_box is not None:
-                set_widget_value_without_signals(
-                    spin_box,
-                    spin_box.setValue,
-                    current_interval,
-                    )
+                set_refresh_interval(spin_box, current_interval)
 
         return persist_config_value(
             self,
@@ -769,10 +818,8 @@ class RunControlsMixin:
         if not hasattr(self, "spinBox"):
             return
 
-        self.spinBox.blockSignals(True)
-        self.spinBox.setValue(interval)
-        self.spinBox.blockSignals(False)
-        self._apply_refresh_interval(self.spinBox.value())
+        set_refresh_interval(self.spinBox, interval)
+        self._apply_refresh_interval(interval)
 
     def _configured_preview_size(self):
         return int(self.config.get("GUI.preview_size"))

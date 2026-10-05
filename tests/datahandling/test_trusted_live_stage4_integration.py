@@ -44,8 +44,13 @@ pytestmark = pytest.mark.timeout(120)
 
 
 @pytest.fixture
-def stage4_wal_writer(tmp_path: Path) -> _QcodesWalWriter:
-    writer = _QcodesWalWriter.start(tmp_path / "stage4-live.db")
+def stage4_wal_writer(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> _QcodesWalWriter:
+    directory = tmp_path.joinpath(*(["nested"] * getattr(request, "param", 0)))
+    directory.mkdir(parents=True, exist_ok=True)
+    writer = _QcodesWalWriter.start(directory / "stage4-live.db")
     try:
         assert writer.startup["run_count"] == 1
         assert Path(f"{writer.database_path}-wal").is_file()
@@ -290,6 +295,7 @@ def test_refresh_reconciles_real_idle_helper_respawn_at_same_data_version(
         supervisor.close()
 
 
+@pytest.mark.parametrize("stage4_wal_writer", [0, 10], indirect=True)
 def test_basic_page_stays_under_real_wire_budget_with_large_descriptions(
     stage4_wal_writer: _QcodesWalWriter,
 ) -> None:
@@ -340,6 +346,7 @@ def test_basic_page_stays_under_real_wire_budget_with_large_descriptions(
                 rows,
             )
 
+        before = _stable_source_state(writer.database_path)
         accepted = database_instance(writer.database_path)
         with TrustedLiveReaderSupervisor.open(
             writer.database_path,
@@ -354,6 +361,10 @@ def test_basic_page_stays_under_real_wire_budget_with_large_descriptions(
         assert len(page.runs) == TRUSTED_RUN_PAGE_SIZE
         assert all("run_description" not in record.as_dict() for record in page.runs)
         assert all(record.as_dict()["name"] for record in page.runs)
+        _assert_protected_artifacts_unchanged(
+            before,
+            _stable_source_state(writer.database_path),
+        )
     finally:
         connection.close()
 

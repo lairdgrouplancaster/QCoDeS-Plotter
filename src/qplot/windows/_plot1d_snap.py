@@ -8,6 +8,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._commands import command_spec, command_with_status, create_action
+from ._native_transforms import NativePlotDataItem
 
 if TYPE_CHECKING:
     class _Plot1DSnapBase(qtw.QMainWindow):
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
         def formatNum(num: float, sf: int = 3) -> str: ...
 
         def _set_cursor_index_label(self, text: str) -> None: ...
+        def _cursor_1d_x_data(self) -> Any: ...
 else:
     class _Plot1DSnapBase:
         pass
@@ -137,7 +139,12 @@ def _line_is_snap_visible(line: object) -> bool:
 
 def _line_snap_data(line: object | None) -> _LineData | None:
     """
-    Return line data when the item is usable for snap selection.
+    Return full trace samples with aligned physical and view coordinates.
+
+    Downsampling, clipping and dynamic range limiting only change rendering.
+    Neither display positions nor peak/mean aggregates identify raw samples.
+    Apply native processing before log mapping, keeping the resulting arrays
+    aligned for snapping and selection statistics.
 
     """
     if line is None or not _line_is_snap_visible(line):
@@ -155,6 +162,36 @@ def _line_snap_data(line: object | None) -> _LineData | None:
     raw_data = get_original() if callable(get_original) else view_data
     if raw_data is None or raw_data[0] is None or raw_data[1] is None:
         raw_data = view_data
+    if callable(get_original):
+        opts = getattr(line, "opts", {})
+        processing = {
+            key: opts.get(key, False)
+            for key in ("subtractMeanMode", "fftMode", "derivativeMode", "phasemapMode")
+        }
+        if any(processing.values()):
+            # Share the rendering mapping, without display reduction.
+            analysis_line = NativePlotDataItem(
+                x=raw_data[0], y=raw_data[1], **processing,
+            )
+            raw_data = analysis_line.getData()
+            if raw_data[0] is None or raw_data[1] is None:
+                return None
+            # Native log-X drops DC within the FFT stage. Phase map runs later
+            # and replaces both coordinates with full input-derived samples,
+            # so that FFT slice must not remove a valid phase-map point here.
+            if (processing["fftMode"] and not processing["phasemapMode"]
+                    and opts.get("logMode", (False, False))[0]):
+                raw_data = (raw_data[0][1:], raw_data[1][1:])
+        view_data = tuple(np.asarray(values, dtype=float) for values in raw_data)
+        log_mode = opts.get("logMode", (False, False))
+        mapped = []
+        for values, logarithmic in zip(view_data, log_mode, strict=True):
+            if logarithmic:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    values = np.log10(values)
+                values[~np.isfinite(values)] = np.nan
+            mapped.append(values)
+        view_data = tuple(mapped)
     return _LineData(
         x_view=view_data[0],
         y_view=view_data[1],
@@ -449,7 +486,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             raw_x_data=None,
             raw_y_data=None,
             ):
-        """Return the nearest display sample with its aligned physical values."""
+        """Return the nearest full trace sample with aligned physical values."""
 
         x_data = np.asarray(x_data, dtype=float)
         y_data = np.asarray(y_data, dtype=float)
@@ -486,22 +523,27 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         y_values = y_data[finite]
         raw_x_values = raw_x_data[finite]
         raw_y_values = raw_y_data[finite]
-        origin = viewbox.mapViewToScene(QtCore.QPointF(0.0, 0.0))
-        x_basis = viewbox.mapViewToScene(QtCore.QPointF(1.0, 0.0))
-        y_basis = viewbox.mapViewToScene(QtCore.QPointF(0.0, 1.0))
-        scene_x = (
-            origin.x()
-            + x_values * (x_basis.x() - origin.x())
-            + y_values * (y_basis.x() - origin.x())
+        # Read the affine coefficients directly: subtracting mapped unit
+        # points loses precision when a narrow sweep is far from zero.
+        # childTransform also updates the matrix after a range/geometry change.
+        transform = viewbox.childTransform() * viewbox.sceneTransform()
+        origin = viewbox.mapSceneToView(scene_pos)
+        scene_origin = viewbox.mapViewToScene(origin)
+        x_offsets = x_values - origin.x()
+        y_offsets = y_values - origin.y()
+        # Work near the pointer so neither the large absolute data coordinates
+        # nor the transform's large translation enter the vectorized mapping.
+        scene_dx = (
+            (scene_origin.x() - scene_pos.x())
+            + x_offsets * transform.m11()
+            + y_offsets * transform.m21()
             )
-        scene_y = (
-            origin.y()
-            + x_values * (x_basis.y() - origin.y())
-            + y_values * (y_basis.y() - origin.y())
+        scene_dy = (
+            (scene_origin.y() - scene_pos.y())
+            + x_offsets * transform.m12()
+            + y_offsets * transform.m22()
             )
-        distances = np.square(scene_x - scene_pos.x()) + np.square(
-            scene_y - scene_pos.y()
-            )
+        distances = np.square(scene_dx) + np.square(scene_dy)
         index = int(np.argmin(distances))
         sample = _SnapTraceSample(
             x_value=float(raw_x_values[index]),
@@ -548,7 +590,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
         if self._snap_marker_view is not viewbox:
             self._hide_snap_marker()
-            viewbox.addItem(self.snap_marker)
+            viewbox.addItem(self.snap_marker, ignoreBounds=True)
             self._snap_marker_view = viewbox
 
         self.snap_marker.setData([x_value], [y_value])

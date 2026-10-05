@@ -13,6 +13,7 @@ from qplot.datahandling.readonly import (
     qcodes_read_only_connection,
     sqlite_read_only_connection,
 )
+from qplot.datahandling.source_activity import source_activity_timestamp
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES,
     TRUSTED_PRESENTATION_MAX_PARAMETER_TEXT_BYTES,
@@ -32,40 +33,44 @@ MAX_SNAPSHOT_SELECTED_PARAMETERS = 256
 MAX_SNAPSHOT_SELECTED_SETPOINTS = 32
 MAX_RUN_DESCRIPTION_SHAPE_DIMENSIONS = 32
 _SNAPSHOT_SELECTED_LAYOUT_TEXT_BYTES = 512
-_SNAPSHOT_STANDARD_RUN_COLUMNS = frozenset({
-    "run_id",
-    "exp_id",
-    "name",
-    "result_table_name",
-    "result_counter",
-    "run_timestamp",
-    "completed_timestamp",
-    "is_completed",
-    "parameters",
-    "guid",
-    "run_description",
-    "snapshot",
-    "parent_datasets",
-    "captured_run_id",
-    "captured_counter",
-    })
-_SNAPSHOT_OBSERVATION_FIELDS = frozenset({
-    "database_modified_timestamp",
-    "expected_results",
-    "expected_results_source",
-    "measure_parameters",
-    "measurement_exception",
-    "point_shape",
-    "read_setpoint_count",
-    "result_count",
-    "setpoint_count",
-    "setpoint_count_source",
-    "setpoint_shape",
-    "setpoint_shape_source",
-    "storage_bytes",
-    "storage_bytes_estimated",
-    "sweep_parameters",
-    })
+_SNAPSHOT_STANDARD_RUN_COLUMNS = frozenset(
+    {
+        "run_id",
+        "exp_id",
+        "name",
+        "result_table_name",
+        "result_counter",
+        "run_timestamp",
+        "completed_timestamp",
+        "is_completed",
+        "parameters",
+        "guid",
+        "run_description",
+        "snapshot",
+        "parent_datasets",
+        "captured_run_id",
+        "captured_counter",
+    }
+)
+_SNAPSHOT_OBSERVATION_FIELDS = frozenset(
+    {
+        "database_modified_timestamp",
+        "expected_results",
+        "expected_results_source",
+        "measure_parameters",
+        "measurement_exception",
+        "point_shape",
+        "read_setpoint_count",
+        "result_count",
+        "setpoint_count",
+        "setpoint_count_source",
+        "setpoint_shape",
+        "setpoint_shape_source",
+        "storage_bytes",
+        "storage_bytes_estimated",
+        "sweep_parameters",
+    }
+)
 
 
 class _StorageSize(NamedTuple):
@@ -81,10 +86,10 @@ def _raise_if_read_aborted(cancelled_callback=None, deadline=None):
 
 
 def _install_cancel_progress_handler(
-        conn,
-        cancelled_callback,
-        deadline=None,
-        ):
+    conn,
+    cancelled_callback,
+    deadline=None,
+):
     if cancelled_callback is None and deadline is None:
         return
     _raise_if_read_aborted(cancelled_callback, deadline)
@@ -94,9 +99,9 @@ def _install_cancel_progress_handler(
             lambda: int(
                 bool(cancelled_callback is not None and cancelled_callback())
                 or bool(deadline is not None and monotonic() >= deadline)
-                ),
+            ),
             1000,
-            )
+        )
 
 
 def _translate_interrupted_read(error, cancelled_callback=None, deadline=None):
@@ -110,11 +115,11 @@ def _notify_connection(connection_callback, connection):
 
 
 def _read_only_connection(
-        database_path,
-        expected_database_identity,
-        cancelled_callback=None,
-        deadline=None,
-        ):
+    database_path,
+    expected_database_identity,
+    cancelled_callback=None,
+    deadline=None,
+):
     """Open a QCoDeS view while retaining optional abort controls."""
     kwargs = {}
     if expected_database_identity is not None:
@@ -127,17 +132,17 @@ def _read_only_connection(
 
 
 def get_selected_run_setpoint_summaries(
-        database_path,
-        result_table_name,
-        setpoint_names,
-        result_count,
-        *,
-        setpoint_shape=None,
-        expected_database_identity=None,
-        cancelled_callback=None,
-        connection_callback=None,
-        deadline=None,
-        ):
+    database_path,
+    result_table_name,
+    setpoint_names,
+    result_count,
+    *,
+    setpoint_shape=None,
+    expected_database_identity=None,
+    cancelled_callback=None,
+    connection_callback=None,
+    deadline=None,
+):
     """Return bounded, plain summaries for snapshot-mode run details.
 
     Result-table grouping is deliberately limited to runs whose already-known
@@ -146,59 +151,51 @@ def get_selected_run_setpoint_summaries(
     SQLite.  This function is part of the data layer so Qt widgets only render
     the mapping supplied by their controller.
     """
-    names = tuple(dict.fromkeys(
-        str(name)
-        for name in setpoint_names or ()
-        if str(name)
-        ))
+    names = tuple(
+        dict.fromkeys(str(name) for name in setpoint_names or () if str(name))
+    )
     summaries = {}
     try:
-        bounded_result_count = (
-            int(result_count)
-            if result_count is not None
-            else None
-            )
+        bounded_result_count = int(result_count) if result_count is not None else None
     except (TypeError, ValueError, OverflowError):
         bounded_result_count = None
 
     if (
-            database_path
-            and result_table_name
-            and names
-            and bounded_result_count is not None
-            and 0 <= bounded_result_count
-            <= MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
-            ):
-        summaries.update(_read_selected_run_setpoint_summaries(
-            database_path,
-            result_table_name,
-            names,
-            expected_database_identity=expected_database_identity,
-            cancelled_callback=cancelled_callback,
-            connection_callback=connection_callback,
-            deadline=deadline,
-            ))
+        database_path
+        and result_table_name
+        and names
+        and bounded_result_count is not None
+        and 0 <= bounded_result_count <= MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
+    ):
+        summaries.update(
+            _read_selected_run_setpoint_summaries(
+                database_path,
+                result_table_name,
+                names,
+                expected_database_identity=expected_database_identity,
+                cancelled_callback=cancelled_callback,
+                connection_callback=connection_callback,
+                deadline=deadline,
+            )
+        )
 
     for name, steps in zip(names, setpoint_shape or (), strict=False):
         if steps is None or steps == "":
             continue
         summaries.setdefault(name, {}).setdefault("steps", steps)
-    return {
-        name: dict(summary)
-        for name, summary in summaries.items()
-        }
+    return {name: dict(summary) for name, summary in summaries.items()}
 
 
 def _read_selected_run_setpoint_summaries(
-        database_path,
-        result_table_name,
-        setpoint_names,
-        *,
-        expected_database_identity=None,
-        cancelled_callback=None,
-        connection_callback=None,
-        deadline=None,
-        ):
+    database_path,
+    result_table_name,
+    setpoint_names,
+    *,
+    expected_database_identity=None,
+    cancelled_callback=None,
+    connection_callback=None,
+    deadline=None,
+):
     """Read one bounded snapshot summary batch, degrading to empty on error."""
     conn = None
     cursor = None
@@ -209,7 +206,7 @@ def _read_selected_run_setpoint_summaries(
             expected_database_identity=expected_database_identity,
             cancelled_callback=cancelled_callback,
             deadline=deadline,
-            )
+        )
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
@@ -219,7 +216,7 @@ def _read_selected_run_setpoint_summaries(
             setpoint_names,
             cancelled_callback=cancelled_callback,
             deadline=deadline,
-            )
+        )
         _raise_if_read_aborted(cancelled_callback, deadline)
         return summaries
     except (InterruptedError, TimeoutError):
@@ -240,13 +237,13 @@ def _read_selected_run_setpoint_summaries(
 
 
 def _selected_run_setpoint_summaries_from_cursor(
-        cursor,
-        result_table_name,
-        setpoint_names,
-        *,
-        cancelled_callback=None,
-        deadline=None,
-    ):
+    cursor,
+    result_table_name,
+    setpoint_names,
+    *,
+    cancelled_callback=None,
+    deadline=None,
+):
     """Return bounded summaries using an already guarded snapshot connection."""
     quoted_table = _sqlite_identifier(result_table_name)
     _raise_if_read_aborted(cancelled_callback, deadline)
@@ -258,15 +255,15 @@ def _selected_run_setpoint_summaries_from_cursor(
         quoted_table,
     )
     if (
-            high_watermark is None
-            or high_watermark > MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
-            ):
+        high_watermark is None
+        or high_watermark > MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
+    ):
         return {}
-    columns = _result_table_columns(cursor, quoted_table)
+    columns = _result_table_column_types(cursor, quoted_table)
     summaries = {}
     for name in setpoint_names:
         _raise_if_read_aborted(cancelled_callback, deadline)
-        if name not in columns:
+        if name not in columns or columns[name] == "array":
             continue
         summary = _selected_run_setpoint_summary(cursor, quoted_table, name)
         if summary:
@@ -291,21 +288,21 @@ def _selected_summary_source_within_byte_limit(cursor):
         cursor.execute("PRAGMA main.page_count")
         page_count_row = cursor.fetchone()
         if (
-                page_size_row is None
-                or page_count_row is None
-                or len(page_size_row) != 1
-                or len(page_count_row) != 1
-                ):
+            page_size_row is None
+            or page_count_row is None
+            or len(page_size_row) != 1
+            or len(page_count_row) != 1
+        ):
             return False
         page_size = page_size_row[0]
         page_count = page_count_row[0]
         if (
-                type(page_size) is not int
-                or type(page_count) is not int
-                or page_size <= 0
-                or page_count < 0
-                or page_count > limit // page_size
-                ):
+            type(page_size) is not int
+            or type(page_count) is not int
+            or page_size <= 0
+            or page_count < 0
+            or page_count > limit // page_size
+        ):
             return False
 
         cursor.execute("PRAGMA database_list")
@@ -348,19 +345,15 @@ def _result_table_integer_pk_high_watermark(cursor, quoted_table):
     """
     try:
         cursor.execute(f"PRAGMA table_info({quoted_table})")
-        primary_keys = [
-            row
-            for row in cursor.fetchall()
-            if len(row) >= 6 and row[5]
-        ]
+        primary_keys = [row for row in cursor.fetchall() if len(row) >= 6 and row[5]]
         if len(primary_keys) != 1:
             return None
         primary_key = primary_keys[0]
         if (
-                str(primary_key[1]) != "id"
-                or str(primary_key[2] or "").strip().upper() != "INTEGER"
-                or primary_key[5] != 1
-                ):
+            str(primary_key[1]) != "id"
+            or str(primary_key[2] or "").strip().upper() != "INTEGER"
+            or primary_key[5] != 1
+        ):
             return None
         quoted_id = _sqlite_identifier(primary_key[1])
         cursor.execute(f"SELECT MAX({quoted_id}) FROM {quoted_table}")
@@ -380,16 +373,16 @@ def _result_table_integer_pk_high_watermark(cursor, quoted_table):
 
 
 def get_snapshot_selected_run_detail(
-        database_path,
-        run_id,
-        guid,
-        run_metadata=None,
-        *,
-        expected_database_identity=None,
-        cancelled_callback=None,
-        connection_callback=None,
-        deadline=None,
-        ):
+    database_path,
+    run_id,
+    guid,
+    run_metadata=None,
+    *,
+    expected_database_identity=None,
+    cancelled_callback=None,
+    connection_callback=None,
+    deadline=None,
+):
     """Return a bounded immutable detail view without constructing a DataSet.
 
     Every SQLite operation is finite and cancellable. Result-table values are
@@ -424,7 +417,7 @@ def get_snapshot_selected_run_detail(
         expected_database_identity,
         cancelled_callback,
         deadline,
-        )
+    )
     try:
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
@@ -437,15 +430,11 @@ def get_snapshot_selected_run_detail(
             columns,
             cancelled_callback=cancelled_callback,
             deadline=deadline,
-            )
+        )
         if values is None:
-            raise LookupError(
-                f"Run {run_id} with GUID {guid} is no longer available."
-            )
+            raise LookupError(f"Run {run_id} with GUID {guid} is no longer available.")
         if str(values.get("guid") or "") != guid:
-            raise LookupError(
-                f"Run {run_id} no longer has the selected GUID {guid}."
-            )
+            raise LookupError(f"Run {run_id} no longer has the selected GUID {guid}.")
 
         database_values = {
             name: value
@@ -470,12 +459,9 @@ def get_snapshot_selected_run_detail(
         )
         materialized["guid"] = guid
         materialized["run_id"] = run_id
-        try:
-            materialized["database_modified_timestamp"] = os.path.getmtime(
-                database_path
-            )
-        except OSError:
-            materialized.setdefault("database_modified_timestamp", None)
+        materialized["database_modified_timestamp"] = _database_modified_timestamp(
+            cursor
+        )
 
         layout_rows, layout_unavailable = _snapshot_selected_layout_rows(
             cursor,
@@ -545,29 +531,28 @@ def get_snapshot_selected_run_detail(
         metadata = {
             name: value
             for name, value in values.items()
-            if (
-                name not in _SNAPSHOT_STANDARD_RUN_COLUMNS
-                and value is not None
-            )
+            if (name not in _SNAPSHOT_STANDARD_RUN_COLUMNS and value is not None)
         }
         snapshot = normalize_trusted_snapshot(
             values.get("snapshot"),
             omission=snapshot_omission,
         )
-        unavailable_fields = tuple(dict.fromkeys(
-            (
-                *unavailable,
-                *layout_unavailable,
-                *(("parameters.presentation",) if parameters_truncated else ()),
-                *(
-                    ("setpoint_summaries.presentation",)
-                    if summaries_truncated
-                    else ()
-                ),
+        unavailable_fields = tuple(
+            dict.fromkeys(
+                (
+                    *unavailable,
+                    *layout_unavailable,
+                    *(("parameters.presentation",) if parameters_truncated else ()),
+                    *(
+                        ("setpoint_summaries.presentation",)
+                        if summaries_truncated
+                        else ()
+                    ),
+                )
             )
-        ))
-        public_unavailable_fields, _unavailable_truncated = (
-            bounded_presentation_names(unavailable_fields)
+        )
+        public_unavailable_fields, _unavailable_truncated = bounded_presentation_names(
+            unavailable_fields
         )
         presentation = build_selected_run_presentation(
             run_fields={**materialized, "run_id": run_id},
@@ -583,10 +568,14 @@ def get_snapshot_selected_run_detail(
                 for parameter in parameters
             ),
             snapshot_summary={
-                "Status": snapshot.status,
+                "Status": (
+                    "available — loaded on demand"
+                    if snapshot.status == "available"
+                    else snapshot.status
+                ),
                 "Message": snapshot.message,
                 "Input bytes": snapshot.input_bytes,
-                "Rendered nodes": len(snapshot.nodes),
+                "Initial page nodes": len(snapshot.nodes),
             },
             setpoint_summaries=tuple(
                 {
@@ -666,9 +655,9 @@ def _snapshot_selected_run_columns(cursor):
     cursor.execute('SELECT * FROM "runs" WHERE 0')
     columns = tuple(description[0] for description in cursor.description or ())
     if (
-            not {"run_id", "guid"}.issubset(columns)
-            or len(columns) > MAX_SNAPSHOT_SELECTED_RUN_COLUMNS
-            ):
+        not {"run_id", "guid"}.issubset(columns)
+        or len(columns) > MAX_SNAPSHOT_SELECTED_RUN_COLUMNS
+    ):
         raise RuntimeError(
             "The selected QCoDeS run schema exceeds the bounded detail plan."
         )
@@ -676,14 +665,14 @@ def _snapshot_selected_run_columns(cursor):
 
 
 def _bounded_snapshot_selected_run_values(
-        cursor,
-        run_id,
-        guid,
-        columns,
-        *,
-        cancelled_callback=None,
-        deadline=None,
-        ):
+    cursor,
+    run_id,
+    guid,
+    columns,
+    *,
+    cancelled_callback=None,
+    deadline=None,
+):
     from qplot.datahandling.trusted_snapshot import TrustedSnapshotOmission
 
     values: dict[str, object] = {}
@@ -706,18 +695,17 @@ def _bounded_snapshot_selected_run_values(
             values[name] = None
             continue
         if (
-                value_type not in {"integer", "real", "text", "blob"}
-                or type(value_bytes) is not int
-                or value_bytes < 0
-                ):
+            value_type not in {"integer", "real", "text", "blob"}
+            or type(value_bytes) is not int
+            or value_bytes < 0
+        ):
             raise RuntimeError(
                 "A selected-run scalar preflight returned invalid metadata."
             )
         if (
-                value_bytes > MAX_SNAPSHOT_SELECTED_RUN_SCALAR_BYTES
-                or accepted_bytes + value_bytes
-                > MAX_SNAPSHOT_SELECTED_RUN_TOTAL_BYTES
-                ):
+            value_bytes > MAX_SNAPSHOT_SELECTED_RUN_SCALAR_BYTES
+            or accepted_bytes + value_bytes > MAX_SNAPSHOT_SELECTED_RUN_TOTAL_BYTES
+        ):
             values[name] = None
             unavailable.append(name)
             if name == "snapshot":
@@ -796,32 +784,48 @@ def _snapshot_selected_layout_rows(cursor, run_id):
 
 
 def _snapshot_selected_summary_values(
-        cursor,
-        metadata,
-        setpoint_names,
-        *,
-        cancelled_callback=None,
-        deadline=None,
-        ):
+    cursor,
+    metadata,
+    setpoint_names,
+    *,
+    cancelled_callback=None,
+    deadline=None,
+):
+    from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+
     result_count = _snapshot_positive_int(metadata.get("result_count"))
     summaries = {}
     if (
-            result_count is not None
-            and result_count <= MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
-            and metadata.get("result_table_name")
-            and setpoint_names
-            ):
-        summaries.update(_selected_run_setpoint_summaries_from_cursor(
-            cursor,
-            metadata["result_table_name"],
-            setpoint_names,
-            cancelled_callback=cancelled_callback,
-            deadline=deadline,
-        ))
-    shape = metadata.get("setpoint_shape") or metadata.get("point_shape") or ()
-    for name, steps in zip(setpoint_names, shape, strict=False):
+        result_count is not None
+        and result_count <= MAX_SELECTED_RUN_SETPOINT_SUMMARY_ROWS
+        and metadata.get("result_table_name")
+        and setpoint_names
+    ):
+        summaries.update(
+            _selected_run_setpoint_summaries_from_cursor(
+                cursor,
+                metadata["result_table_name"],
+                setpoint_names,
+                cancelled_callback=cancelled_callback,
+                deadline=deadline,
+            )
+        )
+    planned_steps = TrustedMetadataQueryAdapter._planned_setpoint_steps(
+        metadata, setpoint_names,
+    )
+    # The largest run-wide shape cannot describe independent dependent trees.
+    # Retain the controller's shape only when no dependency declaration exists
+    # and a single dependent makes its association unambiguous.
+    if (
+        not _parameter_dependencies(_json_dict(metadata.get("run_description")))
+        and len(metadata.get("measure_parameters") or ()) == 1
+    ):
+        shape = metadata.get("setpoint_shape") or metadata.get("point_shape") or ()
+        if len(shape) == len(setpoint_names):
+            planned_steps = dict(zip(setpoint_names, shape, strict=True))
+    for name, steps in planned_steps.items():
         summaries.setdefault(name, {}).setdefault("steps", steps)
-    return summaries
+    return {name: summaries[name] for name in setpoint_names if name in summaries}
 
 
 def _snapshot_positive_int(value):
@@ -880,17 +884,17 @@ def _selected_run_setpoint_summary(cursor, quoted_table, parameter):
         "from": first_value,
         "to": last_value,
         "steps": count,
-        }
+    }
 
 
 def get_runs_via_sql(
-        database_path=None,
-        include_details=True,
-        cancelled_callback=None,
-        connection_callback=None,
-        expected_database_identity=None,
-        deadline=None,
-        ):
+    database_path=None,
+    include_details=True,
+    cancelled_callback=None,
+    connection_callback=None,
+    expected_database_identity=None,
+    deadline=None,
+):
     """
     Read from the currently initialised QCoDeS database and fetches all data to
     be displayed in Main Window runList
@@ -899,7 +903,7 @@ def get_runs_via_sql(
     -------
     outDict : dict{int: dict}
         A nested dictionary of requried data.
-        Has layout: 
+        Has layout:
             run_id : {column_name: column_data}
 
     """
@@ -908,7 +912,7 @@ def get_runs_via_sql(
         expected_database_identity,
         cancelled_callback,
         deadline,
-        )
+    )
     try:
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
@@ -917,7 +921,7 @@ def get_runs_via_sql(
             cursor,
             empty_as_none=False,
             include_details=include_details,
-            )
+        )
         _raise_if_read_aborted(cancelled_callback, deadline)
         return rows
     except sqlite3.OperationalError as error:
@@ -931,12 +935,12 @@ def get_runs_via_sql(
 
 
 def get_runs_basic_via_sql(
-        database_path=None,
-        cancelled_callback=None,
-        connection_callback=None,
-        expected_database_identity=None,
-        deadline=None,
-        ):
+    database_path=None,
+    cancelled_callback=None,
+    connection_callback=None,
+    expected_database_identity=None,
+    deadline=None,
+):
     """
     Read the run list without scanning result tables.
 
@@ -953,22 +957,22 @@ def get_runs_basic_via_sql(
         connection_callback=connection_callback,
         expected_database_identity=expected_database_identity,
         deadline=deadline,
-        )
+    )
 
 
 def iter_run_detail_batches_via_sql(
-        database_path,
-        run_ids,
-        batch_size=1,
-        infer_missing_shapes=True,
-        include_storage_bytes=True,
-        include_storage_estimate=False,
-        include_read_setpoint_count=True,
-        cancelled_callback=None,
-        connection_callback=None,
-        expected_database_identity=None,
-        deadline=None,
-        ):
+    database_path,
+    run_ids,
+    batch_size=1,
+    infer_missing_shapes=True,
+    include_storage_bytes=True,
+    include_storage_estimate=False,
+    include_read_setpoint_count=True,
+    cancelled_callback=None,
+    connection_callback=None,
+    expected_database_identity=None,
+    deadline=None,
+):
     """
     Yield detailed run metadata in small batches.
 
@@ -987,14 +991,14 @@ def iter_run_detail_batches_via_sql(
         expected_database_identity,
         cancelled_callback,
         deadline,
-        )
+    )
     try:
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
         for offset in range(0, len(run_ids), batch_size):
             _raise_if_read_aborted(cancelled_callback, deadline)
-            batch = run_ids[offset:offset + batch_size]
+            batch = run_ids[offset : offset + batch_size]
             placeholders = ", ".join("?" for _ in batch)
             rows = _fetch_run_rows(
                 cursor,
@@ -1021,14 +1025,14 @@ def iter_run_detail_batches_via_sql(
 
 
 def iter_run_shape_batches_via_sql(
-        database_path,
-        run_ids,
-        batch_size=1,
-        cancelled_callback=None,
-        connection_callback=None,
-        expected_database_identity=None,
-        deadline=None,
-        ):
+    database_path,
+    run_ids,
+    batch_size=1,
+    cancelled_callback=None,
+    connection_callback=None,
+    expected_database_identity=None,
+    deadline=None,
+):
     """
     Yield setpoint-shape metadata for runs that need result-table inference.
 
@@ -1047,14 +1051,14 @@ def iter_run_shape_batches_via_sql(
         expected_database_identity,
         cancelled_callback,
         deadline,
-        )
+    )
     try:
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
         for offset in range(0, len(run_ids), batch_size):
             _raise_if_read_aborted(cancelled_callback, deadline)
-            batch = run_ids[offset:offset + batch_size]
+            batch = run_ids[offset : offset + batch_size]
             placeholders = ", ".join("?" for _ in batch)
             rows = _fetch_run_rows(
                 cursor,
@@ -1065,7 +1069,7 @@ def iter_run_shape_batches_via_sql(
                 infer_missing_shapes=True,
                 include_storage_bytes=False,
                 include_read_setpoint_count=False,
-                )
+            )
             rows = {
                 run_id: metadata
                 for run_id, metadata in (rows or {}).items()
@@ -1073,7 +1077,7 @@ def iter_run_shape_batches_via_sql(
                     metadata.get("setpoint_shape")
                     or metadata.get("point_shape")
                     or metadata.get("setpoint_count") is not None
-                    )
+                )
             }
             if rows:
                 _raise_if_read_aborted(cancelled_callback, deadline)
@@ -1090,14 +1094,14 @@ def iter_run_shape_batches_via_sql(
 
 
 def iter_run_storage_batches_via_sql(
-        database_path,
-        run_ids,
-        batch_size=25,
-        cancelled_callback=None,
-        connection_callback=None,
-        expected_database_identity=None,
-        deadline=None,
-        ):
+    database_path,
+    run_ids,
+    batch_size=25,
+    cancelled_callback=None,
+    connection_callback=None,
+    expected_database_identity=None,
+    deadline=None,
+):
     """
     Yield per-run storage sizes after the cheap detail pass has completed.
 
@@ -1117,7 +1121,7 @@ def iter_run_storage_batches_via_sql(
         expected_database_identity,
         cancelled_callback,
         deadline,
-        )
+    )
     try:
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
@@ -1127,7 +1131,7 @@ def iter_run_storage_batches_via_sql(
             metadata.get("result_table_name")
             for metadata in run_tables.values()
             if metadata.get("result_table_name")
-            }
+        }
         sizes = _table_storage_bytes_by_name(cursor, table_names)
         if not sizes:
             _raise_if_read_aborted(cancelled_callback, deadline)
@@ -1136,7 +1140,7 @@ def iter_run_storage_batches_via_sql(
         for offset in range(0, len(run_ids), batch_size):
             _raise_if_read_aborted(cancelled_callback, deadline)
             rows = {}
-            for run_id in run_ids[offset:offset + batch_size]:
+            for run_id in run_ids[offset : offset + batch_size]:
                 metadata = run_tables.get(run_id)
                 if not metadata:
                     continue
@@ -1149,7 +1153,7 @@ def iter_run_storage_batches_via_sql(
                     "guid": metadata.get("guid"),
                     "storage_bytes": storage_bytes,
                     "storage_bytes_estimated": False,
-                    }
+                }
             if rows:
                 _raise_if_read_aborted(cancelled_callback, deadline)
                 yield rows
@@ -1165,13 +1169,13 @@ def iter_run_storage_batches_via_sql(
 
 
 def find_new_runs(
-        last_run_id,
-        database_path=None,
-        cancelled_callback=None,
-        connection_callback=None,
-        expected_database_identity=None,
-        deadline=None,
-        ):
+    last_run_id,
+    database_path=None,
+    cancelled_callback=None,
+    connection_callback=None,
+    expected_database_identity=None,
+    deadline=None,
+):
     """
     Fetch all runs created after the last seen run ID.
 
@@ -1187,7 +1191,7 @@ def find_new_runs(
     -------
     outDict : dict{int: dict}
         A nested dictionary of requried data.
-        Has layout: 
+        Has layout:
             run_id : {column_name: column_data}
     """
     conn = _read_only_connection(
@@ -1195,13 +1199,13 @@ def find_new_runs(
         expected_database_identity,
         cancelled_callback,
         deadline,
-        )
+    )
 
     try:
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
-        rows = _fetch_run_rows(cursor, "WHERE runs.run_id > ?", (last_run_id, ))
+        rows = _fetch_run_rows(cursor, "WHERE runs.run_id > ?", (last_run_id,))
         _raise_if_read_aborted(cancelled_callback, deadline)
         return rows
     except sqlite3.OperationalError as error:
@@ -1215,23 +1219,24 @@ def find_new_runs(
 
 
 def _fetch_run_rows(
-        cursor,
-        where="",
-        params=(),
-        empty_as_none=True,
-        include_details=True,
-        infer_missing_shapes=True,
-        include_storage_bytes=True,
-        include_storage_estimate=False,
-        include_read_setpoint_count=True,
-        storage_bytes_by_table=None,
-        ):
+    cursor,
+    where="",
+    params=(),
+    empty_as_none=True,
+    include_details=True,
+    infer_missing_shapes=True,
+    include_storage_bytes=True,
+    include_storage_estimate=False,
+    include_read_setpoint_count=True,
+    storage_bytes_by_table=None,
+):
     optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
     optional_select = "".join(
         f", runs.{_sqlite_identifier(column)} AS {_sqlite_identifier(column)}"
         for column in optional_columns
-        )
-    cursor.execute(f"""
+    )
+    cursor.execute(
+        f"""
        SELECT
            runs.run_id,
            runs.exp_id,
@@ -1249,7 +1254,9 @@ def _fetch_run_rows(
        FROM runs
        LEFT JOIN experiments ON runs.exp_id = experiments.exp_id
        {where}
-    """, params)
+    """,
+        params,
+    )
     values = cursor.fetchall()
 
     if len(values) == 0:
@@ -1272,7 +1279,7 @@ def _fetch_run_rows(
                 include_storage_estimate=include_storage_estimate,
                 include_read_setpoint_count=include_read_setpoint_count,
                 storage_bytes_by_table=storage_bytes_by_table,
-                )
+            )
         outDict[row[0]] = metadata
 
     return outDict
@@ -1290,22 +1297,18 @@ def _add_run_basic_fields(metadata):
     point_shape, shape_truncated = _bounded_point_shape(
         run_description,
         measure_parameters,
-        )
+    )
 
     metadata["measure_parameters"] = measure_parameters
     metadata["sweep_parameters"] = sweep_parameters
-    metadata["parameters_truncated"] = bool(
-        parameters_truncated or shape_truncated
-    )
+    metadata["parameters_truncated"] = bool(parameters_truncated or shape_truncated)
     metadata["point_shape"] = point_shape
     metadata["setpoint_shape"] = metadata["point_shape"]
     shape_source = "planned" if metadata["setpoint_shape"] else None
     metadata["setpoint_shape_source"] = shape_source
-    expected_results, expected_shape_truncated = (
-        _bounded_expected_results_from_shapes(
-            run_description,
-            measure_parameters,
-        )
+    expected_results, expected_shape_truncated = _bounded_expected_results_from_shapes(
+        run_description,
+        measure_parameters,
     )
     metadata["parameters_truncated"] = bool(
         metadata["parameters_truncated"] or expected_shape_truncated
@@ -1313,7 +1316,7 @@ def _add_run_basic_fields(metadata):
     metadata["expected_results"] = expected_results
     metadata["expected_results_source"] = (
         "planned" if expected_results is not None else None
-        )
+    )
     metadata["setpoint_count"] = _shape_size(metadata["setpoint_shape"])
     metadata["setpoint_count_source"] = shape_source
 
@@ -1332,21 +1335,26 @@ def materialize_run_basic_fields(metadata):
     return materialized
 
 
+_OBSERVATION_UNSET = object()
+
+
 def materialize_run_observation(
-        metadata,
-        *,
-        result_count=None,
-        setpoint_shape=None,
-        setpoint_count=None,
-        storage_bytes=None,
-        storage_bytes_estimated=None,
-        read_setpoint_count=None,
-        ):
+    metadata,
+    *,
+    result_count=None,
+    setpoint_shape=None,
+    setpoint_count=None,
+    storage_bytes=None,
+    storage_bytes_estimated=None,
+    read_setpoint_count=_OBSERVATION_UNSET,
+):
     """Return shared detail fields from already-bounded observations.
 
     All database work happens before this function.  The snapshot path can
     continue collecting observations with cursors, while the trusted adapter
     supplies the same values from fixed supervisor queries.
+    An omitted acquired count retains the prior observation; explicit ``None``
+    clears a count whose structural evidence is no longer available.
     """
     materialized = materialize_run_basic_fields(metadata)
     if result_count is not None:
@@ -1356,9 +1364,7 @@ def materialize_run_observation(
 
     if setpoint_count is not None or setpoint_shape is not None:
         normalized_shape = (
-            [int(size) for size in setpoint_shape]
-            if setpoint_shape
-            else None
+            [int(size) for size in setpoint_shape] if setpoint_shape else None
         )
         materialized["setpoint_shape"] = normalized_shape
         materialized["point_shape"] = _point_shape_from_setpoint_shape(
@@ -1366,9 +1372,7 @@ def materialize_run_observation(
             materialized.get("measure_parameters"),
             materialized.get("result_count"),
         )
-        materialized["setpoint_shape_source"] = (
-            "observed" if normalized_shape else None
-        )
+        materialized["setpoint_shape_source"] = "observed" if normalized_shape else None
         materialized["setpoint_count"] = (
             int(setpoint_count) if setpoint_count is not None else None
         )
@@ -1378,8 +1382,10 @@ def materialize_run_observation(
         materialized["expected_results"] = None
         materialized["expected_results_source"] = None
 
-    if read_setpoint_count is not None:
-        materialized["read_setpoint_count"] = int(read_setpoint_count)
+    if read_setpoint_count is not _OBSERVATION_UNSET:
+        materialized["read_setpoint_count"] = (
+            int(read_setpoint_count) if read_setpoint_count is not None else None
+        )
 
     if storage_bytes is not None or storage_bytes_estimated is not None:
         materialized["storage_bytes"] = (
@@ -1392,14 +1398,14 @@ def materialize_run_observation(
 
 
 def _add_run_detail_fields(
-        cursor,
-        metadata,
-        infer_missing_shapes=True,
-        include_storage_bytes=True,
-        include_storage_estimate=False,
-        include_read_setpoint_count=True,
-        storage_bytes_by_table=None,
-        ):
+    cursor,
+    metadata,
+    infer_missing_shapes=True,
+    include_storage_bytes=True,
+    include_storage_estimate=False,
+    include_read_setpoint_count=True,
+    storage_bytes_by_table=None,
+):
     measure_parameters = metadata.get("measure_parameters") or []
     sweep_parameters = metadata.get("sweep_parameters") or []
 
@@ -1409,9 +1415,9 @@ def _add_run_detail_fields(
         observed_setpoints = _add_observed_shape_fields(cursor, metadata)
     _add_completed_observed_result_count(metadata)
     if include_read_setpoint_count and (
-            not bool(metadata.get("is_completed"))
-            or _is_keyboard_interrupt(metadata.get("measurement_exception"))
-            ):
+        not bool(metadata.get("is_completed"))
+        or _is_keyboard_interrupt(metadata.get("measurement_exception"))
+    ):
         if observed_setpoints is None:
             observed_setpoints = _run_setpoint_observation(
                 cursor,
@@ -1419,7 +1425,7 @@ def _add_run_detail_fields(
                 _json_dict(metadata.get("run_description")),
                 measure_parameters,
                 sweep_parameters,
-                )
+            )
         metadata["read_setpoint_count"] = observed_setpoints["count"]
     if include_storage_bytes:
         table_name = metadata.get("result_table_name")
@@ -1428,27 +1434,27 @@ def _add_run_detail_fields(
             storage_size = _StorageSize(
                 storage_bytes,
                 "exact" if storage_bytes is not None else "unavailable",
-                )
+            )
         else:
             storage_size = _table_storage_bytes(
                 cursor,
                 table_name,
                 result_count=metadata.get("result_count"),
-                )
+            )
         _add_storage_size_fields(metadata, storage_size)
     elif include_storage_estimate:
         storage_bytes = _estimated_table_storage_bytes(
             cursor,
             metadata.get("result_table_name"),
             result_count=metadata.get("result_count"),
-            )
+        )
         _add_storage_size_fields(
             metadata,
             _StorageSize(
                 storage_bytes,
                 "estimated" if storage_bytes is not None else "unavailable",
-                ),
-            )
+            ),
+        )
 
 
 def _add_storage_size_fields(metadata, storage_size):
@@ -1457,7 +1463,7 @@ def _add_storage_size_fields(metadata, storage_size):
         "exact": False,
         "estimated": True,
         "unavailable": None,
-        }[storage_size.accuracy]
+    }[storage_size.accuracy]
 
 
 def _add_observed_shape_fields(cursor, metadata):
@@ -1469,21 +1475,19 @@ def _add_observed_shape_fields(cursor, metadata):
         _json_dict(metadata.get("run_description")),
         measure_parameters,
         sweep_parameters,
-        )
+    )
     setpoint_shape = observed_setpoints["shape"]
     metadata["setpoint_shape"] = setpoint_shape
     metadata["point_shape"] = _point_shape_from_setpoint_shape(
         setpoint_shape,
         measure_parameters,
         metadata.get("result_count"),
-        )
-    metadata["setpoint_shape_source"] = (
-        "observed" if setpoint_shape else None
-        )
+    )
+    metadata["setpoint_shape_source"] = "observed" if setpoint_shape else None
     metadata["setpoint_count"] = observed_setpoints["count"]
     metadata["setpoint_count_source"] = (
         "observed" if observed_setpoints["count"] is not None else None
-        )
+    )
     metadata["expected_results"] = None
     metadata["expected_results_source"] = None
     _add_completed_observed_result_count(metadata)
@@ -1492,10 +1496,10 @@ def _add_observed_shape_fields(cursor, metadata):
 
 def _add_completed_observed_result_count(metadata):
     if (
-            metadata.get("expected_results") is None
-            and _run_is_complete(metadata)
-            and metadata.get("result_count") is not None
-            ):
+        metadata.get("expected_results") is None
+        and _run_is_complete(metadata)
+        and metadata.get("result_count") is not None
+    ):
         metadata["expected_results"] = metadata["result_count"]
         metadata["expected_results_source"] = "observed"
 
@@ -1575,9 +1579,7 @@ def _bounded_parameter_dependencies(run_description):
     interdependencies = run_description.get("interdependencies_")
     if not isinstance(interdependencies, dict):
         interdependencies = {}
-    dependencies = (
-        interdependencies.get("dependencies", {})
-    )
+    dependencies = interdependencies.get("dependencies", {})
     if not isinstance(dependencies, dict) or not dependencies:
         return _bounded_legacy_dependencies(run_description)
 
@@ -1606,9 +1608,7 @@ def _bounded_parameter_dependencies(run_description):
             if dependency_index >= TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES:
                 truncated = True
                 break
-            setpoint, dependency_truncated = _bounded_parameter_identifier(
-                raw_setpoint
-            )
+            setpoint, dependency_truncated = _bounded_parameter_identifier(raw_setpoint)
             truncated = truncated or dependency_truncated
             if setpoint and setpoint not in seen:
                 bounded_setpoints.append(setpoint)
@@ -1727,9 +1727,13 @@ def _bounded_expected_results_from_shapes(run_description, measure_parameters):
     if not isinstance(shapes, dict) or not measure_parameters:
         return None, False
 
-    sizes = []
+    sizes = {}
     truncated = False
-    for parameter in measure_parameters:
+    for index, parameter in enumerate(
+        islice(measure_parameters, TRUSTED_PRESENTATION_MAX_PARAMETERS + 1)
+    ):
+        if index >= TRUSTED_PRESENTATION_MAX_PARAMETERS:
+            return None, True
         shape = shapes.get(parameter)
         if not isinstance(shape, list) or not shape:
             return None, truncated
@@ -1742,9 +1746,63 @@ def _bounded_expected_results_from_shapes(run_description, measure_parameters):
         size = _shape_size(dimensions)
         if size is None:
             return None, truncated
-        sizes.append(size)
+        sizes[parameter] = size
 
-    return (sum(sizes) if sizes else None), truncated
+    interdependencies = run_description.get("interdependencies_")
+    inferences = (
+        interdependencies.get("inferences", {})
+        if isinstance(interdependencies, dict) else {}
+    )
+    if not isinstance(inferences, dict):
+        return None, truncated
+    if len(inferences) > TRUSTED_PRESENTATION_MAX_PARAMETERS:
+        return None, True
+    if not inferences:
+        return (sum(sizes.values()) if sizes else None), truncated
+
+    # Current QCoDeS writes each top-level parameter tree separately. An
+    # inferred channel is stored with its basis, rather than adding another
+    # row. Multiple basis roots still contribute one tree each. Only infer a
+    # planned row count when the complete bounded graph lies among measured
+    # channels and its linked shape sizes agree; setpoint inference and other
+    # ambiguous declarations retain an unknown count.
+    inferred = set()
+    followers: dict[str, set[str]] = {name: set() for name in sizes}
+    remaining_bases = {name: 0 for name in sizes}
+    for index, (name, bases) in enumerate(
+        islice(inferences.items(), TRUSTED_PRESENTATION_MAX_PARAMETERS + 1)
+    ):
+        if index >= TRUSTED_PRESENTATION_MAX_PARAMETERS:
+            return None, True
+        if name not in sizes or not isinstance(bases, (list, tuple)) or not bases:
+            return None, truncated
+        inferred.add(name)
+        for basis_index, basis in enumerate(
+            islice(bases, TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES + 1)
+        ):
+            if basis_index >= TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES:
+                return None, True
+            if not isinstance(basis, str) or basis not in sizes:
+                return None, truncated
+            if sizes[name] != sizes[basis]:
+                return None, truncated
+            if name not in followers[basis]:
+                followers[basis].add(name)
+                remaining_bases[name] += 1
+
+    ready = [name for name, count in remaining_bases.items() if count == 0]
+    visited = 0
+    while ready:
+        name = ready.pop()
+        visited += 1
+        for follower in followers[name]:
+            remaining_bases[follower] -= 1
+            if remaining_bases[follower] == 0:
+                ready.append(follower)
+    if visited != len(sizes):
+        return None, truncated
+    roots = sizes.keys() - inferred
+    return (sum(sizes[name] for name in roots) if roots else None), truncated
 
 
 def _shape_size(shape):
@@ -1761,6 +1819,9 @@ def _shape_size(shape):
 
 
 def _database_modified_timestamp(cursor):
+    connection = cursor.connection
+    if hasattr(connection, "_qplot_source_activity_timestamp"):
+        return connection._qplot_source_activity_timestamp
     try:
         cursor.execute("PRAGMA database_list")
         databases = cursor.fetchall()
@@ -1772,10 +1833,7 @@ def _database_modified_timestamp(cursor):
     for database in databases:
         if len(database) < 3 or database[1] != "main" or not database[2]:
             continue
-        try:
-            return os.path.getmtime(database[2])
-        except OSError:
-            return None
+        return source_activity_timestamp(database[2])
 
     return None
 
@@ -1838,7 +1896,7 @@ def _setpoint_shape_from_result_table(cursor, table_name, sweep_parameters):
         return None
 
     quoted_table_name = _sqlite_identifier(table_name)
-    columns = _result_table_columns(cursor, quoted_table_name)
+    columns = _result_table_column_types(cursor, quoted_table_name)
     if not columns or any(parameter not in columns for parameter in sweep_parameters):
         return None
 
@@ -1847,7 +1905,7 @@ def _setpoint_shape_from_result_table(cursor, table_name, sweep_parameters):
         quoted_table_name,
         sweep_parameters,
         columns,
-        )
+    )
     return observation["shape"]
 
 
@@ -1856,32 +1914,46 @@ def _read_setpoint_count(cursor, table_name, sweep_parameters):
         return None
 
     quoted_table_name = _sqlite_identifier(table_name)
-    columns = _result_table_columns(cursor, quoted_table_name)
+    columns = _result_table_column_types(cursor, quoted_table_name)
     if not columns or any(parameter not in columns for parameter in sweep_parameters):
+        return None
+
+    if any(columns[parameter] == "array" for parameter in sweep_parameters):
         return None
 
     return _distinct_setpoint_count(
         cursor,
         quoted_table_name,
         sweep_parameters,
-        )
+    )
 
 
 def _run_setpoint_observation(
-        cursor,
-        table_name,
-        run_description,
-        measure_parameters,
-        sweep_parameters,
-        ):
+    cursor,
+    table_name,
+    run_description,
+    measure_parameters,
+    sweep_parameters,
+):
     """Return a safe global shape and the largest per-dependent point count."""
     empty = {"shape": None, "count": None}
     if not table_name:
         return empty
 
     quoted_table_name = _sqlite_identifier(table_name)
-    columns = _result_table_columns(cursor, quoted_table_name)
+    columns = _result_table_column_types(cursor, quoted_table_name)
     if not columns:
+        return empty
+
+    # An array cell holds an acquisition record with an unknown number of
+    # samples. DISTINCT counts serialized records, not logical data points.
+    # This also applies when an array dependent has scalar setpoints, or when
+    # scalar and array dependent trees share a run. Keep planned shapes in the
+    # caller, but do not invent a global observed shape/count from these rows.
+    if any(
+        columns.get(parameter) == "array"
+        for parameter in (*measure_parameters, *sweep_parameters)
+    ):
         return empty
 
     dependencies = _parameter_dependencies(run_description)
@@ -1890,10 +1962,10 @@ def _run_setpoint_observation(
         for parameter in measure_parameters:
             setpoints = dependencies.get(parameter)
             if (
-                    not setpoints
-                    or parameter not in columns
-                    or any(setpoint not in columns for setpoint in setpoints)
-                    ):
+                not setpoints
+                or parameter not in columns
+                or any(setpoint not in columns for setpoint in setpoints)
+            ):
                 continue
             observation = _setpoint_observation(
                 cursor,
@@ -1901,16 +1973,18 @@ def _run_setpoint_observation(
                 setpoints,
                 columns,
                 dependent_parameter=parameter,
-                )
+            )
             if observation["count"] is not None:
                 observations.append((tuple(setpoints), observation))
-    elif sweep_parameters and all(parameter in columns for parameter in sweep_parameters):
+    elif sweep_parameters and all(
+        parameter in columns for parameter in sweep_parameters
+    ):
         observation = _setpoint_observation(
             cursor,
             quoted_table_name,
             sweep_parameters,
             columns,
-            )
+        )
         if observation["count"] is not None:
             observations.append((tuple(sweep_parameters), observation))
 
@@ -1926,24 +2000,29 @@ def _run_setpoint_observation(
             len(dependency_sets) == 1
             and observed_shapes[0] is not None
             and all(shape == observed_shapes[0] for shape in observed_shapes)
-            )
-        else None
         )
+        else None
+    )
     return {"shape": shared_shape, "count": observed_count}
 
 
 def _setpoint_observation(
-        cursor,
-        quoted_table_name,
-        sweep_parameters,
-        columns,
-        dependent_parameter=None,
-        ):
+    cursor,
+    quoted_table_name,
+    sweep_parameters,
+    columns,
+    dependent_parameter=None,
+):
     empty = {"shape": None, "count": None}
     required_columns = list(sweep_parameters)
     if dependent_parameter is not None:
         required_columns.append(dependent_parameter)
-    if not required_columns or any(column not in columns for column in required_columns):
+    if not required_columns or any(
+        column not in columns for column in required_columns
+    ):
+        return empty
+
+    if any(columns[column] == "array" for column in required_columns):
         return empty
 
     observed_count = _distinct_setpoint_count(
@@ -1951,18 +2030,18 @@ def _setpoint_observation(
         quoted_table_name,
         sweep_parameters,
         dependent_parameter=dependent_parameter,
-        )
+    )
     if not observed_count:
         return empty
 
     conditions = _setpoint_not_null_conditions(
         sweep_parameters,
         dependent_parameter=dependent_parameter,
-        )
+    )
     distinct_counts = ", ".join(
         f"COUNT(DISTINCT {_sqlite_identifier(parameter)})"
         for parameter in sweep_parameters
-        )
+    )
     try:
         cursor.execute(f"""
           SELECT {distinct_counts}
@@ -1981,19 +2060,18 @@ def _setpoint_observation(
 
 
 def _distinct_setpoint_count(
-        cursor,
-        quoted_table_name,
-        sweep_parameters,
-        dependent_parameter=None,
-        ):
+    cursor,
+    quoted_table_name,
+    sweep_parameters,
+    dependent_parameter=None,
+):
     quoted_columns = ", ".join(
-        _sqlite_identifier(parameter)
-        for parameter in sweep_parameters
-        )
+        _sqlite_identifier(parameter) for parameter in sweep_parameters
+    )
     conditions = _setpoint_not_null_conditions(
         sweep_parameters,
         dependent_parameter=dependent_parameter,
-        )
+    )
     try:
         cursor.execute(f"""
           SELECT COUNT(*)
@@ -2016,19 +2094,19 @@ def _setpoint_not_null_conditions(sweep_parameters, dependent_parameter=None):
     if dependent_parameter is not None:
         parameters.append(dependent_parameter)
     return " AND ".join(
-        f"{_sqlite_identifier(parameter)} IS NOT NULL"
-        for parameter in parameters
-        )
+        f"{_sqlite_identifier(parameter)} IS NOT NULL" for parameter in parameters
+    )
 
 
-def _result_table_columns(cursor, quoted_table_name):
+def _result_table_column_types(cursor, quoted_table_name):
+    """Read current QCoDeS storage types without fetching array payloads."""
     try:
         cursor.execute(f"PRAGMA table_info({quoted_table_name})")
-        return {row[1] for row in cursor.fetchall()}
+        return {row[1]: str(row[2]).lower() for row in cursor.fetchall()}
     except Exception as error:
         if _sql_was_interrupted(error):
             raise
-        return set()
+        return {}
 
 
 def _result_count(cursor, table_name):
@@ -2053,7 +2131,7 @@ def _table_storage_bytes(cursor, table_name, result_count=None):
         return _StorageSize(None, "unavailable")
 
     try:
-        cursor.execute("SELECT SUM(pgsize) FROM dbstat WHERE name = ?", (table_name, ))
+        cursor.execute("SELECT SUM(pgsize) FROM dbstat WHERE name = ?", (table_name,))
         row = cursor.fetchone()
         value = row[0] if row else None
         if value is not None:
@@ -2066,7 +2144,7 @@ def _table_storage_bytes(cursor, table_name, result_count=None):
         cursor,
         table_name,
         result_count=result_count,
-        )
+    )
     if estimated_bytes is None:
         return _StorageSize(None, "unavailable")
     return _StorageSize(estimated_bytes, "estimated")
@@ -2083,14 +2161,17 @@ def _run_storage_tables(cursor, run_ids):
     rows = {}
     chunk_size = 500
     for offset in range(0, len(run_ids), chunk_size):
-        batch = run_ids[offset:offset + chunk_size]
+        batch = run_ids[offset : offset + chunk_size]
         placeholders = ", ".join("?" for _ in batch)
         try:
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
               SELECT run_id, guid, result_table_name
               FROM runs
               WHERE run_id IN ({placeholders})
-            """, tuple(batch))
+            """,
+                tuple(batch),
+            )
         except Exception as error:
             if _sql_was_interrupted(error):
                 raise
@@ -2100,7 +2181,7 @@ def _run_storage_tables(cursor, run_ids):
             rows[run_id] = {
                 "guid": guid,
                 "result_table_name": table_name,
-                }
+            }
 
     return rows
 
@@ -2120,7 +2201,7 @@ def _table_storage_bytes_by_name(cursor, table_names):
             GROUP BY name
             """,
             tuple(table_names),
-            )
+        )
     except Exception as err:
         if _sql_was_interrupted(err):
             raise
@@ -2172,7 +2253,10 @@ def _estimated_table_row_bytes(columns):
     row_bytes = len(columns) + 2
     for column in columns:
         column_type = str(column[2] or "").upper()
-        if any(type_name in column_type for type_name in ("INT", "REAL", "FLOA", "DOUB", "NUM")):
+        if any(
+            type_name in column_type
+            for type_name in ("INT", "REAL", "FLOA", "DOUB", "NUM")
+        ):
             row_bytes += 8
         else:
             row_bytes += 32
@@ -2180,14 +2264,14 @@ def _estimated_table_row_bytes(columns):
 
 
 def get_run_status(
-        guid,
-        database_path=None,
-        include_storage_bytes=True,
-        cancelled_callback=None,
-        connection_callback=None,
-        expected_database_identity=None,
-        deadline=None,
-        ):
+    guid,
+    database_path=None,
+    include_storage_bytes=True,
+    cancelled_callback=None,
+    connection_callback=None,
+    expected_database_identity=None,
+    deadline=None,
+):
     """
     Returns completion and result count information for one run.
 
@@ -2197,18 +2281,18 @@ def get_run_status(
         expected_database_identity,
         cancelled_callback,
         deadline,
-        )
+    )
     try:
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
         optional_columns = _existing_run_columns(cursor, ["measurement_exception"])
         optional_select = "".join(
-            f", {_sqlite_identifier(column)}"
-            for column in optional_columns
-            )
+            f", {_sqlite_identifier(column)}" for column in optional_columns
+        )
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
           SELECT
               run_timestamp,
               completed_timestamp,
@@ -2220,7 +2304,9 @@ def get_run_status(
           FROM runs
           WHERE guid=?
           LIMIT 1
-        """, (guid, ))
+        """,
+            (guid,),
+        )
         value = cursor.fetchone()
         if value is None:
             _raise_if_read_aborted(cancelled_callback, deadline)
@@ -2232,7 +2318,7 @@ def get_run_status(
             "is_completed": value[2],
             "result_count": _result_count(cursor, value[3]),
             "database_modified_timestamp": _database_modified_timestamp(cursor),
-            }
+        }
         if include_storage_bytes:
             _add_storage_size_fields(
                 status,
@@ -2240,8 +2326,8 @@ def get_run_status(
                     cursor,
                     value[3],
                     result_count=status["result_count"],
-                    ),
-                )
+                ),
+            )
         for index, column in enumerate(optional_columns, start=6):
             status[column] = value[index]
 
@@ -2252,27 +2338,26 @@ def get_run_status(
             "run_description": value[4],
             "parameters": value[5],
             "result_count": status["result_count"],
-            }
+        }
         _add_run_basic_fields(shape_metadata)
         observed_setpoints = None
         if not shape_metadata["point_shape"]:
             observed_setpoints = _add_observed_shape_fields(cursor, shape_metadata)
         _add_completed_observed_result_count(shape_metadata)
         for field in (
-                "point_shape",
-                "setpoint_shape",
-                "setpoint_shape_source",
-                "setpoint_count",
-                "setpoint_count_source",
-                "expected_results",
-                "expected_results_source",
-                ):
+            "point_shape",
+            "setpoint_shape",
+            "setpoint_shape_source",
+            "setpoint_count",
+            "setpoint_count_source",
+            "expected_results",
+            "expected_results_source",
+        ):
             status[field] = shape_metadata.get(field)
 
-        if (
-                not bool(value[2])
-                or _is_keyboard_interrupt(status.get("measurement_exception"))
-                ):
+        if not bool(value[2]) or _is_keyboard_interrupt(
+            status.get("measurement_exception")
+        ):
             if observed_setpoints is None:
                 observed_setpoints = _run_setpoint_observation(
                     cursor,
@@ -2280,7 +2365,7 @@ def get_run_status(
                     _json_dict(value[4]),
                     shape_metadata["measure_parameters"],
                     shape_metadata["sweep_parameters"],
-                    )
+                )
             status["read_setpoint_count"] = observed_setpoints["count"]
 
         _raise_if_read_aborted(cancelled_callback, deadline)
@@ -2296,15 +2381,15 @@ def get_run_status(
 
 
 def has_finished(
-        guid,
-        expected_database_identity=None,
-        cancelled_callback=None,
-        connection_callback=None,
-        deadline=None,
-        ) -> float | None:
+    guid,
+    expected_database_identity=None,
+    cancelled_callback=None,
+    connection_callback=None,
+    deadline=None,
+) -> float | None:
     """
     Checks if specific run (by guid) has finished running.
-    If the run with guid has finished, returns the completed time. 
+    If the run with guid has finished, returns the completed time.
     Otherwise returns a NULL value which python interprets as None.
 
     Parameters
@@ -2324,20 +2409,23 @@ def has_finished(
         expected_database_identity,
         cancelled_callback,
         deadline,
-        )
-    
+    )
+
     try:
         _notify_connection(connection_callback, conn)
         _install_cancel_progress_handler(conn, cancelled_callback, deadline)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
           SELECT
               completed_timestamp
           FROM runs
           WHERE guid=?
           LIMIT 1
-        """, (guid, ))
+        """,
+            (guid,),
+        )
         row = cursor.fetchone()
         if row is None or row[0] is None:
             _raise_if_read_aborted(cancelled_callback, deadline)

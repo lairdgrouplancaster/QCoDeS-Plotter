@@ -335,12 +335,14 @@ def canonicalize_heatmap_data(
             f"axis shape {expected_shape}."
             )
 
-    if x_values.size > 1 and np.all(np.diff(x_values) < 0.0):
-        x_values = x_values[::-1].copy()
-        grid = np.flip(grid, axis=1).copy()
-    if y_values.size > 1 and np.all(np.diff(y_values) < 0.0):
-        y_values = y_values[::-1].copy()
-        grid = np.flip(grid, axis=0).copy()
+    if x_values.size > 1 and not np.all(np.diff(x_values) > 0.0):
+        order = np.argsort(x_values)
+        x_values = x_values[order]
+        grid = grid[:, order]
+    if y_values.size > 1 and not np.all(np.diff(y_values) > 0.0):
+        order = np.argsort(y_values)
+        y_values = y_values[order]
+        grid = grid[order, :]
 
     AxisGeometry(x_values)
     AxisGeometry(y_values)

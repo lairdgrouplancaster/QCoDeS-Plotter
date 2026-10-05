@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
+from qcodes import Station
+from qcodes.parameters import ManualParameter
+from qcodes.utils.json_utils import NumpyJSONEncoder
 
 from qplot.datahandling import _trusted_live_protocol as protocol
 from qplot.datahandling._trusted_live_protocol import (
@@ -18,6 +22,7 @@ from qplot.datahandling._trusted_live_protocol import (
     validate_job_success,
 )
 from qplot.datahandling.trusted_live import TrustedQueryResult
+from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
 
 _SESSION = "1" * 32
 
@@ -97,3 +102,30 @@ def test_tagged_sqlite_reals_preserve_supported_canonical_values() -> None:
             assert math.isnan(actual)
         else:
             assert actual.hex() == expected.hex()
+
+
+@pytest.mark.parametrize(
+    ("value", "token"),
+    [(float("nan"), "NaN"), (float("inf"), "Infinity"), (float("-inf"), "-Infinity")],
+)
+def test_qcodes_snapshot_text_survives_live_query_transport(
+    value: float, token: str
+) -> None:
+    station = Station(ManualParameter("sensor", initial_value=value))
+    snapshot_json = json.dumps(
+        {"station": station.snapshot(update=False)}, cls=NumpyJSONEncoder
+    )
+    result = TrustedQueryResult(("snapshot",), ((snapshot_json,),))
+    frame = encode_success_reply(
+        _SESSION, 1, "query", {"results": encode_query_results((result,))}
+    )
+    envelope = decode_reply_frame(frame)
+    status, payload = decode_reply_payload(envelope)
+    decoded = validate_job_success(envelope.operation, payload)
+
+    assert status == "ok"
+    assert isinstance(decoded, TrustedQueryResult)
+    assert decoded.rows == ((snapshot_json,),)
+    view = normalize_trusted_snapshot(decoded.rows[0][0])
+    assert view.status == "available"
+    assert dict(view.parameters[0].fields)["value"] == token

@@ -1,12 +1,14 @@
 import csv
 import os
 import weakref
+from itertools import zip_longest
 from os import path
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from PyQt6 import QtCore, QtGui, QtPrintSupport, QtSvg
 from PyQt6 import QtWidgets as qtw
+from pyqtgraph import ErrorBarItem, PlotItem
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
 try:
@@ -38,6 +40,7 @@ from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
 )
+from ._svg_export import svg_bytes, write_svg_stage
 
 if TYPE_CHECKING:
     from ._dataset_handle import DatasetKey
@@ -52,6 +55,22 @@ _UnsafePrintDestinationError = UnsafeExportDestinationError
 _PrintPdfDestination = ExportDestinationTransaction
 _SAFE_PYQTGRAPH_FILE_EXPORTERS = (ImageExporter, CSVExporter, SVGExporter)
 _SAFE_PYQTGRAPH_COPY_EXPORTERS = (ImageExporter, SVGExporter)
+
+
+def _csv_shared_coordinates_match(reference: Any, candidate: Any) -> bool:
+    """Check an exact coordinate prefix without NumPy mixed-type coercion."""
+    reference = np.asarray(reference)
+    candidate = np.asarray(candidate)
+    if reference.ndim != 1 or candidate.ndim != 1 or candidate.size > reference.size:
+        return False
+    for left, right in zip(reference, candidate, strict=False):
+        if isinstance(left, np.generic):
+            left = left.item()
+        if isinstance(right, np.generic):
+            right = right.item()
+        if left != right and not (left != left and right != right):
+            return False
+    return True
 
 
 class _PrintPdfExportCancelled(RuntimeError):
@@ -114,6 +133,11 @@ if (
                 return
             super().exportFormatChanged(item, previous)
             exporter_type = type(self.currentExporter)
+            if isinstance(self.currentExporter, CSVExporter):
+                # Numeric exports always retain the original precision. The
+                # upstream decimal-place control is unused by both our writers.
+                params = self.currentExporter.parameters()
+                params.removeChild(params.child("precision"))
             self.ui.exportBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_FILE_EXPORTERS
             )
@@ -672,18 +696,30 @@ class PlotExportMixin(_PlotExportBase):
                 default_suffix=default_suffix,
                 replace_title="Replace Plot Export?",
                 file_description=description,
+                match_selected_filter=type(exporter) is CSVExporter,
             )
             if destination is None:
                 self.show_status("Plot export cancelled.", 3000)
                 return False
+            csv_separator = None
+            if type(exporter) is CSVExporter:
+                # Resolve the delimiter from the exact, already-approved target
+                # without changing the options in the reused export dialog.
+                csv_separator = (
+                    "tab" if path.splitext(destination.filename)[1].casefold()
+                    == ".tsv" else "comma"
+                )
             writer = lambda staging_path: exporter.export(fileName=staging_path)
-            if (
-                    type(exporter) is CSVExporter
-                    and getattr(self, "operation_kind", None) == "plot2d"
-                    ):
-                writer = lambda staging_path: self._write_heatmap_csv_stage(
-                    staging_path,
-                    exporter,
+            if type(exporter) is SVGExporter:
+                writer = lambda staging_path: write_svg_stage(staging_path, exporter)
+            elif type(exporter) is CSVExporter:
+                if getattr(self, "operation_kind", None) == "plot2d":
+                    writer = lambda staging_path: self._write_heatmap_csv_stage(
+                        staging_path, exporter, separator=csv_separator,
+                    )
+                else:
+                    writer = lambda staging_path: self._write_line_csv_stage(
+                        staging_path, exporter, separator=csv_separator,
                     )
             saved = write_export_atomically(
                 destination,
@@ -707,10 +743,75 @@ class PlotExportMixin(_PlotExportBase):
         return True
 
 
+    def _write_line_csv_stage(
+            self,
+            staging_path: str,
+            exporter: CSVExporter,
+            *,
+            separator: str | None = None,
+            ) -> bool:
+        """Retain original line data with round-trip-safe numeric text.
+
+        Reuse PyQtGraph's column/header collection, including error bars and
+        original (unmapped, non-downsampled) datasets, but never its positional
+        decimal-place formatter. Python's float representation round-trips
+        QCoDeS's binary64 numbers; integers are written without float coercion.
+        Every attempt owns a fresh collector: copy only parameter settings,
+        never the dialog exporter's counter, headers or accumulated data. This
+        also isolates failures and leaves options intact for a retry or mode
+        switch. The earlier round-trip numeric serialization is unchanged.
+        """
+        if not isinstance(exporter.item, PlotItem):
+            raise TypeError("Must have a PlotItem selected for CSV export.")
+
+        collector = CSVExporter(exporter.item)
+        collector.params.restoreState(exporter.params.saveState())
+        if separator is not None:
+            collector.params["separator"] = separator
+        coordinates = []
+        for item in exporter.item.items:
+            if isinstance(item, ErrorBarItem):
+                collector._exportErrorBarItem(item)
+            elif hasattr(item, "implements") and item.implements("plotData"):
+                dataset = (
+                    item.getOriginalDataset() if hasattr(item, "getOriginalDataset")
+                    else item.getData()
+                )
+                if dataset[0] is not None:
+                    coordinates.append(dataset[0])
+                collector._exportPlotDataItem(item)
+
+        if collector.params["columnMode"] == "(x,y,y,y) for all plots" and collector.data:
+            reference = collector.data[0][0]
+            if any(not _csv_shared_coordinates_match(reference, values) for values in coordinates):
+                raise ValueError(
+                    "The traces have different X coordinates and cannot share one "
+                    "CSV coordinate column. Select '(x,y) per plot' to retain "
+                    "each trace's recorded coordinates."
+                )
+
+        columns = [column for dataset in collector.data for column in dataset]
+        delimiter = "\t" if collector.params["separator"] == "tab" else ","
+        with open(staging_path, "w", encoding="utf-8", newline="") as csv_file:
+            csv_writer = csv.writer(
+                csv_file, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL,
+            )
+            csv_writer.writerow(collector.header)
+            for row in zip_longest(*columns, fillvalue=""):
+                csv_writer.writerow([
+                    repr(float(value)) if isinstance(value, (float, np.floating))
+                    else str(value)
+                    for value in row
+                ])
+        return True
+
+
     def _write_heatmap_csv_stage(
             self,
             staging_path: str,
             exporter: CSVExporter,
+            *,
+            separator: str | None = None,
             ) -> bool:
         """Write the canonical, currently plotted heatmap as long-form rows.
 
@@ -737,7 +838,9 @@ class PlotExportMixin(_PlotExportBase):
         if data_grid.size == 0:
             raise ValueError("The currently plotted heatmap is empty.")
 
-        delimiter = "\t" if exporter.params["separator"] == "tab" else ","
+        if separator is None:
+            separator = exporter.params["separator"]
+        delimiter = "\t" if separator == "tab" else ","
         column_names = self._heatmap_csv_column_names()
         rows_written = 0
         with open(staging_path, "w", encoding="utf-8", newline="") as csv_file:
@@ -793,7 +896,16 @@ class PlotExportMixin(_PlotExportBase):
             self.show_status("Copy is disabled for that export format.", 5000)
             return False
         try:
-            result = exporter.export(copy=True)
+            if type(exporter) is SVGExporter:
+                clipboard = qtw.QApplication.clipboard()
+                if clipboard is None:
+                    raise RuntimeError("No clipboard available.")
+                mime_data = QtCore.QMimeData()
+                mime_data.setData("image/svg+xml", QtCore.QByteArray(svg_bytes(exporter)))
+                clipboard.setMimeData(mime_data)
+                result = None
+            else:
+                result = exporter.export(copy=True)
         except Exception as err:
             log_exception("PyQtGraph plot copy failed", err, __name__)
             self.show_status("Could not copy plot.", 5000)
@@ -1106,7 +1218,9 @@ class PlotExportMixin(_PlotExportBase):
         if not buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly):
             return b""
 
-        generator = QtSvg.QSvgGenerator()
+        # SVG Tiny omits ViewBox clipping; SVG 1.1 preserves zoomed traces
+        # and heatmaps within their axes, as in the file export renderer.
+        generator = QtSvg.QSvgGenerator(QtSvg.QSvgGenerator.SvgVersion.Svg11)
         generator.setOutputDevice(buffer)
         generator.setSize(size)
         generator.setViewBox(QtCore.QRect(0, 0, size.width(), size.height()))

@@ -23,6 +23,13 @@ from qplot.datahandling.file_identity import (
 )
 
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
+_SQLITE_HEADER = b"SQLite format 3\x00"
+_SQLITE_ARTIFACT_HEADERS = (
+    _SQLITE_HEADER,
+    b"\x37\x7f\x06\x82",  # WAL, little-endian checksums
+    b"\x37\x7f\x06\x83",  # WAL, big-endian checksums
+    b"\xd9\xd5\x05\xf9\x20\xa1\x63\xd7",  # rollback journal
+)
 
 
 class UnsafeExportDestinationError(RuntimeError):
@@ -86,11 +93,13 @@ class ExportDestinationTransaction:
         protected_files = self.protected_database_files.merged(
             collect_protected_database_files(self.owner)
         )
+        _ensure_target_is_not_protected(
+            self.filename, protected_files, parent_fd=parent_fd,
+        )
         current_signature = _target_signature(
             self.filename,
             parent_fd=parent_fd,
         )
-        _ensure_target_is_not_protected(self.filename, protected_files)
         if current_signature != self.target_signature:
             raise UnsafeExportDestinationError(
                 "The selected file changed while printing or exporting; "
@@ -158,8 +167,13 @@ def choose_export_path_with_suffixes(
     default_suffix: str,
     replace_title: str,
     file_description: str,
+    match_selected_filter: bool = False,
 ) -> ExportDestinationTransaction | None:
-    """Choose an export whose format may use one of several suffixes."""
+    """Choose and approve an export, optionally enforcing its selected format.
+
+    When matching the filter, replace a conflicting allowed suffix before
+    approval. An absent/unrecognized filter leaves an allowed suffix intact.
+    """
     suffixes = tuple(
         suffix.casefold() if suffix.startswith(".") else f".{suffix.casefold()}"
         for suffix in allowed_suffixes
@@ -189,12 +203,21 @@ def choose_export_path_with_suffixes(
         return None
 
     selected_suffix = os.path.splitext(filename)[1].casefold()
+    selected_match = re.search(r"\*\.([A-Za-z0-9]+)\b", selected_filter)
+    filtered_suffix = (
+        f".{selected_match.group(1).casefold()}"
+        if selected_match is not None else None
+    )
+    if match_selected_filter and filtered_suffix in suffixes:
+        if selected_suffix in suffixes and selected_suffix != filtered_suffix:
+            filename = f"{os.path.splitext(filename)[0]}{filtered_suffix}"
+            selected_suffix = filtered_suffix
+        elif selected_suffix not in suffixes:
+            selected_suffix = filtered_suffix
+            filename = f"{filename}{selected_suffix}"
     if selected_suffix not in suffixes:
-        selected_match = re.search(r"\*\.([A-Za-z0-9]+)\b", selected_filter)
-        if selected_match is not None:
-            filtered_suffix = f".{selected_match.group(1).casefold()}"
-            if filtered_suffix in suffixes:
-                selected_suffix = filtered_suffix
+        if filtered_suffix in suffixes:
+            selected_suffix = filtered_suffix
         if selected_suffix not in suffixes:
             selected_suffix = default_suffix
         filename = f"{filename}{selected_suffix}"
@@ -582,6 +605,10 @@ def _capture_export_destination(
     target_signature = _target_signature(filename)
     protected_files = collect_protected_database_files(owner)
     _ensure_target_is_not_protected(filename, protected_files)
+    if _target_signature(filename) != target_signature:
+        raise UnsafeExportDestinationError(
+            "The selected export file changed while it was being inspected."
+        )
     destination = ExportDestinationTransaction(
         filename=filename,
         parent_path=parent_path,
@@ -599,6 +626,8 @@ def _capture_export_destination(
 def _ensure_target_is_not_protected(
     filename: str,
     protected_files: ProtectedDatabaseFiles,
+    *,
+    parent_fd: int | None = None,
 ) -> None:
     logical_path = logical_database_path(filename)
     resolved_path = canonical_database_path(filename)
@@ -628,6 +657,84 @@ def _ensure_target_is_not_protected(
         raise UnsafeExportDestinationError(
             "The selected export path refers to an input database file."
         )
+
+    # A destination need never have been loaded in qPlot. Conservatively
+    # protect every recognizable SQLite file, without opening SQLite or
+    # trying to distinguish QCoDeS schemas (which could live only in a WAL).
+    header = _read_export_candidate_header(filename, parent_fd=parent_fd)
+    if header.startswith(_SQLITE_ARTIFACT_HEADERS):
+        raise UnsafeExportDestinationError(
+            "The selected export path refers to a SQLite database or journal; "
+            "export replacement cannot overwrite database files."
+        )
+    for suffix in SQLITE_SIDECAR_SUFFIXES:
+        if filename.casefold().endswith(suffix):
+            database_path = filename[:-len(suffix)]
+            if _read_export_candidate_header(
+                database_path, parent_fd=parent_fd,
+            ).startswith(_SQLITE_HEADER):
+                raise UnsafeExportDestinationError(
+                    "The selected export path is reserved for a SQLite "
+                    "database sidecar."
+                )
+
+
+def _read_export_candidate_header(
+    filename: str,
+    *,
+    parent_fd: int | None,
+) -> bytes:
+    """Read at most 16 bytes from a stable regular file, physically read-only.
+
+    No SQLite connection, locks, schema traversal, recovery, or sidecar
+    creation is involved. Unreadable or changing candidates fail closed.
+    NONBLOCK and the regular-file checks avoid waiting on a substituted FIFO.
+    The same bounded inspection also handles a sidecar's associated main file.
+    """
+    signature = _target_signature(filename, parent_fd=parent_fd)
+    if signature is None:
+        return b""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(
+            filename if parent_fd is None else os.path.basename(filename),
+            flags,
+            **({} if parent_fd is None else {"dir_fd": parent_fd}),
+        )
+        try:
+            opened = os.fstat(fd)
+            stat_fields = (
+                "st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
+                "st_mtime_ns", "st_ctime_ns",
+            )
+            opened_signature = tuple(int(getattr(opened, field)) for field in stat_fields)
+            # On Windows, lstat may report CreationTime as ctime while
+            # fstat reports ChangeTime. Compare their common fields, then
+            # retain the full timestamps in each API's before/after checks.
+            common_fields = 6 if os.name == "nt" else 7
+            if opened_signature[:common_fields] != signature[:common_fields]:
+                raise UnsafeExportDestinationError(
+                    "The selected export file changed while it was being inspected."
+                )
+            header = os.read(fd, len(_SQLITE_HEADER))
+            after_read = os.fstat(fd)
+            if tuple(int(getattr(after_read, field)) for field in stat_fields) != opened_signature:
+                raise UnsafeExportDestinationError(
+                    "The selected export file changed while it was being inspected."
+                )
+        finally:
+            os.close(fd)
+    except OSError as err:
+        raise UnsafeExportDestinationError(
+            "The selected export file could not be inspected safely."
+        ) from err
+    if _target_signature(filename, parent_fd=parent_fd) != signature:
+        raise UnsafeExportDestinationError(
+            "The selected export file changed while it was being inspected."
+        )
+    return header
 
 
 def _filesystem_alias_key(filename: str) -> str:

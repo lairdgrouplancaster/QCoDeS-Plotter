@@ -27,13 +27,13 @@ points.
 
 ## Current Beta
 
-The current beta is `1.6.0-b1`. The package metadata uses the PEP 440 normal
-form `1.6.0b1`; the GitHub release tag should be `v1.6.0-b1`.
+The current beta and package version are `1.6.0b1`, using the PEP 440 normal
+form; the GitHub release tag should be `v1.6.0b1`.
 
 Beta test install:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.6.0-b1
+python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.6.0b1
 ```
 
 ## Current Release
@@ -230,8 +230,8 @@ until all four exact-revision jobs finish successfully.
 Before creating a tagged release:
 
 1. Update the version in `pyproject.toml`. For prereleases, use the PEP 440
-   package form, such as `1.6.0b1`, even if the Git tag includes a separator,
-   such as `v1.6.0-b1`.
+   package form, such as `1.6.0b1`, with a matching Git tag prefixed by `v`,
+   such as `v1.6.0b1`.
 2. Move relevant entries from `CHANGELOG.md`'s Unreleased section into the new
    release section.
 3. Run `python -m ruff check .`.

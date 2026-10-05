@@ -39,6 +39,22 @@ def test_canonicalize_heatmap_data_rejects_shape_mismatch():
         canonicalize_heatmap_data([0.0, 1.0], [10.0, 11.0], np.zeros((3, 2)))
 
 
+def test_canonicalize_heatmap_data_reorders_unordered_axes_with_grid():
+    x, y, grid = canonicalize_heatmap_data(
+        [0.0, 2.0, 1.0], [1.0, 0.0],
+        [[10, 12, 11], [0, 2, 1]],
+    )
+
+    np.testing.assert_array_equal(x, [0, 1, 2])
+    np.testing.assert_array_equal(y, [0, 1])
+    np.testing.assert_array_equal(grid, [[0, 1, 2], [10, 11, 12]])
+
+
+def test_canonicalize_heatmap_data_rejects_repeated_centres():
+    with pytest.raises(ValueError, match="strictly increasing"):
+        canonicalize_heatmap_data([0, 2, 0], [0, 1], [[0, 2, 4], [10, 12, 14]])
+
+
 class TestAxisGeometry:
     def test_uniform_centres_are_expanded_to_cell_edges(self):
         axis = AxisGeometry([0.0, 1.0])

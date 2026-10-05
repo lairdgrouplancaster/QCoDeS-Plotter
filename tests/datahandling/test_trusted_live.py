@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import gc
-import hashlib
 import multiprocessing
 import os
 import queue
@@ -22,14 +21,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from qcodes.dataset import (
-    Measurement,
-    initialise_or_create_database_at,
-    load_or_create_experiment,
-)
-from qcodes.dataset.sqlite.connection import atomic
-from qcodes.dataset.sqlite.database import connect
-from qcodes.parameters import ManualParameter
 
 from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_live import (
@@ -49,10 +40,13 @@ from qplot.datahandling.trusted_live import (
     TrustedLiveUnsupportedSourceError,
     TrustedQuery,
 )
+from tests._artifact_audit import (
+    _artifact_state_in_audit_process,
+    _path_stat_in_audit_process,
+)
 
 pytestmark = pytest.mark.timeout(120)
 
-_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
 _SQLITE_UNIX_DMS_BYTE = 128
 _SQLITE_UNIX_SHARED_FIRST_BYTE = 0x40000002
 _SQLITE_UNIX_SHARED_BYTE_COUNT = 510
@@ -126,6 +120,14 @@ def _start_qcodes_run(
     database_path: str,
 ) -> tuple[Any, Any, Any, Any, Any, Any]:
     """Start an acquisition through public QCoDeS measurement APIs."""
+    # Reader-only spawn probes must not import QCoDeS and its dependencies.
+    from qcodes.dataset import (
+        Measurement,
+        initialise_or_create_database_at,
+        load_or_create_experiment,
+    )
+    from qcodes.parameters import ManualParameter
+
     initialise_or_create_database_at(database_path, journal_mode="WAL")
     experiment = load_or_create_experiment(
         "trusted_live_experiment",
@@ -160,6 +162,9 @@ def _qcodes_wal_writer_process(
     datasaver = None
     dataset = None
     try:
+        from qcodes.dataset.sqlite.connection import atomic
+        from qcodes.dataset.sqlite.database import connect
+
         (
             experiment,
             setpoint,
@@ -373,6 +378,9 @@ def _clean_qcodes_wal_database_process(
     dataset = None
     writer = None
     try:
+        from qcodes.dataset.sqlite.connection import atomic
+        from qcodes.dataset.sqlite.database import connect
+
         (
             experiment,
             _setpoint,
@@ -1072,61 +1080,6 @@ def _qcodes_result_count(
     return reader.query(f"SELECT count(*) FROM {quoted_table_name}").rows[0][0]
 
 
-def _file_descriptor_digest(file_descriptor: int) -> str:
-    """Hash the exact object already bound to ``file_descriptor``."""
-
-    digest = hashlib.sha256()
-    while chunk := os.read(file_descriptor, 1024 * 1024):
-        digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _artifact_state_in_audit_process(
-    database_path: str,
-    control: Connection,
-) -> None:
-    """Capture source state without touching reader-process POSIX descriptors."""
-    state: dict[str, tuple[Any, ...] | None] = {}
-    try:
-        for suffix in _ARTIFACT_SUFFIXES:
-            artifact = Path(f"{database_path}{suffix}")
-            open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
-            open_flags |= getattr(os, "O_CLOEXEC", 0)
-            open_flags |= getattr(os, "O_NOINHERIT", 0)
-            open_flags |= getattr(os, "O_NOFOLLOW", 0)
-            try:
-                file_descriptor = os.open(artifact, open_flags)
-            except FileNotFoundError:
-                state[suffix] = None
-                continue
-            try:
-                status = os.fstat(file_descriptor)
-                digest = (
-                    _file_descriptor_digest(file_descriptor)
-                    if stat.S_ISREG(status.st_mode)
-                    else None
-                )
-                state[suffix] = (
-                    digest,
-                    status.st_dev,
-                    status.st_ino,
-                    status.st_mode,
-                    status.st_nlink,
-                    status.st_uid,
-                    status.st_gid,
-                    status.st_size,
-                    status.st_mtime_ns,
-                    status.st_ctime_ns,
-                )
-            finally:
-                os.close(file_descriptor)
-        control.send(("ok", state))
-    except BaseException:
-        control.send(("error", traceback.format_exc()))
-    finally:
-        control.close()
-
-
 def _artifact_state(database_path: Path) -> dict[str, tuple[Any, ...] | None]:
     """Observe source artifacts from a separate spawned audit process."""
     context = multiprocessing.get_context("spawn")
@@ -1150,19 +1103,6 @@ def _artifact_state(database_path: Path) -> dict[str, tuple[Any, ...] | None]:
         parent_control.close()
     assert process.exitcode == 0
     return payload
-
-
-def _path_stat_in_audit_process(file_path: str, control: Connection) -> None:
-    try:
-        try:
-            status = os.stat(file_path, follow_symlinks=False)
-        except FileNotFoundError:
-            status = None
-        control.send(("ok", status))
-    except BaseException:
-        control.send(("error", traceback.format_exc()))
-    finally:
-        control.close()
 
 
 def _audited_stat(file_path: Path) -> os.stat_result | None:
@@ -1333,33 +1273,59 @@ def test_uncommitted_wal_rows_are_invisible_until_commit(
 
 def test_finite_query_batch_is_repeatable_then_next_operation_refreshes(
     live_writer: _QcodesWalWriter,
+    monkeypatch,
 ) -> None:
     with TrustedLiveReader.open(live_writer.database_path) as reader:
         commit_error: list[BaseException] = []
+        first_select_finished = threading.Event()
+        commit_finished = threading.Event()
+        stop_commit = threading.Event()
+        select_sql = "SELECT value FROM qplot_trusted_probe ORDER BY seq"
+        original_query = reader._query_spec_in_transaction
+
+        def query_with_commit_barrier(connection, query, *args):
+            result = original_query(connection, query, *args)
+            if query.sql == select_sql and not first_select_finished.is_set():
+                # The first SELECT has materialized and pinned this batch's
+                # snapshot. Complete the writer commit before the next SELECT.
+                first_select_finished.set()
+                assert commit_finished.wait(3), "Writer commit did not finish"
+                assert commit_error == []
+            return result
+
+        monkeypatch.setattr(reader, "_query_spec_in_transaction", query_with_commit_barrier)
 
         def commit_during_batch() -> None:
             try:
-                time.sleep(0.05)
-                live_writer.request("commit", value="new-commit")
+                assert first_select_finished.wait(5), "First SELECT did not finish"
+                if stop_commit.is_set():
+                    return
+                live_writer.request("commit", timeout=2, value="new-commit")
             except BaseException as error:
                 commit_error.append(error)
+            finally:
+                commit_finished.set()
 
         commit_thread = threading.Thread(target=commit_during_batch)
         commit_thread.start()
-        results = reader.query_batch(
-            (
-                TrustedQuery("SELECT value FROM qplot_trusted_probe ORDER BY seq"),
-                TrustedQuery(
-                    "WITH RECURSIVE values_(n) AS ("
-                    "SELECT 1 UNION ALL SELECT n + 1 FROM values_ "
-                    "WHERE n < 5000000) SELECT sum(n) FROM values_"
+        try:
+            results = reader.query_batch(
+                (
+                    TrustedQuery(select_sql),
+                    TrustedQuery(
+                        "WITH RECURSIVE values_(n) AS ("
+                        "SELECT 1 UNION ALL SELECT n + 1 FROM values_ "
+                        "WHERE n < 5000000) SELECT sum(n) FROM values_"
+                    ),
+                    TrustedQuery(select_sql),
                 ),
-                TrustedQuery("SELECT value FROM qplot_trusted_probe ORDER BY seq"),
-            ),
-            timeout=4.0,
-        )
-        commit_thread.join(10)
-        assert not commit_thread.is_alive()
+                timeout=4.0,
+            )
+        finally:
+            stop_commit.set()
+            first_select_finished.set()
+            commit_thread.join(10)
+            assert not commit_thread.is_alive()
         assert commit_error == []
         assert results[0].rows == (("initial",),)
         assert results[2].rows == (("initial",),)
@@ -1726,6 +1692,8 @@ def test_open_reader_rejects_source_file_replacement(
 def test_actual_main_handle_rejects_deterministic_aba_replacement(
     tmp_path: Path,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     selected = tmp_path / "aba-main.db"
     replacement = tmp_path / "aba-main-b.db"
     initialise_or_create_database_at(selected, journal_mode="DELETE")
@@ -1772,6 +1740,85 @@ def test_open_reader_rejects_symlink_selection(
         match="symbolic[- ]link|symlink",
     ):
         TrustedLiveReader.open(logical)
+
+
+@pytest.mark.parametrize("canonicalize", [False, True])
+def test_native_open_rejects_parent_redirection_after_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    canonicalize: bool,
+) -> None:
+    import apsw
+    from qcodes.dataset import initialise_or_create_database_at
+
+    from qplot.datahandling import trusted_live
+
+    selected_directory = tmp_path / "selected"
+    moved_directory = tmp_path / "moved"
+    selected_directory.mkdir()
+    database_path = selected_directory / "source.db"
+    initialise_or_create_database_at(database_path, journal_mode="DELETE")
+    before = _artifact_state(database_path)
+
+    def redirect_parent() -> None:
+        selected_directory.rename(moved_directory)
+        if os.name == "nt":
+            subprocess.run(
+                [
+                    "cmd", "/d", "/c", "mklink", "/J",
+                    str(selected_directory), str(moved_directory),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            selected_directory.symlink_to(moved_directory, target_is_directory=True)
+
+    class RedirectingVFS(apsw.VFS):
+        def xFullPathname(self, name: str) -> str:
+            full_path = super().xFullPathname(name)
+            # POSIX SQLite resolves symlinks here. Exercise that behavior on
+            # Windows too, and redirect only after resolution, before xOpen.
+            if canonicalize:
+                full_path = str(Path(full_path).resolve())
+            assert Path(full_path) == database_path
+            redirect_parent()
+            return full_path
+
+    native_vfs_name = trusted_live.TRUSTED_READER_VFS_NAME
+    wrapper: apsw.VFS | None = None
+
+    def install_wrapper(_token: Any, _temporary_directory: Path) -> None:
+        nonlocal wrapper
+        # The callback runs after the native VFS has been registered. Inherit
+        # its I/O unchanged; intercept only SQLite's pathname resolution.
+        wrapper_name = "qplot-test-parent-redirection"
+        wrapper = RedirectingVFS(wrapper_name, native_vfs_name)
+        monkeypatch.setattr(trusted_live, "TRUSTED_READER_VFS_NAME", wrapper_name)
+
+    try:
+        with pytest.raises(TrustedLiveUnsupportedSourceError):
+            with TrustedLiveReader.open(
+                database_path,
+                _test_pre_open_callback=install_wrapper,
+            ):
+                pass
+        assert _artifact_state(moved_directory / "source.db") == before
+    finally:
+        monkeypatch.setattr(trusted_live, "TRUSTED_READER_VFS_NAME", native_vfs_name)
+        if wrapper is not None:
+            wrapper.unregister()
+        if moved_directory.exists():
+            if selected_directory.exists():
+                if os.name == "nt":
+                    selected_directory.rmdir()
+                else:
+                    selected_directory.unlink()
+            moved_directory.rename(selected_directory)
+
+    with TrustedLiveReader.open(database_path) as reader:
+        assert reader.query("SELECT count(*) FROM runs").rows == ((0,),)
 
 
 def test_open_reader_rejects_symlinked_parent_component(
@@ -1856,6 +1903,8 @@ def test_rejection_before_native_session_configuration_is_reusable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     from qplot.datahandling import trusted_live as trusted_live_module
 
     database_path = tmp_path / "preconfiguration-rejection.db"
@@ -1879,6 +1928,8 @@ def test_rejection_before_native_session_configuration_is_reusable(
 
 @pytest.mark.skipif(os.name != "nt", reason="NTFS alternate streams are Windows-only")
 def test_open_reader_rejects_ntfs_alternate_data_stream(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "ordinary.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     host_path = tmp_path / "stream-host.bin"
@@ -1934,6 +1985,8 @@ def test_open_reader_rejects_nonregular_sidecar(
 def test_expected_instance_rejects_replacement_before_native_open(
     tmp_path: Path,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     selected = tmp_path / "selected-rollback.db"
     replacement = tmp_path / "replacement-rollback.db"
     initialise_or_create_database_at(selected, journal_mode="DELETE")
@@ -1950,6 +2003,8 @@ def test_expected_instance_rejects_replacement_before_native_open(
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission fixture")
 def test_native_proof_permission_failure_is_source_io(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "permission.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     original_mode = stat.S_IMODE(database_path.stat().st_mode)
@@ -2083,6 +2138,8 @@ def test_ordinary_query_failure_is_not_relabelled_as_policy_or_source_change(
 
 
 def test_corrupt_database_has_distinct_invalid_database_error(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "corrupt.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     with database_path.open("r+b", buffering=0) as database_file:
@@ -2119,6 +2176,8 @@ def test_retained_malformed_wal_is_unsupported(
 
 
 def test_retained_malformed_rollback_journal_is_unsupported(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "malformed-journal.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     journal_path = Path(f"{database_path}-journal")
@@ -2134,6 +2193,8 @@ def test_retained_malformed_rollback_journal_is_unsupported(tmp_path: Path) -> N
 def test_rollback_journal_appearing_after_capture_is_unsupported(
     tmp_path: Path,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "appearing-journal.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     journal_path = Path(f"{database_path}-journal")
@@ -2165,6 +2226,8 @@ def test_rollback_journal_appearing_after_capture_is_unsupported(
 def test_rollback_journal_appearing_between_operations_invalidates_reader(
     tmp_path: Path,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "operation-journal.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     journal_path = Path(f"{database_path}-journal")
@@ -2191,6 +2254,8 @@ def test_rollback_journal_appearing_between_operations_invalidates_reader(
 
 
 def test_busy_wait_is_bounded_and_connection_recovers(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "busy.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     before = _artifact_state(database_path)
@@ -2422,6 +2487,8 @@ def test_forced_cleanup_uncertainty_is_chained_and_quarantined(
     tmp_path: Path,
     failure_phase: str,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / f"{failure_phase}-cleanup.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
 
@@ -2452,6 +2519,8 @@ def test_preflight_close_uncertainty_quarantines_process_session(
     tmp_path: Path,
     fault: str,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / f"preflight-{fault}.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
 
@@ -2488,6 +2557,8 @@ def test_rejected_second_reader_does_not_drop_first_reader_main_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "exclusive-rollback.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     context = multiprocessing.get_context("spawn")
@@ -2576,6 +2647,8 @@ def test_abandoned_reader_finalizer_releases_session_and_temp_directory(
 
 
 def test_sidecar_free_qcodes_rollback_database_is_readable(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
     database_path = tmp_path / "rollback.db"
     initialise_or_create_database_at(database_path, journal_mode="DELETE")
     assert all(

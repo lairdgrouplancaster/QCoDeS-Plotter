@@ -10,6 +10,7 @@ from shutil import copyfileobj
 
 import jsonschema
 
+from qplot._auxiliary_paths import ensure_safe_auxiliary_path
 from qplot.diagnostics import log_exception
 
 from .themes import dark, light, pyqt
@@ -76,8 +77,21 @@ class config:
         self.schema = self.load_config(self.default__schema_file)
         self.startup_warning = None
         
-        # Make config file if missing
-        if not path.isfile(self.default_file):
+        try:
+            loaded_config = self.load_config(self.default_file)
+        except FileNotFoundError as error:
+            # A read can fail with ENOENT even when the settings path still
+            # exists (for example, a dangling link). Keep that original.
+            try:
+                os.lstat(self.default_file)
+            except FileNotFoundError:
+                pass
+            except OSError as stat_error:
+                self._recover_unreadable_config(stat_error)
+                return
+            else:
+                self._recover_unreadable_config(error)
+                return
             self.config = self.build_default_config()
             try:
                 self.save_config(self.default_file)
@@ -87,9 +101,15 @@ class config:
                     f"{self.default_file}",
                     error,
                     )
+        except (ValueError, UnicodeDecodeError, RecursionError) as error:
+            # JSONDecodeError subclasses ValueError. The decoder also raises
+            # ValueError for integer conversion limits and RecursionError for
+            # excessive nesting; these concern only the user settings read.
+            self._recover_invalid_config(error)
+        except OSError as error:
+            self._recover_unreadable_config(error)
         else:
             try:
-                loaded_config = self.load_config(self.default_file)
                 if not isinstance(loaded_config, dict):
                     raise jsonschema.ValidationError(
                         "config.json root must be a JSON object"
@@ -107,9 +127,7 @@ class config:
                             f"{self.default_file}",
                             error,
                             )
-
-            # config.json does not meet schema requirements
-            except (json.JSONDecodeError, jsonschema.ValidationError) as error:
+            except jsonschema.ValidationError as error:
                 self._recover_invalid_config(error)
         
     
@@ -257,7 +275,7 @@ class config:
             if config is missing
 
         """
-        with open(path) as fp:
+        with open(path, encoding="utf-8") as fp:
             config = json.load(fp, parse_constant=_reject_json_constant)
         return config
 
@@ -272,6 +290,7 @@ class config:
             path of file
 
         """
+        ensure_safe_auxiliary_path(path)
         directory = os.path.dirname(os.path.abspath(path))
         makedirs(directory, exist_ok=True)
         file_mode = None
@@ -294,6 +313,7 @@ class config:
                 os.fsync(fp.fileno())
             if file_mode is not None:
                 os.chmod(temporary_path, file_mode)
+            ensure_safe_auxiliary_path(path)
             os.replace(temporary_path, path)
             self._sync_config_directory(directory)
         except Exception:
@@ -361,12 +381,21 @@ class config:
     def _recover_invalid_config(self, original_error):
         """Use defaults after an invalid config without risking the original."""
 
+        diagnostic = original_error
+        if isinstance(original_error, jsonschema.ValidationError):
+            # ValidationError.__str__ pretty-prints the rejected instance.
+            # Deep, invalid settings must not prevent recovery while logging.
+            diagnostic = f"ValidationError: {original_error.message}"
         log_exception(
             f"Invalid configuration at {self.default_file}",
-            original_error,
+            diagnostic,
             __name__,
             )
         self.config = self.build_default_config()
+        self.startup_warning = (
+            "Invalid configuration was reset to defaults; the original "
+            "settings were backed up."
+            )
         try:
             self.invalid_config_backup_file = self.backup_invalid_config()
         except OSError as error:
@@ -385,6 +414,21 @@ class config:
                 f"{self.default_file}",
                 error,
                 )
+
+
+    def _recover_unreadable_config(self, original_error):
+        """Use defaults without changing a settings file that could not be read."""
+
+        log_exception(
+            f"Could not read configuration at {self.default_file}",
+            original_error,
+            __name__,
+            )
+        self.config = self.build_default_config()
+        self.startup_warning = (
+            "Could not read configuration; using defaults for this session. "
+            "The original settings were left untouched."
+            )
 
 
     def _record_startup_persistence_failure(self, context, error):
@@ -407,20 +451,28 @@ class config:
         """Apply non-destructive migrations for newly introduced settings."""
 
         preferences = candidate.get("user_preference")
-        if not isinstance(preferences, dict):
-            return False
-
-        preference_schema = self.schema["properties"]["user_preference"]["properties"]
         migrated = False
-        # ``axis_tick_density`` was superseded by an explicit target because
-        # PyQtGraph clamps density values and cannot produce sparse axes.
-        if preferences.pop("axis_tick_density", None) is not None:
-            migrated = True
 
-        for key in ("colorbar_width", "axis_tick_width", "axis_major_tick_count"):
-            if key not in preferences:
-                preferences[key] = deepcopy(preference_schema[key]["default"])
+        if isinstance(preferences, dict):
+            preference_schema = self.schema["properties"]["user_preference"]["properties"]
+            # ``axis_tick_density`` was superseded by an explicit target because
+            # PyQtGraph clamps density values and cannot produce sparse axes.
+            if preferences.pop("axis_tick_density", None) is not None:
                 migrated = True
+
+            for key in ("colorbar_width", "axis_tick_width", "axis_major_tick_count"):
+                if key not in preferences:
+                    preferences[key] = deepcopy(preference_schema[key]["default"])
+                    migrated = True
+
+        runtime_settings = candidate.get("runtime_settings")
+        if isinstance(runtime_settings, dict):
+            runtime_schema = self.schema["properties"]["runtime_settings"]["properties"]
+            for key in ("max_heatmap_grid_cells", "max_heatmap_grid_side"):
+                if key not in runtime_settings:
+                    runtime_settings[key] = deepcopy(runtime_schema[key]["default"])
+                    migrated = True
+
         return migrated
 
 
@@ -445,6 +497,7 @@ class config:
         Copies an invalid config file aside before resetting to defaults.
 
         """
+        ensure_safe_auxiliary_path(self.default_file)
         directory = path.dirname(self.default_file)
         makedirs(directory, exist_ok=True)
         source_stat = os.stat(self.default_file)

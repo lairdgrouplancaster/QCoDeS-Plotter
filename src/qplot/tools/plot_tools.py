@@ -14,12 +14,340 @@ To pass other arguments, please use lambda functions, i.e.:
 .worker.loader.do_operations() expects a dictionary to be returned which is 
 used to find which properties to update the keyed value.
 """
+import math
+from decimal import Decimal
+from fractions import Fraction
+
 import numpy as np
+
+from qplot.datahandling.parameter_data import numeric_isfinite, numeric_isnan
+
+
+def _integer_differences(values, axis=0, step=1, *, cancelled_callback=None):
+    """Subtract before conversion; int64 and uint64 gaps can exceed int64."""
+    exact_values = np.moveaxis(values.astype(object), axis, -1)
+    if values.dtype.kind == "O" and not _integer_samples(values):
+        # Python also rounds integers before subtracting binary floats.
+        # Exact mixed cells preserve steps above 2**53 and allow subtraction
+        # between decimal clipping bounds and original binary floats.
+        # Missing cells and infinities cannot be converted to Fraction. Keep
+        # those as floats so they propagate through only their own stencils.
+        finite = numeric_isfinite(exact_values)
+        left_values, right_values = exact_values[..., :-step], exact_values[..., step:]
+
+        def mixed_differences():
+            pairs = zip(left_values.flat, right_values.flat,
+                        finite[..., :-step].flat, finite[..., step:].flat, strict=True)
+            for index, (left, right, left_finite, right_finite) in enumerate(pairs):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                if left_finite and right_finite:
+                    difference = _sample_fraction(right) - _sample_fraction(left)
+                else:
+                    difference = float(right) - float(left)
+                yield _fraction_as_float(difference)
+
+        numeric = np.fromiter(mixed_differences(), dtype=np.float64,
+                              count=left_values.size).reshape(left_values.shape)
+        return np.moveaxis(numeric, -1, axis)
+    with np.errstate(over="ignore", invalid="ignore"):
+        differences = exact_values[..., step:] - exact_values[..., :-step]
+    try:
+        numeric = differences.astype(np.float64)
+    except OverflowError:
+        # Fraction differences from decimal clipping may exceed float64.
+        # Keep signed overflow so finite-input secant/stencil repair can
+        # divide the exact difference before rounding the resulting quotient.
+        def rounded_cells():
+            for index, value in enumerate(differences.flat):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                yield _fraction_as_float(value)
+
+        numeric = np.fromiter(rounded_cells(), dtype=np.float64,
+                              count=differences.size).reshape(differences.shape)
+    return np.moveaxis(numeric, -1, axis)
+
+
+def _integer_samples(values):
+    if values.dtype.kind in "iu":
+        return True
+    # Joined QCoDeS records can use object cells to retain mixed int64/uint64.
+    return values.dtype.kind == "O" and all(
+        isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_))
+        for value in values.flat
+    )
+
+
+def _numeric_object_samples(values):
+    return values.dtype.kind == "O" and all(
+        isinstance(value, (int, float, Decimal, Fraction, np.integer, np.floating))
+        and not isinstance(value, (bool, np.bool_))
+        for value in values.flat
+    )
+
+
+def _gradient_with_integer_samples(
+        data, coordinates, spacing, axis, integer_data, *, cancelled_callback=None):
+    """Use gradient's first-order edges and three-point interior stencil."""
+    samples = np.moveaxis(np.asarray(data), axis, -1)
+    mixed_objects = samples.dtype.kind == "O" and not _integer_samples(samples)
+    dtype = np.float64 if integer_data else np.result_type(samples.dtype, np.float64)
+    result = np.empty(samples.shape, dtype=dtype)
+    if integer_data:
+        differences = _integer_differences(samples, axis=-1,
+                                           cancelled_callback=cancelled_callback)
+    else:
+        samples = samples.astype(dtype, copy=False)
+        with np.errstate(over="ignore", invalid="ignore"):
+            differences = np.diff(samples, axis=-1)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        slopes = differences / spacing
+    if integer_data:
+        # Mixed QCoDeS integer/float records use object cells. Their finite
+        # floating differences can overflow too; divide the exact recorded
+        # difference before rounding, including the first-order edge slopes.
+        repair = ((~np.isfinite(differences) | mixed_objects)
+                  & numeric_isfinite(samples[..., 1:])
+                  & numeric_isfinite(samples[..., :-1]))
+        for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
+            if index % 1024 == 0:
+                _check_cancelled(cancelled_callback)
+            left = position[-1]
+            row = position[:-1]
+            distance = _sample_fraction(coordinates[left + 1]) - _sample_fraction(coordinates[left])
+            difference = (_sample_fraction(samples[row][left + 1])
+                          - _sample_fraction(samples[row][left]))
+            slopes[position] = _fraction_as_float(difference / distance)
+    else:
+        # A finite sample jump can exceed float's range before division by a
+        # large, finite spacing restores a representable secant slope.
+        repair = (~np.isfinite(differences) & np.isfinite(samples[..., 1:])
+                  & np.isfinite(samples[..., :-1]))
+        if np.any(repair):
+            distances = np.broadcast_to(spacing, differences.shape)
+            slopes[repair] = (
+                samples[..., 1:][repair] / 2. - samples[..., :-1][repair] / 2.
+            ) / (distances[repair] / 2.)
+
+    if np.all(spacing == spacing[0]):
+        dx = spacing[0]
+        if integer_data:
+            # The uniform central stencil uses only its two outer samples.
+            # Summing adjacent differences would involve a missing centre and
+            # erase a valid derivative (or subtract opposite infinities).
+            outer_difference = _integer_differences(
+                samples, axis=-1, step=2, cancelled_callback=cancelled_callback,
+            )
+            if abs(dx) > np.finfo(float).max / 2:
+                central = (outer_difference / 2.) / dx
+            else:
+                central = outer_difference / (2. * dx)
+            repair = ((~np.isfinite(outer_difference) | mixed_objects)
+                      & numeric_isfinite(samples[..., 2:])
+                      & numeric_isfinite(samples[..., :-2]))
+            for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                left = position[-1]
+                row = position[:-1]
+                distance = (_sample_fraction(coordinates[left + 2])
+                            - _sample_fraction(coordinates[left]))
+                difference = (_sample_fraction(samples[row][left + 2])
+                              - _sample_fraction(samples[row][left]))
+                central[position] = _fraction_as_float(difference / distance)
+            result[..., 1:-1] = central
+        else:
+            with np.errstate(over="ignore", invalid="ignore"):
+                outer_difference = samples[..., 2:] - samples[..., :-2]
+                denominator = 2. * dx
+                central = outer_difference / denominator
+            # Both the two-step difference and twice the spacing can exceed
+            # float's range even when their quotient is small. Halve the
+            # operands first only for those stencils; ordinary small values
+            # retain the direct subtraction's precision and missingness.
+            repair = (np.isfinite(samples[..., 2:])
+                      & np.isfinite(samples[..., :-2])
+                      & (~np.isfinite(outer_difference) | ~np.isfinite(denominator)))
+            if np.any(repair):
+                central[repair] = (
+                    samples[..., 2:][repair] / 2. - samples[..., :-2][repair] / 2.
+                ) / dx
+            result[..., 1:-1] = central
+    else:
+        dx1, dx2 = spacing[:-1], spacing[1:]
+        # Blend the adjacent secant slopes. Normalized spacings avoid
+        # under/overflow in the products used by the equivalent three-point
+        # coefficients, and subtraction still precedes weighting so stored
+        # offsets cannot erase representable differences.
+        scale = np.maximum(np.abs(dx1), np.abs(dx2))
+        before, after = dx1 / scale, dx2 / scale
+        total = before + after
+        with np.errstate(over="ignore", invalid="ignore"):
+            left_term = (after / total) * slopes[..., :-1]
+            right_term = (before / total) * slopes[..., 1:]
+            central = left_term + right_term
+        if samples.dtype.kind != "c":
+            # Individual secants can overflow while their weighted stencil
+            # remains finite. Recover only fully finite source stencils;
+            # acquired NaN/Inf samples must retain their usual propagation.
+            # Finite opposing terms can also cancel after their individual
+            # differences or weights have rounded. Recover small residuals
+            # from the recorded stencil, not its already rounded secants.
+            cancellation = ((np.signbit(left_term) != np.signbit(right_term))
+                            & (np.abs(central) <= np.sqrt(np.finfo(float).eps)
+                               * np.maximum(np.abs(left_term), np.abs(right_term))))
+            # A normalized spacing can underflow before multiplication by a
+            # large secant restores a representable derivative. Replay those
+            # stencils even when the rounded weighted terms have the same sign.
+            underflow = ((np.abs(before) < np.finfo(float).tiny)
+                         | (np.abs(after) < np.finfo(float).tiny))
+            repair = ((~np.isfinite(central) | cancellation | underflow | mixed_objects)
+                      & numeric_isfinite(samples[..., :-2])
+                      & numeric_isfinite(samples[..., 1:-1])
+                      & numeric_isfinite(samples[..., 2:]))
+            for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                centre = position[-1] + 1
+                row = position[:-1]
+
+                # Subtract the original coordinates exactly. Rounded spacing
+                # loses the small residual when opposing large slopes cancel.
+                left, middle, right = map(_sample_fraction, coordinates[centre - 1:centre + 2])
+                before_step, after_step = middle - left, right - middle
+                before_value, middle_value, after_value = map(
+                    _sample_fraction, samples[row][centre - 1:centre + 2],
+                )
+                derivative = (
+                    after_step * (middle_value - before_value) / before_step
+                    + before_step * (after_value - middle_value) / after_step
+                ) / (before_step + after_step)
+                try:
+                    central[position] = float(derivative)
+                except OverflowError:
+                    central[position] = np.inf if derivative > 0 else -np.inf
+        result[..., 1:-1] = central
+
+    result[..., 0] = slopes[..., 0]
+    result[..., -1] = slopes[..., -1]
+    return np.moveaxis(result, -1, axis)
 
 
 def _check_cancelled(cancelled_callback):
     if cancelled_callback is not None and cancelled_callback():
         raise InterruptedError("Plot operation cancelled.")
+
+
+def _fraction_as_float(value):
+    """Round an exact derived value, retaining signed overflow as infinity."""
+    try:
+        return float(value)
+    except OverflowError:
+        return np.inf if value > 0 else -np.inf
+
+
+def _sample_fraction(value):
+    """Use the exact recorded scalar, including NumPy integer/float cells."""
+    return Fraction(value.item() if isinstance(value, np.generic) else value)
+
+
+def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callback=None):
+    """Remove a float mean without rounding a large offset into the result.
+
+    Subtract a recorded anchor before accumulation. Rows whose range exceeds
+    float64 use a scaled mean instead, retaining the usual NaN/Inf semantics.
+    Process groups of complete rows, checking cancellation between groups.
+    Temporary arrays contain at most 65536 cells or one complete row.
+    """
+    values = np.asarray(values)
+    dtype = np.result_type(values.dtype, np.float64)
+    samples = np.moveaxis(values.astype(dtype, copy=False), axis, -1)
+    if samples.shape[-1] == 0:
+        return values.astype(dtype, copy=True)
+    rows = samples.reshape(-1, samples.shape[-1])
+    centered = np.empty(rows.shape, dtype=dtype)
+    mean_func = np.nanmean if ignore_nan else np.mean
+    chunk_size = max(1, 65536 // samples.shape[-1])
+    for start in range(0, len(rows), chunk_size):
+        _check_cancelled(cancelled_callback)
+        chunk = rows[start:start + chunk_size]
+        finite = np.isfinite(chunk)
+        indices = np.argmax(finite, axis=1)
+        anchors = chunk[np.arange(len(chunk)), indices, None]
+        with np.errstate(over="ignore", invalid="ignore"):
+            shifted = chunk - anchors
+            offset_mean = mean_func(shifted, axis=1, keepdims=True)
+            result = shifted - offset_mean
+            overflow = (np.any(np.isinf(shifted) & finite, axis=1)
+                        | ~np.isfinite(offset_mean[:, 0]))
+            infinite_source = np.any(np.isinf(chunk), axis=1)
+            expected_finite_mean = (np.any(finite, axis=1) if ignore_nan
+                                    else np.all(finite, axis=1))
+            fallback = overflow & expected_finite_mean & ~infinite_source
+            if np.any(fallback):
+                large = chunk[fallback]
+                scale = np.nanmax(np.abs(large), axis=1, keepdims=True)
+                mean = mean_func(large / scale, axis=1, keepdims=True) * scale
+                result[fallback] = large - mean
+            # Anchoring around a large positive/negative sample can round
+            # away small source cells across zero before the mean is formed.
+            # Sum those original values accurately; nearby same-sign offsets
+            # keep the anchor path so fractional offset means remain intact.
+            mixed_sign = (np.any(chunk < 0, axis=1) & np.any(chunk > 0, axis=1)
+                          & expected_finite_mean & ~infinite_source)
+            # A rounded mean of subnormal differences can underflow before
+            # subtraction. Round each exact residual instead, including the
+            # halfway case whose correctly rounded residual is signed zero.
+            subnormal = np.any((np.abs(shifted) > 0)
+                               & (np.abs(shifted) < np.finfo(float).tiny), axis=1)
+            sensitive = ((mixed_sign | subnormal)
+                         & expected_finite_mean & ~infinite_source)
+            for row_index in np.flatnonzero(sensitive):
+                _check_cancelled(cancelled_callback)
+                original = chunk[row_index][finite[row_index]]
+
+                def values_for_sum(values):
+                    for index, value in enumerate(values):
+                        if index % 1024 == 0:
+                            _check_cancelled(cancelled_callback)
+                        yield float(value)
+
+                nonzero = np.abs(original[original != 0])
+                # With more than a mantissa's range between samples, rounding
+                # the mean itself can change the small residual by one ULP.
+                # Subtract exact means in just these sensitive rows.
+                exact_required = (subnormal[row_index]
+                                  or np.max(nonzero) / (2. ** 53) > np.min(nonzero))
+                if not exact_required:
+                    try:
+                        mean = math.fsum(values_for_sum(original)) / len(original)
+                    except OverflowError:
+                        # The exact total can overflow despite a finite mean.
+                        exact_required = True
+                if exact_required:
+                    total = Fraction()
+                    exact_values = []
+                    for value in values_for_sum(original):
+                        exact_value = Fraction(value)
+                        exact_values.append(exact_value)
+                        total += exact_value
+                    exact_mean = total / len(original)
+                    residuals = np.empty(len(original))
+                    for index, value in enumerate(exact_values):
+                        if index % 1024 == 0:
+                            _check_cancelled(cancelled_callback)
+                        difference = value - exact_mean
+                        residuals[index] = _fraction_as_float(difference)
+                    result[row_index, finite[row_index]] = residuals
+                else:
+                    result[row_index] = chunk[row_index] - mean
+            if np.any(infinite_source):
+                special = chunk[infinite_source]
+                result[infinite_source] = special - mean_func(special, axis=1, keepdims=True)
+        centered[start:start + len(chunk)] = result
+    _check_cancelled(cancelled_callback)
+    return np.moveaxis(centered.reshape(samples.shape), -1, axis)
 
 
 def subtract_mean(
@@ -51,9 +379,38 @@ def subtract_mean(
     num_axis = 1 if axis == "x" else 0
 
     _check_cancelled(cancelled_callback)
-    mean = np.nanmean(dataGrid, axis=num_axis, keepdims=True)
-    _check_cancelled(cancelled_callback)
-    dataGrid = dataGrid - mean
+    if dataGrid.dtype.kind in "iuO":
+        # Center exact samples before conversion; NaN holes remain missing.
+        # Work one row/column at a time so this path stays cancellable.
+        samples = np.moveaxis(dataGrid, num_axis, -1)
+        centered = np.full(samples.shape, np.nan, dtype=float)
+        for position in np.ndindex(samples.shape[:-1]):
+            _check_cancelled(cancelled_callback)
+            row = samples[position]
+            valid = ~numeric_isnan(row)
+            values = row[valid]
+            if not values.size:
+                continue
+            if np.all(numeric_isfinite(values)):
+                exact = [Fraction(value.item() if isinstance(value, np.generic) else value)
+                         for value in values]
+                mean = sum(exact) / len(exact)
+                centered[position][valid] = [_fraction_as_float(value - mean) for value in exact]
+            else:
+                numeric = values.astype(float)
+                centered[position][valid] = numeric - np.mean(numeric)
+        dataGrid = np.moveaxis(centered, -1, num_axis)
+    elif dataGrid.dtype.kind == "f":
+        dataGrid = _center_float_samples(
+            dataGrid, num_axis, ignore_nan=True,
+            cancelled_callback=cancelled_callback,
+        )
+    else:
+        # Narrow floats must be widened before accumulation and subtraction.
+        dataGrid = dataGrid.astype(np.result_type(dataGrid.dtype, np.float64), copy=False)
+        mean = np.nanmean(dataGrid, axis=num_axis, keepdims=True)
+        _check_cancelled(cancelled_callback)
+        dataGrid = dataGrid - mean
     _check_cancelled(cancelled_callback)
     
     return {"z" : dataGrid}
@@ -61,7 +418,7 @@ def subtract_mean(
 
 def pass_filter(
         which : str,
-        limit : float,
+        limit : float | Decimal,
         data_dict : dict,
         cancelled_callback=None,
         ):
@@ -80,6 +437,8 @@ def pass_filter(
     data_dict : dict{str, np.ndarry}
         The data array to operate on.
         This uses the dependant parameter data. (data_dict["y"] or data_dict["z"])
+        Integer samples that remain inside the bound retain their exact value.
+        Partial fractional clipping may return mixed integer/decimal object cells.
         
     Returns
     -------
@@ -92,19 +451,52 @@ def pass_filter(
     """
     # Get y for 1d or z for 2d
     axis = "z" if data_dict["z"] is not None else "y"
-    data = data_dict[axis]
+    data = np.asarray(data_dict[axis])
     
-    # Set the bounds
+    # The controls retain the user's decimal text; direct float callers keep
+    # their float value. Compare integers with a decimal bound exactly.
+    exact_limit = limit if isinstance(limit, Decimal) else Decimal(str(limit))
+    float_limit = float(limit)
+
+    # Set the bounds for arrays that already contain floating-point samples.
     limit_arr: tuple[float | None, float | None]
     if which == "low":
-        limit_arr = (None, limit)
+        limit_arr = (None, float_limit)
     elif which == "high":
-        limit_arr = (limit, None)
+        limit_arr = (float_limit, None)
     else:
         raise KeyError(f'Invalid value for which: {which}. Must be: "high" or "low"')
     
     _check_cancelled(cancelled_callback)
-    new_data = np.clip(data, *limit_arr)
+    if data.dtype.kind in "iuO" and not exact_limit.is_nan():
+        # NumPy promotes an integer array to float before clipping against a
+        # float bound, even when no element changes. Compare Python integers
+        # with the bound first, so adjacent int64/uint64 values stay distinct.
+        exact_data = data.astype(object)
+        # Decimal comparisons with NaN raise InvalidOperation. Missing cells
+        # are never clipped, including holes in an integer heatmap.
+        valid = ~numeric_isnan(exact_data)
+        clipped = np.zeros(data.shape, dtype=bool)
+        clipped[valid] = (exact_data[valid] > exact_limit if which == "low"
+                          else exact_data[valid] < exact_limit)
+        if not np.any(clipped):
+            new_data = data.copy()
+        elif (data.dtype.kind in "iu" and exact_limit.is_finite()
+              and exact_limit == exact_limit.to_integral_value()
+              and int(np.iinfo(data.dtype).min) <= exact_limit
+              <= int(np.iinfo(data.dtype).max)):
+            new_data = data.copy()
+            new_data[clipped] = int(exact_limit)
+        elif np.all(clipped):
+            new_data = np.full(data.shape, exact_limit, dtype=object)
+        else:
+            # A fractional bound and unchanged large integers need different
+            # scalar types. Object cells retain both exactly for later ops and
+            # the original-data CSV exporter.
+            new_data = exact_data
+            new_data[clipped] = exact_limit
+    else:
+        new_data = np.clip(data, *limit_arr)
     _check_cancelled(cancelled_callback)
     
     return {axis : new_data}
@@ -125,7 +517,8 @@ def differentiate(
     data_dict : dict{str : np.ndarry}
         The data array to operate on.
         This uses the dependant parameter data. (data_dict["y"] or data_dict["z"])
-        and an independant to find spacing.
+        and an independant to find spacing. Coordinates must be finite and
+        strictly increasing or decreasing in their supplied order.
 
     Returns
     -------
@@ -149,17 +542,35 @@ def differentiate(
         key = "y"
         axis_num = 0
        
-    data = data_dict[key]
-    coordinates = np.asarray(data_dict[dx], dtype=float)
+    data = np.asarray(data_dict[key])
+    coordinates = np.asarray(data_dict[dx])
     if coordinates.ndim != 1 or coordinates.size < 2:
         raise ValueError("Differentiation requires at least two axis coordinates.")
-    if not np.all(np.isfinite(coordinates)):
+    integer_coordinates = _integer_samples(coordinates) or _numeric_object_samples(coordinates)
+    if integer_coordinates:
+        spacing = _integer_differences(coordinates, cancelled_callback=cancelled_callback)
+    else:
+        coordinates = coordinates.astype(float)
+        spacing = np.diff(coordinates)
+    if ((not integer_coordinates and not np.all(np.isfinite(coordinates)))
+            or not np.all(np.isfinite(spacing))):
         raise ValueError("Differentiation axis coordinates must be finite.")
-    if np.any(np.diff(coordinates) == 0):
+    if np.any(spacing == 0):
         raise ValueError("Differentiation axis coordinates must not repeat.")
+    # Reversals can make gradient's three-point stencils singular. Keep the
+    # acquisition order: sorting or merging samples would erase hysteresis.
+    if not (np.all(spacing > 0) or np.all(spacing < 0)):
+        raise ValueError(
+            "Differentiation axis coordinates must be strictly increasing or "
+            "decreasing; reversing sweeps are not supported."
+        )
 
     _check_cancelled(cancelled_callback)
-    new_data = np.gradient(data, coordinates, axis=axis_num)
+    integer_data = _integer_samples(data) or _numeric_object_samples(data)
+    new_data = _gradient_with_integer_samples(
+        data, coordinates, spacing, axis_num, integer_data,
+        cancelled_callback=cancelled_callback,
+    )
     _check_cancelled(cancelled_callback)
     
     return {key : new_data}
@@ -187,12 +598,12 @@ def fill_heatmap(
         _check_cancelled(cancelled_callback)
         position = 0
         while position < len(line):
-            if not np.isnan(line[position]):
+            if not numeric_isnan(line[position]):
                 position += 1
                 continue
 
             gap_start = position
-            while position < len(line) and np.isnan(line[position]):
+            while position < len(line) and numeric_isnan(line[position]):
                 if position % 1024 == 0:
                     _check_cancelled(cancelled_callback)
                 position += 1

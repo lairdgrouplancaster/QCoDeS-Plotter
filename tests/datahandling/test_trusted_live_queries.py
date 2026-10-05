@@ -12,6 +12,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from qcodes import Station
+from qcodes.parameters import ManualParameter
+from qcodes.utils.json_utils import NumpyJSONEncoder
 
 from qplot.datahandling import trusted_live_queries as trusted_queries_module
 from qplot.datahandling.trusted_live import (
@@ -38,6 +41,10 @@ from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_RENDERED_NODES,
     TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
     TRUSTED_PRESENTATION_MAX_UNAVAILABLE_FIELDS,
+)
+from qplot.datahandling.trusted_snapshot import (
+    TRUSTED_SNAPSHOT_MAX_INPUT_BYTES,
+    TrustedSnapshotContinuation,
 )
 
 _RUN_COLUMNS = (
@@ -112,6 +119,28 @@ def _run(run_id: int) -> dict[str, Any]:
     }
 
 
+def _large_qcodes_snapshot_json() -> str:
+    parameters = {
+        f"gate_{index:04d}": {
+            "name": f"gate_{index:04d}",
+            "full_name": f"dac_gate_{index:04d}",
+            "label": f"Gate {index:04d} " + "x" * 16,
+            "unit": "V",
+            "value": index / 10,
+        }
+        for index in range(1_200)
+    }
+    return json.dumps(
+        {
+            "station": {
+                "instruments": {"dac": {"parameters": parameters}},
+            },
+            "final_field": "reachable beyond the former 1024-node boundary",
+        },
+        separators=(",", ":"),
+    )
+
+
 class _FakeExecutor:
     """Execute only the adapter's bounded fixed statements, without SQLite."""
 
@@ -126,6 +155,25 @@ class _FakeExecutor:
             for row in self.runs.values()
         }
         self.result_counts = {row["result_table_name"]: 6 for row in self.runs.values()}
+        self.result_shapes = {
+            row["result_table_name"]: (2, 3) for row in self.runs.values()
+        }
+        self.result_fast_axis_indexes = {
+            row["result_table_name"]: 1 for row in self.runs.values()
+        }
+        self.result_dependents = {
+            row["result_table_name"]: ("signal",) for row in self.runs.values()
+        }
+        self.result_storage_patterns = {
+            row["result_table_name"]: "dense" for row in self.runs.values()
+        }
+        self.result_serpentine = {
+            row["result_table_name"]: False for row in self.runs.values()
+        }
+        self.result_row_overrides: dict[
+            str,
+            dict[int, tuple[float, float]],
+        ] = {row["result_table_name"]: {} for row in self.runs.values()}
         self.layouts: dict[int, tuple[tuple[Any, ...], ...]] = {
             run_id: (
                 (1, "x", "layout x", "layout V", None),
@@ -145,6 +193,12 @@ class _FakeExecutor:
         table_name = row["result_table_name"]
         self.result_columns[table_name] = ("id", "x", "y", "signal")
         self.result_counts[table_name] = 6
+        self.result_shapes[table_name] = (2, 3)
+        self.result_fast_axis_indexes[table_name] = 1
+        self.result_dependents[table_name] = ("signal",)
+        self.result_storage_patterns[table_name] = "dense"
+        self.result_serpentine[table_name] = False
+        self.result_row_overrides[table_name] = {}
         self.layouts[run_id] = (
             (1, "x", "layout x", "layout V", None),
             (2, "y", "layout y", "layout V", None),
@@ -269,6 +323,75 @@ class _FakeExecutor:
             return TrustedQueryResult(
                 ("result_count",),
                 ((self.result_counts[table_name],),),
+            )
+
+        if (
+            sql.startswith('SELECT "id", CASE WHEN typeof(')
+            and 'ORDER BY "id" LIMIT ?' in sql
+            and 'AS "qplot_axis_0"' not in sql
+        ):
+            table_name = self._result_table_for_sql(sql)
+            lower, upper, limit = self._bindings(query)
+            columns = self.result_columns[table_name]
+            axes = tuple(
+                name
+                for name in columns
+                if name not in ("id", *self.result_dependents[table_name])
+            )
+            rows = []
+            for row_id in range(lower + 1, min(upper, lower + limit) + 1):
+                regular = self._regular_result_row(table_name, row_id)
+                values = dict(zip(axes, regular[1 : 1 + len(axes)], strict=True))
+                values.update(
+                    {
+                        name: float(row_id) if present else None
+                        for name, present in zip(
+                            self.result_dependents[table_name],
+                            regular[1 + len(axes) :],
+                            strict=True,
+                        )
+                    }
+                )
+                rows.append((row_id, *(values[name] for name in columns[1:])))
+            return TrustedQueryResult(columns, tuple(rows))
+
+        if ' AS "qplot_axis_0"' in sql and ' AS "qplot_present_0"' in sql:
+            table_name = self._result_table_for_sql(sql)
+            bindings = self._bindings(query)
+            if 'WHERE "id" > ? AND "id" <= ?' in sql:
+                lower, upper, limit = bindings
+                # Apply SQL LIMIT before materializing the virtual result set.
+                row_ids = tuple(
+                    range(
+                        lower + 1,
+                        min(upper, self.result_counts[table_name]) + 1,
+                    )[:limit]
+                )
+            elif 'WHERE "id" IN (' in sql:
+                *requested, through = bindings
+                row_ids = tuple(
+                    sorted(
+                        {
+                            row_id
+                            for row_id in requested
+                            if 0 < row_id <= through <= self.result_counts[table_name]
+                        }
+                    )
+                )
+            else:  # pragma: no cover - every new layout plan is explicit
+                raise AssertionError(f"unexpected regular-layout query: {sql}")
+            shape = self.result_shapes[table_name]
+            dependents = self.result_dependents[table_name]
+            columns = (
+                "id",
+                *(f"qplot_axis_{index}" for index in range(len(shape))),
+                *(f"qplot_present_{index}" for index in range(len(dependents))),
+            )
+            return TrustedQueryResult(
+                columns,
+                tuple(
+                    self._regular_result_row(table_name, row_id) for row_id in row_ids
+                ),
             )
 
         if sql.startswith("SELECT (SELECT COUNT(*) FROM (SELECT DISTINCT "):
@@ -404,6 +527,9 @@ class _FakeExecutor:
                     projected.append("experiment one")
                 elif alias == "sample_name":
                     projected.append("sample one")
+                elif alias == "run_description":
+                    value = run[alias]
+                    projected.append(value if len(value.encode("utf-8")) <= 2048 else None)
                 else:
                     projected.append(run[alias])
             rows.append(tuple(projected))
@@ -475,6 +601,57 @@ class _FakeExecutor:
         assert len(matches) == 1, f"could not resolve result table in: {sql}"
         return matches[0]
 
+    def _regular_result_row(
+        self,
+        table_name: str,
+        row_id: int,
+    ) -> tuple[int | float, ...]:
+        shape = self.result_shapes[table_name]
+        dependents = self.result_dependents[table_name]
+        dependent_count = len(dependents)
+        pattern = self.result_storage_patterns[table_name]
+        fast_axis_index = self.result_fast_axis_indexes[table_name]
+        if len(shape) == 1:
+            if pattern == "dense":
+                logical_index = row_id - 1
+                active = tuple(True for _dependent in dependents)
+            elif pattern == "interleaved":
+                logical_index = (row_id - 1) // dependent_count
+                phase = (row_id - 1) % dependent_count
+                active = tuple(index == phase for index in range(dependent_count))
+            else:
+                logical_index = (row_id - 1) % shape[0]
+                phase = (row_id - 1) // shape[0]
+                active = tuple(index == phase for index in range(dependent_count))
+            axes = (float(logical_index),)
+        else:
+            fast_count = shape[fast_axis_index]
+            if pattern == "dense":
+                logical_index = row_id - 1
+                slow_index, fast_index = divmod(logical_index, fast_count)
+                active = tuple(True for _dependent in dependents)
+            elif pattern == "interleaved":
+                logical_index = (row_id - 1) // dependent_count
+                slow_index, fast_index = divmod(logical_index, fast_count)
+                phase = (row_id - 1) % dependent_count
+                active = tuple(index == phase for index in range(dependent_count))
+            else:
+                slow_stride = dependent_count * fast_count
+                slow_index, within_slow = divmod(row_id - 1, slow_stride)
+                phase, fast_index = divmod(within_slow, fast_count)
+                active = tuple(index == phase for index in range(dependent_count))
+            coordinate_fast_index = (
+                fast_count - 1 - fast_index
+                if self.result_serpentine[table_name] and slow_index % 2
+                else fast_index
+            )
+            axis_indexes = [0, 0]
+            axis_indexes[fast_axis_index] = coordinate_fast_index
+            axis_indexes[1 - fast_axis_index] = slow_index
+            axes = (float(axis_indexes[0]), float(axis_indexes[1] * 10 + 10))
+        axes = self.result_row_overrides[table_name].get(row_id, axes)
+        return (row_id, *axes, *(int(present) for present in active))
+
     @staticmethod
     def _bindings(query: TrustedQuery) -> tuple[Any, ...]:
         bindings = query.bindings
@@ -498,6 +675,142 @@ def _adapter(
         page_size=page_size,
     )
     return adapter, executor
+
+
+def _configure_regular_result(
+    executor: _FakeExecutor,
+    *,
+    run_id: int = 1,
+    shape: tuple[int, int],
+    fast_axis_index: int,
+    dependents: tuple[str, ...] = ("signal",),
+    storage_pattern: str = "dense",
+    serpentine: bool = False,
+) -> str:
+    table_name = executor.runs[run_id]["result_table_name"]
+    axis_names = ("x", "y")
+    parameters = {
+        "x": {"label": "X gate", "unit": "V", "type": "numeric"},
+        "y": {"label": "Y gate", "unit": "V", "type": "numeric"},
+    }
+    for dependent in dependents:
+        parameters[dependent] = {
+            "label": dependent,
+            "unit": "A",
+            "type": "numeric",
+        }
+    executor.runs[run_id]["parameters"] = ",".join((*axis_names, *dependents))
+    executor.runs[run_id]["run_description"] = json.dumps(
+        {
+            "interdependencies_": {
+                "parameters": parameters,
+                "dependencies": {
+                    dependent: list(axis_names) for dependent in dependents
+                },
+            }
+        },
+        separators=(",", ":"),
+    )
+    executor.result_columns[table_name] = ("id", *axis_names, *dependents)
+    executor.result_shapes[table_name] = shape
+    executor.result_fast_axis_indexes[table_name] = fast_axis_index
+    executor.result_dependents[table_name] = dependents
+    executor.result_storage_patterns[table_name] = storage_pattern
+    executor.result_serpentine[table_name] = serpentine
+    logical_count = shape[0] * shape[1]
+    executor.result_counts[table_name] = (
+        logical_count * len(dependents)
+        if storage_pattern in {"blocked", "interleaved"}
+        else logical_count
+    )
+    return table_name
+
+
+def _declare_regular_result_shape(
+    executor: _FakeExecutor,
+    *,
+    run_id: int = 1,
+    shape: tuple[int, ...],
+) -> None:
+    """Attach authoritative current-QCoDeS planned shapes to a fake run."""
+
+    description = json.loads(executor.runs[run_id]["run_description"])
+    description["shapes"] = {
+        dependent: list(shape)
+        for dependent in executor.result_dependents[
+            executor.runs[run_id]["result_table_name"]
+        ]
+    }
+    executor.runs[run_id]["run_description"] = json.dumps(
+        description,
+        separators=(",", ":"),
+    )
+
+
+def _progressive_layout_queries(
+    executor: _FakeExecutor,
+    table_name: str,
+) -> list[TrustedQuery]:
+    return [
+        query
+        for query in executor.queries
+        if quote_sqlite_identifier(table_name) in query.sql
+        and 'AS "qplot_axis_0"' in query.sql
+        and query.bindings
+        and query.bindings[-1] == 4_096
+    ]
+
+
+def _drain_expensive_run(
+    adapter: TrustedMetadataQueryAdapter,
+    run_id: int,
+    *,
+    maximum_pages: int,
+) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for _page in range(maximum_pages):
+        fields = adapter.expensive_run(run_id).as_dict()
+        if run_id not in adapter._regular_layout_progress:
+            return fields
+    raise AssertionError("The bounded progressive layout verifier did not drain.")
+
+
+def _configure_regular_1d_result(
+    executor: _FakeExecutor,
+    *,
+    points: int,
+    dependents: tuple[str, ...] = ("signal",),
+    storage_pattern: str = "dense",
+) -> str:
+    table_name = executor.runs[1]["result_table_name"]
+    parameters = {"x": {"label": "X gate", "unit": "V", "type": "numeric"}}
+    for dependent in dependents:
+        parameters[dependent] = {
+            "label": dependent,
+            "unit": "A",
+            "type": "numeric",
+        }
+    executor.runs[1]["parameters"] = ",".join(("x", *dependents))
+    executor.runs[1]["run_description"] = json.dumps(
+        {
+            "interdependencies_": {
+                "parameters": parameters,
+                "dependencies": {dependent: ["x"] for dependent in dependents},
+            }
+        },
+        separators=(",", ":"),
+    )
+    executor.result_columns[table_name] = ("id", "x", *dependents)
+    executor.result_shapes[table_name] = (points,)
+    executor.result_fast_axis_indexes[table_name] = 0
+    executor.result_dependents[table_name] = dependents
+    executor.result_storage_patterns[table_name] = storage_pattern
+    executor.result_counts[table_name] = (
+        points * len(dependents)
+        if storage_pattern in {"blocked", "interleaved"}
+        else points
+    )
+    return table_name
 
 
 def _assert_frozen_primitive(value: object) -> None:
@@ -583,10 +896,27 @@ def test_basic_run_list_is_paged_without_accessing_any_result_table(tmp_path):
         for query in executor.queries
         for run in executor.runs.values()
     )
-    assert records[0].as_dict()["measure_parameters"] == []
-    assert records[0].as_dict()["sweep_parameters"] == []
-    assert all("run_description" not in query.sql for query in page_queries)
+    assert records[0].as_dict()["measure_parameters"] == ["signal"]
+    assert records[0].as_dict()["sweep_parameters"] == ["x", "y"]
+    assert records[0].as_dict()["preview_dimensions"] == [2]
+    assert "run_description" not in records[0].as_dict()
+    assert all('octet_length(runs."run_description") <= 2048' in query.sql for query in page_queries)
     assert all('runs."parameters"' not in query.sql for query in page_queries)
+
+
+def test_placeholder_description_is_optional_bounded_and_not_retained(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1, 2, 3))
+    executor.runs[1]["run_description"] = "x" * 2049
+    executor.runs[2]["run_description"] = "{malformed"
+    executor.runs[3]["run_description"] = json.dumps({
+        "interdependencies_": {"dependencies": {"signal": ["x"]}}
+    })
+    header = adapter.bootstrap()
+    records = _load_basic_pages(adapter, 0, header.run_id_watermark)
+    assert not records[0].as_dict()["preview_dimensions"]
+    assert not records[1].as_dict()["preview_dimensions"]
+    assert records[2].as_dict()["preview_dimensions"] == [1]
+    assert all("run_description" not in record.as_dict() for record in records)
 
 
 def test_refresh_reconciles_same_version_when_data_version_respawns_helper(tmp_path):
@@ -1056,7 +1386,7 @@ def test_reconciled_basic_page_preserves_enriched_fields(tmp_path):
     assert replayed["storage_bytes"] == enriched["storage_bytes"]
 
 
-def test_cheap_and_expensive_runs_use_aggregates_and_return_frozen_primitives(
+def test_cheap_and_expensive_runs_use_bounded_probes_and_return_frozen_primitives(
     tmp_path,
 ):
     adapter, executor = _adapter(tmp_path, (1,))
@@ -1095,7 +1425,14 @@ def test_cheap_and_expensive_runs_use_aggregates_and_return_frozen_primitives(
     assert result_queries[0] == f"SELECT * FROM {table} WHERE 0"
     assert all("SELECT *" not in sql for sql in result_queries[1:])
     assert any('COALESCE(MAX("id"), 0)' in sql for sql in result_queries)
-    assert any("SELECT DISTINCT" in sql for sql in result_queries)
+    layout_queries = [sql for sql in result_queries if 'AS "qplot_axis_0"' in sql]
+    assert layout_queries
+    assert all(
+        'WHERE "id" > ? AND "id" <= ?' in sql or 'WHERE "id" IN (' in sql
+        for sql in layout_queries
+    )
+    assert all("DISTINCT" not in sql for sql in result_queries)
+    assert all("GROUP BY" not in sql for sql in result_queries)
     assert all("dbstat" not in sql for sql in result_queries)
     assert all(len(batch) <= 4 for batch in executor.batches)
     assert all("PRAGMA" not in sql.upper() for sql in result_queries)
@@ -1218,6 +1555,12 @@ def test_nested_cheap_refresh_cannot_be_regressed_by_resumed_selected_detail(
     assert selected.snapshot.status == "available"
     assert [(node.key, node.value) for node in selected.snapshot.nodes] == [
         ("station", ""),
+    ]
+    station = selected.snapshot.nodes[0]
+    assert station.container_handle is not None
+    assert selected.snapshot.source is not None
+    station_page = selected.snapshot.source.page(station.container_handle, None)
+    assert [(node.key, node.value) for node in station_page.nodes] == [
         ("run_id", "1"),
     ]
 
@@ -1236,26 +1579,18 @@ def test_selected_detail_preserves_prior_expensive_observations(tmp_path):
     assert selected["storage_bytes"] == expensive["storage_bytes"]
 
 
-@pytest.mark.parametrize("aggregate_prefix", (True, False))
 def test_expensive_setpoint_edges_are_bounded_before_adapter_cache(
     tmp_path,
-    aggregate_prefix,
 ):
     adapter, executor = _adapter(tmp_path, (1,))
     bootstrap = adapter.bootstrap()
     _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
-    adapter._bounded_aggregate_prefix = lambda _watermark: aggregate_prefix
     real_execute = executor._execute
     raw_tail = "RAW_SETPOINT_TAIL"
     raw_first = "f" * (64 * 1024 - len(raw_tail)) + raw_tail
     raw_last = "l" * (64 * 1024 - len(raw_tail)) + raw_tail
 
     def execute_with_large_edges(query):
-        if query.sql.startswith("WITH distinct_values(value, first_rowid) AS ("):
-            return TrustedQueryResult(
-                ("first", "last", "steps"),
-                ((raw_first, raw_last, 2),),
-            )
         if query.sql.startswith("SELECT (SELECT ") and 'ORDER BY "id" ' in query.sql:
             parameter_count = query.sql.count('ORDER BY "id"')
             value = raw_first if 'ORDER BY "id" ASC' in query.sql else raw_last
@@ -1295,6 +1630,787 @@ def test_expensive_run_rejects_result_table_without_qcodes_integer_primary_key(
         adapter.expensive_run(1)
 
     assert not any('MAX("id")' in query.sql for query in executor.queries)
+
+
+@pytest.mark.parametrize("shape", ((201, 301), (301, 451)))
+def test_exact_stage5c_large_source_shapes_are_inferred_run_locally(
+    tmp_path,
+    shape,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=shape,
+        fast_axis_index=1,
+    )
+    # Match the confirmed 24,932,352-byte source family without materialising
+    # its contents.  Trusted metadata must depend on the selected run structure,
+    # not on the size of unrelated database pages.
+    database_path = tmp_path / "accepted.db"
+    with database_path.open("r+b") as database_file:
+        database_file.truncate(24_932_352)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    fields = _drain_expensive_run(adapter, 1, maximum_pages=35)
+
+    logical_count = shape[0] * shape[1]
+    assert fields["result_count"] == logical_count
+    assert fields["setpoint_count"] == logical_count
+    assert fields["setpoint_shape"] == list(shape)
+    assert fields["point_shape"] == list(shape)
+    assert fields["setpoint_shape_source"] == "observed"
+    result_sql = "\n".join(
+        query.sql
+        for query in executor.queries
+        if quote_sqlite_identifier(table_name) in query.sql
+    )
+    assert "OFFSET" not in result_sql.upper()
+    assert "DISTINCT" not in result_sql.upper()
+    assert "GROUP BY" not in result_sql.upper()
+
+
+def test_exact_stage5c_ten_run_specification_publishes_every_large_shape(tmp_path):
+    adapter, executor = _adapter(tmp_path, tuple(range(1, 11)))
+    expected = {
+        **{run_id: (201, 301) for run_id in range(3, 8)},
+        **{run_id: (301, 451) for run_id in range(8, 11)},
+    }
+    for run_id, shape in expected.items():
+        _configure_regular_result(
+            executor,
+            run_id=run_id,
+            shape=shape,
+            fast_axis_index=1,
+        )
+    database_path = tmp_path / "accepted.db"
+    with database_path.open("r+b") as database_file:
+        database_file.truncate(24_932_352)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    observed = {
+        run_id: _drain_expensive_run(adapter, run_id, maximum_pages=35)
+        for run_id in sorted(expected)
+    }
+
+    assert {
+        run_id: tuple(fields["setpoint_shape"] or ())
+        for run_id, fields in observed.items()
+    } == expected
+    assert {
+        run_id: fields["setpoint_count"] for run_id, fields in observed.items()
+    } == {run_id: shape[0] * shape[1] for run_id, shape in expected.items()}
+
+
+def test_dependent_blocked_fast_first_grid_reports_logical_shape_and_count(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(251, 16),
+        fast_axis_index=0,
+        dependents=("signal", "signal_2"),
+        storage_pattern="blocked",
+    )
+    database_path = tmp_path / "accepted.db"
+    with database_path.open("r+b") as database_file:
+        database_file.truncate(24_932_352)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    fields = _drain_expensive_run(adapter, 1, maximum_pages=3)
+
+    assert fields["result_count"] == 8_032
+    assert fields["setpoint_count"] == 4_016
+    assert fields["setpoint_shape"] == [251, 16]
+    assert fields["point_shape"] == [251, 16, 2]
+    assert fields["setpoint_shape_source"] == "observed"
+    proof = adapter._validated_grid_layouts[1]
+    assert proof.dependencies == ("x", "y")
+    assert proof.shape == (251, 16)
+    assert proof.fast_axis_index == 0
+    assert tuple(
+        (
+            pattern.dependent,
+            pattern.first_row_id,
+            pattern.fast_id_stride,
+            pattern.slow_id_stride,
+        )
+        for pattern in proof.dependent_rows
+    ) == (
+        ("signal", 1, 1, 502),
+        ("signal_2", 252, 1, 502),
+    )
+    assert all(
+        forbidden not in query.sql.upper()
+        for query in executor.queries
+        if quote_sqlite_identifier(table_name) in query.sql
+        for forbidden in ("OFFSET", "DISTINCT", "GROUP BY")
+    )
+
+
+def test_sparse_multi_dependent_1d_sweep_reports_logical_shape_and_count(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    _configure_regular_1d_result(
+        executor,
+        points=4_016,
+        dependents=("signal", "signal_2"),
+        storage_pattern="blocked",
+    )
+    database_path = tmp_path / "accepted.db"
+    with database_path.open("r+b") as database_file:
+        database_file.truncate(24_932_352)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    fields = _drain_expensive_run(adapter, 1, maximum_pages=3)
+
+    assert fields["result_count"] == 8_032
+    assert fields["setpoint_count"] == 4_016
+    assert fields["setpoint_shape"] == [4_016]
+    assert fields["point_shape"] == [4_016, 2]
+    assert fields["setpoint_shape_source"] == "observed"
+
+
+def test_large_fast_axis_candidate_starts_bounded_full_prefix_verification(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(7_900_079, 16),
+        fast_axis_index=0,
+    )
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["setpoint_count"] is None
+    assert fields["setpoint_shape"] is None
+    assert fields["setpoint_shape_source"] is None
+    assert 1 not in adapter._validated_grid_layouts
+    assert adapter._regular_layout_progress[1].after_row_id == 4_096
+    result_queries = [
+        query
+        for query in executor.queries
+        if quote_sqlite_identifier(table_name) in query.sql
+    ]
+    assert len(result_queries) <= 97
+    assert all("OFFSET" not in query.sql.upper() for query in result_queries)
+    assert all("DISTINCT" not in query.sql.upper() for query in result_queries)
+    assert all("GROUP BY" not in query.sql.upper() for query in result_queries)
+    assert all("COUNT(" not in query.sql.upper() for query in result_queries)
+    progressive_pages = _progressive_layout_queries(executor, table_name)
+    assert [query.bindings for query in progressive_pages] == [(0, 126_401_264, 4_096)]
+
+
+def test_unfinalized_interleaved_complete_prefix_becomes_logical_and_resumes_append(
+    tmp_path,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(108, 861),
+        fast_axis_index=1,
+        dependents=("signal", "signal_2"),
+        storage_pattern="interleaved",
+    )
+    executor.runs[1].update(completed_timestamp=None, is_completed=0)
+    initial_logical_count = 107 * 861
+    initial_watermark = initial_logical_count * 2
+    executor.result_counts[table_name] = initial_watermark
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    initial = None
+    for _page in range(48):
+        initial = adapter.expensive_run(1).as_dict()
+        if initial.get("setpoint_count") == initial_logical_count:
+            break
+    assert initial is not None
+    assert initial["setpoint_count"] == initial_logical_count
+    assert initial["read_setpoint_count"] == initial_logical_count
+    assert initial["setpoint_shape"] == [107, 861]
+    assert initial["point_shape"] == [107, 861, 2]
+    assert initial["setpoint_shape_source"] == "observed"
+    assert initial["setpoint_count"] != initial_watermark
+    initial_proof = adapter._validated_grid_layouts[1]
+    assert initial_proof.shape == (107, 861)
+    assert initial_proof.fast_axis_index == 1
+    assert tuple(pattern.dependent for pattern in initial_proof.dependent_rows) == (
+        "signal",
+        "signal_2",
+    )
+
+    executor.clear_history()
+    executor.result_counts[table_name] = 108 * 861 * 2
+    executor.current_data_version += 1
+    appended = None
+    for _page in range(3):
+        appended = adapter.expensive_run(1).as_dict()
+        if appended.get("setpoint_count") == 108 * 861:
+            break
+    assert appended is not None
+    assert appended["setpoint_count"] == 92_988
+    assert appended["read_setpoint_count"] == 92_988
+    assert appended["setpoint_shape"] == [108, 861]
+    assert appended["point_shape"] == [108, 861, 2]
+    assert appended["setpoint_count"] != 185_976
+    appended_proof = adapter._validated_grid_layouts[1]
+    assert appended_proof.shape == (108, 861)
+    assert tuple(pattern.dependent for pattern in appended_proof.dependent_rows) == (
+        "signal",
+        "signal_2",
+    )
+
+    # The exact full-prefix lane may re-run fixed candidate probes after an
+    # append, but it must resume its keyset verification at the accepted old
+    # watermark rather than reread 184,254 physical rows.
+    append_pages = _progressive_layout_queries(executor, table_name)
+    assert append_pages
+    assert append_pages[0].bindings[0] == initial_watermark
+
+
+def test_unfinalized_interleaved_partial_final_row_uses_planned_extent(
+    tmp_path,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(108, 861),
+        fast_axis_index=1,
+        dependents=("signal", "signal_2"),
+        storage_pattern="interleaved",
+    )
+    _declare_regular_result_shape(executor, shape=(108, 861))
+    executor.runs[1].update(completed_timestamp=None, is_completed=0)
+    acquired_logical_count = 107 * 861 + 437
+    executor.result_counts[table_name] = acquired_logical_count * 2
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    fields = None
+    for _page in range(48):
+        fields = adapter.expensive_run(1).as_dict()
+        if fields.get("read_setpoint_count") == acquired_logical_count:
+            break
+    assert fields is not None
+    assert fields["setpoint_shape"] == [108, 861]
+    assert fields["setpoint_shape_source"] == "planned"
+    assert fields["setpoint_count"] == 92_988
+    assert fields["read_setpoint_count"] == acquired_logical_count
+    assert fields["read_setpoint_count"] < fields["setpoint_count"]
+    proof = adapter._validated_grid_layouts[1]
+    assert proof.shape == (108, 861)
+    assert proof.source == "planned"
+    assert tuple(pattern.dependent for pattern in proof.dependent_rows) == (
+        "signal",
+        "signal_2",
+    )
+
+
+def test_unplanned_incomplete_irregular_run_stays_unknown(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(17, 23),
+        fast_axis_index=1,
+    )
+    executor.runs[1].update(completed_timestamp=None, is_completed=0)
+    executor.result_row_overrides[table_name][66] = (2.0, 123_456.0)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    incomplete = None
+    for _page in range(3):
+        incomplete = adapter.expensive_run(1).as_dict()
+    assert incomplete is not None
+    assert incomplete["setpoint_shape"] is None
+    assert incomplete["setpoint_count"] is None
+    assert incomplete["read_setpoint_count"] is None
+    assert 1 not in adapter._validated_grid_layouts
+    assert 1 not in adapter._regular_layout_progress
+
+
+def test_sparse_anchor_candidate_does_not_publish_exact_shape_before_full_prefix(
+    tmp_path,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(201, 301),
+        fast_axis_index=1,
+    )
+    # Row 66 is immediately beyond the fixed 64-row prefix and is absent from
+    # the old sparse anchor set.  It remains finite and locally monotonic but
+    # is not a member of the canonical fast-coordinate vector.
+    executor.result_row_overrides[table_name][66] = (0.0, 660.5)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    first = adapter.expensive_run(1).as_dict()
+
+    assert first["setpoint_shape"] is None
+    assert first["setpoint_count"] is None
+    assert first["setpoint_shape_source"] is None
+    assert 1 not in adapter._validated_grid_layouts
+    progressive_pages = _progressive_layout_queries(executor, table_name)
+    assert progressive_pages
+    assert progressive_pages[0].bindings == (0, 201 * 301, 4_096)
+
+
+def test_irregular_tail_probe_prevents_guessed_exact_shape(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(201, 301),
+        fast_axis_index=1,
+    )
+    watermark = executor.result_counts[table_name]
+    executor.result_row_overrides[table_name][watermark] = (200.0, 123_456.0)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["result_count"] == watermark
+    assert fields["setpoint_shape"] is None
+    assert fields["setpoint_count"] is None
+    assert fields["setpoint_shape_source"] is None
+
+
+def test_progressive_full_vector_rejects_changed_interior_with_same_endpoints(
+    tmp_path,
+    monkeypatch,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(17, 23),
+        fast_axis_index=1,
+    )
+    # Slow row zero is canonical.  Slow row one has the same count, start,
+    # end, and direction, but its interior fast coordinate is scientifically
+    # different.  Endpoint-only comparison used to accept this as Cartesian.
+    executor.result_row_overrides[table_name][23 + 12] = (1.0, 121.0)
+    monkeypatch.setattr(
+        adapter,
+        "_infer_regular_setpoint_observation",
+        lambda *_args, **_kwargs: None,
+    )
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["setpoint_shape"] is None
+    assert fields["setpoint_count"] is None
+    assert fields["setpoint_shape_source"] is None
+    assert 1 not in adapter._validated_grid_layouts
+    assert [
+        query.bindings[0]
+        for query in _progressive_layout_queries(
+            executor,
+            table_name,
+        )
+    ] == [0]
+
+
+def test_progressive_interleaved_full_prefix_tracks_vector_ownership_and_accounting(
+    tmp_path,
+    monkeypatch,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(17, 257),
+        fast_axis_index=1,
+        dependents=("signal", "signal_2"),
+        storage_pattern="interleaved",
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_infer_regular_setpoint_observation",
+        lambda *_args, **_kwargs: None,
+    )
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    first = adapter.expensive_run(1).as_dict()
+    assert first["setpoint_shape"] is None
+    assert adapter._regular_layout_progress[1].after_row_id == 4_096
+    second = adapter.expensive_run(1).as_dict()
+    assert second["setpoint_shape"] is None
+    assert adapter._regular_layout_progress[1].after_row_id == 8_192
+    third = adapter.expensive_run(1).as_dict()
+
+    assert third["setpoint_shape"] == [17, 257]
+    assert third["setpoint_count"] == 17 * 257
+    assert third["read_setpoint_count"] == 17 * 257
+    assert third["point_shape"] == [17, 257, 2]
+    assert 1 not in adapter._regular_layout_progress
+    proof = adapter._validated_grid_layouts[1]
+    assert tuple(
+        (
+            pattern.dependent,
+            pattern.first_row_id,
+            pattern.fast_id_stride,
+            pattern.slow_id_stride,
+        )
+        for pattern in proof.dependent_rows
+    ) == (
+        ("signal", 1, 2, 514),
+        ("signal_2", 2, 2, 514),
+    )
+    assert [
+        query.bindings[0] for query in _progressive_layout_queries(executor, table_name)
+    ] == [0, 4_096, 8_192]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ("ownership", "unequal-row-length", "incomplete-phase"),
+)
+def test_progressive_interleaved_full_prefix_rejects_structural_mismatch(
+    tmp_path,
+    monkeypatch,
+    corruption,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(17, 23),
+        fast_axis_index=1,
+        dependents=("signal", "signal_2"),
+        storage_pattern="interleaved",
+    )
+    if corruption == "ownership":
+        real_result_row = executor._regular_result_row
+
+        def result_row_with_wrong_owner(table_name: str, row_id: int):
+            row = real_result_row(table_name, row_id)
+            if row_id == 66:
+                return (*row[:-2], 1, 0)
+            return row
+
+        executor._regular_result_row = result_row_with_wrong_owner
+    elif corruption == "unequal-row-length":
+        # Extend the first slow row by one logical coordinate.  Both physical
+        # phases move together, so ownership still looks valid while adjacent
+        # fast-row lengths become 24 and 22 instead of 23 and 23.
+        executor.result_row_overrides[table_name][47] = (0.0, 240.0)
+        executor.result_row_overrides[table_name][48] = (0.0, 240.0)
+    else:
+        # A completed interleaved prefix cannot end after only one dependent
+        # phase; the physical watermark must account for every logical cell.
+        executor.result_counts[table_name] -= 1
+    monkeypatch.setattr(
+        adapter,
+        "_infer_regular_setpoint_observation",
+        lambda *_args, **_kwargs: None,
+    )
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["setpoint_shape"] is None
+    assert fields["setpoint_count"] is None
+    assert fields["setpoint_shape_source"] is None
+    assert 1 not in adapter._validated_grid_layouts
+    assert 1 not in adapter._regular_layout_progress
+    assert [
+        query.bindings[0] for query in _progressive_layout_queries(executor, table_name)
+    ] == [0]
+
+
+def test_single_dependent_null_cell_does_not_hide_rectangular_axes(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    _configure_regular_result(
+        executor,
+        shape=(17, 23),
+        fast_axis_index=1,
+    )
+    real_result_row = executor._regular_result_row
+
+    def result_row_with_missing_value(table_name: str, row_id: int):
+        row = real_result_row(table_name, row_id)
+        if row_id == 197:
+            return (*row[:-1], 0)
+        return row
+
+    executor._regular_result_row = result_row_with_missing_value
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["setpoint_shape"] == [17, 23]
+    assert fields["setpoint_count"] == 17 * 23
+    assert fields["setpoint_shape_source"] == "observed"
+    proof = adapter._validated_grid_layouts[1]
+    assert proof.shape == (17, 23)
+    assert proof.fast_axis_index == 1
+
+
+def test_shared_row_multi_dependent_null_cell_preserves_exact_grid(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    _configure_regular_result(
+        executor,
+        shape=(17, 23),
+        fast_axis_index=1,
+        dependents=("signal", "signal_2"),
+        storage_pattern="dense",
+    )
+    real_result_row = executor._regular_result_row
+
+    def result_row_with_one_missing_output(table_name: str, row_id: int):
+        row = real_result_row(table_name, row_id)
+        if row_id == 197:
+            return (*row[:-2], 0, row[-1])
+        return row
+
+    executor._regular_result_row = result_row_with_one_missing_output
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["result_count"] == 17 * 23
+    assert fields["setpoint_shape"] == [17, 23]
+    assert fields["setpoint_count"] == 17 * 23
+    assert fields["point_shape"] == [17, 23]
+    proof = adapter._validated_grid_layouts[1]
+    assert proof.shape == (17, 23)
+    assert proof.fast_axis_index == 1
+    assert tuple(
+        (
+            pattern.dependent,
+            pattern.first_row_id,
+            pattern.fast_id_stride,
+            pattern.slow_id_stride,
+        )
+        for pattern in proof.dependent_rows
+    ) == (
+        ("signal", 1, 1, 23),
+        ("signal_2", 1, 1, 23),
+    )
+
+
+def test_interleaved_missing_first_phase_learns_owner_from_later_group(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    _configure_regular_result(
+        executor,
+        shape=(17, 23),
+        fast_axis_index=1,
+        dependents=("signal", "signal_2"),
+        storage_pattern="interleaved",
+    )
+    real_result_row = executor._regular_result_row
+
+    def result_row_with_missing_first_output(table_name: str, row_id: int):
+        row = real_result_row(table_name, row_id)
+        if row_id == 1:
+            return (*row[:-2], 0, 0)
+        return row
+
+    executor._regular_result_row = result_row_with_missing_first_output
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["result_count"] == 17 * 23 * 2
+    assert fields["setpoint_shape"] == [17, 23]
+    assert fields["setpoint_count"] == 17 * 23
+    assert fields["point_shape"] == [17, 23, 2]
+    proof = adapter._validated_grid_layouts[1]
+    assert proof.shape == (17, 23)
+    assert proof.fast_axis_index == 1
+    assert tuple(
+        (
+            pattern.dependent,
+            pattern.first_row_id,
+            pattern.fast_id_stride,
+            pattern.slow_id_stride,
+        )
+        for pattern in proof.dependent_rows
+    ) == (
+        ("signal", 1, 2, 46),
+        ("signal_2", 2, 2, 46),
+    )
+
+
+def test_blocked_missing_first_row_stays_unknown_without_owner_evidence(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    _configure_regular_result(
+        executor,
+        shape=(17, 23),
+        fast_axis_index=1,
+        dependents=("signal", "signal_2"),
+        storage_pattern="blocked",
+    )
+    real_result_row = executor._regular_result_row
+
+    def result_row_with_ambiguous_first_owner(table_name: str, row_id: int):
+        row = real_result_row(table_name, row_id)
+        if row_id == 1:
+            return (*row[:-2], 0, 0)
+        return row
+
+    executor._regular_result_row = result_row_with_ambiguous_first_owner
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["setpoint_shape"] is None
+    assert fields["setpoint_count"] is None
+    assert 1 not in adapter._validated_grid_layouts
+    assert 1 not in adapter._regular_layout_progress
+
+
+def test_incomplete_planned_fast_first_grid_has_no_guessed_layout() -> None:
+    proof = trusted_queries_module._planned_dense_2d_layout_proof(
+        {
+            "setpoint_shape": (251, 16),
+            "setpoint_shape_source": "planned",
+            "result_count": 1_000,
+            "is_completed": False,
+        },
+        ((("fast", "slow"), "signal"),),
+    )
+
+    assert proof is None
+
+
+def test_ambiguous_multi_dependent_layout_is_rejected_by_one_full_prefix_page(
+    tmp_path,
+) -> None:
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(17, 23),
+        fast_axis_index=1,
+        dependents=("signal", "signal_2"),
+        storage_pattern="dense",
+    )
+    real_result_row = executor._regular_result_row
+
+    def ambiguous_singleton_rows(table_name: str, row_id: int):
+        row = real_result_row(table_name, row_id)
+        return (*row[:-2], int(row_id % 2 == 1), int(row_id % 2 == 0))
+
+    executor._regular_result_row = ambiguous_singleton_rows
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["setpoint_shape"] is None
+    assert fields["setpoint_count"] is None
+    assert 1 not in adapter._regular_layout_progress
+    progressive_pages = [
+        query
+        for query in executor.queries
+        if quote_sqlite_identifier(table_name) in query.sql
+        and 'AS "qplot_axis_0"' in query.sql
+        and query.bindings
+        and query.bindings[-1] == 4_096
+    ]
+    assert [query.bindings for query in progressive_pages] == [(0, 391, 4_096)]
+
+
+def test_progressive_fallback_advances_one_bounded_keyset_page_per_call(
+    tmp_path,
+    monkeypatch,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(130, 65),
+        fast_axis_index=1,
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_infer_regular_setpoint_observation",
+        lambda *_args, **_kwargs: None,
+    )
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    first = adapter.expensive_run(1).as_dict()
+    assert first["setpoint_shape"] is None
+    assert adapter._regular_layout_progress[1].after_row_id == 4_096
+
+    second = adapter.expensive_run(1).as_dict()
+    assert second["setpoint_shape"] is None
+    assert adapter._regular_layout_progress[1].after_row_id == 8_192
+
+    third = adapter.expensive_run(1).as_dict()
+    assert third["setpoint_shape"] == [130, 65]
+    assert third["setpoint_count"] == 130 * 65
+    assert 1 not in adapter._regular_layout_progress
+    assert adapter._validated_grid_layouts[1].shape == (130, 65)
+
+    pages = [
+        query
+        for query in executor.queries
+        if quote_sqlite_identifier(table_name) in query.sql
+        and 'AS "qplot_axis_0"' in query.sql
+        and query.bindings
+        and query.bindings[-1] == 4_096
+    ]
+    assert [query.bindings[0] for query in pages] == [0, 4_096, 8_192]
+    assert all('WHERE "id" > ? AND "id" <= ?' in query.sql for query in pages)
+    assert all("OFFSET" not in query.sql.upper() for query in pages)
+
+
+def test_progressive_fallback_stops_immediately_after_conclusive_invalidity(
+    tmp_path,
+    monkeypatch,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor,
+        shape=(130, 65),
+        fast_axis_index=1,
+    )
+    # Make the second row repeat the first coordinate.  The first progressive
+    # page can conclusively reject this as a rectangular acquisition; no later
+    # page can make the invalid direction evidence recover.
+    executor.result_row_overrides[table_name][2] = (0.0, 10.0)
+    monkeypatch.setattr(
+        adapter,
+        "_infer_regular_setpoint_observation",
+        lambda *_args, **_kwargs: None,
+    )
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["setpoint_shape"] is None
+    assert fields["setpoint_count"] is None
+    assert 1 not in adapter._regular_layout_progress
+    pages = [
+        query
+        for query in executor.queries
+        if quote_sqlite_identifier(table_name) in query.sql
+        and 'AS "qplot_axis_0"' in query.sql
+        and query.bindings
+        and query.bindings[-1] == 4_096
+    ]
+    assert [query.bindings[0] for query in pages] == [0]
 
 
 def test_logical_32_gib_source_uses_only_pk_watermark_and_bounded_edge_windows(
@@ -1339,11 +2455,23 @@ def test_logical_32_gib_source_uses_only_pk_watermark_and_bounded_edge_windows(
     assert all("DISTINCT" not in query.sql for query in result_queries)
     assert all("GROUP BY" not in query.sql for query in result_queries)
     assert all("COUNT(" not in query.sql for query in result_queries)
-    edge_queries = [query for query in result_queries if 'ORDER BY "id"' in query.sql]
+    edge_queries = [
+        query
+        for query in result_queries
+        if query.sql.startswith("SELECT (SELECT ") and 'ORDER BY "id"' in query.sql
+    ]
     assert edge_queries
     assert all('WHERE "id" > ? AND "id" <= ?' in query.sql for query in edge_queries)
     assert all("LIMIT 1)" in query.sql for query in edge_queries)
     assert len(edge_queries) == 2
+    layout_queries = [
+        query for query in result_queries if 'AS "qplot_axis_0"' in query.sql
+    ]
+    assert layout_queries
+    assert all(
+        'WHERE "id" > ? AND "id" <= ?' in query.sql or 'WHERE "id" IN (' in query.sql
+        for query in layout_queries
+    )
     assert all(len(batch) <= 4 for batch in executor.batches)
     assert any(
         len(batch) == 2 and "sqlite_schema" in batch[-1].sql
@@ -1441,8 +2569,18 @@ def test_selected_detail_contains_plain_parameters_metadata_snapshot_and_summari
     assert detail.snapshot.status == "available"
     assert [(node.key, node.value) for node in detail.snapshot.nodes] == [
         ("station", ""),
+    ]
+    station = detail.snapshot.nodes[0]
+    assert station.container_handle is not None
+    assert detail.snapshot.source is not None
+    station_page = detail.snapshot.source.page(station.container_handle, None)
+    assert [(node.key, node.value) for node in station_page.nodes] == [
         ("run_id", "1"),
     ]
+    raw_summary = {(node.key, node.value) for node in detail.presentation.raw.nodes}
+    assert ("Status", "available — loaded on demand") in raw_summary
+    assert ("Initial page nodes", "1") in raw_summary
+    assert all(node.key != "Rendered nodes" for node in detail.presentation.raw.nodes)
     assert not hasattr(detail, "snapshot_json")
     assert detail.setpoint_summaries == (
         TrustedSetpointSummary("x", 0.0, 1.0, 2),
@@ -1467,6 +2605,240 @@ def test_selected_detail_contains_plain_parameters_metadata_snapshot_and_summari
         (1, 2, 3, 2),
     ]
     assert all("PRAGMA" not in query.sql.upper() for query in executor.queries)
+
+
+def _planned_steps_metadata(
+    dependencies: dict[str, list[str]],
+    shapes: dict[str, list[int]],
+) -> dict[str, object]:
+    return {
+        "measure_parameters": list(dependencies),
+        # This deliberately models the lossy public field that caused the
+        # regression.  Planned steps must come from the per-dependent shapes.
+        "setpoint_shape": max(shapes.values(), key=lambda shape: len(shape)),
+        "run_description": json.dumps(
+            {
+                "interdependencies_": {"dependencies": dependencies},
+                "shapes": shapes,
+            }
+        ),
+    }
+
+
+def test_planned_setpoint_steps_preserve_independent_dependent_shapes():
+    metadata = _planned_steps_metadata(
+        {"z0": ["x0"], "z1": ["x1"], "z2": ["x2"]},
+        {"z0": [3], "z1": [5], "z2": [7]},
+    )
+
+    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+        metadata,
+        ("x0", "x1", "x2"),
+    ) == {"x0": 3, "x1": 5, "x2": 7}
+
+
+@pytest.mark.parametrize(
+    ("dependencies", "shapes_by_stage", "expected_by_stage"),
+    (
+        (
+            {"signal": ["x"], "signal_b": ["y"]},
+            (
+                {"signal": [11], "signal_b": [17]},
+                {"signal": [13], "signal_b": [19]},
+            ),
+            ({"x": 11, "y": 17}, {"x": 13, "y": 19}),
+        ),
+        (
+            {"signal": ["x", "y"], "signal_b": ["y", "x"]},
+            (
+                {"signal": [11, 17], "signal_b": [17, 11]},
+                {"signal": [13, 19], "signal_b": [19, 13]},
+                {"signal": [13, 19], "signal_b": [23, 13]},
+                {"signal": [13, 19], "signal_b": [23, 29]},
+            ),
+            (
+                {"x": 11, "y": 17},
+                {"x": 13, "y": 19},
+                {"x": 13, "y": None},
+                {"x": None, "y": None},
+            ),
+        ),
+    ),
+    ids=("independent", "shared-reversed-order"),
+)
+def test_cached_steps_follow_updated_dependent_shapes_without_edge_queries(
+    tmp_path,
+    dependencies,
+    shapes_by_stage,
+    expected_by_stage,
+):
+    adapter, executor = _adapter(tmp_path, (1,))
+    _configure_regular_result(
+        executor,
+        shape=(2, 3),
+        fast_axis_index=1,
+        dependents=("signal", "signal_b"),
+    )
+    description = json.loads(executor.runs[1]["run_description"])
+    description["interdependencies_"]["dependencies"] = dependencies
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    initial_edges = None
+    for shapes, expected in zip(shapes_by_stage, expected_by_stage, strict=True):
+        description["shapes"] = shapes
+        executor.runs[1]["run_description"] = json.dumps(description)
+        adapter.selected_run_detail(1)
+        executor.clear_history()
+        assert adapter.expensive_run(1).as_dict()["result_count"] == 6
+        detail = adapter.selected_run_detail(1)
+        assert {summary.name: summary.steps for summary in detail.setpoint_summaries} == expected
+        edges = tuple(
+            (summary.first, summary.last) for summary in detail.setpoint_summaries
+        )
+        if initial_edges is None:
+            initial_edges = edges
+        else:
+            assert edges == initial_edges
+            assert not any(
+                query.sql.startswith("SELECT (SELECT ")
+                and 'ORDER BY "id" ' in query.sql
+                for query in executor.queries
+            )
+
+
+def test_planned_setpoint_steps_follow_each_dependency_order():
+    metadata = _planned_steps_metadata(
+        {"forward": ["x", "y"], "reverse": ["y", "x"]},
+        {"forward": [3, 5], "reverse": [5, 3]},
+    )
+
+    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+        metadata,
+        ("x", "y"),
+    ) == {"x": 3, "y": 5}
+
+
+@pytest.mark.parametrize(
+    ("shapes", "expected"),
+    (
+        ({"first": [11], "second": [11]}, {"shared": 11}),
+        ({"first": [11], "second": [13]}, {}),
+    ),
+    ids=("consistent", "conflicting"),
+)
+def test_planned_setpoint_steps_require_shared_axis_counts_to_agree(
+    shapes,
+    expected,
+):
+    metadata = _planned_steps_metadata(
+        {"first": ["shared"], "second": ["shared"]},
+        shapes,
+    )
+
+    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+        metadata,
+        ("shared",),
+    ) == expected
+
+
+def test_selected_detail_keeps_large_valid_snapshot_available_for_lazy_pages(
+    tmp_path,
+) -> None:
+    adapter, executor = _adapter(tmp_path, (1,))
+    snapshot_json = _large_qcodes_snapshot_json()
+    input_bytes = len(snapshot_json.encode("utf-8"))
+    assert 130 * 1024 <= input_bytes <= 145 * 1024
+    executor.runs[1]["snapshot"] = snapshot_json
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    detail = adapter.selected_run_detail(1)
+
+    assert detail.snapshot.status == "available"
+    assert "loaded on demand" in detail.snapshot.message.lower()
+    assert detail.snapshot.input_bytes == input_bytes
+    assert detail.snapshot.source is not None
+    assert [node.key for node in detail.snapshot.nodes] == [
+        "station",
+        "final_field",
+    ]
+    assert detail.snapshot.nodes[-1].value == (
+        "reachable beyond the former 1024-node boundary"
+    )
+
+    source = detail.snapshot.source
+    container = detail.snapshot.nodes[0].container_handle
+    for expected_key in ("instruments", "dac", "parameters"):
+        assert container is not None
+        page = source.page(container, None)
+        assert [node.key for node in page.nodes] == [expected_key]
+        container = page.nodes[0].container_handle
+    assert container is not None
+
+    parameter_names: list[str] = []
+    cursor = None
+    while True:
+        page = source.page(container, cursor)
+        parameter_names.extend(node.key for node in page.nodes)
+        cursor = page.continuation
+        if cursor is None:
+            break
+    assert parameter_names == [f"gate_{index:04d}" for index in range(1_200)]
+
+    raw_summary = {(node.key, node.value) for node in detail.presentation.raw.nodes}
+    assert ("Status", "available — loaded on demand") in raw_summary
+    assert ("Initial page nodes", "2") in raw_summary
+    assert all(node.key != "[truncated]" for node in detail.presentation.raw.nodes)
+
+
+def test_snapshot_has_an_independent_near_limit_selected_detail_budget(
+    tmp_path,
+) -> None:
+    adapter, executor = _adapter(tmp_path, (1,))
+    run_description = json.dumps(
+        {"payload": "d" * 400_000},
+        separators=(",", ":"),
+    )
+    snapshot_json = json.dumps(
+        {f"field_{index:04d}": "s" * 1_000 for index in range(3_800)},
+        separators=(",", ":"),
+    )
+    snapshot_bytes = len(snapshot_json.encode("utf-8"))
+    assert (
+        TRUSTED_SNAPSHOT_MAX_INPUT_BYTES - 512 * 1024
+        < snapshot_bytes
+        <= TRUSTED_SNAPSHOT_MAX_INPUT_BYTES
+    )
+    assert len(run_description.encode("utf-8")) + snapshot_bytes > (
+        TRUSTED_LIVE_MAX_SCALAR_BYTES
+    )
+    executor.runs[1]["run_description"] = run_description
+    executor.runs[1]["snapshot"] = snapshot_json
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    detail = adapter.selected_run_detail(1)
+
+    snapshot = detail.snapshot
+    assert snapshot.status == "available"
+    assert snapshot.input_bytes == snapshot_bytes
+    assert snapshot.source is not None
+    assert snapshot.root_handle is not None
+    assert snapshot.continuation is not None
+    assert "snapshot" not in detail.unavailable_fields
+    keys = [node.key for node in snapshot.nodes]
+    cursor: TrustedSnapshotContinuation | None = snapshot.continuation
+    while cursor is not None:
+        page = snapshot.source.page(snapshot.root_handle, cursor)
+        keys.extend(node.key for node in page.nodes)
+        cursor = page.continuation
+    assert keys == [f"field_{index:04d}" for index in range(3_800)]
+    guarded_sql = "\n".join(
+        query.sql
+        for query in executor.queries
+        if query.sql.startswith("SELECT CASE WHEN")
+    )
+    assert 'THEN "snapshot"' in guarded_sql
 
 
 def test_selected_detail_discards_near_limit_raw_presentation_values(tmp_path):
@@ -1521,7 +2893,9 @@ def test_selected_detail_discards_near_limit_raw_presentation_values(tmp_path):
     )
     assert huge_label not in repr(detail)
     assert huge_metadata not in repr(detail)
-    assert detail.presentation.metadata.status == "truncated"
+    assert detail.presentation.metadata.status == "available"
+    assert any(node.key == "[display]" for node in detail.presentation.metadata.nodes)
+    assert all(node.key != "[truncated]" for node in detail.presentation.metadata.nodes)
     assert detail.presentation.raw.status == "truncated"
     for view in (detail.presentation.metadata, detail.presentation.raw):
         assert len(view.nodes) <= TRUSTED_PRESENTATION_MAX_RENDERED_NODES
@@ -1629,10 +3003,41 @@ def test_parameter_view_source_iterators_stop_after_limit_probe(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    ("value", "token"),
+    [(float("nan"), "NaN"), (float("inf"), "Infinity"), (float("-inf"), "-Infinity")],
+)
+def test_selected_detail_keeps_qcodes_nonfinite_snapshot_parameters(
+    tmp_path, value: float, token: str
+) -> None:
+    station = Station(
+        ManualParameter("sensor", initial_value=value),
+        ManualParameter("reference", initial_value=2.5),
+    )
+    snapshot_json = json.dumps(
+        {"station": station.snapshot(update=False)}, cls=NumpyJSONEncoder
+    )
+    adapter, executor = _adapter(tmp_path, (1,))
+    executor.runs[1]["snapshot"] = snapshot_json
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    detail = adapter.selected_run_detail(1)
+    parameters = {
+        parameter.name: dict(parameter.fields)
+        for parameter in detail.snapshot.parameters
+    }
+
+    assert detail.snapshot.status == "available"
+    assert parameters["sensor"]["value"] == token
+    assert parameters["reference"]["value"] == 2.5
+    assert "snapshot" not in detail.unavailable_fields
+
+
+@pytest.mark.parametrize(
     ("stored_snapshot", "expected_status", "message_fragment"),
     (
         (None, "empty", "No snapshot was stored"),
-        ('{"station":{"valid":true}}', "available", "decoded within all limits"),
+        ('{"station":{"valid":true}}', "available", "loaded on demand"),
         ('{"station":', "malformed", "Malformed snapshot JSON"),
         (
             '"' + "x" * TRUSTED_LIVE_MAX_SCALAR_BYTES + '"',
@@ -1669,6 +3074,43 @@ def test_selected_detail_preserves_snapshot_storage_state_through_preflight(
             if query.sql.startswith("SELECT CASE WHEN")
         )
         assert 'THEN "snapshot"' not in guarded_sql
+
+
+def test_selected_detail_reports_snapshot_changed_during_guarded_fetch(
+    tmp_path,
+) -> None:
+    class SnapshotChangesAfterPreflight(_FakeExecutor):
+        def __init__(self) -> None:
+            super().__init__((1,))
+            self.snapshot_changed = False
+
+        def _execute(self, query: TrustedQuery) -> TrustedQueryResult:
+            result = super()._execute(query)
+            if not self.snapshot_changed and query.sql.startswith(
+                'SELECT typeof("snapshot")'
+            ):
+                self.snapshot_changed = True
+                self.runs[1]["snapshot"] = '{"station":{"changed":true}}'
+            return result
+
+    executor = SnapshotChangesAfterPreflight()
+    original_snapshot = str(executor.runs[1]["snapshot"])
+    database_path = tmp_path / "changed-snapshot.db"
+    database_path.touch()
+    adapter = TrustedMetadataQueryAdapter(executor, database_path, page_size=2)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+
+    detail = adapter.selected_run_detail(1)
+
+    assert executor.snapshot_changed
+    assert detail.snapshot.status == "unavailable"
+    assert detail.snapshot.input_bytes == len(original_snapshot.encode("utf-8"))
+    assert "changed while the bounded reader was fetching it" in (
+        detail.snapshot.message
+    )
+    assert "No snapshot was stored" not in detail.snapshot.message
+    assert "snapshot" in detail.unavailable_fields
 
 
 def test_oversized_single_run_scalars_are_explicitly_unavailable_without_fetch(

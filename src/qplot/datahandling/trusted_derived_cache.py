@@ -34,7 +34,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     trusted_derived_cache_root,
 )
 
-TRUSTED_DERIVED_CACHE_FORMAT_VERSION = 1
+TRUSTED_DERIVED_CACHE_FORMAT_VERSION = 3
 TRUSTED_DERIVED_CACHE_MAX_ENTRY_BYTES = 16 * 1024 * 1024
 TRUSTED_DERIVED_CACHE_MAX_TOTAL_BYTES = 256 * 1024 * 1024
 TRUSTED_DERIVED_CACHE_MAX_ENTRIES = 2_048
@@ -53,6 +53,7 @@ _TEMP_PATTERN = re.compile(r"^[0-9a-f]{64}\.[0-9a-f]{32}\.tmp$")
 _INDEX_NAME = ".qplot-derived-cache-index.sqlite3"
 _LOCK_NAME = ".qplot-derived-cache.lock"
 _INDEX_SCHEMA_VERSION = "1"
+_INDEX_MAX_VALIDATION_ROWS = TRUSTED_DERIVED_CACHE_MAX_ENTRIES + 1
 
 
 class _CacheLockUnavailable(OSError):
@@ -80,6 +81,16 @@ class _ArtifactProof:
     canonical_key: bytes
 
 
+@dataclass(frozen=True)
+class _IndexProof:
+    device: int
+    inode: int
+    size: int
+    modified: int
+    changed: int
+    created: bool
+
+
 def _rollback_index_best_effort(connection: object) -> None:
     try:
         cast(sqlite3.Connection, connection).rollback()
@@ -94,6 +105,45 @@ def _close_index_best_effort(connection: object) -> None:
         pass
 
 
+def _open_owned_cache_lock(path: Path) -> int:
+    """Open only a new lock or the exact empty/one-zero-byte qPlot lock."""
+
+    flags = getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOINHERIT", 0)
+    try:
+        status = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        try:
+            return os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | flags, 0o600)
+        except FileExistsError:
+            # Another cache process may have created the lock first.
+            status = path.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or status.st_nlink != 1
+        or status.st_size not in (0, 1)
+    ):
+        raise _CacheOwnershipError("The cache lock is not owned by qPlot.")
+    with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (
+            (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino)
+            or stream.read(2) not in (b"", b"\0")
+        ):
+            raise _CacheOwnershipError("The cache lock is not owned by qPlot.")
+    current = path.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or current.st_nlink != 1
+        or (current.st_dev, current.st_ino) != (status.st_dev, status.st_ino)
+        or current.st_size not in (0, 1)
+    ):
+        raise _CacheOwnershipError("The cache lock changed during validation.")
+    # Existing locks are never created, truncated or replaced. The cache
+    # namespace is trusted; no hostile path substitution is assumed here.
+    return os.open(path, os.O_RDWR | flags)
+
+
 @contextmanager
 def _cross_process_cache_lock(
     path: Path,
@@ -102,15 +152,14 @@ def _cross_process_cache_lock(
 ):
     """Acquire one bounded unprivileged root lock on POSIX or Windows."""
 
-    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    if os.name == "posix":
-        os.chmod(path, 0o600)
+    descriptor = _open_owned_cache_lock(path)
     acquired = False
     deadline = time.monotonic() + 1.0
     try:
         if os.name == "posix":
             import fcntl
 
+            os.chmod(descriptor, 0o600)
             while True:
                 cancel_check()
                 try:
@@ -777,7 +826,7 @@ class TrustedDerivedDiskCache:
             raise
         except _CacheEpochChanged:
             return False
-        except sqlite3.Error:
+        except (sqlite3.Error, _CacheOwnershipError):
             disable_after_cleanup = True
             return False
         except (
@@ -1069,28 +1118,44 @@ class TrustedDerivedDiskCache:
 
     def _open_index(self) -> sqlite3.Connection:
         index_path = self.root / _INDEX_NAME
+        # Ownership of the main inventory cannot establish ownership of its
+        # SQLite sidecars. Even an unrelated database may occupy these names.
+        # Decline crash recovery and continue without disk caching instead.
+        for suffix in ("-journal", "-wal", "-shm"):
+            try:
+                Path(f"{index_path}{suffix}").stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            raise _CacheOwnershipError(
+                "The cache inventory has an unowned SQLite sidecar."
+            )
+        proof = self._establish_index_ownership(index_path)
+        self._recheck_index_proof(index_path, proof)
         connection = sqlite3.connect(index_path, timeout=0.0, isolation_level=None)
         try:
             if os.name == "posix":
                 os.chmod(index_path, 0o600)
-            connection.execute("PRAGMA journal_mode = DELETE")
             connection.execute("PRAGMA trusted_schema = OFF")
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS cache_meta ("
-                "key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS entries ("
-                "name TEXT PRIMARY KEY, modified INTEGER NOT NULL, "
-                "size INTEGER NOT NULL, ready INTEGER NOT NULL) WITHOUT ROWID"
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS entries_oldest ON entries(modified, name)"
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO cache_meta(key, value) VALUES('schema', ?)",
-                (_INDEX_SCHEMA_VERSION,),
-            )
+            connection.execute("PRAGMA journal_mode = DELETE")
+            if proof.created:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "CREATE TABLE cache_meta ("
+                    "key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID"
+                )
+                connection.execute(
+                    "CREATE TABLE entries ("
+                    "name TEXT PRIMARY KEY, modified INTEGER NOT NULL, "
+                    "size INTEGER NOT NULL, ready INTEGER NOT NULL) WITHOUT ROWID"
+                )
+                connection.execute(
+                    "CREATE INDEX entries_oldest ON entries(modified, name)"
+                )
+                connection.execute(
+                    "INSERT INTO cache_meta(key, value) VALUES('schema', ?)",
+                    (_INDEX_SCHEMA_VERSION,),
+                )
+                connection.commit()
             schema = connection.execute(
                 "SELECT value FROM cache_meta WHERE key = 'schema'"
             ).fetchone()
@@ -1100,6 +1165,159 @@ class TrustedDerivedDiskCache:
         except BaseException:
             _close_index_best_effort(connection)
             raise
+
+    def _establish_index_ownership(self, index_path: Path) -> _IndexProof:
+        """Claim a missing inventory or prove an existing one without writes."""
+
+        flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOINHERIT", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(index_path, flags, 0o600)
+        except FileExistsError:
+            return self._prove_existing_index_read_only(index_path)
+        try:
+            status = os.fstat(descriptor)
+            if not stat.S_ISREG(status.st_mode):
+                raise _CacheOwnershipError(
+                    "The newly claimed cache inventory is not a regular file."
+                )
+            return _IndexProof(
+                status.st_dev,
+                status.st_ino,
+                status.st_size,
+                status.st_mtime_ns,
+                status.st_ctime_ns,
+                True,
+            )
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _recheck_index_proof(index_path: Path, proof: _IndexProof) -> None:
+        status = index_path.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISREG(status.st_mode)
+            or (status.st_dev, status.st_ino) != (proof.device, proof.inode)
+            or status.st_size != proof.size
+            or status.st_mtime_ns != proof.modified
+            or status.st_ctime_ns != proof.changed
+        ):
+            raise _CacheOwnershipError(
+                "The cache inventory changed after ownership validation."
+            )
+
+    def _prove_existing_index_read_only(self, index_path: Path) -> _IndexProof:
+        """Recognise the exact current qPlot inventory via immutable SQLite."""
+
+        initial_status = index_path.stat(follow_symlinks=False)
+        if not stat.S_ISREG(initial_status.st_mode):
+            raise _CacheOwnershipError(
+                "The cache inventory is not a regular qPlot file."
+            )
+        connection = sqlite3.connect(
+            f"{index_path.as_uri()}?mode=ro&immutable=1",
+            timeout=0.0,
+            isolation_level=None,
+            uri=True,
+        )
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("PRAGMA trusted_schema = OFF")
+            objects = connection.execute(
+                "SELECT type, name, tbl_name FROM sqlite_schema "
+                "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+            ).fetchall()
+            if objects != [
+                ("index", "entries_oldest", "entries"),
+                ("table", "cache_meta", "cache_meta"),
+                ("table", "entries", "entries"),
+            ]:
+                raise _CacheOwnershipError(
+                    "The cache inventory schema is not owned by qPlot."
+                )
+            if connection.execute("PRAGMA table_info(cache_meta)").fetchall() != [
+                (0, "key", "TEXT", 1, None, 1),
+                (1, "value", "TEXT", 1, None, 0),
+            ]:
+                raise _CacheOwnershipError(
+                    "The cache inventory metadata table is incompatible."
+                )
+            if connection.execute("PRAGMA table_info(entries)").fetchall() != [
+                (0, "name", "TEXT", 1, None, 1),
+                (1, "modified", "INTEGER", 1, None, 0),
+                (2, "size", "INTEGER", 1, None, 0),
+                (3, "ready", "INTEGER", 1, None, 0),
+            ]:
+                raise _CacheOwnershipError(
+                    "The cache inventory entries table is incompatible."
+                )
+            if connection.execute("PRAGMA index_info(entries_oldest)").fetchall() != [
+                (0, 1, "modified"),
+                (1, 0, "name"),
+            ]:
+                raise _CacheOwnershipError(
+                    "The cache inventory ordering index is incompatible."
+                )
+            metadata = connection.execute(
+                "SELECT key, value FROM cache_meta ORDER BY key"
+            ).fetchall()
+            if metadata not in [
+                [("schema", _INDEX_SCHEMA_VERSION)],
+                [
+                    ("inventory_complete", "1"),
+                    ("schema", _INDEX_SCHEMA_VERSION),
+                ],
+            ]:
+                raise _CacheOwnershipError(
+                    "The cache inventory metadata is incompatible."
+                )
+            rows = connection.execute(
+                "SELECT name, modified, size, ready FROM entries "
+                "ORDER BY name LIMIT ?",
+                (_INDEX_MAX_VALIDATION_ROWS,),
+            ).fetchall()
+            if len(rows) >= _INDEX_MAX_VALIDATION_ROWS:
+                raise _CacheOwnershipError(
+                    "The cache inventory contains too many entries."
+                )
+            for name, modified, size, ready in rows:
+                if (
+                    type(name) is not str
+                    or _ENTRY_PATTERN.fullmatch(name) is None
+                    or type(modified) is not int
+                    or type(size) is not int
+                    or not 0 <= size <= TRUSTED_DERIVED_CACHE_MAX_ENTRY_BYTES
+                    or type(ready) is not int
+                    or ready not in (0, 1)
+                ):
+                    raise _CacheOwnershipError(
+                        "The cache inventory contains an incompatible entry."
+                    )
+        finally:
+            _close_index_best_effort(connection)
+        final_status = index_path.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISREG(final_status.st_mode)
+            or (final_status.st_dev, final_status.st_ino)
+            != (initial_status.st_dev, initial_status.st_ino)
+            or final_status.st_size != initial_status.st_size
+            or final_status.st_mtime_ns != initial_status.st_mtime_ns
+            or final_status.st_ctime_ns != initial_status.st_ctime_ns
+        ):
+            raise _CacheOwnershipError(
+                "The cache inventory changed during ownership validation."
+            )
+        return _IndexProof(
+            final_status.st_dev,
+            final_status.st_ino,
+            final_status.st_size,
+            final_status.st_mtime_ns,
+            final_status.st_ctime_ns,
+            False,
+        )
 
     def _ensure_global_inventory(
         self,

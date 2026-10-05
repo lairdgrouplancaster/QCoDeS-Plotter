@@ -46,6 +46,7 @@ from ._run_formatting import (  # noqa: F401
     format_time_taken_seconds,
     format_timestamp,
     measured_parameter_count,
+    point_count_sort_value,
     progress_percent_value,
     run_failed,
     run_is_complete,
@@ -54,7 +55,11 @@ from ._run_formatting import (  # noqa: F401
     time_taken_seconds,
 )
 from .details_tables import (
+    FULL_VALUE_ID_ROLE,
     CopyableTableWidget,
+    SnapshotTreePageRequest,
+    SnapshotTreeValueRequest,
+    TrustedFullValueDialog,
     WrappedValueDelegate,  # noqa: F401 - re-exported for compatibility
     format_value,
     infoTree,
@@ -81,12 +86,12 @@ class RunList(qtw.QTreeWidget):
     """
     A modified PyQt6.QtWidgets.QTreeWidget, formated as a list which displays
     all run_ids and other properties found in self.cols.
-    
+
     All QTreeWidgetItem are converted to SortableTreeWidgetItem to allow the user to sort
     by any columns.
-    
+
     """
-    
+
     column_ids = (
         "run_id",
         "experiment",
@@ -100,7 +105,7 @@ class RunList(qtw.QTreeWidget):
         "duration",
         "size",
         "guid",
-        )
+    )
     column_labels = {
         "run_id": "ID",
         "experiment": "Experiment",
@@ -114,7 +119,7 @@ class RunList(qtw.QTreeWidget):
         "duration": "Duration",
         "size": "Size",
         "guid": "GUID",
-        }
+    }
     cols = [
         "ID",
         "Experiment",
@@ -128,7 +133,7 @@ class RunList(qtw.QTreeWidget):
         "Duration",
         "Size",
         "GUID",
-        ]
+    ]
     default_visible_column_ids = (
         "run_id",
         "measurements",
@@ -137,7 +142,7 @@ class RunList(qtw.QTreeWidget):
         "status",
         "duration",
         "size",
-        )
+    )
     default_visible_columns = (
         "ID",
         "Measurements",
@@ -146,7 +151,7 @@ class RunList(qtw.QTreeWidget):
         "Status",
         "Duration",
         "Size",
-        )
+    )
     column_widths = {
         "ID": 44,
         "Measurements": 96,
@@ -158,11 +163,11 @@ class RunList(qtw.QTreeWidget):
         "Size": 62,
         "Completed": 142,
         "GUID": 286,
-        }
+    }
     elastic_column_widths = {
         "Setpoints": 170,
         "Started": 142,
-        }
+    }
     representative_column_values = {
         "ID": "9999",
         "Experiment": "experiment-name",
@@ -175,7 +180,7 @@ class RunList(qtw.QTreeWidget):
         "Size": "116 MB",
         "Completed": "2026-05-04 13:05:16",
         "GUID": "00000000-0000-0000-0000-000000000000",
-        }
+    }
     readable_column_widths = {
         "ID": 37,
         "Measurements": 92,
@@ -189,7 +194,7 @@ class RunList(qtw.QTreeWidget):
         "Size": 54,
         "Completed": 128,
         "GUID": 220,
-        }
+    }
     minimum_column_widths = {
         "ID": 34,
         "Measurements": 84,
@@ -203,7 +208,7 @@ class RunList(qtw.QTreeWidget):
         "Size": 50,
         "Completed": 84,
         "GUID": 120,
-        }
+    }
     compact_growth_order = (
         "Measurements",
         "Experiment",
@@ -217,7 +222,7 @@ class RunList(qtw.QTreeWidget):
         "GUID",
         "Setpoints",
         "ID",
-        )
+    )
     preferred_growth_order = (
         "Setpoints",
         "Name",
@@ -231,7 +236,7 @@ class RunList(qtw.QTreeWidget):
         "Status",
         "GUID",
         "ID",
-        )
+    )
     compact_shrink_order = (
         "Setpoints",
         "GUID",
@@ -245,7 +250,7 @@ class RunList(qtw.QTreeWidget):
         "Status",
         "Size",
         "ID",
-        )
+    )
 
     selected = QtCore.pyqtSignal([str])
     nonSingleSelection = QtCore.pyqtSignal()
@@ -253,20 +258,20 @@ class RunList(qtw.QTreeWidget):
     previewPlotRequested = QtCore.pyqtSignal(str, str)
     previewExportRequested = QtCore.pyqtSignal(str, str)
     _shortcut_keys = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    
+
     def __init__(
-            self,
-            *args,
-            initalize=False,
-            initialize=None,
-            config=None,
-            **kargs,
-            ):
+        self,
+        *args,
+        initalize=False,
+        initialize=None,
+        config=None,
+        **kargs,
+    ):
         super().__init__(*args, **kargs)
         # Retained as no-op compatibility flags. Database loading is owned by
         # the controller and arrives through addRuns/setRuns.
         _ = initalize, initialize
-        
+
         self.watching: list[SortableTreeWidgetItem] = []
         self.preview_cells: dict[str, RunPreviewCell] = {}
         self._preview_publication_suspended = False
@@ -282,7 +287,7 @@ class RunList(qtw.QTreeWidget):
         self._column_width_save_timer.timeout.connect(self._persist_column_widths)
         self._preview_widgets_enabled = True
         self.maxRunId = 0
-        
+
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
         header = self.header()
@@ -291,12 +296,12 @@ class RunList(qtw.QTreeWidget):
             header.setMinimumSectionSize(32)
             header.setMinimumHeight(
                 max(header.sizeHint().height(), self.fontMetrics().height() + 8)
-                )
+            )
             for column in range(len(self.cols)):
                 header.setSectionResizeMode(
                     column,
                     qtw.QHeaderView.ResizeMode.Interactive,
-                    )
+                )
         self.setRootIsDecorated(False)
         self.setIndentation(0)
         self.setUniformRowHeights(False)
@@ -306,12 +311,11 @@ class RunList(qtw.QTreeWidget):
         self.setItemDelegateForColumn(
             self.cols.index("Setpoints"),
             self._setpoints_delegate,
-            )
+        )
         self._column_width_cache = self._preferred_column_widths()
-        self._apply_column_widths([
-            self._column_width_cache[name]
-            for name in self.cols
-            ])
+        self._apply_column_widths(
+            [self._column_width_cache[name] for name in self.cols]
+        )
         self.apply_configured_column_widths()
         self.apply_configured_column_visibility()
 
@@ -319,11 +323,11 @@ class RunList(qtw.QTreeWidget):
             header.sectionResized.connect(self._column_resized)
             header.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
             header.customContextMenuRequested.connect(self._open_header_menu)
-        
+
         # Slot connections
         self.itemSelectionChanged.connect(self.onSelect)
         self.itemDoubleClicked.connect(self._double_clicked)
-        
+
         # Setup Context Menu
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.prepareMenu)
@@ -332,14 +336,13 @@ class RunList(qtw.QTreeWidget):
             "context.show",
             self,
             status_tip="Show run-list context menu",
-            )
+        )
         context_action.setShortcutContext(
             QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
-            )
+        )
         context_action.triggered.connect(self.openKeyboardMenu)
         self.addAction(context_action)
-        
-    
+
     def addRuns(self, runs, *, continue_loading=None, commit_check=None):
         """
         Adds Row to table.
@@ -363,9 +366,7 @@ class RunList(qtw.QTreeWidget):
                 SortableTreeWidgetItem | None,
             ]
         ] = []
-        preview_history: list[
-            tuple[str, RunPreviewCell, RunPreviewCell | None]
-        ] = []
+        preview_history: list[tuple[str, RunPreviewCell, RunPreviewCell | None]] = []
         committed = False
 
         def roll_back_added_items():
@@ -398,10 +399,9 @@ class RunList(qtw.QTreeWidget):
 
         try:
             if (
-                    self._preview_widgets_enabled
-                    and self.topLevelItemCount() + len(runs)
-                    > MAX_RUN_PREVIEW_WIDGETS
-                    ):
+                self._preview_widgets_enabled
+                and self.topLevelItemCount() + len(runs) > MAX_RUN_PREVIEW_WIDGETS
+            ):
                 self._disable_measurement_preview_widgets()
 
             # Prevent constant resorting while rows are added.
@@ -426,63 +426,60 @@ class RunList(qtw.QTreeWidget):
                     item.setTextAlignment(
                         self.cols.index(col_name),
                         QtCore.Qt.AlignmentFlag.AlignRight
-                        | QtCore.Qt.AlignmentFlag.AlignVCenter
-                        )
-                item.setTextAlignment(
-                    self.cols.index("Status"),
-                    QtCore.Qt.AlignmentFlag.AlignCenter
+                        | QtCore.Qt.AlignmentFlag.AlignVCenter,
                     )
+                item.setTextAlignment(
+                    self.cols.index("Status"), QtCore.Qt.AlignmentFlag.AlignCenter
+                )
                 item.setTextAlignment(
                     self.cols.index("Duration"),
                     QtCore.Qt.AlignmentFlag.AlignRight
-                    | QtCore.Qt.AlignmentFlag.AlignVCenter
-                    )
+                    | QtCore.Qt.AlignmentFlag.AlignVCenter,
+                )
                 item.setData(
                     self.cols.index("Measurements"),
                     QtCore.Qt.ItemDataRole.UserRole,
-                    measurement_count
-                    )
+                    measurement_count,
+                )
                 item.setData(
                     self.cols.index("Measurements"),
                     QtCore.Qt.ItemDataRole.AccessibleTextRole,
                     self._measurement_accessible_text(metadata, measurement_count),
-                    )
+                )
                 item.setSizeHint(
                     self.cols.index("Measurements"),
-                    QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6)
-                    )
+                    QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6),
+                )
                 item.setData(
                     self.cols.index("Setpoints"),
                     QtCore.Qt.ItemDataRole.UserRole,
-                    metadata.get("setpoint_count")
-                    or metadata.get("expected_results")
-                    or metadata.get("result_count")
-                    )
+                    point_count_sort_value(metadata),
+                )
                 item.setData(
                     self.cols.index("Started"),
                     QtCore.Qt.ItemDataRole.UserRole,
-                    metadata.get("run_timestamp")
-                    )
+                    metadata.get("run_timestamp"),
+                )
                 item.setData(
                     self.cols.index("Completed"),
                     QtCore.Qt.ItemDataRole.UserRole,
-                    metadata.get("completed_timestamp")
-                    )
+                    metadata.get("completed_timestamp"),
+                )
                 item.setData(
                     self.cols.index("Status"),
                     QtCore.Qt.ItemDataRole.UserRole,
-                    complete_cell_sort_value(metadata)
-                    )
+                    complete_cell_sort_value(metadata),
+                )
                 item.setData(
                     self.cols.index("Duration"),
                     QtCore.Qt.ItemDataRole.UserRole,
-                    time_taken_seconds(metadata)
-                    )
+                    time_taken_seconds(metadata),
+                )
                 item.setData(
                     self.cols.index("Size"),
                     QtCore.Qt.ItemDataRole.UserRole,
-                    metadata.get("storage_bytes")
-                    )
+                    metadata.get("storage_bytes"),
+                )
                 item.update_tooltip()
 
                 # Add to top.  Record every mutation before the next operation
@@ -500,12 +497,12 @@ class RunList(qtw.QTreeWidget):
                     finally:
                         current_cell = self.preview_cells.get(item.guid)
                         if (
-                                current_cell is not None
-                                and current_cell is not previous_cell
-                                ):
+                            current_cell is not None
+                            and current_cell is not previous_cell
+                        ):
                             preview_history.append(
                                 (item.guid, current_cell, previous_cell)
-                                )
+                            )
                 else:
                     self._set_compact_measurement_cell(item, measurement_count)
 
@@ -513,10 +510,7 @@ class RunList(qtw.QTreeWidget):
                 if append_to_watching:
                     self.watching.append(item)
 
-                if (
-                        row_index < run_count
-                        and row_index % RUN_LIST_EVENT_YIELD_ROWS == 0
-                        ):
+                if row_index < run_count and row_index % RUN_LIST_EVENT_YIELD_ROWS == 0:
                     # Basic-row construction is deliberately bounded so a large
                     # trusted page or initial run list cannot monopolise Qt. Detail
                     # work starts only after addRuns returns (or after the refresh
@@ -547,7 +541,6 @@ class RunList(qtw.QTreeWidget):
                 self._setpoints_delegate.invalidate_width_cache()
                 self.setSortingEnabled(True)
 
-
     def updateRuns(self, runs):
         """
         Merge updated metadata into existing rows.
@@ -576,8 +569,8 @@ class RunList(qtw.QTreeWidget):
                 "Size",
                 "Completed",
                 "GUID",
-                )
-            }
+            )
+        }
         suspend_sorting = sorting_enabled and sort_column in mutable_columns
         if suspend_sorting:
             self.setSortingEnabled(False)
@@ -589,10 +582,10 @@ class RunList(qtw.QTreeWidget):
 
             merged_metadata = dict(metadata)
             if (
-                    item.run_metadata.get("storage_bytes") is not None
-                    and item.run_metadata.get("storage_bytes_estimated") is False
-                    and merged_metadata.get("storage_bytes_estimated") is True
-                    ):
+                item.run_metadata.get("storage_bytes") is not None
+                and item.run_metadata.get("storage_bytes_estimated") is False
+                and merged_metadata.get("storage_bytes_estimated") is True
+            ):
                 merged_metadata.pop("storage_bytes", None)
                 merged_metadata.pop("storage_bytes_estimated", None)
 
@@ -606,7 +599,6 @@ class RunList(qtw.QTreeWidget):
             self.setSortingEnabled(True)
         return updated
 
-
     def _refresh_run_item(self, item):
         metadata = item.run_metadata
         measurement_count = measured_parameter_count(metadata)
@@ -618,34 +610,33 @@ class RunList(qtw.QTreeWidget):
             measurements_col,
             QtCore.Qt.ItemDataRole.UserRole,
             measurement_count,
-            )
+        )
         item.setData(
             measurements_col,
             QtCore.Qt.ItemDataRole.AccessibleTextRole,
             self._measurement_accessible_text(metadata, measurement_count),
-            )
+        )
         item.setSizeHint(
             measurements_col,
             QtCore.QSize(0, MEASUREMENT_PREVIEW_SIZE + 6),
-            )
+        )
         cell = self.preview_cells.get(item.guid)
-        if (
-                self._preview_widgets_enabled
-                and (cell is None or cell.placeholder_count != measurement_count)
-                ):
+        if self._preview_widgets_enabled and (
+            cell is None or cell.placeholder_count != measurement_count
+        ):
             self._set_measurement_preview_cell(item, measurement_count)
         elif not self._preview_widgets_enabled:
             self._set_compact_measurement_cell(item, measurement_count)
+        elif cell is not None:
+            cell.update_placeholder_metadata(metadata)
 
         setpoints_col = self.cols.index("Setpoints")
         item.setText(setpoints_col, format_point_count(metadata))
         item.setData(
             setpoints_col,
             QtCore.Qt.ItemDataRole.UserRole,
-            metadata.get("setpoint_count")
-            or metadata.get("expected_results")
-            or metadata.get("result_count"),
-            )
+            point_count_sort_value(metadata),
+        )
 
         complete_col = self.cols.index("Status")
         item.setText(complete_col, format_complete_cell(metadata))
@@ -653,7 +644,7 @@ class RunList(qtw.QTreeWidget):
             complete_col,
             QtCore.Qt.ItemDataRole.UserRole,
             complete_cell_sort_value(metadata),
-            )
+        )
 
         duration_col = self.cols.index("Duration")
         item.setText(duration_col, format_time_taken_seconds(metadata))
@@ -661,7 +652,7 @@ class RunList(qtw.QTreeWidget):
             duration_col,
             QtCore.Qt.ItemDataRole.UserRole,
             time_taken_seconds(metadata),
-            )
+        )
 
         size_col = self.cols.index("Size")
         item.setText(size_col, format_storage_size(metadata.get("storage_bytes")))
@@ -669,10 +660,9 @@ class RunList(qtw.QTreeWidget):
             size_col,
             QtCore.Qt.ItemDataRole.UserRole,
             metadata.get("storage_bytes"),
-            )
+        )
 
         item.update_tooltip()
-
 
     @classmethod
     def _run_column_texts(cls, run_id, metadata):
@@ -689,14 +679,12 @@ class RunList(qtw.QTreeWidget):
             "Size": format_storage_size(metadata.get("storage_bytes")),
             "Completed": cls._format_completed_timestamp(metadata),
             "GUID": cls._metadata_cell_text(metadata.get("guid")),
-            }
+        }
         return [values[name] for name in cls.cols]
-
 
     @staticmethod
     def _metadata_cell_text(value):
         return "" if value is None else str(value)
-
 
     @staticmethod
     def _format_completed_timestamp(metadata):
@@ -707,7 +695,6 @@ class RunList(qtw.QTreeWidget):
             return "unknown"
         return "Ongoing"
 
-
     def _refresh_metadata_columns(self, item):
         metadata = item.run_metadata
         values = {
@@ -717,7 +704,7 @@ class RunList(qtw.QTreeWidget):
             "Started": format_timestamp(metadata.get("run_timestamp")),
             "Completed": self._format_completed_timestamp(metadata),
             "GUID": self._metadata_cell_text(metadata.get("guid") or item.guid),
-            }
+        }
         for name, value in values.items():
             item.setText(self.cols.index(name), value)
 
@@ -725,13 +712,12 @@ class RunList(qtw.QTreeWidget):
             self.cols.index("Started"),
             QtCore.Qt.ItemDataRole.UserRole,
             metadata.get("run_timestamp"),
-            )
+        )
         item.setData(
             self.cols.index("Completed"),
             QtCore.Qt.ItemDataRole.UserRole,
             metadata.get("completed_timestamp"),
-            )
-
+        )
 
     def _sync_watching_item(self, item):
         watching = item in self.watching
@@ -741,7 +727,6 @@ class RunList(qtw.QTreeWidget):
         elif not complete and not watching:
             self.watching.append(item)
 
-
     def clear(self):
         self.preview_cells = {}
         self._items_by_guid = {}
@@ -750,23 +735,22 @@ class RunList(qtw.QTreeWidget):
         self._setpoints_delegate.invalidate_width_cache()
         super().clear()
 
-
     def _set_measurement_preview_cell(self, item, measurement_count):
         column = self.cols.index("Measurements")
         cell = RunPreviewCell(item.guid, measurement_count, self)
+        cell.update_placeholder_metadata(item.run_metadata)
         cell.plotRequested.connect(self._preview_plot_requested)
         cell.exportRequested.connect(self._preview_export_requested)
         accessible_text = self._measurement_accessible_text(
             item.run_metadata,
             measurement_count,
-            )
+        )
         cell.setAccessibleName(accessible_text)
         cell.setAccessibleDescription(
             "Measurement previews. Focus a preview for plot and export actions."
-            )
+        )
         self.preview_cells[item.guid] = cell
         self.setItemWidget(item, column, cell)
-
 
     def _set_compact_measurement_cell(self, item, measurement_count):
         column = self.cols.index("Measurements")
@@ -776,8 +760,7 @@ class RunList(qtw.QTreeWidget):
             column,
             "Inline previews are disabled for this large run list. "
             "Select the run to use the Preview tab.",
-            )
-
+        )
 
     def _disable_measurement_preview_widgets(self):
         column = self.cols.index("Measurements")
@@ -788,12 +771,11 @@ class RunList(qtw.QTreeWidget):
                 self._set_compact_measurement_cell(
                     item,
                     measured_parameter_count(item.run_metadata),
-                    )
+                )
             cell.deleteLater()
         self.preview_cells.clear()
         self._preview_widgets_enabled = False
         self.setUniformRowHeights(True)
-
 
     @QtCore.pyqtSlot(str, object)
     def set_run_previews(self, guid, previews):
@@ -803,7 +785,6 @@ class RunList(qtw.QTreeWidget):
         if cell is not None:
             cell.show_previews(previews)
 
-
     def accepts_run_preview(self, guid):
         """Return whether one inline cell can own a decoded thumbnail now."""
 
@@ -812,13 +793,11 @@ class RunList(qtw.QTreeWidget):
             and str(guid or "") in self.preview_cells
         )
 
-
     def run_preview_is_ready(self, guid):
         """Expose bounded inline-cell readiness for acceptance diagnostics."""
 
         cell = self.preview_cells.get(str(guid or ""))
         return bool(cell is not None and cell._has_rendered_previews)
-
 
     @QtCore.pyqtSlot(str, bool)
     def set_run_preview_generating(self, guid, generating):
@@ -828,19 +807,16 @@ class RunList(qtw.QTreeWidget):
         if cell is not None:
             cell.set_generating(generating)
 
-
     def set_preview_publication_suspended(self, suspended):
         """Gate source-bound preview callbacks during a run-list transaction."""
         previous = self._preview_publication_suspended
         self._preview_publication_suspended = bool(suspended)
         return previous
 
-
     def show_run_preview_placeholders(self):
         """Discard rendered run-list previews without changing row metadata."""
         for cell in tuple(self.preview_cells.values()):
             cell.show_placeholders(generating=False)
-
 
     @QtCore.pyqtSlot(str, str)
     def _preview_plot_requested(self, guid, parameter):
@@ -849,7 +825,6 @@ class RunList(qtw.QTreeWidget):
             self.setCurrentItem(item)
         self.previewPlotRequested.emit(guid, parameter)
 
-
     @QtCore.pyqtSlot(str, str)
     def _preview_export_requested(self, guid, parameter):
         item = self._item_for_guid(guid)
@@ -857,10 +832,8 @@ class RunList(qtw.QTreeWidget):
             self.setCurrentItem(item)
         self.previewExportRequested.emit(guid, parameter)
 
-
     def _item_for_guid(self, guid):
         return self._items_by_guid.get(guid)
-
 
     @staticmethod
     def _measurement_accessible_text(metadata, measurement_count):
@@ -868,13 +841,12 @@ class RunList(qtw.QTreeWidget):
             str(parameter)
             for parameter in metadata.get("measure_parameters", [])
             if parameter
-            ]
+        ]
         noun = "measurement" if measurement_count == 1 else "measurements"
         summary = f"{measurement_count} {noun}"
         if parameters:
             summary += f": {', '.join(parameters)}"
         return summary
-
 
     def _column_resized(self, column, old_size, new_size):
         if self._resizing_columns or old_size == new_size:
@@ -886,16 +858,15 @@ class RunList(qtw.QTreeWidget):
         if self._config is not None:
             self._column_width_save_timer.start()
 
-
     def reset_column_widths(self):
         self._column_width_save_timer.stop()
         if self._config is not None and not persist_config_value(
-                self,
-                self._config,
-                RUN_TABLE_COLUMN_WIDTHS_KEY,
-                [],
-                "the run-table column widths",
-                ):
+            self,
+            self._config,
+            RUN_TABLE_COLUMN_WIDTHS_KEY,
+            [],
+            "the run-table column widths",
+        ):
             return False
 
         self._saved_column_widths = None
@@ -903,7 +874,6 @@ class RunList(qtw.QTreeWidget):
         self._column_width_cache = self._preferred_column_widths()
         self._resize_columns(force=True)
         return True
-
 
     def apply_configured_column_widths(self):
         """Apply saved widths, or restore responsive defaults when none exist."""
@@ -920,7 +890,6 @@ class RunList(qtw.QTreeWidget):
         self._saved_column_widths = widths
         self._manual_column_widths = True
 
-
     def _configured_column_widths(self):
         if self._config is None:
             return None
@@ -929,18 +898,14 @@ class RunList(qtw.QTreeWidget):
             return None
         return list(widths)
 
-
     def _apply_column_widths(self, widths):
         self._resizing_columns = True
         try:
-            for column, (name, width) in enumerate(
-                    zip(self.cols, widths, strict=True)
-                    ):
+            for column, (name, width) in enumerate(zip(self.cols, widths, strict=True)):
                 self._column_width_cache[name] = width
                 self.setColumnWidth(column, width)
         finally:
             self._resizing_columns = False
-
 
     def _persist_column_widths(self):
         if self._config is None or not self._manual_column_widths:
@@ -950,9 +915,8 @@ class RunList(qtw.QTreeWidget):
             if not self.isColumnHidden(column) and self.columnWidth(column) >= 32:
                 self._column_width_cache[name] = self.columnWidth(column)
         persisted_widths = [
-            max(32, self._column_width_cache.get(name, 32))
-            for name in self.cols
-            ]
+            max(32, self._column_width_cache.get(name, 32)) for name in self.cols
+        ]
         previous_widths = self._saved_column_widths
 
         def rollback():
@@ -964,38 +928,32 @@ class RunList(qtw.QTreeWidget):
                 self._manual_column_widths = True
 
         if persist_config_value(
-                self,
-                self._config,
-                RUN_TABLE_COLUMN_WIDTHS_KEY,
-                persisted_widths,
-                "the run-table column widths",
-                rollback,
-                ):
+            self,
+            self._config,
+            RUN_TABLE_COLUMN_WIDTHS_KEY,
+            persisted_widths,
+            "the run-table column widths",
+            rollback,
+        ):
             self._saved_column_widths = [
-                max(32, self._column_width_cache.get(name, 32))
-                for name in self.cols
-                ]
-
+                max(32, self._column_width_cache.get(name, 32)) for name in self.cols
+            ]
 
     def visible_column_ids(self):
         return [
             column_id
             for column, column_id in enumerate(self.column_ids)
             if not self.isColumnHidden(column)
-            ]
-
+        ]
 
     def visible_columns(self):
         return [
-            self.column_labels[column_id]
-            for column_id in self.visible_column_ids()
-            ]
-
+            self.column_labels[column_id] for column_id in self.visible_column_ids()
+        ]
 
     def apply_configured_column_visibility(self):
         """Show the columns selected in the current configuration."""
         self._apply_visible_column_ids(self._configured_visible_column_ids())
-
 
     def _configured_visible_column_ids(self):
         if self._config is None:
@@ -1003,11 +961,8 @@ class RunList(qtw.QTreeWidget):
         configured = self._config.get(RUN_TABLE_VISIBLE_COLUMNS_KEY)
         configured_set = set(configured)
         return [
-            column_id
-            for column_id in self.column_ids
-            if column_id in configured_set
-            ]
-
+            column_id for column_id in self.column_ids if column_id in configured_set
+        ]
 
     def set_column_visible(self, column, visible):
         """Show or hide one column and persist the complete visible set."""
@@ -1023,38 +978,34 @@ class RunList(qtw.QTreeWidget):
             visible_ids.remove(column_id)
         visible_set = set(visible_ids)
         visible_ids = [
-            candidate
-            for candidate in self.column_ids
-            if candidate in visible_set
-            ]
+            candidate for candidate in self.column_ids if candidate in visible_set
+        ]
 
         if self._config is not None and not persist_config_value(
-                self,
-                self._config,
-                RUN_TABLE_VISIBLE_COLUMNS_KEY,
-                visible_ids,
-                "the run-table columns",
-                ):
+            self,
+            self._config,
+            RUN_TABLE_VISIBLE_COLUMNS_KEY,
+            visible_ids,
+            "the run-table columns",
+        ):
             return False
 
         self._apply_visible_column_ids(visible_ids)
         return True
-
 
     def reset_column_visibility(self):
         visible_ids = list(self.default_visible_column_ids)
         if self._config is not None and not persist_config_value(
-                self,
-                self._config,
-                RUN_TABLE_VISIBLE_COLUMNS_KEY,
-                visible_ids,
-                "the run-table columns",
-                ):
+            self,
+            self._config,
+            RUN_TABLE_VISIBLE_COLUMNS_KEY,
+            visible_ids,
+            "the run-table columns",
+        ):
             return False
 
         self._apply_visible_column_ids(visible_ids)
         return True
-
 
     def _resolve_column_id(self, column):
         if column in self.column_ids:
@@ -1063,7 +1014,6 @@ class RunList(qtw.QTreeWidget):
             if column == label:
                 return column_id
         raise ValueError(f"Unknown run-table column: {column!r}")
-
 
     def _apply_visible_column_ids(self, visible_ids):
         visible_set = set(visible_ids)
@@ -1075,41 +1025,40 @@ class RunList(qtw.QTreeWidget):
         self._resizing_columns = True
         try:
             for column, (column_id, name) in enumerate(
-                    zip(self.column_ids, self.cols, strict=True)
-                    ):
+                zip(self.column_ids, self.cols, strict=True)
+            ):
                 is_visible = column_id in visible_set
                 self.setColumnHidden(column, not is_visible)
                 if is_visible:
                     self.setColumnWidth(
                         column,
                         max(32, self._column_width_cache.get(name, 32)),
-                        )
+                    )
         finally:
             self._resizing_columns = False
 
         sort_column = self.sortColumn()
         if (
-                self.isSortingEnabled()
-                and 0 <= sort_column < len(self.cols)
-                and self.isColumnHidden(sort_column)
-                and visible_set
-                ):
+            self.isSortingEnabled()
+            and 0 <= sort_column < len(self.cols)
+            and self.isColumnHidden(sort_column)
+            and visible_set
+        ):
             first_visible_column = next(
                 column
                 for column, column_id in enumerate(self.column_ids)
                 if column_id in visible_set
-                )
+            )
             header = self.header()
             sort_order = (
                 header.sortIndicatorOrder()
                 if header is not None
                 else QtCore.Qt.SortOrder.AscendingOrder
-                )
+            )
             self.sortItems(first_visible_column, sort_order)
 
         if not self._manual_column_widths:
             self._resize_columns(force=True)
-
 
     def _build_header_menu(self):
         menu = qtw.QMenu(self)
@@ -1122,13 +1071,14 @@ class RunList(qtw.QTreeWidget):
             action.setChecked(column_id in visible_ids)
             action.setProperty("runTableColumnId", column_id)
             action.triggered.connect(
-                lambda checked, selected=column_id, source=action:
-                self._toggle_column_from_action(
-                    selected,
-                    checked,
-                    source,
+                lambda checked, selected=column_id, source=action: (
+                    self._toggle_column_from_action(
+                        selected,
+                        checked,
+                        source,
                     )
                 )
+            )
 
         columns_menu.addSeparator()
         defaults_action = columns_menu.addAction("Restore defaults")
@@ -1139,11 +1089,9 @@ class RunList(qtw.QTreeWidget):
         reset_action.triggered.connect(self.reset_column_widths)
         return menu
 
-
     def _toggle_column_from_action(self, column_id, visible, action):
         if not self.set_column_visible(column_id, visible):
             action.setChecked(column_id in self.visible_column_ids())
-
 
     def _open_header_menu(self, pos):
         header = self.header()
@@ -1151,7 +1099,6 @@ class RunList(qtw.QTreeWidget):
             return
         menu = self._build_header_menu()
         menu.exec(header.mapToGlobal(pos))
-
 
     def _resize_columns(self, force=False):
         if self._manual_column_widths and not force:
@@ -1175,7 +1122,7 @@ class RunList(qtw.QTreeWidget):
             name: width
             for name, width in self._preferred_column_widths().items()
             if name in visible_names
-            }
+        }
         preferred_width = sum(preferred_widths.values())
         if available_width <= 0:
             available_width = preferred_width
@@ -1185,12 +1132,12 @@ class RunList(qtw.QTreeWidget):
                 name: width
                 for name, width in self.readable_column_widths.items()
                 if name in visible_names
-                }
+            }
             minimum_widths = {
                 name: width
                 for name, width in self.minimum_column_widths.items()
                 if name in visible_names
-                }
+            }
             readable_width = sum(readable_widths.values())
             if available_width < readable_width:
                 widths = self._grow_column_widths(
@@ -1201,8 +1148,8 @@ class RunList(qtw.QTreeWidget):
                         name
                         for name in self.compact_growth_order
                         if name in visible_names
-                        ],
-                    )
+                    ],
+                )
             else:
                 widths = self._grow_column_widths(
                     readable_widths,
@@ -1212,8 +1159,8 @@ class RunList(qtw.QTreeWidget):
                         name
                         for name in self.preferred_growth_order
                         if name in visible_names
-                        ],
-                    )
+                    ],
+                )
         else:
             extra_width = max(0, available_width - preferred_width)
             widths = dict(preferred_widths)
@@ -1232,11 +1179,11 @@ class RunList(qtw.QTreeWidget):
                             "Experiment",
                             "Sample",
                             "GUID",
-                            )
+                        )
                         if name in widths
-                        ),
+                    ),
                     visible_names[-1],
-                    )
+                )
                 widths[elastic_name] += extra_width
 
         self._resizing_columns = True
@@ -1247,18 +1194,16 @@ class RunList(qtw.QTreeWidget):
         finally:
             self._resizing_columns = False
 
-
     def _preferred_column_widths(self):
         """Return roomy widths adjusted for the active platform font."""
         widths = {
             **self.elastic_column_widths,
             **self.column_widths,
-            }
+        }
         metrics = QtGui.QFontMetrics(self.font())
         for name, value in self.representative_column_values.items():
             widths[name] = max(widths[name], metrics.horizontalAdvance(value) + 12)
         return widths
-
 
     def _grow_column_widths(self, base_widths, target_widths, available_width, order):
         widths = dict(base_widths)
@@ -1276,12 +1221,10 @@ class RunList(qtw.QTreeWidget):
                 break
         return widths
 
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._resize_columns()
-        
-        
+
     def setRuns(self, runs):
         """
         Reset the table from controller-supplied plain run metadata.
@@ -1292,10 +1235,9 @@ class RunList(qtw.QTreeWidget):
         self.preview_cells.clear()
         self._items_by_guid.clear()
         self.maxRunId = 0
-        
+
         self.addRuns(runs)
         return runs
-
 
     def all_run_metadata(self):
         runs = {}
@@ -1312,7 +1254,6 @@ class RunList(qtw.QTreeWidget):
 
             runs[run_id] = dict(getattr(item, "run_metadata", {}))
         return runs
-
 
     def visible_run_ids(self, limit=50):
         run_ids: list[int | str] = []
@@ -1344,7 +1285,6 @@ class RunList(qtw.QTreeWidget):
                 break
         return run_ids
 
-
     def selected_run_ids(self):
         run_ids = []
         for item in self.selectedItems():
@@ -1354,13 +1294,11 @@ class RunList(qtw.QTreeWidget):
                     run_ids.append(run_id)
         return run_ids
 
-
     def run_id_for_guid(self, guid):
         item = self._item_for_guid(guid)
         if item is None:
             return None
         return self._item_run_id(item)
-
 
     def _item_run_id(self, item):
         try:
@@ -1368,7 +1306,6 @@ class RunList(qtw.QTreeWidget):
         except (TypeError, ValueError):
             text = item.text(0)
             return text if text else None
-
 
     def checkWatching(self, statuses):
         """
@@ -1386,7 +1323,7 @@ class RunList(qtw.QTreeWidget):
             if status.get("database_modified_timestamp") is not None:
                 run.run_metadata["database_modified_timestamp"] = status[
                     "database_modified_timestamp"
-                    ]
+                ]
 
             if status.get("run_timestamp") is not None:
                 run.run_metadata["run_timestamp"] = status["run_timestamp"]
@@ -1396,14 +1333,14 @@ class RunList(qtw.QTreeWidget):
 
             shape_metadata_changed = False
             for field in (
-                    "point_shape",
-                    "setpoint_shape",
-                    "setpoint_shape_source",
-                    "setpoint_count",
-                    "setpoint_count_source",
-                    "expected_results",
-                    "expected_results_source",
-                    ):
+                "point_shape",
+                "setpoint_shape",
+                "setpoint_shape_source",
+                "setpoint_count",
+                "setpoint_count_source",
+                "expected_results",
+                "expected_results_source",
+            ):
                 if field not in status:
                     continue
                 if run.run_metadata.get(field) != status[field]:
@@ -1420,32 +1357,32 @@ class RunList(qtw.QTreeWidget):
                 run.setData(
                     points_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    run.run_metadata.get("setpoint_count")
-                    or run.run_metadata.get("expected_results")
-                    or run.run_metadata.get("result_count"),
-                    )
+                    point_count_sort_value(run.run_metadata),
+                )
                 complete_col = self.cols.index("Status")
                 run.setText(complete_col, format_complete_cell(run.run_metadata))
                 run.setData(
                     complete_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    progress_percent_value(run.run_metadata)
-                    )
+                    progress_percent_value(run.run_metadata),
+                )
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
                 run.setData(
                     time_taken_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    time_taken_seconds(run.run_metadata)
-                    )
+                    time_taken_seconds(run.run_metadata),
+                )
 
             completion_metadata_changed = False
-            if status.get("read_setpoint_count") is not None:
+            if "read_setpoint_count" in status:
                 run.run_metadata["read_setpoint_count"] = status["read_setpoint_count"]
                 completion_metadata_changed = True
 
             if status.get("measurement_exception") is not None:
-                run.run_metadata["measurement_exception"] = status["measurement_exception"]
+                run.run_metadata["measurement_exception"] = status[
+                    "measurement_exception"
+                ]
                 completion_metadata_changed = True
 
             if completion_metadata_changed:
@@ -1454,14 +1391,18 @@ class RunList(qtw.QTreeWidget):
                 run.setData(
                     complete_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    complete_cell_sort_value(run.run_metadata)
-                    )
+                    complete_cell_sort_value(run.run_metadata),
+                )
 
             if status.get("storage_bytes") is not None:
                 storage_col = self.cols.index("Size")
                 run.run_metadata["storage_bytes"] = status["storage_bytes"]
                 run.setText(storage_col, format_storage_size(status["storage_bytes"]))
-                run.setData(storage_col, QtCore.Qt.ItemDataRole.UserRole, status["storage_bytes"])
+                run.setData(
+                    storage_col,
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    status["storage_bytes"],
+                )
 
             completed_timestamp = status.get("completed_timestamp")
             if completed_timestamp is not None:
@@ -1473,15 +1414,15 @@ class RunList(qtw.QTreeWidget):
                 run.setData(
                     complete_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    complete_cell_sort_value(run.run_metadata)
-                    )
+                    complete_cell_sort_value(run.run_metadata),
+                )
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
                 run.setData(
                     time_taken_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    time_taken_seconds(run.run_metadata)
-                    )
+                    time_taken_seconds(run.run_metadata),
+                )
                 to_remove.append(run)
 
             self._refresh_metadata_columns(run)
@@ -1492,20 +1433,19 @@ class RunList(qtw.QTreeWidget):
             except ValueError:
                 run_id = run.text(0)
             updated_runs[run_id] = dict(run.run_metadata)
-        
+
         # Remove runs outside for loops to prevent interfering with loop indexing
         for run in to_remove:
             self.watching.remove(run)
 
         return updated_runs
-            
-    
+
     @QtCore.pyqtSlot(QtCore.QPoint)
     def prepareMenu(self, pos):
         """
         Produces the context menu at mouse position on right click.
         Allows user to open specific plots from the selected run.
-        
+
         Selects the row under the pointer before building actions so every menu
         command targets the row that was actually clicked.
 
@@ -1543,7 +1483,7 @@ class RunList(qtw.QTreeWidget):
             "run.plot_selected_all",
             menu,
             text="&Plot all",
-            )
+        )
         self._set_action_shortcut(open_all, "run.plot_selected_all")
         open_all.triggered.connect(lambda _,: main.open_selected_run_all())
         menu.addAction(open_all)
@@ -1564,34 +1504,32 @@ class RunList(qtw.QTreeWidget):
         # Create an action for all dependant parameters in the loaded dataset,
         # linking the coresponding parameter to the openPlot.
         for itr, (parameter_name, param) in enumerate(parameter_targets):
-            
             open_win = QtGui.QAction(f"  - {parameter_name}", menu)
             if itr < 9:
                 self._set_action_shortcut(
                     open_win,
                     plot_measurement_command_spec(itr),
-                    )
-            
-            # Due to the for loop, the lambda function sets param as an optional 
+                )
+
+            # Due to the for loop, the lambda function sets param as an optional
             # default. Otherwise, param is set by the last iteration of the for loop.
-            # This will be done a few times through the program but this note 
+            # This will be done a few times through the program but this note
             # may be missing
             if param is None:
                 open_win.triggered.connect(
-                    lambda _, name=parameter_name:
-                    main.open_selected_measurement(name)
+                    lambda _, name=parameter_name: main.open_selected_measurement(name)
                 )
             else:
                 open_win.triggered.connect(
-                    lambda _, selected_param=param:
-                    main.openPlot(params=[selected_param])
+                    lambda _, selected_param=param: main.openPlot(
+                        params=[selected_param]
+                    )
                 )
-            
+
             menu.addAction(open_win)
 
         # Display context menu
         menu.exec(self.mapToGlobal(pos))
-
 
     @QtCore.pyqtSlot()
     def openKeyboardMenu(self):
@@ -1602,7 +1540,6 @@ class RunList(qtw.QTreeWidget):
         item = self.currentItem()
         pos = self.visualItemRect(item).center() if item else self.rect().center()
         self.prepareMenu(pos)
-
 
     def main_window(self):
         """
@@ -1621,7 +1558,6 @@ class RunList(qtw.QTreeWidget):
 
         return None
 
-
     def _set_action_shortcut(self, action, command):
         """
         Sets a context-menu action shortcut.
@@ -1632,12 +1568,11 @@ class RunList(qtw.QTreeWidget):
         if hasattr(action, "setShortcutVisibleInContextMenu"):
             action.setShortcutVisibleInContextMenu(True)
 
-
     @QtCore.pyqtSlot()
     def onSelect(self):
         """
         Event handler for right/click on table.
-        This emits a signal connected to: 
+        This emits a signal connected to:
             qplot.windows.main.MainWindow.updateSelected()
         for further loading.
 
@@ -1646,7 +1581,7 @@ class RunList(qtw.QTreeWidget):
         None.
 
         """
-        if len(self.selectedItems()) == 1: # Check multiple items are not selected
+        if len(self.selectedItems()) == 1:  # Check multiple items are not selected
             item = self.selectedItems()[0]
             if isinstance(item, SortableTreeWidgetItem):
                 self.selected.emit(item.guid)
@@ -1657,7 +1592,6 @@ class RunList(qtw.QTreeWidget):
         # signal, leaving the previous single selection available to plot and
         # CSV actions even though it was no longer visible in the run list.
         self.nonSingleSelection.emit()
-
 
     @QtCore.pyqtSlot(qtw.QTreeWidgetItem, int)
     def _double_clicked(self, item, column):
@@ -1671,8 +1605,7 @@ class RunList(qtw.QTreeWidget):
 
         """
         self.plot.emit(None)
-    
-    
+
     def add_plot(self, target_win, param):
         """
         Event handler for add _ to _ context menu option
@@ -1696,14 +1629,8 @@ class RunList(qtw.QTreeWidget):
         if not isinstance(selected_item, SortableTreeWidgetItem):
             return
 
-        main.add_trace_to_plot(
-            target_win,
-            selected_item.guid,
-            param.name,
-            param=param
-            )
-        
-     
+        main.add_trace_to_plot(target_win, selected_item.guid, param.name, param=param)
+
     def add_all(self, target_win, param_dict):
         """
         Event handler for add _ to _ context menu all action.
@@ -1720,13 +1647,20 @@ class RunList(qtw.QTreeWidget):
         for param, depends_on in param_dict.items():
             if depends_on == target_win.param.depends_on_:
                 self.add_plot(target_win, param)
-   
-    
+
+
 class moreInfo(qtw.QTabWidget):
-    
+    snapshotPageRequested = QtCore.pyqtSignal(object)
+    snapshotFullValueRequested = QtCore.pyqtSignal(object)
+
     def __init__(self, *args, preview_size=None):
         super().__init__(*args)
         self.setObjectName("runDetailsTabs")
+        self._trusted_full_values = {}
+        self._full_value_dialog = None
+        self._trusted_detail_identity = None
+        self._trusted_snapshot_session_token = ""
+        self._pending_snapshot_value_request = None
 
         self.overview = CopyableTableWidget()
         self.parameters = CopyableTableWidget()
@@ -1734,13 +1668,23 @@ class moreInfo(qtw.QTabWidget):
         self._update_preview_minimum_height()
         self.metadata = infoTree(expand_all=True, truncate_values=True)
         self.snapshot = infoTree(expand_all=True, truncate_values=False)
-        self.raw = infoTree(expand_all=False, truncate_values=False)
+        self.raw = infoTree(
+            expand_all=False,
+            truncate_values=False,
+            expand_top_level=True,
+        )
+        self.metadata.fullValueRequested.connect(self._show_trusted_full_value)
+        self.raw.fullValueRequested.connect(self._show_trusted_full_value)
+        self.snapshot.snapshotPageRequested.connect(self._relay_snapshot_page_request)
+        self.snapshot.snapshotFullValueRequested.connect(
+            self._relay_snapshot_full_value_request
+        )
 
         self._setup_table(self.overview, ["Field", "Value"])
         self._setup_table(
             self.parameters,
-            ["Name", "Label", "Unit", "From", "To", "Steps", "Delay", "Instrument"]
-            )
+            ["Name", "Label", "Unit", "From", "To", "Steps", "Delay", "Instrument"],
+        )
 
         self.addTab(self.overview, "Overview")
         self.addTab(self.parameters, "Sweep parameters")
@@ -1751,20 +1695,16 @@ class moreInfo(qtw.QTabWidget):
         self.currentChanged.connect(self._preview_tab_changed)
         self._preview_tab_changed(self.currentIndex())
 
-
     def _preview_tab_changed(self, index):
         self.preview.set_preview_active(self.widget(index) is self.preview)
-
 
     def set_preview_size(self, preview_size):
         self.preview.set_preview_size(preview_size)
         self._update_preview_minimum_height()
 
-
     def _update_preview_minimum_height(self):
         preferred_height = self.preview.preferred_tab_height() + 36
         self.setMinimumHeight(max(1, round(preferred_height * COLLAPSE_MINIMUM_RATIO)))
-
 
     def _setup_table(self, table, headers):
         table.setObjectName("detailsTable")
@@ -1781,14 +1721,13 @@ class moreInfo(qtw.QTabWidget):
         table.setWordWrap(False)
         table.horizontalHeader().setStretchLastSection(True)
 
-
     def setInfo(
-            self,
-            info,
-            dataset=None,
-            run_metadata=None,
-            setpoint_summaries=None,
-            ):
+        self,
+        info,
+        dataset=None,
+        run_metadata=None,
+        setpoint_summaries=None,
+    ):
         self.clear()
 
         self._set_overview(info, dataset, run_metadata=run_metadata)
@@ -1798,19 +1737,17 @@ class moreInfo(qtw.QTabWidget):
         self.snapshot.setInfo(info.get("Snapshot", {}))
         self.raw.setInfo(info)
 
-
     def set_trusted_run_detail(self, detail: TrustedSelectedRunDetail) -> None:
         """Render a selected trusted run without dataset or database access."""
         self._set_plain_run_detail(detail, preview_guid=None)
 
-
     def set_trusted_derived_metadata(
-            self,
-            run_metadata,
-            parameters,
-            setpoint_summaries,
-            metadata,
-            ) -> None:
+        self,
+        run_metadata,
+        parameters,
+        setpoint_summaries,
+        metadata,
+    ) -> None:
         """Render one Stage 5B metadata publication without database access."""
 
         run_metadata = self._trusted_run_metadata(run_metadata)
@@ -1841,7 +1778,6 @@ class moreInfo(qtw.QTabWidget):
             )
         )
 
-
     def set_snapshot_run_detail(self, detail: TrustedSelectedRunDetail) -> None:
         """Render snapshot detail primitives and preview by plain GUID."""
         if not isinstance(detail, TrustedSelectedRunDetail):
@@ -1849,20 +1785,30 @@ class moreInfo(qtw.QTabWidget):
         guid = detail.run.as_dict().get("guid")
         self._set_plain_run_detail(detail, preview_guid=guid)
 
-
     def _set_plain_run_detail(self, detail, *, preview_guid) -> None:
         if not isinstance(detail, TrustedSelectedRunDetail):
             raise TypeError("detail must be a TrustedSelectedRunDetail.")
 
+        detail_run = detail.run.as_dict()
+        detail_guid = str(detail_run.get("guid") or "")
+        detail_identity = (detail.run.run_id, detail_guid)
+        raw_expanded = (
+            self.raw.expandedPaths()
+            if self._trusted_detail_identity == detail_identity
+            else None
+        )
         self.clear()
-        run_metadata = detail.run.as_dict()
+        self._trusted_detail_identity = detail_identity
+        self._trusted_full_values = {
+            value.identifier: value for value in detail.presentation.full_values
+        }
+        run_metadata = detail_run
         run_metadata.setdefault("run_id", detail.run.run_id)
         snapshot = detail.snapshot
         presentation = detail.presentation
         snapshot_parameters = {
-            parameter.name: dict(parameter.fields)
-            for parameter in snapshot.parameters
-            }
+            parameter.name: dict(parameter.fields) for parameter in snapshot.parameters
+        }
 
         self._set_trusted_overview(run_metadata, detail.parameters)
         self._set_trusted_parameters(
@@ -1870,20 +1816,151 @@ class moreInfo(qtw.QTabWidget):
             detail.setpoint_summaries,
             snapshot_parameters,
             parameters_truncated=presentation.parameters_truncated,
-            )
+        )
         if preview_guid is None:
             self.preview.show_trusted_live_placeholder()
         else:
             self.preview.set_current_guid(preview_guid)
         self.metadata.setBoundedView(presentation.metadata)
-        self.snapshot.setBoundedView(snapshot)
-        self.raw.setBoundedView(presentation.raw)
+        self.snapshot.setBoundedView(snapshot, expand_all=False)
+        self._trusted_snapshot_session_token = self.snapshot.snapshotSessionToken
+        self.raw.setBoundedView(
+            presentation.raw,
+            expanded_paths=raw_expanded,
+        )
+        self.snapshot.expandDefaultSnapshotContainer()
 
+    @QtCore.pyqtSlot(str, str)
+    def _show_trusted_full_value(self, identifier, path) -> None:
+        value = self._trusted_full_values.get(str(identifier))
+        if value is None:
+            return
+        dialog = self._full_value_dialog
+        if dialog is None:
+            dialog = TrustedFullValueDialog(self)
+            self._full_value_dialog = dialog
+        dialog.show_value(
+            path=str(path),
+            text=value.text,
+            utf8_bytes=value.utf8_bytes,
+        )
+
+    @QtCore.pyqtSlot(object)
+    def _relay_snapshot_page_request(self, request) -> None:
+        if (
+            isinstance(request, SnapshotTreePageRequest)
+            and request.session_token
+            and request.session_token == self._trusted_snapshot_session_token
+        ):
+            self.snapshotPageRequested.emit(request)
+
+    @QtCore.pyqtSlot(object)
+    def _relay_snapshot_full_value_request(self, request) -> None:
+        if (
+            not isinstance(request, SnapshotTreeValueRequest)
+            or not request.session_token
+            or request.session_token != self._trusted_snapshot_session_token
+            or self._pending_snapshot_value_request is not None
+        ):
+            return
+        self._pending_snapshot_value_request = request
+        self.snapshotFullValueRequested.emit(request)
+
+    def accept_snapshot_page(self, page) -> bool:
+        """Publish one already-bounded Snapshot page on the Qt owner thread."""
+
+        if QtCore.QThread.currentThread() != self.thread():
+            raise RuntimeError("Snapshot page publication must run on the Qt thread.")
+        return self.snapshot.acceptSnapshotPage(page)
+
+    def reject_snapshot_page(self, request) -> bool:
+        """Release one failed page request without exposing stale content."""
+
+        return self.reject_snapshot_request(request)
+
+    def reject_snapshot_request(self, request) -> bool:
+        """Release one exact failed Snapshot request without changing content."""
+
+        if QtCore.QThread.currentThread() != self.thread():
+            raise RuntimeError("Snapshot request rejection must run on the Qt thread.")
+        if isinstance(request, SnapshotTreePageRequest):
+            return self.snapshot.rejectSnapshotPage(request)
+        if (
+            isinstance(request, SnapshotTreeValueRequest)
+            and request == self._pending_snapshot_value_request
+            and request.session_token == self._trusted_snapshot_session_token
+        ):
+            self._pending_snapshot_value_request = None
+            return True
+        return False
+
+    def show_snapshot_full_value(
+        self,
+        request: SnapshotTreeValueRequest,
+        result,
+    ) -> bool:
+        """Show exact Snapshot text only after its complete request fence wins."""
+
+        if QtCore.QThread.currentThread() != self.thread():
+            raise RuntimeError("Snapshot value publication must run on the Qt thread.")
+        if (
+            not isinstance(request, SnapshotTreeValueRequest)
+            or request != self._pending_snapshot_value_request
+            or request.session_token != self._trusted_snapshot_session_token
+        ):
+            return False
+        text = getattr(result, "text", None)
+        utf8_bytes = getattr(result, "utf8_bytes", None)
+        if not isinstance(text, str) or type(utf8_bytes) is not int or utf8_bytes < 0:
+            return False
+        try:
+            if len(text.encode("utf-8")) != utf8_bytes:
+                return False
+        except UnicodeEncodeError:
+            return False
+        self._pending_snapshot_value_request = None
+        dialog = self._full_value_dialog
+        if dialog is None:
+            dialog = TrustedFullValueDialog(self)
+            self._full_value_dialog = dialog
+        dialog.show_value(
+            path=request.path,
+            text=text,
+            utf8_bytes=utf8_bytes,
+        )
+        return True
+
+    def invalidate_trusted_snapshot(self) -> None:
+        """Drop the active Snapshot session, its items, and any exact viewer."""
+
+        if QtCore.QThread.currentThread() != self.thread():
+            raise RuntimeError("Snapshot invalidation must run on the Qt thread.")
+        self._trusted_snapshot_session_token = ""
+        self._pending_snapshot_value_request = None
+        self.snapshot.invalidateSnapshot()
+        dialog = self._full_value_dialog
+        self._full_value_dialog = None
+        if dialog is not None:
+            dialog.discard_value()
+            dialog.deleteLater()
+
+    def invalidate_trusted_full_values(self) -> None:
+        """Drop the sole selected-detail backing and any open exact viewer."""
+
+        self._trusted_full_values = {}
+        self.invalidate_trusted_snapshot()
+        for tree in (self.metadata, self.raw):
+            iterator = qtw.QTreeWidgetItemIterator(tree)
+            while iterator.value() is not None:
+                item = iterator.value()
+                item.setData(0, FULL_VALUE_ID_ROLE, None)
+                item.setData(1, FULL_VALUE_ID_ROLE, None)
+                iterator += 1
 
     def set_trusted_run_loading(
-            self,
-            run: TrustedRunRecord | Mapping[str, object] | None = None,
-            ) -> None:
+        self,
+        run: TrustedRunRecord | Mapping[str, object] | None = None,
+    ) -> None:
         """Render cached basics and loading placeholders without I/O."""
         run_metadata = self._trusted_run_metadata(run)
         self.clear()
@@ -1896,11 +1973,10 @@ class moreInfo(qtw.QTabWidget):
             "Loading run details...",
         )
 
-
     def set_snapshot_run_loading(
-            self,
-            run: TrustedRunRecord | Mapping[str, object] | None = None,
-            ) -> None:
+        self,
+        run: TrustedRunRecord | Mapping[str, object] | None = None,
+    ) -> None:
         """Render snapshot basics immediately and queue preview by GUID."""
         run_metadata = self._trusted_run_metadata(run)
         self.clear()
@@ -1913,11 +1989,10 @@ class moreInfo(qtw.QTabWidget):
             "Loading run details...",
         )
 
-
     def set_snapshot_run_unavailable(
-            self,
-            run: TrustedRunRecord | Mapping[str, object] | None = None,
-            ) -> None:
+        self,
+        run: TrustedRunRecord | Mapping[str, object] | None = None,
+    ) -> None:
         """Render fallback basics without starting selected-detail I/O.
 
         Snapshot-fallback previews retain their separately accepted GUID path,
@@ -1935,12 +2010,11 @@ class moreInfo(qtw.QTabWidget):
         self.preview.set_current_guid(run_metadata.get("guid"))
         self._set_bounded_placeholder_views(run_metadata, "Status", message)
 
-
     def set_trusted_run_error(
-            self,
-            error: BaseException | str,
-            run: TrustedRunRecord | Mapping[str, object] | None = None,
-            ) -> None:
+        self,
+        error: BaseException | str,
+        run: TrustedRunRecord | Mapping[str, object] | None = None,
+    ) -> None:
         """Render a bounded trusted-detail failure while retaining basics."""
         run_metadata = self._trusted_run_metadata(run)
         message = bounded_presentation_error(error)
@@ -1950,12 +2024,11 @@ class moreInfo(qtw.QTabWidget):
         self.preview.show_trusted_live_placeholder()
         self._set_bounded_placeholder_views(run_metadata, "Error", message)
 
-
     def set_snapshot_run_error(
-            self,
-            error: BaseException | str,
-            run: TrustedRunRecord | Mapping[str, object] | None = None,
-            ) -> None:
+        self,
+        error: BaseException | str,
+        run: TrustedRunRecord | Mapping[str, object] | None = None,
+    ) -> None:
         """Retain snapshot preview and basics when detail loading fails."""
         run_metadata = self._trusted_run_metadata(run)
         message = bounded_presentation_error(error)
@@ -1965,16 +2038,12 @@ class moreInfo(qtw.QTabWidget):
         self.preview.set_current_guid(run_metadata.get("guid"))
         self._set_bounded_placeholder_views(run_metadata, "Error", message)
 
-
     def _set_bounded_placeholder_views(self, run_metadata, field, message):
         status_view = normalize_presentation_tree({field: message})
-        raw_view = normalize_presentation_tree(
-            {"Run": run_metadata, field: message}
-        )
+        raw_view = normalize_presentation_tree({"Run": run_metadata, field: message})
         self.metadata.setBoundedView(status_view)
         self.snapshot.setBoundedView(status_view)
         self.raw.setBoundedView(raw_view)
-
 
     def update_live_run_details(self, run_metadata):
         """Patch authoritative live fields without rebuilding run details."""
@@ -1986,24 +2055,34 @@ class moreInfo(qtw.QTabWidget):
             "Status": self._status_text(None, run_metadata),
             "Duration": self._time_taken_from_metadata(run_metadata),
             "Started": self._run_timestamp(None, run_metadata, "run_timestamp"),
-            }
-        if run_metadata.get("result_count") is not None:
-            updates["Data points"] = run_metadata["result_count"]
+        }
+        data_points = self._trusted_data_points_text(run_metadata)
+        if data_points is not None:
+            updates["Data points"] = data_points
+        elif any(
+            field in run_metadata
+            for field in ("read_setpoint_count", "setpoint_count")
+        ):
+            # An explicit unavailable count invalidates the previously shown
+            # value. A status-only update carries no count observation.
+            row = self._overview_row("Data points")
+            if row is not None:
+                self.overview.removeRow(row)
         if bool(is_completed):
             updates["Completed"] = self._run_timestamp(
                 None,
                 run_metadata,
                 "completed_timestamp",
-                )
+            )
 
         vertical_scroll_bar = cast(
             qtw.QScrollBar,
             self.overview.verticalScrollBar(),
-            )
+        )
         horizontal_scroll_bar = cast(
             qtw.QScrollBar,
             self.overview.horizontalScrollBar(),
-            )
+        )
         vertical_scroll = vertical_scroll_bar.value()
         horizontal_scroll = horizontal_scroll_bar.value()
         for field, value in updates.items():
@@ -2012,8 +2091,9 @@ class moreInfo(qtw.QTabWidget):
         vertical_scroll_bar.setValue(vertical_scroll)
         horizontal_scroll_bar.setValue(horizontal_scroll)
 
-
     def clear(self):
+        self.invalidate_trusted_full_values()
+        self._trusted_detail_identity = None
         self.overview.setRowCount(0)
         self.parameters.clearSpans()
         self.parameters.setRowCount(0)
@@ -2022,7 +2102,6 @@ class moreInfo(qtw.QTabWidget):
         self.snapshot.clear()
         self.raw.clear()
 
-
     def scrollToTop(self):
         self.overview.scrollToTop()
         self.parameters.scrollToTop()
@@ -2030,41 +2109,35 @@ class moreInfo(qtw.QTabWidget):
         self.snapshot.scrollToTop()
         self.raw.scrollToTop()
 
-
     def _set_overview(self, info, dataset, run_metadata=None):
         structure = info.get("Data Structure", {})
         param_info = {
-            key: value for key, value in structure.items()
-            if isinstance(value, dict)
-            }
+            key: value for key, value in structure.items() if isinstance(value, dict)
+        }
         measured = list((run_metadata or {}).get("measure_parameters") or [])
         setpoints = list((run_metadata or {}).get("sweep_parameters") or [])
         if not measured and not setpoints and dataset is not None:
             params = list(dataset.get_parameters())
             setpoint_names = {
-                axis
-                for param in params
-                for axis in getattr(param, "depends_on_", ())
-                }
+                axis for param in params for axis in getattr(param, "depends_on_", ())
+            }
             measured = [
                 getattr(param, "name", "")
                 for param in params
                 if getattr(param, "name", "") not in setpoint_names
-                ]
+            ]
             setpoints = [
                 getattr(param, "name", "")
                 for param in params
                 if getattr(param, "name", "") in setpoint_names
-                ]
+            ]
         elif not measured and not setpoints:
             measured = [
-                name for name, details in param_info.items()
-                if details.get("axes")
-                ]
+                name for name, details in param_info.items() if details.get("axes")
+            ]
             setpoints = [
-                name for name, details in param_info.items()
-                if not details.get("axes")
-                ]
+                name for name, details in param_info.items() if not details.get("axes")
+            ]
 
         rows = [
             ("Status", self._status_text(dataset, run_metadata)),
@@ -2076,16 +2149,15 @@ class moreInfo(qtw.QTabWidget):
             (
                 "Completed",
                 self._run_timestamp(dataset, run_metadata, "completed_timestamp"),
-                ),
+            ),
             ("Experiment", self._run_attr(dataset, run_metadata, "exp_name")),
             ("Sample", self._run_attr(dataset, run_metadata, "sample_name")),
             ("Name", self._run_attr(dataset, run_metadata, "name")),
             ("GUID", self._run_attr(dataset, run_metadata, "guid")),
-            ]
+        ]
         rows = [(key, value) for key, value in rows if self._has_value(value)]
 
         self._fill_key_value_table(self.overview, rows)
-
 
     def _set_parameters(self, info, dataset, setpoint_summaries=None):
         params = list(dataset.get_parameters()) if dataset is not None else []
@@ -2100,7 +2172,7 @@ class moreInfo(qtw.QTabWidget):
         setpoint_summaries = {
             str(name): dict(summary)
             for name, summary in (setpoint_summaries or {}).items()
-            }
+        }
         setpoint_rows = []
         measured_rows = []
 
@@ -2108,7 +2180,9 @@ class moreInfo(qtw.QTabWidget):
             name = getattr(param, "name", "")
             snap = snapshot_params.get(name, {})
             is_setpoint = name in seen_axes and not getattr(param, "depends_on_", ())
-            values = self._parameter_row_values(param, snap, is_setpoint, setpoint_summaries)
+            values = self._parameter_row_values(
+                param, snap, is_setpoint, setpoint_summaries
+            )
 
             if is_setpoint:
                 setpoint_rows.append(values)
@@ -2117,45 +2191,66 @@ class moreInfo(qtw.QTabWidget):
 
         self._fill_parameter_groups(setpoint_rows, measured_rows)
 
-
     def _set_trusted_overview(self, run_metadata, parameters=()):
         run_metadata = dict(bounded_selected_run_fields(run_metadata or {}))
         if parameters and not (
-                run_metadata.get("measure_parameters")
-                or run_metadata.get("sweep_parameters")
-                ):
+            run_metadata.get("measure_parameters")
+            or run_metadata.get("sweep_parameters")
+        ):
             setpoint_names = {
-                name
-                for parameter in parameters
-                for name in parameter.depends_on
-                }
+                name for parameter in parameters for name in parameter.depends_on
+            }
             run_metadata["measure_parameters"] = [
                 parameter.name
                 for parameter in parameters
                 if parameter.name not in setpoint_names
-                ]
+            ]
             run_metadata["sweep_parameters"] = [
                 parameter.name
                 for parameter in parameters
                 if parameter.name in setpoint_names
-                ]
+            ]
             run_metadata = dict(bounded_selected_run_fields(run_metadata))
         info = {
             "Data Structure": {
-                "Data points": run_metadata.get("result_count"),
-                }
+                "Data points": self._trusted_data_points_text(run_metadata),
             }
+        }
         self._set_overview(info, None, run_metadata=run_metadata)
 
+    @staticmethod
+    def _trusted_logical_point_count(run_metadata):
+        acquired = run_metadata.get("read_setpoint_count")
+        if type(acquired) is int and acquired >= 0:
+            return acquired
+        observed = run_metadata.get("setpoint_count")
+        if (
+            run_metadata.get("setpoint_count_source") == "observed"
+            and type(observed) is int
+            and observed >= 0
+        ):
+            return observed
+        return None
+
+    @classmethod
+    def _trusted_data_points_text(cls, run_metadata):
+        logical_count = cls._trusted_logical_point_count(run_metadata)
+        if logical_count is None:
+            return None
+        if run_metadata.get("setpoint_shape") or run_metadata.get("point_shape"):
+            formatted = format_point_count(run_metadata)
+            if formatted != "unknown":
+                return formatted
+        return f"{logical_count:,}"
 
     def _set_trusted_parameters(
-            self,
-            parameters: tuple[TrustedParameterView, ...],
-            summaries: tuple[TrustedSetpointSummary, ...],
-            snapshot_params,
-            *,
-            parameters_truncated=False,
-            ) -> None:
+        self,
+        parameters: tuple[TrustedParameterView, ...],
+        summaries: tuple[TrustedSetpointSummary, ...],
+        snapshot_params,
+        *,
+        parameters_truncated=False,
+    ) -> None:
         seen_axes = set()
         for parameter in parameters:
             for axis in parameter.depends_on:
@@ -2168,9 +2263,9 @@ class moreInfo(qtw.QTabWidget):
                 "from": summary.first,
                 "to": summary.last,
                 "steps": summary.steps,
-                }
-            for summary in summaries
             }
+            for summary in summaries
+        }
         setpoint_rows = []
         measured_rows = []
         for parameter in parameters:
@@ -2181,7 +2276,7 @@ class moreInfo(qtw.QTabWidget):
                 snap,
                 is_setpoint,
                 summary_values,
-                )
+            )
             if is_setpoint:
                 setpoint_rows.append(values)
             else:
@@ -2195,19 +2290,18 @@ class moreInfo(qtw.QTabWidget):
             item = self._table_item(
                 "Additional or oversized parameter details were omitted at "
                 "presentation limits."
-                )
+            )
             font = item.font()
             font.setItalic(True)
             item.setFont(font)
             self.parameters.setItem(row, 0, item)
             self._resize_table(self.parameters)
 
-
     def _fill_parameter_groups(self, setpoint_rows, measured_rows):
         groups = [
             ("Set parameters", setpoint_rows),
             ("Measure parameters", measured_rows),
-            ]
+        ]
         self.parameters.clearSpans()
         self.parameters.setRowCount(sum(1 + len(rows) for _, rows in groups))
 
@@ -2217,11 +2311,12 @@ class moreInfo(qtw.QTabWidget):
             row += 1
             for values in rows:
                 for col, value in enumerate(values):
-                    self.parameters.setItem(row, col, self._table_item(value, max_len=80))
+                    self.parameters.setItem(
+                        row, col, self._table_item(value, max_len=80)
+                    )
                 row += 1
 
         self._resize_table(self.parameters)
-
 
     def _set_parameter_message(self, message):
         self.parameters.clearSpans()
@@ -2234,7 +2329,6 @@ class moreInfo(qtw.QTabWidget):
         self.parameters.setItem(0, 0, item)
         self._resize_table(self.parameters)
 
-
     def _trusted_run_metadata(self, run):
         if run is None:
             return {}
@@ -2246,7 +2340,6 @@ class moreInfo(qtw.QTabWidget):
             return dict(bounded_selected_run_fields(run))
         raise TypeError("run must be a TrustedRunRecord, mapping, or None.")
 
-
     def _set_parameter_heading_row(self, row, heading):
         for col in range(self.parameters.columnCount()):
             item = self._table_item(heading if col == 0 else "")
@@ -2256,14 +2349,13 @@ class moreInfo(qtw.QTabWidget):
             item.setToolTip(heading)
             self.parameters.setItem(row, col, item)
 
-
     def _parameter_row_values(self, param, snap, is_setpoint, setpoint_summaries):
         name = getattr(param, "name", "")
         common = [
             name,
             getattr(param, "label", "") or snap.get("label", ""),
             getattr(param, "unit", "") or snap.get("unit", ""),
-            ]
+        ]
         instrument = snap.get("instrument_name", snap.get("instrument", ""))
 
         if not is_setpoint:
@@ -2276,8 +2368,7 @@ class moreInfo(qtw.QTabWidget):
             summary.get("steps", ""),
             self._parameter_delay(snap),
             instrument,
-            ]
-
+        ]
 
     def _parameter_delay(self, snap):
         for key in ("delay", "post_delay", "inter_delay"):
@@ -2285,7 +2376,6 @@ class moreInfo(qtw.QTabWidget):
             if self._has_value(value):
                 return value
         return ""
-
 
     def _time_taken_value(self, dataset, info, run_metadata=None):
         if self._has_authoritative_run_state(run_metadata):
@@ -2300,9 +2390,15 @@ class moreInfo(qtw.QTabWidget):
         if not self._has_value(started):
             return ""
 
-        end = completed if self._has_value(completed) else datetime.now().timestamp()
+        end = completed if self._has_value(completed) else (
+            (run_metadata or {}).get("database_modified_timestamp")
+        )
+        if not self._has_value(end):
+            return ""
         try:
-            seconds = max(0, self._timestamp_seconds(end) - self._timestamp_seconds(started))
+            seconds = max(
+                0, self._timestamp_seconds(end) - self._timestamp_seconds(started)
+            )
         except (TypeError, ValueError):
             return ""
 
@@ -2311,37 +2407,20 @@ class moreInfo(qtw.QTabWidget):
             return f"{seconds:.2f} s\t({format_duration_dhms(seconds)}; {per_point} s/point)"
         return f"{seconds:.2f} s\t({format_duration_dhms(seconds)})"
 
-
     def _time_taken_from_metadata(self, run_metadata):
-        started = run_metadata.get("run_timestamp")
-        if not self._has_value(started):
+        seconds = time_taken_seconds(run_metadata)
+        if seconds is None:
             return ""
 
-        completed = run_metadata.get("is_completed")
-        if completed is None:
-            return ""
-        if bool(completed):
-            end = run_metadata.get("completed_timestamp")
-            if not self._has_value(end):
-                return ""
-        else:
-            end = datetime.now().timestamp()
-
-        try:
-            seconds = max(0, self._timestamp_seconds(end) - self._timestamp_seconds(started))
-        except (TypeError, ValueError):
-            return ""
-
-        points = run_metadata.get("result_count")
+        points = self._trusted_logical_point_count(run_metadata)
         per_point = self._time_per_point(
             seconds,
             {"Data Structure": {"Data points": points}},
             None,
-            )
+        )
         if self._has_value(per_point):
             return f"{seconds:.2f} s\t({format_duration_dhms(seconds)}; {per_point} s/point)"
         return f"{seconds:.2f} s\t({format_duration_dhms(seconds)})"
-
 
     def _timestamp_seconds(self, value):
         if isinstance(value, (int, float)):
@@ -2359,7 +2438,6 @@ class moreInfo(qtw.QTabWidget):
 
         return float(value)
 
-
     def _time_per_point(self, seconds, info, dataset):
         points = info.get("Data Structure", {}).get("Data points")
         try:
@@ -2372,14 +2450,12 @@ class moreInfo(qtw.QTabWidget):
 
         return f"{seconds / points:.3g}"
 
-
     def _fill_key_value_table(self, table, rows):
         table.setRowCount(len(rows))
         for row, (key, value) in enumerate(rows):
             table.setItem(row, 0, self._table_item(key))
             table.setItem(row, 1, self._table_item(value, max_len=140))
         self._resize_table(table)
-
 
     def _resize_table(self, table):
         header = table.horizontalHeader()
@@ -2392,11 +2468,12 @@ class moreInfo(qtw.QTabWidget):
             if col in stretch_cols:
                 header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.Stretch)
             else:
-                header.setSectionResizeMode(col, qtw.QHeaderView.ResizeMode.ResizeToContents)
+                header.setSectionResizeMode(
+                    col, qtw.QHeaderView.ResizeMode.ResizeToContents
+                )
         header.setStretchLastSection(False)
         for row in range(table.rowCount()):
             table.setRowHeight(row, 20)
-
 
     def _table_item(self, value, max_len=None):
         text = format_value(value, max_len=max_len)
@@ -2408,13 +2485,11 @@ class moreInfo(qtw.QTabWidget):
         item.setToolTip(tooltip)
         return item
 
-
     def _dataset_attr(self, dataset, name):
         if dataset is None:
             return ""
         value = getattr(dataset, name, "")
         return value() if callable(value) else value
-
 
     def _run_attr(self, dataset, run_metadata, name):
         if run_metadata is not None:
@@ -2423,13 +2498,11 @@ class moreInfo(qtw.QTabWidget):
                 return value
         return self._dataset_attr(dataset, name)
 
-
     def _run_timestamp(self, dataset, run_metadata, name):
         if self._has_authoritative_run_state(run_metadata):
-            if (
-                    name == "completed_timestamp"
-                    and not bool(run_metadata.get("is_completed"))
-                    ):
+            if name == "completed_timestamp" and not bool(
+                run_metadata.get("is_completed")
+            ):
                 return ""
             value = run_metadata.get(name)
         else:
@@ -2437,7 +2510,6 @@ class moreInfo(qtw.QTabWidget):
         if isinstance(value, (int, float)):
             return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
         return value
-
 
     def _status_text(self, dataset, run_metadata=None):
         if self._has_authoritative_run_state(run_metadata):
@@ -2450,10 +2522,8 @@ class moreInfo(qtw.QTabWidget):
             return format_run_state({"is_completed": True})
         return ""
 
-
     def _has_authoritative_run_state(self, run_metadata):
         return run_metadata is not None and "is_completed" in run_metadata
-
 
     def _set_overview_value(self, field, value):
         row = self._overview_row(field)
@@ -2464,14 +2534,12 @@ class moreInfo(qtw.QTabWidget):
         self.overview.setItem(row, 1, self._table_item(value))
         self.overview.setRowHeight(row, 20)
 
-
     def _overview_row(self, field):
         for row in range(self.overview.rowCount()):
             item = self.overview.item(row, 0)
             if item is not None and item.text() == field:
                 return row
         return None
-
 
     def _overview_insert_row(self, field):
         field_order = (
@@ -2486,7 +2554,7 @@ class moreInfo(qtw.QTabWidget):
             "Sample",
             "Name",
             "GUID",
-            )
+        )
         target_order = field_order.index(field)
         for row in range(self.overview.rowCount()):
             item = self.overview.item(row, 0)
@@ -2499,7 +2567,6 @@ class moreInfo(qtw.QTabWidget):
             if current_order > target_order:
                 return row
         return self.overview.rowCount()
-
 
     def _has_value(self, value):
         return value is not None and value != ""

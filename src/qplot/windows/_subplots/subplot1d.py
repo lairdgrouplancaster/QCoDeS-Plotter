@@ -1,8 +1,12 @@
+from collections.abc import Callable
+
 import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6.QtGui import QColor
 
+from .._native_transforms import NativePlotDataItem
 from .._plot_refresh import plot_refresh_required
+from .._refresh_interval import refresh_interval_value, set_refresh_interval
 
 
 def _subplot_axis_order(
@@ -61,7 +65,7 @@ def _subplot_shared_parameter(parent) -> str | None:
     return None
 
 
-class subplot1d(pg.PlotDataItem):
+class subplot1d(NativePlotDataItem):
     """
     Class for handling secondary line plots on plot1d
     """
@@ -79,6 +83,7 @@ class subplot1d(pg.PlotDataItem):
         self._source_interval_slot = None
 
         self.choose_from: tuple[str, str] | None = None
+        self.axis_param = {}
         self._source_update_signal = getattr(from_win, "trace_updated", None)
         if self._source_update_signal is not None:
             self._source_update_signal.connect(self._source_trace_updated)
@@ -137,7 +142,7 @@ class subplot1d(pg.PlotDataItem):
 
     @QtCore.pyqtSlot()
     def _source_trace_updated(self):
-        """Refresh immediately after a cut publishes new, ready-to-use data."""
+        """Refresh immediately after the source publishes ready-to-use data."""
 
         self.refresh(source_ready=True)
 
@@ -178,10 +183,15 @@ class subplot1d(pg.PlotDataItem):
             parent_spinbox = getattr(self.parent, "spinBox", None)
             source_spinbox = getattr(source, "spinBox", None)
             if parent_spinbox is not None and source_spinbox is not None:
-                source_spinbox.setValue(parent_spinbox.value())
+                def sync_interval(interval):
+                    interval = refresh_interval_value(parent_spinbox)
+                    set_refresh_interval(source_spinbox, interval)
+                    source.monitorIntervalChanged(interval)
+
+                sync_interval(refresh_interval_value(parent_spinbox))
                 interval_signal = getattr(parent_spinbox, "valueChanged", None)
                 if interval_signal is not None:
-                    interval_slot = source_spinbox.setValue
+                    interval_slot = sync_interval
                     interval_signal.connect(interval_slot)
                     self._source_interval_signal = interval_signal
                     self._source_interval_slot = interval_slot
@@ -191,7 +201,7 @@ class subplot1d(pg.PlotDataItem):
                 and plot_refresh_required(source)
                 and not source.monitor.isActive()
                 ):
-            source.monitorIntervalChanged(source.spinBox.value())
+            source.monitorIntervalChanged(refresh_interval_value(source.spinBox))
 
 
     def _release_source_consumer(self):
@@ -218,7 +228,7 @@ class subplot1d(pg.PlotDataItem):
 
 
     def disconnect_source_updates(self):
-        """Release the persistent cut-update connection when a trace is removed."""
+        """Release source-update connections when a trace is removed."""
 
         if self._source_update_signal is not None:
             try:
@@ -261,6 +271,18 @@ class subplot1d(pg.PlotDataItem):
             x=data["x"], 
             y=data["y"],
             )
+
+        # Keep metadata with the samples we actually copied. Axis selections
+        # and operation controls can change before replacement data is ready.
+        source_params = getattr(self.from_win, "axis_param", {})
+        self.axis_param = {
+            axis: source_params[source_axis]
+            for axis, source_axis in zip(("x", "y"), choose_from, strict=True)
+            if source_axis in source_params
+            }
+        sync_labels = getattr(self.parent, "_sync_trace_axis_labels", None)
+        if callable(sync_labels):
+            sync_labels()
         
         self._disconnect_pending_update()
     
@@ -298,13 +320,8 @@ class subplot1d(pg.PlotDataItem):
         if self.side == side:
             return
         
-        # Remove from other viewbox and add to new viewbox
-        if side == "right":
-            parent.plot.removeItem(self)
-            parent.right_vb.addItem(self)
-        else:
-            parent.right_vb.removeItem(self)
-            self.parent.plot.addItem(self)
+        # Use the same registration-preserving path as Trace Appearance.
+        parent._set_trace_y_axis(parent._window_trace_key(self.from_win), side)
             
         parent.vb.enableAutoRange()
         self.side = side
@@ -327,6 +344,7 @@ class custom_viewbox(pg.ViewBox):
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
         self._marquee_owner = None
+        self._auto_range_handler: Callable[[], None] | None = None
         self._shift_pan_axis_constraint = True
         self._shift_pan_axis = None
         self._main_moved_axis = None
@@ -335,6 +353,10 @@ class custom_viewbox(pg.ViewBox):
 
     def set_marquee_owner(self, owner):
         self._marquee_owner = owner
+
+    def set_auto_range_handler(self, handler: Callable[[], None] | None) -> None:
+        """Let a line-plot owner validate full-view requests before mutation."""
+        self._auto_range_handler = handler
 
 
     def set_shift_pan_axis_constraint(self, enabled):
@@ -384,7 +406,7 @@ class custom_viewbox(pg.ViewBox):
                 return False
 
             owner.begin_marquee_drag(
-                self.mapSceneToView(ev.buttonDownScenePos()),
+                owner._marquee_viewbox().mapSceneToView(ev.buttonDownScenePos()),
                 mode,
                 )
 
@@ -393,7 +415,7 @@ class custom_viewbox(pg.ViewBox):
 
         self._update_marquee_cursor(ev.scenePos(), ev.modifiers())
         owner.drag_marquee_to(
-            self.mapSceneToView(ev.scenePos()),
+            owner._marquee_viewbox().mapSceneToView(ev.scenePos()),
             ev.modifiers(),
             )
         if ev.isFinish():
@@ -497,6 +519,13 @@ class custom_viewbox(pg.ViewBox):
             self.main_moved.emit(ev)
        
     def autoRange(self, padding=None, items=None, item=None):
+        if (
+                self._auto_range_handler is not None
+                and padding is None and items is None and item is None
+                ):
+            self._auto_range_handler()
+            self.autoRange_triggered.emit()
+            return
         super().autoRange(padding=padding, items=items, item=item)
         
         self.autoRange_triggered.emit()

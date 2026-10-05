@@ -216,6 +216,7 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
                 move_item(line, primary_viewbox())
             self.set_sweep_line_cursor(line)
         
+        line.sweep_fixed_param = fixed_param
         self.set_sweep_line_index(line, fixed_index, emit=False)
     
     
@@ -283,19 +284,35 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             self.__dict__["rotate"] = None
             return
             
+        # A queued refresh may publish axes that a later UI request superseded.
+        # Align markers with that publication, and keep the final rotation pending.
+        selected_axes = self.axis_options
+        axis_param = self.__dict__.get("axis_param", {})
+        published_axes = {
+            axis: getattr(axis_param.get(axis), "name", None)
+            for axis in ("x", "y")
+        }
+        axes = published_axes if all(published_axes.values()) else selected_axes
+
         # Rotate lines as parameters switched
         for key, line in self.sweep_lines.items():
             line = self.sweep_lines[key]
             # Rotate
             pos = line.value()
-            line.angle = 90 if line.angle == 0 else 0
+            # Several swaps can share one refresh. Resolve the cut's fixed
+            # parameter on the final axes rather than counting rotations.
+            fixed_param = getattr(line, "sweep_fixed_param", None)
+            if fixed_param in axes.values():
+                line.angle = 90 if fixed_param == axes["x"] else 0
+            else:
+                line.angle = 90 if line.angle == 0 else 0
             
             line.resetTransform()
             line.setRotation(line.angle)
             line.setPos(pos) # force line placement into correct spot
             self.set_sweep_line_cursor(line)
             
-        self.__dict__["rotate"] = None
+        self.__dict__["rotate"] = None if axes == selected_axes else True
     
     
     def sweep_axis_count(self, axis: _SweepAxis) -> int:

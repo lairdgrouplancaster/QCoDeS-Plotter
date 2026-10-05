@@ -56,6 +56,8 @@ PREFERENCE_KEYS = (
     CONFIRM_QUIT_KEY,
     "runtime_settings.max_threads",
     "runtime_settings.max_full_heatmap_points",
+    "runtime_settings.max_heatmap_grid_cells",
+    "runtime_settings.max_heatmap_grid_side",
     "runtime_settings.del_grace_period",
     "runtime_settings.cloud_sync_timeout",
     )
@@ -77,6 +79,23 @@ class PreferencesDialog(qtw.QDialog):
         self.setMinimumWidth(420)
 
         self._build_ui()
+        self._edited_preference_keys: set[str] = set()
+        for key, widget in zip(PREFERENCE_KEYS, self._preference_controls(), strict=True):
+            mark_edited = lambda _value, key=key: self._edited_preference_keys.add(key)
+            if isinstance(widget, (qtw.QSpinBox, qtw.QDoubleSpinBox)):
+                signal = widget.valueChanged
+                line_edit = widget.lineEdit()
+                if line_edit is not None:
+                    # Typing the same rounded display is still an explicit
+                    # edit, even when the numeric valueChanged signal is silent.
+                    line_edit.textEdited.connect(mark_edited)
+            elif isinstance(widget, qtw.QComboBox):
+                signal = widget.currentIndexChanged
+            elif isinstance(widget, qtw.QLineEdit):
+                signal = widget.textChanged
+            else:
+                signal = widget.toggled
+            signal.connect(mark_edited)
         self.load_from_config()
 
     def _build_ui(self):
@@ -178,7 +197,7 @@ class PreferencesDialog(qtw.QDialog):
         self.refreshRateSpin = qtw.QDoubleSpinBox(tab)
         self.refreshRateSpin.setObjectName("refreshRatePreferenceSpin")
         self.refreshRateSpin.setAccessibleName("Default refresh interval")
-        self.refreshRateSpin.setRange(0.0, 86_400.0)
+        self.refreshRateSpin.setRange(0.0, 10_000.0)
         self.refreshRateSpin.setSingleStep(0.1)
         self.refreshRateSpin.setDecimals(1)
         self.refreshRateSpin.setSuffix(" s")
@@ -317,6 +336,48 @@ class PreferencesDialog(qtw.QDialog):
             self.maxFullHeatmapPointsSpin,
             )
 
+        self.maxHeatmapGridCellsSpin = qtw.QSpinBox(tab)
+        self.maxHeatmapGridCellsSpin.setObjectName(
+            "maxHeatmapGridCellsPreferenceSpin"
+            )
+        self.maxHeatmapGridCellsSpin.setAccessibleName(
+            "Maximum heatmap display grid cells"
+            )
+        self.maxHeatmapGridCellsSpin.setRange(1, 2_000_000_000)
+        self.maxHeatmapGridCellsSpin.setSingleStep(10_000)
+        self.maxHeatmapGridCellsSpin.setSuffix(" cells")
+        if hasattr(self.maxHeatmapGridCellsSpin, "setGroupSeparatorShown"):
+            self.maxHeatmapGridCellsSpin.setGroupSeparatorShown(True)
+        self.maxHeatmapGridCellsSpin.setToolTip(
+            "Maximum cells in a downsampled heatmap display grid."
+            )
+        self._add_row(
+            form,
+            "Heatmap display grid &cells:",
+            self.maxHeatmapGridCellsSpin,
+            )
+
+        self.maxHeatmapGridSideSpin = qtw.QSpinBox(tab)
+        self.maxHeatmapGridSideSpin.setObjectName(
+            "maxHeatmapGridSidePreferenceSpin"
+            )
+        self.maxHeatmapGridSideSpin.setAccessibleName(
+            "Maximum heatmap display grid bins per axis"
+            )
+        self.maxHeatmapGridSideSpin.setRange(1, 2_000_000_000)
+        self.maxHeatmapGridSideSpin.setSingleStep(100)
+        self.maxHeatmapGridSideSpin.setSuffix(" bins")
+        if hasattr(self.maxHeatmapGridSideSpin, "setGroupSeparatorShown"):
+            self.maxHeatmapGridSideSpin.setGroupSeparatorShown(True)
+        self.maxHeatmapGridSideSpin.setToolTip(
+            "Maximum bins on either axis of a downsampled heatmap display grid."
+            )
+        self._add_row(
+            form,
+            "Heatmap display grid &side:",
+            self.maxHeatmapGridSideSpin,
+            )
+
         self.delGracePeriodSpin = qtw.QDoubleSpinBox(tab)
         self.delGracePeriodSpin.setObjectName("deleteGracePreferenceSpin")
         self.delGracePeriodSpin.setAccessibleName("Dataset release grace period")
@@ -355,13 +416,12 @@ class PreferencesDialog(qtw.QDialog):
             key: self.config.get(key)
             for key in PREFERENCE_KEYS
             })
+        self._loaded_control_values = self.preference_values()
+        self._edited_preference_keys.clear()
 
-    def set_preference_values(self, values):
-        """
-        Loads preference values into the dialog widgets.
-
-        """
-        widgets = (
+    def _preference_controls(self):
+        """Return the controls in the same order as their preference keys."""
+        return (
             self.themeCombo,
             self.colorbarWidthSpin,
             self.axisTickWidthSpin,
@@ -375,9 +435,18 @@ class PreferencesDialog(qtw.QDialog):
             self.confirmQuitCheck,
             self.maxThreadsSpin,
             self.maxFullHeatmapPointsSpin,
+            self.maxHeatmapGridCellsSpin,
+            self.maxHeatmapGridSideSpin,
             self.delGracePeriodSpin,
             self.cloudSyncTimeoutSpin,
             )
+
+    def set_preference_values(self, values):
+        """
+        Loads preference values into the dialog widgets.
+
+        """
+        widgets = self._preference_controls()
         blocked_states = [widget.blockSignals(True) for widget in widgets]
         try:
             theme_index = self.themeCombo.findData(values["user_preference.theme"])
@@ -413,6 +482,12 @@ class PreferencesDialog(qtw.QDialog):
                 )
             self.maxFullHeatmapPointsSpin.setValue(
                 int(values["runtime_settings.max_full_heatmap_points"])
+                )
+            self.maxHeatmapGridCellsSpin.setValue(
+                int(values["runtime_settings.max_heatmap_grid_cells"])
+                )
+            self.maxHeatmapGridSideSpin.setValue(
+                int(values["runtime_settings.max_heatmap_grid_side"])
                 )
             self.delGracePeriodSpin.setValue(
                 float(values["runtime_settings.del_grace_period"])
@@ -451,6 +526,12 @@ class PreferencesDialog(qtw.QDialog):
             "runtime_settings.max_full_heatmap_points": int(
                 self.maxFullHeatmapPointsSpin.value()
                 ),
+            "runtime_settings.max_heatmap_grid_cells": int(
+                self.maxHeatmapGridCellsSpin.value()
+                ),
+            "runtime_settings.max_heatmap_grid_side": int(
+                self.maxHeatmapGridSideSpin.value()
+                ),
             "runtime_settings.del_grace_period": self.delGracePeriodSpin.value(),
             "runtime_settings.cloud_sync_timeout": self.cloudSyncTimeoutSpin.value(),
             }
@@ -479,10 +560,16 @@ class PreferencesDialog(qtw.QDialog):
         Persists the dialog values and emits preferencesApplied on success.
 
         """
+        control_values = self.preference_values()
+        # Display precision and text normalization may differ from valid saved
+        # values. Only an actual edit may replace those exact saved values.
         changed_values = {
             key: value
-            for key, value in self.preference_values().items()
-            if self.config.get(key) != value
+            for key, value in control_values.items()
+            if self.config.get(key) != value and (
+                key in self._edited_preference_keys
+                or value != self._loaded_control_values[key]
+                )
             }
         if changed_values and not persist_config_values(
                 self,
@@ -493,6 +580,8 @@ class PreferencesDialog(qtw.QDialog):
                 ):
             return False
 
+        self._loaded_control_values = control_values
+        self._edited_preference_keys.clear()
         self.preferencesApplied.emit()
         return True
 
@@ -512,6 +601,9 @@ class PreferencesDialog(qtw.QDialog):
             return False
 
         self.set_preference_values(self.default_preference_values())
+        # Reset is explicit consent to defaults, even when the old value had
+        # the same rounded representation in its control.
+        self._edited_preference_keys.update(PREFERENCE_KEYS)
         return True
 
     def choose_default_load_path(self):
