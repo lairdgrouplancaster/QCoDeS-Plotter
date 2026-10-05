@@ -2484,7 +2484,7 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
 
             datasaver.add_result((gate, 3.0), (signal, 13.0))
             datasaver.flush_data_to_database(block=True)
-            writer_artifacts = database_artifact_state(database_path)
+            writer_artifacts = trusted_database_artifact_state(database_path)
             assert database_file_identity(database_path) == loaded_identity
 
             replacement_loads = []
@@ -2596,7 +2596,7 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
 
             datasaver.add_result((gate, 2.0), (signal, 12.0))
             datasaver.flush_data_to_database(block=True)
-            source_artifacts = database_artifact_state(database_path)
+            source_artifacts = trusted_database_artifact_state(database_path)
             source_entries = set(source_directory.iterdir())
 
             action_datasets = []
