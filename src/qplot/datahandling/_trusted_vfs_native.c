@@ -632,6 +632,18 @@ static int qp_windows_path_has_no_reparse_component(wchar_t *wide) {
   return 1;
 }
 
+static int qp_windows_unredirected_path_is_local(wchar_t *wide) {
+  /* Callers have already required an absolute drive-letter path.  Reject
+   * every reparse component before using its drive root: mounted folders,
+   * junctions and symlinks cannot redirect an accepted path to another volume.
+   * GetVolumePathNameW otherwise walks the entire path again on every pre/post
+   * read validation, even though that walk cannot discover a mounted folder.
+   * Keep both checks live (no cached locality or source-identity decisions). */
+  wchar_t root[4] = {wide[0], L':', L'\\', L'\0'};
+  if (!qp_windows_path_has_no_reparse_component(wide)) return 0;
+  return qp_windows_path_is_local(root);
+}
+
 static int qp_validate_existing_path(const char *path, int require_directory) {
   wchar_t *wide;
   DWORD attributes;
@@ -647,8 +659,7 @@ static int qp_validate_existing_path(const char *path, int require_directory) {
   if (attributes != INVALID_FILE_ATTRIBUTES &&
       !(attributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
       (!!(attributes & FILE_ATTRIBUTE_DIRECTORY) == !!require_directory) &&
-      qp_windows_path_is_local(wide) &&
-      qp_windows_path_has_no_reparse_component(wide)) {
+      qp_windows_unredirected_path_is_local(wide)) {
     result = 1;
   }
   qp_api->free(wide);
@@ -915,8 +926,7 @@ static int qp_open_proof_handle(const char *path, HANDLE *handle_out,
   if (!qp_path_is_absolute(path)) return SQLITE_CANTOPEN;
   wide = qp_utf8_to_wide(path);
   if (wide == NULL) return SQLITE_NOMEM;
-  if (!qp_windows_path_is_local(wide) ||
-      !qp_windows_path_has_no_reparse_component(wide)) {
+  if (!qp_windows_unredirected_path_is_local(wide)) {
     qp_api->free(wide);
     return SQLITE_CANTOPEN;
   }
@@ -993,8 +1003,7 @@ static int qp_current_path_identity(const char *path, QpIdentity *identity,
   }
   if ((attributes & (FILE_ATTRIBUTE_DIRECTORY |
                      FILE_ATTRIBUTE_REPARSE_POINT)) != 0 ||
-      !qp_windows_path_is_local(wide) ||
-      !qp_windows_path_has_no_reparse_component(wide)) {
+      !qp_windows_unredirected_path_is_local(wide)) {
     qp_api->free(wide);
     return QP_PATH_IDENTITY_UNSAFE;
   }

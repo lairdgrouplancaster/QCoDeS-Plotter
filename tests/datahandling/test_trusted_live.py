@@ -1742,6 +1742,53 @@ def test_open_reader_rejects_symlink_selection(
         TrustedLiveReader.open(logical)
 
 
+def test_native_open_rejects_parent_redirection_after_preflight(tmp_path: Path) -> None:
+    from qcodes.dataset import initialise_or_create_database_at
+
+    selected_directory = tmp_path / "selected"
+    moved_directory = tmp_path / "moved"
+    selected_directory.mkdir()
+    database_path = selected_directory / "source.db"
+    initialise_or_create_database_at(database_path, journal_mode="DELETE")
+    before = _artifact_state(database_path)
+
+    def redirect_parent(_token: Any, _temporary_directory: Path) -> None:
+        selected_directory.rename(moved_directory)
+        if os.name == "nt":
+            subprocess.run(
+                [
+                    "cmd", "/d", "/c", "mklink", "/J",
+                    str(selected_directory), str(moved_directory),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            selected_directory.symlink_to(moved_directory, target_is_directory=True)
+
+    try:
+        # The file identity is unchanged. The native boundary must still reject
+        # the redirected parent, even after Python's path preflight has passed.
+        with pytest.raises(TrustedLiveUnsupportedSourceError):
+            TrustedLiveReader.open(
+                database_path,
+                _test_pre_open_callback=redirect_parent,
+            )
+        assert _artifact_state(moved_directory / "source.db") == before
+    finally:
+        if moved_directory.exists():
+            if selected_directory.exists():
+                if os.name == "nt":
+                    selected_directory.rmdir()
+                else:
+                    selected_directory.unlink()
+            moved_directory.rename(selected_directory)
+
+    with TrustedLiveReader.open(database_path) as reader:
+        assert reader.query("SELECT count(*) FROM runs").rows == ((0,),)
+
+
 def test_open_reader_rejects_symlinked_parent_component(
     live_writer: _QcodesWalWriter,
     tmp_path: Path,
