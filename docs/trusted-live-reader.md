@@ -221,6 +221,32 @@ to another inode or file ID. Replacing the main database, WAL, or SHM invalidate
 the reader and requires an explicit reopen. SHM content, size, `mtime`, and
 `ctime` changes alone do not invalidate it.
 
+Each finite reader operation begins with full native validation of the retained
+proof handles, actual SQLite handles, source pathnames, rollback-journal absence,
+and active SHM bindings. Only after that succeeds may page reads reuse pathname
+proofs until operation cleanup. Every page read still validates the retained and
+actual handle identities and their physically read-only permissions, before and
+after delegation. Other callbacks, including SHM mapping/locking, retain their
+full existing checks. Newly opened or promoted WAL handles are fully validated.
+
+Cleanup disables pathname reuse and performs full native validation before any
+materialised result is published, including error, deadline and cancellation
+paths. An observed replacement rejects the result and invalidates the reader;
+it never triggers snapshot fallback. This removes repeated directory/filesystem
+inspection from the inner read loop under the existing trusted-parent-namespace
+assumption; it adds no permission to write source files and no long-lived source
+transaction. Reads outside the explicit finite scope retain per-read path checks.
+
+Native audit counters include `read_path_reused`, `read_validation_ns` and
+`read_io_ns`. The timings separate page-read validation from the delegated OS VFS
+read, not total SQL or IPC time, and never govern safety checks or deadlines.
+`scripts/profile_trusted_reads.py DATABASE RUN_ID` profiles finite 65,536-row
+intervals through the pinned reader and checks protected-file sizes/timestamps.
+It does not clear OS caches or modify the selected database. Use the actual plot
+benchmark as well to measure the user-visible effect.
+The profiler's `--full-path-checks` option disables reuse to provide a controlled
+reference; compare its result digest and read counts with the default run.
+
 Only regular files with correctly named, colocated sidecars on supported
 same-host local filesystems are accepted. Symbolic links, Windows reparse-point
 escapes or alternate data streams, non-regular files, multiply linked SHM

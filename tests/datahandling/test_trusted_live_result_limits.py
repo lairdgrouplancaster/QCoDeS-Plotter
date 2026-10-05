@@ -481,14 +481,14 @@ def test_result_limit_cannot_mask_cleanup_identity_failure(
         real_validate = reader._validate_native_source
         validation_calls = 0
 
-        def fail_during_cleanup(_reader: TrustedLiveReader) -> None:
+        def fail_during_cleanup(_reader: TrustedLiveReader, **options) -> None:
             nonlocal validation_calls
             validation_calls += 1
             if validation_calls == 2:
                 raise TrustedLiveSourceChangedError(
                     "Injected source-identity failure during result-limit cleanup."
                 )
-            real_validate()
+            real_validate(**options)
 
         monkeypatch.setattr(
             TrustedLiveReader,

@@ -2093,8 +2093,12 @@ class TrustedLiveReader:
         except (apsw.Error, TrustedLiveReaderError):
             return None
 
-    def _validate_native_source(self) -> None:
-        result = self._bootstrap_scalar("SELECT qplot_trusted_vfs_validate(?)")
+    def _validate_native_source(self, *, begin_reads: bool = False) -> None:
+        # Validate all paths/handles, then reuse only pathname proofs during
+        # this finite operation. _finish_operation always disables reuse and
+        # revalidates before publication, including cancellation/error paths.
+        function = "qplot_trusted_vfs_begin_reads" if begin_reads else "qplot_trusted_vfs_validate"
+        result = self._bootstrap_scalar(f"SELECT {function}(?)")
         if result != 1:
             raise TrustedLiveReaderUnavailableError(
                 "The native trusted VFS returned an invalid validation result."
@@ -2373,7 +2377,7 @@ class TrustedLiveReader:
             self._raise_if_operation_aborted(control)
             status = self._read_native_status()
             control.native_sequence = status.sequence
-            self._validate_native_source()
+            self._validate_native_source(begin_reads=True)
             self._raise_if_operation_aborted(control)
             handlers_installed = True
             self._install_operation_handlers(connection, control)
