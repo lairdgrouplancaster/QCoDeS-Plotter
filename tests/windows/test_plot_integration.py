@@ -1073,9 +1073,11 @@ def test_real_plot_export_format_controls_suffix_and_delimiter(
         close_main_window(window)
 
 
+@pytest.mark.parametrize("change_selection", [False, True])
 def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
     tmp_path,
     monkeypatch,
+    change_selection,
 ):
     configure_temp_qplot(monkeypatch, tmp_path)
     database_path = Path(tmp_path) / "plot-csv-export.db"
@@ -1091,15 +1093,47 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
         assert window.load_file(str(database_path))
         wait_for(lambda: not window._database_load_active)
 
-        line_dataset = load_by_id(line_run_id)
-        line_param = dependent_parameter(line_dataset, 1)
-        window._replace_selected_dataset(
-            line_dataset,
-            window._current_dataset_key(line_dataset.guid),
-        )
-        window.openPlot(params=[line_param], show=False)
-        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
-        line_window = window.windows[-1]
+        requested_guids = []
+        if change_selection:
+            submit = window._trusted_read_service.submit_plot_dataset
+
+            def submit_then_change_selection(guid):
+                requested_guids.append(guid)
+                request = submit(guid)
+                other_guid = next(
+                    run["guid"] for run in window.RunList.all_run_metadata().values()
+                    if run["guid"] != guid
+                )
+                window.updateSelected(other_guid)
+                return request
+
+            monkeypatch.setattr(
+                window._trusted_read_service, "submit_plot_dataset",
+                submit_then_change_selection,
+            )
+
+        errors = []
+        monkeypatch.setattr(window, "show_error", lambda *args: errors.append(args))
+
+        def open_export_plot(run_id, dimensions):
+            dataset = load_by_id(run_id)
+            try:
+                guid = dataset.guid
+                parameter = dependent_parameter(dataset, dimensions)
+            finally:
+                dataset.conn.close()
+            prior_count = len(window.windows)
+            # An explicit source is independent of the run-table selection.
+            # Do not partially replace MainWindow's private selection state.
+            window.openPlot(guid=guid, params=[parameter], show=False)
+            wait_for(lambda: errors or len(window.windows) == prior_count + 1)
+            assert not errors
+            plot = window.windows[-1]
+            assert plot._dataset_key.guid == guid
+            assert plot.param.name == parameter.name
+            return plot
+
+        line_window = open_export_plot(line_run_id, 1)
         wait_for(
             lambda: (
                 hasattr(line_window, "axis_data")
@@ -1134,15 +1168,7 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
             for pair in populated_pairs
         )
 
-        uniform_dataset = load_by_id(uniform_run_id)
-        uniform_param = dependent_parameter(uniform_dataset, 2)
-        window._replace_selected_dataset(
-            uniform_dataset,
-            window._current_dataset_key(uniform_dataset.guid),
-        )
-        window.openPlot(params=[uniform_param], show=False)
-        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
-        uniform_window = window.windows[-1]
+        uniform_window = open_export_plot(uniform_run_id, 2)
         wait_for(
             lambda: (
                 hasattr(uniform_window, "dataGrid")
@@ -1169,15 +1195,7 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
             expected_uniform,
         )
 
-        nonuniform_dataset = load_by_id(nonuniform_run_id)
-        nonuniform_param = dependent_parameter(nonuniform_dataset, 2)
-        window._replace_selected_dataset(
-            nonuniform_dataset,
-            window._current_dataset_key(nonuniform_dataset.guid),
-        )
-        window.openPlot(params=[nonuniform_param], show=False)
-        wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
-        nonuniform_window = window.windows[-1]
+        nonuniform_window = open_export_plot(nonuniform_run_id, 2)
         wait_for(
             lambda: (
                 hasattr(nonuniform_window, "dataGrid")
@@ -1186,6 +1204,11 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
         )
         assert not nonuniform_window._required_heatmap_geometry().is_uniform
         assert np.isnan(nonuniform_window.dataGrid).sum() == 1
+        if change_selection:
+            assert requested_guids == [
+                plot._dataset_key.guid
+                for plot in (line_window, uniform_window, nonuniform_window)
+            ]
 
         nonuniform_target = Path(tmp_path) / "nonuniform.csv"
         assert export_real_plot_csv(
