@@ -27,6 +27,35 @@ from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
 
 
+def test_control_layout_preserves_pending_data_range_instead_of_empty_view():
+    viewbox = pg.ViewBox()
+    image = pg.ImageItem(np.arange(12).reshape(3, 4))
+    viewbox.addItem(image)
+    image.setRect(QtCore.QRectF(10, 20, 30, 40))
+    assert viewbox._autoRangeNeedsUpdate
+    owner = SimpleNamespace(
+        worker=SimpleNamespace(running=False),
+        _has_plottable_heatmap_data=lambda: True,
+        _primary_heatmap_viewbox=lambda: viewbox,
+        _sync_secondary_heatmap_view_ranges=lambda: None,
+    )
+    callbacks = []
+    try:
+        with patch.object(QtCore.QTimer, "singleShot", side_effect=lambda _, cb: callbacks.append(cb)):
+            plot2d._preserve_heatmap_view_range_after_control_layout(owner)
+            # First paint consumes the queued data range before the deferred
+            # layout restoration runs; restoration must not undo that range.
+            viewbox.updateAutoRange()
+            expected = np.asarray(viewbox.viewRange()).copy()
+            while callbacks:
+                callbacks.pop(0)()
+        np.testing.assert_allclose(viewbox.viewRange(), expected)
+        assert expected[0][0] > 0
+        assert expected[1][0] > 0
+    finally:
+        viewbox.close()
+
+
 def _colorbar_config_values(overrides=None):
     values = {
         "user_preference.bar_colour": "viridis",

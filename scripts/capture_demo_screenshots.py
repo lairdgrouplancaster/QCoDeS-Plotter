@@ -164,10 +164,12 @@ def install_snapshot_cleanup_audit():
     return readonly_module, original_attach, records
 
 
-def verify_snapshot_cleanup(records):
+def verify_snapshot_cleanup(records, *, trusted_service=None):
     """Require every audited SQLite snapshot to be explicitly released."""
 
-    if not records:
+    if trusted_service is not None and not trusted_service.wait_closed(0):
+        raise RuntimeError("Trusted reader remained open after shutdown")
+    if not records and trusted_service is None:
         raise RuntimeError("No private snapshot connections were audited")
 
     for connection, snapshot_directory in records:
@@ -197,6 +199,7 @@ def capture_screenshots(database_path, line_guid, heatmap_guid):
     app.setQuitOnLastWindowClosed(False)
     main_window = MainWindow()
     dialog = None
+    trusted_service = None
     plot_windows = []
     try:
         main_window.startupDatabaseTimer.stop()
@@ -213,12 +216,14 @@ def capture_screenshots(database_path, line_guid, heatmap_guid):
             ),
         )
 
+        trusted_service = main_window._trusted_read_service
         select_run(app, main_window, heatmap_guid)
         settle(app)
         main_path = save_widget(app, main_window, "qplot-main-window.png")
 
         select_run(app, main_window, line_guid)
         main_window.open_selected_measurement("current")
+        wait_for(app, lambda: len(main_window.windows) == 1)
         line_window = main_window.windows[-1]
         line_window.resize(920, 620)
         wait_for(
@@ -232,6 +237,7 @@ def capture_screenshots(database_path, line_guid, heatmap_guid):
 
         select_run(app, main_window, heatmap_guid)
         main_window.open_selected_measurement("conductance")
+        wait_for(app, lambda: len(main_window.windows) == 2)
         heatmap_window = main_window.windows[-1]
         heatmap_window.resize(980, 660)
         wait_for(
@@ -260,7 +266,7 @@ def capture_screenshots(database_path, line_guid, heatmap_guid):
             app.processEvents()
             if audit is not None:
                 readonly_module, original_attach, records = audit
-                verify_snapshot_cleanup(records)
+                verify_snapshot_cleanup(records, trusted_service=trusted_service)
         finally:
             if audit is not None:
                 readonly_module._attach_snapshot_cleanup = original_attach

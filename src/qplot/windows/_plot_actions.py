@@ -186,6 +186,11 @@ class PlotActionsMixin:
             return False
         if not self._generation_gate_allows_action(key.database_path, "opening plots"):
             return True
+        try:
+            self._ensure_dataset_key_can_be_read(key)
+        except Exception as error:
+            self.show_error("Plot Load Failed", "Could not open the selected source.", str(error))
+            return True
         ready = getattr(self, "_trusted_plot_ready", {})
         if key in ready or self._dataset_handle_for_key(key) is not None:
             return False

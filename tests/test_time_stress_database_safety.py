@@ -111,7 +111,9 @@ def timed_plots(tmp_path, monkeypatch, qapplication, request):
             )
         )
         for parameter in ("signal", "other"):
+            prior_count = len(window.windows)
             window.open_selected_measurement(parameter)
+            wait_for(lambda prior_count=prior_count: len(window.windows) > prior_count)
             plot = window.windows[-1]
             plots.append(plot)
             assert isinstance(plot, module.test2d)

@@ -4060,6 +4060,21 @@ def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
     assert harness.error_messages == []
 
 
+def test_trusted_plot_replacement_starts_recovery_before_requesting_metadata(tmp_path):
+    path = tmp_path / "replaced.db"
+    path.write_bytes(b"source identity")
+    instance = database_instance(path)
+    service = _FakeService(instance)
+    harness = _TrustedActionHarness(instance, service, "guid")
+    key = harness._current_dataset_key("guid")
+    with patch.object(harness, "_reload_if_database_instance_changed", return_value=True) as reload:
+        harness.openPlot(guid=key)
+    reload.assert_called_once_with(instance.logical_path)
+    assert not harness.opened
+    assert "being reloaded" in harness.error_messages[-1][2]
+    assert not getattr(harness, "_trusted_plot_pending", ())
+
+
 @pytest.mark.parametrize("action_outcome", ["no-plottable", "plot-error"])
 def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
     tmp_path,

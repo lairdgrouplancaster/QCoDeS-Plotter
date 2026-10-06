@@ -2202,6 +2202,10 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
                 and not window._database_refresh_active
                 and not window._database_detail_active
                 and not window._database_expensive_detail_active
+                and any(
+                    run.get("result_count") == 4 and run.get("guid") != old_guid
+                    for run in window.RunList.all_run_metadata().values()
+                )
             )
         )
         window.monitor.stop()

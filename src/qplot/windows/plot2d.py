@@ -175,6 +175,11 @@ class plot2d(
                     ):
                 saved_range = pending["view_range"]
             else:
+                # A completed render can still have its initial auto-range
+                # queued for the next paint. Do not preserve the empty viewport
+                # over that newly loaded data when a control becomes visible.
+                if getattr(viewbox, "_autoRangeNeedsUpdate", False):
+                    viewbox.updateAutoRange()
                 view_range = viewbox.viewRange()
                 saved_range = (
                     tuple(float(value) for value in view_range[0]),

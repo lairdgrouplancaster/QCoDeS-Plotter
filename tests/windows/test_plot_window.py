@@ -4,7 +4,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pyqtgraph as pg
@@ -922,6 +922,7 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         window.worker = Worker()
         window._merged_trace_users = 0
         window._refresh_pending = True
+        window.plot_state_overlay = Mock()
 
         plotWidget.closeEvent(window, object())
 
@@ -1019,6 +1020,7 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         window.visible = True
         restart_intervals = []
         window.monitorIntervalChanged = restart_intervals.append
+        window.plot_state_overlay = Mock()
 
         plotWidget.closeEvent(window, QtGui.QCloseEvent())
 
