@@ -600,6 +600,9 @@ class sweeper(plotWidget):
                 self._finalize_axis_change(active, "failure")
             raise
         finally:
+            overlay = self.__dict__.get("plot_state_overlay")
+            if overlay is not None:
+                overlay.finish(plot_worker)
             plot_worker.running = False
             self.picker.slider.blockSignals(False)
             self._ensure_refresh_monitor()

@@ -83,6 +83,7 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
     lower: list[int | float | None] = [None, None]
     upper: list[int | float | None] = [None, None]
     row_count = selected = matching = 0
+    executor.report_progress("Scanning coordinates", 0, watermark)
     start = 0
     while start < watermark:
         executor.check_cancelled()
@@ -121,6 +122,7 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
             if len(values) > MAX_AXIS_VALUES:
                 unique[axis] = None
         start = stop
+        executor.report_progress("Scanning coordinates", stop, watermark)
         yield
 
     counts = tuple(len(values) if values is not None else MAX_AXIS_VALUES + 1 for values in unique)
@@ -175,6 +177,8 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
     # the configured display size and acquisition length.
     pending: list[tuple[int, int]] = []
     next_start = 0
+    aggregated_extent = 0
+    executor.report_progress("Building heatmap", 0, watermark, stage=2)
     while pending or next_start < watermark:
         executor.check_cancelled()
         if pending:
@@ -201,6 +205,8 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
                 minima[key] = min(minima[key], lo)
                 maxima[key] = max(maxima[key], hi)
                 integers[key] |= bool(integer)
+            aggregated_extent += stop - start
+            executor.report_progress("Building heatmap", aggregated_extent, watermark, stage=2)
         yield
 
     largest = np.maximum(np.abs(minima), np.abs(maxima))
@@ -211,6 +217,7 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
             | (integers & (largest * samples >= 2**53)))
     totals = {tuple(key): Fraction() for key in np.argwhere(risky)}
     if totals:
+        executor.report_progress("Refining numerical precision", 0, watermark, stage=2)
         # Replay original values, never averages of page averages. This keeps
         # cancellation residuals, large integers and near-overflow means.
         for start in range(0, watermark, MAX_GROUPS):
@@ -222,7 +229,9 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
                 key = indices(gx, gy)
                 if key in totals:
                     totals[key] += Fraction(value)
+            executor.report_progress("Refining numerical precision", min(start + MAX_GROUPS, watermark), watermark, stage=2)
             yield
+    executor.report_progress("Finalising heatmap", stage=2)
     grid = np.full(shape, np.nan)
     np.divide(sums, samples, out=grid, where=samples > 0)
     for key, total in totals.items():

@@ -118,6 +118,29 @@ path. This is a logical allocation budget, not a process RSS ceiling. Interactiv
 plots never use cached preview PNGs as data. Completion is published only after
 the final acquired data successfully reaches the plot.
 
+Plot loading shows progress for the current stage, not an estimated overall
+percentage or remaining time. Coordinate scans, numeric aggregation, precision
+replay, and result capture report the captured source range completed after each
+bounded step. Sparse row IDs therefore measure range coverage, not a count of
+records or elapsed time. Split aggregation intervals advance only when accepted,
+so retries never count twice. Array transfers report bytes within the named
+array record. Preflight, decoding, transforms, validation, and rendering use an
+indeterminate bar when their total work is unknown.
+Titles identify two broad stages: `Stage 1/2:` for reading and scanning, and
+`Stage 2/2:` for building, processing, and displaying the plot. Optional precision
+refinement and transforms remain part of stage 2.
+
+The broker retains one immutable progress observation per operation/subscriber;
+it sends no progress queries to the source and queues no progress callbacks.
+Plot overlays poll the latest observation every 100 ms on the GUI thread.
+An elapsed-time label uses a monotonic clock from the start of each load,
+including queue waits. It continues across stage changes and indeterminate
+processing, and resets for each new load or live refresh.
+Shared captures share observations while cancellation stays subscriber-specific.
+The bar remains in its rendering state until the concrete display commits, and
+is stopped on cancellation, error, supersession, or window close. Live refreshes
+start a new progress cycle for their newly captured prefix.
+
 The broker retains at most eight completed results totalling 512 MiB of private
 prefix storage or numeric heatmap arrays for reuse by sibling plots and detail
 reloads, revalidating the source

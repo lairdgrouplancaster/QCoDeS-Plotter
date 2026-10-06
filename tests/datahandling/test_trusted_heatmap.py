@@ -241,6 +241,8 @@ def test_large_summary_yield_allows_writer_checkpoint_append_and_cancel(tmp_path
         settings = plan(x='x', y='y', max_cells=8, max_side=8)
         request = service.submit_plot_prefix(dataset, heatmap_plan=settings)
         assert reached.wait(10)
+        assert request.progress.phase == "Scanning coordinates"
+        assert (request.progress.completed, request.progress.total) == (20, 48)
         assert writer.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0] == 0
         writer.executemany(f'INSERT INTO "{table}" (id,x,y,z) VALUES (?,?,0,7)',
                            [(i + 1, i) for i in range(48, 52)])
@@ -365,6 +367,13 @@ def test_large_numeric_plot_never_stages_raw_rows_and_refuses_full_resolution_op
         assert isinstance(result, NumericHeatmap)
         assert result.grid.size <= 4
         assert result.cardinality_exact == (False, False)
+        plot_worker = loader(
+            dataset.cache, dataset.paramspecs['z'], dataset.paramspecs, {'x': 'y', 'y': 'x'},
+            max_full_heatmap_points=4, max_heatmap_grid_cells=4, max_heatmap_grid_side=2,
+        )
+        plot_worker.run()
+        assert not plot_worker.heatmap_full_resolution
+        assert plot_worker.heatmap_downsample_info['source_dimensions_limited']
         with pytest.raises(OperationExecutionError):
             service.submit_plot_prefix(dataset, heatmap_plan=plan(operations=True)).wait()
         monkeypatch.setattr(trusted_heatmap, 'MAX_NUMERIC_HEATMAP_CELLS', 3)

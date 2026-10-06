@@ -79,7 +79,15 @@ def test_trusted_launch_and_refresh_never_copy_database(tmp_path, monkeypatch, a
         assert not errors
         plot = window.windows[-1]
         assert plot.isVisible()
+        assert plot.plot_state_overlay.frame.isHidden()
+        assert not plot.plot_state_overlay.progress_timer.isActive()
         np.testing.assert_array_equal(plot.dataGrid, np.arange(3)[:, None] * 10 + np.arange(4))
+        if action != "aggregate":
+            assert plot.worker.heatmap_full_resolution
+            assert plot.heatmap_resolution_label.text() == "Resolution: full 4 x 3"
+        else:
+            assert not plot.worker.heatmap_full_resolution
+            assert "downsampled" in plot.heatmap_resolution_label.text()
         if action in ("live", "switch", "aggregate"):
             if action == "switch":
                 second = tmp_path / "second.db"
@@ -97,6 +105,7 @@ def test_trusted_launch_and_refresh_never_copy_database(tmp_path, monkeypatch, a
             wait_for(lambda: plot.dataGrid.shape == (4, 4) and not plot.worker.running)
             np.testing.assert_array_equal(plot.dataGrid, np.arange(4)[:, None] * 10 + np.arange(4))
             assert plot.ds.completed
+            assert not plot.plot_state_overlay.progress_timer.isActive()
             assert not plot._refresh_monitor_required()
             return
         assert plot.load_data()

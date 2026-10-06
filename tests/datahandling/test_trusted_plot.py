@@ -140,12 +140,16 @@ def test_suspended_capture_lifecycle_and_shared_subscribers(tmp_path, monkeypatc
         if finish == "subscriber_cancel":
             second = service.submit_plot_prefix(dataset)
             assert request._state.operation_id == second._state.operation_id
+            assert second.progress is request.progress
+            cancelled_progress = request.progress
             assert request.cancel()
             with pytest.raises(TrustedReadRequestCancelledError):
                 request.wait()
             assert not second.done
             release.set()
             assert second.wait().row_count == 3
+            assert request.progress is cancelled_progress
+            assert second.progress.phase == "Validating plot data"
             assert len(spools) == 1
         elif finish == "deadline":
             with pytest.raises(TrustedReadRequestDeadlineError):

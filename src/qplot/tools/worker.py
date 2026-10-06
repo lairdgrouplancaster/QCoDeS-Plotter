@@ -21,6 +21,7 @@ from qplot.datahandling.parameter_data import (
     numeric_isfinite,
     numeric_isnan,
 )
+from qplot.datahandling.plot_progress import PlotProgress
 from qplot.datahandling.qcodes_cache import (
     cache_database_path,
     cache_dataset_completed,
@@ -125,6 +126,12 @@ class loader(QtCore.QRunnable):
     before rerending data
     
     """
+    _trusted_wait_timer: QtCore.QTimer | None
+    _spatial_heatmap_axes: tuple[np.ndarray, np.ndarray]
+    _spatial_heatmap_indices: tuple[np.ndarray, np.ndarray]
+    _spatial_heatmap_source_unique_counts: tuple[int, int]
+    _heatmap_aggregated_source_rows: int
+
     def __init__(self,
                  cache : "qcodes.dataset.data_set_cache.DataSetCacheWithDBBackend",
                  param : "qcodes.dataset.descriptions.param_spec.ParamSpec", 
@@ -201,6 +208,7 @@ class loader(QtCore.QRunnable):
         self.loaded_from_sql_heatmap = False
         self.loaded_point_count: int | None = None
         self.heatmap_downsample_info: dict[str, Any] | None = None
+        self.heatmap_full_resolution = False
         self.heatmap_source_grid_shape: tuple[int, int] | None = None
         self.heatmap_source_axis_ranges: (
             dict[str, tuple[float, float]] | None
@@ -383,6 +391,15 @@ class loader(QtCore.QRunnable):
         timer.timeout.connect(ready)
         timer.start(10)
 
+    @property
+    def progress(self):
+        request = getattr(self, "_trusted_request", None)
+        if request is not None and not request.done:
+            return request.progress or PlotProgress("Waiting to read plot data")
+        if request is not None:
+            return PlotProgress("Waiting to process plot data", stage=2)
+        return getattr(self, "_progress", PlotProgress("Waiting to load plot data"))
+
     def _prepare_trusted_prefix(self):
         from qplot.datahandling.trusted_plot import TrustedPlotDataset
         dataset = getattr(self.cache, "_dataset", None)
@@ -400,6 +417,7 @@ class loader(QtCore.QRunnable):
             if self.is_cancelled():
                 request.cancel()
             self._trusted_prefix = request.wait()
+            self._progress = PlotProgress("Processing plot data", stage=2)
             self.dataset_length_at_start = self._trusted_prefix.row_count
             self._check_cancelled()
         finally:
@@ -499,6 +517,7 @@ class loader(QtCore.QRunnable):
                     if getattr(self.param_dict[name], "type", None) == "complex":
                         self._reject_complex_line(name)
             self._prepare_trusted_prefix()
+            self._progress = PlotProgress("Processing plot data", stage=2)
             cache = self.cache
             cache_live = cache_is_live(cache)
             from qplot.datahandling.trusted_heatmap import NumericHeatmap
@@ -655,6 +674,7 @@ class loader(QtCore.QRunnable):
             # Normalize heatmap geometry first so coordinate-dependent
             # operations see spatial order rather than acquisition order.
             if self.operations:
+                self._progress = PlotProgress("Applying transforms", stage=2)
                 self._canonicalize_heatmap()
                 self._check_cancelled()
             results = self.do_operations()
@@ -714,6 +734,13 @@ class loader(QtCore.QRunnable):
             return
 
         # Callback
+        self.heatmap_full_resolution = bool(
+            len(self.param.depends_on_) == 2
+            and self.heatmap_downsample_info is None
+            and not self.sampled_heatmap_source
+            and not self.aggregated_heatmap_source
+        )
+        self._progress = PlotProgress("Preparing display", stage=2)
         self._emit_finished(True)
 
 
@@ -1345,11 +1372,11 @@ class loader(QtCore.QRunnable):
         self._check_cancelled()
         y_indices, x_indices = np.nonzero(means.counts)
         z_data = means.means()[y_indices, x_indices]
-        self._spatial_heatmap_axes: tuple[np.ndarray, np.ndarray] = (axes[0], axes[1])
-        self._spatial_heatmap_indices: tuple[np.ndarray, np.ndarray] = (x_indices, y_indices)
-        self._spatial_heatmap_source_unique_counts: tuple[int, int] = (counts[0], counts[1])
+        self._spatial_heatmap_axes = (axes[0], axes[1])
+        self._spatial_heatmap_indices = (x_indices, y_indices)
+        self._spatial_heatmap_source_unique_counts = (counts[0], counts[1])
         self._array_heatmap_cardinality_exact = tuple(values is not None for values in unique)
-        self._heatmap_aggregated_source_rows: int = matching_count
+        self._heatmap_aggregated_source_rows = matching_count
         full_ranges = self._normalised_heatmap_axis_ranges(self.heatmap_full_axis_ranges)
         if full_ranges is not None:
             self.heatmap_source_axis_ranges = full_ranges
@@ -2007,6 +2034,10 @@ class loader(QtCore.QRunnable):
             "source_grid_columns": source_grid_columns,
             "source_grid_rows": source_grid_rows,
             "source_grid_cell_count": grid_info.get("source_grid_cell_count"),
+            "source_dimensions_limited": (
+                not all(getattr(self, "_array_heatmap_cardinality_exact", (True, True)))
+                and (source_grid_columns is None or source_grid_rows is None)
+            ),
             "grid_columns": grid_info.get("grid_columns"),
             "grid_rows": grid_info.get("grid_rows"),
             "grid_cell_count": grid_info.get("grid_cell_count"),

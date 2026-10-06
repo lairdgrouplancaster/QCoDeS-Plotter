@@ -285,6 +285,9 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
                 return
             self._commit_refresh_publication(plot_worker, preview_ready=True)
         finally:
+            overlay = self.__dict__.get("plot_state_overlay")
+            if overlay is not None:
+                overlay.finish(plot_worker)
             if isinstance(
                     getattr(plot_worker, "_qplot_publication_snapshot", None),
                     dict,

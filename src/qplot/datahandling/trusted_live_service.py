@@ -24,6 +24,7 @@ from enum import IntEnum, StrEnum
 from typing import Any, Generic, TypeVar, cast
 
 from qplot.datahandling.file_identity import DatabaseInstance, database_instance
+from qplot.datahandling.plot_progress import PlotProgress
 from qplot.datahandling.trusted_live import (
     SqliteBindings,
     TrustedLiveBusyTimeoutError,
@@ -157,6 +158,7 @@ class _RequestState:
     cancelled: bool = False
     request: TrustedReadRequest[Any] | None = None
     slot_released: bool = False
+    progress: PlotProgress | None = None
 
 
 @dataclass(slots=True)
@@ -175,6 +177,7 @@ class _OperationState:
     cancel_underlying: bool = False
     force_next_transaction: bool = False
     plot_steps: Generator[None, None, Any] | None = None
+    progress: PlotProgress | None = None
 
 
 class TrustedReadRequest(Generic[_ResultT]):
@@ -213,6 +216,11 @@ class TrustedReadRequest(Generic[_ResultT]):
     @property
     def cancelled(self) -> bool:
         return self._state.cancelled
+
+    @property
+    def progress(self) -> PlotProgress | None:
+        """Latest immutable observation; polling never waits for a query."""
+        return self._state.progress
 
     def cancel(self) -> bool:
         """Mark only this public request; never block on supervisor cleanup."""
@@ -264,6 +272,15 @@ class _BrokerQueryExecutor:
             if self._service._closing or self._operation.cancel_underlying:
                 raise TrustedReadRequestCancelledError("Plot capture cancelled.")
         self._service._operation_remaining(self._operation)
+
+    def report_progress(self, phase, completed=0, total=None, *, unit="scan", stage=1):
+        progress = PlotProgress(phase, completed, total, unit, stage)
+        with self._service._condition:
+            self._operation.progress = progress
+            for request_id in self._operation.subscribers:
+                state = self._service._requests.get(request_id)
+                if state is not None and not state.done.is_set():
+                    state.progress = progress
 
     def query(
         self,
@@ -798,6 +815,7 @@ class TrustedLiveReadService:
                 requested_priority,
                 operation.operation_id,
             )
+            state.progress = operation.progress
             request: TrustedReadRequest[Any] = TrustedReadRequest(self, state)
             state.request = request
             self._requests[request_id] = state

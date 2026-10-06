@@ -103,6 +103,7 @@ def plot_prefix(executor, dataset, heatmap_plan=None):
     array chunk. Only the broker dispatcher may advance or close this iterator.
     """
     table = identifier(dataset.table_name)
+    executor.report_progress("Checking plot data")
     metadata, extent = executor.query_batch((
         TrustedQuery(
             "SELECT guid, result_table_name, run_description, is_completed "
@@ -128,6 +129,7 @@ def plot_prefix(executor, dataset, heatmap_plan=None):
         if any(dataset.paramspecs[name].type != "numeric" for name in (plan.x, plan.y, plan.z)):
             raise ValueError("The numeric heatmap plan requires numeric parameters.")
         count = 0
+        executor.report_progress("Checking plot size")
         for start in range(0, watermark, 65_536):
             count += executor.query(
                 f"SELECT COUNT(*) FROM {table} WHERE id>? AND id<=? "
@@ -156,6 +158,7 @@ def plot_prefix(executor, dataset, heatmap_plan=None):
             return heatmap
     prefix = PlotPrefix()
     prefix.watermark = watermark
+    executor.report_progress("Reading plot data", 0, watermark)
     # This is a newly created, private database. It contains no source metadata
     # besides the completion observation needed by the existing cache loader.
     try:
@@ -208,6 +211,8 @@ def plot_prefix(executor, dataset, heatmap_plan=None):
                         if size is None:
                             continue
                         with target.blobopen(dataset.table_name, specs[index].name, row_id) as blob:
+                            array_phase = f"Reading array {specs[index].name} (record {prefix.row_count + 1:,})"
+                            executor.report_progress(array_phase, 0, size, unit="array")
                             for offset in range(0, size, BLOB_CHUNK_BYTES):
                                 chunk = executor.query(
                                     "SELECT qplot_read_blob(?, ?, ?, ?, ?)",
@@ -217,12 +222,15 @@ def plot_prefix(executor, dataset, heatmap_plan=None):
                                 if len(chunk) != 1 or len(chunk[0][0]) != min(BLOB_CHUNK_BYTES, size - offset):
                                     raise TrustedLiveQueryError("A captured array record changed.")
                                 blob.write(chunk[0][0])
+                                executor.report_progress(array_phase, offset + len(chunk[0][0]), size, unit="array")
                                 yield
                     prefix.row_count += 1
                 last_id = rows[-1][0]
                 target.commit()
+                executor.report_progress("Reading plot data", last_id, watermark)
                 if last_id < watermark:
                     yield
+            executor.report_progress("Validating plot data")
             final = executor.query(
                 "SELECT guid, result_table_name, run_description FROM runs WHERE run_id=?",
                 (dataset.run_id,),

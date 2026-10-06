@@ -2920,6 +2920,21 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 )
             self.assertIn("200,000 spatial mean cells", text)
             self.assertNotIn("sampled before plotting", text)
+            Worker.heatmap_downsample_info.update({
+                "source_dimensions_limited": True,
+                "source_grid_rows": None,
+                "source_grid_cell_count": None,
+                "unique_y_count": None,
+            })
+            host._update_heatmap_downsample_state(Worker())
+            self.assertEqual(
+                host.heatmap_resolution_label.text(),
+                "Resolution: downsampled 500 x 400; exact source dimensions not retained",
+            )
+            for details in (host._heatmap_downsample_dialog_text(), host._heatmap_downsample_dialog_message()):
+                self.assertIn("not retained during downsampling", details)
+                self.assertIn("keep memory use bounded", details)
+                self.assertNotIn("unknown", details)
         finally:
             host.deleteLater()
 

@@ -522,6 +522,9 @@ class plot2d(
                 return
             self._commit_refresh_publication(plot_worker, preview_ready=True)
         finally:
+            overlay = self.__dict__.get("plot_state_overlay")
+            if overlay is not None:
+                overlay.finish(plot_worker)
             if isinstance(
                     getattr(plot_worker, "_qplot_publication_snapshot", None),
                     dict,
@@ -568,6 +571,8 @@ class plot2d(
         resolution_label = qtw.QLabel("Resolution: pending")
         resolution_label.setObjectName("heatmapResolutionStatusLabel")
         resolution_label.setToolTip("Heatmap source and plotted grid resolution.")
+        resolution_label.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Preferred)
+        resolution_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.heatmap_resolution_label = resolution_label
         self.toolbarCo_ord.addWidget(resolution_label)
 
@@ -646,6 +651,7 @@ class plot2d(
 
 
     def _update_heatmap_downsample_state(self, worker: Any) -> None:
+        self._heatmap_full_resolution = getattr(worker, "heatmap_full_resolution", False) is True
         self._heatmap_worker_downsample_info = self._heatmap_downsample_info_from_worker(
             worker
             )
@@ -675,6 +681,9 @@ class plot2d(
                 or info.get("empty_bins_filled")
                 ):
             return dict(info)
+
+        if getattr(worker, "heatmap_full_resolution", False) is True:
+            return None
 
         return self._fallback_heatmap_downsample_info(worker)
 
@@ -930,6 +939,10 @@ class plot2d(
                     or info.get("source_aggregated")
                     or info.get("grid_binned")
                     ):
+                if info.get("source_grid_columns") is None or info.get("source_grid_rows") is None:
+                    reason = ("exact source dimensions not retained" if info.get("source_dimensions_limited")
+                              else "source dimensions unavailable")
+                    return f"Resolution: downsampled {grid_columns} x {grid_rows}; {reason}"
                 return (
                     "Resolution: downsampled "
                     f"{grid_columns} x {grid_rows} of "
@@ -947,6 +960,12 @@ class plot2d(
 
         source_shape = self._source_heatmap_grid_shape_from_metadata()
         if source_shape is None:
+            if self.__dict__.get("_heatmap_full_resolution", False):
+                return (
+                    "Resolution: full "
+                    f"{self._format_heatmap_count(plotted_grid_columns)} x "
+                    f"{self._format_heatmap_count(plotted_grid_rows)}"
+                )
             return (
                 "Resolution: plotted "
                 f"{self._format_heatmap_count(plotted_grid_columns)} x "
@@ -1035,21 +1054,28 @@ class plot2d(
             )
 
 
+    def _heatmap_source_grid_description(self, info: dict[str, Any]) -> str:
+        if info.get("source_dimensions_limited"):
+            return (
+                "Exact source dimensions were not retained during downsampling "
+                "to keep memory use bounded. This does not omit source measurements "
+                "from the plotted averages."
+            )
+        columns, rows = info.get("source_grid_columns"), info.get("source_grid_rows")
+        if columns is None or rows is None:
+            return "Exact source grid dimensions are unavailable in the run metadata."
+        return (
+            f"The source heatmap grid is {self._format_heatmap_count(columns)} x "
+            f"{self._format_heatmap_count(rows)} = "
+            f"{self._format_heatmap_count(info.get('source_grid_cell_count'))} cells."
+        )
+
     def _heatmap_downsample_dialog_message(self) -> str:
         """Return the plain-text details shown below the dialog title."""
         info = self._heatmap_downsample_info or {}
         lines = ["This heatmap is displayed from downsampled data.", ""]
 
         if info.get("grid_binned"):
-            source_grid_columns = self._format_heatmap_count(
-                info.get("source_grid_columns")
-                )
-            source_grid_rows = self._format_heatmap_count(
-                info.get("source_grid_rows")
-                )
-            source_grid_cells = self._format_heatmap_count(
-                info.get("source_grid_cell_count")
-                )
             full_limit = self._format_heatmap_count(
                 info.get("full_resolution_point_limit")
                 )
@@ -1057,8 +1083,7 @@ class plot2d(
             grid_rows = self._format_heatmap_count(info.get("grid_rows"))
             grid_cells = self._format_heatmap_count(info.get("grid_cell_count"))
             lines.extend([
-                f"The source heatmap grid is {source_grid_columns} x "
-                f"{source_grid_rows} = {source_grid_cells} cells.",
+                self._heatmap_source_grid_description(info),
                 "The full-resolution heatmap limit is "
                 f"{full_limit} points.",
                 f"The plotted grid is {grid_columns} x {grid_rows} = "
@@ -1102,13 +1127,6 @@ class plot2d(
                     "",
                     ])
 
-        source_grid_columns = self._format_heatmap_count(
-            info.get("source_grid_columns")
-            )
-        source_grid_rows = self._format_heatmap_count(info.get("source_grid_rows"))
-        source_grid_cells = self._format_heatmap_count(
-            info.get("source_grid_cell_count")
-            )
         grid_columns = self._format_heatmap_count(info.get("grid_columns"))
         grid_rows = self._format_heatmap_count(info.get("grid_rows"))
         grid_cells = self._format_heatmap_count(info.get("grid_cell_count"))
@@ -1118,8 +1136,7 @@ class plot2d(
         if info.get("grid_binned"):
             lines.extend([
                 "Full-resolution grid:",
-                f"The source heatmap grid is {source_grid_columns} x "
-                f"{source_grid_rows} = {source_grid_cells} cells.",
+                self._heatmap_source_grid_description(info),
                 "The full-resolution heatmap limit is "
                 f"{full_limit} points.",
                 f"The plotted grid is {grid_columns} x {grid_rows} = "
@@ -1188,10 +1205,17 @@ class plot2d(
                 "Loaded values were averaged into a "
                 f"{grid_columns} x {grid_rows} display grid."
                 )
-            lines.append(
-                "The source x/y positions would form up to "
-                f"{unique_x} x {unique_y} cells."
+            if info.get("unique_x_count") is None or info.get("unique_y_count") is None:
+                lines.append(
+                    "Exact source-axis counts were not retained during downsampling."
+                    if info.get("source_dimensions_limited") else
+                    "Exact source-axis counts are unavailable."
                 )
+            else:
+                lines.append(
+                    "The source x/y positions would form up to "
+                    f"{unique_x} x {unique_y} cells."
+                    )
         else:
             lines.append(
                 "Loaded values were displayed on an exact "
