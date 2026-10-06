@@ -1805,13 +1805,16 @@ def test_typed_run_id_clears_guid_and_cancels_stale_selected_detail():
 
     class Harness:
         update_run_id = run_controls.RunControlsMixin.update_run_id
+        _defer_trusted_plot_action = (
+            plot_actions.PlotActionsMixin._defer_trusted_plot_action
+        )
+        open_selected_run_all = plot_actions.PlotActionsMixin.open_selected_run_all
         _cancel_selected_run_detail = (
             database_actions.DatabaseActionsMixin._cancel_selected_run_detail
         )
         database_selected_run_finished = (
             database_actions.DatabaseActionsMixin.database_selected_run_finished
         )
-        open_selected_run_all = plot_actions.PlotActionsMixin.open_selected_run_all
 
         def __init__(self) -> None:
             self.RunList = RunList()
@@ -2545,6 +2548,33 @@ def test_runtime_reaper_releases_delayed_quarantine_without_database_switch():
     assert service.close_async_calls == 1
     assert service.wait_timeouts
     assert set(service.wait_timeouts) == {0}
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_plot_retained_service_closes_once_when_released_or_forced(force):
+    service = _FakeService(_instance("plot-source.db", (1, 1)))
+    owner = SimpleNamespace(
+        _trusted_read_service=None,
+        dataset_holder={"plot": SimpleNamespace(dataset=SimpleNamespace(service=service))},
+    )
+    retire = database_actions.DatabaseActionsMixin._retire_trusted_read_service
+    reap = database_actions.DatabaseActionsMixin._reap_retired_trusted_read_services
+
+    retire(owner, service)
+    assert service._qplot_retained_by_plots
+    assert service.close_async_calls == 0
+    if force:
+        retire(owner, service, force=True)
+    else:
+        owner.dataset_holder.clear()
+        reap(owner)
+    assert not service._qplot_retained_by_plots
+    assert service.close_async_calls == 1
+
+    # Replacement recovery and shutdown can both retire the same broker.
+    retire(owner, service, force=True)
+    reap(owner)
+    assert service.close_async_calls == 1
 
 
 def test_active_service_is_retained_until_pending_database_succeeds():
@@ -3941,7 +3971,7 @@ def test_legacy_preview_callback_cannot_land_on_staged_trusted_rows(
 @pytest.mark.parametrize(
     ("access_mode", "expected_close_calls"),
     (
-        (database_actions.TRUSTED_LIVE_MODE, [1, 1, 1]),
+        (database_actions.TRUSTED_LIVE_MODE, [1, 1]),
         (database_actions.SNAPSHOT_FALLBACK_MODE, [1, 1]),
     ),
 )
@@ -3957,6 +3987,13 @@ def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
     service = _FakeService(instance)
     harness = _TrustedActionHarness(instance, service, guid)
     harness._database_access_mode = access_mode
+    if access_mode == database_actions.TRUSTED_LIVE_MODE:
+        # Model metadata already delivered by the asynchronous plot broker.
+        plot_dataset = _ActionDataset(guid, 7)
+        del plot_dataset.conn
+        harness._trusted_plot_ready = {
+            harness._current_dataset_key(guid): plot_dataset,
+        }
     load_calls = []
     datasets = []
     published = []
@@ -3969,8 +4006,8 @@ def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
 
     def choose_after_preflight(_default_name):
         # Trusted export enumerates progressive metadata in its own short-lived
-        # dataset. Both that view and the plot action must close before a modal
-        # destination dialog; the export data view is opened afterwards.
+        # dataset. It must close before a modal destination dialog; trusted
+        # plots use connection-free metadata, not another snapshot DataSet.
         assert [dataset.conn.close_calls for dataset in datasets] == (
             expected_close_calls[:-1]
         )
@@ -4054,12 +4091,13 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
     service = _FakeService(instance)
     harness = Harness(instance, service, guid)
     dataset = NoPlottableDataset(guid, 7)
+    del dataset.conn
+    harness._trusted_plot_ready = {harness._current_dataset_key(guid): dataset}
     closed_datasets = []
 
     def close_action_dataset(candidate):
         closed_datasets.append(candidate)
-        candidate.conn.close()
-        return True
+        return False  # Trusted plot metadata has no connection to close.
 
     def fail_open_plot(*_args, **_kwargs):
         raise RuntimeError("injected explicit plot failure")
@@ -4096,21 +4134,17 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
         assert harness.ds is None
         assert harness._selected_dataset_key is None
         assert closed_datasets == [dataset]
-        assert dataset.conn.close_calls == 1
+        assert not hasattr(dataset, "conn")
 
         # This is the ordinary Stage 4 selection path. It may schedule a plain
         # trusted detail worker, but it must not load, snapshot, or close any
         # QCoDeS/SQLite DataSet handle.
         harness.updateSelected(guid)
 
-    load_by_guid.assert_called_once_with(
-        guid,
-        instance.logical_path,
-        expected_database_identity=instance.identity,
-    )
+    load_by_guid.assert_not_called()
     close_dataset.assert_called_once_with(dataset)
     assert closed_datasets == [dataset]
-    assert dataset.conn.close_calls == 1
+    assert not hasattr(dataset, "conn")
     assert harness.ds is None
     assert harness.databaseDetailThreadPool.started
 

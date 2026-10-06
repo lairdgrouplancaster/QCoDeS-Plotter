@@ -420,7 +420,8 @@ class DatabaseActionsMixin:
         )
         if keep_plots:
             service._qplot_retained_by_plots = True
-        elif not already_retiring or force:
+        elif (not already_retiring
+              or getattr(service, "_qplot_retained_by_plots", False)):
             service._qplot_retained_by_plots = False
             service.close_async()
         DatabaseActionsMixin._reap_retired_trusted_read_services(self)
