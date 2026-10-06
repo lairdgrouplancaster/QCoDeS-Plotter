@@ -161,6 +161,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 "_live",
                 "_qplot_display_synchronized",
                 "_qplot_display_uses_direct_sql",
+                "_heatmap_full_resolution",
                 "axis_data",
                 "axis_param",
                 "dataGrid",
@@ -281,6 +282,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
         """Release rollback state after the concrete display committed."""
 
         worker._qplot_publication_snapshot = None
+        overlay = self.__dict__.get("plot_state_overlay")
+        if overlay is not None:
+            overlay.finish(worker)
         publish_preview = self.__dict__.get("_plot_preview_sink")
         if (
             preview_ready
@@ -509,13 +513,18 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         # Run worker
         self.worker = worker
+        overlay = self.__dict__.get("plot_state_overlay")
+        if overlay is not None:
+            overlay.track(worker)
         worker_will_start = getattr(type(self), "_refresh_worker_will_start", None)
         if callable(worker_will_start):
             worker_will_start(self, worker)
         try:
-            self.threadPool.start(worker)
+            worker.start(self.threadPool)
         except Exception:
             worker.running = False
+            if overlay is not None:
+                overlay.show("Plot could not start", kind="error")
             raise
 
         if wait_on_thread:
@@ -697,6 +706,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             worker._qplot_display_commit_ready = False
             if was_cancelled:
                 worker.running = False
+                self.show_plot_state("Plot load cancelled")
                 return False
 
             if not finished:  # error in worker
@@ -811,7 +821,14 @@ class PlotRefreshMixin(_PlotRefreshBase):
             if dataset_length is None:
                 dataset_length = self.ds.number_of_results
             self.last_ds_len = dataset_length
-            self.hide_plot_state()
+            from qplot.datahandling.trusted_plot import TrustedPlotDataset
+            if isinstance(self.ds, TrustedPlotDataset):
+                self.ds.number_of_results = max(self.ds.number_of_results, dataset_length)
+            overlay = self.__dict__.get("plot_state_overlay")
+            if overlay is not None:
+                overlay.rendering(worker)
+            else:
+                self.hide_plot_state()
             if (
                     getattr(worker, "loaded_from_sql_heatmap", False)
                     and getattr(worker, "dataset_completed", None) is True
@@ -862,6 +879,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     ):
                 if self._refresh_publication_source_is_current(worker):
                     self._rollback_refresh_publication(worker)
+            if worker is self.__dict__.get("worker"):
+                self.show_plot_state("Plot display failed", kind="error")
             raise
 
         finally:  # Allow code to move on from wait_on_thread

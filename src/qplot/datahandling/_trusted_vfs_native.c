@@ -37,6 +37,7 @@
 # include <sys/stat.h>
 # include <sys/types.h>
 # include <unistd.h>
+# include <time.h>
 # ifndef O_CLOEXEC
 #  define O_CLOEXEC 0
 # endif
@@ -139,6 +140,9 @@ typedef struct QpAudit {
   QpU64 source_open_flags_stripped;
   QpU64 source_read;
   QpU64 source_read_bytes;
+  QpU64 read_validation_ticks;
+  QpU64 read_io_ticks;
+  QpU64 read_path_reused;
   QpU64 source_write;
   QpU64 source_truncate;
   QpU64 source_sync;
@@ -174,6 +178,7 @@ typedef struct QpState {
   int configured;
   int active_files;
   int session_claimed;
+  int read_scope;
   QpU64 generation;
   QpU64 temp_sequence;
   char token[QP_TOKEN_CAP];
@@ -388,6 +393,31 @@ static int qp_take_test_cleanup_fault(const char *fault) {
 
 #define QP_AUDIT_INC(field) \
   do { qp_lock(); qp_state.audit.field++; qp_unlock(); } while (0)
+
+/* Monotonic diagnostic timing only; never used for permission or deadlines. */
+static QpU64 qp_clock_ticks(void) {
+#ifdef _WIN32
+  LARGE_INTEGER value;
+  return QueryPerformanceCounter(&value) ? (QpU64)value.QuadPart : 0;
+#else
+  struct timespec value;
+  if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0;
+  return (QpU64)value.tv_sec * 1000000000ULL + (QpU64)value.tv_nsec;
+#endif
+}
+
+static QpU64 qp_ticks_to_ns(QpU64 ticks) {
+#ifdef _WIN32
+  LARGE_INTEGER frequency;
+  QpU64 rate;
+  if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) return 0;
+  rate = (QpU64)frequency.QuadPart;
+  return (ticks / rate) * 1000000000ULL +
+         (ticks % rate) * 1000000000ULL / rate;
+#else
+  return ticks;
+#endif
+}
 
 static const char *qp_artifact_name(int artifact) {
   switch (artifact) {
@@ -1649,6 +1679,7 @@ static int qp_validate_source_binding_now(QpFile *file,
   int failure_kind = QP_FAILURE_IO;
   int path_state;
   int rc;
+  int reuse_path;
   const char *binding_path;
   memset(&proof_now, 0, sizeof(proof_now));
   memset(&actual_now, 0, sizeof(actual_now));
@@ -1697,6 +1728,23 @@ static int qp_validate_source_binding_now(QpFile *file,
     qp_record_failure(QP_FAILURE_SOURCE_CHANGED, file->artifact, operation,
                       SQLITE_IOERR);
     return SQLITE_IOERR;
+  }
+  /* Only page reads inside a bounded reader operation may reuse the path
+   * proof. Retained and actual OS handle identities/permissions above remain
+   * checked on EVERY read. The trusted parent namespace cannot redirect an
+   * already-open handle. Full source/SHM/path validation brackets the operation
+   * and rejects replacement before any materialised result can be published.
+   * All other callbacks (including SHM coordination) retain their full checks. */
+  qp_lock();
+  reuse_path = qp_state.read_scope &&
+               (strcmp(operation, "read_pre") == 0 ||
+                strcmp(operation, "read_post") == 0);
+  if (reuse_path) qp_state.audit.read_path_reused++;
+  qp_unlock();
+  if (reuse_path) {
+    file->actual_identity = actual_now;
+    QP_AUDIT_INC(identity_verified);
+    return SQLITE_OK;
   }
   path_state = qp_current_path_identity(binding_path, &path_now,
                                         file->artifact);
@@ -2841,6 +2889,8 @@ static int qp_after_source_callback(QpFile *file, const char *operation,
 static int qp_read(sqlite3_file *sqlite_file, void *buffer, int amount,
                    sqlite3_int64 offset) {
   QpFile *file = (QpFile *)sqlite_file;
+  QpU64 started = qp_clock_ticks();
+  QpU64 delegated, finished;
   int rc = qp_before_callback(file, "read_pre");
   if (rc != SQLITE_OK) return rc;
   if (file->kind == QP_FILE_SOURCE) {
@@ -2849,8 +2899,18 @@ static int qp_read(sqlite3_file *sqlite_file, void *buffer, int amount,
     if (amount > 0) qp_state.audit.source_read_bytes += (QpU64)amount;
     qp_unlock();
   }
+  delegated = qp_clock_ticks();
   rc = file->real->pMethods->xRead(file->real, buffer, amount, offset);
-  return qp_after_source_callback(file, "read_post", rc);
+  finished = qp_clock_ticks();
+  rc = qp_after_source_callback(file, "read_post", rc);
+  if (file->kind == QP_FILE_SOURCE) {
+    QpU64 checked = qp_clock_ticks();
+    qp_lock();
+    qp_state.audit.read_io_ticks += finished - delegated;
+    qp_state.audit.read_validation_ticks += delegated - started + checked - finished;
+    qp_unlock();
+  }
+  return rc;
 }
 
 static int qp_write(sqlite3_file *sqlite_file, const void *buffer, int amount,
@@ -3666,7 +3726,8 @@ static void qp_audit_sql(sqlite3_context *context, int argc,
       "{\"source_open_readonly\":%llu,\"source_open_readwrite\":%llu,"
       "\"source_open_create\":%llu,\"source_open_delete_on_close\":%llu,"
       "\"source_open_flags_stripped\":%llu,\"source_read\":%llu,"
-      "\"source_read_bytes\":%llu,\"source_write\":%llu,"
+      "\"source_read_bytes\":%llu,\"read_validation_ns\":%llu,"
+      "\"read_io_ns\":%llu,\"read_path_reused\":%llu,\"source_write\":%llu,"
       "\"source_truncate\":%llu,\"source_sync\":%llu,"
       "\"source_delete\":%llu,\"source_fetch\":%llu,"
       "\"source_writable_map\":%llu,\"shm_map_readonly\":%llu,"
@@ -3684,7 +3745,9 @@ static void qp_audit_sql(sqlite3_context *context, int argc,
       audit.source_open_readonly, audit.source_open_readwrite,
       audit.source_open_create, audit.source_open_delete_on_close,
       audit.source_open_flags_stripped, audit.source_read,
-      audit.source_read_bytes, audit.source_write, audit.source_truncate,
+      audit.source_read_bytes, qp_ticks_to_ns(audit.read_validation_ticks),
+      qp_ticks_to_ns(audit.read_io_ticks), audit.read_path_reused,
+      audit.source_write, audit.source_truncate,
       audit.source_sync, audit.source_delete, audit.source_fetch,
       audit.source_writable_map, audit.shm_map_readonly,
       audit.shm_map_writable, audit.shm_map_extend, audit.shm_map_rejected,
@@ -3744,8 +3807,8 @@ static void qp_status_sql(sqlite3_context *context, int argc,
   qp_api->result_text(context, json, length, QPLOT_SQLITE_TRANSIENT);
 }
 
-static void qp_validate_sql(sqlite3_context *context, int argc,
-                            sqlite3_value **values) {
+static void qp_validate_scope_sql(sqlite3_context *context, int argc,
+                                  sqlite3_value **values, int begin_reads) {
   const unsigned char *token;
   QpFile *file;
   int rc = SQLITE_OK;
@@ -3766,6 +3829,8 @@ static void qp_validate_sql(sqlite3_context *context, int argc,
     return;
   }
   cleanup_failed = qp_state.cleanup_failed;
+  /* Disable reuse before validating, including every failure/cleanup path. */
+  qp_state.read_scope = 0;
   qp_unlock();
   if (cleanup_failed) rc = SQLITE_IOERR;
   for (file = qp_active_file_list; rc == SQLITE_OK && file != NULL;
@@ -3787,6 +3852,11 @@ static void qp_validate_sql(sqlite3_context *context, int argc,
       if (rc != SQLITE_OK) break;
     }
   }
+  if (rc == SQLITE_OK && begin_reads) {
+    qp_lock();
+    qp_state.read_scope = 1;
+    qp_unlock();
+  }
   qp_api->mutex_leave(qp_file_list_mutex);
   if (rc != SQLITE_OK) {
     qp_api->result_error(context,
@@ -3795,6 +3865,16 @@ static void qp_validate_sql(sqlite3_context *context, int argc,
     return;
   }
   qp_api->result_int(context, 1);
+}
+
+static void qp_validate_sql(sqlite3_context *context, int argc,
+                            sqlite3_value **values) {
+  qp_validate_scope_sql(context, argc, values, 0);
+}
+
+static void qp_begin_reads_sql(sqlite3_context *context, int argc,
+                               sqlite3_value **values) {
+  qp_validate_scope_sql(context, argc, values, 1);
 }
 
 static void qp_release_sql(sqlite3_context *context, int argc,
@@ -4001,6 +4081,11 @@ QP_EXPORT int sqlite3_qplot_trusted_vfs_init(
     rc = api->create_function(database, "qplot_trusted_vfs_validate", 1,
                               SQLITE_UTF8 | SQLITE_DIRECTONLY, NULL,
                               qp_validate_sql, NULL, NULL);
+  }
+  if (rc == SQLITE_OK) {
+    rc = api->create_function(database, "qplot_trusted_vfs_begin_reads", 1,
+                              SQLITE_UTF8 | SQLITE_DIRECTONLY, NULL,
+                              qp_begin_reads_sql, NULL, NULL);
   }
   if (rc == SQLITE_OK) {
     rc = api->create_function(database, "qplot_trusted_vfs_release", 1,

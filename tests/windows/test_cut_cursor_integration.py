@@ -37,7 +37,9 @@ def heatmap_cut(tmp_path, monkeypatch):
             guid = connection.execute(
                 "SELECT guid FROM runs WHERE run_id = ?", (run_id,),
             ).fetchone()[0]
+        prior_plot_count = len(window.windows)
         window.openPlot(guid=guid, show=True)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         heatmap = window.windows[-1]
         wait_for(lambda: hasattr(heatmap, "dataGrid") and not heatmap.worker.running)
         heatmap.monitor.stop()

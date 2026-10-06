@@ -101,7 +101,9 @@ def test_real_mixed_record_mean_maps_overflow_through_qt_control(tmp_path, monke
         window.close_database(status=False)
         assert window.load_file(str(path))
         wait_for(lambda: not window._database_load_active)
+        prior_plot_count = len(window.windows)
         window.openPlot(guid=guid, show=True)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
         plot.monitor.stop()

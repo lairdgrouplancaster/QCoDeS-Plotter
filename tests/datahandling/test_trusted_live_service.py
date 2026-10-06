@@ -633,6 +633,46 @@ def test_different_explicit_deadlines_remain_exact_after_earlier_cancellation(
     assert not harness.service.closed
 
 
+def test_plot_slices_do_not_consume_a_metadata_jobs_deadline(service_factory, monkeypatch):
+    from qplot.datahandling import trusted_plot
+    reached, resume = threading.Event(), threading.Event()
+
+    class MultiTransactionAdapter(_FakeMetadataAdapter):
+        def expensive_run(self, run_id):
+            self._touch("background-1")
+            reached.set()
+            assert resume.wait(2)
+            for index in range(2, 5):
+                self._touch(f"background-{index}")
+            return TrustedRunRecord(run_id, ())
+
+    def capture(executor, dataset):
+        for index in range(3):
+            executor.query(f"plot-{index}")
+            time.sleep(0.06)  # each page exceeds the broker's short time slice
+            yield
+        return "plot complete"
+
+    monkeypatch.setattr(service_module, "TrustedMetadataQueryAdapter", MultiTransactionAdapter)
+    monkeypatch.setattr(trusted_plot, "plot_prefix", capture)
+    harness = service_factory()
+    background = harness.service.submit_expensive_run(
+        11, priority=TrustedReadPriority.REMAINING_EXPENSIVE)
+    assert reached.wait(2)
+    class Dataset:
+        service = harness.service
+    plot = harness.service.submit_plot_prefix(Dataset())
+    selected = harness.service.submit_cheap_run(12, priority=TrustedReadPriority.SELECTED_CHEAP)
+    resume.set()
+    assert background.wait(2).run_id == 11
+    assert selected.wait(2).run_id == 12
+    assert plot.wait(2) == "plot complete"
+    assert harness.supervisor.labels_submitted() == [
+        "background-1", "cheap:12", "background-2", "background-3", "background-4",
+        "plot-0", "plot-1", "plot-2",
+    ]
+
+
 def test_promotion_reorders_queued_operations(
     service_factory: Callable[..., _ServiceHarness],
 ) -> None:
@@ -1500,3 +1540,32 @@ def test_async_close_retains_unreaped_receiver_and_pipe_until_zero_wait_reap(
     assert liveness.open_supervisor_endpoints == 0
     assert liveness.unreaped_incarnations == 0
     assert not liveness.resource_cleanup_pending
+
+
+def test_plot_cleanup_failure_still_closes_other_captures_and_helper(service_factory):
+    harness = service_factory()
+    service = harness.service
+    service.submit_basic_page(0, 1).wait(2.0)
+    closed = []
+
+    def suspended(fail):
+        try:
+            yield
+        finally:
+            closed.append((fail, threading.get_ident()))
+            if fail:
+                raise OSError("private spool cleanup failed")
+
+    first, second = suspended(True), suspended(False)
+    next(first)
+    next(second)
+    with service._condition:
+        service._retired_plot_steps.extend((first, second))
+        service._condition.notify_all()
+    assert service.wait_closed(3.0)
+    assert closed == [(True, service._dispatcher_thread.ident),
+                      (False, service._dispatcher_thread.ident)]
+    assert harness.supervisor.closed
+    assert not service.liveness().resource_cleanup_pending
+    with pytest.raises(OSError, match="private spool cleanup failed"):
+        service.close()

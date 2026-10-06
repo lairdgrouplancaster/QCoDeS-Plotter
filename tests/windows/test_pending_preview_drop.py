@@ -54,6 +54,7 @@ def test_pending_thumbnail_drop_loads_unopened_line_source(tmp_path, monkeypatch
         assert window.load_file(str(path))
         _wait_for(lambda: not window._database_load_active and window._selected_run_guid)
         window.open_run_preview_plot(guid, "a")
+        _wait_for(lambda: bool(window.windows))
         target = window.windows[-1]
         _wait_for(lambda: not getattr(target.worker, "running", False))
         assert len(window.windows) == 1

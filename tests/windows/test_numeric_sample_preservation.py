@@ -59,7 +59,9 @@ def array_plot(tmp_path, monkeypatch, records, *, shape=None, heatmap=False):
         window.close_database(status=False)
         assert window.load_file(str(path))
         wait_for(lambda: not window._database_load_active)
+        prior_plot_count = len(window.windows)
         window.openPlot(guid=guid, show=True)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         plot = window.windows[-1]
         monkeypatch.setattr(plot, "show_error", lambda *args: errors.append(args))
         wait_for(lambda: not plot.worker.running)

@@ -13,6 +13,10 @@ from qplot.windows._dragdrop import (
 from qplot.windows._plotWin import plotWidget
 
 
+class _PlotActionHarness:
+    _defer_trusted_plot_action = main_window.MainWindow._defer_trusted_plot_action
+
+
 class RunPreviewDragDropTestCase(unittest.TestCase):
     def test_pending_preview_drop_dispatches_without_rendered_axes(self):
         requests = []
@@ -53,7 +57,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         def unexpected_source_plot(*_args):
             self.fail("An incompatible drop must not create a source plot")
 
-        harness = type("Harness", (), {
+        harness = type("Harness", (_PlotActionHarness,), {
             "_parameter_from_key": lambda _self, key, parameter: incompatible,
             "_plot_window_for_param": unexpected_source_plot,
             "show_status": lambda _self, *args: messages.append(args),
@@ -275,7 +279,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
             def close(self):
                 self.closed = True
 
-        class Harness:
+        class Harness(_PlotActionHarness):
             _plot_window_for_param = main_window.MainWindow._plot_window_for_param
             add_trace_to_plot = main_window.MainWindow.add_trace_to_plot
 
@@ -340,7 +344,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
             def close(self):
                 self.closed = True
 
-        class Harness:
+        class Harness(_PlotActionHarness):
             _plot_window_for_param = main_window.MainWindow._plot_window_for_param
             add_trace_to_plot = main_window.MainWindow.add_trace_to_plot
 
@@ -444,7 +448,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         )()
         harness = type(
             "Harness",
-            (),
+            (_PlotActionHarness,),
             {
                 "add_trace_to_plot": main_window.MainWindow.add_trace_to_plot,
                 "_plot_window_for_param": lambda *_args: source,
@@ -521,7 +525,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
             },
         )()
 
-        class Harness:
+        class Harness(_PlotActionHarness):
             add_trace_to_plot = main_window.MainWindow.add_trace_to_plot
             add_heatmap_to_plot = main_window.MainWindow.add_heatmap_to_plot
 

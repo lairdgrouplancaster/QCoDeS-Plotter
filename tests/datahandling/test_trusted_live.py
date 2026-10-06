@@ -58,6 +58,9 @@ _AUDIT_KEYS = {
     "source_open_flags_stripped",
     "source_read",
     "source_read_bytes",
+    "read_validation_ns",
+    "read_io_ns",
+    "read_path_reused",
     "source_write",
     "source_truncate",
     "source_sync",
@@ -533,7 +536,7 @@ def _forced_cleanup_fault_process(
     original_validate = TrustedLiveReader._validate_native_source
     reader: TrustedLiveReader | None = None
 
-    def fail_after_native_open(_reader: TrustedLiveReader) -> None:
+    def fail_after_native_open(_reader: TrustedLiveReader, **_options) -> None:
         raise TrustedLiveSourceIOError(
             f"simulated {failure_phase} failure after the native main handle opened"
         )

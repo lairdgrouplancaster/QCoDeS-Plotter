@@ -367,6 +367,12 @@ class DatabaseActionsMixin:
             self._retired_service_reap_diagnostics = diagnostics
         if retired is not None:
             for service in tuple(retired):
+                if getattr(service, "_qplot_retained_by_plots", False):
+                    if any(getattr(handle.dataset, "service", None) is service
+                           for handle in getattr(self, "dataset_holder", {}).values()):
+                        continue
+                    service._qplot_retained_by_plots = False
+                    service.close_async()
                 wait_closed = getattr(service, "wait_closed", None)
                 if not callable(wait_closed):
                     continue
@@ -408,7 +414,15 @@ class DatabaseActionsMixin:
             self._retired_trusted_read_services = retired
         already_retiring = service in retired
         retired.add(service)
-        if not already_retiring:
+        keep_plots = not force and any(
+            getattr(handle.dataset, "service", None) is service
+            for handle in getattr(self, "dataset_holder", {}).values()
+        )
+        if keep_plots:
+            service._qplot_retained_by_plots = True
+        elif (not already_retiring
+              or getattr(service, "_qplot_retained_by_plots", False)):
+            service._qplot_retained_by_plots = False
             service.close_async()
         DatabaseActionsMixin._reap_retired_trusted_read_services(self)
 
@@ -3321,7 +3335,7 @@ class DatabaseActionsMixin:
                     DatabaseActionsMixin._retire_trusted_read_service(
                         self,
                         old_service,
-                        force=True,
+                        force=False,
                     )
                 if access_mode != TRUSTED_LIVE_MODE and owns_pending_service:
                     DatabaseActionsMixin._retire_trusted_read_service(

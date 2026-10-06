@@ -1799,6 +1799,7 @@ class plotWidget(
                 cancel()
         self.visible = False
         self._closed = True
+        self.plot_state_overlay.hide()
         self.closed.emit(self)
 
         if (

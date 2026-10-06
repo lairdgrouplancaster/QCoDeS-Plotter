@@ -201,7 +201,9 @@ def test_preview_drop_adds_and_removes_real_secondary_heatmap(
         # Stage 4 keeps ordinary trusted selection DB-free.  The explicit plot
         # action materialises only the requested trace against the accepted
         # database instance.
+        prior_plot_count = len(window.windows)
         window.open_preview_plot("signal_a")
+        _wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         target = window.windows[-1]
         _wait_for(
             lambda: (

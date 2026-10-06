@@ -1,4 +1,6 @@
 import os
+from functools import wraps
+from inspect import signature
 
 import numpy as np
 import pandas as pd
@@ -44,6 +46,22 @@ from ._subplots.subplot1d import (
 )
 from .plot1d import plot1d
 from .plot2d import plot2d
+
+
+def _trusted_plot_action(method):
+    """Resume an explicit UI action only after broker metadata is available."""
+    call_signature = signature(method)
+
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        arguments = call_signature.bind(self, *args, **kwargs).arguments
+        target = arguments.get("source_identity", arguments.get("guid"))
+        if self._defer_trusted_plot_action(
+            target, lambda: invoke(self, *args, **kwargs),
+        ):
+            return
+        return method(self, *args, **kwargs)
+    return invoke
 
 
 def _plot_has_trace_window(target, candidate):
@@ -146,6 +164,89 @@ class PlotActionsMixin:
     """
 
     _selected_dataset_key: DatasetKey | None
+
+    def _defer_trusted_plot_action(self, target, resume):
+        if getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE:
+            return False
+        # Qt's str signal converts the run table's None argument to "".
+        # Both spellings select the current run, just as openPlot does.
+        if target == "":
+            target = None
+        selection = ((getattr(self, "selected_run_id", None),
+                      getattr(self, "_selected_run_guid", None))
+                     if target is None else None)
+        if target is None:
+            metadata = self._run_metadata_for_id(getattr(self, "selected_run_id", None))
+            target = metadata.get("guid") or getattr(self, "_selected_run_guid", None)
+        if not target:
+            return False
+        key = target if isinstance(target, DatasetKey) else self._current_dataset_key(target)
+        if (getattr(self, "ds", None) is not None
+                and getattr(self, "_selected_dataset_key", None) == key):
+            return False
+        if not self._generation_gate_allows_action(key.database_path, "opening plots"):
+            return True
+        try:
+            self._ensure_dataset_key_can_be_read(key)
+        except Exception as error:
+            self.show_error("Plot Load Failed", "Could not open the selected source.", str(error))
+            return True
+        ready = getattr(self, "_trusted_plot_ready", {})
+        if key in ready or self._dataset_handle_for_key(key) is not None:
+            return False
+        service = getattr(self, "_trusted_read_service", None)
+        if (service is None or service.closing or service.closed
+                or service.database_instance.identity != key.database_identity):
+            self.show_error("Plot Load Failed", "The trusted plot session is unavailable.",
+                            "Reopen the source to start a new trusted session.")
+            return True
+        pending = getattr(self, "_trusted_plot_pending", None)
+        if pending is None:
+            pending = self._trusted_plot_pending = set()
+        if len(pending) >= 16:
+            self.show_status("Wait for the pending plots to open.", 5000)
+            return True
+        try:
+            request = service.submit_plot_dataset(key.guid)
+        except Exception as error:
+            self.show_error("Plot Load Failed", "Could not load plot metadata.", str(error))
+            return True
+        pending.add(request)
+        timer = QtCore.QTimer(self)
+        timer.setInterval(10)
+
+        def poll():
+            stale = (getattr(self, "_shutdown_started", False)
+                     or service is not getattr(self, "_trusted_read_service", None)
+                     or (selection is not None and selection != (
+                         getattr(self, "selected_run_id", None),
+                         getattr(self, "_selected_run_guid", None)))
+                     or not self._dataset_key_is_current(key))
+            if stale:
+                request.cancel()
+            if not stale and not request.done:
+                return
+            timer.stop()
+            timer.deleteLater()
+            pending.discard(request)
+            if stale:
+                return
+            try:
+                dataset = request.wait(0)
+                ready = self.__dict__.setdefault("_trusted_plot_ready", {})
+                ready[key] = dataset
+                try:
+                    resume()
+                finally:
+                    ready.pop(key, None)
+            except Exception as error:
+                log_exception("Trusted plot launch failed", error, __name__)
+                self.show_error("Plot Load Failed", "Could not load the selected run.", str(error))
+
+        timer.timeout.connect(poll)
+        timer.start()
+        self.show_status("Loading plot metadata...", 0)
+        return True
 
     def _generation_gate_allows_action(self, database_path=None, operation=None):
         gate = getattr(self, "_database_generation_read_allowed", None)
@@ -811,7 +912,7 @@ class PlotActionsMixin:
                     close()
             if loaded_for_construction:
                 try:
-                    construction_ds.conn.close()
+                    close_dataset_connection(construction_ds)
                 except Exception as err:
                     log_exception("Unused plot dataset cleanup failed", err, __name__)
             raise
@@ -990,6 +1091,7 @@ class PlotActionsMixin:
 
 
     @QtCore.pyqtSlot()
+    @_trusted_plot_action
     def openRun(self):
         """
         Plots the requested measurement for the requested run.
@@ -1031,6 +1133,7 @@ class PlotActionsMixin:
 
 
     @QtCore.pyqtSlot()
+    @_trusted_plot_action
     def open_selected_run_all(self):
         """
         Opens every plottable measurement in the currently selected table row.
@@ -1361,6 +1464,7 @@ class PlotActionsMixin:
 
 
     @QtCore.pyqtSlot(str)
+    @_trusted_plot_action
     def openPlot(self, guid: str | DatasetKey = None, params: list = None, show: bool = True):
         """
         Opens plot windows for the selected or requested run.
@@ -1540,6 +1644,7 @@ class PlotActionsMixin:
                     )
 
 
+    @_trusted_plot_action
     def open_param_by_index(self, index: int):
         """
         Open the indexed dependent parameter for the selected run.
@@ -1579,6 +1684,7 @@ class PlotActionsMixin:
 
 
     @QtCore.pyqtSlot(str)
+    @_trusted_plot_action
     def open_preview_plot(self, parameter_name):
         """
         Open the plot represented by a double-clicked preview image.
@@ -1619,6 +1725,7 @@ class PlotActionsMixin:
 
 
     @QtCore.pyqtSlot(str, str)
+    @_trusted_plot_action
     def open_run_preview_plot(self, guid, parameter_name):
         """
         Open the plot represented by a double-clicked run-table preview image.
@@ -1675,6 +1782,7 @@ class PlotActionsMixin:
             self._preview_drop_feedback_window = previous_target
 
 
+    @_trusted_plot_action
     def add_trace_to_plot(self, target_win, source_identity, parameter_name, param=None):
         """
         Add a compatible parameter to an existing plot.
@@ -1844,6 +1952,7 @@ class PlotActionsMixin:
         return candidates
 
 
+    @_trusted_plot_action
     def add_heatmap_to_plot(
             self,
             target_win,
@@ -2513,6 +2622,15 @@ class PlotActionsMixin:
 
     def _load_dataset(self, dataset_key: DatasetKey):
         self._ensure_dataset_key_can_be_read(dataset_key)
+
+        prepared = getattr(self, "_trusted_plot_ready", {}).get(dataset_key)
+        if prepared is not None:
+            return prepared
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            handle = self._dataset_handle_for_key(dataset_key)
+            if handle is not None:
+                return handle.dataset
+            raise RuntimeError("Trusted plot metadata must be requested asynchronously.")
 
         try:
             load_kwargs = {}

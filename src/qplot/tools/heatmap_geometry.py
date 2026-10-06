@@ -19,6 +19,38 @@ _DEFAULT_SINGLETON_SPAN = 1.0
 _DEFAULT_UNIFORM_REL_TOL = 1e-9
 
 
+def bounded_grid_shape(x_count, y_count, *, max_cells, max_side):
+    max_cells = max(1, int(max_cells))
+    x_bins = max(1, min(int(x_count), max_side))
+    y_bins = max(1, min(int(y_count), max_side))
+    if x_bins * y_bins <= max_cells:
+        return x_bins, y_bins
+    scale = math.sqrt(max_cells / (x_bins * y_bins))
+    x_bins = max(1, int(x_bins * scale))
+    y_bins = max(1, int(y_bins * scale))
+    while x_bins * y_bins > max_cells:
+        if x_bins >= y_bins and x_bins > 1:
+            x_bins -= 1
+        elif y_bins > 1:
+            y_bins -= 1
+        else:
+            break
+    return x_bins, y_bins
+
+
+def spatial_axis_bins(lower, upper, source_count, bin_count):
+    if not np.isfinite(lower) or not np.isfinite(upper):
+        return np.array([], dtype=float), 0.0, 1.0
+    if source_count <= 1 or bin_count <= 1 or lower == upper:
+        return np.array([lower], dtype=float), lower, 1.0
+    source_step = (upper - lower) / (source_count - 1)
+    lower_edge = lower - source_step / 2
+    upper_edge = upper + source_step / 2
+    bin_width = (upper_edge - lower_edge) / bin_count
+    centres = lower_edge + (np.arange(bin_count, dtype=float) + 0.5) * bin_width
+    return centres, lower_edge, 1.0 / bin_width
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class AxisGeometry:
     """Immutable geometry for one strictly increasing heatmap axis.

@@ -77,6 +77,7 @@ are implemented. See
 Install qPlot inside a Python 3.11 or newer virtual environment:
 The commands below install the latest full release, `1.5.0`. The current beta
 is `1.6.0b1`; it is documented below but is not used for the default install.
+This checkout prepares the next beta, `1.6.0b2`, pending release validation.
 
 ### Prelude
 #### Windows

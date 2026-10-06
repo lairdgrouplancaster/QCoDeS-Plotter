@@ -3,7 +3,6 @@
 import sqlite3
 import sys
 import time
-from functools import partial
 from unittest.mock import patch
 
 import pytest
@@ -240,25 +239,29 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
         database_actions.SNAPSHOT_FALLBACK_MODE if snapshot else database_actions.TRUSTED_LIVE_MODE
     )
     worker_types = {}
-    if snapshot:
-        # Snapshot reads of a DELETE database are immutable and do not wait
-        # for the writer lock. Use a genuine expired read deadline to cover
-        # their error transport and presentation without changing DB access.
-        for name in (
-            "DatabaseRefreshWorker", "DatabaseDetailWorker", "DatabaseExpensiveDetailWorker",
-        ):
-            worker_types[name] = getattr(database_actions, name)
-            monkeypatch.setattr(
-                database_actions, name,
-                partial(getattr(database_actions, name), deadline=time.monotonic() - 1),
-            )
+    for name in (
+        "DatabaseRefreshWorker", "DatabaseDetailWorker", "DatabaseExpensiveDetailWorker",
+    ):
+        worker_type = worker_types[name] = getattr(database_actions, name)
+
+        def observed_worker(*args, worker_type=worker_type, **kwargs):
+            if snapshot:
+                # Immutable snapshot reads do not wait for the writer lock.
+                kwargs["deadline"] = time.monotonic() - 1
+            worker = worker_type(*args, **kwargs)
+            # Observe before submission: an expired deadline can finish before
+            # the controller's start method returns on a fast CI runner.
+            worker._test_finished_spy = QtTest.QSignalSpy(worker.signals.finished)
+            return worker
+
+        monkeypatch.setattr(database_actions, name, observed_worker)
     runs = window.RunList.all_run_metadata()
     before = _artifacts(path)
     writer = sqlite3.connect(path)
     try:
         writer.execute("BEGIN EXCLUSIVE")
         window.refreshMain()
-        refresh = QtTest.QSignalSpy(window._database_refresh_worker.signals.finished)
+        refresh = window._database_refresh_worker._test_finished_spy
         _process_until(lambda: bool(errors) or bool(uncaught))
         _wait_idle(window)
         assert not uncaught
@@ -272,8 +275,8 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
             statuses = []
             window.statusBar().messageChanged.connect(statuses.append)
             window._start_database_detail_load(str(path), runs)
-            cheap = QtTest.QSignalSpy(window._database_detail_worker.signals.finished)
-            expensive = QtTest.QSignalSpy(window._database_expensive_detail_worker.signals.finished)
+            cheap = window._database_detail_worker._test_finished_spy
+            expensive = window._database_expensive_detail_worker._test_finished_spy
             _wait_idle(window)
             assert not uncaught
             assert isinstance(cheap[0][-1], str)

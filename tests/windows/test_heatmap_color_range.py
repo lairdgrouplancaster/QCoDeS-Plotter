@@ -70,7 +70,9 @@ def color_plot(tmp_path, monkeypatch, request, no_callback_errors):
     try:
         assert window.load_file(str(path))
         wait_for(lambda: not window._database_load_active)
+        prior_plot_count = len(window.windows)
         window.openPlot(guid=guid, show=True)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         plot = window.windows[-1]
         wait_for(lambda: not plot.worker.running and plot._qplot_display_synchronized)
         plot.monitor.stop()
@@ -156,7 +158,9 @@ def test_live_color_rejection_keeps_polling_and_manual_span_recovers_on_completi
             window.config.config["user_preference"]["confirm_close_all"] = False
             assert window.load_file(str(path))
             wait_for(lambda: not window._database_load_active)
+            prior_plot_count = len(window.windows)
             window.openPlot(guid=saver.dataset.guid, show=True)
+            wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
             plot = window.windows[-1]
 
             @contextmanager

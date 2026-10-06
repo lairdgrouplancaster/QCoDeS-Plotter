@@ -84,7 +84,9 @@ def integer_array_plot(tmp_path, monkeypatch, request):
         window.close_database(status=False)
         assert window.load_file(str(database_path))
         wait_for(lambda: not window._database_load_active)
+        prior_plot_count = len(window.windows)
         window.openPlot(guid=guid, show=show)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
         plot.monitor.stop()
@@ -134,7 +136,9 @@ def sweep_plot(tmp_path, monkeypatch, request):
         window.close_database(status=False)
         assert window.load_file(str(database_path))
         wait_for(lambda: not window._database_load_active)
+        prior_plot_count = len(window.windows)
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
         plot.monitor.stop()
@@ -177,6 +181,7 @@ def apply_operations(plot):
         warnings.simplefilter("always", RuntimeWarning)
         with patch.object(plot.threadPool, "start", side_effect=observe_and_start):
             plot.oper_widget.apply_but.click()
+            wait_for(lambda: bool(submitted))
         worker = plot.worker
         assert worker is not previous
         assert submitted == [worker]
@@ -280,7 +285,9 @@ def test_stored_integer_heatmap_through_operations_apply(tmp_path, monkeypatch, 
         window.close_database(status=False)
         assert window.load_file(str(database_path))
         wait_for(lambda: not window._database_load_active)
+        prior_plot_count = len(window.windows)
         window.openPlot(guid=guid, show=False)
+        wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "dataGrid") and not plot.worker.running)
         plot.monitor.stop()
@@ -368,7 +375,7 @@ def test_large_integer_differentiation_cancellation_keeps_source():
     ([0, 1, 2, 1, 0], [0, 3, 6, 3, 0]),
 ], indirect=True)
 @pytest.mark.parametrize("reject_derivative", [False, True], ids=["success", "error"])
-def test_apply_observes_worker_completion_before_button_returns(
+def test_apply_observes_worker_completion_before_pool_submission_returns(
     sweep_plot, monkeypatch, reject_derivative,
 ):
     plot = sweep_plot
@@ -378,7 +385,7 @@ def test_apply_observes_worker_completion_before_button_returns(
 
     def start_and_finish(worker):
         # Keep the real threaded worker and GUI callbacks, but force completion
-        # while the Apply button's clicked handler is still on the stack.
+        # while processing-pool submission is still on the stack.
         start_worker(worker)
         wait_for(lambda: not worker.running)
         completed_before_return.append(worker)

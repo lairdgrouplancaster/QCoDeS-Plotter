@@ -22,9 +22,161 @@ produces primitive metadata and deterministic PNG payloads, and performs
 verified disk-cache I/O on its sole worker. Stage 5C connects those payloads to
 Qt through one GUI-owned bridge, progressively displaying derived metadata,
 thumbnails, and previews without reviving the legacy competing producers.
-Explicit plot and CSV actions still acquire action-owned private snapshots, and
-a narrowly eligible snapshot fallback session may retain the existing snapshot
-preview behavior.
+Explicit plots now acquire their metadata and result prefixes through the same
+broker/helper. CSV actions still acquire action-owned private snapshots, and a
+narrowly eligible snapshot fallback session retains its existing behavior.
+
+## Explicit plotting
+
+Plot-all, Run, indexed measurement, preview, and overlay actions request a
+connection-free `TrustedPlotDataset` asynchronously. A bounded Qt polling timer
+only consumes completed metadata requests; metadata queries, description
+decoding, prefix capture, and processing run outside the GUI thread. Selection
+changes invalidate pending selection-based actions. No trusted plot action,
+completion check, or refresh calls the whole-database snapshot-copy path.
+An accepted trusted-session failure remains an error, including a later native
+backend failure; the initial-open fallback eligibility rules are unchanged.
+
+The broker captures GUID/table/description identity, completion, and indexed
+`MAX(id)` in one transaction. Small numeric plots and array plots stage only
+that run's result table through the watermark in a private temporary SQLite
+file, with at most 8,192 physical rows
+and 65,536 value/length cells per page. Pages and BLOB chunks use separate
+transactions capped at five seconds; the complete capture has a one-hour
+deadline and exact broker cancellation. Appends beyond the watermark appear on
+the next refresh. Current QCoDeS's append-only result-row contract makes the
+captured prefix stable between those transactions. Source identity is checked
+by the pinned reader at every transaction boundary and by the existing plot
+publication fences.
+The overall wall-clock horizon includes time yielded to other plots; it does
+not extend any reader transaction. Explicit caller deadlines retain their
+existing shorter limits.
+
+Large numeric heatmaps instead reduce the captured prefix directly through
+bounded SQL queries. A paged preflight counts only until the full-resolution
+limit is crossed; it is skipped when the indexed watermark already proves the
+run small enough. Summary queries cover at most 65,536 row IDs while both axes
+still need exact distinct-coordinate sets. Once either set exceeds its existing
+131,072-value cardinality limit, summaries cover at most 262,144 row IDs, with
+at most one remaining distinct-coordinate reply capped at 131,073 values.
+The counts and bounds still cover every row in the interval, even after both
+axes saturate. Numeric aggregation queries cover at most 262,144 row IDs.
+Both yield between intervals and retain the five-second transaction deadline.
+Each aggregate reply holds at most 32,769 groups; dense intervals are split
+before accepting their data.
+The pinned reader has a bounded 16 MiB SQLite page cache so summary queries over
+the same interval can reuse pages. No source transaction survives a yield.
+
+These heatmaps use the existing spatial bin geometry and configured display
+limits. Page sums and counts produce weighted means over every valid sample,
+never means of page means or sampled preview images. Mixed-sign, large-integer,
+and near-overflow bins replay original values with exact rational sums.
+Distinct-axis sets hold at most 131,072 values each; saturated cardinalities
+are reported as unknown, as for bounded array heatmaps. A saturated axis uses
+the observed full bounds and a bounded cardinality estimate to place bins.
+Full-resolution transforms above their configured limit are still rejected.
+The numeric aggregate's allocation guard rejects grids above two million
+cells before allocating its sums, counts, extrema, or precision-replay state.
+
+Captures are resumable broker operations. Numeric pages and 256 KiB BLOB chunks
+yield with no source transaction open. The broker groups inexpensive steps into
+a 50 ms time slice before returning the operation to the end of its priority
+queue; a slower bounded query ends its slice as soon as it returns. This keeps
+small runs from paying for another large query between every tiny page, while
+allowing other plots to progress without waiting for a whole large run. Higher-priority
+metadata and existing background fairness still apply. Suspended captures hold
+only private spool resources, never source transactions; cancellation, expiry,
+and shutdown close those resources on the dispatcher thread. The existing
+bounded request queue also bounds the number of suspended captures.
+Capture slices run between broker jobs, rather than nesting between every
+query of a metadata job and consuming its deadline. Cheap interactive metadata
+can still preempt at those query boundaries. A background inference job cannot
+therefore lose its entire budget to repeated plot-capture slices.
+
+Plot windows submit capture requests without occupying a processing-pool
+thread. A GUI timer checks completion and starts decoding only when the broker
+result is ready. Duplicate default-deadline requests for the same dataset share
+one capture with independent cancellation; explicit deadlines retain their
+existing coalescing rules. A small plot can therefore display and refresh while
+another capture is in progress, even with one plot-processing thread.
+
+`qplot_read_blob(table, column, rowid, offset, length)` is a direct-only scalar
+function registered on the pinned reader connection. It reads at most 256 KiB
+through SQLite's incremental BLOB API with `writeable=False`, from `main` only,
+and closes the handle before returning bytes. It shares the normal operation's
+deadline, cancellation, native source proofs, result budgets, and rollback.
+Uncertain BLOB close retires the reader/helper. This avoids materialising an
+entire large NPY value merely to evaluate SQL `substr()`, which would exceed the
+reader's SQLite length limit. It adds no source-writing capability or VFS
+exception. The exact permitted SHM operations are unchanged.
+
+Existing QCoDeS decoding, precision-preserving array handling, acquisition
+masks, transforms, overlays, and array-heatmap aggregation operate on the
+private prefix. Full-resolution decoding has a conservative 1 GiB input/object
+and planned-shape budget; larger heatmaps retain their existing bounded display
+path. This is a logical allocation budget, not a process RSS ceiling. Interactive
+plots never use cached preview PNGs as data. Completion is published only after
+the final acquired data successfully reaches the plot.
+
+Plot loading shows progress for the current stage, not an estimated overall
+percentage or remaining time. Coordinate scans, numeric aggregation, precision
+replay, and result capture report the captured source range completed after each
+bounded step. Sparse row IDs therefore measure range coverage, not a count of
+records or elapsed time. Split aggregation intervals advance only when accepted,
+so retries never count twice. Array transfers report bytes within the named
+array record. Preflight, decoding, transforms, validation, and rendering use an
+indeterminate bar when their total work is unknown.
+Titles identify two broad stages: `Stage 1/2:` for reading and scanning, and
+`Stage 2/2:` for building, processing, and displaying the plot. Optional precision
+refinement and transforms remain part of stage 2.
+
+The broker retains one immutable progress observation per operation/subscriber;
+it sends no progress queries to the source and queues no progress callbacks.
+Plot overlays poll the latest observation every 100 ms on the GUI thread.
+An elapsed-time label uses a monotonic clock from the start of each load,
+including queue waits. It continues across stage changes and indeterminate
+processing, and resets for each new load or live refresh.
+Shared captures share observations while cancellation stays subscriber-specific.
+The bar remains in its rendering state until the concrete display commits, and
+is stopped on cancellation, error, supersession, or window close. Live refreshes
+start a new progress cycle for their newly captured prefix.
+
+The broker retains at most eight completed results totalling 512 MiB of private
+prefix storage or numeric heatmap arrays for reuse by sibling plots and detail
+reloads, revalidating the source
+and watermark before reuse. This temporary cache is separate from the derived
+image cache. Database switching retains an old broker while its plots still
+need it; closing their dataset handles retires that broker off the GUI thread.
+Source replacement and application shutdown still invalidate/close it.
+
+Capture cost and temporary disk space scale with the selected run, not the
+database. Large numeric heatmaps avoid staging raw rows but still scan the
+selected prefix to include all valid observations. Very large individual runs
+can still be expensive or reach the finite capture deadline; live refresh
+currently recaptures that run's prefix or numerical reduction. The disk
+cache cap limits retained completed prefixes, not the active capture file.
+CSV export is unchanged.
+
+`scripts/benchmark_plot_launch.py DATABASE RUN_ID` measures the actual
+`MainWindow.openPlot` path through populated Qt painting, rejects whole-database
+copy attempts, and reports protected main/WAL/journal size and timestamp checks.
+Use `--action double-click` or `--action run` to exercise the actual run-table
+signal or Run button. In particular, Qt converts the table signal's `None` to
+an empty string; both forms must pass through asynchronous metadata loading.
+Use `--preceding-run 33 --max-threads 1` to measure opening the selected run while
+run 33 is still being captured. The report includes the preceding capture's
+progress and pending state; that capture is cancelled after the measured plots
+display, so this does not measure run 33's total plotting time.
+The benchmark reports broker-query counts, total time and maximum time for the
+summary and aggregation phases. `--aggregate-rows 65536` supplies the smaller
+reference batch size; `--aggregate-rows 262144` selects the current size. Run the
+comparisons sequentially under similar machine load. Add
+`--preceding-stage aggregate` to wait until the preceding run starts aggregation
+before opening the small run, rather than testing only its initial capture steps.
+Use `--large-summary-rows 65536` for the original summary batching or
+`--large-summary-rows 262144` for adaptive batching. The
+`--preceding-stage large-summary` option checks small-plot responsiveness during
+an enlarged summary transaction.
 
 ## Source-file boundary
 
@@ -107,6 +259,32 @@ legitimately appear between operations, but an operation never silently changes
 to another inode or file ID. Replacing the main database, WAL, or SHM invalidates
 the reader and requires an explicit reopen. SHM content, size, `mtime`, and
 `ctime` changes alone do not invalidate it.
+
+Each finite reader operation begins with full native validation of the retained
+proof handles, actual SQLite handles, source pathnames, rollback-journal absence,
+and active SHM bindings. Only after that succeeds may page reads reuse pathname
+proofs until operation cleanup. Every page read still validates the retained and
+actual handle identities and their physically read-only permissions, before and
+after delegation. Other callbacks, including SHM mapping/locking, retain their
+full existing checks. Newly opened or promoted WAL handles are fully validated.
+
+Cleanup disables pathname reuse and performs full native validation before any
+materialised result is published, including error, deadline and cancellation
+paths. An observed replacement rejects the result and invalidates the reader;
+it never triggers snapshot fallback. This removes repeated directory/filesystem
+inspection from the inner read loop under the existing trusted-parent-namespace
+assumption; it adds no permission to write source files and no long-lived source
+transaction. Reads outside the explicit finite scope retain per-read path checks.
+
+Native audit counters include `read_path_reused`, `read_validation_ns` and
+`read_io_ns`. The timings separate page-read validation from the delegated OS VFS
+read, not total SQL or IPC time, and never govern safety checks or deadlines.
+`scripts/profile_trusted_reads.py DATABASE RUN_ID` profiles finite 65,536-row
+intervals through the pinned reader and checks protected-file sizes/timestamps.
+It does not clear OS caches or modify the selected database. Use the actual plot
+benchmark as well to measure the user-visible effect.
+The profiler's `--full-path-checks` option disables reuse to provide a controlled
+reference; compare its result digest and read counts with the default run.
 
 Only regular files with correctly named, colocated sidecars on supported
 same-host local filesystems are accepted. Symbolic links, Windows reparse-point

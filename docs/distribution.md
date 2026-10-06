@@ -27,8 +27,9 @@ points.
 
 ## Current Beta
 
-The current beta and package version are `1.6.0b1`, using the PEP 440 normal
-form; the GitHub release tag should be `v1.6.0b1`.
+The published beta is `1.6.0b1`. This checkout prepares the next beta,
+`1.6.0b2`, using the PEP 440 normal form. After release validation, its GitHub
+release tag should be `v1.6.0b2`; that tag has not been published yet.
 
 Beta test install:
 

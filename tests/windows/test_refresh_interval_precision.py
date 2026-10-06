@@ -14,6 +14,7 @@ from qcodes.dataset import (
 )
 
 from qplot.configuration.config import config
+from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._refresh_interval import (
     refresh_interval_value,
@@ -68,11 +69,24 @@ def live_view(tmp_path, monkeypatch, rate, *, heatmap=False):
                 wait_for(lambda: not window._database_load_active)
 
             def open_plot(name, *, show=True):
-                with QtCore.QSignalBlocker(window.monitor):
+                with QtCore.QSignalBlocker(window.monitor), monkeypatch.context() as launch_patch:
+                    # Metadata now arrives asynchronously. Fence the new plot's
+                    # timer before its first worker, including the event batches
+                    # needed to wait for the window itself to appear.
+                    blockers = []
+                    def fence_initial_load(plot, _worker):
+                        if plot not in window.windows:
+                            blockers.append(QtCore.QSignalBlocker(plot.monitor))
+                    launch_patch.setattr(plotWidget, "_refresh_worker_will_start",
+                                         fence_initial_load, raising=False)
+                    prior_plot_count = len(window.windows)
                     window.openPlot(guid=saver.dataset.guid, params=[parameters[name]], show=show)
+                    wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
                     plot = window.windows[-1]
                     monkeypatch.setattr(plot, "show_error", lambda *args: errors.append(args))
                     wait_for_plot_load(window, plot)
+                    for blocker in blockers:
+                        blocker.unblock()
                 assert plot._last_error_text is None
                 return plot
 

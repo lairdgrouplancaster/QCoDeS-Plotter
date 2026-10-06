@@ -7,6 +7,21 @@ installation commands and release validation, see `docs/distribution.md`.
 
 ## Unreleased
 
+## 1.6.0b2 - Unreleased
+
+### Changed
+
+- Load and refresh explicit plots through the trusted, physically read-only
+  reader without copying the whole database. Small runs can open while a large
+  run is loading, including with a single processing thread.
+- Speed up large heatmap loading with bounded reader validation and larger
+  bounded summary and aggregation batches. Preserve measurement precision,
+  cancellation, live acquisition, and existing downsampling.
+- Show two-stage plot-loading progress and elapsed time through rendering.
+- Clarify full-resolution and downsampled heatmap dimensions, explaining when
+  exact source dimensions are not retained during downsampling. Right-align
+  resolution information while keeping cursor coordinates left-aligned.
+
 ## 1.6.0b1 - 2026-09-28
 
 ### Added
