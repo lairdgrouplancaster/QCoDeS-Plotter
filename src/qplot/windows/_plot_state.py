@@ -74,7 +74,7 @@ class PlotStateOverlay(QtCore.QObject):
         self.progress_bar.setMinimumWidth(260)
         self.progress_bar.setToolTip(
             "Progress within the named stage, not total loading time. Scan progress "
-            "covers the captured source range; array progress covers the current array."
+            "covers the captured source range, including partial array records."
         )
         layout.addWidget(self.progress_bar)
         self.elapsed_label = qtw.QLabel(self.frame)

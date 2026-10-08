@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 from types import SimpleNamespace
 
@@ -93,10 +94,13 @@ def test_cancel_error_and_close_stop_progress(qapplication):
         widget.close()
 
 
-@pytest.mark.parametrize('dimensions', [1, 2])
-def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, dimensions):
+@pytest.mark.parametrize('dimensions,arrays', [(1, False), (2, False), (2, True)])
+def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, dimensions, arrays):
     path = tmp_path / 'display-progress.db'
-    _, guid, _ = make_run(path, dimensions=dimensions)
+    _, guid, _ = make_run(path, dimensions=dimensions, arrays=arrays)
+    if arrays:
+        for name in ('ARRAY', 'NUMERIC', 'COMPLEX'):
+            monkeypatch.delitem(sqlite3.converters, name, raising=False)
     prohibit_snapshots(monkeypatch)
     monkeypatch.setattr(config, 'default_path', str(tmp_path / 'settings'))
     monkeypatch.setattr(config, 'default_file', str(tmp_path / 'settings' / config.config_file_name))
@@ -143,7 +147,7 @@ def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, di
         overlay = plot.plot_state_overlay
         wait_for(lambda: overlay.progress_bar.maximum() == 1000 and overlay.progress_bar.value() > 0)
         assert 0 < overlay.progress_bar.value() < 1000
-        assert overlay.detail_label.text() == 'Stage 1/2: Reading plot data'
+        assert overlay.detail_label.text().startswith('Stage 1/2: Reading ')
         assert plot.worker.running
         release.set()
         wait_for(lambda: not plot.worker.running)

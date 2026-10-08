@@ -1,5 +1,6 @@
 import sqlite3
 from dataclasses import FrozenInstanceError
+from fractions import Fraction
 
 import pytest
 
@@ -64,7 +65,12 @@ def test_capture_reports_bounded_completed_work_and_protects_source(tmp_path, mo
             assert phases['Refining numerical precision'][-1].completed == result.watermark
         if kind == 'array':
             arrays = [values for phase, values in phases.items() if phase.startswith('Reading array')]
-            assert arrays and all(values[-1].completed == values[-1].total for values in arrays)
+            assert arrays
+            fractions = [Fraction(p.completed, p.total) for p in observations if p.total]
+            assert fractions == sorted(fractions)
+            assert fractions[0] == 0 and fractions[-1] == 1
+            assert arrays[0][-1].completed < arrays[0][-1].total
+            assert all(p.unit == 'scan' for values in arrays for p in values)
         with pytest.raises(FrozenInstanceError):
             observations[-1].phase = 'changed'
         assert protected_state(path) == before
