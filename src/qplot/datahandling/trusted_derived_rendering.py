@@ -19,7 +19,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     TrustedWorkKind,
 )
 
-TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v5"
+TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v6"
 TRUSTED_DERIVED_MAX_IMAGES = 8
 TRUSTED_DERIVED_MAX_IMAGE_WIDTH = 2_048
 TRUSTED_DERIVED_MAX_IMAGE_HEIGHT = 2_048
@@ -240,7 +240,19 @@ def render_trusted_derived_payload(
                 raise _UnsupportedNumericData(
                     "The dependent or one of its sweep parameters is unavailable."
                 )
-            if len(dependencies) == 1:
+            array_tree = any(
+                parameter_by_name[name].paramtype == "array"
+                for name in (*dependencies, dependent)
+                if name in parameter_by_name
+            )
+            if array_tree:
+                from .trusted_array_preview import render_array_preview
+
+                rgba, points = render_array_preview(
+                    observation, dependencies, dependent, width, height, cancel_check,
+                )
+                dimensionality = len(dependencies)
+            elif len(dependencies) == 1:
                 rgba, points = _render_1d(
                     observation,
                     dependencies[0],

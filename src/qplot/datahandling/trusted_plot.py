@@ -86,6 +86,12 @@ class PlotPrefix:
         self.disk_bytes = 0
 
     def connect(self, *, decode_arrays=False, cancelled=lambda: False):
+        if decode_arrays:
+            from qcodes.dataset.sqlite import database as qcodes_database
+
+            from .readonly import _register_qcodes_sqlite_types
+
+            _register_qcodes_sqlite_types(qcodes_database)
         conn = sqlite3.connect(
             self.path.as_uri() + "?mode=ro&immutable=1", uri=True,
             factory=AtomicConnection,

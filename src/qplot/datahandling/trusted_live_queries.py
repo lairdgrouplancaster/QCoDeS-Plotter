@@ -95,6 +95,8 @@ TRUSTED_DERIVED_MAX_SAMPLE_CELLS = TRUSTED_DERIVED_MAX_SAMPLE_ROWS * (
     TRUSTED_DERIVED_MAX_SOURCE_COLUMNS + 1
 )
 TRUSTED_DERIVED_RUN_TEXT_MAX_BYTES = 256 * 1024
+TRUSTED_DERIVED_ARRAY_ROWS_PER_WINDOW = 8
+TRUSTED_DERIVED_MAX_ARRAY_BYTES = 1024 * 1024
 _QCODES_RESULT_ID_SCHEMA = re.compile(
     r'(?:\(|,)\s*(?:"id"|`id`|\[id\]|id)\s+INTEGER\s+PRIMARY\s+KEY'
     r"(?:\s+AUTOINCREMENT)?\s*(?:,|\))",
@@ -1537,6 +1539,7 @@ class TrustedMetadataQueryAdapter:
         self._runs: dict[int, dict[str, Any]] = {}
         self._unavailable_run_fields: dict[int, tuple[str, ...]] = {}
         self._setpoint_summaries: dict[int, tuple[TrustedSetpointSummary, ...]] = {}
+        self._preview_array_columns: dict[int, tuple[str, ...]] = {}
         self._setpoint_summaries_truncated: dict[int, bool] = {}
         self._setpoint_summary_watermarks: dict[int, int] = {}
         self._setpoint_summary_names: dict[int, tuple[str, ...]] = {}
@@ -1580,6 +1583,7 @@ class TrustedMetadataQueryAdapter:
         self._unavailable_run_fields.clear()
         self._result_columns.clear()
         self._setpoint_summaries.clear()
+        self._preview_array_columns.clear()
         self._setpoint_summaries_truncated.clear()
         self._setpoint_summary_watermarks.clear()
         self._setpoint_summary_names.clear()
@@ -1773,6 +1777,7 @@ class TrustedMetadataQueryAdapter:
             # A run identity changing in place invalidates every observation
             # tied to its former result table.
             self._setpoint_summaries.pop(record.run_id, None)
+            self._preview_array_columns.pop(record.run_id, None)
             self._setpoint_summaries_truncated.pop(record.run_id, None)
             self._setpoint_summary_watermarks.pop(record.run_id, None)
             self._setpoint_summary_names.pop(record.run_id, None)
@@ -1921,6 +1926,12 @@ class TrustedMetadataQueryAdapter:
         sweep_parameters = tuple(metadata.get("sweep_parameters") or ())
         run_description = _json_object(metadata.get("run_description"))
         array_parameters = self._array_parameters(run_description)
+        preview_columns = tuple(
+            name for name in result_columns if name != "id"
+        )[:TRUSTED_DERIVED_MAX_SOURCE_COLUMNS]
+        self._preview_array_columns[run_id] = tuple(
+            name for name in preview_columns if name in array_parameters
+        )
         has_array_records = bool(
             array_parameters.intersection((*measure_parameters, *sweep_parameters))
         )
@@ -2321,6 +2332,26 @@ class TrustedMetadataQueryAdapter:
             for name in retained_columns
         )
         selected = ", ".join(('"id"', *numeric_expressions))
+        array_columns = set(self._preview_array_columns.get(run_id, ())).intersection(
+            retained_columns
+        )
+        array_selected = selected
+        if array_columns:
+            # Bound the whole capture, including overlapping sampling windows,
+            # before any BLOB crosses the helper boundary.
+            blob_limit = TRUSTED_DERIVED_MAX_ARRAY_BYTES // (
+                len(array_columns) * TRUSTED_DERIVED_ARRAY_ROWS_PER_WINDOW
+                * (TRUSTED_DERIVED_SAMPLE_WINDOWS + 1)
+            )
+            expressions = []
+            for name, numeric in zip(retained_columns, numeric_expressions, strict=True):
+                column = quote_sqlite_identifier(name)
+                expressions.append(
+                    f"CASE WHEN typeof({column})='blob' AND length({column}) <= "
+                    f"{blob_limit} THEN {column} ELSE NULL END AS {column}"
+                    if name in array_columns else numeric
+                )
+            array_selected = ", ".join(('"id"', *expressions))
         maximum_expression = f'(SELECT COALESCE(MAX("id"), 0) FROM {table})'
         if grid_sample_plans:
             sampled_grid_ids = tuple(
@@ -2343,15 +2374,17 @@ class TrustedMetadataQueryAdapter:
             ]
         else:
             sample_queries = []
-        if not grid_sample_plans or needs_other_samples:
+        if not grid_sample_plans or needs_other_samples or array_columns:
             window_rows = (
                 TRUSTED_DERIVED_ROWS_PER_WINDOW // (TRUSTED_DERIVED_SAMPLE_WINDOWS + 1)
                 if grid_sample_plans
                 else TRUSTED_DERIVED_ROWS_PER_WINDOW
             )
+            if array_columns:
+                window_rows = TRUSTED_DERIVED_ARRAY_ROWS_PER_WINDOW
             sample_queries.extend(
                 TrustedQuery(
-                    f"SELECT {selected} FROM {table} "
+                    f"SELECT {array_selected} FROM {table} "
                     f'WHERE "id" > MAX(0, (({maximum_expression} * ?) / '
                     f"{TRUSTED_DERIVED_SAMPLE_WINDOWS}) - 1) "
                     f'AND "id" <= {maximum_expression} '
@@ -2364,7 +2397,7 @@ class TrustedMetadataQueryAdapter:
             # cached count was stale before this transaction began.
             sample_queries.append(
                 TrustedQuery(
-                    f"SELECT {selected} FROM {table} "
+                    f"SELECT {array_selected} FROM {table} "
                     f'WHERE "id" <= {maximum_expression} ORDER BY "id" DESC '
                     f"LIMIT {window_rows}"
                 )
