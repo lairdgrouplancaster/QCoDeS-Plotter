@@ -74,7 +74,13 @@ def test_qcodes_table_identity_survives_bounded_run_presentation(tmp_path, prefi
         service.submit_selected_run(run_id).wait(10)
         source = service.submit_derived_source(run_id).wait(10)
         assert source.result_table_name == table_name
-        assert source.sample_rows == ((1, 1.0, 2.0),)
+        # QCoDeS may create x/y in either physical column order. The reader
+        # preserves that order and supplies matching names in sample_columns.
+        assert len(source.sample_rows) == 1
+        assert len(source.sample_columns) == 3
+        assert dict(zip(source.sample_columns, source.sample_rows[0], strict=True)) == {
+            "id": 1, "x": 1.0, "y": 2.0,
+        }
         assert source.result_watermark == 1
     finally:
         service.close(timeout=10)
