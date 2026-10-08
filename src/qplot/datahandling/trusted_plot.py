@@ -20,11 +20,21 @@ from .trusted_live import TrustedLiveQueryError, TrustedQuery
 
 PAGE_ROWS = 8192
 BLOB_CHUNK_BYTES = 256 * 1024
+RECORD_PROGRESS_UNITS = 1_000_000
 MAX_PARAMETERS = 256
 
 
 def identifier(name):
     return '"' + str(name).replace('"', '""') + '"'
+
+
+def _report_array_progress(executor, phase, row_id, watermark, copied_bytes, record_bytes):
+    # Byte progress advances within this record's share of the captured range,
+    # instead of repeatedly resetting the bar to 0% for each stored array.
+    completed_units = (row_id - 1) * RECORD_PROGRESS_UNITS
+    if record_bytes:
+        completed_units += copied_bytes * RECORD_PROGRESS_UNITS // record_bytes
+    executor.report_progress(phase, completed_units, watermark * RECORD_PROGRESS_UNITS)
 
 
 class TrustedPlotDataset:
@@ -212,13 +222,18 @@ def plot_prefix(executor, dataset, heatmap_plan=None):
                     target.execute(
                         f"INSERT INTO {table} VALUES ({','.join(expressions)})", bindings,
                     )
+                    record_bytes = sum(row[2 + 2 * index] or 0 for index in range(len(names)))
+                    copied_bytes = 0
+
                     for index in range(len(names)):
                         size = row[2 + 2 * index]
                         if size is None:
                             continue
                         with target.blobopen(dataset.table_name, specs[index].name, row_id) as blob:
                             array_phase = f"Reading array {specs[index].name} (record {prefix.row_count + 1:,})"
-                            executor.report_progress(array_phase, 0, size, unit="array")
+                            _report_array_progress(
+                                executor, array_phase, row_id, watermark, copied_bytes, record_bytes,
+                            )
                             for offset in range(0, size, BLOB_CHUNK_BYTES):
                                 chunk = executor.query(
                                     "SELECT qplot_read_blob(?, ?, ?, ?, ?)",
@@ -228,7 +243,10 @@ def plot_prefix(executor, dataset, heatmap_plan=None):
                                 if len(chunk) != 1 or len(chunk[0][0]) != min(BLOB_CHUNK_BYTES, size - offset):
                                     raise TrustedLiveQueryError("A captured array record changed.")
                                 blob.write(chunk[0][0])
-                                executor.report_progress(array_phase, offset + len(chunk[0][0]), size, unit="array")
+                                copied_bytes += len(chunk[0][0])
+                                _report_array_progress(
+                                    executor, array_phase, row_id, watermark, copied_bytes, record_bytes,
+                                )
                                 yield
                     prefix.row_count += 1
                 last_id = rows[-1][0]
