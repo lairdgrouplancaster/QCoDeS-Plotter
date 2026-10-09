@@ -8,13 +8,13 @@ import qplot
 
 
 def test_package_version_comes_from_installed_metadata():
-    assert qplot.__version__ == version("qplot")
+    assert qplot.__version__ == version("qcodes-plotter")
 
 
 def test_console_scripts_are_declared():
     scripts = {
         entry_point.name: entry_point.value
-        for entry_point in distribution("qplot").entry_points
+        for entry_point in distribution("qcodes-plotter").entry_points
         if entry_point.group == "console_scripts"
     }
 

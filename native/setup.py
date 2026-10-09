@@ -24,10 +24,10 @@ setup(
     cmdclass={"build_ext": TrustedVFSBuildExt},
     ext_modules=[
         Extension(
-            "qplot.datahandling._trusted_vfs_native",
-            sources=["src/qplot/datahandling/_trusted_vfs_native.c"],
-            include_dirs=["src/qplot/datahandling"],
-            depends=["src/qplot/datahandling/_trusted_vfs_sqlite_abi.h"],
+            "qplot_native._trusted_vfs_native",
+            sources=["src/qplot_native/_trusted_vfs_native.c"],
+            include_dirs=["src/qplot_native"],
+            depends=["src/qplot_native/_trusted_vfs_sqlite_abi.h"],
             define_macros=[("Py_LIMITED_API", "0x030B0000")],
             export_symbols=["sqlite3_qplot_trusted_vfs_init"],
             libraries=["advapi32"] if sys.platform == "win32" else [],

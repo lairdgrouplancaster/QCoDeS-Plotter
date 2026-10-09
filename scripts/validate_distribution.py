@@ -11,6 +11,7 @@ import tempfile
 import tomllib
 import venv
 import zipfile
+from email.parser import Parser
 from pathlib import Path, PurePosixPath
 
 IGNORED_DIRECTORY_NAMES = {
@@ -32,22 +33,22 @@ REQUIRED_ROOT_FILES = {
     "MANIFEST.in",
     "README.md",
     "pyproject.toml",
-    "setup.py",
 }
 SDIST_SOURCE_PREFIXES = ("docs/", "scripts/", "src/", "tests/")
 REQUIRED_NATIVE_SOURCE_FILES = {
-    "src/qplot/datahandling/_trusted_vfs_native.c",
-    "src/qplot/datahandling/_trusted_vfs_sqlite_abi.h",
+    "src/qplot_native/_trusted_vfs_native.c",
+    "src/qplot_native/_trusted_vfs_sqlite_abi.h",
 }
 NATIVE_BUILD_SUFFIXES = {".c", ".h"}
 COMPILED_NATIVE_SUFFIXES = {".dll", ".dylib", ".pyd", ".so"}
-NATIVE_EXTENSION_MODULE = "qplot.datahandling._trusted_vfs_native"
-NATIVE_EXTENSION_STEM = "qplot/datahandling/_trusted_vfs_native"
+NATIVE_EXTENSION_MODULE = "qplot_native._trusted_vfs_native"
+NATIVE_EXTENSION_STEM = "qplot_native/_trusted_vfs_native"
 NATIVE_EXTENSION_MEMBERS = {
     f"{NATIVE_EXTENSION_STEM}.abi3.so",
     f"{NATIVE_EXTENSION_STEM}.pyd",
 }
 PINNED_APSW_VERSION = "3.53.4.0"
+PINNED_NATIVE_VERSION = "1.0.0"
 CONSOLE_SCRIPTS = {
     "qplot": "qplot.__main__:run",
     "qplot-cfg": "qplot.configuration.scripts:scripts",
@@ -97,7 +98,7 @@ def source_files(repository: Path) -> set[str]:
     return {
         path.decode().replace(os.sep, "/")
         for path in result.stdout.split(b"\0")
-        if path
+        if path and (repository / path.decode()).is_file()
     }
 
 
@@ -143,7 +144,10 @@ def relative_sdist_files(members: set[str]) -> tuple[str, set[str]]:
 def ignored_member(path: str) -> bool:
     """Return whether an artifact path is forbidden by the sdist policy."""
     parts = PurePosixPath(path).parts
-    setuptools_inventory = path.endswith("src/qplot.egg-info/SOURCES.txt")
+    setuptools_inventory = any(
+        path.endswith(f"src/{name}.egg-info/SOURCES.txt")
+        for name in ("qcodes_plotter", "qcodes_plotter_native")
+    )
     for part in parts:
         if part in IGNORED_DIRECTORY_NAMES:
             return True
@@ -181,6 +185,7 @@ def assert_no_compiled_native_members(artifact: Path, members: set[str]) -> None
 def validate_sdist(
     artifact: Path,
     source: set[str],
+    *, native: bool = False,
 ) -> tuple[str, set[str]]:
     """Check the sdist against the explicit source-tree inclusion policy."""
     members = archive_files(artifact)
@@ -189,7 +194,6 @@ def validate_sdist(
     assert_no_compiled_native_members(artifact, relative_members)
     expected = (
         REQUIRED_ROOT_FILES
-        | REQUIRED_NATIVE_SOURCE_FILES
         | {
             path
             for path in source
@@ -197,6 +201,15 @@ def validate_sdist(
             and PurePosixPath(path).suffix.casefold() not in COMPILED_NATIVE_SUFFIXES
         }
     )
+    if native:
+        expected = {"LICENSE", "README.md", "MANIFEST.in", "pyproject.toml", "setup.py"}
+        expected |= REQUIRED_NATIVE_SOURCE_FILES
+        expected |= {
+            path.removeprefix("native/") for path in source
+            if path.startswith("native/src/")
+            and not ignored_member(path)
+            and PurePosixPath(path).suffix.casefold() not in COMPILED_NATIVE_SUFFIXES
+        }
     missing = sorted(expected - relative_members)
     if missing:
         raise AssertionError(
@@ -210,60 +223,77 @@ def validate_sdist(
         and Path(path).name.startswith("test_")
         and path.endswith(".py")
     )
-    if "tests/conftest.py" not in relative_members:
+    if not native and "tests/conftest.py" not in relative_members:
         raise AssertionError("sdist is missing tests/conftest.py")
-    print(
-        f"{artifact.name}: {len(relative_members)} files; "
-        f"all {len(source_tests)} source test modules and conftest are present."
+    detail = (
+        "native build sources are present."
+        if native else f"all {len(source_tests)} source test modules and conftest are present."
     )
+    print(f"{artifact.name}: {len(relative_members)} files; {detail}")
     return root, relative_members
 
 
-def validate_wheel(artifact: Path, source: set[str]) -> set[str]:
-    """Check that wheel runtime files exactly match source package files."""
-    if "-cp311-abi3-" not in artifact.name:
-        raise AssertionError(
-            f"{artifact.name} is not tagged for the CPython 3.11 stable ABI"
-        )
+def validate_wheel(
+    artifact: Path, source: set[str], *, native: bool = False,
+) -> set[str]:
+    """Check each distribution's tags, metadata, and exact runtime inventory."""
+    tag = "-cp311-abi3-" if native else "-py3-none-any.whl"
+    if tag not in artifact.name:
+        raise AssertionError(f"{artifact.name} must use {tag}")
     members = archive_files(artifact)
     assert_no_ignored_members(artifact, members)
-    actual_runtime = {path for path in members if path.startswith("qplot/")}
+    package = "qplot_native" if native else "qplot"
+    distribution_name = "qcodes-plotter-native" if native else "qcodes-plotter"
+    actual_runtime = {path for path in members if path.startswith(f"{package}/")}
     native_members = actual_runtime & NATIVE_EXTENSION_MEMBERS
-    if len(native_members) != 1:
+    if native and len(native_members) != 1:
         raise AssertionError(
             f"{artifact.name} must contain exactly one abi3 native extension; "
             f"found {sorted(native_members)}"
         )
+    if not native:
+        assert_no_compiled_native_members(artifact, members)
+    source_prefix = "native/src/" if native else "src/"
     expected_runtime = {
-        path.removeprefix("src/")
+        path.removeprefix(source_prefix)
         for path in source
-        if path.startswith("src/qplot/")
+        if path.startswith(f"{source_prefix}{package}/")
         and PurePosixPath(path).suffix.casefold()
         not in NATIVE_BUILD_SUFFIXES | COMPILED_NATIVE_SUFFIXES
-    }
-    expected_runtime.update(native_members)
+        and not ignored_member(path)
+    } | native_members
     missing = sorted(expected_runtime - actual_runtime)
     stale = sorted(actual_runtime - expected_runtime)
     if missing or stale:
-        detail = []
-        if missing:
-            detail.append("missing runtime files:\n" + "\n".join(missing))
-        if stale:
-            detail.append("unexpected/stale runtime files:\n" + "\n".join(stale))
-        raise AssertionError(f"{artifact.name} runtime mismatch:\n" + "\n".join(detail))
-
+        raise AssertionError(
+            f"{artifact.name} runtime mismatch: missing {missing}; unexpected {stale}"
+        )
     unexpected = sorted(
-        path
-        for path in members - actual_runtime
+        path for path in members - actual_runtime
         if not PurePosixPath(path).parts[0].endswith(".dist-info")
     )
     if unexpected:
-        raise AssertionError(
-            f"{artifact.name} has unexpected top-level files:\n" + "\n".join(unexpected)
-        )
-    print(
-        f"{artifact.name}: {len(members)} files; {len(actual_runtime)} runtime files."
-    )
+        raise AssertionError(f"{artifact.name} has unexpected files: {unexpected}")
+    with zipfile.ZipFile(artifact) as archive:
+        metadata_paths = [path for path in members if path.endswith(".dist-info/METADATA")]
+        assert len(metadata_paths) == 1, metadata_paths
+        metadata = Parser().parsestr(archive.read(metadata_paths[0]).decode())
+        assert metadata["Name"] == distribution_name
+        requirements = metadata.get_all("Requires-Dist", [])
+        assert f"apsw=={PINNED_APSW_VERSION}" in requirements, requirements
+        if native:
+            assert metadata["Version"] == PINNED_NATIVE_VERSION
+        else:
+            assert f"qcodes-plotter-native=={PINNED_NATIVE_VERSION}" in requirements
+        wheel_path = metadata_paths[0].removesuffix("METADATA") + "WHEEL"
+        wheel_metadata = Parser().parsestr(archive.read(wheel_path).decode())
+        assert wheel_metadata["Root-Is-Purelib"] == ("false" if native else "true")
+        tags = wheel_metadata.get_all("Tag", [])
+        assert tags and all(
+            value.startswith("cp311-abi3-") if native else value == "py3-none-any"
+            for value in tags
+        ), tags
+    print(f"{artifact.name}: {len(members)} files; {len(actual_runtime)} runtime files.")
     return expected_runtime
 
 
@@ -305,16 +335,19 @@ def create_environment(path: Path) -> Path:
     return environment_python(path)
 
 
-def test_extracted_sdist(artifact: Path, temporary: Path) -> None:
+def test_extracted_sdist(
+    artifact: Path, native_artifact: Path, temporary: Path,
+) -> None:
     """Install and run all tests from the extracted source distribution."""
     source = extract_sdist(artifact, temporary / "sdist-source")
     environment = temporary / "sdist-venv"
     python = create_environment(environment)
-    run([str(python), "-m", "pip", "install", f"{source}[dev]"])
+    native_source = extract_sdist(native_artifact, temporary / "native-sdist-source")
+    run([str(python), "-m", "pip", "install", str(native_source), f"{source}[dev]"])
     test_env = os.environ.copy()
     test_env.setdefault("QT_QPA_PLATFORM", "offscreen")
-    test_env["MPLCONFIGDIR"] = str(temporary / "matplotlib")
-    # Exercise the installed sdist, including compiled extensions.  The
+    test_env.setdefault("MPLCONFIGDIR", str(temporary / "matplotlib"))
+    # Exercise both installed sdists, including the separate extension. The
     # repository's normal ``pythonpath = ["src"]`` setting would otherwise
     # shadow that installation with the unbuilt extracted source tree.
     # Match CI's two-worker, per-file scheduling; coverage has its own CI job.
@@ -1844,7 +1877,7 @@ def assert_installed_package():
     expected_apsw_version = sys.argv[4]
     native_module_name = sys.argv[5]
     native_file_names = set(json.loads(sys.argv[6]))
-    assert qplot.__version__ == expected_version == version("qplot")
+    assert qplot.__version__ == expected_version == version("qcodes-plotter")
     assert shutdown_supervisor.ShutdownSupervisorClient.__module__ == (
         "qplot._shutdown_supervisor"
     )
@@ -1860,6 +1893,7 @@ def assert_installed_package():
     assert TrustedSnapshotOmission.__module__ == (
         "qplot.datahandling.trusted_snapshot"
     )
+    assert version("qcodes-plotter-native") == sys.argv[7]
     assert version("apsw") == expected_apsw_version
     assert apsw.apsw_version() == expected_apsw_version
     native_module = importlib.import_module(native_module_name)
@@ -1872,11 +1906,11 @@ def assert_installed_package():
         assert resource.read_bytes(), resource_path
     scripts = {
         entry.name: entry.value
-        for entry in distribution("qplot").entry_points
+        for entry in distribution("qcodes-plotter").entry_points
         if entry.group == "console_scripts"
     }
     assert scripts == expected_scripts
-    for entry in distribution("qplot").entry_points:
+    for entry in distribution("qcodes-plotter").entry_points:
         if entry.group == "console_scripts":
             assert callable(entry.load()), entry.name
 
@@ -3540,13 +3574,15 @@ def smoke_test_installed_qplot_entrypoint(
 def smoke_test_wheel(
     repository: Path,
     artifact: Path,
+    native_artifact: Path,
     runtime_files: set[str],
     temporary: Path,
 ) -> None:
-    """Install only the wheel into a fresh venv and exercise installed files."""
+    """Install both local wheels into a fresh venv and exercise installed files."""
     environment = temporary / "wheel-venv"
     python = create_environment(environment)
-    run([str(python), "-m", "pip", "install", str(artifact.resolve())])
+    run([str(python), "-m", "pip", "install",
+         str(native_artifact.resolve()), str(artifact.resolve())])
     version = tomllib.loads((repository / "pyproject.toml").read_text())["project"][
         "version"
     ]
@@ -3574,6 +3610,7 @@ def smoke_test_wheel(
             json.dumps(
                 sorted(PurePosixPath(path).name for path in NATIVE_EXTENSION_MEMBERS)
             ),
+            PINNED_NATIVE_VERSION,
         ],
         cwd=smoke_directory,
     )
@@ -3585,8 +3622,8 @@ def smoke_test_wheel(
     run([str(console_script(environment, "qplot-generate-db")), "--help"])
 
 
-def find_artifacts(paths: list[Path]) -> tuple[Path, Path]:
-    """Resolve exactly one sdist and one wheel from files or directories."""
+def find_artifacts(paths: list[Path], *, wheel_only: bool = False) -> dict[str, Path]:
+    """Require one local wheel (and optionally sdist) for each distribution."""
     artifacts: set[Path] = set()
     for path in paths:
         if path.is_dir():
@@ -3594,26 +3631,20 @@ def find_artifacts(paths: list[Path]) -> tuple[Path, Path]:
             artifacts.update(path.glob("*.whl"))
         else:
             artifacts.add(path)
-    sdists = sorted(path for path in artifacts if path.name.endswith(".tar.gz"))
-    wheels = sorted(path for path in artifacts if path.suffix == ".whl")
-    if len(sdists) != 1 or len(wheels) != 1:
-        raise AssertionError(
-            f"expected one sdist and one wheel, found {len(sdists)} and {len(wheels)}"
-        )
-    return sdists[0], wheels[0]
-
-
-def find_wheel(paths: list[Path]) -> Path:
-    """Resolve exactly one wheel from files or directories."""
-    wheels: set[Path] = set()
-    for path in paths:
-        if path.is_dir():
-            wheels.update(path.glob("*.whl"))
-        elif path.suffix == ".whl":
-            wheels.add(path)
-    if len(wheels) != 1:
-        raise AssertionError(f"expected one wheel, found {len(wheels)}")
-    return wheels.pop()
+    result = {}
+    for name in ("qcodes_plotter", "qcodes_plotter_native"):
+        for kind, suffix in (("wheel", ".whl"), ("sdist", ".tar.gz")):
+            if wheel_only and kind == "sdist":
+                continue
+            candidates = [
+                path for path in artifacts
+                if path.name.startswith((f"{name}-", f"{name.replace('_', '-')}-"))
+                and path.name.endswith(suffix)
+            ]
+            if len(candidates) != 1:
+                raise AssertionError(f"expected one {name} {kind}, found {candidates}")
+            result[f"{name}_{kind}"] = candidates[0]
+    return result
 
 
 def parse_args() -> argparse.Namespace:
@@ -3623,8 +3654,8 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         type=Path,
         help=(
-            "artifact files or directories containing one sdist and one wheel, "
-            "or one wheel with --wheel-only"
+            "artifact files or directories containing both distributions, "
+            "or both wheels with --wheel-only"
         ),
     )
     parser.add_argument(
@@ -3635,7 +3666,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--wheel-only",
         action="store_true",
-        help="validate and smoke-test one platform wheel without requiring an sdist",
+        help="validate and smoke-test both wheels without requiring sdists",
     )
     return parser.parse_args()
 
@@ -3653,18 +3684,20 @@ def main() -> int:
     source = source_files(repository)
     with tempfile.TemporaryDirectory(prefix="qplot-artifacts-") as temporary_name:
         temporary = Path(temporary_name)
-        if args.wheel_only:
-            wheel = find_wheel(args.artifacts)
-            runtime_files = validate_wheel(wheel, source)
-            smoke_test_wheel(repository, wheel.resolve(), runtime_files, temporary)
-            print("Wheel artifact validation passed.")
-            return 0
-
-        sdist, wheel = find_artifacts(args.artifacts)
-        validate_sdist(sdist, source)
+        artifacts = find_artifacts(args.artifacts, wheel_only=args.wheel_only)
+        wheel = artifacts["qcodes_plotter_wheel"]
+        native_wheel = artifacts["qcodes_plotter_native_wheel"]
         runtime_files = validate_wheel(wheel, source)
-        test_extracted_sdist(sdist.resolve(), temporary)
-        smoke_test_wheel(repository, wheel.resolve(), runtime_files, temporary)
+        validate_wheel(native_wheel, source, native=True)
+        if not args.wheel_only:
+            sdist = artifacts["qcodes_plotter_sdist"]
+            native_sdist = artifacts["qcodes_plotter_native_sdist"]
+            validate_sdist(sdist, source)
+            validate_sdist(native_sdist, source, native=True)
+            test_extracted_sdist(sdist.resolve(), native_sdist.resolve(), temporary)
+        smoke_test_wheel(
+            repository, wheel.resolve(), native_wheel.resolve(), runtime_files, temporary,
+        )
     print("Distribution artifact validation passed.")
     return 0
 

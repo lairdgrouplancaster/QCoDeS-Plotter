@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import sys
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
@@ -12,6 +13,9 @@ import pytest
 
 from scripts.validate_distribution import (
     ENTRYPOINT_DELEGATION_SITECUSTOMIZE,
+    NATIVE_EXTENSION_MEMBERS,
+    find_artifacts,
+    validate_wheel,
     wheel_smoke_code,
 )
 
@@ -371,3 +375,79 @@ def test_actual_installed_entrypoint_hook_captures_launcher_delegation() -> None
     assert '"argv": list(original_argv)' in ENTRYPOINT_DELEGATION_SITECUSTOMIZE
     assert '"database_path": database_path' in ENTRYPOINT_DELEGATION_SITECUSTOMIZE
     assert "return 17" in ENTRYPOINT_DELEGATION_SITECUSTOMIZE
+
+
+PACKAGING_SOURCE = {
+    "src/qplot/__init__.py",
+    "native/src/qplot_native/__init__.py",
+    "native/src/qplot_native/_trusted_vfs_native.c",
+}
+
+
+def _split_wheel(tmp_path, *, native=False, extra_files=(), native_pin="1.0.0"):
+    name = "qcodes_plotter_native" if native else "qcodes_plotter"
+    version = "1.0.0" if native else "1.6.0b2"
+    tag = "cp311-abi3-test_platform" if native else "py3-none-any"
+    artifact = tmp_path / f"{name}-{version}-{tag}.whl"
+    info = f"{name}-{version}.dist-info"
+    metadata = (
+        f"Name: {name.replace('_', '-')}\nVersion: {version}\n"
+        "Requires-Dist: apsw==3.53.4.0\n"
+    )
+    if not native:
+        metadata += f"Requires-Dist: qcodes-plotter-native=={native_pin}\n"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr(f"{info}/METADATA", metadata)
+        archive.writestr(
+            f"{info}/WHEEL",
+            f"Root-Is-Purelib: {'false' if native else 'true'}\nTag: {tag}\n",
+        )
+        package = "qplot_native" if native else "qplot"
+        archive.writestr(f"{package}/__init__.py", "")
+        if native:
+            archive.writestr(sorted(NATIVE_EXTENSION_MEMBERS)[0], b"native fixture")
+        for path in extra_files:
+            archive.writestr(path, b"unexpected fixture")
+    return artifact
+
+
+def test_validator_accepts_both_split_wheels(tmp_path):
+    app = _split_wheel(tmp_path)
+    native = _split_wheel(tmp_path, native=True)
+    assert validate_wheel(app, PACKAGING_SOURCE) == {"qplot/__init__.py"}
+    assert "qplot_native/__init__.py" in validate_wheel(native, PACKAGING_SOURCE, native=True)
+    assert find_artifacts([tmp_path], wheel_only=True) == {
+        "qcodes_plotter_wheel": app,
+        "qcodes_plotter_native_wheel": native,
+    }
+
+
+@pytest.mark.parametrize("extra_file", [
+    "qplot/datahandling/_trusted_vfs_native.abi3.so",
+    "qplot_native/__init__.py",
+    "qplot/source.c",
+])
+def test_validator_rejects_native_files_in_app_wheel(tmp_path, extra_file):
+    app = _split_wheel(tmp_path, extra_files=[extra_file])
+    with pytest.raises(AssertionError):
+        validate_wheel(app, PACKAGING_SOURCE)
+
+
+def test_validator_rejects_incompatible_native_dependency(tmp_path):
+    app = _split_wheel(tmp_path, native_pin="0.9.0")
+    with pytest.raises(AssertionError):
+        validate_wheel(app, PACKAGING_SOURCE)
+
+
+def test_validator_requires_both_local_wheels(tmp_path):
+    _split_wheel(tmp_path)
+    with pytest.raises(AssertionError, match="qcodes_plotter_native wheel"):
+        find_artifacts([tmp_path], wheel_only=True)
+
+
+def test_validator_preserves_native_stable_abi_tag(tmp_path):
+    native = _split_wheel(tmp_path, native=True)
+    wrong_tag = native.with_name(native.name.replace("cp311-abi3", "cp312-cp312"))
+    native.rename(wrong_tag)
+    with pytest.raises(AssertionError, match="cp311-abi3"):
+        validate_wheel(wrong_tag, PACKAGING_SOURCE, native=True)

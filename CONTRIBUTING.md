@@ -50,12 +50,20 @@ source .venv-linux/bin/activate
 Linux is useful for source-level development, but it is not currently part of
 the supported desktop GUI test matrix.
 
-Install qPlot in editable mode with the development dependencies:
+The root distribution `qcodes-plotter` is pure Python. Install the compatible
+`qcodes-plotter-native==1.0.0` platform wheel before installing the application
+in editable mode. Download it from the same release into `dist/` (the names
+are provisional; neither distribution needs to be on PyPI):
 
 ```console
 python -m pip install -U pip
-python -m pip install -e ".[dev]"
+python -m pip install --only-binary qcodes-plotter-native --find-links dist -e ".[dev]"
 ```
+
+Editing the application requires no C compiler. Native contributors can build
+and install the separate distribution with `python -m pip install ./native`
+(a C compiler is required for that step), then use the editable command above.
+The native import package is `qplot_native`; application imports remain `qplot`.
 
 If the virtual environment is not activated, call its Python executable
 directly:
@@ -123,22 +131,24 @@ Pytest prints branch coverage for the `qplot` package and writes `coverage.xml`
 for CI or editor integrations.
 
 For release or packaging changes, start from a clean source tree, build the
-source distribution and wheel, validate both artifacts, and check their
+two source distributions and wheels, validate all four artifacts, and check their
 metadata:
 
 ```console
 python scripts/validate_distribution.py --check-clean
+python -m build native --outdir dist
 python -m build
 python scripts/validate_distribution.py dist
 python -m twine check dist/*
 ```
 
-The artifact validator checks the sdist against the current source tree and
-source-distribution policy, requires the trusted-reader C source and header,
-rejects ignored files and stale compiled native binaries, and runs all tests
-from an extracted sdist in a fresh virtual environment. It installs the wheel
-into another fresh environment for version, resource, console-script, and native
-extension checks. From outside the repository it then runs a real guarded Python
+The artifact validator checks both sdists against the current source tree and
+source-distribution policy, requires the native sdist's trusted-reader C source
+and header, rejects ignored files and stale compiled native binaries, and runs
+all tests with both extracted sdists installed in a fresh virtual environment.
+It installs both local wheels into another fresh environment for version,
+resource, console-script, and native extension checks. From outside the
+repository it then runs a real guarded Python
 script that opens a temporary WAL database through
 `TrustedLiveReaderSupervisor`. This exercises the installed package-level helper
 target with multiprocessing `spawn`, queries committed data while the writer
@@ -215,7 +225,7 @@ Before committing:
 2. Run `python -m mypy`.
 3. Run `python -m pytest`.
 4. Run `python scripts/manual_run.py` for application or GUI changes.
-5. Run `python -m build`, `python scripts/validate_distribution.py dist`, and
+5. Run `python -m build native --outdir dist`, `python -m build`, `python scripts/validate_distribution.py dist`, and
    `python -m twine check dist/*` for packaging or release changes.
 6. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or
    `docs/configuration.md` when the setup, workflow, module boundaries, or

@@ -1,11 +1,12 @@
 # Distribution
 
-This project currently targets source installs from GitHub. The packaging
-metadata in `pyproject.toml` is already usable for editable installs, direct
-Git installs, and local wheel builds.
+This repository builds two distributions: the pure-Python application
+`qcodes-plotter` at the root and `qcodes-plotter-native` in `native/`.
+Application imports remain `qplot`, and native imports use `qplot_native`.
+The distribution names are provisional.
 
 The authoritative package version is `project.version` in `pyproject.toml`.
-At runtime, `qplot.__version__` reads the installed package metadata through
+At runtime, `qplot.__version__` reads the installed `qcodes-plotter` metadata through
 `importlib.metadata`.
 
 ## Current Install Path
@@ -19,10 +20,17 @@ python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.
 Recommended development install:
 
 ```console
-python -m pip install -e ".[dev]"
+python -m pip install --only-binary qcodes-plotter-native --find-links dist -e ".[dev]"
 ```
 
-Both commands expose the `qplot`, `qplot-cfg`, and `qplot-generate-db` entry
+For this checkout, first obtain the compatible native platform wheel from the
+same release and place it in `dist/`. Install both release wheels together with
+`python -m pip install dist/*.whl`, or use the editable command above.
+No C compiler is needed to edit the application. Native contributors may instead
+run `python -m pip install ./native` using a C compiler. Historical release
+commands above use the packaging that existed at those tags.
+
+Application installs expose the `qplot`, `qplot-cfg`, and `qplot-generate-db` entry
 points.
 
 ## Current Beta
@@ -54,6 +62,7 @@ Build local release artifacts from a clean source tree with:
 
 ```console
 python scripts/validate_distribution.py --check-clean
+python -m build native --outdir dist
 python -m build
 ```
 
@@ -65,26 +74,31 @@ python scripts/validate_distribution.py dist
 python -m twine check dist/*
 ```
 
-For a platform job that intentionally builds only one wheel, use
+For a platform job that builds both wheels without sdists, use
 `python scripts/validate_distribution.py --wheel-only dist`; it performs the
-same wheel-content and installed-helper smoke checks without requiring an sdist.
+same wheel-content and installed-helper smoke checks without requiring sdists.
+Both local wheels are passed to pip in one command, so neither qPlot
+distribution is fetched from PyPI.
 
 The source distribution deliberately contains all source tests and fixtures,
 shared `tests/conftest.py`, project metadata, documentation, developer scripts,
-package source, schemas, CSV resources, and the trusted-reader C source and
-SQLite ABI header. Virtual environments, build output, caches, coverage output,
-bytecode, `.DS_Store`, and compiled `.so`, `.pyd`, `.dll`, and `.dylib` files are
-excluded. The artifact validator independently rejects those compiled files in
-an sdist, so every wheel must build the native extension from source.
+application source, schemas, and CSV resources. The separate native sdist
+contains its build metadata, package, C source, and SQLite ABI header. Virtual
+environments, build output, caches, coverage output, bytecode, `.DS_Store`, and
+compiled `.so`, `.pyd`, `.dll`, and `.dylib` files are excluded. The artifact
+validator independently rejects those compiled files in an sdist, so native
+wheels must build the extension from source.
 
-The Stage 2 trusted live reader adds the `cp311-abi3` native extension
-`qplot.datahandling._trusted_vfs_native`, so qPlot wheels are platform-specific.
-A source or Git install requires a C compiler suitable for its Python. The
-runtime dependency is the pinned APSW 3.53.4.0 build; CI requires its platform
-wheel rather than silently compiling an unreviewed substitute. The setuptools
-build selects C11 mode explicitly for MSVC while leaving Clang and GCC flags
-untouched, so the native source's compile-time ABI assertions remain active on
-Windows as well as POSIX builds.
+The native wheel contains the `cp311-abi3` extension
+`qplot_native._trusted_vfs_native` and is platform-specific. The application
+wheel is `py3-none-any`. The application requires exactly native version 1.0.0;
+both distributions pin APSW 3.53.4.0. Keep these dependencies, the validator's
+pins, and the Python/native SQLite 3.53.4 and source-ID checks coordinated.
+The reader also rejects an incompatible native distribution version, SQLite
+version, or VFS name before loading the extension. The C implementation and
+its database protections are unchanged. The setuptools native build selects
+C11 mode for MSVC and preserves `Py_LIMITED_API=0x030B0000`, `py_limited_api=True`,
+and the `cp311` wheel setting.
 
 The Stage 3 supervisor, protocol, and helper target are ordinary installed
 Python modules under `qplot.datahandling`. Setuptools package discovery includes
@@ -239,7 +253,7 @@ Before creating a tagged release:
 4. Run `python -m mypy`.
 5. Run `python -m pytest`.
 6. Run `python scripts/validate_distribution.py --check-clean`.
-7. Run `python -m build`.
+7. Run `python -m build native --outdir dist` and `python -m build`.
 8. Run `python scripts/validate_distribution.py dist`.
 9. Run `python -m twine check dist/*`.
 10. Confirm the validator ran the extracted sdist tests, the installed direct

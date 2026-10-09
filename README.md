@@ -14,10 +14,9 @@ QCoDeS-Plotter requires Python 3.11 or newer.
 Runtime dependencies are declared in `pyproject.toml` and are installed
 automatically when qPlot is installed.
 
-Development and Git installs of the current beta compile a small native module
-for trusted live QCoDeS access, so they also require a C compiler suitable for
-the selected Python. Release wheels include that module for their target
-platform.
+Application development and Git installs use a separately installed native
+platform wheel for trusted live QCoDeS access. A C compiler is required only
+when building the native distribution from source.
 
 Windows and macOS are the currently supported and GUI-tested desktop
 platforms. A source installation may work on Linux, but Linux is not currently
@@ -71,6 +70,23 @@ snapshots. Automatic trusted live
 previews and thumbnails are disabled until the Stage 5 scheduler and disk cache
 are implemented. See
 [Trusted live QCoDeS reader](docs/trusted-live-reader.md).
+
+## Packaging in this checkout
+
+The application distribution is `qcodes-plotter`; its Python imports and
+console commands remain `qplot`, `qplot-cfg`, and `qplot-generate-db`.
+The separately built `qcodes-plotter-native==1.0.0` supplies the protected
+SQLite reader through `qplot_native`. Install both local release wheels with
+`python -m pip install dist/*.whl`. Contributors with that native platform wheel
+in `dist/` can edit the application without a C compiler:
+
+```console
+python -m pip install --only-binary qcodes-plotter-native --find-links dist -e ".[dev]"
+```
+
+See [Contributing](CONTRIBUTING.md) and [Distribution](docs/distribution.md)
+for building and validating both distributions. Install commands for historical
+tags below retain those tags' original packaging.
 
 ## Install
 

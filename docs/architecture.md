@@ -3,6 +3,16 @@
 This document is a working map of the current codebase. It is intentionally
 short: update it when module responsibilities move.
 
+## Distributions
+
+The root `pyproject.toml` builds the pure-Python `qcodes-plotter` distribution
+from `src/qplot`. Its console commands and public `qplot` imports are unchanged.
+`native/pyproject.toml` and `native/setup.py` independently build
+`qcodes-plotter-native` from `native/src/qplot_native`, retaining the CPython
+3.11 stable ABI. The C source and SQLite ABI header live in that package.
+The application pins a compatible native version; `trusted_live.py` locates
+its extension and checks native metadata and the pinned APSW/SQLite runtime.
+
 ## Entry Points
 
 `src/qplot/__main__.py` defines the `qplot` command and `qplot.run()`. It creates
