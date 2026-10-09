@@ -5,6 +5,7 @@ This module keeps blocking database probes, cloud-file hydration, background
 load workers, and diagnostic report generation outside the GUI class.
 """
 
+import errno
 import json
 import os
 import queue
@@ -41,6 +42,7 @@ from qplot.datahandling.readSQL import (
 )
 from qplot.datahandling.trusted_live import (
     TrustedLiveReaderUnavailableError,
+    TrustedLiveSourceIOError,
     TrustedLiveUnsupportedSourceError,
 )
 from qplot.datahandling.trusted_live_queries import run_records_as_dict
@@ -1154,6 +1156,29 @@ class DatabaseLoadWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             if self._is_cancelled():
                 return
             log_exception("Database load worker failed", err, __name__)
+            provider = database_cloud_storage_label(self._read_database_path)
+            if (
+                    provider
+                    and (
+                        isinstance(err, (TrustedLiveSourceIOError, TimeoutError))
+                        or (
+                            isinstance(err, OSError)
+                            and err.errno in {errno.EIO, errno.ETIMEDOUT}
+                        )
+                    )
+                    ):
+                sync_app = provider if provider != "cloud storage" else "your cloud sync app"
+                err = RuntimeError(
+                    f"The database is stored in {provider}, and qPlot could not "
+                    "read it or its auxiliary files in time. The cloud sync "
+                    "app may not be running, or some files may not be "
+                    "available on this device.\n\n"
+                    f"Start or restart {sync_app}, check that it is signed in, "
+                    "and wait for the database folder to finish downloading. "
+                    "Mark the whole folder as always available on this device, "
+                    "then open the database again in qPlot.\n\n"
+                    f"Technical details: {err}"
+                )
             self._emit_finished({}, err)
             return
 
