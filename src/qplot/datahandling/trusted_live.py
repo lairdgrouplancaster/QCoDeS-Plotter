@@ -558,15 +558,15 @@ def _release_process_session(owner: object) -> None:
 
 def _native_extension_path() -> Path:
     try:
-        native_version = version("qcodes-plotter-native")
+        native_version = version("qplotter-native")
     except PackageNotFoundError as error:
         raise TrustedLiveReaderUnavailableError(
-            "qPlot requires qcodes-plotter-native=="
+            "qPlot requires qplotter-native=="
             f"{TRUSTED_READER_NATIVE_VERSION}; install its platform wheel."
         ) from error
     if native_version != TRUSTED_READER_NATIVE_VERSION:
         raise TrustedLiveReaderUnavailableError(
-            "qPlot requires qcodes-plotter-native=="
+            "qPlot requires qplotter-native=="
             f"{TRUSTED_READER_NATIVE_VERSION}; found {native_version}."
         )
     try:

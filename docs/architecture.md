@@ -5,10 +5,10 @@ short: update it when module responsibilities move.
 
 ## Distributions
 
-The root `pyproject.toml` builds the pure-Python `qcodes-plotter` distribution
+The root `pyproject.toml` builds the pure-Python `qplotter` distribution
 from `src/qplot`. Its console commands and public `qplot` imports are unchanged.
 `native/pyproject.toml` and `native/setup.py` independently build
-`qcodes-plotter-native` from `native/src/qplot_native`, retaining the CPython
+`qplotter-native` from `native/src/qplot_native`, retaining the CPython
 3.11 stable ABI. The C source and SQLite ABI header live in that package.
 The application pins a compatible native version; `trusted_live.py` locates
 its extension and checks native metadata and the pinned APSW/SQLite runtime.

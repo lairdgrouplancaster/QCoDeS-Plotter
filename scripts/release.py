@@ -27,7 +27,7 @@ else:
 
 REPOSITORY = "lairdgrouplancaster/QCoDeS-Plotter"
 PLATFORMS = ("linux-x86_64", "macos-arm64", "macos-intel", "windows-x64")
-PACKAGES = {"application": "qcodes-plotter", "native": "qcodes-plotter-native"}
+PACKAGES = {"application": "qplotter", "native": "qplotter-native"}
 
 
 def projects(repository: Path) -> dict:
@@ -36,7 +36,7 @@ def projects(repository: Path) -> dict:
     assert application["name"] == PACKAGES["application"]
     assert native["name"] == PACKAGES["native"]
     assert native["version"] == validator.PINNED_NATIVE_VERSION
-    assert f"qcodes-plotter-native=={native['version']}" in application["dependencies"]
+    assert f"qplotter-native=={native['version']}" in application["dependencies"]
     for project in (application, native):
         assert f"apsw=={validator.PINNED_APSW_VERSION}" in project["dependencies"]
         assert project["requires-python"] == ">=3.11"
@@ -57,7 +57,7 @@ def digest(path: Path) -> str:
 
 
 def native_platform(filename: str, version: str) -> str:
-    prefix = f"qcodes_plotter_native-{version}-cp311-abi3-"
+    prefix = f"qplotter_native-{version}-cp311-abi3-"
     assert filename.startswith(prefix) and filename.endswith(".whl"), filename
     tags = filename[len(prefix):-4].split(".")
     if tags == ["win_amd64"]:
@@ -108,10 +108,10 @@ def stage(repository: Path, artifacts: Path, output: Path, *, ref: str,
     native_version = metadata["native"]["version"]
     files = list(artifacts.iterdir())
     expected_application = {
-        f"qcodes_plotter-{application_version}-py3-none-any.whl",
-        f"qcodes_plotter-{application_version}.tar.gz",
+        f"qplotter-{application_version}-py3-none-any.whl",
+        f"qplotter-{application_version}.tar.gz",
     }
-    native_sdist = f"qcodes_plotter_native-{native_version}.tar.gz"
+    native_sdist = f"qplotter_native-{native_version}.tar.gz"
     grouped = {"application": [], "native": []}
     platforms = set()
     for path in files:
@@ -171,7 +171,7 @@ def verify_bundle(bundle: Path, *, revision: str, ref: str, run_id: str) -> dict
     else:
         version = receipt["version"]
         assert set(receipt["files"]) == {
-            f"qcodes_plotter-{version}-py3-none-any.whl", f"qcodes_plotter-{version}.tar.gz",
+            f"qplotter-{version}-py3-none-any.whl", f"qplotter-{version}.tar.gz",
         }
     return receipt
 
@@ -184,6 +184,20 @@ def read_url(url: str) -> bytes:
         final = urllib.parse.urlsplit(response.url)
         assert final.scheme == "https" and final.hostname in {"pypi.org", "files.pythonhosted.org"}
         return response.read()
+
+
+def select_platform(bundle: Path, platform: str, output: Path, **identity: str) -> None:
+    """Select comparison receipts, never installation inputs, for public checks."""
+    assert platform in PLATFORMS
+    application = verify_bundle(bundle / "application", **identity)
+    native = verify_bundle(bundle / "native", **identity)
+    assert not output.exists(), "platform selection requires an empty destination"
+    output.mkdir(parents=True)
+    app = next(name for name in application["files"] if name.endswith(".whl"))
+    extension = next(name for name in native["files"]
+                     if native_platform(name, native["version"]) == platform)
+    for package, name in (("application", app), ("native", extension)):
+        shutil.copyfile(bundle / package / "dist" / name, output / name)
 
 
 def release_files(package: str, version: str) -> list[dict]:
@@ -213,7 +227,7 @@ def download_file(item: dict, destination: Path) -> None:
 
 
 def fetch_native(repository: Path, platform: str, output: Path, *, from_index: bool = False) -> None:
-    platform = platform.removeprefix("qplot-native-")
+    platform = platform.removeprefix("qplotter-native-")
     assert platform in PLATFORMS
     native = projects(repository)["native"]
     files = published_native_files(native["version"])
@@ -230,7 +244,7 @@ def fetch_native(repository: Path, platform: str, output: Path, *, from_index: b
             "--no-cache-dir", "--no-deps", "--index-url", "https://pypi.org/simple",
             "--platform", wheel_platform, "--implementation", "cp",
             "--python-version", "3.11", "--abi", "abi3", "--dest", str(output.resolve()),
-            f"qcodes-plotter-native=={native['version']}",
+            f"qplotter-native=={native['version']}",
         ], check=True, cwd=output, env=env)
         assert {file.name for file in output.glob("*.whl")} == {item["filename"]}
         assert path.stat().st_size == item["size"]
@@ -284,6 +298,10 @@ def main() -> None:
     fetch_parser.add_argument("--outdir", type=Path, required=True)
     fetch_parser.add_argument("--from-index", action="store_true",
                               help="also verify pip resolves the pinned wheel through PyPI's simple index")
+    select = commands.add_parser("select-platform")
+    select.add_argument("--bundle", type=Path, required=True)
+    select.add_argument("--platform", required=True, choices=PLATFORMS)
+    select.add_argument("--outdir", type=Path, required=True)
     for command in ("verify-bundle", "verify-pypi"):
         check = commands.add_parser(command)
         check.add_argument("bundle", type=Path)
@@ -304,6 +322,8 @@ def main() -> None:
                         run_id=os.environ["GITHUB_RUN_ID"])
         if args.command == "stage":
             stage(repository, args.artifacts, args.outdir, **identity)
+        elif args.command == "select-platform":
+            select_platform(args.bundle, args.platform, args.outdir, **identity)
         else:
             receipt = verify_bundle(args.bundle, **identity)
             if args.command == "verify-pypi":

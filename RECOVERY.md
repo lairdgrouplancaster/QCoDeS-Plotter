@@ -17,7 +17,7 @@ environment and run:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-python -m pip install --only-binary qcodes-plotter-native --find-links dist -e ".[dev]"
+python -m pip install --only-binary qplotter-native --find-links dist -e ".[dev]"
 qplot
 ```
 
@@ -25,7 +25,7 @@ On macOS, from the repository root:
 
 ```sh
 source .venv-mac/bin/activate
-MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache python -m pip install --only-binary qcodes-plotter-native --find-links dist -e ".[dev]"
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache python -m pip install --only-binary qplotter-native --find-links dist -e ".[dev]"
 MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache qplot
 ```
 

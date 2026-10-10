@@ -1,17 +1,20 @@
 # Distribution
 
 This repository builds two distributions: the pure-Python application
-`qcodes-plotter` at the root and `qcodes-plotter-native` in `native/`.
+`qplotter` at the root and `qplotter-native` in `native/`.
 Application imports remain `qplot`, and native imports use `qplot_native`.
-These are the proposed PyPI names. On 2026-10-10 both canonical project JSON
-endpoints returned HTTP 404: [application](https://pypi.org/pypi/qcodes-plotter/json)
-and [native](https://pypi.org/pypi/qcodes-plotter-native/json). No existing PyPI
-project conflict was found. PyPI normalizes case and punctuation, so spellings
-such as `qcodes_plotter` refer to the same name. A 404 does not reserve a name
-or guarantee PyPI will accept it; register the pending publishers before release.
+These are the final distribution names. On 2026-10-10 both canonical project JSON
+endpoints returned HTTP 404: [application](https://pypi.org/pypi/qplotter/json)
+and [native](https://pypi.org/pypi/qplotter-native/json). No existing PyPI
+project conflict was found. A 404 does not prove name eligibility or ownership:
+pending publishers and account/project permissions are private. Confirm them in
+the release owner's authenticated PyPI account before release. No PyPI account
+connector is available in this workspace. The public GitHub environments API
+also reported no environments; create both protected publishing environments
+described below before triggering publication.
 
 The authoritative package version is `project.version` in `pyproject.toml`.
-At runtime, `qplot.__version__` reads the installed `qcodes-plotter` metadata through
+At runtime, `qplot.__version__` reads the installed `qplotter` metadata through
 `importlib.metadata`.
 
 ## Ordinary installation
@@ -20,14 +23,14 @@ After a stable split release is published, install inside a supported Python
 virtual environment with:
 
 ```console
-python -m pip install --only-binary=:all: qcodes-plotter
+python -m pip install --only-binary=:all: qplotter
 ```
 
 The first prepared application release is the beta `1.6.0b2`, with exact native
 dependency `1.0.0`. Once published, install that prerelease explicitly:
 
 ```console
-python -m pip install --only-binary=:all: qcodes-plotter==1.6.0b2
+python -m pip install --only-binary=:all: qplotter==1.6.0b2
 ```
 
 The application installs its native dependency and all runtime dependencies
@@ -42,7 +45,7 @@ wheel paths from this revision's validated artifacts together. For example,
 on Windows x64 (replace the application version when appropriate):
 
 ```console
-python -m pip install --only-binary=:all: dist/qcodes_plotter_native-1.0.0-cp311-abi3-win_amd64.whl dist/qcodes_plotter-1.6.0b2-py3-none-any.whl
+python -m pip install --only-binary=:all: dist/qplotter_native-1.0.0-cp311-abi3-win_amd64.whl dist/qplotter-1.6.0b2-py3-none-any.whl
 ```
 
 Use your platform's native filename on macOS/Linux. Never mix artifacts from
@@ -68,15 +71,15 @@ or rebuilding native code. All runtime and development dependencies are wheels.
 ## Replacing the old distribution
 
 Historical tags installed a distribution named `qplot`. That distribution and
-`qcodes-plotter` own the same Python package and commands, so they must never
+`qplotter` own the same Python package and commands, so they must never
 coexist. Prefer a fresh venv. When reusing a venv, close qPlot and uninstall both
 application names before installing the replacement:
 
 ```console
-python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native
-python -m pip install --only-binary=:all: qcodes-plotter==1.6.0b2
+python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
+python -m pip install --only-binary=:all: qplotter==1.6.0b2
 python -m pip check
-python -c "from importlib.metadata import packages_distributions; p = packages_distributions(); assert p['qplot'] == ['qcodes-plotter']; assert p['qplot_native'] == ['qcodes-plotter-native']"
+python -c "from importlib.metadata import packages_distributions; p = packages_distributions(); assert p['qplot'] == ['qplotter']; assert p['qplot_native'] == ['qplotter-native']"
 ```
 
 If both names were previously installed, removing the old one can delete shared
@@ -114,7 +117,7 @@ python -m pytest --no-cov tests/datahandling/test_trusted_live.py tests/datahand
 ```
 
 Native source archives are built/validated in CI and retained in its
-`qplot-native-linux-x86_64` artifact, but never uploaded to PyPI. Building an
+`qplotter-native-linux-x86_64` artifact, but never uploaded to PyPI. Building an
 explicit archive path with `python -m pip install --only-binary apsw <native-sdist-path>`
 is also a developer-only source build. See
 [CONTRIBUTING](../CONTRIBUTING.md#native-development-explicit-compiler-workflow)
@@ -408,6 +411,24 @@ Only success unlocks application publication; a final job verifies the
 published application files against the validated hashes. Application-only
 releases pass the same native verification gate without a native upload.
 
+After application publication and byte verification, `public-installations`
+runs on all four platforms and every advertised CPython version (3.11–3.14).
+Each entry creates two fresh environments outside the original checkout.
+The ordinary path runs `python -m pip install --only-binary=:all:
+qplotter==1.6.0b2` against the public PyPI index with all runtime dependencies.
+The editable path fetches the exact tested commit into a fresh checkout and
+installs `.[dev]` with `qplotter-native==1.0.0` resolved from public PyPI.
+Neither path installs a local release wheel; the validated artifacts are only
+comparison receipts for the pip report and installed-file hashes. All runtime
+and development dependencies must resolve to public wheels. Both paths disable
+caches, reject compiler invocation, check version reporting and console commands,
+start the real qPlot GUI, and exercise trusted live reading and database/writer
+protections. Editable acceptance additionally observes a Python edit without
+reinstalling and checks that the native binary's bytes, identity and timestamp
+remain unchanged. Windows uses the standard-user wrapper for both paths.
+Publication is irreversible; failures in these post-publication checks must
+be reported and fixed in a new release, rather than described as acceptance.
+
 ### One-time account configuration
 
 These settings must be created in the account/repository UIs before a release;
@@ -424,7 +445,7 @@ and [pending-publisher instructions](https://docs.pypi.org/trusted-publishers/cr
 
    | Field | Native publisher | Application publisher |
    | --- | --- | --- |
-   | PyPI project name | `qcodes-plotter-native` | `qcodes-plotter` |
+   | PyPI project name | `qplotter-native` | `qplotter` |
    | GitHub owner | `lairdgrouplancaster` | `lairdgrouplancaster` |
    | Repository | `QCoDeS-Plotter` | `QCoDeS-Plotter` |
    | Workflow filename | `release.yml` | `release.yml` |
@@ -470,7 +491,7 @@ Use the activated project venv for Python; on macOS set
 import Matplotlib. The tag push is the publication trigger. Review its hosted
 CI results, then approve the `pypi-native` environment. Confirm native
 verification succeeds before approving `pypi-application`. The final PyPI
-verification job must succeed before announcing the release. No GitHub Release
+verification and all `public-installations` jobs must succeed before announcing the release. No GitHub Release
 object is needed to trigger publication; use the connected GitHub app for any
 subsequent release/PR operations if supported, never `gh`.
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -95,10 +97,9 @@ def compiler_free_environment(temporary: Path) -> tuple[dict[str, str], Path]:
             path.write_text('#!/bin/sh\nprintf "%s\\n" "$0" >> "$QPLOT_COMPILER_LOG"\nexit 86\n')
             path.chmod(0o755)
     env = os.environ.copy()
-    for key in ('PYTHONPATH', 'PYTHONHOME', 'PIP_TARGET', 'PIP_PREFIX', 'PIP_USER',
-                'PIP_FIND_LINKS', 'PIP_CONSTRAINT', 'PIP_BUILD_CONSTRAINT',
-                'PIP_NO_BUILD_ISOLATION'):
-        env.pop(key, None)
+    for key in list(env):
+        if key.startswith('PIP_') or key in ('PYTHONPATH', 'PYTHONHOME'):
+            env.pop(key, None)
     env.update(
         QPLOT_COMPILER_LOG=str(log), PIP_NO_CACHE_DIR='1', UV_NO_CACHE='1',
         PIP_CACHE_DIR=str(temporary / 'unused-pip-cache'),
@@ -157,14 +158,22 @@ else:
 
 
 def installation_command(python: Path, app: Path, native: Path, report: Path,
-                         *, editable: bool) -> list[str]:
+                         *, editable: bool, public_version: str | None = None) -> list[str]:
     command = [str(python), '-m', 'pip', 'install', '--only-binary=:all:',
-               '--no-cache-dir', '--report', str(report), str(native.resolve())]
+               '--no-cache-dir', '--report', str(report)]
+    if public_version is not None:
+        command += ['--index-url', 'https://pypi.org/simple']
+        if not editable:
+            return command + [f'qplotter=={public_version}']
+        command += [f'qplotter-native=={validator.PINNED_NATIVE_VERSION}']
+    else:
+        command += [str(native.resolve())]
     command += ['--editable', f'{app.resolve()}[dev]'] if editable else [str(app.resolve())]
     return command
 
 
-def validate_install_report(report: Path, *, editable: bool) -> None:
+def validate_install_report(report: Path, *, editable: bool,
+                            public_artifacts: dict[str, Path] | None = None) -> None:
     """Every resolved runtime/dev dependency must have come from a wheel."""
     installed = json.loads(report.read_text())['install']
     names = set()
@@ -172,14 +181,23 @@ def validate_install_report(report: Path, *, editable: bool) -> None:
         name = item['metadata']['name'].lower().replace('_', '-')
         names.add(name)
         info = item['download_info']
-        if editable and name == 'qcodes-plotter':
+        if editable and name == 'qplotter':
             assert info.get('dir_info', {}).get('editable') is True, info
         else:
             assert urlparse(info['url']).path.endswith('.whl'), info
-        if name in ('qcodes-plotter', 'qcodes-plotter-native'):
+        if public_artifacts is not None and not (editable and name == 'qplotter'):
+            url = urlparse(info['url'])
+            assert url.scheme == 'https' and url.hostname == 'files.pythonhosted.org', info
+            assert item['is_direct'] is False, item
+            if name in ('qplotter', 'qplotter-native'):
+                wheel = public_artifacts[name.replace('-', '_') + '_wheel']
+                assert Path(url.path).name == wheel.name, info
+                expected = hashlib.sha256(wheel.read_bytes()).hexdigest()
+                assert info['archive_info']['hashes']['sha256'] == expected, info
+        elif name in ('qplotter', 'qplotter-native'):
             assert item['is_direct'] is True, item
             assert urlparse(info['url']).scheme == 'file', info
-    assert {'qcodes-plotter', 'qcodes-plotter-native', 'apsw'} <= names, names
+    assert {'qplotter', 'qplotter-native', 'apsw'} <= names, names
     if editable:
         assert {'pytest', 'ruff', 'mypy', 'build', 'twine'} <= names, names
     print(f'{len(names)} packages resolved; all dependencies are wheels.', flush=True)
@@ -206,7 +224,7 @@ import qplot
 
 source = Path({str(source.resolve())!r})
 assert Path(qplot.__file__).resolve() == source / 'src/qplot/__init__.py'
-direct = json.loads(distribution('qcodes-plotter').read_text('direct_url.json'))
+direct = json.loads(distribution('qplotter').read_text('direct_url.json'))
 assert direct['dir_info']['editable'] is True, direct
 assert Path(url2pathname(urlparse(direct['url']).path)).resolve() == source, direct
 print('Application imports resolve to the PEP 660 editable source.')
@@ -287,17 +305,31 @@ def start_qplot(environment: Path, temporary: Path, env: dict[str, str]) -> None
 
 
 def accept_installation(repository: Path, artifacts: dict[str, Path],
-                        temporary: Path, *, editable: bool) -> None:
+                        temporary: Path, *, editable: bool, public_pypi: bool = False) -> None:
     assert not temporary.resolve().is_relative_to(repository.resolve())
-    app_wheel = artifacts['qcodes_plotter_wheel']
-    native = artifacts['qcodes_plotter_native_wheel']
+    app_wheel = artifacts['qplotter_wheel']
+    native = artifacts['qplotter_native_wheel']
     source_inventory = validator.source_files(repository)
     runtime = validator.validate_wheel(app_wheel, source_inventory)
     validator.validate_wheel(native, source_inventory, native=True)
     if editable:
-        sdist = artifacts['qcodes_plotter_sdist']
-        validator.validate_sdist(sdist, source_inventory)
-        app = validator.extract_sdist(sdist, temporary / 'editable-source')
+        if public_pypi:
+            # Fetch only the tested revision into a new checkout outside the
+            # runner's original checkout, without reusing its working files.
+            app = temporary / 'fresh-checkout'
+            revision = subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], cwd=repository, text=True,
+            ).strip()
+            validator.run(['git', 'init', str(app)])
+            validator.run(['git', 'fetch', '--depth', '1', str(repository), revision], cwd=app)
+            validator.run(['git', 'checkout', '--detach', 'FETCH_HEAD'], cwd=app)
+            assert subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], cwd=app, text=True,
+            ).strip() == revision
+        else:
+            sdist = artifacts['qplotter_sdist']
+            validator.validate_sdist(sdist, source_inventory)
+            app = validator.extract_sdist(sdist, temporary / 'editable-source')
     else:
         app = app_wheel
     environment = temporary / 'venv'
@@ -306,10 +338,20 @@ def accept_installation(repository: Path, artifacts: dict[str, Path],
     install_compiler_audit_guard(python, env)
     baseline = verify_compilers_disabled(python, env, log)
     report = temporary / 'install-report.json'
-    validator.run(installation_command(python, app, native, report, editable=editable),
+    version = tomllib.loads((repository / 'pyproject.toml').read_text())['project']['version']
+    assert app_wheel.name.startswith(f'qplotter-{version}-'), app_wheel
+    validator.run(installation_command(python, app, native, report, editable=editable,
+                                      public_version=version if public_pypi else None),
                   cwd=temporary, env=env)
-    validate_install_report(report, editable=editable)
+    validate_install_report(report, editable=editable,
+                            public_artifacts=artifacts if public_pypi else None)
     validator.run([str(python), '-m', 'pip', 'check'], cwd=temporary, env=env)
+    reported_version = subprocess.check_output(
+        [str(validator.console_script(environment, 'qplot-cfg')), '-version'],
+        cwd=temporary, env=env, text=True, timeout=30,
+    ).strip()
+    assert reported_version == version, (reported_version, version)
+    print(f'Installed qplot-cfg reports {version}.', flush=True)
     audit = validator.wheel_installation_audit_code([native] if editable else [app_wheel, native])
     if editable:
         audit += editable_audit_code(app)
@@ -344,20 +386,23 @@ else:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mode', required=True, choices=('wheel', 'editable'))
+    parser.add_argument('--public-pypi', action='store_true',
+                        help='Resolve the exact release from public PyPI; editable uses a fresh checkout')
     parser.add_argument('artifacts', nargs='+', type=Path)
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     artifacts = validator.find_artifacts(args.artifacts, wheel_only=True)
-    if args.mode == 'editable':
+    if args.mode == 'editable' and not args.public_pypi:
         # The app sdist comes from this run's single application build; a native
         # sdist is deliberately unnecessary and is never installed here.
         paths = [file for path in args.artifacts
-                 for file in (path.glob('qcodes_plotter-*.tar.gz') if path.is_dir() else [path])
-                 if file.name.startswith('qcodes_plotter-') and file.name.endswith('.tar.gz')]
+                 for file in (path.glob('qplotter-*.tar.gz') if path.is_dir() else [path])
+                 if file.name.startswith('qplotter-') and file.name.endswith('.tar.gz')]
         assert len(paths) == 1, paths
-        artifacts['qcodes_plotter_sdist'] = paths[0]
+        artifacts['qplotter_sdist'] = paths[0]
     with tempfile.TemporaryDirectory(prefix=f'qplot-compiler-free-{args.mode}-') as name:
-        accept_installation(repository, artifacts, Path(name), editable=args.mode == 'editable')
+        accept_installation(repository, artifacts, Path(name), editable=args.mode == 'editable',
+                            public_pypi=args.public_pypi)
     return 0
 
 

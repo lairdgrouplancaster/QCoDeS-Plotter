@@ -147,7 +147,7 @@ def ignored_member(path: str) -> bool:
     parts = PurePosixPath(path).parts
     setuptools_inventory = any(
         path.endswith(f"src/{name}.egg-info/SOURCES.txt")
-        for name in ("qcodes_plotter", "qcodes_plotter_native")
+        for name in ("qplotter", "qplotter_native")
     )
     for part in parts:
         if part in IGNORED_DIRECTORY_NAMES:
@@ -244,7 +244,7 @@ def validate_wheel(
     members = archive_files(artifact)
     assert_no_ignored_members(artifact, members)
     package = "qplot_native" if native else "qplot"
-    distribution_name = "qcodes-plotter-native" if native else "qcodes-plotter"
+    distribution_name = "qplotter-native" if native else "qplotter"
     actual_runtime = {path for path in members if path.startswith(f"{package}/")}
     native_members = actual_runtime & NATIVE_EXTENSION_MEMBERS
     if native and len(native_members) != 1:
@@ -285,7 +285,7 @@ def validate_wheel(
         if native:
             assert metadata["Version"] == PINNED_NATIVE_VERSION
         else:
-            assert f"qcodes-plotter-native=={PINNED_NATIVE_VERSION}" in requirements
+            assert f"qplotter-native=={PINNED_NATIVE_VERSION}" in requirements
         wheel_path = metadata_paths[0].removesuffix("METADATA") + "WHEEL"
         wheel_metadata = Parser().parsestr(archive.read(wheel_path).decode())
         assert wheel_metadata["Root-Is-Purelib"] == ("false" if native else "true")
@@ -345,7 +345,7 @@ def wheel_installation_audit_code(artifacts: list[Path]) -> str:
                 name for name in archive.namelist() if name.endswith('.dist-info/METADATA')
             )
             metadata = Parser().parsestr(archive.read(metadata_path).decode())
-            package = 'qplot_native' if metadata['Name'] == 'qcodes-plotter-native' else 'qplot'
+            package = 'qplot_native' if metadata['Name'] == 'qplotter-native' else 'qplot'
             expected[metadata['Name']] = {
                 'version': metadata['Version'],
                 'package': package,
@@ -1952,7 +1952,7 @@ def assert_installed_package():
     expected_apsw_version = sys.argv[4]
     native_module_name = sys.argv[5]
     native_file_names = set(json.loads(sys.argv[6]))
-    assert qplot.__version__ == expected_version == version("qcodes-plotter")
+    assert qplot.__version__ == expected_version == version("qplotter")
     assert shutdown_supervisor.ShutdownSupervisorClient.__module__ == (
         "qplot._shutdown_supervisor"
     )
@@ -1968,7 +1968,7 @@ def assert_installed_package():
     assert TrustedSnapshotOmission.__module__ == (
         "qplot.datahandling.trusted_snapshot"
     )
-    assert version("qcodes-plotter-native") == sys.argv[7]
+    assert version("qplotter-native") == sys.argv[7]
     assert version("apsw") == expected_apsw_version
     assert apsw.apsw_version() == expected_apsw_version
     native_module = importlib.import_module(native_module_name)
@@ -1981,11 +1981,11 @@ def assert_installed_package():
         assert resource.read_bytes(), resource_path
     scripts = {
         entry.name: entry.value
-        for entry in distribution("qcodes-plotter").entry_points
+        for entry in distribution("qplotter").entry_points
         if entry.group == "console_scripts"
     }
     assert scripts == expected_scripts
-    for entry in distribution("qcodes-plotter").entry_points:
+    for entry in distribution("qplotter").entry_points:
         if entry.group == "console_scripts":
             assert callable(entry.load()), entry.name
 
@@ -3725,7 +3725,7 @@ def find_artifacts(paths: list[Path], *, wheel_only: bool = False) -> dict[str, 
         else:
             artifacts.add(path)
     result = {}
-    for name in ("qcodes_plotter", "qcodes_plotter_native"):
+    for name in ("qplotter", "qplotter_native"):
         for kind, suffix in (("wheel", ".whl"), ("sdist", ".tar.gz")):
             if wheel_only and kind == "sdist":
                 continue
@@ -3790,8 +3790,8 @@ def main() -> int:
         artifacts = find_artifacts(
             args.artifacts, wheel_only=args.wheel_only or args.install_only,
         )
-        wheel = artifacts["qcodes_plotter_wheel"]
-        native_wheel = artifacts["qcodes_plotter_native_wheel"]
+        wheel = artifacts["qplotter_wheel"]
+        native_wheel = artifacts["qplotter_native_wheel"]
         runtime_files = validate_wheel(wheel, source)
         validate_wheel(native_wheel, source, native=True)
         if args.install_only:
@@ -3808,8 +3808,8 @@ def main() -> int:
             run([sys.executable, "-I", str(audit_path.resolve())])
             return 0
         if not args.wheel_only:
-            sdist = artifacts["qcodes_plotter_sdist"]
-            native_sdist = artifacts["qcodes_plotter_native_sdist"]
+            sdist = artifacts["qplotter_sdist"]
+            native_sdist = artifacts["qplotter_native_sdist"]
             validate_sdist(sdist, source)
             validate_sdist(native_sdist, source, native=True)
             test_extracted_sdist(sdist.resolve(), native_sdist.resolve(), temporary)

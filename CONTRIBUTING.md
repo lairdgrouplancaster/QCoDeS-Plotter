@@ -51,8 +51,8 @@ Native wheels cover Windows x64, macOS ARM64/Intel and glibc Linux x86_64.
 Linux is exercised in headless CI; Windows and macOS are supported desktop
 platforms. See the [platform matrix](docs/distribution.md#supported-platforms).
 
-The root distribution `qcodes-plotter` is pure Python. Install the compatible
-`qcodes-plotter-native==1.0.0` platform wheel with the application in editable
+The root distribution `qplotter` is pure Python. Install the compatible
+`qplotter-native==1.0.0` platform wheel with the application in editable
 mode. After the native release is on PyPI, no separate download is needed:
 
 ```console

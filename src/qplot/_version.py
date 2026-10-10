@@ -7,6 +7,6 @@ def package_version():
 
     """
     try:
-        return version("qcodes-plotter")
+        return version("qplotter")
     except PackageNotFoundError:
         return "0+unknown"

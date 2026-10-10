@@ -6,4 +6,5 @@ include src/qplot_native/__init__.py
 include src/qplot_native/_trusted_vfs_native.c
 include src/qplot_native/_trusted_vfs_sqlite_abi.h
 prune src/qcodes_plotter_native.egg-info
+prune src/qplotter_native.egg-info
 global-exclude *.py[cod] *.so *.pyd *.dll *.dylib .DS_Store

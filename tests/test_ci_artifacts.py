@@ -27,7 +27,7 @@ def test_application_wheel_is_built_once_and_consumed_by_all_jobs(workflow):
         job = text.split(f'  {name}:\n', 1)[1].split('\n  required-checks:', 1)[0]
         job = re.split(r'\n  [a-z-]+:\n', job, maxsplit=1)[0]
         assert 'needs: [application-artifacts, native-wheels]' in job
-        assert 'name: qplot-application' in job
+        assert 'name: qplotter-application' in job
         assert 'Download matching native artifacts from this revision' in job
         # Never select another run/branch's artifacts.
         assert 'run-id:' not in job and 'github-token:' not in job

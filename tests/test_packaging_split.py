@@ -10,12 +10,12 @@ from qplot.datahandling import trusted_live
 
 
 def test_application_pins_native_and_apsw_together():
-    requirements = distribution("qcodes-plotter").requires
-    assert f"qcodes-plotter-native=={trusted_live.TRUSTED_READER_NATIVE_VERSION}" in requirements
+    requirements = distribution("qplotter").requires
+    assert f"qplotter-native=={trusted_live.TRUSTED_READER_NATIVE_VERSION}" in requirements
     apsw_pin = f"apsw=={trusted_live.TRUSTED_READER_APSW_VERSION}"
     assert apsw_pin in requirements
-    assert apsw_pin in distribution("qcodes-plotter-native").requires
-    assert version("qcodes-plotter-native") == trusted_live.TRUSTED_READER_NATIVE_VERSION
+    assert apsw_pin in distribution("qplotter-native").requires
+    assert version("qplotter-native") == trusted_live.TRUSTED_READER_NATIVE_VERSION
 
 
 def test_native_extension_is_located_in_separate_import_package():
@@ -28,7 +28,7 @@ def test_native_extension_is_located_in_separate_import_package():
 @pytest.mark.parametrize("installed_version", [None, "0.9.0", "1.0.1"])
 def test_native_missing_or_wrong_version_fails_before_import(monkeypatch, installed_version):
     def metadata_version(name):
-        assert name == "qcodes-plotter-native"
+        assert name == "qplotter-native"
         if installed_version is None:
             raise PackageNotFoundError(name)
         return installed_version
@@ -38,7 +38,7 @@ def test_native_missing_or_wrong_version_fails_before_import(monkeypatch, instal
 
     monkeypatch.setattr(trusted_live, "version", metadata_version)
     monkeypatch.setattr(trusted_live.importlib, "import_module", forbidden_import)
-    with pytest.raises(trusted_live.TrustedLiveReaderUnavailableError, match="qcodes-plotter-native=="):
+    with pytest.raises(trusted_live.TrustedLiveReaderUnavailableError, match="qplotter-native=="):
         trusted_live._native_extension_path()
 
 

@@ -1,6 +1,7 @@
 """Acceptance checks must prove binary dependencies and compiler rejection."""
 
 import ast
+import hashlib
 import json
 import os
 import subprocess
@@ -29,19 +30,72 @@ def test_install_resolves_every_dependency_as_binary_without_cache(tmp_path, edi
         assert command[-1] == str((tmp_path / 'app').resolve())
 
 
+@pytest.mark.parametrize('editable', [False, True])
+def test_public_install_uses_exact_index_versions_and_no_local_native(tmp_path, editable):
+    command = acceptance.installation_command(
+        tmp_path / 'python', tmp_path / 'fresh-checkout', tmp_path / 'native.whl',
+        tmp_path / 'report.json', editable=editable, public_version='1.6.0b2',
+    )
+    assert '--only-binary=:all:' in command and '--no-cache-dir' in command
+    assert '--no-deps' not in command
+    assert command[command.index('--index-url') + 1] == 'https://pypi.org/simple'
+    assert str((tmp_path / 'native.whl').resolve()) not in command
+    if editable:
+        assert 'qplotter-native==1.0.0' in command
+        assert command[-2:] == ['--editable', str((tmp_path / 'fresh-checkout').resolve()) + '[dev]']
+    else:
+        assert command[-1] == 'qplotter==1.6.0b2'
+
+
+@pytest.mark.parametrize('editable', [False, True])
+@pytest.mark.parametrize('fault', [None, 'old-native', 'wrong-bytes', 'private-index'])
+def test_public_report_requires_validated_wheels_from_public_pypi(tmp_path, editable, fault):
+    report = install_report(tmp_path, editable=editable)
+    data = json.loads(report.read_text())
+    artifacts = {}
+    for name in ('qplotter', 'qplotter-native'):
+        wheel = tmp_path / (name.replace('-', '_') + '-validated.whl')
+        wheel.write_bytes(name.encode())
+        artifacts[name.replace('-', '_') + '_wheel'] = wheel
+    for item in data['install']:
+        name = item['metadata']['name']
+        if editable and name == 'qplotter':
+            continue
+        info = item['download_info']
+        info['url'] = 'https://files.pythonhosted.org/' + name + '.whl'
+        item['is_direct'] = False
+        if name.startswith('qplotter'):
+            wheel = artifacts[name.replace('-', '_') + '_wheel']
+            info['url'] = 'https://files.pythonhosted.org/' + wheel.name
+            info['archive_info'] = {'hashes': {'sha256': hashlib.sha256(wheel.read_bytes()).hexdigest()}}
+        if name == 'qplotter-native':
+            if fault == 'old-native':
+                info['url'] = 'https://files.pythonhosted.org/older-native.whl'
+            elif fault == 'wrong-bytes':
+                info['archive_info']['hashes']['sha256'] = '0' * 64
+            elif fault == 'private-index':
+                info['url'] = info['url'].replace('files.pythonhosted.org', 'private.example')
+    report.write_text(json.dumps(data))
+    if fault:
+        with pytest.raises(AssertionError):
+            acceptance.validate_install_report(report, editable=editable, public_artifacts=artifacts)
+    else:
+        acceptance.validate_install_report(report, editable=editable, public_artifacts=artifacts)
+
+
 def install_report(tmp_path, *, editable, fault=None):
-    names = ['qcodes-plotter', 'qcodes-plotter-native', 'apsw', 'numpy']
+    names = ['qplotter', 'qplotter-native', 'apsw', 'numpy']
     if editable:
         names += ['pytest', 'ruff', 'mypy', 'build', 'twine']
     items = []
     for name in names:
-        project = name.startswith('qcodes-plotter')
+        project = name.startswith('qplotter')
         info = {'url': f'{"file:///artifacts" if project else "https://pypi.example"}/{name}.whl'}
-        if editable and name == 'qcodes-plotter':
+        if editable and name == 'qplotter':
             info = {'url': 'file:///editable-source', 'dir_info': {'editable': True}}
         if name == 'numpy' and fault == 'source-dependency':
             info['url'] = 'https://pypi.example/numpy.tar.gz'
-        if name == 'qcodes-plotter-native' and fault == 'index-native':
+        if name == 'qplotter-native' and fault == 'index-native':
             info['url'] = 'https://pypi.example/native.whl'
         items.append({'metadata': {'name': name}, 'download_info': info, 'is_direct': project})
     report = tmp_path / 'report.json'

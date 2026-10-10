@@ -388,7 +388,7 @@ PACKAGING_SOURCE = {
 
 
 def _split_wheel(tmp_path, *, native=False, extra_files=(), native_pin="1.0.0"):
-    name = "qcodes_plotter_native" if native else "qcodes_plotter"
+    name = "qplotter_native" if native else "qplotter"
     version = "1.0.0" if native else "1.6.0b2"
     tag = "cp311-abi3-test_platform" if native else "py3-none-any"
     artifact = tmp_path / f"{name}-{version}-{tag}.whl"
@@ -398,7 +398,7 @@ def _split_wheel(tmp_path, *, native=False, extra_files=(), native_pin="1.0.0"):
         "Requires-Dist: apsw==3.53.4.0\n"
     )
     if not native:
-        metadata += f"Requires-Dist: qcodes-plotter-native=={native_pin}\n"
+        metadata += f"Requires-Dist: qplotter-native=={native_pin}\n"
     with zipfile.ZipFile(artifact, "w") as archive:
         archive.writestr(f"{info}/METADATA", metadata)
         archive.writestr(
@@ -420,8 +420,8 @@ def test_validator_accepts_both_split_wheels(tmp_path):
     assert validate_wheel(app, PACKAGING_SOURCE) == {"qplot/__init__.py"}
     assert "qplot_native/__init__.py" in validate_wheel(native, PACKAGING_SOURCE, native=True)
     assert find_artifacts([tmp_path], wheel_only=True) == {
-        "qcodes_plotter_wheel": app,
-        "qcodes_plotter_native_wheel": native,
+        "qplotter_wheel": app,
+        "qplotter_native_wheel": native,
     }
 
 
@@ -444,7 +444,7 @@ def test_validator_rejects_incompatible_native_dependency(tmp_path):
 
 def test_validator_requires_both_local_wheels(tmp_path):
     _split_wheel(tmp_path)
-    with pytest.raises(AssertionError, match="qcodes_plotter_native wheel"):
+    with pytest.raises(AssertionError, match="qplotter_native wheel"):
         find_artifacts([tmp_path], wheel_only=True)
 
 
@@ -500,8 +500,8 @@ def test_import_audit_detects_stale_files_and_shadow_packages(tmp_path, monkeypa
         module_paths['qplot'] = tmp_path / 'checkout/qplot/__init__.py'
 
     def installed_distribution(name):
-        version = '1.0.0' if name == 'qcodes-plotter-native' else '1.6.0b2'
-        if fault == 'old-version' and name == 'qcodes-plotter-native':
+        version = '1.0.0' if name == 'qplotter-native' else '1.6.0b2'
+        if fault == 'old-version' and name == 'qplotter-native':
             version = '0.9.0'
         return SimpleNamespace(version=version, locate_file=lambda relative: prefix / relative)
 

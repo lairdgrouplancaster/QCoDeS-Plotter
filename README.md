@@ -78,9 +78,9 @@ are implemented. See
 
 ## Packages
 
-The application distribution is `qcodes-plotter`; its Python imports and
+The application distribution is `qplotter`; its Python imports and
 console commands remain `qplot`, `qplot-cfg`, and `qplot-generate-db`.
-The separately built `qcodes-plotter-native==1.0.0` supplies the protected
+The separately built `qplotter-native==1.0.0` supplies the protected
 SQLite reader through `qplot_native`. The application's exact dependency pin
 installs the compatible native wheel automatically. Both packages pin the same
 APSW/SQLite runtime, preserving trusted live reading and database protections.
@@ -126,12 +126,12 @@ python -m pip install -U pip
 For ordinary installation after a stable PyPI release is available:
 
 ```console
-python -m pip install --only-binary=:all: qcodes-plotter
+python -m pip install --only-binary=:all: qplotter
 ```
 
 For the first split beta, explicitly select the prerelease:
 ```console
-python -m pip install --only-binary=:all: qcodes-plotter==1.6.0b2
+python -m pip install --only-binary=:all: qplotter==1.6.0b2
 ```
 
 Both commands install the full runtime dependency set as wheels, with no C
@@ -152,8 +152,8 @@ the old distribution and any overlapping split installation **before**
 installing the new packages:
 
 ```console
-python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native
-python -m pip install --only-binary=:all: qcodes-plotter==1.6.0b2
+python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
+python -m pip install --only-binary=:all: qplotter==1.6.0b2
 python -m pip check
 ```
 

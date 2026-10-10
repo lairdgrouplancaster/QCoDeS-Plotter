@@ -1,6 +1,6 @@
 # qPlot native reader
 
-`qcodes-plotter-native` supplies `qplot_native._trusted_vfs_native` for qPlot.
+`qplotter-native` supplies `qplot_native._trusted_vfs_native` for qPlot.
 Build it independently from this directory with `python -m build`.
 The extension retains the CPython 3.11 stable ABI (`cp311-abi3`) and requires
 the exact APSW 3.53.4.0 / SQLite 3.53.4 runtime and SQLite source ID checked by

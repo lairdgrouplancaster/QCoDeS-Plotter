@@ -32,7 +32,7 @@ def artifact_set(tmp_path, monkeypatch):
         version = release.validator.PINNED_NATIVE_VERSION if native else "1.6.0b2"
         dependencies = [f"apsw=={release.validator.PINNED_APSW_VERSION}"]
         if not native:
-            dependencies.append(f"qcodes-plotter-native=={release.validator.PINNED_NATIVE_VERSION}")
+            dependencies.append(f"qplotter-native=={release.validator.PINNED_NATIVE_VERSION}")
         path.write_text(f'[project]\nname = "{package}"\nversion = "{version}"\n'
                         f'requires-python = ">=3.11"\ndependencies = {json.dumps(dependencies)}\n')
     source = {"src/qplot/__init__.py", "native/src/qplot_native/__init__.py"}
@@ -83,6 +83,21 @@ def test_stage_has_exact_upload_sets_and_binds_each_to_validated_run(artifact_se
         release.verify_bundle(output / "native", **IDENTITY)
 
 
+@pytest.mark.parametrize('platform', release.PLATFORMS)
+def test_public_comparison_selects_only_matching_validated_wheels(artifact_set, platform):
+    repository, artifacts, bundle = artifact_set
+    release.stage(repository, artifacts, bundle, **IDENTITY)
+    selected = bundle.parent / 'comparison'
+    release.select_platform(bundle, platform, selected, **IDENTITY)
+    files = list(selected.iterdir())
+    assert len(files) == 2 and all(path.suffix == '.whl' for path in files)
+    native = next(path for path in files if path.name.startswith('qplotter_native'))
+    assert release.native_platform(native.name, '1.0.0') == platform
+    assert native.read_bytes() == (artifacts / native.name).read_bytes()
+    with pytest.raises(AssertionError, match='another workflow run'):
+        release.select_platform(bundle, platform, bundle.parent / 'wrong', **{**IDENTITY, 'run_id': '0'})
+
+
 @pytest.mark.parametrize("change", ["missing", "unrepaired", "extra", "wrong-version", "sdist-upload"])
 def test_publication_rejects_incomplete_or_unexpected_artifacts(artifact_set, change):
     repository, artifacts, output = artifact_set
@@ -97,7 +112,7 @@ def test_publication_rejects_incomplete_or_unexpected_artifacts(artifact_set, ch
         native.rename(artifacts / native.name.replace("1.0.0", "0.9.0"))
     else:
         release.stage(repository, artifacts, output, **IDENTITY)
-        shutil.copyfile(next(artifacts.glob("qcodes_plotter_native*.tar.gz")), output / "native/dist/unwanted.tar.gz")
+        shutil.copyfile(next(artifacts.glob("qplotter_native*.tar.gz")), output / "native/dist/unwanted.tar.gz")
         with pytest.raises(AssertionError):
             release.verify_bundle(output / "native", **IDENTITY)
         return
@@ -126,10 +141,10 @@ def remote_file(filename, data=b"validated"):
 
 
 def test_published_native_reuse_rejects_source_fallback_and_missing_platform(monkeypatch):
-    files = [remote_file(f"qcodes_plotter_native-1.0.0-cp311-abi3-{tag}.whl") for tag in NATIVE_TAGS]
+    files = [remote_file(f"qplotter_native-1.0.0-cp311-abi3-{tag}.whl") for tag in NATIVE_TAGS]
     monkeypatch.setattr(release, "release_files", lambda *_: files)
     assert release.published_native_files("1.0.0") == files
-    files.append(dict(filename="qcodes_plotter_native-1.0.0.tar.gz", packagetype="sdist"))
+    files.append(dict(filename="qplotter_native-1.0.0.tar.gz", packagetype="sdist"))
     with pytest.raises(AssertionError, match="sdists must not"):
         release.published_native_files("1.0.0")
     files.pop()
@@ -139,8 +154,8 @@ def test_published_native_reuse_rejects_source_fallback_and_missing_platform(mon
 
 
 def test_pypi_verification_redownloads_every_validated_byte_and_rejects_substitution(monkeypatch):
-    files = [remote_file(f"qcodes_plotter_native-1.0.0-cp311-abi3-{tag}.whl") for tag in NATIVE_TAGS]
-    receipt = dict(package="qcodes-plotter-native", version="1.0.0",
+    files = [remote_file(f"qplotter_native-1.0.0-cp311-abi3-{tag}.whl") for tag in NATIVE_TAGS]
+    receipt = dict(package="qplotter-native", version="1.0.0",
                    files={item["filename"]: item["digests"]["sha256"] for item in files})
     monkeypatch.setattr(release, "release_files", lambda *_: files)
     reader = Mock(return_value=b"validated")
@@ -150,14 +165,14 @@ def test_pypi_verification_redownloads_every_validated_byte_and_rejects_substitu
     reader.return_value = b"corrupted"
     with pytest.raises(AssertionError, match="published bytes differ"):
         release.verify_pypi(receipt)
-    files.append(remote_file("qcodes_plotter_native-1.0.0.tar.gz"))
+    files.append(remote_file("qplotter_native-1.0.0.tar.gz"))
     with pytest.raises(AssertionError, match="unexpected artifacts"):
         release.verify_pypi(receipt)
 
 
 def test_native_verification_waits_for_indexing_but_fails_closed_on_bad_hash(monkeypatch):
-    item = remote_file("qcodes_plotter_native-1.0.0-cp311-abi3-win_amd64.whl")
-    receipt = dict(package="qcodes-plotter-native", version="1.0.0",
+    item = remote_file("qplotter_native-1.0.0-cp311-abi3-win_amd64.whl")
+    receipt = dict(package="qplotter-native", version="1.0.0",
                    files={item["filename"]: item["digests"]["sha256"]})
     unavailable = urllib.error.HTTPError("url", 404, "not indexed", {}, None)
     reader = Mock(side_effect=[unavailable, [item]])
@@ -181,7 +196,7 @@ def test_fetch_native_checks_remote_digest_and_exact_metadata(artifact_set, monk
     monkeypatch.setattr(release, "published_native_files", lambda _: [item])
     monkeypatch.setattr(release, "read_url", lambda _: path.read_bytes())
     destination = artifacts.parent / "downloaded"
-    release.fetch_native(repository, "qplot-native-windows-x64", destination)
+    release.fetch_native(repository, "qplotter-native-windows-x64", destination)
     assert (destination / path.name).read_bytes() == path.read_bytes()
     item["digests"]["sha256"] = "0" * 64
     with pytest.raises(AssertionError, match="PyPI digest mismatch"):
@@ -206,7 +221,7 @@ def test_native_index_verification_uses_exact_binary_pin_without_cache(artifact_
     command, options = calls[0]
     assert "--only-binary=:all:" in command and "--no-cache-dir" in command
     assert "--no-deps" in command and "--abi" in command and "abi3" in command
-    assert command[-1] == "qcodes-plotter-native==1.0.0"
+    assert command[-1] == "qplotter-native==1.0.0"
     assert command[command.index("--index-url") + 1] == "https://pypi.org/simple"
     assert "PIP_EXTRA_INDEX_URL" not in options["env"]
     assert options["cwd"] == destination
@@ -243,12 +258,21 @@ def test_workflow_gates_uploads_and_verifies_native_before_application():
     assert "if: ${{ !inputs.reuse-native }}" in ci
     assert "if: inputs.reuse-native" in ci
     assert "python scripts/release.py fetch-native" in ci
+    public = text.split('  public-installations:\n', 1)[1]
+    assert 'needs: [prepare, verify-application]' in public
+    assert 'python-version: ["3.11", "3.12", "3.13", "3.14"]' in public
+    assert 'platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]' in public
+    assert '--public-pypi' in public
+    assert '--mode wheel public-expected' in public
+    assert '--mode editable public-expected' in public
+    assert 'run-unprivileged-windows.ps1' in public
+    assert 'verify receipts' not in public.lower() or 'select-platform --bundle release' in public
 
 
 def test_receipt_does_not_allow_unlisted_files_or_path_traversal(tmp_path):
     bundle = tmp_path / "bundle"
     (bundle / "dist").mkdir(parents=True)
-    receipt = dict(schema=1, repository=release.REPOSITORY, package="qcodes-plotter",
+    receipt = dict(schema=1, repository=release.REPOSITORY, package="qplotter",
                    version="1.6.0b2", files={"../escape.whl": "0" * 64}, **IDENTITY)
     (bundle / "manifest.json").write_text(json.dumps(receipt))
     with pytest.raises(AssertionError):

@@ -2,12 +2,23 @@
 
 All notable user-facing changes are recorded here.
 
-This project currently releases from GitHub source tags rather than PyPI. For
-installation commands and release validation, see `docs/distribution.md`.
+Historical releases used GitHub source tags. The prepared split beta uses the
+PyPI distributions `qplotter` and `qplotter-native`; publication requires the
+release workflow and its validation gates. See `docs/distribution.md`.
 
 ## Unreleased
 
 ## 1.6.0b2 - Unreleased
+
+### Added
+
+- Split pure-Python application distribution `qplotter` from native reader
+  distribution `qplotter-native`, retaining the qPlot name, `qplot` imports and
+  commands. Ordinary and editable application installation use prebuilt native
+  wheels without a compiler. Preserve the pinned APSW/SQLite ABI and database
+  protections; native source builds remain an explicit developer workflow.
+- Add validated native-first PyPI Trusted Publishing and compiler-free
+  installation/startup/live-reader acceptance across supported platforms.
 
 ### Changed
 

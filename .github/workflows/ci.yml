@@ -44,7 +44,7 @@ jobs:
         run: python -m twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
-          name: qplot-application
+          name: qplotter-application
           path: dist/*
           if-no-files-found: error
 
@@ -60,22 +60,22 @@ jobs:
             os-name: Linux x86_64 manylinux
             arch: x86_64
             build: cp311-manylinux_x86_64
-            artifact-name: qplot-native-linux-x86_64
+            artifact-name: qplotter-native-linux-x86_64
           - os: macos-latest
             os-name: macOS ARM64
             arch: arm64
             build: cp311-macosx_arm64
-            artifact-name: qplot-native-macos-arm64
+            artifact-name: qplotter-native-macos-arm64
           - os: macos-15-intel
             os-name: macOS Intel
             arch: x86_64
             build: cp311-macosx_x86_64
-            artifact-name: qplot-native-macos-intel
+            artifact-name: qplotter-native-macos-intel
           - os: windows-2025
             os-name: Windows x64
             arch: AMD64
             build: cp311-win_amd64
-            artifact-name: qplot-native-windows-x64
+            artifact-name: qplotter-native-windows-x64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -130,12 +130,12 @@ jobs:
       - name: Download application artifacts from this revision
         uses: actions/download-artifact@v4
         with:
-          name: qplot-application
+          name: qplotter-application
           path: dist
       - name: Download matching native artifacts from this revision
         uses: actions/download-artifact@v4
         with:
-          name: qplot-native-linux-x86_64
+          name: qplotter-native-linux-x86_64
           path: dist
 
       - name: Install analysis tools
@@ -163,82 +163,82 @@ jobs:
             python-version: "3.11"
             suite: full
             partition: "1/2"
-            native-artifact: qplot-native-windows-x64
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.11"
             suite: full
             partition: "2/2"
-            native-artifact: qplot-native-windows-x64
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.12"
             suite: compatibility
-            native-artifact: qplot-native-windows-x64
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.13"
             suite: compatibility
-            native-artifact: qplot-native-windows-x64
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.14"
             suite: full
             partition: "1/2"
-            native-artifact: qplot-native-windows-x64
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.14"
             suite: full
             partition: "2/2"
-            native-artifact: qplot-native-windows-x64
+            native-artifact: qplotter-native-windows-x64
           - os: macos-latest
             python-version: "3.11"
             suite: full
             partition: "1/2"
-            native-artifact: qplot-native-macos-arm64
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.11"
             suite: full
             partition: "2/2"
-            native-artifact: qplot-native-macos-arm64
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.12"
             suite: compatibility
-            native-artifact: qplot-native-macos-arm64
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.13"
             suite: compatibility
-            native-artifact: qplot-native-macos-arm64
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.14"
             suite: full
             partition: "1/2"
-            native-artifact: qplot-native-macos-arm64
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.14"
             suite: full
             partition: "2/2"
-            native-artifact: qplot-native-macos-arm64
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-15-intel
             python-version: "3.11"
             suite: compatibility
-            native-artifact: qplot-native-macos-intel
+            native-artifact: qplotter-native-macos-intel
           - os: macos-15-intel
             python-version: "3.12"
             suite: compatibility
-            native-artifact: qplot-native-macos-intel
+            native-artifact: qplotter-native-macos-intel
           - os: macos-15-intel
             python-version: "3.13"
             suite: compatibility
-            native-artifact: qplot-native-macos-intel
+            native-artifact: qplotter-native-macos-intel
           - os: macos-15-intel
             python-version: "3.14"
             suite: compatibility
-            native-artifact: qplot-native-macos-intel
+            native-artifact: qplotter-native-macos-intel
           - os: ubuntu-latest
             python-version: "3.11"
             suite: compatibility
-            native-artifact: qplot-native-linux-x86_64
+            native-artifact: qplotter-native-linux-x86_64
           - os: ubuntu-latest
             python-version: "3.13"
             suite: compatibility
-            native-artifact: qplot-native-linux-x86_64
+            native-artifact: qplotter-native-linux-x86_64
 
     env:
       QT_QPA_PLATFORM: offscreen
@@ -284,7 +284,7 @@ jobs:
       - name: Download application artifacts from this revision
         uses: actions/download-artifact@v4
         with:
-          name: qplot-application
+          name: qplotter-application
           path: dist
       - name: Download matching native artifacts from this revision
         uses: actions/download-artifact@v4
@@ -523,12 +523,12 @@ jobs:
       - name: Download application artifacts from this revision
         uses: actions/download-artifact@v4
         with:
-          name: qplot-application
+          name: qplotter-application
           path: dist
       - name: Download matching native artifacts from this revision
         uses: actions/download-artifact@v4
         with:
-          name: qplot-native-linux-x86_64
+          name: qplotter-native-linux-x86_64
           path: dist
 
       - name: Install package
@@ -582,12 +582,12 @@ jobs:
       - name: Download application artifacts from this revision
         uses: actions/download-artifact@v4
         with:
-          name: qplot-application
+          name: qplotter-application
           path: dist
       - name: Download matching native artifacts from this revision
         uses: actions/download-artifact@v4
         with:
-          name: qplot-native-linux-x86_64
+          name: qplotter-native-linux-x86_64
           path: dist
 
       - name: Validate artifact contents and testability
@@ -618,19 +618,19 @@ jobs:
           - platform: linux-x86_64
             os-name: Linux x86_64
             os: ubuntu-latest
-            native-artifact: qplot-native-linux-x86_64
+            native-artifact: qplotter-native-linux-x86_64
           - platform: macos-arm64
             os-name: macOS ARM64
             os: macos-latest
-            native-artifact: qplot-native-macos-arm64
+            native-artifact: qplotter-native-macos-arm64
           - platform: macos-intel
             os-name: macOS Intel
             os: macos-15-intel
-            native-artifact: qplot-native-macos-intel
+            native-artifact: qplotter-native-macos-intel
           - platform: windows-x64
             os-name: Windows x64
             os: windows-2025
-            native-artifact: qplot-native-windows-x64
+            native-artifact: qplotter-native-windows-x64
 
     env:
       QT_QPA_PLATFORM: offscreen
@@ -670,7 +670,7 @@ jobs:
       - name: Download application artifacts from this revision
         uses: actions/download-artifact@v4
         with:
-          name: qplot-application
+          name: qplotter-application
           path: dist
       - name: Download matching native artifacts from this revision
         uses: actions/download-artifact@v4
