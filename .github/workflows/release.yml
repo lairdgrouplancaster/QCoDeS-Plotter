@@ -1,0 +1,184 @@
+name: Publish validated qPlot distributions
+
+on:
+  push:
+    tags: ["v*", "native-and-app/v*"]
+
+# Never cancel a release while one package may already have been published.
+concurrency:
+  group: pypi-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    if: github.repository == 'lairdgrouplancaster/QCoDeS-Plotter'
+    runs-on: ubuntu-latest
+    outputs:
+      publish-native: ${{ steps.mode.outputs.publish-native }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Require a release tag matching the application and dependency pins
+        id: mode
+        run: python scripts/release.py preflight
+
+  validate:
+    needs: preflight
+    # Local workflow calls use this exact tagged revision. All safety, source,
+    # installed-package and compiler-free matrix checks remain required.
+    uses: ./.github/workflows/ci.yml
+    with:
+      reuse-native: ${{ needs.preflight.outputs.publish-native != 'true' }}
+
+  prepare:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      # No run-id/token: only immutable artifacts from THIS validated run.
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-application
+          path: validated
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qplot-native-*
+          merge-multiple: true
+          path: validated
+      - name: Stage exactly the validated publication files and SHA-256 receipts
+        run: python scripts/release.py stage --artifacts validated --outdir release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qplot-release
+          path: release/
+          if-no-files-found: error
+
+  publish-native:
+    needs: [preflight, prepare]
+    if: needs.preflight.outputs.publish-native == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-native
+      url: https://pypi.org/project/qcodes-plotter-native/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify native upload bytes against the validated run
+        run: python scripts/release.py verify-bundle release/native
+      # No builds, credentials or source archives in this publishing job.
+      - name: Publish only validated native wheels through Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release/native/dist/
+          attestations: true
+
+  verify-native:
+    needs: [prepare, publish-native]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          (needs.publish-native.result == 'success' || needs.publish-native.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify all four published native wheels against validated hashes
+        run: python scripts/release.py verify-pypi release/native --wait-seconds 300
+      - name: Resolve the pinned native wheel through PyPI's index for runtime acceptance
+        run: >-
+          python scripts/release.py fetch-native --from-index
+          --platform linux-x86_64 --outdir published-native
+      - name: Install Qt system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libegl1
+      - name: Start qPlot and exercise trusted live reading with the published dependency
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: >-
+          python scripts/validate_compiler_free_install.py --mode wheel
+          release/application/dist published-native
+
+  publish-application:
+    needs: [prepare, verify-native]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.verify-native.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-application
+      url: https://pypi.org/project/qcodes-plotter/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify application upload bytes against the validated run
+        run: python scripts/release.py verify-bundle release/application
+      - name: Publish validated application wheel and sdist through Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release/application/dist/
+          attestations: true
+
+  verify-application:
+    needs: [prepare, publish-application]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.publish-application.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify published application bytes
+        run: python scripts/release.py verify-pypi release/application --wait-seconds 300

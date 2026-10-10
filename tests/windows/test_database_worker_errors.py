@@ -9,8 +9,8 @@ import pytest
 from PyQt6 import QtTest, QtWidgets
 
 from qplot import diagnostics
-from qplot.datahandling.file_identity import logical_database_path
 from qplot.datahandling import database as database_module
+from qplot.datahandling.file_identity import logical_database_path
 from qplot.datahandling.trusted_live import (
     TrustedLiveBusyTimeoutError,
     TrustedLiveSourceIOError,

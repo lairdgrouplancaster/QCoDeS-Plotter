@@ -3,58 +3,123 @@
 This repository builds two distributions: the pure-Python application
 `qcodes-plotter` at the root and `qcodes-plotter-native` in `native/`.
 Application imports remain `qplot`, and native imports use `qplot_native`.
-The distribution names are provisional.
+These are the proposed PyPI names. On 2026-10-10 both canonical project JSON
+endpoints returned HTTP 404: [application](https://pypi.org/pypi/qcodes-plotter/json)
+and [native](https://pypi.org/pypi/qcodes-plotter-native/json). No existing PyPI
+project conflict was found. PyPI normalizes case and punctuation, so spellings
+such as `qcodes_plotter` refer to the same name. A 404 does not reserve a name
+or guarantee PyPI will accept it; register the pending publishers before release.
 
 The authoritative package version is `project.version` in `pyproject.toml`.
 At runtime, `qplot.__version__` reads the installed `qcodes-plotter` metadata through
 `importlib.metadata`.
 
-## Current Install Path
+## Ordinary installation
 
-Recommended user install for the latest full release:
-
-```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
-```
-
-Recommended development install:
+After a stable split release is published, install inside a supported Python
+virtual environment with:
 
 ```console
-python -m pip install --only-binary qcodes-plotter-native --find-links dist -e ".[dev]"
+python -m pip install --only-binary=:all: qcodes-plotter
 ```
 
-For this checkout, first obtain the compatible native platform wheel from the
-same release and place it in `dist/`. Install both release wheels together with
-`python -m pip install dist/*.whl`, or use the editable command above.
-No C compiler is needed to edit the application. Native contributors may instead
-run `python -m pip install ./native` using a C compiler. Historical release
-commands above use the packaging that existed at those tags.
+The first prepared application release is the beta `1.6.0b2`, with exact native
+dependency `1.0.0`. Once published, install that prerelease explicitly:
+
+```console
+python -m pip install --only-binary=:all: qcodes-plotter==1.6.0b2
+```
+
+The application installs its native dependency and all runtime dependencies
+automatically as wheels. Native PyPI releases contain **only wheels**. Without
+a compatible native wheel, even pip's default installation cannot fall back to
+compiling native source. `--only-binary=:all:` also prevents source builds of
+runtime dependencies. Application sdists remain on PyPI; native source builds
+are an explicit developer workflow from this repository or its CI native sdist.
+
+Before PyPI publication, install the exact application and matching native
+wheel paths from this revision's validated artifacts together. For example,
+on Windows x64 (replace the application version when appropriate):
+
+```console
+python -m pip install --only-binary=:all: dist/qcodes_plotter_native-1.0.0-cp311-abi3-win_amd64.whl dist/qcodes_plotter-1.6.0b2-py3-none-any.whl
+```
+
+Use your platform's native filename on macOS/Linux. Never mix artifacts from
+different revisions when validating a paired release.
 
 Application installs expose the `qplot`, `qplot-cfg`, and `qplot-generate-db` entry
 points.
 
-## Current Beta
+## Editable application development
 
-The published beta is `1.6.0b1`. This checkout prepares the next beta,
-`1.6.0b2`, using the PEP 440 normal form. After release validation, its GitHub
-release tag should be `v1.6.0b2`; that tag has not been published yet.
-
-Beta test install:
+After the pinned native version is published:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.6.0b1
+python -m pip install --only-binary=:all: -e ".[dev]"
+python -m qplot
 ```
 
-## Current Release
+Before publication, supply the exact local native wheel as an additional pip
+argument. See [CONTRIBUTING](../CONTRIBUTING.md#development-environment). Python
+edits are picked up when qPlot next starts, without reinstalling the application
+or rebuilding native code. All runtime and development dependencies are wheels.
 
-The current release is `1.5.0`. The package metadata uses the PEP 440 form
-`1.5.0`; the GitHub release tag should be `v1.5.0`.
+## Replacing the old distribution
 
-Release install:
+Historical tags installed a distribution named `qplot`. That distribution and
+`qcodes-plotter` own the same Python package and commands, so they must never
+coexist. Prefer a fresh venv. When reusing a venv, close qPlot and uninstall both
+application names before installing the replacement:
 
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
+python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native
+python -m pip install --only-binary=:all: qcodes-plotter==1.6.0b2
+python -m pip check
+python -c "from importlib.metadata import packages_distributions; p = packages_distributions(); assert p['qplot'] == ['qcodes-plotter']; assert p['qplot_native'] == ['qcodes-plotter-native']"
 ```
+
+If both names were previously installed, removing the old one can delete shared
+files; reinstalling the new packages **after both removals** repairs ownership.
+The same sequence applies to old editable installs. Settings and measurement
+databases are outside pip's package files. Historical Git tags, such as `v1.5.0`
+and `v1.6.0b1`, retain their original packaging.
+
+## Supported platforms
+
+| Platform | Native publication wheel | Application validation |
+| --- | --- | --- |
+| Windows x64 | `cp311-abi3-win_amd64` | CPython 3.11–3.14; unprivileged reader/GUI checks |
+| macOS ARM64 | `cp311-abi3-macosx_*_arm64` | CPython 3.11–3.14 |
+| macOS Intel | `cp311-abi3-macosx_*_x86_64` | CPython 3.11–3.14 |
+| Linux x86_64 | repaired `cp311-abi3-manylinux_2_28_x86_64` | CPython 3.11–3.14; headless GUI/reader checks |
+
+Windows and macOS are the supported desktop platforms. Linux native wheels
+require glibc 2.28 or newer; runtime wheels may impose further OS requirements,
+and system Qt libraries such as `libegl1` may be needed. Interactive Linux GUI
+support is not claimed. ARM Linux, Windows ARM64/32-bit, musl Linux, PyPy and
+free-threaded CPython are outside this matrix. The exact release must pass its
+hosted jobs before these configured checks count as acceptance.
+
+## Native development
+
+Use the project venv and an explicitly installed platform C toolchain/SDK.
+From the root:
+
+```console
+python -m pip install --only-binary apsw ./native
+python -m pip install --only-binary=:all: -e ".[dev]"
+python -m build native --outdir dist
+python -m pytest --no-cov tests/datahandling/test_trusted_live.py tests/datahandling/test_readonly.py
+```
+
+Native source archives are built/validated in CI and retained in its
+`qplot-native-linux-x86_64` artifact, but never uploaded to PyPI. Building an
+explicit archive path with `python -m pip install --only-binary apsw <native-sdist-path>`
+is also a developer-only source build. See
+[CONTRIBUTING](../CONTRIBUTING.md#native-development-explicit-compiler-workflow)
+for rebuild instructions. Retain the stable ABI, physical read-only main/WAL
+handles, exact-SHM protections and coordinated native/APSW/SQLite pins.
 
 ## Package Validation
 
@@ -189,7 +254,12 @@ and auditwheel repair rather than publishing an ordinary Ubuntu
 `linux_x86_64` wheel. cibuildwheel also audits the stable ABI. The Linux build
 produces the native sdist. These jobs upload immutable artifacts; every consumer
 downloads the application and matching native artifact from the same workflow
-run, without choosing another run, branch, or release.
+run, without choosing another run, branch, or release. For an application-only
+release the native matrix instead downloads the exact pinned PyPI version for
+each platform, verifies its JSON listing and downloaded SHA-256, and passes
+those files through the same validation/upload/consumer pipeline. No native
+wheel is rebuilt or republished on that path. The native sdist is still built
+for explicit source-build validation, which may use a compiler in CI.
 
 The retained Linux package job compares both sdists and wheels with the source
 inventory, runs the extracted sdists' complete test suite in an isolated venv,
@@ -291,8 +361,8 @@ Python-object/payload accounting envelope for standard APSW conversion, not an
 allocator-reserved-byte or process-RSS limit; the separate raw text/blob-payload
 bound is 8 MiB.
 
-Every artifact receives a `twine check` before upload. CI does not publish to
-PyPI or attach artifacts to GitHub releases. Cross-platform acceptance applies
+Every artifact receives a `twine check` before upload. CI itself does not publish
+to PyPI; the separate release workflow calls it before publishing. Cross-platform acceptance applies
 only after the Linux, ARM64 macOS, Intel macOS, and unprivileged Windows jobs
 have all passed for the exact source revision. Workflow configuration alone is
 not acceptance; hosted results for a newly changed revision remain pending
@@ -302,13 +372,154 @@ correctness; they do not establish hosted platform acceptance. Hosted results
 for changes to this workflow must be reported separately, with the tested
 revision and platform/Python jobs, after the workflow actually runs.
 
-## Release Checklist
+## Release automation
+
+`.github/workflows/release.yml` runs on two tag forms, each requiring the exact
+application version from `pyproject.toml`:
+
+| Tag | Native handling | PyPI uploads |
+| --- | --- | --- |
+| `native-and-app/v1.6.0b2` | Build/validate native `1.0.0` at this revision | Native wheels first, then application wheel/sdist |
+| `v1.6.0b3` (example later version) | Fetch/validate the application's exact published native pin | Application wheel/sdist only |
+
+The workflow calls the entire CI workflow at the tagged revision. Failure of
+any build, static check, source-distribution suite, database-protection suite,
+concurrent-writer test, installed smoke or compiler-free installation job
+prevents staging and publishing. Both ordinary and editable acceptance run on
+every platform/Python matrix entry, including standard-user Windows execution.
+
+After success, `scripts/release.py stage` selects only the single application
+wheel/sdist and exactly four repaired/stable-ABI native wheels. The validated
+native sdist is excluded from the upload directory. A SHA-256 receipt binds
+each upload set to the repository, tagged commit and workflow run; publishing
+jobs recheck the exact file set and bytes. They download immutable artifacts
+from that run and do no builds. OIDC permission exists only in the two separate
+publishing jobs in this non-reusable workflow. The PyPA action uploads with
+Trusted Publishing and produces attestations, with no stored upload token.
+
+For a paired release, native publication must succeed first. The next job
+checks PyPI's complete native file listing, rejects sdists/yanked files, and
+redownloads **every platform wheel**, comparing bytes with the validated
+hashes. A fresh Linux compiler-blocked environment then installs the application
+with the actual published native wheel resolved by pip from PyPI's simple
+index (binary-only, uncached, pinned version and hash checked), starts qPlot and exercises trusted
+live reading and the retained safety/writer smokes outside the checkout.
+Only success unlocks application publication; a final job verifies the
+published application files against the validated hashes. Application-only
+releases pass the same native verification gate without a native upload.
+
+### One-time account configuration
+
+These settings must be created in the account/repository UIs before a release;
+they have not been created by this change. The connected GitHub app confirmed
+the repository is `lairdgrouplancaster/QCoDeS-Plotter` (public, default branch
+`main`). Its available tools do not configure PyPI publishers or GitHub
+environments. Follow the
+[official publishing guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
+and [pending-publisher instructions](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
+
+1. Sign into your release-owner PyPI account with verified email and 2FA. At
+   [PyPI account publishing](https://pypi.org/manage/account/publishing/), add
+   **two pending GitHub publishers**, with these exact fields:
+
+   | Field | Native publisher | Application publisher |
+   | --- | --- | --- |
+   | PyPI project name | `qcodes-plotter-native` | `qcodes-plotter` |
+   | GitHub owner | `lairdgrouplancaster` | `lairdgrouplancaster` |
+   | Repository | `QCoDeS-Plotter` | `QCoDeS-Plotter` |
+   | Workflow filename | `release.yml` | `release.yml` |
+   | Environment | `pypi-native` | `pypi-application` |
+
+   Enter just `release.yml`, not its directory path or display name. Pending
+   publishers create each project on first successful upload. Once a project
+   exists, its Publishing settings should show the corresponding active
+   publisher. If the name has meanwhile been taken, stop and resolve ownership
+   or rename/coordinately update the packages before release.
+
+2. In [repository environments](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/settings/environments),
+   create `pypi-native` and `pypi-application`. Add a release maintainer as a
+   **required reviewer** for both. Restrict deployment branches/tags using
+   selected **tag** rules: `native-and-app/v*` for native, and both
+   `native-and-app/v*` and `v*` for application. Do not add branch rules.
+   Restrict admin bypass; prevent self-review if a second maintainer will
+   approve. No environment or repository PyPI token secrets are needed.
+
+3. Protect `main` with the existing `Required checks` CI status. Restrict tag
+   creation/update/deletion for `v*` and `native-and-app/v*` to release
+   maintainers using repository rulesets. Merge/review this workflow and the
+   release version before tagging; never move a published tag. If migrating
+   from token publishing, revoke/remove the old upload tokens/secrets.
+
+### First release commands
+
+Complete the account setup and merge the reviewed packaging/release changes
+to `main`. With application `1.6.0b2` and native `1.0.0`, use the configured
+Git remote/credentials:
+
+```console
+git fetch origin
+git switch main
+git pull --ff-only origin main
+python scripts/validate_distribution.py --check-clean
+git tag -a native-and-app/v1.6.0b2 -m "qPlot 1.6.0b2 with native reader 1.0.0"
+git push origin refs/tags/native-and-app/v1.6.0b2
+```
+
+Use the activated project venv for Python; on macOS set
+`MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache` for Python commands that may
+import Matplotlib. The tag push is the publication trigger. Review its hosted
+CI results, then approve the `pypi-native` environment. Confirm native
+verification succeeds before approving `pypi-application`. The final PyPI
+verification job must succeed before announcing the release. No GitHub Release
+object is needed to trigger publication; use the connected GitHub app for any
+subsequent release/PR operations if supported, never `gh`.
+
+### Later Python-only releases
+
+Update the application version (for example to `1.6.0b3`) and changelog, keep
+the exact native/APSW pins when still compatible, and merge the changes. Do
+not change native sources/ABI under an existing native version. Then:
+
+```console
+git fetch origin
+git switch main
+git pull --ff-only origin main
+python scripts/validate_distribution.py --check-clean
+git tag -a v1.6.0b3 -m "qPlot 1.6.0b3"
+git push origin refs/tags/v1.6.0b3
+```
+
+The native release must already contain all four non-yanked compatible wheels.
+CI installs those exact PyPI files and validates the new application against
+them. Only `pypi-application` needs approval. When native/SQLite compatibility
+changes, bump the native version and every coordinated application/validator/
+reader pin, then use a new `native-and-app/v<application-version>` tag.
+
+Uploads deliberately do not use `skip-existing`. If a job fails after native
+publication, rerun the failed jobs in GitHub Actions; successful upload jobs
+must not be rerun. Do not delete/reuse a PyPI version or tag. If a native upload
+was only partial, stop and resolve that incomplete release before proceeding;
+the application remains blocked. Once the complete native release is verified,
+an application-only tag for the still-unpublished application version can also
+recover a failed paired release after a new validation run.
+
+### Local and hosted results
+
+Local tests and actionlint validate release configuration and failure gates.
+Local macOS acceptance establishes that machine/Python's reader and startup
+behavior. No release tag or PyPI upload has been made as part of preparation;
+hosted release/installation results and account configuration remain pending.
+Report actual successful hosted jobs with their tagged revision and matrix
+separately from these configured checks.
+
+## Release checklist
 
 Before creating a tagged release:
 
 1. Update the version in `pyproject.toml`. For prereleases, use the PEP 440
    package form, such as `1.6.0b1`, with a matching Git tag prefixed by `v`,
-   such as `v1.6.0b1`.
+   such as `v1.6.0b3` for an application-only release or
+   `native-and-app/v1.6.0b2` for a paired release.
 2. Move relevant entries from `CHANGELOG.md`'s Unreleased section into the new
    release section.
 3. Run `python -m ruff check .`.
@@ -326,13 +537,12 @@ Before creating a tagged release:
     use the repaired manylinux artifact for Linux publication.
 12. Run the manual GUI check from `CONTRIBUTING.md`.
 13. Confirm README install and compatibility notes still match the release.
-14. Create a GitHub release from the tag and include user-facing changes.
+14. Confirm publisher/environment settings, push the appropriate tag using the
+    commands above, review both validation and PyPI verification, then announce
+    user-facing changes. GitHub release creation is optional and uses the
+    connected GitHub app when available.
 
 ## Future Options
-
-PyPI publishing would make user installs simpler, but should wait until the
-project has a clear release owner and versioning process. When that happens,
-extend the package job into a protected tag-only publish workflow.
 
 Standalone desktop installers may help non-Python users, but they should be
 treated as a separate distribution target. The installer needs explicit testing

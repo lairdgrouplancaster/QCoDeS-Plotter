@@ -24,7 +24,7 @@ git merge upstream/main
 
 ## Development Environment
 
-Use Python 3.11 or newer in a virtual environment.
+Use standard CPython 3.11–3.14 in a virtual environment.
 
 Windows:
 
@@ -47,23 +47,60 @@ python3 -m venv .venv-linux
 source .venv-linux/bin/activate
 ```
 
-Linux is useful for source-level development, but it is not currently part of
-the supported desktop GUI test matrix.
+Native wheels cover Windows x64, macOS ARM64/Intel and glibc Linux x86_64.
+Linux is exercised in headless CI; Windows and macOS are supported desktop
+platforms. See the [platform matrix](docs/distribution.md#supported-platforms).
 
 The root distribution `qcodes-plotter` is pure Python. Install the compatible
-`qcodes-plotter-native==1.0.0` platform wheel before installing the application
-in editable mode. Download it from the same release into `dist/` (the names
-are provisional; neither distribution needs to be on PyPI):
+`qcodes-plotter-native==1.0.0` platform wheel with the application in editable
+mode. After the native release is on PyPI, no separate download is needed:
 
 ```console
 python -m pip install -U pip
-python -m pip install --only-binary qcodes-plotter-native --find-links dist -e ".[dev]"
+python -m pip install --only-binary=:all: -e ".[dev]"
 ```
 
-Editing the application requires no C compiler. Native contributors can build
-and install the separate distribution with `python -m pip install ./native`
-(a C compiler is required for that step), then use the editable command above.
+Before publication, obtain the native wheel from the validated CI artifacts
+for your revision/platform and supply its exact path (replace the placeholder):
+
+```console
+python -m pip install --only-binary=:all: "dist/<matching-native-wheel>.whl" -e ".[dev]"
+```
+
+Every runtime and development dependency is installed as a wheel. Editing
+Python modules in `src/qplot/` is reflected by the next application process;
+the native binary is not rebuilt. Start it with `python -m qplot`.
 The native import package is `qplot_native`; application imports remain `qplot`.
+For an environment containing the old `qplot` distribution, follow the
+[replacement instructions](README.md#replacing-an-older-installation) before
+installing editable mode. Never leave both application distributions installed.
+
+### Native development (explicit compiler workflow)
+
+The native package lives in `native/` and builds independently. Install a C
+compiler and platform SDK: MSVC Build Tools with the C++ workload/Windows SDK
+on Windows, Xcode Command Line Tools on macOS, or a C toolchain and Python
+development headers on Linux. Then, from the repository root:
+
+```console
+python -m pip install --only-binary apsw ./native
+python -m pip install --only-binary=:all: -e ".[dev]"
+python -m build native --outdir dist
+python -m pytest --no-cov tests/datahandling/test_trusted_live.py tests/datahandling/test_readonly.py
+```
+
+The full `python -m pytest` includes all database-safety and concurrent-writer
+checks. After changing C sources, run
+`python -m pip install --no-deps --force-reinstall ./native` to rebuild; do not
+expect an application editable install to rebuild native code. Remove stale
+`native/build/` output before switching compilers or architectures.
+
+Native sdists are retained as CI artifacts and can also be built with
+`python -m build native --sdist --outdir dist`. They are intentionally excluded
+from PyPI so normal installation cannot silently compile a fallback. Preserve
+`cp311-abi3`, the pinned APSW/SQLite ABI/source ID and all database protections.
+When those change, release a new native version and coordinate the application
+pin and compatibility checks; Python-only releases can retain the existing pin.
 
 If the virtual environment is not activated, call its Python executable
 directly:
@@ -184,7 +221,10 @@ path in CI and verifies installed file hashes and module origins against the
 downloaded wheels; the native origin is checked before loading the extension.
 Both wheels are explicit local installation arguments, so these jobs do not
 depend on either distribution being published. The workflow lives in
-`.github/workflows/ci.yml`. Because the trusted reader requires an unprivileged
+`.github/workflows/ci.yml` and is reused by the protected tag release workflow.
+Application-only releases fetch the exact pinned native wheels from PyPI into
+the same artifact pipeline; paired releases build new native wheels. Because
+the trusted reader requires an unprivileged
 process, its Windows tests and wheel exercise run through a disposable local
 standard account; a separate probe confirms that the hosted runner's elevated
 token is rejected. Configuring these jobs is not cross-platform acceptance for

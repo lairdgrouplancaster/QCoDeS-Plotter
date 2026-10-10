@@ -1,6 +1,7 @@
 """qPlot's coordinate-safe mapping for PyQtGraph's native line controls."""
 
 from fractions import Fraction
+from typing import cast
 
 import numpy as np
 import pyqtgraph as pg
@@ -134,7 +135,7 @@ def _normalized_real_fft(samples):
     tail = (samples != 0) & (np.abs(scaled) < np.finfo(float).tiny)
     if np.any(tail):
         scaled[tail] = 0.
-    spectrum = np.fft.rfft(scaled) / count
+    spectrum: np.ndarray = np.fft.rfft(scaled) / count
     # Roundoff at the largest representable source must not turn bounded
     # components into infinity while their binary units are restored.
     bound = np.ldexp(largest, -shift)
@@ -174,14 +175,14 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
     if x.dtype.kind in "iuO":
         # Rebase before float conversion to retain nearby steps above 2**53
         # without unsigned/signed overflow.
-        exact = x.astype(object)
+        exact: np.ndarray = x.astype(object)
         if x.dtype.kind == "O" and not _integer_samples(x):
-            exact = np.frompyfunc(Fraction, 1, 1)(exact)
+            exact = cast(np.ndarray, np.frompyfunc(Fraction, 1, 1)(exact))
         with np.errstate(over="ignore", invalid="ignore"):
             try:
                 rebased = (exact - exact[0]).astype(np.float64)
             except (TypeError, OverflowError):
-                exact = np.frompyfunc(Fraction, 1, 1)(exact)
+                exact = cast(np.ndarray, np.frompyfunc(Fraction, 1, 1)(exact))
                 rebased = np.fromiter(
                     (_fraction_as_float(value - exact[0]) for value in exact),
                     dtype=np.float64, count=len(exact),
