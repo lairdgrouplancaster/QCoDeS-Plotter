@@ -9,19 +9,23 @@ line plots, heatmaps, 1D cut extraction, CSV export, and simple data operations.
 
 ## Requirements
 
-QCoDeS-Plotter requires Python 3.11 or newer.
+qPlot supports standard CPython 3.11–3.14. Free-threaded Python and PyPy are
+outside the supported matrix.
 
 Runtime dependencies are declared in `pyproject.toml` and are installed
 automatically when qPlot is installed.
 
-Development and Git installs of the current beta compile a small native module
-for trusted live QCoDeS access, so they also require a C compiler suitable for
-the selected Python. Release wheels include that module for their target
-platform.
+Application development and Git installs use a separately installed native
+platform wheel for trusted live QCoDeS access. A C compiler is required only
+when building the native distribution from source.
 
-Windows and macOS are the currently supported and GUI-tested desktop
-platforms. A source installation may work on Linux, but Linux is not currently
-part of the GUI test or support matrix.
+Native wheels are prepared for Windows x64, macOS ARM64, macOS Intel, and Linux
+x86_64 (`manylinux_2_28`, requiring glibc 2.28 or newer). Windows and macOS are
+the supported desktop platforms. Linux receives headless application, reader
+and installation validation; its interactive desktop GUI is not yet supported.
+Linux may need system Qt libraries such as `libegl1`. Other architectures,
+32-bit Windows and musl-based Linux have no native wheel. Their ordinary PyPI
+installation fails with a missing compatible distribution instead of compiling.
 
 For a supported local database, qPlot now attempts trusted live access first.
 One application read broker uses one persistent helper to publish the basic run
@@ -72,26 +76,45 @@ previews and thumbnails are disabled until the Stage 5 scheduler and disk cache
 are implemented. See
 [Trusted live QCoDeS reader](docs/trusted-live-reader.md).
 
+## Packages
+
+The application distribution is `qplotter`; its Python imports and
+console commands remain `qplot`, `qplot-cfg`, and `qplot-generate-db`.
+The separately built `qplotter-native==1.0.0` supplies the protected
+SQLite reader through `qplot_native`. The application's exact dependency pin
+installs the compatible native wheel automatically. Both packages pin the same
+APSW/SQLite runtime, preserving trusted live reading and database protections.
+
+Contributors can edit the application without a C compiler:
+
+```console
+python -m pip install --only-binary=:all: -e ".[dev]"
+```
+
+See [Contributing](CONTRIBUTING.md) and [Distribution](docs/distribution.md)
+for prepublication development using a local native wheel, explicit native
+source builds, and release validation.
+
 ## Install
 
-Install qPlot inside a Python 3.11 or newer virtual environment:
-The commands below install the latest full release, `1.5.0`. The current beta
-is `1.6.0b1`; it is documented below but is not used for the default install.
-This checkout prepares the next beta, `1.6.0b2`, pending release validation.
+Install qPlot inside a supported Python virtual environment. This checkout
+prepares the first split PyPI release, application `1.6.0b2` with native `1.0.0`;
+the commands targeting these packages work after publication. Until then, use
+validated local artifacts as described in [Distribution](docs/distribution.md).
 
 ### Prelude
 #### Windows
 
-Create the folder where you want qplot to live, right-clock to open it in Terminal, and execute:
+Create a folder for qPlot, open it in Terminal, and execute:
 ```console
-py -3 --version
-py -3 -m venv .venv
+py -3.11 --version
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 ```
-#### MacOS
+#### macOS / Linux
 
-Create the folder where you want qplot to live. Then open Terminal, navigate tp that folder, and execute:
+Create a folder for qPlot, open Terminal there, and execute:
 ```console
 python3 --version
 python3 -m venv .venv-mac
@@ -100,21 +123,45 @@ python -m pip install -U pip
 ```
 ### Installing your chosen version
 
-Next, install qplot. Usually, you want to install the current release, which you do by executing:
+For ordinary installation after a stable PyPI release is available:
 
+```console
+python -m pip install --only-binary=:all: qplotter
+```
+
+For the first split beta, explicitly select the prerelease:
+```console
+python -m pip install --only-binary=:all: qplotter==1.6.0b2
+```
+
+Both commands install the full runtime dependency set as wheels, with no C
+compiler. To follow subsequent betas, add `--pre`. Check the selected Python
+interpreter and platform if pip reports no compatible wheel.
+
+Historical releases retain their old packaging. For example, the earlier full
+release remains available from its Git tag:
 ```console
 python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.5.0
 ```
 
-Alternatively, you can install other releases by changing the tag. To install Ben's original version, execute:
+### Replacing an older installation
+
+Older releases used the distribution name `qplot`. A fresh virtual environment
+is the simplest replacement. To reuse an environment, close qPlot, uninstall
+the old distribution and any overlapping split installation **before**
+installing the new packages:
+
 ```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@Wordsworth-version
+python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
+python -m pip install --only-binary=:all: qplotter==1.6.0b2
+python -m pip check
 ```
 
-To test the latest beta, execute:
-```console
-python -m pip install git+https://github.com/lairdgrouplancaster/QCoDeS-Plotter.git@v1.6.0b1
-```
+Do this even if the old installation was editable. Installing the new name
+over `qplot` leaves two distributions owning the same `qplot` import package
+and console commands; uninstalling the old one afterward can remove the new
+installation's files. Settings and measurement databases are outside these
+packages and are unaffected by pip uninstall.
 
 ### Troubleshooting
 

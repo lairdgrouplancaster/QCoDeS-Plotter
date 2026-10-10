@@ -18,6 +18,7 @@ import time
 import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import MappingProxyType, TracebackType
 from typing import Any, TypeAlias
@@ -38,6 +39,7 @@ from qplot.datahandling.file_identity import (
 )
 
 TRUSTED_READER_APSW_VERSION = "3.53.4.0"
+TRUSTED_READER_NATIVE_VERSION = "1.0.0"
 TRUSTED_READER_SQLITE_VERSION = "3.53.4"
 TRUSTED_READER_SQLITE_SOURCE_ID = (
     "2026-07-24 19:02:57 "
@@ -556,11 +558,30 @@ def _release_process_session(owner: object) -> None:
 
 def _native_extension_path() -> Path:
     try:
-        module = importlib.import_module("qplot.datahandling._trusted_vfs_native")
+        native_version = version("qplotter-native")
+    except PackageNotFoundError as error:
+        raise TrustedLiveReaderUnavailableError(
+            "qPlot requires qplotter-native=="
+            f"{TRUSTED_READER_NATIVE_VERSION}; install its platform wheel."
+        ) from error
+    if native_version != TRUSTED_READER_NATIVE_VERSION:
+        raise TrustedLiveReaderUnavailableError(
+            "qPlot requires qplotter-native=="
+            f"{TRUSTED_READER_NATIVE_VERSION}; found {native_version}."
+        )
+    try:
+        module = importlib.import_module("qplot_native._trusted_vfs_native")
     except ImportError as error:
         raise TrustedLiveReaderUnavailableError(
             "qPlot's trusted live-reader native VFS is not installed."
         ) from error
+    if (
+        getattr(module, "sqlite_version", None) != TRUSTED_READER_SQLITE_VERSION
+        or getattr(module, "vfs_name", None) != TRUSTED_READER_VFS_NAME
+    ):
+        raise TrustedLiveReaderUnavailableError(
+            "qPlot's native VFS is incompatible with the pinned trusted reader."
+        )
     module_file = getattr(module, "__file__", None)
     if not module_file:
         raise TrustedLiveReaderUnavailableError(

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
 import sys
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
@@ -12,6 +14,11 @@ import pytest
 
 from scripts.validate_distribution import (
     ENTRYPOINT_DELEGATION_SITECUSTOMIZE,
+    NATIVE_EXTENSION_MEMBERS,
+    find_artifacts,
+    install_wheels,
+    validate_wheel,
+    wheel_installation_audit_code,
     wheel_smoke_code,
 )
 
@@ -371,3 +378,154 @@ def test_actual_installed_entrypoint_hook_captures_launcher_delegation() -> None
     assert '"argv": list(original_argv)' in ENTRYPOINT_DELEGATION_SITECUSTOMIZE
     assert '"database_path": database_path' in ENTRYPOINT_DELEGATION_SITECUSTOMIZE
     assert "return 17" in ENTRYPOINT_DELEGATION_SITECUSTOMIZE
+
+
+PACKAGING_SOURCE = {
+    "src/qplot/__init__.py",
+    "native/src/qplot_native/__init__.py",
+    "native/src/qplot_native/_trusted_vfs_native.c",
+}
+
+
+def _split_wheel(tmp_path, *, native=False, extra_files=(), native_pin="1.0.0"):
+    name = "qplotter_native" if native else "qplotter"
+    version = "1.0.0" if native else "1.6.0b2"
+    tag = "cp311-abi3-test_platform" if native else "py3-none-any"
+    artifact = tmp_path / f"{name}-{version}-{tag}.whl"
+    info = f"{name}-{version}.dist-info"
+    metadata = (
+        f"Name: {name.replace('_', '-')}\nVersion: {version}\n"
+        "Requires-Dist: apsw==3.53.4.0\n"
+    )
+    if not native:
+        metadata += f"Requires-Dist: qplotter-native=={native_pin}\n"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr(f"{info}/METADATA", metadata)
+        archive.writestr(
+            f"{info}/WHEEL",
+            f"Root-Is-Purelib: {'false' if native else 'true'}\nTag: {tag}\n",
+        )
+        package = "qplot_native" if native else "qplot"
+        archive.writestr(f"{package}/__init__.py", "")
+        if native:
+            archive.writestr(sorted(NATIVE_EXTENSION_MEMBERS)[0], b"native fixture")
+        for path in extra_files:
+            archive.writestr(path, b"unexpected fixture")
+    return artifact
+
+
+def test_validator_accepts_both_split_wheels(tmp_path):
+    app = _split_wheel(tmp_path)
+    native = _split_wheel(tmp_path, native=True)
+    assert validate_wheel(app, PACKAGING_SOURCE) == {"qplot/__init__.py"}
+    assert "qplot_native/__init__.py" in validate_wheel(native, PACKAGING_SOURCE, native=True)
+    assert find_artifacts([tmp_path], wheel_only=True) == {
+        "qplotter_wheel": app,
+        "qplotter_native_wheel": native,
+    }
+
+
+@pytest.mark.parametrize("extra_file", [
+    "qplot/datahandling/_trusted_vfs_native.abi3.so",
+    "qplot_native/__init__.py",
+    "qplot/source.c",
+])
+def test_validator_rejects_native_files_in_app_wheel(tmp_path, extra_file):
+    app = _split_wheel(tmp_path, extra_files=[extra_file])
+    with pytest.raises(AssertionError):
+        validate_wheel(app, PACKAGING_SOURCE)
+
+
+def test_validator_rejects_incompatible_native_dependency(tmp_path):
+    app = _split_wheel(tmp_path, native_pin="0.9.0")
+    with pytest.raises(AssertionError):
+        validate_wheel(app, PACKAGING_SOURCE)
+
+
+def test_validator_requires_both_local_wheels(tmp_path):
+    _split_wheel(tmp_path)
+    with pytest.raises(AssertionError, match="qplotter_native wheel"):
+        find_artifacts([tmp_path], wheel_only=True)
+
+
+def test_validator_preserves_native_stable_abi_tag(tmp_path):
+    native = _split_wheel(tmp_path, native=True)
+    wrong_tag = native.with_name(native.name.replace("cp311-abi3", "cp312-cp312"))
+    native.rename(wrong_tag)
+    with pytest.raises(AssertionError, match="cp311-abi3"):
+        validate_wheel(wrong_tag, PACKAGING_SOURCE, native=True)
+
+
+def test_install_pair_cannot_fall_back_to_an_index(tmp_path, monkeypatch):
+    app = _split_wheel(tmp_path)
+    native = _split_wheel(tmp_path, native=True)
+    run = Mock()
+    monkeypatch.setattr('scripts.validate_distribution.run', run)
+    install_wheels(tmp_path / 'python', app, native, with_dev_tools=True)
+    first, second = [invocation.args[0] for invocation in run.call_args_list]
+    assert '--no-index' in first and '--no-deps' in first
+    assert '--force-reinstall' in first
+    assert first[-2:] == [str(native.resolve()), str(app.resolve())]
+    assert second[-2:] == [str(native.resolve()), str(app.resolve()) + '[dev]']
+    assert second[second.index('--only-binary') + 1] == 'apsw'
+    run.reset_mock()
+    run.side_effect = subprocess.CalledProcessError(1, first)
+    with pytest.raises(subprocess.CalledProcessError):
+        install_wheels(tmp_path / 'python', app, native)
+    assert run.call_count == 1, 'No dependency/index resolution after a missing local wheel'
+
+
+@pytest.mark.parametrize('fault', [None, 'changed-native', 'checkout-native', 'checkout-app', 'old-version'])
+def test_import_audit_detects_stale_files_and_shadow_packages(tmp_path, monkeypatch, fault):
+    import importlib
+    import importlib.metadata
+
+    app = _split_wheel(tmp_path)
+    native = _split_wheel(tmp_path, native=True)
+    # auditwheel/delocate add explicit ZIP directory entries when repairing
+    # publication wheels. These are not installed file bytes to hash.
+    with zipfile.ZipFile(native, 'a') as archive:
+        archive.writestr('qplot_native/', b'')
+    prefix = tmp_path / 'environment'
+    prefix.mkdir()
+    for artifact in (app, native):
+        with zipfile.ZipFile(artifact) as archive:
+            archive.extractall(prefix)
+    module_paths = {
+        'qplot': prefix / 'qplot/__init__.py',
+        'qplot_native': prefix / 'qplot_native/__init__.py',
+        'qplot_native._trusted_vfs_native': prefix / 'qplot_native/_trusted_vfs_native.abi3.so',
+    }
+    if fault == 'changed-native':
+        module_paths['qplot_native._trusted_vfs_native'].write_bytes(b'stale binary')
+    elif fault == 'checkout-native':
+        module_paths['qplot_native._trusted_vfs_native'] = tmp_path / 'checkout/native.abi3.so'
+    elif fault == 'checkout-app':
+        module_paths['qplot'] = tmp_path / 'checkout/qplot/__init__.py'
+
+    def installed_distribution(name):
+        version = '1.0.0' if name == 'qplotter-native' else '1.6.0b2'
+        if fault == 'old-version' and name == 'qplotter-native':
+            version = '0.9.0'
+        return SimpleNamespace(version=version, locate_file=lambda relative: prefix / relative)
+
+    monkeypatch.setattr(importlib.metadata, 'distribution', installed_distribution)
+    imports = Mock(side_effect=lambda name: SimpleNamespace(__file__=str(module_paths[name])))
+    monkeypatch.setattr(importlib, 'import_module', imports)
+    monkeypatch.setattr(importlib.util, 'find_spec', lambda name: SimpleNamespace(origin=str(module_paths[name])))
+    monkeypatch.setattr(sys, 'prefix', str(prefix))
+    # The audit is normally run in a fresh interpreter. Avoid inspecting the
+    # real packages already loaded by this test process's Qt fixtures.
+    for name in list(sys.modules):
+        if name == 'qplot' or name.startswith(('qplot.', 'qplot_native')):
+            monkeypatch.delitem(sys.modules, name)
+    code = wheel_installation_audit_code([app, native])
+    if fault is None:
+        exec(compile(code, '<wheel-audit>', 'exec'), {})
+    else:
+        with pytest.raises(AssertionError):
+            exec(compile(code, '<wheel-audit>', 'exec'), {})
+    if fault == 'checkout-native':
+        assert call('qplot_native._trusted_vfs_native') not in imports.call_args_list
+    elif fault == 'checkout-app':
+        assert call('qplot') not in imports.call_args_list

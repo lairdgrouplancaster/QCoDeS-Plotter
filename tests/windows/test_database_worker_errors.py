@@ -9,8 +9,13 @@ import pytest
 from PyQt6 import QtTest, QtWidgets
 
 from qplot import diagnostics
+from qplot.datahandling import database as database_module
 from qplot.datahandling.file_identity import logical_database_path
-from qplot.datahandling.trusted_live import TrustedLiveUnsupportedSourceError
+from qplot.datahandling.trusted_live import (
+    TrustedLiveBusyTimeoutError,
+    TrustedLiveSourceIOError,
+    TrustedLiveUnsupportedSourceError,
+)
 from qplot.datahandling.trusted_live_supervisor import TrustedLiveReaderSupervisor
 from qplot.datahandling.trusted_presentation import TRUSTED_PRESENTATION_MAX_ERROR_BYTES
 from qplot.testdata import RunSpecification, generate_database
@@ -208,6 +213,96 @@ def test_public_load_exclusive_lock_reports_error_and_allows_retry(
 
     assert window.load_file(str(target))
     _wait_idle(window)
+    assert len(errors) == 1
+    assert window._loaded_database_instance.logical_path == logical_database_path(target)
+    assert window.RunList.topLevelItemCount() > 0
+    assert _artifacts(target) == before
+
+
+@pytest.mark.parametrize("prior_loaded", [False, True], ids=["initial", "switch"])
+@pytest.mark.parametrize(
+    "failure, cloud, cloud_hint",
+    [("io", True, True), ("prefetch", True, True),
+     ("io", False, False), ("busy", True, False)],
+    ids=["cloud-io", "cloud-download-timeout", "local-io", "cloud-locked"],
+)
+def test_cloud_load_error_details_explain_recovery_and_allow_retry(
+    tmp_path, error_window, monkeypatch, prior_loaded, failure, cloud, cloud_hint,
+):
+    window, errors, uncaught = error_window
+    directory = tmp_path / ("OneDrive" if cloud else "local")
+    directory.mkdir()
+    target = directory / "target.db"
+    _create_database(target, "target_signal")
+    if prior_loaded:
+        previous = tmp_path / "previous.db"
+        _create_database(previous, "previous_signal")
+        assert window.load_file(str(previous))
+        _wait_published_metadata(window)
+    prior_instance = window._loaded_database_instance
+    prior_runs = window.RunList.all_run_metadata()
+    prior_preview = window.infoBox.preview.database_path
+    before = _artifacts(target)
+    technical_error = {
+        "io": TrustedLiveSourceIOError(
+            "SQLite could not read the trusted source: disk I/O error"
+        ),
+        "prefetch": TimeoutError("Timed out waiting for OneDrive to download the database."),
+        "busy": TrustedLiveBusyTimeoutError("Database is locked."),
+    }[failure]
+
+    def fail_file_access(*args, **kwargs):
+        raise technical_error
+
+    with monkeypatch.context() as fault:
+        fault.setattr(
+            database_module, "database_is_likely_cloud_placeholder",
+            lambda _path: failure == "prefetch",
+        )
+        if failure == "prefetch":
+            fault.setattr(
+                database_module, "prefetch_database_file_with_timeout",
+                fail_file_access,
+            )
+        else:
+            fault.setattr(
+                TrustedLiveReaderSupervisor, "open",
+                fail_file_access,
+            )
+        with patch.object(database_module, "database_access_error") as snapshot_probe:
+            assert window.load_file(str(target))
+            service = window._database_load_worker.trusted_service
+            _process_until(lambda: bool(errors) or bool(uncaught))
+            _wait_idle(window)
+            snapshot_probe.assert_not_called()
+    assert not uncaught
+    assert len(errors) == 1
+    title, message, details = errors[0]
+    assert title == "Database Load Failed"
+    assert message == f"Could not load database {target}."
+    assert str(technical_error) in details
+    assert len(details.encode("utf-8")) <= TRUSTED_PRESENTATION_MAX_ERROR_BYTES
+    assert "Traceback" not in details
+    if cloud_hint:
+        assert "Start or restart OneDrive" in details
+        assert "auxiliary files" in details
+        assert "may not be running" in details
+        assert "whole folder as always available" in details
+        assert "open the database again in qPlot" in details
+    else:
+        assert details == str(technical_error)
+    assert window._database_load_state is None
+    assert window._database_load_worker is None
+    assert window.RunList.isEnabled()
+    assert window.infoBox.isEnabled()
+    _process_until(lambda: service.closed)
+    assert window._loaded_database_instance == prior_instance
+    assert window.RunList.all_run_metadata() == prior_runs
+    assert window.infoBox.preview.database_path == prior_preview
+    assert _artifacts(target) == before
+
+    assert window.load_file(str(target))
+    _wait_published_metadata(window)
     assert len(errors) == 1
     assert window._loaded_database_instance.logical_path == logical_database_path(target)
     assert window.RunList.topLevelItemCount() > 0

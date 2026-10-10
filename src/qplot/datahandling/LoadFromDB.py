@@ -30,7 +30,8 @@ from qplot.datahandling.qcodes_cache import (
 )
 
 if TYPE_CHECKING:
-    import qcodes
+    from qcodes.dataset.data_set_cache import DataSetCacheWithDBBackend
+    from qcodes.dataset.descriptions.param_spec import ParamSpec
 
 
 def append_shaped_parameter_data_to_existing_arrays(
@@ -152,8 +153,8 @@ def append_shaped_parameter_data_to_existing_arrays(
 
 
 def load_param_data_from_db_prep(
-        cache : "qcodes.dataset.data_set_cache.DataSetCacheWithDBBackend",
-        param : "qcodes.dataset.descriptions.param_spec.ParamSpec",
+        cache : "DataSetCacheWithDBBackend",
+        param : "ParamSpec",
         connection=None,
         ):
     if cache_is_live(cache):

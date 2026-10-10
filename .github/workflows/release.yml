@@ -1,0 +1,280 @@
+name: Publish validated qPlot distributions
+
+on:
+  push:
+    tags: ["v*", "native-and-app/v*"]
+
+# Never cancel a release while one package may already have been published.
+concurrency:
+  group: pypi-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    if: github.repository == 'lairdgrouplancaster/QCoDeS-Plotter'
+    runs-on: ubuntu-latest
+    outputs:
+      publish-native: ${{ steps.mode.outputs.publish-native }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Require a release tag matching the application and dependency pins
+        id: mode
+        run: python scripts/release.py preflight
+
+  validate:
+    needs: preflight
+    # Local workflow calls use this exact tagged revision. All safety, source,
+    # installed-package and compiler-free matrix checks remain required.
+    uses: ./.github/workflows/ci.yml
+    with:
+      reuse-native: ${{ needs.preflight.outputs.publish-native != 'true' }}
+
+  prepare:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      # No run-id/token: only immutable artifacts from THIS validated run.
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplotter-application
+          path: validated
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qplotter-native-*
+          merge-multiple: true
+          path: validated
+      - name: Stage exactly the validated publication files and SHA-256 receipts
+        run: python scripts/release.py stage --artifacts validated --outdir release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qplot-release
+          path: release/
+          if-no-files-found: error
+
+  publish-native:
+    needs: [preflight, prepare]
+    if: needs.preflight.outputs.publish-native == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-native
+      url: https://pypi.org/project/qplotter-native/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify native upload bytes against the validated run
+        run: python scripts/release.py verify-bundle release/native
+      # No builds, credentials or source archives in this publishing job.
+      - name: Publish only validated native wheels through Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release/native/dist/
+          attestations: true
+
+  verify-native:
+    needs: [prepare, publish-native]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          (needs.publish-native.result == 'success' || needs.publish-native.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify all four published native wheels against validated hashes
+        run: python scripts/release.py verify-pypi release/native --wait-seconds 300
+      - name: Resolve the pinned native wheel through PyPI's index for runtime acceptance
+        run: >-
+          python scripts/release.py fetch-native --from-index
+          --platform linux-x86_64 --outdir published-native
+      - name: Install Qt system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libegl1
+      - name: Start qPlot and exercise trusted live reading with the published dependency
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: >-
+          python scripts/validate_compiler_free_install.py --mode wheel
+          release/application/dist published-native
+
+  publish-application:
+    needs: [prepare, verify-native]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.verify-native.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-application
+      url: https://pypi.org/project/qplotter/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify application upload bytes against the validated run
+        run: python scripts/release.py verify-bundle release/application
+      - name: Publish validated application wheel and sdist through Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release/application/dist/
+          attestations: true
+
+  verify-application:
+    needs: [prepare, publish-application]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.publish-application.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify published application bytes
+        run: python scripts/release.py verify-pypi release/application --wait-seconds 300
+
+  public-installations:
+    name: Public PyPI ${{ matrix.platform }} Python ${{ matrix.python-version }}
+    needs: [prepare, verify-application]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          needs.verify-application.result == 'success' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+          - platform: macos-arm64
+            os: macos-latest
+          - platform: macos-intel
+            os: macos-15-intel
+          - platform: windows-x64
+            os: windows-2025
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PIP_NO_CACHE_DIR: "1"
+      UV_NO_CACHE: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+      - name: Verify receipts and select the validated native wheel for this platform
+        run: >-
+          python scripts/release.py select-platform --bundle release
+          --platform ${{ matrix.platform }} --outdir public-expected
+      - name: Install Qt system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libegl1
+      - name: Configure Windows temporary directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $standardTemp = Join-Path $env:RUNNER_TEMP "qplot-standard-user"
+          New-Item -ItemType Directory -Force -Path $standardTemp | Out-Null
+          "QPLOT_UNPRIVILEGED_TEMP=$standardTemp" >> $env:GITHUB_ENV
+          "TEMP=$standardTemp" >> $env:GITHUB_ENV
+          "TMP=$standardTemp" >> $env:GITHUB_ENV
+          "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
+      - name: Accept ordinary public PyPI installation with all runtime dependencies
+        if: runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: >-
+          python scripts/validate_compiler_free_install.py --public-pypi
+          --mode wheel public-expected
+      - name: Accept fresh editable checkout using the published native wheel
+        if: runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: >-
+          python scripts/validate_compiler_free_install.py --public-pypi
+          --mode editable public-expected
+      - name: Accept both public installations as a standard Windows user
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
+        run: |
+          $python = (Get-Command python).Source
+          foreach ($mode in @("wheel", "editable")) {
+            $arguments = @(
+              "scripts/validate_compiler_free_install.py", "--public-pypi",
+              "--mode", $mode, "public-expected"
+            )
+            & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+              -FilePath $python -ArgumentList $arguments -TimeoutSeconds 900
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Upload Windows public installation failure diagnostics
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qplot-public-windows-${{ matrix.python-version }}-diagnostics
+          if-no-files-found: ignore
+          path: |
+            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stdout.txt
+            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stderr.txt

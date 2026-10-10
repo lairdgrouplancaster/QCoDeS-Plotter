@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
+    inputs:
+      reuse-native:
+        description: Validate with the pinned native wheels already published on PyPI
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
@@ -17,8 +23,97 @@ env:
   PIP_ONLY_BINARY: apsw
 
 jobs:
+  application-artifacts:
+    name: Pure-Python application artifacts (build once)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install build tools
+        run: python -m pip install build twine
+      - name: Verify clean source tree
+        run: python scripts/validate_distribution.py --check-clean
+      - name: Build application sdist and wheel
+        env:
+          CC: /nonexistent-qplot-compiler
+          CXX: /nonexistent-qplot-compiler
+        run: python -m build --outdir dist
+      - name: Check application metadata
+        run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qplotter-application
+          path: dist/*
+          if-no-files-found: error
+
+  native-wheels:
+    name: ${{ matrix.os-name }} native cp311-abi3 wheel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os-name: Linux x86_64 manylinux
+            arch: x86_64
+            build: cp311-manylinux_x86_64
+            artifact-name: qplotter-native-linux-x86_64
+          - os: macos-latest
+            os-name: macOS ARM64
+            arch: arm64
+            build: cp311-macosx_arm64
+            artifact-name: qplotter-native-macos-arm64
+          - os: macos-15-intel
+            os-name: macOS Intel
+            arch: x86_64
+            build: cp311-macosx_x86_64
+            artifact-name: qplotter-native-macos-intel
+          - os: windows-2025
+            os-name: Windows x64
+            arch: AMD64
+            build: cp311-win_amd64
+            artifact-name: qplotter-native-windows-x64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          architecture: ${{ runner.os == 'Windows' && 'x64' || '' }}
+      - name: Install build tools
+        run: python -m pip install cibuildwheel==4.3.0 build twine
+      - name: Verify clean source tree
+        run: python scripts/validate_distribution.py --check-clean
+      - name: Build native source distribution
+        if: runner.os == 'Linux'
+        run: python -m build native --sdist --outdir dist
+      # cibuildwheel repairs Linux wheels with auditwheel and audits abi3.
+      # An ordinary ubuntu linux_x86_64 wheel is not a publication artifact.
+      - name: Build and repair native platform wheel
+        if: ${{ !inputs.reuse-native }}
+        env:
+          CIBW_BUILD: ${{ matrix.build }}
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+        run: python -m cibuildwheel native --output-dir dist
+      - name: Fetch the exact published native wheel for this platform
+        if: inputs.reuse-native
+        run: >-
+          python scripts/release.py fetch-native
+          --platform ${{ matrix.artifact-name }} --outdir dist
+      - name: Check native metadata
+        run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: dist/*
+          if-no-files-found: error
+
   static-analysis:
     name: Static analysis
+    needs: [application-artifacts, native-wheels]
     runs-on: ubuntu-latest
 
     steps:
@@ -31,10 +126,22 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      # download-artifact defaults to this workflow run, including PR merge SHA.
+      - name: Download application artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-application
+          path: dist
+      - name: Download matching native artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-native-linux-x86_64
+          path: dist
+
       - name: Install analysis tools
         run: |
           python -m pip install -U pip
-          python -m pip install -e . "mypy>=1.14,<2.0" "ruff>=0.8"
+          python scripts/validate_distribution.py --install-only --with-dev-tools dist
 
       - name: Run Ruff
         run: python -m ruff check .
@@ -43,6 +150,7 @@ jobs:
         run: python -m mypy
 
   checks:
+    needs: [application-artifacts, native-wheels]
     name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -55,49 +163,86 @@ jobs:
             python-version: "3.11"
             suite: full
             partition: "1/2"
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.11"
             suite: full
             partition: "2/2"
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.12"
             suite: compatibility
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.13"
             suite: compatibility
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.14"
             suite: full
             partition: "1/2"
+            native-artifact: qplotter-native-windows-x64
           - os: windows-2025
             python-version: "3.14"
             suite: full
             partition: "2/2"
+            native-artifact: qplotter-native-windows-x64
           - os: macos-latest
             python-version: "3.11"
             suite: full
             partition: "1/2"
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.11"
             suite: full
             partition: "2/2"
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.12"
             suite: compatibility
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.13"
             suite: compatibility
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.14"
             suite: full
             partition: "1/2"
+            native-artifact: qplotter-native-macos-arm64
           - os: macos-latest
             python-version: "3.14"
             suite: full
             partition: "2/2"
+            native-artifact: qplotter-native-macos-arm64
+          - os: macos-15-intel
+            python-version: "3.11"
+            suite: compatibility
+            native-artifact: qplotter-native-macos-intel
+          - os: macos-15-intel
+            python-version: "3.12"
+            suite: compatibility
+            native-artifact: qplotter-native-macos-intel
+          - os: macos-15-intel
+            python-version: "3.13"
+            suite: compatibility
+            native-artifact: qplotter-native-macos-intel
+          - os: macos-15-intel
+            python-version: "3.14"
+            suite: compatibility
+            native-artifact: qplotter-native-macos-intel
+          - os: ubuntu-latest
+            python-version: "3.11"
+            suite: compatibility
+            native-artifact: qplotter-native-linux-x86_64
+          - os: ubuntu-latest
+            python-version: "3.13"
+            suite: compatibility
+            native-artifact: qplotter-native-linux-x86_64
 
     env:
       QT_QPA_PLATFORM: offscreen
+      QPLOT_CI_WHEEL_AUDIT: ${{ github.workspace }}/dist/wheel-installation-audit.py
 
     steps:
       - name: Check out repository
@@ -116,7 +261,7 @@ jobs:
           enable-cache: "auto"
           # Reuse downloaded packages across unrelated workflow edits;
           # uv still resolves and installs the requested tool versions below.
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: "**/pyproject.toml"
           cache-local-path: ${{ runner.tool_cache }}/uv-cache
           # Keep downloaded wheels available for subsequent CI runs.
           prune-cache: false
@@ -135,15 +280,32 @@ jobs:
           "PYTEST_ADDOPTS=--basetemp=$pytestTemp" >> $env:GITHUB_ENV
           "QPLOT_CI_PHASE_LOG_PATH=$(Join-Path $standardTemp 'wrapper-phase.txt')" >> $env:GITHUB_ENV
 
+      # download-artifact defaults to this workflow run, including PR merge SHA.
+      - name: Download application artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-application
+          path: dist
+      - name: Download matching native artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.native-artifact }}
+          path: dist
+
       - name: Require the pinned APSW platform wheel
         run: >-
           uv pip install --system --only-binary apsw apsw==3.53.4.0
 
       - name: Install package and test tools
         run: >-
-          uv pip install --system -e .
-          "pytest>=8.2" "pytest-cov>=6.0" "pytest-timeout>=2.3"
-          "pytest-xdist>=3.8"
+          python scripts/validate_distribution.py --install-only --with-dev-tools
+          --audit-path dist/wheel-installation-audit.py dist
+
+      - name: Install Qt system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libegl1
 
       - name: Verify the elevated Windows runner is rejected
         if: runner.os == 'Windows'
@@ -213,7 +375,7 @@ jobs:
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
         run: >-
-          python -m pytest --no-cov -n 2 --dist=loadfile
+          python -m pytest -o pythonpath= --no-cov -n 2 --dist=loadfile
           --no-loadscope-reorder
           --qplot-ci-partition=${{ matrix.partition }}
           --timeout=90 --timeout-method=thread --durations=20 -v
@@ -229,7 +391,7 @@ jobs:
         run: |
           $python = (Get-Command python).Source
           $arguments = @(
-            "-m", "pytest", "--no-cov",
+            "-m", "pytest", "-o", "pythonpath=", "--no-cov",
             "-n", "2", "--dist=loadfile",
             "--no-loadscope-reorder",
             "--qplot-ci-partition=${{ matrix.partition }}",
@@ -251,7 +413,7 @@ jobs:
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
         run: >-
-          python -m pytest --no-cov --maxfail=1 -n 2 --dist=loadfile
+          python -m pytest -o pythonpath= --no-cov --maxfail=1 -n 2 --dist=loadfile
           --timeout=90 --timeout-method=thread --durations=20
           @.github/pytest-compatibility.txt
 
@@ -263,7 +425,7 @@ jobs:
         run: |
           $python = (Get-Command python).Source
           $arguments = @(
-            "-m", "pytest", "--no-cov", "--maxfail=1",
+            "-m", "pytest", "-o", "pythonpath=", "--no-cov", "--maxfail=1",
             "-n", "2", "--dist=loadfile",
             "--timeout=90", "--timeout-method=thread", "--durations=20",
             "@.github/pytest-compatibility.txt"
@@ -338,11 +500,13 @@ jobs:
           }
 
   coverage:
+    needs: [application-artifacts, native-wheels]
     name: Coverage
     runs-on: ubuntu-latest
 
     env:
       QT_QPA_PLATFORM: offscreen
+      QPLOT_CI_WHEEL_AUDIT: ${{ github.workspace }}/dist/wheel-installation-audit.py
 
     steps:
       - name: Check out repository
@@ -355,10 +519,22 @@ jobs:
           python-version: "3.14"
           cache: pip
 
+      # download-artifact defaults to this workflow run, including PR merge SHA.
+      - name: Download application artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-application
+          path: dist
+      - name: Download matching native artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-native-linux-x86_64
+          path: dist
+
       - name: Install package
         run: |
           python -m pip install -U pip
-          python -m pip install -e . "pytest>=8.2" "pytest-cov>=6.0" "pytest-xdist>=3.8" "coverage>=7.12"
+          python scripts/validate_distribution.py --install-only --with-dev-tools --extra-requirement "coverage>=7.12" --audit-path dist/wheel-installation-audit.py dist
 
       - name: Install Qt system libraries
         run: |
@@ -368,10 +544,11 @@ jobs:
       - name: Run tests with coverage
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python -m pytest -n 2 --dist=loadfile --no-loadscope-reorder
+        run: python -m pytest -o pythonpath= -n 2 --dist=loadfile --no-loadscope-reorder
 
   package:
-    name: Linux package artifacts
+    needs: [application-artifacts, native-wheels]
+    name: Linux source and installed manylinux validation
     runs-on: ubuntu-latest
 
     env:
@@ -401,8 +578,17 @@ jobs:
       - name: Verify clean source tree
         run: python scripts/validate_distribution.py --check-clean
 
-      - name: Build source and wheel distributions
-        run: python -m build
+      # download-artifact defaults to this workflow run, including PR merge SHA.
+      - name: Download application artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-application
+          path: dist
+      - name: Download matching native artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-native-linux-x86_64
+          path: dist
 
       - name: Validate artifact contents and testability
         env:
@@ -419,26 +605,37 @@ jobs:
           path: dist/*
 
   platform-wheels:
-    name: ${{ matrix.os-name }} installed wheel
+    name: ${{ matrix.os-name }} compiler-free installations Python ${{ matrix.python-version }}
+    needs: [application-artifacts, native-wheels]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-
     strategy:
       fail-fast: false
       matrix:
+        platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         include:
-          - os: macos-latest
+          - platform: linux-x86_64
+            os-name: Linux x86_64
+            os: ubuntu-latest
+            native-artifact: qplotter-native-linux-x86_64
+          - platform: macos-arm64
             os-name: macOS ARM64
-            artifact-name: qplot-wheel-macos-arm64
-          - os: macos-15-intel
+            os: macos-latest
+            native-artifact: qplotter-native-macos-arm64
+          - platform: macos-intel
             os-name: macOS Intel
-            artifact-name: qplot-wheel-macos-intel
-          - os: windows-2025
-            os-name: Windows
-            artifact-name: qplot-wheel-windows
+            os: macos-15-intel
+            native-artifact: qplotter-native-macos-intel
+          - platform: windows-x64
+            os-name: Windows x64
+            os: windows-2025
+            native-artifact: qplotter-native-windows-x64
 
     env:
       QT_QPA_PLATFORM: offscreen
+      PIP_NO_CACHE_DIR: "1"
+      UV_NO_CACHE: "1"
 
     steps:
       - name: Check out repository
@@ -447,8 +644,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
-          cache: pip
+          python-version: ${{ matrix.python-version }}
 
       - name: Configure Windows temporary directory
         if: runner.os == 'Windows'
@@ -470,14 +666,28 @@ jobs:
       - name: Verify clean source tree
         run: python scripts/validate_distribution.py --check-clean
 
-      - name: Build platform wheel from source
-        run: python -m build --wheel
+      # download-artifact defaults to this workflow run, including PR merge SHA.
+      - name: Download application artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-application
+          path: dist
+      - name: Download matching native artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.native-artifact }}
+          path: dist
+      - name: Install Qt system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libegl1
 
       - name: Validate and exercise the installed wheel
         if: runner.os != 'Windows'
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python scripts/validate_distribution.py --wheel-only dist
+        run: python scripts/validate_compiler_free_install.py --mode wheel dist
 
       - name: Validate the installed wheel as a standard Windows user
         if: runner.os == 'Windows'
@@ -487,7 +697,27 @@ jobs:
         run: |
           $python = (Get-Command python).Source
           $arguments = @(
-            "scripts/validate_distribution.py", "--wheel-only", "dist"
+            "scripts/validate_compiler_free_install.py", "--mode", "wheel", "dist"
+          )
+          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+            -FilePath $python `
+            -ArgumentList $arguments
+
+      - name: Accept editable install and live Python edit without a compiler
+        if: runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: python scripts/validate_compiler_free_install.py --mode editable dist
+
+      - name: Accept editable install as a standard Windows user
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
+        run: |
+          $python = (Get-Command python).Source
+          $arguments = @(
+            "scripts/validate_compiler_free_install.py", "--mode", "editable", "dist"
           )
           & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
             -FilePath $python `
@@ -497,7 +727,7 @@ jobs:
         if: failure() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: qplot-wheel-windows-diagnostics
+          name: qplot-wheel-windows-${{ matrix.python-version }}-diagnostics
           if-no-files-found: ignore
           path: |
             ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stdout.txt
@@ -506,21 +736,19 @@ jobs:
       - name: Check wheel metadata
         run: python -m twine check dist/*
 
-      - name: Upload platform wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact-name }}
-          path: dist/*.whl
-
   required-checks:
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [static-analysis, checks, coverage, package, platform-wheels]
+    needs: [application-artifacts, native-wheels, static-analysis, checks, coverage, package, platform-wheels]
     if: always()
 
     steps:
       - name: Check matrix result
         run: |
+          if [ "${{ needs.application-artifacts.result }}" != "success" ] || [ "${{ needs.native-wheels.result }}" != "success" ]; then
+            echo "Application or native artifact build failed."
+            exit 1
+          fi
           if [ "${{ needs.static-analysis.result }}" != "success" ]; then
             echo "Static analysis failed."
             exit 1

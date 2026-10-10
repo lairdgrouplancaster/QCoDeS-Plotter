@@ -24,7 +24,7 @@ git merge upstream/main
 
 ## Development Environment
 
-Use Python 3.11 or newer in a virtual environment.
+Use standard CPython 3.11–3.14 in a virtual environment.
 
 Windows:
 
@@ -47,15 +47,70 @@ python3 -m venv .venv-linux
 source .venv-linux/bin/activate
 ```
 
-Linux is useful for source-level development, but it is not currently part of
-the supported desktop GUI test matrix.
+Native wheels cover Windows x64, macOS ARM64/Intel and glibc Linux x86_64.
+Linux is exercised in headless CI; Windows and macOS are supported desktop
+platforms. See the [platform matrix](docs/distribution.md#supported-platforms).
 
-Install qPlot in editable mode with the development dependencies:
+The root distribution `qplotter` is pure Python. Install the compatible
+`qplotter-native==1.0.0` platform wheel with the application in editable
+mode. After the native release is on PyPI, no separate download is needed:
 
 ```console
 python -m pip install -U pip
-python -m pip install -e ".[dev]"
+python -m pip install --only-binary=:all: -e ".[dev]"
 ```
+
+Before publication, obtain the native wheel from the validated CI artifacts
+for your revision/platform and supply its exact path (replace the placeholder):
+
+```console
+python -m pip install --only-binary=:all: "dist/<matching-native-wheel>.whl" -e ".[dev]"
+```
+
+Every runtime and development dependency is installed as a wheel. Editing
+Python modules in `src/qplot/` is reflected by the next application process;
+the native binary is not rebuilt. Start it with `python -m qplot`.
+The native import package is `qplot_native`; application imports remain `qplot`.
+For an environment containing the old `qplot` distribution, follow the
+[replacement instructions](README.md#replacing-an-older-installation) before
+installing editable mode. Never leave both application distributions installed.
+When reusing an old editable checkout, also remove its generated legacy
+metadata before installing the new editable application:
+
+```console
+python -c "import shutil; from pathlib import Path; [shutil.rmtree(p) for p in (Path('src/qplot.egg-info'), Path('src/qcodes_plotter.egg-info'), Path('native/src/qcodes_plotter_native.egg-info')) if p.is_dir()]"
+```
+
+These ignored directories contain generated packaging metadata. A fresh
+checkout does not contain them. Removing old metadata prevents pip from
+reporting the old distribution alongside `qplotter` after editable installation.
+
+### Native development (explicit compiler workflow)
+
+The native package lives in `native/` and builds independently. Install a C
+compiler and platform SDK: MSVC Build Tools with the C++ workload/Windows SDK
+on Windows, Xcode Command Line Tools on macOS, or a C toolchain and Python
+development headers on Linux. Then, from the repository root:
+
+```console
+python -m pip install --only-binary apsw ./native
+python -m pip install --only-binary=:all: -e ".[dev]"
+python -m build native --outdir dist
+python -m pytest --no-cov tests/datahandling/test_trusted_live.py tests/datahandling/test_readonly.py
+```
+
+The full `python -m pytest` includes all database-safety and concurrent-writer
+checks. After changing C sources, run
+`python -m pip install --no-deps --force-reinstall ./native` to rebuild; do not
+expect an application editable install to rebuild native code. Remove stale
+`native/build/` output before switching compilers or architectures.
+
+Native sdists are retained as CI artifacts and can also be built with
+`python -m build native --sdist --outdir dist`. They are intentionally excluded
+from PyPI so normal installation cannot silently compile a fallback. Preserve
+`cp311-abi3`, the pinned APSW/SQLite ABI/source ID and all database protections.
+When those change, release a new native version and coordinate the application
+pin and compatibility checks; Python-only releases can retain the existing pin.
 
 If the virtual environment is not activated, call its Python executable
 directly:
@@ -123,22 +178,24 @@ Pytest prints branch coverage for the `qplot` package and writes `coverage.xml`
 for CI or editor integrations.
 
 For release or packaging changes, start from a clean source tree, build the
-source distribution and wheel, validate both artifacts, and check their
+two source distributions and wheels, validate all four artifacts, and check their
 metadata:
 
 ```console
 python scripts/validate_distribution.py --check-clean
+python -m build native --outdir dist
 python -m build
 python scripts/validate_distribution.py dist
 python -m twine check dist/*
 ```
 
-The artifact validator checks the sdist against the current source tree and
-source-distribution policy, requires the trusted-reader C source and header,
-rejects ignored files and stale compiled native binaries, and runs all tests
-from an extracted sdist in a fresh virtual environment. It installs the wheel
-into another fresh environment for version, resource, console-script, and native
-extension checks. From outside the repository it then runs a real guarded Python
+The artifact validator checks both sdists against the current source tree and
+source-distribution policy, requires the native sdist's trusted-reader C source
+and header, rejects ignored files and stale compiled native binaries, and runs
+all tests with both extracted sdists installed in a fresh virtual environment.
+It installs both local wheels into another fresh environment for version,
+resource, console-script, and native extension checks. From outside the
+repository it then runs a real guarded Python
 script that opens a temporary WAL database through
 `TrustedLiveReaderSupervisor`. This exercises the installed package-level helper
 target with multiprocessing `spawn`, queries committed data while the writer
@@ -163,16 +220,37 @@ The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `QApplication` creation unless a test has a specific reason to override the
 shared setup.
 
-GitHub Actions runs the same Ruff, mypy, and pytest checks on Windows 2025 and
-macOS with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. On
-Python 3.12 it validates the sdist and Linux wheel and separately builds and
-exercises installed macOS and Windows wheels. The workflow lives in
-`.github/workflows/ci.yml`. Because the trusted reader requires an unprivileged
+GitHub Actions is configured to build the application wheel once and separate
+`cp311-abi3` native wheels for Windows x64, macOS ARM64, macOS Intel, and Linux
+x86_64. Linux publication wheels use cibuildwheel's `manylinux_2_28` image and
+auditwheel repair. Each platform exercises the same run's matching native wheel
+and shared application wheel on Python 3.11, 3.12, 3.13, and 3.14. The existing
+full and compatibility suites, Linux coverage, source-distribution validation,
+Ruff, and mypy remain required. Pytest disables the checkout's `src` import
+path in CI and verifies installed file hashes and module origins against the
+downloaded wheels; the native origin is checked before loading the extension.
+Both wheels are explicit local installation arguments, so these jobs do not
+depend on either distribution being published. The workflow lives in
+`.github/workflows/ci.yml` and is reused by the protected tag release workflow.
+Application-only releases fetch the exact pinned native wheels from PyPI into
+the same artifact pipeline; paired releases build new native wheels. Because
+the trusted reader requires an unprivileged
 process, its Windows tests and wheel exercise run through a disposable local
 standard account; a separate probe confirms that the hosted runner's elevated
 token is rejected. Configuring these jobs is not cross-platform acceptance for
 a source revision: its Linux, ARM64 macOS, Intel macOS, and unprivileged Windows
 hosted jobs must all finish successfully for that exact revision.
+
+The platform jobs additionally require compiler-free ordinary and editable
+installation acceptance in separate fresh environments. Run
+`python scripts/validate_compiler_free_install.py --mode wheel dist` and
+`python scripts/validate_compiler_free_install.py --mode editable dist` to
+exercise them locally. Every runtime/development dependency must be a wheel;
+compiler commands and absolute compiler subprocesses fail, and caches are
+disabled. Both checks launch the real qPlot command and exercise trusted live
+reading. The editable check changes Python code in a temporary extracted source
+tree, proves the edit is imported without reinstalling, and verifies that the
+native binary was not rebuilt. See `docs/distribution.md` for the full checks.
 
 ## Generated Files
 
@@ -215,7 +293,7 @@ Before committing:
 2. Run `python -m mypy`.
 3. Run `python -m pytest`.
 4. Run `python scripts/manual_run.py` for application or GUI changes.
-5. Run `python -m build`, `python scripts/validate_distribution.py dist`, and
+5. Run `python -m build native --outdir dist`, `python -m build`, `python scripts/validate_distribution.py dist`, and
    `python -m twine check dist/*` for packaging or release changes.
 6. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or
    `docs/configuration.md` when the setup, workflow, module boundaries, or

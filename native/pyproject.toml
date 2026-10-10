@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=70.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qplotter-native"
+version = "1.0.0"
+description = "Pinned native SQLite reader for qplotter"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = ["apsw==3.53.4.0"]
+
+[project.urls]
+Source = "https://github.com/lairdgrouplancaster/QCoDeS-Plotter"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["qplot_native"]
