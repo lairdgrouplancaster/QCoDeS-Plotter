@@ -15,7 +15,7 @@ import pytest
 from scripts import release
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-IDENTITY = dict(revision="a" * 40, ref="refs/tags/native-and-app/v1.6.0b2", run_id="42")
+IDENTITY = dict(revision="a" * 40, ref="refs/tags/native-and-app/v1.6.0b3", run_id="42")
 NATIVE_TAGS = ["manylinux_2_28_x86_64", "macosx_11_0_arm64",
                "macosx_10_13_x86_64", "win_amd64"]
 
@@ -29,7 +29,7 @@ def artifact_set(tmp_path, monkeypatch):
         path = repository / name
         path.parent.mkdir(parents=True, exist_ok=True)
         package = release.PACKAGES["native" if native else "application"]
-        version = release.validator.PINNED_NATIVE_VERSION if native else "1.6.0b2"
+        version = release.validator.PINNED_NATIVE_VERSION if native else "1.6.0b3"
         dependencies = [f"apsw=={release.validator.PINNED_APSW_VERSION}"]
         if not native:
             dependencies.append(f"qplotter-native=={release.validator.PINNED_NATIVE_VERSION}")
@@ -273,7 +273,7 @@ def test_receipt_does_not_allow_unlisted_files_or_path_traversal(tmp_path):
     bundle = tmp_path / "bundle"
     (bundle / "dist").mkdir(parents=True)
     receipt = dict(schema=1, repository=release.REPOSITORY, package="qplotter",
-                   version="1.6.0b2", files={"../escape.whl": "0" * 64}, **IDENTITY)
+                   version="1.6.0b3", files={"../escape.whl": "0" * 64}, **IDENTITY)
     (bundle / "manifest.json").write_text(json.dumps(receipt))
     with pytest.raises(AssertionError):
         release.verify_bundle(bundle, **IDENTITY)

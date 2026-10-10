@@ -98,7 +98,7 @@ source builds, and release validation.
 ## Install
 
 Install qPlot inside a supported Python virtual environment. This checkout
-prepares the first split PyPI release, application `1.6.0b2` with native `1.0.0`;
+prepares the first split PyPI release, application `1.6.0b3` with native `1.0.0`;
 the commands targeting these packages work after publication. Until then, use
 validated local artifacts as described in [Distribution](docs/distribution.md).
 
@@ -131,7 +131,7 @@ python -m pip install --only-binary=:all: qplotter
 
 For the first split beta, explicitly select the prerelease:
 ```console
-python -m pip install --only-binary=:all: qplotter==1.6.0b2
+python -m pip install --only-binary=:all: qplotter==1.6.0b3
 ```
 
 Both commands install the full runtime dependency set as wheels, with no C
@@ -153,7 +153,7 @@ installing the new packages:
 
 ```console
 python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
-python -m pip install --only-binary=:all: qplotter==1.6.0b2
+python -m pip install --only-binary=:all: qplotter==1.6.0b3
 python -m pip check
 ```
 

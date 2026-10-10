@@ -8,7 +8,7 @@ release workflow and its validation gates. See `docs/distribution.md`.
 
 ## Unreleased
 
-## 1.6.0b2 - Unreleased
+## 1.6.0b3 - Unreleased
 
 ### Added
 

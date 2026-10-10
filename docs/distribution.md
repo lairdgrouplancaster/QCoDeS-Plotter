@@ -9,11 +9,12 @@ and [native](https://pypi.org/pypi/qplotter-native/json). No existing PyPI
 project conflict was found. A 404 does not prove name eligibility or ownership:
 pending publishers and account/project permissions are private. Confirm them in
 the release owner's authenticated PyPI account before release. No PyPI account
-connector is available in this workspace, and the release owner confirmed that
-the PyPI pending publishers still need configuration. On 2026-10-10 the public
+connector is available in this workspace. On 2026-10-10 the release owner
+confirmed both pending publishers were configured; acceptance of those private
+settings and names must still be demonstrated by the publishing workflow.
+On 2026-10-10 the public
 GitHub API verified both publishing environments with a required reviewer and
-the selected tag rules described below. Configure the PyPI publishers before
-triggering publication.
+the selected tag rules described below.
 
 The authoritative package version is `project.version` in `pyproject.toml`.
 At runtime, `qplot.__version__` reads the installed `qplotter` metadata through
@@ -28,12 +29,19 @@ virtual environment with:
 python -m pip install --only-binary=:all: qplotter
 ```
 
-The first prepared application release is the beta `1.6.0b2`, with exact native
+The first prepared application release is the beta `1.6.0b3`, with exact native
 dependency `1.0.0`. Once published, install that prerelease explicitly:
 
 ```console
-python -m pip install --only-binary=:all: qplotter==1.6.0b2
+python -m pip install --only-binary=:all: qplotter==1.6.0b3
 ```
+
+The earlier `native-and-app/v1.6.0b2` candidate did not pass its complete hosted
+validation, so neither package was uploaded. Its tag remains unchanged. The
+next candidate removes an unnecessary CPU workload from a concurrent snapshot
+test: the existing commit barrier and additional count assertion prove snapshot
+consistency while preserving the reader's four-second deadline. Every platform
+must validate the new candidate before publication.
 
 The application installs its native dependency and all runtime dependencies
 automatically as wheels. Native PyPI releases contain **only wheels**. Without
@@ -47,7 +55,7 @@ wheel paths from this revision's validated artifacts together. For example,
 on Windows x64 (replace the application version when appropriate):
 
 ```console
-python -m pip install --only-binary=:all: dist/qplotter_native-1.0.0-cp311-abi3-win_amd64.whl dist/qplotter-1.6.0b2-py3-none-any.whl
+python -m pip install --only-binary=:all: dist/qplotter_native-1.0.0-cp311-abi3-win_amd64.whl dist/qplotter-1.6.0b3-py3-none-any.whl
 ```
 
 Use your platform's native filename on macOS/Linux. Never mix artifacts from
@@ -79,7 +87,7 @@ application names before installing the replacement:
 
 ```console
 python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
-python -m pip install --only-binary=:all: qplotter==1.6.0b2
+python -m pip install --only-binary=:all: qplotter==1.6.0b3
 python -m pip check
 python -c "from importlib.metadata import packages_distributions; p = packages_distributions(); assert set(p['qplot']) == {'qplotter'}; assert set(p['qplot_native']) == {'qplotter-native'}"
 ```
@@ -387,8 +395,8 @@ application version from `pyproject.toml`:
 
 | Tag | Native handling | PyPI uploads |
 | --- | --- | --- |
-| `native-and-app/v1.6.0b2` | Build/validate native `1.0.0` at this revision | Native wheels first, then application wheel/sdist |
-| `v1.6.0b3` (example later version) | Fetch/validate the application's exact published native pin | Application wheel/sdist only |
+| `native-and-app/v1.6.0b3` | Build/validate native `1.0.0` at this revision | Native wheels first, then application wheel/sdist |
+| `v1.6.0b4` (example later version) | Fetch/validate the application's exact published native pin | Application wheel/sdist only |
 
 The workflow calls the entire CI workflow at the tagged revision. Failure of
 any build, static check, source-distribution suite, database-protection suite,
@@ -420,7 +428,7 @@ After application publication and byte verification, `public-installations`
 runs on all four platforms and every advertised CPython version (3.11–3.14).
 Each entry creates two fresh environments outside the original checkout.
 The ordinary path runs `python -m pip install --only-binary=:all:
-qplotter==1.6.0b2` against the public PyPI index with all runtime dependencies.
+qplotter==1.6.0b3` against the public PyPI index with all runtime dependencies.
 The editable path fetches the exact tested commit into a fresh checkout and
 installs `.[dev]` with `qplotter-native==1.0.0` resolved from public PyPI.
 Neither path installs a local release wheel; the validated artifacts are only
@@ -479,7 +487,7 @@ and [pending-publisher instructions](https://docs.pypi.org/trusted-publishers/cr
 ### First release commands
 
 Complete the account setup and merge the reviewed packaging/release changes
-to `main`. With application `1.6.0b2` and native `1.0.0`, use the configured
+to `main`. With application `1.6.0b3` and native `1.0.0`, use the configured
 Git remote/credentials:
 
 ```console
@@ -487,8 +495,8 @@ git fetch origin
 git switch main
 git pull --ff-only origin main
 python scripts/validate_distribution.py --check-clean
-git tag -a native-and-app/v1.6.0b2 -m "qPlot 1.6.0b2 with native reader 1.0.0"
-git push origin refs/tags/native-and-app/v1.6.0b2
+git tag -a native-and-app/v1.6.0b3 -m "qPlot 1.6.0b3 with native reader 1.0.0"
+git push origin refs/tags/native-and-app/v1.6.0b3
 ```
 
 Use the activated project venv for Python; on macOS set
@@ -502,7 +510,7 @@ subsequent release/PR operations if supported, never `gh`.
 
 ### Later Python-only releases
 
-Update the application version (for example to `1.6.0b3`) and changelog, keep
+Update the application version (for example to `1.6.0b4`) and changelog, keep
 the exact native/APSW pins when still compatible, and merge the changes. Do
 not change native sources/ABI under an existing native version. Then:
 
@@ -511,8 +519,8 @@ git fetch origin
 git switch main
 git pull --ff-only origin main
 python scripts/validate_distribution.py --check-clean
-git tag -a v1.6.0b3 -m "qPlot 1.6.0b3"
-git push origin refs/tags/v1.6.0b3
+git tag -a v1.6.0b4 -m "qPlot 1.6.0b4"
+git push origin refs/tags/v1.6.0b4
 ```
 
 The native release must already contain all four non-yanked compatible wheels.
@@ -533,8 +541,11 @@ recover a failed paired release after a new validation run.
 
 Local tests and actionlint validate release configuration and failure gates.
 Local macOS acceptance establishes that machine/Python's reader and startup
-behavior. No release tag or PyPI upload has been made as part of preparation;
-hosted release/installation results and account configuration remain pending.
+behavior. The `native-and-app/v1.6.0b2` validation attempt failed and uploaded
+nothing. Its 16 compiler-free ordinary/editable installation jobs passed;
+macOS snapshot tests exposed a CPU-dependent workload and a QCoDeS
+fixture lock. The new `1.6.0b3` candidate requires a fresh complete validation
+run. Public PyPI publication and installation acceptance remain pending.
 Report actual successful hosted jobs with their tagged revision and matrix
 separately from these configured checks.
 
@@ -545,7 +556,7 @@ Before creating a tagged release:
 1. Update the version in `pyproject.toml`. For prereleases, use the PEP 440
    package form, such as `1.6.0b1`, with a matching Git tag prefixed by `v`,
    such as `v1.6.0b3` for an application-only release or
-   `native-and-app/v1.6.0b2` for a paired release.
+   `native-and-app/v1.6.0b3` for a paired release.
 2. Move relevant entries from `CHANGELOG.md`'s Unreleased section into the new
    release section.
 3. Run `python -m ruff check .`.

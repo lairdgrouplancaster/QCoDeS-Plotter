@@ -1315,11 +1315,9 @@ def test_finite_query_batch_is_repeatable_then_next_operation_refreshes(
             results = reader.query_batch(
                 (
                     TrustedQuery(select_sql),
-                    TrustedQuery(
-                        "WITH RECURSIVE values_(n) AS ("
-                        "SELECT 1 UNION ALL SELECT n + 1 FROM values_ "
-                        "WHERE n < 5000000) SELECT sum(n) FROM values_"
-                    ),
+                    # The barrier above proves that the writer has committed.
+                    # Check the pinned snapshot without a CPU-dependent delay.
+                    TrustedQuery("SELECT count(*) FROM qplot_trusted_probe"),
                     TrustedQuery(select_sql),
                 ),
                 timeout=4.0,
@@ -1331,6 +1329,7 @@ def test_finite_query_batch_is_repeatable_then_next_operation_refreshes(
             assert not commit_thread.is_alive()
         assert commit_error == []
         assert results[0].rows == (("initial",),)
+        assert results[1].rows == ((1,),)
         assert results[2].rows == (("initial",),)
         assert reader.query(
             "SELECT value FROM qplot_trusted_probe ORDER BY seq"
