@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import shlex
 import subprocess
 import tempfile
 import tomllib
+from functools import cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -27,6 +29,38 @@ EDIT_BEFORE = 'before-edit'
 EDIT_AFTER = 'after-edit-without-reinstall'
 
 
+@cache
+def windows_command_line_api():
+    """Resolve the Windows parser and its matching allocation release once."""
+    import ctypes
+    from ctypes import wintypes
+
+    parse = ctypes.WinDLL('shell32', use_last_error=True).CommandLineToArgvW
+    parse.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    parse.restype = ctypes.POINTER(wintypes.LPWSTR)
+    free = ctypes.WinDLL('kernel32', use_last_error=True).LocalFree
+    free.argtypes = [ctypes.c_void_p]
+    free.restype = ctypes.c_void_p
+    return parse, free
+
+
+def split_command_line(command: str) -> list[str]:
+    """Parse audit-event command strings using the operating system's grammar."""
+    if os.name != 'nt':
+        return shlex.split(command)
+    import ctypes
+
+    parse, free = windows_command_line_api()
+    count = ctypes.c_int()
+    pointer = parse(command, ctypes.byref(count))
+    if not pointer:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return [pointer[index] for index in range(count.value)]
+    finally:
+        free(pointer)
+
+
 def install_compiler_audit_guard(python: Path, env: dict[str, str]) -> None:
     """Reject even absolute compiler paths in pip's isolated build processes."""
     site_packages = subprocess.check_output(
@@ -37,7 +71,11 @@ def install_compiler_audit_guard(python: Path, env: dict[str, str]) -> None:
 import os
 import shlex
 import sys
+from functools import cache
 from pathlib import Path
+
+{inspect.getsource(windows_command_line_api)}
+{inspect.getsource(split_command_line)}
 
 blocked = {COMPILERS!r}
 def audit(event, arguments):
@@ -46,12 +84,12 @@ def audit(event, arguments):
         if event == 'subprocess.Popen':
             argv = arguments[1]
             if isinstance(argv, (str, bytes)):
-                argv = shlex.split(os.fsdecode(argv), posix=os.name != 'nt')
+                argv = split_command_line(os.fsdecode(argv))
             else:
                 argv = list(argv)
             targets += argv
     elif event == 'os.system':
-        targets = shlex.split(os.fsdecode(arguments[0]), posix=os.name != 'nt')
+        targets = split_command_line(os.fsdecode(arguments[0]))
     elif event == 'os.spawn':
         targets = [arguments[1]]
     else:
