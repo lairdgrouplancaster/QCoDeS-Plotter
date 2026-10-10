@@ -593,7 +593,7 @@ jobs:
           path: dist/*
 
   platform-wheels:
-    name: ${{ matrix.os-name }} installed wheels Python ${{ matrix.python-version }}
+    name: ${{ matrix.os-name }} compiler-free installations Python ${{ matrix.python-version }}
     needs: [application-artifacts, native-wheels]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -622,6 +622,8 @@ jobs:
 
     env:
       QT_QPA_PLATFORM: offscreen
+      PIP_NO_CACHE_DIR: "1"
+      UV_NO_CACHE: "1"
 
     steps:
       - name: Check out repository
@@ -631,7 +633,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
 
       - name: Configure Windows temporary directory
         if: runner.os == 'Windows'
@@ -674,7 +675,7 @@ jobs:
         if: runner.os != 'Windows'
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python scripts/validate_distribution.py --wheel-only dist
+        run: python scripts/validate_compiler_free_install.py --mode wheel dist
 
       - name: Validate the installed wheel as a standard Windows user
         if: runner.os == 'Windows'
@@ -684,7 +685,27 @@ jobs:
         run: |
           $python = (Get-Command python).Source
           $arguments = @(
-            "scripts/validate_distribution.py", "--wheel-only", "dist"
+            "scripts/validate_compiler_free_install.py", "--mode", "wheel", "dist"
+          )
+          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+            -FilePath $python `
+            -ArgumentList $arguments
+
+      - name: Accept editable install and live Python edit without a compiler
+        if: runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: python scripts/validate_compiler_free_install.py --mode editable dist
+
+      - name: Accept editable install as a standard Windows user
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
+        run: |
+          $python = (Get-Command python).Source
+          $arguments = @(
+            "scripts/validate_compiler_free_install.py", "--mode", "editable", "dist"
           )
           & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
             -FilePath $python `

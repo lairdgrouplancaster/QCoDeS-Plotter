@@ -3606,6 +3606,7 @@ if __name__ == "__main__":
 def smoke_test_installed_qplot_entrypoint(
     environment: Path,
     temporary: Path,
+    *, env=None,
 ) -> None:
     """Prove the actual installed qplot executable delegates to launch_gui."""
 
@@ -3616,7 +3617,7 @@ def smoke_test_installed_qplot_entrypoint(
         encoding="utf-8",
     )
     record_path = hook_directory / "delegation.json"
-    entrypoint_environment = os.environ.copy()
+    entrypoint_environment = dict(os.environ if env is None else env)
     entrypoint_environment["PYTHONPATH"] = str(hook_directory)
     entrypoint_environment["_QPLOT_ENTRYPOINT_DELEGATION_RECORD"] = str(record_path)
     database_argument = "installed database path.db"
@@ -3655,6 +3656,18 @@ def smoke_test_wheel(
     environment = temporary / "wheel-venv"
     python = create_environment(environment)
     install_wheels(python, artifact, native_artifact)
+    smoke_test_installation(
+        repository, artifact, native_artifact, runtime_files, temporary, environment,
+    )
+
+
+def smoke_test_installation(
+    repository: Path, artifact: Path, native_artifact: Path,
+    runtime_files: set[str], temporary: Path, environment: Path, *,
+    audit_code: str | None = None, env=None,
+) -> None:
+    """Exercise an already installed application and native wheel pair."""
+    python = environment_python(environment)
     version = tomllib.loads((repository / "pyproject.toml").read_text())["project"][
         "version"
     ]
@@ -3669,10 +3682,11 @@ def smoke_test_wheel(
         raise AssertionError("installed-wheel smoke must run outside the repository")
     smoke_script = smoke_directory / "installed_wheel_smoke.py"
     smoke_script.write_text(
-        wheel_installation_audit_code([artifact, native_artifact]) + wheel_smoke_code(),
+        (audit_code if audit_code is not None else
+         wheel_installation_audit_code([artifact, native_artifact])) + wheel_smoke_code(),
         encoding="utf-8",
     )
-    smoke_environment = os.environ.copy()
+    smoke_environment = dict(os.environ if env is None else env)
     smoke_environment.pop("PYTHONPATH", None)
     run(
         [
@@ -3696,7 +3710,7 @@ def smoke_test_wheel(
         path = console_script(environment, name)
         if not path.is_file():
             raise AssertionError(f"installed console script is missing: {path}")
-    smoke_test_installed_qplot_entrypoint(environment, temporary)
+    smoke_test_installed_qplot_entrypoint(environment, temporary, env=smoke_environment)
     run([str(console_script(environment, "qplot-generate-db")), "--help"],
         cwd=smoke_directory, env=smoke_environment)
 

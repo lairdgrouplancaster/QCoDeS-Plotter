@@ -182,7 +182,7 @@ full and compatibility suites, Linux coverage, source-distribution validation,
 Ruff, and mypy remain required. Pytest disables the checkout's `src` import
 path in CI and verifies installed file hashes and module origins against the
 downloaded wheels; the native origin is checked before loading the extension.
-Both wheels are initially installed without an index, so these jobs do not
+Both wheels are explicit local installation arguments, so these jobs do not
 depend on either distribution being published. The workflow lives in
 `.github/workflows/ci.yml`. Because the trusted reader requires an unprivileged
 process, its Windows tests and wheel exercise run through a disposable local
@@ -190,6 +190,17 @@ standard account; a separate probe confirms that the hosted runner's elevated
 token is rejected. Configuring these jobs is not cross-platform acceptance for
 a source revision: its Linux, ARM64 macOS, Intel macOS, and unprivileged Windows
 hosted jobs must all finish successfully for that exact revision.
+
+The platform jobs additionally require compiler-free ordinary and editable
+installation acceptance in separate fresh environments. Run
+`python scripts/validate_compiler_free_install.py --mode wheel dist` and
+`python scripts/validate_compiler_free_install.py --mode editable dist` to
+exercise them locally. Every runtime/development dependency must be a wheel;
+compiler commands and absolute compiler subprocesses fail, and caches are
+disabled. Both checks launch the real qPlot command and exercise trusted live
+reading. The editable check changes Python code in a temporary extracted source
+tree, proves the edit is imported without reinstalling, and verifies that the
+native binary was not rebuilt. See `docs/distribution.md` for the full checks.
 
 ## Generated Files
 

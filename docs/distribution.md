@@ -92,6 +92,39 @@ disable the development `pythonpath=src` setting and run the same audit inside
 each pytest process through `QPLOT_CI_WHEEL_AUDIT`. A checkout import, changed
 extension, or older installed release fails validation.
 
+Compiler-free acceptance uses separate fresh virtual environments for each
+installation path:
+
+```console
+python scripts/validate_compiler_free_install.py --mode wheel dist
+python scripts/validate_compiler_free_install.py --mode editable dist
+```
+
+The ordinary path installs both explicit wheels and the complete runtime
+dependency set with `--only-binary=:all: --no-cache-dir`. The editable path
+extracts this run's application sdist outside the checkout and installs it with
+`--editable <source>[dev]`, the explicit prebuilt native wheel, and the same
+binary-only dependency policy. Pip's install reports must show wheels for every
+dependency, and `pip check` must succeed. No native sdist is installed. Download
+and build caches are disabled; neither environment inherits installed packages.
+
+C and C++ compiler selection and PATH commands deliberately fail. A venv `.pth`
+audit hook also rejects absolute compiler paths, including in pip's isolated
+build subprocesses. Negative controls prove these guards work. Pip's optional
+`rustc --version` user-agent probes are rejected too; those failed probes are
+the sole permitted additional compiler attempts. Any build invocation fails
+acceptance.
+
+Both paths launch the actual installed `qplot` command offscreen and observe
+its visible MainWindow inside the real Qt event loop before requesting normal
+shutdown. They then run the retained installed-package, trusted-WAL-reader,
+concurrent-writer/checkpoint, database-protection and shutdown smoke checks from
+outside the repository. For editable acceptance, an existing application
+Python module is changed in the extracted source and a fresh interpreter must
+observe the changed function without another install/build command. The native
+wheel hashes, file identity and modification time must remain unchanged across
+the edit, startup and reader checks. The temporary source is discarded afterward.
+
 The source distribution deliberately contains all source tests and fixtures,
 shared `tests/conftest.py`, project metadata, documentation, developer scripts,
 application source, schemas, and CSV resources. The separate native sdist

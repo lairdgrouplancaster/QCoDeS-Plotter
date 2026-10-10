@@ -62,8 +62,12 @@ def test_every_advertised_python_runs_installed_smoke_on_every_platform(workflow
     assert 'platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]' in wheels
     assert 'python-version: ${{ matrix.python-version }}' in wheels
     assert 'run-unprivileged-windows.ps1' in wheels
-    assert '"scripts/validate_distribution.py", "--wheel-only", "dist"' in wheels
-    assert 'python scripts/validate_distribution.py --wheel-only dist' in wheels
+    for mode in ('wheel', 'editable'):
+        assert f'"scripts/validate_compiler_free_install.py", "--mode", "{mode}", "dist"' in wheels
+        assert f'python scripts/validate_compiler_free_install.py --mode {mode} dist' in wheels
+    assert 'cache: pip' not in wheels
+    assert 'PIP_NO_CACHE_DIR: "1"' in wheels
+    assert 'UV_NO_CACHE: "1"' in wheels
 
 
 def test_pytest_cannot_shadow_the_installed_pair(workflow):
