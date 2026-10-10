@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import venv
 from pathlib import Path
 
@@ -112,6 +113,21 @@ def test_report_rejects_source_builds_and_index_native(tmp_path, editable, fault
             acceptance.validate_install_report(report, editable=editable)
     else:
         acceptance.validate_install_report(report, editable=editable)
+
+
+def test_pip_report_unicode_is_decoded_as_utf8_under_a_non_utf8_locale(tmp_path):
+    report = install_report(tmp_path, editable=False)
+    data = json.loads(report.read_text())
+    data['install'][0]['metadata']['description'] = 'Unicode dependency description: “wheel”'
+    report.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+    scripts = Path(acceptance.__file__).parent
+    code = (f'import sys; sys.path.insert(0, {str(scripts)!r}); '
+            'from pathlib import Path; '
+            'from validate_compiler_free_install import validate_install_report; '
+            f'validate_install_report(Path({str(report)!r}), editable=False)')
+    env = dict(os.environ, LC_ALL='C', PYTHONUTF8='0', PYTHONCOERCECLOCALE='0')
+    subprocess.run([sys.executable, '-I', '-X', 'utf8=0', '-c', code],
+                   env=env, check=True)
 
 
 def test_compilers_fail_even_in_an_isolated_python_build_process(tmp_path):

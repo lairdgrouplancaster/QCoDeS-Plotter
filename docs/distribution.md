@@ -9,9 +9,11 @@ and [native](https://pypi.org/pypi/qplotter-native/json). No existing PyPI
 project conflict was found. A 404 does not prove name eligibility or ownership:
 pending publishers and account/project permissions are private. Confirm them in
 the release owner's authenticated PyPI account before release. No PyPI account
-connector is available in this workspace. The public GitHub environments API
-also reported no environments; create both protected publishing environments
-described below before triggering publication.
+connector is available in this workspace, and the release owner confirmed that
+the PyPI pending publishers still need configuration. On 2026-10-10 the public
+GitHub API verified both publishing environments with a required reviewer and
+the selected tag rules described below. Configure the PyPI publishers before
+triggering publication.
 
 The authoritative package version is `project.version` in `pyproject.toml`.
 At runtime, `qplot.__version__` reads the installed `qplotter` metadata through

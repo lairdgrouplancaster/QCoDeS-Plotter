@@ -191,7 +191,7 @@ def installation_command(python: Path, app: Path, native: Path, report: Path,
 def validate_install_report(report: Path, *, editable: bool,
                             public_artifacts: dict[str, Path] | None = None) -> None:
     """Every resolved runtime/dev dependency must have come from a wheel."""
-    installed = json.loads(report.read_text())['install']
+    installed = json.loads(report.read_text(encoding='utf-8'))['install']
     names = set()
     for item in installed:
         name = item['metadata']['name'].lower().replace('_', '-')
