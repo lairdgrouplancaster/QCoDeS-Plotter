@@ -74,6 +74,16 @@ The native import package is `qplot_native`; application imports remain `qplot`.
 For an environment containing the old `qplot` distribution, follow the
 [replacement instructions](README.md#replacing-an-older-installation) before
 installing editable mode. Never leave both application distributions installed.
+When reusing an old editable checkout, also remove its generated legacy
+metadata before installing the new editable application:
+
+```console
+python -c "import shutil; from pathlib import Path; [shutil.rmtree(p) for p in (Path('src/qplot.egg-info'), Path('src/qcodes_plotter.egg-info'), Path('native/src/qcodes_plotter_native.egg-info')) if p.is_dir()]"
+```
+
+These ignored directories contain generated packaging metadata. A fresh
+checkout does not contain them. Removing old metadata prevents pip from
+reporting the old distribution alongside `qplotter` after editable installation.
 
 ### Native development (explicit compiler workflow)
 

@@ -84,7 +84,10 @@ python -c "from importlib.metadata import packages_distributions; p = packages_d
 
 If both names were previously installed, removing the old one can delete shared
 files; reinstalling the new packages **after both removals** repairs ownership.
-The same sequence applies to old editable installs. Settings and measurement
+For old editable installs, uninstall first and remove the legacy generated
+metadata from the reused checkout as described in
+[Contributing](../CONTRIBUTING.md), before installing the new editable app.
+Settings and measurement
 databases are outside pip's package files. Historical Git tags, such as `v1.5.0`
 and `v1.6.0b1`, retain their original packaging.
 
