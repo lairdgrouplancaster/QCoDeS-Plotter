@@ -35,7 +35,7 @@ def test_install_resolves_every_dependency_as_binary_without_cache(tmp_path, edi
 def test_public_install_uses_exact_index_versions_and_no_local_native(tmp_path, editable):
     command = acceptance.installation_command(
         tmp_path / 'python', tmp_path / 'fresh-checkout', tmp_path / 'native.whl',
-        tmp_path / 'report.json', editable=editable, public_version='1.6.0b2',
+        tmp_path / 'report.json', editable=editable, public_version='1.6.0b3',
     )
     assert '--only-binary=:all:' in command and '--no-cache-dir' in command
     assert '--no-deps' not in command
@@ -45,7 +45,7 @@ def test_public_install_uses_exact_index_versions_and_no_local_native(tmp_path, 
         assert 'qplotter-native==1.0.0' in command
         assert command[-2:] == ['--editable', str((tmp_path / 'fresh-checkout').resolve()) + '[dev]']
     else:
-        assert command[-1] == 'qplotter==1.6.0b2'
+        assert command[-1] == 'qplotter==1.6.0b3'
 
 
 @pytest.mark.parametrize('editable', [False, True])

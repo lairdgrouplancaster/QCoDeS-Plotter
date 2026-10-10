@@ -1315,11 +1315,9 @@ def test_finite_query_batch_is_repeatable_then_next_operation_refreshes(
             results = reader.query_batch(
                 (
                     TrustedQuery(select_sql),
-                    TrustedQuery(
-                        "WITH RECURSIVE values_(n) AS ("
-                        "SELECT 1 UNION ALL SELECT n + 1 FROM values_ "
-                        "WHERE n < 5000000) SELECT sum(n) FROM values_"
-                    ),
+                    # The barrier above proves that the writer has committed.
+                    # Check the pinned snapshot without a CPU-dependent delay.
+                    TrustedQuery("SELECT count(*) FROM qplot_trusted_probe"),
                     TrustedQuery(select_sql),
                 ),
                 timeout=4.0,
@@ -1331,6 +1329,7 @@ def test_finite_query_batch_is_repeatable_then_next_operation_refreshes(
             assert not commit_thread.is_alive()
         assert commit_error == []
         assert results[0].rows == (("initial",),)
+        assert results[1].rows == ((1,),)
         assert results[2].rows == (("initial",),)
         assert reader.query(
             "SELECT value FROM qplot_trusted_probe ORDER BY seq"
@@ -1512,39 +1511,65 @@ def test_macos_last_reader_close_allows_only_shm_coordination_metadata(
 @pytest.mark.skipif(os.name == "nt", reason="POSIX fcntl main-lock proof")
 def test_posix_identity_validation_does_not_drop_active_main_database_lock(
     live_writer: _QcodesWalWriter,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reader = TrustedLiveReader.open(live_writer.database_path)
+    context = multiprocessing.get_context("spawn")
+    parent_control, child_control = context.Pipe(duplex=True)
+    probe_now = context.Event()
+    probe_process = context.Process(
+        target=_posix_exclusive_lock_probe_process,
+        args=(
+            str(live_writer.database_path),
+            _SQLITE_UNIX_SHARED_FIRST_BYTE,
+            _SQLITE_UNIX_SHARED_BYTE_COUNT,
+            child_control,
+            probe_now,
+        ),
+        name="qplot-test-active-main-lock-probe",
+    )
+    probe_process.start()
+    child_control.close()
     try:
         live_writer.request("exit_without_sqlite_cleanup")
         live_writer.process.join(10)
         assert live_writer.process.exitcode == 0
+        assert parent_control.poll(30), "Main lock probe did not start"
+        kind, payload = parent_control.recv()
+        assert kind == "ready", f"Main lock probe failed:\n{payload}"
 
         lock_results: list[bool] = []
+        original_query = reader._query_spec_in_transaction
 
-        def probe_during_query() -> None:
-            time.sleep(0.05)
-            lock_results.append(
-                _posix_exclusive_lock_is_available(
-                    live_writer.database_path,
-                    start=_SQLITE_UNIX_SHARED_FIRST_BYTE,
-                    length=_SQLITE_UNIX_SHARED_BYTE_COUNT,
-                )
-            )
+        def query_with_lock_probe(connection, query, *args):
+            result = original_query(connection, query, *args)
+            assert connection.in_transaction
+            # Revalidate identities after a real SELECT has pinned the read
+            # transaction, then probe before that transaction can end.
+            reader._validate_native_source()
+            probe_now.set()
+            assert parent_control.poll(2), "Active main lock probe timed out"
+            probe_kind, probe_payload = parent_control.recv()
+            assert probe_kind == "ok", f"Main lock probe failed:\n{probe_payload}"
+            lock_results.append(bool(probe_payload))
+            return result
 
-        probe_thread = threading.Thread(target=probe_during_query)
-        probe_thread.start()
+        monkeypatch.setattr(reader, "_query_spec_in_transaction", query_with_lock_probe)
         result = reader.query(
-            "WITH RECURSIVE values_(n) AS ("
-            "SELECT 1 UNION ALL SELECT n + 1 FROM values_ WHERE n < 5000000"
-            ") SELECT (SELECT count(*) FROM runs), sum(n) FROM values_",
+            "SELECT count(*) FROM runs",
             timeout=4.0,
         )
-        probe_thread.join(10)
-        assert not probe_thread.is_alive()
-        assert result.rows[0][0] == 1
+        assert result.rows == ((1,),)
         assert lock_results == [False]
     finally:
+        probe_now.set()
+        probe_process.join(10)
+        if probe_process.is_alive():
+            probe_process.terminate()
+            probe_process.join(10)
+        parent_control.close()
         reader.close()
+    assert probe_process.exitcode == 0
 
 
 def test_native_boundary_changes_only_allowed_shm_coordination_state(
