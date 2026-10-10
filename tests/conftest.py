@@ -1,6 +1,7 @@
 """Shared pytest setup for qPlot's Qt-based tests."""
 
 import os
+import runpy
 import sqlite3
 from pathlib import Path
 
@@ -11,6 +12,13 @@ import qcodes
 from PyQt6 import QtWidgets as qtw
 
 pytest_plugins = ["tests._ci_scheduling"]
+
+
+def pytest_sessionstart(session):
+    """CI must test the exact downloaded wheels in every pytest worker."""
+    audit_path = os.environ.get("QPLOT_CI_WHEEL_AUDIT")
+    if audit_path:
+        runpy.run_path(audit_path)
 
 
 def ensure_qapplication():

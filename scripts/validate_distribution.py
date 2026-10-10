@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -335,6 +336,79 @@ def create_environment(path: Path) -> Path:
     return environment_python(path)
 
 
+def wheel_installation_audit_code(artifacts: list[Path]) -> str:
+    """Bind imported packages to the exact bytes in the supplied local wheels."""
+    expected = {}
+    for artifact in artifacts:
+        with zipfile.ZipFile(artifact) as archive:
+            metadata_path = next(
+                name for name in archive.namelist() if name.endswith('.dist-info/METADATA')
+            )
+            metadata = Parser().parsestr(archive.read(metadata_path).decode())
+            package = 'qplot_native' if metadata['Name'] == 'qcodes-plotter-native' else 'qplot'
+            expected[metadata['Name']] = {
+                'version': metadata['Version'],
+                'package': package,
+                'files': {
+                    name: hashlib.sha256(archive.read(name)).hexdigest()
+                    for name in archive.namelist() if name.startswith(f'{package}/')
+                },
+            }
+    return f'''\
+import hashlib
+import importlib
+import importlib.util
+import sys
+from importlib.metadata import distribution
+from pathlib import Path
+
+expected = {expected!r}
+for name, record in expected.items():
+    installed = distribution(name)
+    assert installed.version == record['version'], (name, installed.version)
+    paths = {{
+        relative: Path(installed.locate_file(relative)).resolve()
+        for relative in record['files']
+    }}
+    for relative, digest in record['files'].items():
+        path = paths[relative]
+        assert path.is_relative_to(Path(sys.prefix).resolve()), ('outside environment', path)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, ('wheel hash mismatch', path)
+    package_spec = importlib.util.find_spec(record['package'])
+    assert package_spec is not None and package_spec.origin is not None, record['package']
+    assert Path(package_spec.origin).resolve() == paths[record['package'] + '/__init__.py'], ('checkout package origin', package_spec.origin)
+    package = importlib.import_module(record['package'])
+    assert Path(package.__file__).resolve() == paths[record['package'] + '/__init__.py'], ('checkout package', package.__file__)
+    if record['package'] == 'qplot_native':
+        extension = next(relative for relative in paths if relative.endswith(('.so', '.pyd')))
+        native_spec = importlib.util.find_spec('qplot_native._trusted_vfs_native')
+        assert native_spec is not None and native_spec.origin is not None, 'missing native extension'
+        assert Path(native_spec.origin).resolve() == paths[extension], ('stale native origin', native_spec.origin)
+        native = importlib.import_module('qplot_native._trusted_vfs_native')
+        assert Path(native.__file__).resolve() == paths[extension], ('stale native extension', native.__file__)
+    for module_name, module in list(sys.modules.items()):
+        if module_name.startswith(record['package'] + '.') and getattr(module, '__file__', None):
+            assert Path(module.__file__).resolve() in paths.values(), ('checkout module', module_name, module.__file__)
+print('Installed application and native files match the supplied wheels.')
+'''
+
+
+def install_wheels(
+    python: Path, artifact: Path, native_artifact: Path, *,
+    with_dev_tools: bool = False, extra_requirements: tuple[str, ...] = (),
+) -> None:
+    """Install the local pair first without consulting an index, then dependencies."""
+    local = [str(native_artifact.resolve()), str(artifact.resolve())]
+    run([str(python), '-m', 'pip', 'install', '--no-index', '--no-deps',
+         '--force-reinstall', *local])
+    # Keep explicit wheel arguments during dependency resolution too. A missing
+    # native wheel is an error before pip can consider a release from an index.
+    if with_dev_tools:
+        local[1] += '[dev]'
+    run([str(python), '-m', 'pip', 'install', '--only-binary', 'apsw',
+         *local, *extra_requirements])
+
+
 def test_extracted_sdist(
     artifact: Path, native_artifact: Path, temporary: Path,
 ) -> None:
@@ -347,6 +421,7 @@ def test_extracted_sdist(
     test_env = os.environ.copy()
     test_env.setdefault("QT_QPA_PLATFORM", "offscreen")
     test_env.setdefault("MPLCONFIGDIR", str(temporary / "matplotlib"))
+    test_env.pop("PYTHONPATH", None)
     # Exercise both installed sdists, including the separate extension. The
     # repository's normal ``pythonpath = ["src"]`` setting would otherwise
     # shadow that installation with the unbuilt extracted source tree.
@@ -355,7 +430,7 @@ def test_extracted_sdist(
         [
             str(python), "-m", "pytest", "--no-cov",
             "-n", "2", "--dist=loadfile", "--no-loadscope-reorder",
-            "-o", "pythonpath=",
+            "-o", "pythonpath=", "--timeout=90", "--timeout-method=thread",
         ],
         cwd=source,
         env=test_env,
@@ -3542,10 +3617,7 @@ def smoke_test_installed_qplot_entrypoint(
     )
     record_path = hook_directory / "delegation.json"
     entrypoint_environment = os.environ.copy()
-    existing_pythonpath = entrypoint_environment.get("PYTHONPATH")
-    entrypoint_environment["PYTHONPATH"] = os.pathsep.join(
-        item for item in (str(hook_directory), existing_pythonpath) if item
-    )
+    entrypoint_environment["PYTHONPATH"] = str(hook_directory)
     entrypoint_environment["_QPLOT_ENTRYPOINT_DELEGATION_RECORD"] = str(record_path)
     database_argument = "installed database path.db"
     completed = subprocess.run(
@@ -3556,6 +3628,7 @@ def smoke_test_installed_qplot_entrypoint(
             "offscreen",
         ],
         env=entrypoint_environment,
+        cwd=hook_directory,
         check=False,
         capture_output=True,
         text=True,
@@ -3581,8 +3654,7 @@ def smoke_test_wheel(
     """Install both local wheels into a fresh venv and exercise installed files."""
     environment = temporary / "wheel-venv"
     python = create_environment(environment)
-    run([str(python), "-m", "pip", "install",
-         str(native_artifact.resolve()), str(artifact.resolve())])
+    install_wheels(python, artifact, native_artifact)
     version = tomllib.loads((repository / "pyproject.toml").read_text())["project"][
         "version"
     ]
@@ -3596,7 +3668,12 @@ def smoke_test_wheel(
     if smoke_directory.resolve().is_relative_to(repository.resolve()):
         raise AssertionError("installed-wheel smoke must run outside the repository")
     smoke_script = smoke_directory / "installed_wheel_smoke.py"
-    smoke_script.write_text(wheel_smoke_code(), encoding="utf-8")
+    smoke_script.write_text(
+        wheel_installation_audit_code([artifact, native_artifact]) + wheel_smoke_code(),
+        encoding="utf-8",
+    )
+    smoke_environment = os.environ.copy()
+    smoke_environment.pop("PYTHONPATH", None)
     run(
         [
             str(python),
@@ -3613,13 +3690,15 @@ def smoke_test_wheel(
             PINNED_NATIVE_VERSION,
         ],
         cwd=smoke_directory,
+        env=smoke_environment,
     )
     for name in CONSOLE_SCRIPTS:
         path = console_script(environment, name)
         if not path.is_file():
             raise AssertionError(f"installed console script is missing: {path}")
     smoke_test_installed_qplot_entrypoint(environment, temporary)
-    run([str(console_script(environment, "qplot-generate-db")), "--help"])
+    run([str(console_script(environment, "qplot-generate-db")), "--help"],
+        cwd=smoke_directory, env=smoke_environment)
 
 
 def find_artifacts(paths: list[Path], *, wheel_only: bool = False) -> dict[str, Path]:
@@ -3659,6 +3738,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--install-only", action="store_true",
+        help="validate and install the local wheel pair into this interpreter for CI",
+    )
+    parser.add_argument("--with-dev-tools", action="store_true")
+    parser.add_argument("--extra-requirement", action="append", default=[])
+    parser.add_argument(
+        "--audit-path", type=Path,
+        help="write an import/hash audit for pytest to run in its own process",
+    )
+    parser.add_argument(
         "--check-clean",
         action="store_true",
         help="fail unless the Git working tree is clean",
@@ -3684,11 +3773,26 @@ def main() -> int:
     source = source_files(repository)
     with tempfile.TemporaryDirectory(prefix="qplot-artifacts-") as temporary_name:
         temporary = Path(temporary_name)
-        artifacts = find_artifacts(args.artifacts, wheel_only=args.wheel_only)
+        artifacts = find_artifacts(
+            args.artifacts, wheel_only=args.wheel_only or args.install_only,
+        )
         wheel = artifacts["qcodes_plotter_wheel"]
         native_wheel = artifacts["qcodes_plotter_native_wheel"]
         runtime_files = validate_wheel(wheel, source)
         validate_wheel(native_wheel, source, native=True)
+        if args.install_only:
+            import sys
+
+            install_wheels(
+                Path(sys.executable), wheel, native_wheel,
+                with_dev_tools=args.with_dev_tools,
+                extra_requirements=tuple(args.extra_requirement),
+            )
+            audit = wheel_installation_audit_code([wheel, native_wheel])
+            audit_path = args.audit_path or temporary / "wheel-installation-audit.py"
+            audit_path.write_text(audit, encoding="utf-8")
+            run([sys.executable, "-I", str(audit_path.resolve())])
+            return 0
         if not args.wheel_only:
             sdist = artifacts["qcodes_plotter_sdist"]
             native_sdist = artifacts["qcodes_plotter_native_sdist"]

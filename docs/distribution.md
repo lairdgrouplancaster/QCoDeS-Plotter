@@ -77,8 +77,20 @@ python -m twine check dist/*
 For a platform job that builds both wheels without sdists, use
 `python scripts/validate_distribution.py --wheel-only dist`; it performs the
 same wheel-content and installed-helper smoke checks without requiring sdists.
-Both local wheels are passed to pip in one command, so neither qPlot
-distribution is fetched from PyPI.
+Both local wheels remain explicit pip arguments throughout installation, so
+neither qPlot distribution is fetched from PyPI.
+
+CI also uses `--install-only --with-dev-tools --audit-path
+dist/wheel-installation-audit.py dist` to install the pair into the selected
+test interpreter. It first force-installs both explicit wheels with
+`--no-index --no-deps`, then resolves dependencies with both wheel paths still
+explicit. Missing or duplicate artifacts fail before installation. An isolated
+import audit checks module origins before loading the extension and compares
+installed package locations, versions, and every runtime file's SHA-256 with
+the supplied wheels. The full and compatibility pytest jobs
+disable the development `pythonpath=src` setting and run the same audit inside
+each pytest process through `QPLOT_CI_WHEEL_AUDIT`. A checkout import, changed
+extension, or older installed release fails validation.
 
 The source distribution deliberately contains all source tests and fixtures,
 shared `tests/conftest.py`, project metadata, documentation, developer scripts,
@@ -137,14 +149,27 @@ metadata, thumbnails, and previews; the competing legacy producers remain
 disabled. The bridge module and Stage 5C source regressions participate in the
 same exact wheel/sdist inventory and configured mypy checks.
 
-The CI workflow is configured to build from clean checkouts on Python 3.12. The
-Linux package job builds the sdist and Linux wheel, compares their contents with
-the source tree, runs the extracted sdist's complete test suite in an isolated
-virtual environment, and installs and exercises the wheel in another
-environment. Dedicated ARM64 macOS, Intel macOS, and Windows jobs build their
-platform wheels from source and run the same installed-wheel smoke tests. The
-Python 3.12 and 3.13 compatibility subsets include focused Stage 4 coverage in
-addition to the retained Stage 2/3 files.
+CI builds the application wheel and sdist once on Python 3.11. A separate native
+build matrix produces one `cp311-abi3` wheel each for Windows x64, macOS ARM64,
+macOS Intel, and Linux x86_64. Linux uses cibuildwheel's `manylinux_2_28` image
+and auditwheel repair rather than publishing an ordinary Ubuntu
+`linux_x86_64` wheel. cibuildwheel also audits the stable ABI. The Linux build
+produces the native sdist. These jobs upload immutable artifacts; every consumer
+downloads the application and matching native artifact from the same workflow
+run, without choosing another run, branch, or release.
+
+The retained Linux package job compares both sdists and wheels with the source
+inventory, runs the extracted sdists' complete test suite in an isolated venv,
+and exercises the installed wheel pair in another venv. Linux coverage still
+runs the complete suite. The Windows and ARM64 macOS full suites retain both
+partitions on Python 3.11 and 3.14; their middle versions use the existing
+compatibility subset. Intel macOS runs that subset on all four versions, with
+additional Linux compatibility checks on 3.11 and 3.13. The compatibility
+subset retains the database protections, concurrent-writer tests and focused
+Stage 4 coverage. All four platforms run the complete installed-package smoke
+on each advertised CPython version, 3.11, 3.12, 3.13 and 3.14, reusing the same
+platform's stable-ABI wheel across versions. Free-threaded CPython and PyPy are
+not part of the advertised CPython support matrix.
 
 The validator writes a real `if __name__ == "__main__"`-guarded smoke script
 into a temporary directory outside the repository and runs it with isolated
@@ -239,6 +264,10 @@ only after the Linux, ARM64 macOS, Intel macOS, and unprivileged Windows jobs
 have all passed for the exact source revision. Workflow configuration alone is
 not acceptance; hosted results for a newly changed revision remain pending
 until all four exact-revision jobs finish successfully.
+Local regression tests and workflow lint checks establish configuration
+correctness; they do not establish hosted platform acceptance. Hosted results
+for changes to this workflow must be reported separately, with the tested
+revision and platform/Python jobs, after the workflow actually runs.
 
 ## Release Checklist
 
@@ -259,8 +288,9 @@ Before creating a tagged release:
 10. Confirm the validator ran the extracted sdist tests, the installed direct
     trusted-WAL-helper smoke, the Stage 4 application-adapter smoke, and the
     installed Stage 5B live-WAL backend and Stage 5C Qt-bridge smokes.
-11. Confirm unprivileged Windows, ARM64 macOS, Intel macOS, and Linux wheel jobs
-    passed for the exact source.
+11. Confirm unprivileged Windows x64, ARM64 macOS, Intel macOS, and Linux
+    installed-wheel jobs passed on Python 3.11–3.14 for the exact source, and
+    use the repaired manylinux artifact for Linux publication.
 12. Run the manual GUI check from `CONTRIBUTING.md`.
 13. Confirm README install and compatibility notes still match the release.
 14. Create a GitHub release from the tag and include user-facing changes.

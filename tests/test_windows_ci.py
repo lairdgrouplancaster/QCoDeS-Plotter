@@ -79,7 +79,7 @@ def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
     required = workflow.split("  required-checks:\n", 1)[1]
     assert 'needs.checks.result }}" != "success"' in required
     coverage = workflow.split("  coverage:\n", 1)[1].split("  package:\n", 1)[0]
-    assert "python -m pytest -n 2 --dist=loadfile --no-loadscope-reorder" in coverage
+    assert "python -m pytest -o pythonpath= -n 2 --dist=loadfile --no-loadscope-reorder" in coverage
     assert "--no-cov" not in coverage
     assert "--qplot-ci-partition" not in coverage
 

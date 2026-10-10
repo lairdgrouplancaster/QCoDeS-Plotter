@@ -173,10 +173,17 @@ The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `QApplication` creation unless a test has a specific reason to override the
 shared setup.
 
-GitHub Actions runs the same Ruff, mypy, and pytest checks on Windows 2025 and
-macOS with Python 3.11, 3.12, 3.13, and 3.14 for pushes and pull requests. On
-Python 3.12 it validates the sdist and Linux wheel and separately builds and
-exercises installed macOS and Windows wheels. The workflow lives in
+GitHub Actions is configured to build the application wheel once and separate
+`cp311-abi3` native wheels for Windows x64, macOS ARM64, macOS Intel, and Linux
+x86_64. Linux publication wheels use cibuildwheel's `manylinux_2_28` image and
+auditwheel repair. Each platform exercises the same run's matching native wheel
+and shared application wheel on Python 3.11, 3.12, 3.13, and 3.14. The existing
+full and compatibility suites, Linux coverage, source-distribution validation,
+Ruff, and mypy remain required. Pytest disables the checkout's `src` import
+path in CI and verifies installed file hashes and module origins against the
+downloaded wheels; the native origin is checked before loading the extension.
+Both wheels are initially installed without an index, so these jobs do not
+depend on either distribution being published. The workflow lives in
 `.github/workflows/ci.yml`. Because the trusted reader requires an unprivileged
 process, its Windows tests and wheel exercise run through a disposable local
 standard account; a separate probe confirms that the hosted runner's elevated
