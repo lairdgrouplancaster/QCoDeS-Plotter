@@ -266,7 +266,7 @@ def test_workflow_gates_uploads_and_verifies_native_before_application():
     assert '--mode wheel public-expected' in public
     assert '--mode editable public-expected' in public
     assert 'run-unprivileged-windows.ps1' in public
-    assert 'verify receipts' not in public.lower() or 'select-platform --bundle release' in public
+    assert 'select-platform --bundle release' in public
 
 
 def test_receipt_does_not_allow_unlisted_files_or_path_traversal(tmp_path):

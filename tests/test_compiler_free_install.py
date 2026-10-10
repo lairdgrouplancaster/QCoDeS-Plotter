@@ -145,6 +145,26 @@ else:
     assert log.read_text() == baseline + 'audit blocked /absolute/toolchain/cl.exe\n'
 
 
+def test_windows_compiler_filter_removes_runneradmin_private_paths(tmp_path, monkeypatch):
+    private = tmp_path / 'runneradmin/.cargo/bin'
+    compiler = tmp_path / 'toolchain'
+    compiler.mkdir()
+    (compiler / 'cl.exe').touch()
+    usable = tmp_path / 'python'
+    usable.mkdir()
+    original = Path.is_file
+
+    def accessible(path):
+        if path.is_relative_to(private):
+            raise PermissionError('standard user cannot inspect runneradmin')
+        return original(path)
+
+    monkeypatch.setattr(Path, 'is_file', accessible)
+    assert acceptance.windows_paths_without_compilers(
+        os.pathsep.join(map(str, (private, compiler, usable))),
+    ) == [str(usable)]
+
+
 def test_python_edit_changes_import_without_another_install(tmp_path):
     source = tmp_path / 'application'
     package = source / 'src/qplot'

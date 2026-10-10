@@ -83,6 +83,24 @@ sys.addaudithook(audit)
     (directory / 'qplot-ci-compiler-guard.pth').write_text('import _qplot_ci_compiler_guard\n')
 
 
+def windows_paths_without_compilers(path: str) -> list[str]:
+    """Remove toolchains and PATH entries inaccessible to the standard user."""
+    paths = []
+    for directory in path.split(os.pathsep):
+        if not directory:
+            continue
+        try:
+            has_compiler = any((Path(directory) / (name + '.exe')).is_file()
+                               for name in COMPILERS)
+        except OSError:
+            # Hosted runner PATH includes runneradmin's private Rust directory.
+            # The standard account cannot inspect or execute anything there.
+            continue
+        if not has_compiler:
+            paths.append(directory)
+    return paths
+
+
 def compiler_free_environment(temporary: Path) -> tuple[dict[str, str], Path]:
     """Block compiler selection and PATH lookup; record every attempted call."""
     blockers = temporary / 'disabled-compilers'
@@ -114,9 +132,7 @@ def compiler_free_environment(temporary: Path) -> tuple[dict[str, str], Path]:
         env.update(DISTUTILS_USE_SDK='1', MSSdk='1',
                    VCINSTALLDIR=str(blockers), VSINSTALLDIR=str(blockers),
                    VCToolsInstallDir=str(blockers), INCLUDE='', LIB='', LIBPATH='')
-        paths = [directory for directory in env.get('PATH', '').split(os.pathsep)
-                 if directory and not any((Path(directory) / (name + '.exe')).is_file()
-                                          for name in COMPILERS)]
+        paths = windows_paths_without_compilers(env.get('PATH', ''))
     else:
         paths = env.get('PATH', '').split(os.pathsep)
     env['PATH'] = os.pathsep.join([str(blockers), *paths])

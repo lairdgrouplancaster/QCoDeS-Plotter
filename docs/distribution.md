@@ -79,7 +79,7 @@ application names before installing the replacement:
 python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
 python -m pip install --only-binary=:all: qplotter==1.6.0b2
 python -m pip check
-python -c "from importlib.metadata import packages_distributions; p = packages_distributions(); assert p['qplot'] == ['qplotter']; assert p['qplot_native'] == ['qplotter-native']"
+python -c "from importlib.metadata import packages_distributions; p = packages_distributions(); assert set(p['qplot']) == {'qplotter'}; assert set(p['qplot_native']) == {'qplotter-native'}"
 ```
 
 If both names were previously installed, removing the old one can delete shared

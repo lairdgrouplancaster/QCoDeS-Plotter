@@ -482,6 +482,10 @@ def test_import_audit_detects_stale_files_and_shadow_packages(tmp_path, monkeypa
 
     app = _split_wheel(tmp_path)
     native = _split_wheel(tmp_path, native=True)
+    # auditwheel/delocate add explicit ZIP directory entries when repairing
+    # publication wheels. These are not installed file bytes to hash.
+    with zipfile.ZipFile(native, 'a') as archive:
+        archive.writestr('qplot_native/', b'')
     prefix = tmp_path / 'environment'
     prefix.mkdir()
     for artifact in (app, native):

@@ -350,8 +350,9 @@ def wheel_installation_audit_code(artifacts: list[Path]) -> str:
                 'version': metadata['Version'],
                 'package': package,
                 'files': {
-                    name: hashlib.sha256(archive.read(name)).hexdigest()
-                    for name in archive.namelist() if name.startswith(f'{package}/')
+                    item.filename: hashlib.sha256(archive.read(item)).hexdigest()
+                    for item in archive.infolist()
+                    if not item.is_dir() and item.filename.startswith(f'{package}/')
                 },
             }
     return f'''\
